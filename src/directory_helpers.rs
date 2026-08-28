@@ -67,7 +67,7 @@ pub(crate) fn resolve_handle_request_body(
         proof_challenge: non_empty(context.proof_challenge),
         claim_presentations: Vec::new(),
         intent,
-        requester,
+        requester_id: requester,
         audience: non_empty(context.audience),
         realm_id,
         proofs: context.proofs.to_vec(),

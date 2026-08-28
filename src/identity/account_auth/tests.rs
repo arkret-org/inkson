@@ -82,7 +82,7 @@ fn session_grant_proof_signs_canonical_claims() {
     );
     assert_eq!(claims.session_grant_id, "01HABC123");
     assert_eq!(
-        claims.audience.as_str(),
+        claims.audience_id.as_str(),
         "ak:did_core:web:principal.example"
     );
     assert_eq!(claims.challenge, "challenge-deadbeef");
@@ -199,9 +199,9 @@ fn test_discovery() -> OidcDiscoveryDocument {
 fn test_oidc_method() -> arkret_sdk::AuthMethod {
     arkret_sdk::AuthMethod {
         method: arkret_sdk::AuthMethodKind::Oidc,
-        issuer: Some("https://issuer.example".to_owned()),
-        provider: None,
-        openid_configuration: Some(
+        issuer_uri: Some("https://issuer.example".to_owned()),
+        provider_uri: None,
+        openid_configuration_uri: Some(
             "https://issuer.example/.well-known/openid-configuration".to_owned(),
         ),
         client_id: Some("inkson-test".to_owned()),
@@ -441,7 +441,7 @@ fn authorize_url_falls_back_to_native_client_id() {
 fn resolve_gate_account_base_prefers_account_authority() {
     let mut metadata = arkret_sdk::AuthMetadata::minimal();
     metadata.account_authority = Some(arkret_sdk::AccountAuthority {
-        origin: "https://aa.example".to_owned(),
+        origin_uri: "https://aa.example".to_owned(),
         gate_account_base: "https://aa.example/_arkret/gate/account".to_owned(),
     });
     let base = resolve_gate_account_base("https://principal.example", &metadata).unwrap();
@@ -452,7 +452,7 @@ fn resolve_gate_account_base_prefers_account_authority() {
 fn resolve_gate_account_base_derives_from_account_authority_origin() {
     let mut metadata = arkret_sdk::AuthMetadata::minimal();
     metadata.account_authority = Some(arkret_sdk::AccountAuthority {
-        origin: "https://aa.example".to_owned(),
+        origin_uri: "https://aa.example".to_owned(),
         gate_account_base: String::new(),
     });
     let base = resolve_gate_account_base("https://principal.example", &metadata).unwrap();
@@ -480,12 +480,12 @@ fn principal_description() -> arkret_sdk::ServiceDescribe {
             "ak.operation_bundle.principal_server.http_core.v1".to_owned(),
         ],
         vec![arkret_sdk::TransportBinding::HttpJson {
-            base_url: "https://principal.example/_arkret".to_owned(),
+            base_uri: "https://principal.example/_arkret".to_owned(),
             extension_profile_required: (),
         }],
     );
     description.auth_metadata.account_authority = Some(arkret_sdk::AccountAuthority {
-        origin: "https://auth.example".to_owned(),
+        origin_uri: "https://auth.example".to_owned(),
         gate_account_base: "https://auth.example/_arkret/gate/account".to_owned(),
     });
     description

@@ -467,7 +467,7 @@ fn chat_message_create_operation_with_content_inner(
         if !is_schema_message_id(reply_to) {
             anyhow::bail!("reply_to must be a ak:message id");
         }
-        payload = payload.with_reply_to(reply_to);
+        payload = payload.with_reply_to_id(reply_to);
     }
     crate::operation::TypedOperationBuilder::new::<arkret_sdk::event_spec::MessageCreate>(
         realm_id, actor, payload,

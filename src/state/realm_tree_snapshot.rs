@@ -184,10 +184,16 @@ impl LocalStateStore {
     ) -> Option<std::collections::BTreeSet<String>> {
         let state = self.load();
         let projection = state.realm_tree_projections.get(realm_id.trim())?;
-        if projection.get("members_limited").and_then(Value::as_bool) != Some(false) {
+        if projection
+            .get("member_roster_entries_limited")
+            .and_then(Value::as_bool)
+            != Some(false)
+        {
             return None;
         }
-        let members = projection.get("members").and_then(Value::as_array)?;
+        let members = projection
+            .get("member_roster_entries")
+            .and_then(Value::as_array)?;
         Some(
             members
                 .iter()

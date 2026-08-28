@@ -253,7 +253,7 @@ pub async fn author_pairing_request_body(
                     .map_err(anyhow::Error::msg)?,
                     expires_at: required_string(challenge, "expires_at")?
                         .parse::<chrono::DateTime<chrono::Utc>>()?,
-                    gate_audience: required_string(challenge, "gate_audience")?,
+                    gate_audience_uri: required_string(challenge, "gate_audience_uri")?,
                     pairing_code: arkret_sdk::DevicePairingCode::new(required_string(
                         challenge,
                         "pairing_code",
@@ -324,7 +324,7 @@ pub async fn author_pairing_request_body(
     let authorize_payload = arkret_sdk::UnsignedDeviceAuthorizePayload::new(
         principal_actor.clone(),
         attestation.device_id.clone(),
-        arkret_sdk::NonEmptyString::new(attestation.device_public_key.as_str().to_owned())
+        arkret_sdk::NonEmptyString::new(attestation.device_public_key_did.as_str().to_owned())
             .map_err(anyhow::Error::msg)?,
         attestation.hpke_key.clone(),
         attestation.algorithms.clone(),
@@ -467,7 +467,7 @@ pub async fn verify_authorized_pairing_event(
         serde_json::from_value(serde_json::to_value(&event.payload)?)?;
     if payload.principal_id != principal_actor
         || payload.device_id != attestation.device_id
-        || payload.device_public_key.as_str() != attestation.device_public_key.as_str()
+        || payload.device_public_key_did.as_str() != attestation.device_public_key_did.as_str()
         || payload.hpke_key != attestation.hpke_key
         || payload.algorithms != attestation.algorithms
         || payload.authorization_binding_kind

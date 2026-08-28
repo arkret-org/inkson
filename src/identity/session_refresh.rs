@@ -745,7 +745,7 @@ fn mint_session_grant_refresh_proof(
         predecessor_session_grant_id,
         principal_id: principal_core,
         device_id,
-        audience,
+        audience_id: audience,
         holder_jkt: holder_jkt.to_owned(),
         session_intent_digest,
         issued_at,

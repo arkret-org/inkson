@@ -679,7 +679,7 @@ pub async fn join_call_media(
     Ok(JoinedMediaSession {
         backend_kind: "livekit".to_owned(),
         focus_id: outcome.focus_id,
-        connect_url: outcome.connect_url,
+        connect_url: outcome.connect_uri,
         backend_token,
         participant_binding: outcome.participant_binding,
         participant_identity: verification.participant_identity,

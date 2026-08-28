@@ -93,7 +93,7 @@ pub(super) fn validate_projected_cba_plane(
     for write in crate::operation::project_registered_cell_writes(event, digest_suite)
         .map_err(|error| anyhow::anyhow!("cell-write projection failed: {error}"))?
     {
-        let cell = arkret_sdk::CellId::from_ref(&write.cell)
+        let cell = arkret_sdk::CellId::from_ref(&write.cell_id)
             .map_err(|error| anyhow::anyhow!("projected cell is invalid: {error}"))?;
         let cell_plane = cba_cell_family_plane(cell.component()).ok_or_else(|| {
             anyhow::anyhow!(

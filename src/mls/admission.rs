@@ -355,7 +355,7 @@ fn validate_claim_receipt_for_admission(
         .map_err(|error| format!("invalid requester actor_id: {error}"))?;
     let expected_realm = arkret_sdk::RealmId::new(trim_realm_id(realm_id))
         .map_err(|error| format!("invalid admission realm_id: {error}"))?;
-    if receipt.request.requester != requester
+    if receipt.request.requester_id != requester
         || receipt.request.target_principal_id != claim.principal_id
         || receipt.request.intended_realm_id != expected_realm
         || receipt.request.claim_request_id.as_str() != claim_request_id
@@ -847,7 +847,7 @@ mod tests {
                 .unwrap(),
             target_principal_id: claim.principal_id.clone(),
             intended_realm_id: arkret_sdk::RealmId::new(realm_id.to_owned()).unwrap(),
-            requester: crate::mls_api_helpers::principal_core_id(requester).unwrap(),
+            requester_id: crate::mls_api_helpers::principal_core_id(requester).unwrap(),
             mls_group_id: arkret_sdk::NonEmptyString::new(
                 crate::mls::runtime::mls_group_id_for_realm(realm_id)
                     .expect("test Realm scope must derive a canonical MLS group id"),

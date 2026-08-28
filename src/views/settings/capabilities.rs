@@ -66,7 +66,7 @@ fn decode_capability_row(grant: &CapabilityGrant, queried_realm_id: &str) -> Cap
             .first()
             .and_then(|resource| serde_json::to_string(resource).ok())
             .unwrap_or_default(),
-        issuer_id: grant.issuer.as_str().to_owned(),
+        issuer_id: grant.issuer_id.as_str().to_owned(),
         subject: match &grant.subject {
             CapabilitySubject::CoreDid(did) => did.as_str().to_owned(),
             CapabilitySubject::Condition(selector) => {

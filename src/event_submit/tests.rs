@@ -882,7 +882,7 @@ fn queued_mls_admission_round_trips_exact_welcome_material() {
                 arkret_sdk::PrincipalServerAdmissionProof::producer_proof_digest(&producer)
                     .unwrap(),
             producer_verification_method: producer.verification_method.clone(),
-            producer_signing_key: arkret_sdk::DidKey::new("did:key:z6MkhFixtureDeviceKey")
+            producer_signing_key_did: arkret_sdk::DidKey::new("did:key:z6MkhFixtureDeviceKey")
                 .unwrap(),
             producer_signer_resolution_evidence_ref: producer
                 .signer_resolution_evidence_ref
@@ -1097,7 +1097,7 @@ fn actor_frontier_stamp_carries_into_the_ordered_log_issuer_seq() {
         crate::operation::direct_registered_cell_writes(event, arkret_sdk::DigestSuite::Sha256)
             .unwrap()
             .into_iter()
-            .find(|write| write.cell.as_str() == arkret_bootstrap::REALM_CREATE_CELL)
+            .find(|write| write.cell_id.as_str() == arkret_bootstrap::REALM_CREATE_CELL)
             .expect("realm.create projects the create-log append")
             .op
             .issuer_seq
@@ -1106,7 +1106,7 @@ fn actor_frontier_stamp_carries_into_the_ordered_log_issuer_seq() {
         crate::operation::direct_registered_cell_writes(event, arkret_sdk::DigestSuite::Sha256)
             .unwrap()
             .into_iter()
-            .filter(|write| write.cell.as_str() != arkret_bootstrap::REALM_CREATE_CELL)
+            .filter(|write| write.cell_id.as_str() != arkret_bootstrap::REALM_CREATE_CELL)
             .collect::<Vec<_>>()
     };
 

@@ -295,7 +295,7 @@ pub fn prepare_genesis_draft(
             .context("persisted PCR genesis omits founding device descriptor")?;
         if initial.session_public_key.thumbprint_sha256()? != dpop.jkt()
             || initial.device_id.as_str() != checkpoint.device_id
-            || descriptor.device_public_key.as_str() != device_public_key
+            || descriptor.device_public_key_did.as_str() != device_public_key
             || descriptor.hpke_key.as_str() != hpke_key
         {
             anyhow::bail!(
@@ -336,7 +336,7 @@ pub fn prepare_genesis_draft(
     let initial = arkret_sdk::InitialSessionGrantIntent {
         device_id: arkret_sdk::DeviceId::new(checkpoint.device_id.clone())?,
         session_public_key: dpop.canonical_session_public_jwk()?,
-        audience,
+        audience_id: audience,
     };
     initial.validate()?;
     let mut prepared = checkpoint.clone();

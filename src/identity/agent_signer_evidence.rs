@@ -409,13 +409,9 @@ async fn materialize_verified_cache_entry(
             arkret_sdk::signatures::agent_evidence::historical_receipt_verification_method(receipt)
                 .ok()?;
         if !verification_method_public_keys.contains_key(method.as_str()) {
-            let key = resolve_source_service_method_key(
-                http,
-                anchor,
-                &receipt.receiver_id,
-                &method,
-            )
-            .await?;
+            let key =
+                resolve_source_service_method_key(http, anchor, &receipt.receiver_id, &method)
+                    .await?;
             verification_method_public_keys.insert(method.as_str().to_owned(), key);
         }
     }
@@ -674,7 +670,7 @@ fn current_evidence_matches_context(
     current_observation.operation_id == *operation_id
         && current_observation.request_digest == *request_digest
         && current_observation.verifier_id == *verifier_id
-        && current_observation.audience == *audience
+        && current_observation.audience_id == *audience
         && current_observation.challenge == *challenge
 }
 

@@ -324,7 +324,7 @@ fn settled_realm_profile_payload(rows: &[arkret_sdk::EventReadRow]) -> anyhow::R
         let matching: Vec<_> = event
             .preconditions
             .iter()
-            .filter(|guard| guard.cell.as_str() == cell)
+            .filter(|guard| guard.cell_id.as_str() == cell)
             .collect();
         let [guard] = matching.as_slice() else {
             anyhow::bail!(
@@ -1054,7 +1054,7 @@ mod tests {
         let [guard] = replacement.intent().preconditions() else {
             panic!("profile replacement must carry one exact CAS guard");
         };
-        assert_eq!(guard.cell.as_str(), arkret_wire::REALM_PROFILE_CELL);
+        assert_eq!(guard.cell_id.as_str(), arkret_wire::REALM_PROFILE_CELL);
         assert_eq!(guard.predicate.op, arkret_sdk::PredicateOp::HeadEq);
         assert_eq!(guard.predicate.value.as_ref(), Some(&expected));
 

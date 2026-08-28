@@ -145,7 +145,7 @@ pub fn capability_grant_actions_with_resources(
     let grant = arkret_sdk::CapabilityGrantCreateBody {
         schema: arkret_wire::SchemaId::CAPABILITY_V1.to_owned(),
         realm_id: Some(realm_typed.clone()),
-        issuer: actor_typed,
+        issuer_id: actor_typed,
         subject: arkret_sdk::CapabilitySubject::CoreDid(subject_typed),
         subject_principal_server_id: Some(crate::operation::authoring_principal_server_id()?),
         actions: actions.iter().map(|action| (*action).to_owned()).collect(),
@@ -250,7 +250,7 @@ mod tests {
         assert_eq!(writes.len(), 1);
         let grant_id = arkret_sdk::GrantId::from_event_id(event.event_id());
         assert_eq!(
-            writes[0].cell.as_str(),
+            writes[0].cell_id.as_str(),
             format!("ak:cell:ak.component.capability.grant.v1:{grant_id}")
         );
         assert_eq!(writes[0].op.op_type, arkret_sdk::LatticeOpType::Add);

@@ -1360,7 +1360,7 @@ pub(super) fn validate_welcome_claim_receipt_context(
             } => recipient_pairwise_actor_id,
         };
     if receipt.claim_request_id != request.claim_request_id
-        || request.requester != welcome.claim_envelope.requester_actor_id
+        || request.requester_id != welcome.claim_envelope.requester_actor_id
         || request.intended_realm_id != welcome.claim_envelope.intended_realm_id
         || request.intended_realm_id.as_str() != welcome.governance_binding.realm_id().as_str()
         || request.mls_group_id.as_str() != welcome.mls_group_id.as_str()

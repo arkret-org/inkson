@@ -396,7 +396,7 @@ pub fn build_agent_pairing_bootstrap_json(
 ) -> serde_json::Result<String> {
     let base_url = base_url.trim_end_matches('/');
     let bootstrap = AgentPairingBootstrap {
-        arkret_base_url: base_url.to_owned(),
+        arkret_base_uri: base_url.to_owned(),
         service_id: arkret_sdk::DidCoreId::new(service_id.trim().to_owned())
             .map_err(json_invalid_input)?,
         agent_id: outcome.agent_id.clone(),
@@ -496,7 +496,7 @@ pub fn build_requested_scope_disclosure_for_pairing(
     let requested_scope = key_state.requested_scope.clone();
     let verifier_did = arkret_sdk::Did::new(service_did.trim().to_owned())?;
     let verifier_id = arkret_sdk::project_did_to_core_id(&verifier_did)?;
-    if request.proof_of_possession.audience != verifier_id {
+    if request.proof_of_possession.audience_id != verifier_id {
         anyhow::bail!("runtime request audience does not match the current service");
     }
     let signer = crate::event_signer::active_signer()

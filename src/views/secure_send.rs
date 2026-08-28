@@ -407,7 +407,7 @@ pub(crate) fn build_secure_send(
             message_payload = message_payload.with_mls_encrypted_metadata(encrypted_metadata);
         }
         if let Some(reply_to) = plan_reply_to {
-            message_payload = message_payload.with_reply_to(reply_to);
+            message_payload = message_payload.with_reply_to_id(reply_to);
         }
         crate::operation::TypedOperationBuilder::new::<arkret_sdk::event_spec::MessageCreate>(
             &plan_realm_id,

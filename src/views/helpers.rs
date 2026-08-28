@@ -269,7 +269,7 @@ pub fn handle_claim_rows(
                 is_primary: primary.as_deref() == Some(handle.as_str()) && !handle.is_empty(),
                 handle,
                 issuer: claim
-                    .issuer
+                    .issuer_id
                     .as_ref()
                     .map(ToString::to_string)
                     .unwrap_or_else(|| "(unknown)".to_owned()),
@@ -475,11 +475,11 @@ mod tests {
             schema: HandleClaim::SCHEMA.to_owned(),
             handle: Some(Handle::parse("alice:acme.example").unwrap()),
             handle_aliases: Vec::new(),
-            subject: Some(
+            subject_id: Some(
                 crate::mls_api_helpers::principal_core_id("did:web:acme.example:principals:alice")
                     .unwrap(),
             ),
-            issuer: Some(
+            issuer_id: Some(
                 crate::mls_api_helpers::principal_core_id("did:web:issuer.acme.example").unwrap(),
             ),
             vouching_id: None,
@@ -498,7 +498,7 @@ mod tests {
             proofs: Vec::new(),
         };
         let accepted = vec![arkret_sdk::identity::HandleIssuerPolicyEntry {
-            issuer: arkret_sdk::DidCoreId::new("ak:did_core:web:issuer.acme.example".to_owned())
+            issuer_id: arkret_sdk::DidCoreId::new("ak:did_core:web:issuer.acme.example".to_owned())
                 .unwrap(),
             authorized_handle_domains: vec!["acme.example".to_owned()],
             issuer_class: arkret_sdk::identity::HandleIssuerAuthorityClass::DomainAuthority,
@@ -559,8 +559,8 @@ mod tests {
             schema: HandleClaim::SCHEMA.to_owned(),
             handle: Some(Handle::parse("alice:acme.example").unwrap()),
             handle_aliases: Vec::new(),
-            subject: Some(subject.clone()),
-            issuer: Some(
+            subject_id: Some(subject.clone()),
+            issuer_id: Some(
                 crate::mls_api_helpers::principal_core_id("did:web:issuer.acme.example").unwrap(),
             ),
             vouching_id: None,
@@ -579,7 +579,7 @@ mod tests {
             proofs: Vec::new(),
         };
         let res = DirectorySubjectHandleList {
-            subject,
+            subject_id: subject,
             claims: vec![claim],
             primary_handle: Some(Handle::parse("alice:acme.example").unwrap()),
             as_of: now,

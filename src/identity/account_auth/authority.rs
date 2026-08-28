@@ -154,7 +154,7 @@ pub(crate) fn resolve_gate_account_base(
         if !base.is_empty() {
             return Ok(normalize_gate_account_base(base));
         }
-        let origin = authority.origin.trim();
+        let origin = authority.origin_uri.trim();
         if !origin.is_empty() {
             return gate_account_base_from_origin(origin);
         }

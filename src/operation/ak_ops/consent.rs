@@ -23,7 +23,7 @@ pub fn consent_grant(
 ) -> anyhow::Result<TypedOperationBuilder> {
     let payload = arkret_sdk::ConsentGrantPayload {
         consent_id: consent_id.clone(),
-        peer: did_id(peer)?,
+        peer_id: did_id(peer)?,
         consent_scope: consent_scope.trim().parse()?,
         not_before: None,
         expires_at,

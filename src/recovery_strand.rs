@@ -383,7 +383,7 @@ fn build_signed_genesis_recovery_policy_with_raw_signer(
         policy_id: PolicyId::new(format!("ak:policy:{}", crate::operation::uuid_v7()))?,
         principal_id: arkret_sdk::project_did_to_core_id(principal_did)?,
         version: 1,
-        supersedes: None,
+        supersedes_id: None,
         trust_domain: TrustDomainId::new(trust_domain.to_owned())?,
         allowed_proof_kinds: vec![
             RecoveryProofKind::DidRoot,

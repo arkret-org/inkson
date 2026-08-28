@@ -32,8 +32,8 @@ fn seed_complete_rfc9420_projection(
         realm,
         json!({
             "content_scheme": "mls_rfc9420",
-            "members_limited": false,
-            "members": [{ "actor_id": actor_id, "membership": "join" }]
+            "member_roster_entries_limited": false,
+            "member_roster_entries": [{ "actor_id": actor_id, "membership": "join" }]
         }),
     );
 }
@@ -78,8 +78,8 @@ fn creator_snapshot_bootstrap_makes_space_encryptable() {
         realm,
         json!({
             "content_scheme": "mls_rfc9420",
-            "members_limited": false,
-            "members": [{
+            "member_roster_entries_limited": false,
+            "member_roster_entries": [{
                 "actor_id": crate::mls_api_helpers::principal_core_id(actor).unwrap(),
                 "membership": "join"
             }]
@@ -290,8 +290,8 @@ fn encrypted_write_blocks_complete_roster_ahead_of_local_group() {
         realm,
         json!({
             "encrypted": true,
-            "members_limited": false,
-            "members": [
+            "member_roster_entries_limited": false,
+            "member_roster_entries": [
                 {
                     "actor_id": crate::mls_api_helpers::principal_core_id(actor).unwrap(),
                     "membership": "join"
@@ -346,8 +346,8 @@ fn encrypted_write_blocks_until_content_scheme_projection_arrives() {
         realm,
         json!({
             "encrypted": true,
-            "members_limited": false,
-            "members": [{
+            "member_roster_entries_limited": false,
+            "member_roster_entries": [{
                 "actor_id": crate::mls_api_helpers::principal_core_id(actor).unwrap(),
                 "membership": "join"
             }]
@@ -1076,8 +1076,8 @@ fn minimal_overdue_epoch_blocks_before_counter_advance() {
         json!({
             "schema_refs": [arkret_sdk::ProfileId::MLS_MINIMAL_METADATA_REALM_V1],
             "content_scheme": "mls_rfc9420",
-            "members_limited": false,
-            "members": [{
+            "member_roster_entries_limited": false,
+            "member_roster_entries": [{
                 "actor_id": crate::mls_api_helpers::principal_core_id(actor).unwrap(),
                 "membership": "join"
             }]

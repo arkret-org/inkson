@@ -96,9 +96,9 @@ pub fn build_genesis_unit(
         descriptor_version: 1,
         device_id: payload.device_id.clone(),
         device_key_digest: arkret_sdk::Hash::new(arkret_sdk::canonical::sha256_digest(
-            payload.device_public_key.as_bytes(),
+            payload.device_public_key_did.as_bytes(),
         ))?,
-        device_public_key: payload.device_public_key.clone(),
+        device_public_key_did: payload.device_public_key_did.clone(),
         device_key_algorithm: arkret_sdk::FoundingDeviceKeyAlgorithm::Ed25519,
         device_key_purpose: arkret_sdk::FoundingDeviceKeyPurpose::EventSigningAndMlsIdentity,
         hpke_key_digest: arkret_sdk::Hash::new(arkret_sdk::canonical::sha256_digest(
@@ -114,7 +114,7 @@ pub fn build_genesis_unit(
     };
     descriptor.validate()?;
     let founding_notary_public_key =
-        decode_founding_device_public_key(payload.device_public_key.as_str())?;
+        decode_founding_device_public_key(payload.device_public_key_did.as_str())?;
     let founding_notary =
         arkret_sdk::NotaryValue::single_signer(arkret_sdk::NotarySignerDescriptor {
             actor_id: principal_id.clone(),

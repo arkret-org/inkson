@@ -7,7 +7,7 @@ fn realm_member_roster_reads_r32_wire_shape() {
     // `identity_event_ids` / `member_display_state_digest`. Handle
     // strings only appear inside signed handle_claim evidence.
     let projection = json!({
-        "members": [
+        "member_roster_entries": [
             {
                 "actor_id": "ak:did_core:web:acme.example:users:alice",
                 "membership": "join",
@@ -62,7 +62,7 @@ fn realm_member_roster_reads_r32_digest_only() {
     // Aggressive no-compat: only the R3.2 `member_display_state_digest`
     // key is read.
     let projection = json!({
-        "members": [{
+        "member_roster_entries": [{
             "actor_id": "ak:did_core:web:acme.example:users:v2",
             "membership": "join",
             "member_display_state_digest": "sha256:cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
@@ -77,7 +77,7 @@ fn realm_member_roster_reads_r32_digest_only() {
 fn realm_member_roster_ignores_removed_digest_key() {
     // The pre-R3.2 `identity_state_digest` key is NOT honoured.
     let projection = json!({
-        "members": [{
+        "member_roster_entries": [{
             "actor_id": "ak:did_core:web:acme.example:users:removed",
             "membership": "join",
             "identity_state_digest": "sha256:cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
@@ -91,7 +91,7 @@ fn realm_member_roster_ignores_removed_digest_key() {
 #[test]
 fn realm_member_roster_ignores_bare_did_strings() {
     let projection = json!({
-        "members": ["ak:did_core:web:bob.example", "ak:did_core:web:carol.example"]
+        "member_roster_entries": ["ak:did_core:web:bob.example", "ak:did_core:web:carol.example"]
     });
     let rows = realm_member_roster(Some(&projection));
     assert!(rows.is_empty());
@@ -105,7 +105,7 @@ fn realm_member_roster_reads_only_root_members() {
             "participants": [{ "actor_id": "ak:did_core:web:participant.example" }]
         },
         "owners": [{ "actor_id": "ak:did_core:web:owner.example" }],
-        "members": [{ "actor_id": "ak:did_core:web:canonical.example" }]
+        "member_roster_entries": [{ "actor_id": "ak:did_core:web:canonical.example" }]
     });
 
     let rows = realm_member_roster(Some(&projection));
@@ -116,7 +116,7 @@ fn realm_member_roster_reads_only_root_members() {
 #[test]
 fn realm_member_roster_keeps_first_duplicate_actor_entry() {
     let projection = json!({
-        "members": [
+        "member_roster_entries": [
             { "actor_id": "ak:did_core:web:alice.example", "membership": "join" },
             { "actor_id": "ak:did_core:web:alice.example", "membership": "invite" }
         ]
@@ -352,23 +352,23 @@ fn member_roster_realm_context_prefers_projection_realm_id() {
 
 #[test]
 fn realm_roster_pagination_extracts_limited_and_cursor() {
-    // ROST-4: truncated rosters MUST signal `members_limited=true`
+    // ROST-4: truncated rosters MUST signal `member_roster_entries_limited=true`
     // so the UI surfaces a "load more" affordance.
     let projection = json!({
-        "members": [],
-        "members_limited": true,
-        "members_next_cursor": "cursor-opaque.v1.abc"
+        "member_roster_entries": [],
+        "member_roster_entries_limited": true,
+        "member_roster_entries_next_cursor": "cursor-opaque.v1.abc"
     });
     let pagination = RealmRosterPagination::from_projection(Some(&projection));
-    assert!(pagination.members_limited);
+    assert!(pagination.member_roster_entries_limited);
     assert_eq!(
-        pagination.members_next_cursor.as_deref(),
+        pagination.member_roster_entries_next_cursor.as_deref(),
         Some("cursor-opaque.v1.abc")
     );
 
     // Complete projections leave the flag unset.
-    let complete = json!({ "members": [] });
+    let complete = json!({ "member_roster_entries": [] });
     let pagination = RealmRosterPagination::from_projection(Some(&complete));
-    assert!(!pagination.members_limited);
-    assert!(pagination.members_next_cursor.is_none());
+    assert!(!pagination.member_roster_entries_limited);
+    assert!(pagination.member_roster_entries_next_cursor.is_none());
 }

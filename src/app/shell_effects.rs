@@ -439,7 +439,7 @@ pub(super) fn ShellEffects(state: ShellEffectState) -> Element {
                             state_store_for_contact_handles
                                 .write()
                                 .save_member_handle_lookup(
-                                    res.subject.as_str().to_owned(),
+                                    res.subject_id.as_str().to_owned(),
                                     None,
                                     None,
                                     primary,

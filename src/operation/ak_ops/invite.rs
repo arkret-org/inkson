@@ -176,7 +176,7 @@ pub fn invite_revoke(
     };
     let payload = arkret_sdk::InviteRevokePayload {
         invite_id,
-        invitee,
+        invitee_id: invitee,
         target_state,
         reason: Some(reason_code.to_owned()),
     };

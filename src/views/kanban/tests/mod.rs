@@ -87,8 +87,8 @@ pub(super) fn creator_realm_projection(
     serde_json::json!({
         "__kind": "realm",
         "content_scheme": encryption_profile,
-        "members_limited": false,
-        "members": [{ "actor_id": actor_id, "membership": "join" }],
+        "member_roster_entries_limited": false,
+        "member_roster_entries": [{ "actor_id": actor_id, "membership": "join" }],
         "summary": {
             "title": "Encrypted Realm",
             "encryption_profile": encryption_profile,

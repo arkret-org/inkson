@@ -3437,7 +3437,7 @@ pub(crate) fn validate_capability_grant_payload(intent: &EventIntent) -> anyhow:
             .map_err(|error| anyhow::anyhow!("encode capability grant payload: {error}"))?,
     )
     .map_err(|error| anyhow::anyhow!("decode capability grant payload: {error}"))?;
-    if &payload.grant.issuer != intent.actor_id() {
+    if &payload.grant.issuer_id != intent.actor_id() {
         anyhow::bail!("capability grant issuer must equal the Event actor");
     }
     Ok(())

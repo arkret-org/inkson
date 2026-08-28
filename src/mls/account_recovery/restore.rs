@@ -455,7 +455,7 @@ async fn verify_active_series_range_completeness(
                 continue;
             }
         };
-        let issuer_actor = payload.issuer.clone();
+        let issuer_actor = payload.issuer_id.clone();
         if issuer_actor != describe.service_id || attestation_event.actor_id != issuer_actor {
             first_error.get_or_insert_with(|| {
                 "active-series completeness issuer does not match the described service".to_owned()
@@ -638,7 +638,7 @@ fn verify_active_series_record_signature(
             continue;
         }
         let attested = &device.device_projection_attestation.attestation;
-        let did_key = attested.device_signing_key.as_str();
+        let did_key = attested.device_signing_key_did.as_str();
         let Some(multikey) = did_key.strip_prefix("did:key:") else {
             continue;
         };

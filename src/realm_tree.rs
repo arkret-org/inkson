@@ -107,7 +107,7 @@ impl OptimisticRealmTreeProjection {
         //
         //   * top level only — `security_state::strand_projection_security_state` walks `[],
         //     object, strand, body, fields, scope, …` and never descends into `summary`, and
-        //     `state::realm_tree_snapshot` reads `projection["members"]` flat;
+        //     `state::realm_tree_snapshot` reads `projection["member_roster_entries"]` flat;
         //   * `summary` first — `explicit_realm_title` and `extract_parent_space_id` /
         //     `extract_child_space_ids` prefer it, because that is where the *server* sync
         //     projection puts these fields. Matching that shape is the point of an optimistic body:
@@ -1181,8 +1181,8 @@ mod tests {
             }]}
         });
         let transient_projection = json!({
-            "members_limited": false,
-            "members": []
+            "member_roster_entries_limited": false,
+            "member_roster_entries": []
         });
 
         assert_eq!(

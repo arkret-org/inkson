@@ -259,7 +259,7 @@ fn projected_member_profiles_use_only_verified_canonical_identity_fields() {
     store.save_realm_tree_projection(
         realm_id.to_owned(),
         serde_json::json!({
-            "members": [{
+            "member_roster_entries": [{
                 "actor_id": "ak:did_core:web:alice.example",
                 "display_name": "Alice",
                 "subject_id": "ak:did_core:web:acme.example:users:alice",
@@ -294,7 +294,7 @@ fn projected_member_profiles_classify_authority_root_controller_as_owner() {
     store.save_realm_tree_projection(
         realm_id.to_owned(),
         serde_json::json!({
-            "members": [{
+            "member_roster_entries": [{
                 "actor_id": "ak:did_core:web:alice.example",
                 "membership": "join"
             }],
@@ -323,7 +323,7 @@ fn projected_member_profiles_preserve_pending_invite_membership() {
     store.save_realm_tree_projection(
         realm_id.to_owned(),
         serde_json::json!({
-            "members": [
+            "member_roster_entries": [
                 {
                     "actor_id": "ak:did_core:web:alice.example",
                     "membership": "join"
@@ -353,7 +353,7 @@ fn joined_member_signature_lists_only_joined_members_sorted() {
     store.save_realm_tree_projection(
         realm_id.to_owned(),
         serde_json::json!({
-            "members": [
+            "member_roster_entries": [
                 { "actor_id": "ak:did_core:web:carol.example", "membership": "join" },
                 { "actor_id": "ak:did_core:web:alice.example", "membership": "join" },
                 { "actor_id": "ak:did_core:web:bob.example", "membership": "invite" }
@@ -510,7 +510,7 @@ fn projected_duplicate_member_keeps_first_roster_entry() {
     store.save_realm_tree_projection(
         realm_id.to_owned(),
         serde_json::json!({
-            "members": [
+            "member_roster_entries": [
                 {
                     "actor_id": "ak:did_core:web:bob.example",
                     "membership": "invite"
@@ -626,7 +626,7 @@ fn queued_invite_accept_does_not_promote_join_or_trigger_admission() {
         realm_id.to_owned(),
         serde_json::json!({
             "encrypted": true,
-            "members": [
+            "member_roster_entries": [
                 { "actor_id": "ak:did_core:web:alice.example", "membership": "join" },
                 { "actor_id": "ak:did_core:web:bob.example", "membership": "invite" }
             ]
@@ -713,7 +713,7 @@ fn raw_pending_invite_does_not_override_join_projection() {
     store.save_realm_tree_projection(
         realm_id.to_owned(),
         serde_json::json!({
-            "members": [{
+            "member_roster_entries": [{
                 "actor_id": "ak:did_core:web:bob.example",
                 "membership": "join"
             }]
@@ -746,8 +746,8 @@ fn admission_candidates_exclude_direct_conversation_realms() {
         realm_id.to_owned(),
         serde_json::json!({
             "encrypted": true,
-            "members_limited": false,
-            "members": [
+            "member_roster_entries_limited": false,
+            "member_roster_entries": [
                 { "actor_id": "ak:did_core:web:alice.example", "membership": "join" },
                 { "actor_id": "ak:did_core:web:agent.example", "membership": "join" }
             ],
@@ -780,8 +780,8 @@ fn projected_membership_uses_positive_limited_roster_without_claiming_completene
         realm_id.to_owned(),
         serde_json::json!({
             "encrypted": true,
-            "members_limited": true,
-            "members": [
+            "member_roster_entries_limited": true,
+            "member_roster_entries": [
                 { "actor_id": "ak:did_core:web:bob.example", "membership": "join" }
             ]
         }),

@@ -78,7 +78,7 @@ pub fn build_session_grant_introspection_proof(
         kind: arkret_sdk::SESSION_GRANT_INTROSPECTION_PROOF_CLAIMS_KIND.to_owned(),
         session_grant_id: grant_id.to_owned(),
         grant_jwt_digest: session_grant_jwt_digest(grant_jwt),
-        audience,
+        audience_id: audience,
         challenge: challenge.to_owned(),
         issued_at: now,
         expires_at: now + chrono::Duration::seconds(60),

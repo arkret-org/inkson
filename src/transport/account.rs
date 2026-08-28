@@ -536,7 +536,7 @@ async fn verify_contact_request_receipt(
             .map(|(controller, _)| controller.to_owned())
             .ok_or_else(|| anyhow::anyhow!("Contact receipt verification method omits fragment"))?,
     )?;
-    if arkret_sdk::project_did_to_core_id(&issuer_did)? != receipt.core.issuer {
+    if arkret_sdk::project_did_to_core_id(&issuer_did)? != receipt.core.issuer_id {
         anyhow::bail!("Contact receipt proof controller differs from issuer");
     }
     let history =
@@ -1072,7 +1072,7 @@ pub(crate) fn primary_handle_from_viewer(
         .primary_handle_claim
         .as_ref()
         .filter(|claim| {
-            claim.subject.as_ref() == Some(&viewer.principal_id)
+            claim.subject_id.as_ref() == Some(&viewer.principal_id)
                 && claim.binding_state == Some(arkret_models_identity::HandleBindingState::Verified)
         })
         .and_then(|claim| claim.handle.as_ref())

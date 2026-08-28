@@ -248,7 +248,7 @@ fn build_formal_applet_install_events(
         let grant = arkret_sdk::CapabilityGrantCreateBody {
             schema: arkret_wire::SchemaId::CAPABILITY_V1.to_owned(),
             realm_id: Some(realm_id.clone()),
-            issuer: actor.clone(),
+            issuer_id: actor.clone(),
             subject: arkret_sdk::CapabilitySubject::CoreDid(package.service_id.clone()),
             subject_principal_server_id: Some(target_principal_server_id.clone()),
             actions: vec![action.to_owned()],
@@ -811,7 +811,7 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
                                         install_status.set("installing applet…".to_owned());
                                         spawn(async move {
                                             let applet_url = match url::Url::parse(
-                                                &snapshot.package.base_url,
+                                                &snapshot.package.base_uri,
                                             ) {
                                                 Ok(value) => value,
                                                 Err(error) => {

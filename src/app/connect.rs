@@ -566,7 +566,7 @@ async fn current_event_signer_matches_directory(
             record
                 .device_projection_attestation
                 .attestation
-                .device_signing_key
+                .device_signing_key_did
                 .as_str()
         })
         == Some(expected_key.as_str());

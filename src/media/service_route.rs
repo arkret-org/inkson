@@ -421,7 +421,7 @@ async fn fetch_route_material_from_origin(
     // Second hop: role-scoped describe confirmation from the *verified* base.
     let describe_url = format!(
         "{}_arkret/describe?service_kind={MEDIA_SERVICE_KIND}",
-        record.record.base_url
+        record.record.base_uri
     );
     let (_, describe_bytes) = crate::identity::did_resolver::fetch_arkret_bytes(
         http,

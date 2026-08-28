@@ -50,8 +50,8 @@ pub(super) struct CardAuthorDisplayContext<'a> {
 #[cfg(test)]
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(super) struct RealmRosterPagination {
-    pub members_limited: bool,
-    pub members_next_cursor: Option<String>,
+    pub member_roster_entries_limited: bool,
+    pub member_roster_entries_next_cursor: Option<String>,
 }
 
 #[cfg(test)]
@@ -61,18 +61,18 @@ impl RealmRosterPagination {
             return Self::default();
         };
         let limited = root
-            .get("members_limited")
+            .get("member_roster_entries_limited")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
         let cursor = root
-            .get("members_next_cursor")
+            .get("member_roster_entries_next_cursor")
             .and_then(|v| v.as_str())
             .map(str::trim)
             .filter(|s| !s.is_empty())
             .map(ToOwned::to_owned);
         Self {
-            members_limited: limited,
-            members_next_cursor: cursor,
+            member_roster_entries_limited: limited,
+            member_roster_entries_next_cursor: cursor,
         }
     }
 }

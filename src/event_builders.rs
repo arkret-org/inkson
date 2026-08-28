@@ -36,7 +36,7 @@ fn cell_ref(cell: &str) -> anyhow::Result<arkret_sdk::CellRef> {
 
 fn head_eq_precondition(cell: &str, value: Value) -> anyhow::Result<Precondition> {
     Ok(Precondition {
-        cell: cell_ref(cell)?,
+        cell_id: cell_ref(cell)?,
         predicate: Predicate {
             op: PredicateOp::HeadEq,
             value: Some(value),
@@ -1115,8 +1115,8 @@ pub fn build_space_lifecycle_event(
     let tombstone_payload = || arkret_sdk::SpaceObjectTombstonePayload {
         space_id: space_id_typed.clone(),
         reason: Some("user_requested".to_owned()),
-        replacement_space: None,
-        replacement_event: None,
+        replacement_space_id: None,
+        replacement_event_id: None,
         effective_at: None,
     };
     let created_at = event_timestamp();
@@ -1262,7 +1262,7 @@ fn build_realm_state_event_for_principal_server_with_set_head<K: arkret_sdk::Eve
                 "Realm state event kind {kind} has no supported singleton state contract"
             ),
         };
-        (kind, write.cell.as_str().to_owned(), expected_head)
+        (kind, write.cell_id.as_str().to_owned(), expected_head)
     };
     let _ = kind;
     builder
@@ -1994,11 +1994,11 @@ mod notary_derivation_tests {
         .unwrap();
         assert_eq!(writes.len(), 1);
         assert_eq!(
-            writes[0].cell.as_str(),
+            writes[0].cell_id.as_str(),
             "ak:cell:ak.component.realm.policy_bundle.v1:null"
         );
         assert_eq!(bundle.preconditions.len(), 1);
-        assert_eq!(bundle.preconditions[0].cell, writes[0].cell);
+        assert_eq!(bundle.preconditions[0].cell_id, writes[0].cell_id);
         assert_eq!(
             bundle.preconditions[0].predicate.op,
             arkret_sdk::PredicateOp::HeadEq

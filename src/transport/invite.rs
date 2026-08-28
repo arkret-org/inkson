@@ -75,11 +75,9 @@ fn invite_address(
 ) -> anyhow::Result<arkret_sdk::InviteAddress> {
     let _subject = arkret_sdk::DidCoreId::new(subject_id.trim().to_owned())
         .map_err(|err| anyhow::anyhow!("invalid invite subject core_id `{subject_id}`: {err}"))?;
-    let _recipient_service = arkret_sdk::DidCoreId::new(recipient_id.trim().to_owned())
-        .map_err(|err| {
-            anyhow::anyhow!(
-                "invalid invite recipient service core_id `{recipient_id}`: {err}"
-            )
+    let _recipient_service =
+        arkret_sdk::DidCoreId::new(recipient_id.trim().to_owned()).map_err(|err| {
+            anyhow::anyhow!("invalid invite recipient service core_id `{recipient_id}`: {err}")
         })?;
     anyhow::bail!(
         "DID + server invite addressing omits service_resolution; use a principal locator or invite address carrying current resolution evidence"
@@ -196,9 +194,7 @@ fn parse_explicit_invite_target(target: &str) -> anyhow::Result<Option<InviteeRe
     for token in &tokens {
         if let Some(value) = token_value(token, &["did", "subject", "subject_id", "target"]) {
             subject = Some(value);
-        } else if let Some(value) =
-            token_value(token, &["server", "service", "recipient_id"])
-        {
+        } else if let Some(value) = token_value(token, &["server", "service", "recipient_id"]) {
             server = Some(value);
         }
     }
@@ -322,7 +318,7 @@ impl crate::transport::TransportClient {
             proof_challenge: None,
             intent: arkret_models_discovery::DirectoryIntent::Mention,
             realm_id: Some(realm_id),
-            requester,
+            requester_id: requester,
             proofs: Vec::new(),
         };
         let outcome: arkret_models_discovery::DirectoryAgentSelectorResolutionOutcome = self
@@ -452,8 +448,8 @@ impl crate::transport::TransportClient {
                     "contact `{contact_did}` has no attested recipient service; use the invite link path instead"
                 )
             })?;
-        let _recipient_service = arkret_sdk::DidCoreId::new(recipient_id.to_owned())
-            .map_err(|err| {
+        let _recipient_service =
+            arkret_sdk::DidCoreId::new(recipient_id.to_owned()).map_err(|err| {
                 anyhow::anyhow!("invalid contact recipient service `{recipient_id}`: {err}")
             })?;
         let _ = (

@@ -491,7 +491,7 @@ mod tests {
                 "ak.operation_bundle.principal_server.http_core.v1".to_owned(),
             ],
             vec![arkret_sdk::TransportBinding::HttpJson {
-                base_url: "https://service.example/_arkret".to_owned(),
+                base_uri: "https://service.example/_arkret".to_owned(),
                 extension_profile_required: (),
             }],
         );
@@ -509,7 +509,7 @@ mod tests {
                 "ak.operation_bundle.principal_server.describe.v1".to_owned(),
             ],
             vec![arkret_sdk::TransportBinding::HttpJson {
-                base_url: "https://service.example/_arkret".to_owned(),
+                base_uri: "https://service.example/_arkret".to_owned(),
                 extension_profile_required: (),
             }],
         );
@@ -641,10 +641,7 @@ mod tests {
         );
         // The trust lists survive a re-encode (no silent wipe on save).
         let re = serde_json::to_value(&policy).expect("re-encode policy");
-        assert_eq!(
-            re["trusted_principal_ids"][0],
-            "ak:did_core:web:ps.example"
-        );
+        assert_eq!(re["trusted_principal_ids"][0], "ak:did_core:web:ps.example");
         assert_eq!(
             re["trusted_realm_ids"][0],
             "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19"

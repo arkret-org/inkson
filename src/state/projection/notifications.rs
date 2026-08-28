@@ -62,7 +62,7 @@ impl JoinedRealmIds {
                 .iter()
                 .filter(|(_, projection)| {
                     projection
-                        .get("members")
+                        .get("member_roster_entries")
                         .and_then(Value::as_array)
                         .is_some_and(|members| {
                             members.iter().any(|member| {
@@ -383,9 +383,9 @@ pub(crate) fn test_invite(ordinal: u64, realm_id: &str) -> Invite {
         id: arkret_sdk::InviteId::from_event_id(&invite_event_id),
         schema: "ak.schema.invite.v1".to_owned(),
         realm_id: arkret_sdk::RealmId::new(realm_id.to_owned()).expect("valid test Realm id"),
-        inviter: crate::mls_api_helpers::principal_core_id("did:web:alice.example")
+        inviter_id: crate::mls_api_helpers::principal_core_id("did:web:alice.example")
             .expect("valid test inviter"),
-        invitee: None,
+        invitee_id: None,
         invite_delivery_target: None,
         introduction_evidence_digest: None,
         third_party_invite: None,

@@ -712,8 +712,8 @@ fn encrypted_private_patch_with_ready_snapshot_replaces_plaintext() {
         json!({
             "schema_refs": [arkret_sdk::ProfileId::MLS_MINIMAL_METADATA_REALM_V1],
             "content_scheme": "mls_rfc9420",
-            "members_limited": false,
-            "members": [{
+            "member_roster_entries_limited": false,
+            "member_roster_entries": [{
                 "actor_id": crate::mls_api_helpers::principal_core_id(actor).unwrap(),
                 "membership": "join"
             }]

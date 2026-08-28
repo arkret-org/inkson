@@ -305,14 +305,13 @@ fn build_mls_keypackage_claim_request_with_requester(
         .into_iter()
         .collect::<Vec<_>>();
     let source_id = arkret_sdk::DidCoreId::new(source_id.trim().to_owned())?;
-    let destination_id =
-        arkret_sdk::DidCoreId::new(destination_id.trim().to_owned())?;
+    let destination_id = arkret_sdk::DidCoreId::new(destination_id.trim().to_owned())?;
     let signed_at = crate::clock::now_utc();
     let unsigned = arkret_sdk::PeerKeyPackagesClaimUnsignedRequest {
         claim_request_id: arkret_sdk::Base64UrlString::new(claim_request_id.trim().to_owned())
             .map_err(anyhow::Error::msg)?,
         target_principal_id: principal_core_id(target_principal_id)?,
-        requester,
+        requester_id: requester,
         intended_realm_id: arkret_sdk::RealmId::new(crate::operation::trim_realm_id(
             intended_realm_id,
         ))?,
@@ -390,7 +389,7 @@ fn build_mls_keypackage_claim_request_with_requester(
     let body = arkret_sdk::KeyPackagesClaimRequestBody {
         claim_request_id: unsigned.claim_request_id,
         target_principal_id: unsigned.target_principal_id,
-        requester: unsigned.requester,
+        requester_id: unsigned.requester_id,
         intended_realm_id: unsigned.intended_realm_id,
         mls_group_id: unsigned.mls_group_id,
         claim_purpose: unsigned.claim_purpose,
@@ -489,7 +488,7 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(body.requester, requester.actor_id);
+        assert_eq!(body.requester_id, requester.actor_id);
         assert_eq!(body.intended_realm_id, realm_id);
         match body.requester_authorization {
             arkret_sdk::PeerKeyPackageRequesterAuthorization::MinimalMetadataPairwise {

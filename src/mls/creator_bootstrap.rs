@@ -546,8 +546,8 @@ mod tests {
         json!({
             "__kind": "realm",
             "content_scheme": encryption_profile,
-            "members_limited": false,
-            "members": [{ "actor_id": creator, "membership": "join" }],
+            "member_roster_entries_limited": false,
+            "member_roster_entries": [{ "actor_id": creator, "membership": "join" }],
             "summary": {
                 "title": "Realm",
                 "encryption_profile": encryption_profile,

@@ -124,14 +124,14 @@ fn space_bootstrap_events_use_canonical_create_and_facet_kinds() {
     // notary, reducer profile and authority root.
     assert_eq!(create_writes.len(), 5);
     assert_eq!(
-        create_writes[0].cell.as_str(),
+        create_writes[0].cell_id.as_str(),
         arkret_bootstrap::REALM_GENESIS_CELL
     );
     assert_eq!(create_writes[0].op.op_type, arkret_sdk::LatticeOpType::Set);
     assert!(
         create_writes
             .iter()
-            .any(|write| write.cell.as_str() == arkret_bootstrap::REALM_AUTHORITY_ROOT_CELL),
+            .any(|write| write.cell_id.as_str() == arkret_bootstrap::REALM_AUTHORITY_ROOT_CELL),
         "genesis MUST materialize the Realm authority-root cell"
     );
     for event in &events {
@@ -160,7 +160,7 @@ fn space_bootstrap_events_use_canonical_create_and_facet_kinds() {
             )
             .unwrap()
             .iter()
-            .all(|write| write.cell.as_str().ends_with(":null")),
+            .all(|write| write.cell_id.as_str().ends_with(":null")),
             "Realm singleton facet {} must use the canonical null subject",
             facet.kind.as_str()
         );
@@ -213,7 +213,7 @@ fn space_bootstrap_events_use_canonical_create_and_facet_kinds() {
     assert_eq!(events[8].payload["membership"], "join");
     assert_eq!(events[8].preconditions.len(), 1);
     assert_eq!(
-        events[8].preconditions[0].cell.as_str(),
+        events[8].preconditions[0].cell_id.as_str(),
         "ak:cell:ak.component.member.state.v1:ak:did_core:web:alice.example"
     );
     assert_eq!(
@@ -413,7 +413,7 @@ fn member_state_ban_event_uses_realm_scoped_member_cell() {
     assert_eq!(event.payload()["membership"], "ban");
     assert_eq!(event.intent().preconditions().len(), 1);
     assert_eq!(
-        event.intent().preconditions()[0].cell.as_str(),
+        event.intent().preconditions()[0].cell_id.as_str(),
         "ak:cell:ak.component.member.state.v1:ak:did_core:web:bob.example"
     );
     assert_eq!(
@@ -430,7 +430,7 @@ fn member_state_ban_event_uses_realm_scoped_member_cell() {
     .unwrap();
     assert_eq!(writes.len(), 1);
     assert_eq!(
-        writes[0].cell.as_str(),
+        writes[0].cell_id.as_str(),
         "ak:cell:ak.component.member.state.v1:ak:did_core:web:bob.example"
     );
     assert_eq!(

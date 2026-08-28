@@ -1527,7 +1527,7 @@ pub(crate) async fn prepare_oidc_authorization(
 /// `openid_configuration` when present, else `{issuer}/.well-known/openid-configuration`.
 fn oidc_discovery_url(method: &arkret_sdk::AuthMethod) -> Option<String> {
     if let Some(config) = method
-        .openid_configuration
+        .openid_configuration_uri
         .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty())
@@ -1535,7 +1535,7 @@ fn oidc_discovery_url(method: &arkret_sdk::AuthMethod) -> Option<String> {
         return Some(config.to_owned());
     }
     method
-        .issuer
+        .issuer_uri
         .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty())
@@ -1987,7 +1987,7 @@ pub(crate) async fn issue_bound_handoff_session(
                 account_handoff_grant_digest,
                 principal_id: principal_id.clone(),
                 device_id: device_id.clone(),
-                audience: audience.clone(),
+                audience_id: audience.clone(),
                 holder_jkt: pending_handoff.holder_jkt.clone(),
                 session_intent_digest,
                 issued_at: now,

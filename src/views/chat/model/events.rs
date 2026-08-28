@@ -1956,7 +1956,7 @@ pub(crate) fn moderation_appeal_prompts_from_events(
                 decisions.remove(payload.decision_ref.as_str());
             }
             LocalModerationEvent::AppealSubmit(payload) => {
-                if payload.appellant.as_str() != appellant {
+                if payload.appellant_id.as_str() != appellant {
                     continue;
                 }
                 let Ok(event_id) = arkret_sdk::EventId::new(event.event_id.clone()) else {

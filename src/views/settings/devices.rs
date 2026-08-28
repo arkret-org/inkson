@@ -66,7 +66,7 @@ struct PairingServerChallengeCarrier {
     client_nonce: arkret_sdk::DevicePairingNonce,
     device_pairing_request_id: arkret_sdk::DevicePairingRequestId,
     expires_at: chrono::DateTime<chrono::Utc>,
-    gate_audience: String,
+    gate_audience_uri: String,
     pairing_code: arkret_sdk::DevicePairingCode,
     server_nonce: arkret_sdk::DevicePairingNonce,
 }
@@ -176,7 +176,7 @@ fn build_pair_payload(
             client_nonce: server_challenge.client_nonce.clone(),
             device_pairing_request_id: server_challenge.device_pairing_request_id.clone(),
             expires_at: server_challenge.expires_at,
-            gate_audience: server_challenge.gate_audience.clone(),
+            gate_audience_uri: server_challenge.gate_audience_uri.clone(),
             pairing_code: server_challenge.pairing_code.clone(),
             server_nonce: server_challenge.server_nonce.clone(),
         },
@@ -324,7 +324,7 @@ fn build_pairing_verification_content(
             extra: std::collections::BTreeMap::new(),
         });
     }
-    content.gate_audience = Some(
+    content.gate_audience_uri = Some(
         arkret_sdk::NonEmptyString::new(gate_audience.to_owned()).map_err(anyhow::Error::msg)?,
     );
     content.request_canonical_digest = Some(arkret_sdk::Hash::new(
@@ -1709,7 +1709,7 @@ fn render_pair_strand(
                                             client_nonce: server_challenge.client_nonce,
                                             device_pairing_request_id: server_challenge.device_pairing_request_id,
                                             expires_at: server_challenge.expires_at,
-                                            gate_audience: server_challenge.gate_audience,
+                                            gate_audience_uri: server_challenge.gate_audience_uri,
                                             pairing_code: server_challenge.pairing_code,
                                             server_nonce: server_challenge.server_nonce,
                                         },
@@ -1846,7 +1846,7 @@ mod tests {
             )
             .unwrap(),
             expires_at: "2026-06-12T12:00:00Z".parse().unwrap(),
-            gate_audience: "https://host.example".to_owned(),
+            gate_audience_uri: "https://host.example".to_owned(),
             pairing_code: arkret_sdk::DevicePairingCode::new("7H2K9M4Q".to_owned()).unwrap(),
             server_nonce: arkret_sdk::DevicePairingNonce::new("server-nonce-fixture-01").unwrap(),
         }

@@ -553,7 +553,7 @@ mod personal_agent_tests {
                         verification_method: verification_method.clone(),
                         signature_algorithm: arkret_models_collaboration::agent_operations::AgentRuntimeKeyAlgorithm::Ed25519,
                         challenge: pairing_request_id,
-                        audience: arkret_sdk::DidCoreId::new(service_id.to_owned()).unwrap(),
+                        audience_id: arkret_sdk::DidCoreId::new(service_id.to_owned()).unwrap(),
                         created_at,
                         expires_at,
                         runtime_key_binding_digest,

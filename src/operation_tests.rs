@@ -878,7 +878,10 @@ fn invite_helpers_emit_canonical_kinds() {
     let created = authored(&create);
     let derived_invite_id = arkret_sdk::InviteId::from_event_id(created.event_id()).to_string();
     assert!(!create.payload().contains_key("invite_id"));
-    assert_eq!(create.payload()["invitee_id"], "ak:did_core:web:bob.example");
+    assert_eq!(
+        create.payload()["invitee_id"],
+        "ak:did_core:web:bob.example"
+    );
     assert_eq!(
         create.payload()["invite_delivery_target"],
         serde_json::to_value(invite_delivery_target).unwrap()
@@ -916,7 +919,7 @@ fn invite_helpers_emit_canonical_kinds() {
     assert_eq!(
         writes
             .iter()
-            .map(|write| write.cell.as_str())
+            .map(|write| write.cell_id.as_str())
             .collect::<Vec<_>>(),
         vec![
             format!("ak:cell:ak.component.invite.lifecycle.v1:{derived_invite_id}").as_str(),
@@ -955,7 +958,10 @@ fn invite_helpers_emit_canonical_kinds() {
     assert_eq!(cancel.kind().as_str(), "ak.invite.cancel");
     assert_eq!(cancel.payload()["invite_id"], invite_id);
     assert_eq!(cancel.payload()["reason"], "expired");
-    assert_eq!(cancel.payload()["invitee_id"], "ak:did_core:web:bob.example");
+    assert_eq!(
+        cancel.payload()["invitee_id"],
+        "ak:did_core:web:bob.example"
+    );
     // `target_state` is the signed operand of the lifecycle `transition_to`
     // projection; without it the cancel has no derivable cell write.
     assert_eq!(cancel.payload()["target_state"], "revoked");
@@ -986,7 +992,7 @@ fn invite_helpers_emit_canonical_kinds() {
     assert_eq!(
         cancel_writes
             .iter()
-            .map(|write| write.cell.as_str())
+            .map(|write| write.cell_id.as_str())
             .collect::<Vec<_>>(),
         vec![
             format!("ak:cell:ak.component.invite.lifecycle.v1:{invite_id}").as_str(),
@@ -1128,7 +1134,7 @@ mod realm_organization_builder_tests {
     fn direct_org_auth() -> RealmOrganizationAuthorization {
         // OrganizationPrincipalId is a non-delegated role: no delegation_ref.
         RealmOrganizationAuthorization {
-            issuer: crate::mls_api_helpers::principal_core_id(ORG_DID).unwrap(),
+            issuer_id: crate::mls_api_helpers::principal_core_id(ORG_DID).unwrap(),
             issuer_role: RealmOrganizationIssuerRole::OrganizationPrincipalId,
             verification_method: arkret_sdk::DidUrl::new(ORG_VM).unwrap(),
             delegation_ref: None,
@@ -1144,7 +1150,7 @@ mod realm_organization_builder_tests {
 
     fn delegated_org_auth() -> RealmOrganizationAuthorization {
         RealmOrganizationAuthorization {
-            issuer: crate::mls_api_helpers::principal_core_id("did:web:gov.example").unwrap(),
+            issuer_id: crate::mls_api_helpers::principal_core_id("did:web:gov.example").unwrap(),
             issuer_role: RealmOrganizationIssuerRole::GovernanceService,
             verification_method: arkret_sdk::DidUrl::new("did:web:gov.example#k1").unwrap(),
             delegation_ref: Some(

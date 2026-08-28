@@ -413,9 +413,9 @@ fn realm_update_has_durable_projection(update: &arkret_sdk::RealmUpdate) -> bool
         || entry.state_after.is_some()
         || entry.account_data.is_some()
         || entry.summary.is_some()
-        || entry.members.is_some()
-        || entry.members_limited.is_some()
-        || entry.members_next_cursor.is_some()
+        || entry.member_roster_entries.is_some()
+        || entry.member_roster_entries_limited.is_some()
+        || entry.member_roster_entries_next_cursor.is_some()
         || entry.unread_notifications.is_some()
         || entry.event_states.is_some()
         || entry.bottoms.is_some()
@@ -895,11 +895,15 @@ fn realm_membership_removal_basis(
 ) -> Option<(BTreeSet<String>, Vec<arkret_sdk::EventId>)> {
     // A truncated roster is not negative membership evidence.  Waiting for a
     // complete projection is required before comparing it with the MLS tree.
-    if projection.get("members_limited").and_then(Value::as_bool) != Some(false) {
+    if projection
+        .get("member_roster_entries_limited")
+        .and_then(Value::as_bool)
+        != Some(false)
+    {
         return None;
     }
     let active_members = projection
-        .get("members")?
+        .get("member_roster_entries")?
         .as_array()?
         .iter()
         .filter(|member| member.get("membership").and_then(Value::as_str) == Some("join"))
@@ -3141,8 +3145,8 @@ mod tests {
     fn realm_mls_removal_basis_requires_complete_roster_and_accepted_frontier() {
         let removal_event = "ak:event:AXYOPItXAzTTu_rqIAINR7C7AvNSR5bjjBslclmJ9ZVt";
         let projection = json!({
-            "members_limited": false,
-            "members": [{
+            "member_roster_entries_limited": false,
+            "member_roster_entries": [{
                 "actor_id": "ak:did_core:webvh:z6mkfixture:alice.example",
                 "membership": "join"
             }],
@@ -3167,7 +3171,7 @@ mod tests {
         );
 
         let mut truncated = projection;
-        truncated["members_limited"] = json!(true);
+        truncated["member_roster_entries_limited"] = json!(true);
         assert!(realm_membership_removal_basis(&truncated).is_none());
     }
 

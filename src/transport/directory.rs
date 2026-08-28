@@ -64,7 +64,10 @@ fn list_handles_http_json_base(description: &arkret_sdk::ServiceDescribe) -> any
     let transport = description
         .select_transport_binding(operation, &[arkret_sdk::BindingKind::HttpJson])
         .ok_or_else(|| anyhow::anyhow!("Directory has no usable HTTP/JSON transport"))?;
-    let arkret_sdk::TransportBinding::HttpJson { base_url, .. } = transport else {
+    let arkret_sdk::TransportBinding::HttpJson {
+        base_uri: base_url, ..
+    } = transport
+    else {
         anyhow::bail!("Directory selected a non-HTTP/JSON transport");
     };
     Ok(base_url)
@@ -167,7 +170,7 @@ pub async fn verified_directory_client(
                 ));
             }
         };
-        entry.route_base = resolved.route().base_url.clone();
+        entry.route_base = resolved.route().base_uri.clone();
         entry.valid_until = resolved.route().cache_expires_at;
         entry.last_used_at = now;
         let route_base = entry.route_base.clone();
@@ -200,7 +203,7 @@ mod route_tests {
             service_kind,
             bundles,
             vec![TransportBinding::HttpJson {
-                base_url: "https://directory.example/".to_owned(),
+                base_uri: "https://directory.example/".to_owned(),
                 extension_profile_required: (),
             }],
         )
@@ -250,7 +253,7 @@ pub async fn search_realms(
         query: Some(query.to_owned()),
         organization_principal_id: None,
         source_realm_id: None,
-        requester: None,
+        requester_id: None,
         proof_challenge: None,
         claim_presentations: Vec::new(),
         cursor,
@@ -298,7 +301,7 @@ pub async fn resolve_realm_with_invite_token(
         alias,
         invite_token: invite_token.map(str::to_owned),
         signed_link: None,
-        requester: None,
+        requester_id: None,
         proof_challenge: None,
         claim_presentations: Vec::new(),
     };
@@ -330,7 +333,7 @@ pub async fn directory_resolve_target(
 ) -> anyhow::Result<arkret_models_discovery::DirectoryTargetResolutionOutcome> {
     let body = arkret_models_discovery::DirectoryResolveTargetRequestBody {
         address: address.to_owned(),
-        requester: None,
+        requester_id: None,
         proof_challenge: None,
         claim_presentations: Vec::new(),
         proofs: Vec::new(),
@@ -433,10 +436,10 @@ pub async fn list_handles_for_subject(
         None => None,
     };
     let body = DirectoryListHandlesForSubjectRequestBody {
-        subject: subject_id,
+        subject_id,
         realm_id: realm,
         intent: intent.map(|value| value.as_str().to_owned()),
-        requester: None,
+        requester_id: None,
         proof_challenge: None,
         proofs: Vec::new(),
         as_of: None,

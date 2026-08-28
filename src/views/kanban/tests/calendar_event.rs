@@ -152,7 +152,7 @@ fn calendar_rsvp_operation_carries_the_complete_entry_and_effect() {
     assert_eq!(writes.len(), 1);
     assert!(
         writes[0]
-            .cell
+            .cell_id
             .as_str()
             .starts_with("ak:cell:ak.component.calendar.rsvp.v1:")
     );

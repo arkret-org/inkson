@@ -44,7 +44,7 @@ pub fn moderation_report(
         target_ref: target_ref.to_owned(),
         report_reason_code: report_reason_code.to_owned(),
         description,
-        reporter: did_id(actor)?,
+        reporter_id: did_id(actor)?,
         provenance: Some(arkret_sdk::ModerationReportProvenance::SelfAuthored),
         source_provider_id: None,
         evidence_refs: None,
@@ -103,7 +103,7 @@ pub fn moderation_decision(
     let payload = arkret_sdk::ModerationDecisionPayload {
         target_ref: target_ref.to_owned(),
         decision: decision.to_owned(),
-        issuer: did_id(actor)?,
+        issuer_id: did_id(actor)?,
         request_canonical_digest: decision_request_digest(target_ref)?,
         action: None,
         reason_code: Some(reason_code.to_owned()),
@@ -164,7 +164,7 @@ pub fn moderation_appeal_review(
     let payload = arkret_sdk::AppealReviewPayload {
         appeal_id: arkret_sdk::TypedAppealId::new(appeal_id.to_owned())?,
         realm_id: arkret_sdk::RealmId::new(realm.clone())?,
-        reviewer: did_id(actor)?,
+        reviewer_id: did_id(actor)?,
         reviewed_at: crate::clock::now_utc_millis(),
         notes_ref: notes_ref.map(ToOwned::to_owned),
     };
@@ -201,7 +201,7 @@ pub fn moderation_appeal_decision(
     let payload = arkret_sdk::AppealDecisionPayload {
         appeal_id: arkret_sdk::TypedAppealId::new(appeal_id.to_owned())?,
         realm_id: arkret_sdk::RealmId::new(realm.clone())?,
-        reviewer: did_id(actor)?,
+        reviewer_id: did_id(actor)?,
         decision,
         reason_text_ref: reason_text_ref.to_owned(),
         modify_decision_ref: modify_decision_ref
@@ -231,7 +231,7 @@ pub fn moderation_appeal_close(
     let payload = arkret_sdk::AppealClosePayload {
         appeal_id: arkret_sdk::TypedAppealId::new(appeal_id.to_owned())?,
         realm_id: arkret_sdk::RealmId::new(realm.clone())?,
-        closer: did_id(actor)?,
+        closer_id: did_id(actor)?,
         closed_at: crate::clock::now_utc_millis(),
         auto_closed: false,
         close_reason: close_reason.map(ToOwned::to_owned),

@@ -265,7 +265,7 @@ pub fn sign_organization_statement(
         realm_frontier_digest: None,
         organization_policy_ref: None,
         authorization: RealmOrganizationAuthorization {
-            issuer: organization_id,
+            issuer_id: organization_id,
             issuer_role: RealmOrganizationIssuerRole::OrganizationPrincipalId,
             verification_method: arkret_sdk::DidUrl::new(input.verification_method.clone())
                 .map_err(anyhow::Error::msg)?,

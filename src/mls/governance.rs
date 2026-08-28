@@ -70,7 +70,7 @@ pub fn mls_commit_preconditions(
     );
     Ok(vec![
         Precondition {
-            cell: epoch_cell,
+            cell_id: epoch_cell,
             predicate: Predicate {
                 op: PredicateOp::HeadEq,
                 value: Some(previous_epoch_head),
@@ -79,7 +79,7 @@ pub fn mls_commit_preconditions(
             },
         },
         Precondition {
-            cell: key_schedule_cell,
+            cell_id: key_schedule_cell,
             predicate: Predicate {
                 op: PredicateOp::HeadEq,
                 value: Some(serde_json::to_value(previous_governance_binding).map_err(
@@ -159,10 +159,10 @@ mod tests {
         .unwrap();
 
         assert_eq!(preconditions.len(), 2);
-        assert!(preconditions[0].cell.as_str().contains("mls.epoch"));
+        assert!(preconditions[0].cell_id.as_str().contains("mls.epoch"));
         assert_eq!(preconditions[0].predicate.op, PredicateOp::HeadEq);
         assert_eq!(preconditions[0].predicate.value, Some(previous_epoch_head));
-        assert!(preconditions[1].cell.as_str().contains("key_schedule"));
+        assert!(preconditions[1].cell_id.as_str().contains("key_schedule"));
         assert_eq!(preconditions[1].predicate.op, PredicateOp::HeadEq);
         assert_eq!(
             preconditions[1].predicate.value,
@@ -177,9 +177,24 @@ mod tests {
             group_id.as_str(),
         ])
         .unwrap();
-        assert!(preconditions[0].cell.as_str().ends_with(&expected_subject));
-        assert!(preconditions[1].cell.as_str().ends_with(&expected_subject));
-        assert!(!preconditions[0].cell.as_str().ends_with(group_id.as_str()));
+        assert!(
+            preconditions[0]
+                .cell_id
+                .as_str()
+                .ends_with(&expected_subject)
+        );
+        assert!(
+            preconditions[1]
+                .cell_id
+                .as_str()
+                .ends_with(&expected_subject)
+        );
+        assert!(
+            !preconditions[0]
+                .cell_id
+                .as_str()
+                .ends_with(group_id.as_str())
+        );
     }
 
     #[test]

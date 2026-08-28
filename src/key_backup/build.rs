@@ -379,7 +379,7 @@ fn build_recovery_public_key_backup_body_for_keybag_in_series(
                 .unwrap_or_else(|| format!("ak:backup_series:{}", crate::operation::uuid_v7())),
         )?,
         series_seq: 0,
-        supersedes: None,
+        supersedes_id: None,
         supersedes_digest: None,
         frontier_ref,
         recovery_policy_ref: recovery_policy_ref
@@ -405,7 +405,7 @@ fn build_recovery_public_key_backup_body_for_keybag_in_series(
             .series_seq
             .checked_add(1)
             .ok_or_else(|| anyhow::anyhow!("key backup successor series_seq overflow"))?;
-        body.supersedes = Some(predecessor.backup_id);
+        body.supersedes_id = Some(predecessor.backup_id);
         body.supersedes_digest = Some(crate::mls::account_recovery::series_supersedes_digest(
             previous,
         )?);

@@ -218,7 +218,8 @@ async fn accepted_device_evidence(
         chrono::Utc::now(),
     )
     .ok()?;
-    let key = public_key_from_directory_value(attestation.attestation.device_signing_key.as_str())?;
+    let key =
+        public_key_from_directory_value(attestation.attestation.device_signing_key_did.as_str())?;
     let authority = arkret_sdk::PrincipalAuthorityKey::new(
         actor,
         attestation.attestation.principal_server_id.clone(),

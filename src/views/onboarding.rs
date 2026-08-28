@@ -1309,7 +1309,7 @@ async fn issue_recovery_session_transport(
             request_id: arkret_sdk::RequestId::new(handoff.request_id.clone())?,
             principal_id: principal_id.clone(),
             device_id: arkret_sdk::DeviceId::new(handoff.device_id.clone())?,
-            audience: arkret_sdk::DidCoreId::new(handoff.audience.clone())?,
+            audience_id: arkret_sdk::DidCoreId::new(handoff.audience.clone())?,
         });
     request.validate()?;
     let outcome = account_http.auth_issue_session_grant(&request).await?;
@@ -1321,7 +1321,7 @@ async fn issue_recovery_session_transport(
     if outcome.principal_id != *principal_id
         || outcome.device_id.as_ref().map(arkret_sdk::DeviceId::as_str)
             != Some(handoff.device_id.as_str())
-        || outcome.audience.as_str() != handoff.audience
+        || outcome.audience_id.as_str() != handoff.audience
         || outcome.session_public_key != expected_session_public_key
         || outcome.expires_at > handoff.expires_at
         || outcome.granted_scope != expected_granted_scope
@@ -1422,7 +1422,7 @@ async fn issue_recovery_completion_grant(
             let initial_session = arkret_sdk::InitialSessionGrantIntent {
                 device_id: arkret_sdk::DeviceId::new(handoff.device_id.clone())?,
                 session_public_key: holder.canonical_session_public_jwk()?,
-                audience: arkret_sdk::DidCoreId::new(handoff.audience.clone())?,
+                audience_id: arkret_sdk::DidCoreId::new(handoff.audience.clone())?,
             };
             initial_session.validate()?;
             let request = workflow
@@ -3585,7 +3585,7 @@ fn validate_completed_recovery_material(
         .context("completed recovery checkpoint omits its PCR genesis receipt")?;
     let expected_authority = arkret_sdk::PrincipalAuthorityKey::new(
         account.principal_id().clone(),
-        receipt.issuer.clone(),
+        receipt.issuer_id.clone(),
     );
     if evidence.principal_id != *account.principal_id()
         || evidence.principal_did != *account.did()
@@ -3716,7 +3716,7 @@ async fn finish_principal_setup(
         .pcr_genesis_receipt
         .as_ref()
         .context("recovery-material evidence omits PCR genesis receipt")?
-        .issuer
+        .issuer_id
         .clone();
     let controller_authority =
         arkret_sdk::PrincipalAuthorityKey::new(principal_id.clone(), principal_server_id);

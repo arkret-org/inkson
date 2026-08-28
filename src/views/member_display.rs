@@ -6,7 +6,7 @@ use serde_json::Value;
 use super::helpers::short_protocol_id;
 use crate::state::LocalStateStore;
 
-/// Canonical Realm roster row from the root `members[]` projection.
+/// Canonical Realm roster row from the root `member_roster_entries[]` projection.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct RealmMemberRow {
     pub actor_id: String,
@@ -38,7 +38,7 @@ pub(crate) struct MemberHandleLookupRequest {
 
 pub(crate) fn realm_member_roster(projection: Option<&Value>) -> Vec<RealmMemberRow> {
     let Some(members) = projection
-        .and_then(|root| root.get("members"))
+        .and_then(|root| root.get("member_roster_entries"))
         .and_then(Value::as_array)
     else {
         return Vec::new();
@@ -220,7 +220,7 @@ pub(crate) async fn fetch_and_cache_member_handle(
     })
     .await;
     match result {
-        Ok(response) if response.subject.as_str() == request.subject_id => {
+        Ok(response) if response.subject_id.as_str() == request.subject_id => {
             let primary = response
                 .primary_handle
                 .as_ref()
@@ -232,7 +232,7 @@ pub(crate) async fn fetch_and_cache_member_handle(
                 .filter_map(|claim| claim.expires_at.as_ref().cloned())
                 .min();
             state_store.write().save_member_handle_lookup(
-                response.subject.as_str().to_owned(),
+                response.subject_id.as_str().to_owned(),
                 Some(request.realm_id),
                 request.member_display_state_digest,
                 primary,

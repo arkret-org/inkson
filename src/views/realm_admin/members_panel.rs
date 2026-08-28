@@ -1886,7 +1886,10 @@ fn projected_realm_membership_hint(
     let Some(projection) = state.realm_tree_projections.get(realm_id) else {
         return ProjectedRealmMembershipHint::default();
     };
-    let Some(_) = projection.get("members").and_then(Value::as_array) else {
+    let Some(_) = projection
+        .get("member_roster_entries")
+        .and_then(Value::as_array)
+    else {
         return ProjectedRealmMembershipHint::default();
     };
     let joined = crate::views::member_display::realm_member_roster(Some(projection))
@@ -1895,7 +1898,10 @@ fn projected_realm_membership_hint(
         .map(|member| member.actor_id)
         .filter(|actor_id| !actor_id.trim().is_empty())
         .collect();
-    let completeness = if projection.get("members_limited").and_then(Value::as_bool) == Some(false)
+    let completeness = if projection
+        .get("member_roster_entries_limited")
+        .and_then(Value::as_bool)
+        == Some(false)
     {
         MembershipCompleteness::Complete
     } else {

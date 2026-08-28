@@ -1720,7 +1720,7 @@ pub fn SettingsPanel(
                                                         ),
                                                     )?,
                                                 }],
-                                                requester: None,
+                                                requester_id: None,
                                                 privacy_profile: Some("private_identifier_query".to_owned()),
                                                 proofs: Vec::new(),
                                             };
@@ -1843,7 +1843,7 @@ pub fn SettingsPanel(
                                                     "ak:blob:sha256:01015dc8af66d01f557ea63f13538f1964848840a350c5311d1efc8ad138bb91",
                                                 )
                                                 .map_err(anyhow::Error::msg)?,
-                                                requester: crate::mls_api_helpers::principal_core_id(&actor)?,
+                                                requester_id: crate::mls_api_helpers::principal_core_id(&actor)?,
                                                 strand_id: None,
                                                 ohttp_context: None,
                                                 range: None,
