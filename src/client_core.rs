@@ -747,7 +747,7 @@ mod tests {
             .unwrap();
         assert_eq!(frame.kind(), arkret_sdk::EventsSubscribeFrameKind::Frontier);
         assert_eq!(
-            frame.cursor.as_ref().map(|cursor| cursor.as_str()),
+            frame.cursor().map(|cursor| cursor.as_str()),
             Some("ak:cursor:first")
         );
 

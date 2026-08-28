@@ -722,15 +722,15 @@ fn inkson_accepts_v1_sync_buckets_and_subscribe_ndjson_contract() {
     })
     .collect::<Vec<_>>();
     assert_eq!(
-        frames[0].kind,
+        frames[0].kind(),
         arkret_sdk::EventsSubscribeFrameKind::Heartbeat
     );
     assert_eq!(
-        frames[1].kind,
+        frames[1].kind(),
         arkret_sdk::EventsSubscribeFrameKind::Frontier
     );
     assert_eq!(
-        frames[2].kind,
+        frames[2].kind(),
         arkret_sdk::EventsSubscribeFrameKind::CatchupComplete
     );
 }

@@ -17,15 +17,15 @@ fn parses_events_subscribe_ndjson_frames() {
     .collect::<Vec<_>>();
 
     assert_eq!(
-        frames[0].kind,
+        frames[0].kind(),
         arkret_sdk::EventsSubscribeFrameKind::Heartbeat
     );
     assert_eq!(
-        frames[1].kind,
+        frames[1].kind(),
         arkret_sdk::EventsSubscribeFrameKind::Frontier
     );
     assert_eq!(
-        frames[2].kind,
+        frames[2].kind(),
         arkret_sdk::EventsSubscribeFrameKind::CatchupComplete
     );
 }

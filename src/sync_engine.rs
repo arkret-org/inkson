@@ -3592,8 +3592,6 @@ mod tests {
     /// re-delivers history never double-inserts.
     #[test]
     fn realm_subscribe_frames_ingest_into_raw_operations_and_dedupe() {
-        use arkret_sdk::EventsSubscribeFrameKind;
-
         let realm_id = "ak:realm:AZQnaSleDidYaYIvfwYy3au5gnd_DSinxyUHEl7ewtxk";
         let object = arkret_sdk::Space::create_object(
             arkret_sdk::RealmId::new(realm_id).unwrap(),
@@ -3616,7 +3614,7 @@ mod tests {
                 "payload": space_create
             }),
             json!({ "kind": "catchup_complete", "cursor": "ak:cursor:realmframe1" }),
-            json!({ "kind": "heartbeat", "ts": "2026-06-29T00:00:01.000Z" }),
+            json!({ "kind": "heartbeat" }),
         );
 
         let frames = ndjson
@@ -3632,10 +3630,12 @@ mod tests {
 
         let event_payloads: Vec<arkret_sdk::Event> = frames
             .iter()
-            .filter(|frame| frame.kind() == EventsSubscribeFrameKind::Event)
-            .filter_map(|frame| frame.payload.as_ref())
-            .filter_map(|payload| {
-                serde_json::from_value(Value::Object(payload.clone().into_iter().collect())).ok()
+            .filter_map(|frame| {
+                if let arkret_sdk::EventsSubscribeFrame::Event { payload, .. } = frame {
+                    Some(payload.as_ref().clone())
+                } else {
+                    None
+                }
             })
             .collect();
         assert_eq!(event_payloads.len(), 1);
