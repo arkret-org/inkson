@@ -131,7 +131,7 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
                             Err(error) => {
                                 tracing::warn!(%error, "external history candidate convergence is pending");
                                 convergence_error.set(Some(crate::history_ui::status_message(
-                                    crate::history_ui::HistoryUiReason::TemporaryPending,
+                                    crate::history_ui::HistoryUiReason::ResponseVerificationPending,
                                     &format!("external candidate convergence: {error}"),
                                 )));
                             }
@@ -140,7 +140,7 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
                     Err(error) => {
                         tracing::warn!(%error, "accepted MLS artifact convergence is pending");
                         convergence_error.set(Some(crate::history_ui::status_message(
-                            crate::history_ui::HistoryUiReason::TemporaryPending,
+                            crate::history_ui::HistoryUiReason::ResponseVerificationPending,
                             &format!("accepted artifact convergence: {error}"),
                         )));
                         crate::runtime_helpers::sleep_for(std::time::Duration::from_secs(5)).await;

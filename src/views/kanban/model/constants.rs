@@ -149,7 +149,7 @@ pub(crate) const KANBAN_CONTENT_TEXT_MAX_CHARS: usize = 262_144;
 /// fresh browser before restore. Distinguishes "encrypted, waiting for key
 /// material" from genuinely empty content so users don't read it as data loss.
 pub(crate) const MLS_LOCKED_FIELD_PLACEHOLDER: &str =
-    "🔒 Encrypted — waiting for MLS Welcome or shared history key";
+    "🔒 Encrypted — awaiting MLS Welcome or an authorized history source response";
 
 /// Browser-`localStorage` keys for the card-detail panel display
 /// preference. Dock mode + width are device-/browser-level UI state

@@ -629,6 +629,23 @@ fn canonical_ranges_for_epochs(
     ranges
 }
 
+fn live_attempt_covers_epoch(attempts: &[garth::DurableHistorySourceAttempt], epoch: u64) -> bool {
+    attempts
+        .iter()
+        .any(|attempt| live_ranges_cover_epoch(attempt.status, &attempt.covered_ranges, epoch))
+}
+
+fn live_ranges_cover_epoch(
+    status: garth::HistorySourceAttemptStatus,
+    ranges: &[arkret_sdk::EpochRange],
+    epoch: u64,
+) -> bool {
+    status != garth::HistorySourceAttemptStatus::Expired
+        && ranges
+            .iter()
+            .any(|range| range.from_epoch <= epoch && epoch <= range.to_epoch)
+}
+
 fn ranges_cover(outer: &[arkret_sdk::EpochRange], inner: &[arkret_sdk::EpochRange]) -> bool {
     inner.iter().all(|needed| {
         outer.iter().any(|available| {
@@ -1230,16 +1247,17 @@ pub async fn converge_member_history_recovery(
                     continue;
                 }
                 let outbox = crate::state::history_source_outbox(state_store);
-                if !outbox
+                let attempts = outbox
                     .attempts_for_request_source(
                         &request_record.request.request_id,
                         device_id.as_str(),
                     )
-                    .map_err(|error| anyhow::anyhow!(error.to_string()))?
-                    .is_empty()
-                {
-                    continue;
-                }
+                    .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+                let uncovered_secrets = secrets
+                    .iter()
+                    .filter(|secret| !live_attempt_covers_epoch(&attempts, secret.epoch))
+                    .cloned()
+                    .collect::<Vec<_>>();
                 let bundle = build_member_source_attempt(
                     state_store,
                     api,
@@ -1247,7 +1265,7 @@ pub async fn converge_member_history_recovery(
                     &actor_id,
                     device_id,
                     &request_record,
-                    &secrets,
+                    &uncovered_secrets,
                     now,
                 )
                 .await;
@@ -1413,8 +1431,11 @@ where
         arkret_sdk::WireError,
     >,
 {
-    let traversal = acquire_and_verify_traversal(state_store, api, request_id).await?;
     let page = acquire_response_page(state_store, api, secure_store, request_id, limit).await?;
+    if page.ack_entries.is_empty() {
+        return Ok(HistoryResponsePageInstallOutcome::default());
+    }
+    let traversal = acquire_and_verify_traversal(state_store, api, request_id).await?;
     let runtime = runtime(state_store);
     let durable = runtime
         .durable_request(request_id)
@@ -1946,6 +1967,26 @@ mod tests {
                 from_epoch: 9,
                 to_epoch: 12,
             }]
+        ));
+        assert!(live_ranges_cover_epoch(
+            garth::HistorySourceAttemptStatus::Unfinished,
+            &ranges,
+            8,
+        ));
+        assert!(live_ranges_cover_epoch(
+            garth::HistorySourceAttemptStatus::Completed,
+            &ranges,
+            12,
+        ));
+        assert!(!live_ranges_cover_epoch(
+            garth::HistorySourceAttemptStatus::Expired,
+            &ranges,
+            8,
+        ));
+        assert!(!live_ranges_cover_epoch(
+            garth::HistorySourceAttemptStatus::Completed,
+            &ranges,
+            10,
         ));
     }
 

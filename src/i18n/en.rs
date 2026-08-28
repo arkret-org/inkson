@@ -900,7 +900,7 @@ pub fn english_translations() -> TranslationDict {
     dict.set("chat.crypto.key_missing", "Key not yet received");
     dict.set(
         "chat.crypto.key_missing_hint",
-        "Waiting for a Welcome message from the Space admin or another device.",
+        "Awaiting a Welcome message or an authorized history source response.",
     );
     dict.set(
         "chat.crypto.needs_verification",

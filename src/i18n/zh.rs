@@ -985,7 +985,7 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("chat.crypto.key_missing", "尚未收到密钥");
     dict.set(
         "chat.crypto.key_missing_hint",
-        "等待 Space 管理员或其他设备发送的 Welcome 消息。",
+        "正在等待 Welcome 消息或已授权的历史密钥源响应。",
     );
     dict.set("chat.crypto.needs_verification", "正在验证发送方身份…");
     // T6: human-readable copy for late-recovery rejections; the raw

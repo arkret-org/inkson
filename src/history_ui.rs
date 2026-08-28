@@ -8,7 +8,8 @@
 pub enum HistoryUiReason {
     PolicyTerminal,
     ProfileFloorTerminal,
-    TemporaryPending,
+    AwaitingAuthorizedSourceResponse,
+    ResponseVerificationPending,
     ServiceRecordLost,
     QuotaOrRetry,
 }
@@ -18,7 +19,8 @@ impl HistoryUiReason {
         match self {
             Self::PolicyTerminal => "policy_terminal",
             Self::ProfileFloorTerminal => "profile_floor_terminal",
-            Self::TemporaryPending => "temporary_pending",
+            Self::AwaitingAuthorizedSourceResponse => "awaiting_authorized_source_response",
+            Self::ResponseVerificationPending => "response_verification_pending",
             Self::ServiceRecordLost => "service_record_lost",
             Self::QuotaOrRetry => "quota_or_retry",
         }
@@ -30,8 +32,11 @@ impl HistoryUiReason {
             Self::ProfileFloorTerminal => {
                 "This endpoint joined after that history epoch, so its profile floor excludes it."
             }
-            Self::TemporaryPending => {
-                "History recovery is waiting for durable state or verification material."
+            Self::AwaitingAuthorizedSourceResponse => {
+                "History recovery is waiting for an authorized source response."
+            }
+            Self::ResponseVerificationPending => {
+                "History recovery is waiting for durable verification material."
             }
             Self::ServiceRecordLost => {
                 "The recovery service reports that this signed history record was lost."
@@ -62,6 +67,8 @@ pub fn classify_runtime_error(error: &str) -> HistoryUiReason {
         HistoryUiReason::PolicyTerminal
     } else if normalized.contains("decryption_unavailable_by_profile_floor") {
         HistoryUiReason::ProfileFloorTerminal
+    } else if normalized.contains("awaiting_authorized_source_response") {
+        HistoryUiReason::AwaitingAuthorizedSourceResponse
     } else if normalized.contains("service_record_lost") || normalized.contains("lost descriptor") {
         HistoryUiReason::ServiceRecordLost
     } else if normalized.contains("quota")
@@ -71,7 +78,7 @@ pub fn classify_runtime_error(error: &str) -> HistoryUiReason {
     {
         HistoryUiReason::QuotaOrRetry
     } else {
-        HistoryUiReason::TemporaryPending
+        HistoryUiReason::ResponseVerificationPending
     }
 }
 
@@ -112,7 +119,11 @@ mod tests {
         );
         assert_eq!(
             classify_runtime_error("dependency_missing"),
-            HistoryUiReason::TemporaryPending
+            HistoryUiReason::ResponseVerificationPending
+        );
+        assert_eq!(
+            classify_runtime_error("awaiting_authorized_source_response"),
+            HistoryUiReason::AwaitingAuthorizedSourceResponse
         );
         assert_eq!(
             classify_runtime_error("history source quota exceeded; retry later"),
@@ -129,7 +140,8 @@ mod tests {
         for reason in [
             HistoryUiReason::PolicyTerminal,
             HistoryUiReason::ProfileFloorTerminal,
-            HistoryUiReason::TemporaryPending,
+            HistoryUiReason::AwaitingAuthorizedSourceResponse,
+            HistoryUiReason::ResponseVerificationPending,
             HistoryUiReason::ServiceRecordLost,
             HistoryUiReason::QuotaOrRetry,
         ] {
