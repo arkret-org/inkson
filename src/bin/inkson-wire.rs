@@ -39,6 +39,15 @@ struct RangeCompletenessInput {
     events: Vec<arkret_sdk::Event>,
 }
 
+#[derive(Debug, Deserialize)]
+struct RealmActorFrontierInput {
+    realm_id: arkret_sdk::RealmId,
+    actor_id: arkret_sdk::DidCoreId,
+    next_actor_seq: u64,
+    frontier_event_ids: Vec<arkret_sdk::EventId>,
+    digest_suite: arkret_sdk::DigestSuite,
+}
+
 fn main() -> Result<()> {
     let command = std::env::args().nth(1).context("missing command")?;
     let input = read_stdin_json()?;
@@ -50,11 +59,26 @@ fn main() -> Result<()> {
         "control-proposal-ack" => control_proposal_ack(input)?,
         "ingress-receipts" => ingress_receipts(input)?,
         "range-completeness" => range_completeness(input)?,
+        "realm-actor-frontier" => realm_actor_frontier(input)?,
         _ => bail!("unknown inkson-wire command {command:?}"),
     };
 
     println!("{}", serde_json::to_string(&output)?);
     Ok(())
+}
+
+fn realm_actor_frontier(input: Value) -> Result<Value> {
+    let input: RealmActorFrontierInput =
+        serde_json::from_value(input).context("parse Realm actor frontier input")?;
+    let frontier = arkret_models_collaboration::event_sync::RealmActorFrontierView::new(
+        input.realm_id,
+        input.actor_id,
+        input.next_actor_seq,
+        input.frontier_event_ids,
+        input.digest_suite,
+    )
+    .context("derive Realm actor frontier")?;
+    serde_json::to_value(frontier).context("serialize Realm actor frontier")
 }
 
 fn range_completeness(input: Value) -> Result<Value> {
@@ -421,4 +445,29 @@ fn ingress_receipts(input: Value) -> Result<Value> {
         receipts.push(receipt);
     }
     serde_json::to_value(receipts).context("serialize ingress receipts")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::realm_actor_frontier;
+
+    #[test]
+    fn realm_actor_frontier_command_matches_the_spec_vector() {
+        let output = realm_actor_frontier(serde_json::json!({
+            "realm_id": "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
+            "actor_id": "ak:did_core:web:alice.example",
+            "next_actor_seq": 43,
+            "frontier_event_ids": [
+                "ak:event:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1",
+                "ak:event:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19"
+            ],
+            "digest_suite": "sha256"
+        }))
+        .expect("typed frontier command");
+
+        assert_eq!(
+            output["frontier_digest"],
+            "sha256:cb4775b3b4590faa096cafd34b0dfd9abc77ad02729a451c0fe5dfdee10d5dc1"
+        );
+    }
 }

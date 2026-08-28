@@ -1,6 +1,5 @@
 import { expect, type Page, type Route } from "@playwright/test";
 import { spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { mockArkretContract } from "./mockArkretContract";
@@ -139,7 +138,8 @@ type InksonWireCommand =
   | "mls-governance-proof"
   | "control-proposal-ack"
   | "ingress-receipts"
-  | "range-completeness";
+  | "range-completeness"
+  | "realm-actor-frontier";
 type InksonWireCanonicalJson = { canonical: string };
 type InksonWireDigest = { digest: string };
 
@@ -161,45 +161,20 @@ function canonicalSha256(value: unknown) {
     .digest;
 }
 
-function canonicalNdjsonLine(value: unknown): string {
-  assertJsonTransportable(value, "$");
-  const sort = (item: unknown): unknown => {
-    if (Array.isArray(item)) {
-      return item.map(sort);
-    }
-    if (item !== null && typeof item === "object") {
-      return Object.fromEntries(
-        Object.entries(item as Record<string, unknown>)
-          .sort(([left], [right]) => left.localeCompare(right))
-          .map(([key, child]) => [key, sort(child)]),
-      );
-    }
-    return item;
-  };
-  return JSON.stringify(sort(value));
-}
-
 function realmActorFrontier(
   realmId: string,
   actorId: string,
-  nextActorSeq = 0,
-  frontierEventIds: string[] = [],
+  nextActorSeq: number,
+  frontierEventIds: string[],
+  digestSuite: "sha256" | "blake3",
 ) {
-  const transcript = {
-    kind: "realm_actor",
+  return inksonWire("realm-actor-frontier", {
     realm_id: realmId,
     actor_id: actorId,
     next_actor_seq: nextActorSeq,
     frontier_event_ids: frontierEventIds,
-  };
-  const digest = createHash("sha256")
-    .update("ak-realm-actor-frontier-v1\0", "utf8")
-    .update(canonicalJson(transcript), "utf8")
-    .digest("hex");
-  return {
-    ...transcript,
-    frontier_digest: `sha256:${digest}`,
-  };
+    digest_suite: digestSuite,
+  });
 }
 
 function inksonWire<T>(command: InksonWireCommand, input: unknown): T {
@@ -1071,6 +1046,7 @@ export async function mockArkretApi(
                   "https://auth.local.host/.well-known/openid-configuration",
                 client_id: "01GFWR28C4KNE04WG3HKXB7C9R",
                 scopes: ["openid", "profile"],
+                grant_exchange: { kind: "account_handoff" },
               },
             ],
           },
@@ -1118,6 +1094,7 @@ export async function mockArkretApi(
                 "https://auth.local.host/.well-known/openid-configuration",
               client_id: "01GFWR28C4KNE04WG3HKXB7C9R",
               scopes: ["openid", "profile"],
+              grant_exchange: { kind: "account_handoff" },
             },
           ],
         },
@@ -1329,7 +1306,13 @@ export async function mockArkretApi(
             -1,
           ) + 1;
         return json(route, {
-          frontier: realmActorFrontier(realmId, actorId, nextActorSeq, heads),
+          frontier: realmActorFrontier(
+            realmId,
+            actorId,
+            nextActorSeq,
+            heads,
+            "sha256",
+          ),
         });
       }
       if (actorId) {
@@ -2258,7 +2241,7 @@ export async function mockArkretApi(
         return route.fulfill({
           status: 200,
           contentType: "application/x-ndjson",
-          body: `${canonicalNdjsonLine({ kind: "frontier", cursor: "ak:cursor:e2e-2" })}\n${canonicalNdjsonLine({ kind: "catchup_complete", cursor: "ak:cursor:e2e-2" })}\n`,
+          body: `${canonicalJson({ kind: "frontier", cursor: "ak:cursor:e2e-2" })}\n${canonicalJson({ kind: "catchup_complete", cursor: "ak:cursor:e2e-2" })}\n`,
         });
       }
       const demoProjectionEvents = projectionEvents.filter(
@@ -2520,7 +2503,7 @@ export async function mockArkretApi(
       return route.fulfill({
         status: 200,
         contentType: "application/x-ndjson",
-        body: `${canonicalNdjsonLine(withRequiredEventScopeRefs(frame))}\n${canonicalNdjsonLine({ kind: "catchup_complete", cursor: "ak:cursor:e2e-2" })}\n`,
+        body: `${canonicalJson(withRequiredEventScopeRefs(frame))}\n${canonicalJson({ kind: "catchup_complete", cursor: "ak:cursor:e2e-2" })}\n`,
       });
     }
 
@@ -2750,7 +2733,7 @@ export async function mockArkretApi(
         return route.fulfill({
           status: 200,
           contentType: "application/x-ndjson",
-          body: `${canonicalNdjsonLine({ kind: "frontier", cursor })}\n${canonicalNdjsonLine({ kind: "catchup_complete", cursor })}\n`,
+          body: `${canonicalJson({ kind: "frontier", cursor })}\n${canonicalJson({ kind: "catchup_complete", cursor })}\n`,
         });
       }
       const requestedRealms = (url.searchParams.get("realms") ?? "")
@@ -2773,7 +2756,7 @@ export async function mockArkretApi(
       return route.fulfill({
         status: 200,
         contentType: "application/x-ndjson",
-        body: `${frames.map(canonicalNdjsonLine).join("\n")}\n`,
+        body: `${frames.map(canonicalJson).join("\n")}\n`,
       });
     }
 
