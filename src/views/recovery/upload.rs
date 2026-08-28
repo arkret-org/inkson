@@ -67,10 +67,10 @@ pub(crate) fn upload_recovery_key_account_backup(
     };
     let base = account.server_url.to_string();
     let authority = account.authority.clone();
-    let actor_full_id = account.full_id().clone();
+    let actor_did = account.did().clone();
     let account_key = account.principal_id().clone();
     let session = token();
-    let actor = actor_full_id.to_string();
+    let actor = actor_did.to_string();
     let device = device_id();
     if base.trim().is_empty() || session.trim().is_empty() || actor.trim().is_empty() {
         if let Some(handler) = on_outcome {
@@ -109,7 +109,7 @@ pub(crate) fn upload_recovery_key_account_backup(
             let evidence = recovery_material_evidence.ok_or_else(|| {
                 anyhow::anyhow!("frozen PCR authority evidence is required for recovery setup")
             })?;
-            if evidence.principal_id != actor_full_id || evidence.device_id.as_str() != device {
+            if evidence.principal_did != actor_did || evidence.device_id.as_str() != device {
                 anyhow::bail!("recovery authority evidence does not match the active session");
             }
             crate::recovery_strand::verify_recovery_authority_evidence(&api, &evidence).await?;
@@ -121,7 +121,7 @@ pub(crate) fn upload_recovery_key_account_backup(
             .await?;
             crate::recovery_strand::ensure_recovery_policy(
                 &api,
-                &evidence.principal_id,
+                &evidence.principal_did,
                 &authority,
                 &evidence.device_id,
                 &evidence.principal_control_realm_id,

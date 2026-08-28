@@ -72,9 +72,9 @@ pub async fn create_realm(
 
     let join_rule = validate_join_rule_v1(join_rule)?;
     let principal_server_id = submitter.authority()?.principal_server_id.clone();
-    let notary_did = submitter.service_full_id().await?;
+    let notary_did = submitter.service_did().await?;
     let described_server_id =
-        arkret_sdk::project_full_id_to_core_id(&arkret_sdk::DidFullId::new(notary_did.clone())?)?;
+        arkret_sdk::project_did_to_core_id(&arkret_sdk::Did::new(notary_did.clone())?)?;
     if described_server_id != principal_server_id {
         anyhow::bail!(
             "authenticated Principal Server authority does not match the current service description"
@@ -385,11 +385,11 @@ pub async fn set_realm_alias(
     let requested = alias.map(str::trim).filter(|alias| !alias.is_empty());
     let event = match (requested, current) {
         (Some(alias), Some(expected)) => {
-            let service_id = submitter.service_full_id().await?;
+            let service_id = submitter.service_did().await?;
             build_realm_alias_rename_event(realm_id, actor_id, &service_id, alias, expected)?
         }
         (Some(alias), None) => {
-            let service_id = submitter.service_full_id().await?;
+            let service_id = submitter.service_did().await?;
             build_realm_alias_event(realm_id, actor_id, &service_id, alias)?
         }
         (None, Some(expected)) => {
@@ -593,9 +593,9 @@ pub async fn leave_realm(
 pub async fn rejoin_direct_conversation(
     submitter: &EventSubmitter,
     realm_id: &arkret_sdk::RealmId,
-    actor_id: &arkret_sdk::DidFullId,
+    actor_id: &arkret_sdk::Did,
 ) -> anyhow::Result<SubmitEventResult> {
-    let actor_id = arkret_sdk::project_full_id_to_core_id(actor_id)?;
+    let actor_id = arkret_sdk::project_did_to_core_id(actor_id)?;
     transition_member_state(
         submitter,
         realm_id.as_str(),

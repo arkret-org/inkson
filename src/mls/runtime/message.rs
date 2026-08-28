@@ -649,10 +649,10 @@ pub fn ordinary_agent_mls_author_view(
         let Ok(identity) = std::str::from_utf8(identity) else {
             continue;
         };
-        let Ok(signer_id) = arkret_sdk::DidFullId::new(identity.to_owned()) else {
+        let Ok(signer_id) = arkret_sdk::Did::new(identity.to_owned()) else {
             continue;
         };
-        let Ok(signer_core) = arkret_sdk::project_full_id_to_core_id(&signer_id) else {
+        let Ok(signer_core) = arkret_sdk::project_did_to_core_id(&signer_id) else {
             continue;
         };
         let signer_actor = signer_core;
@@ -1382,22 +1382,22 @@ pub(super) fn welcome_recipient_endpoint(
         arkret_sdk::MlsWelcomeRecipient::Device {
             recipient_device_id,
         } => {
-            let recipient_full_id = arkret_sdk::DidFullId::new(
+            let recipient_did = arkret_sdk::Did::new(
                 crate::event_signer::active_signer()
                     .ok_or_else(|| "active recipient signer is unavailable".to_owned())?
                     .signer_did()
                     .to_owned(),
             )
-            .map_err(|error| format!("active recipient full_id is invalid: {error}"))?;
+            .map_err(|error| format!("active recipient did is invalid: {error}"))?;
             let recipient_principal_id = recipient_principal_id
                 .as_ref()
                 .ok_or_else(|| "device Welcome recipient_principal_id is required".to_owned())?;
-            if arkret_sdk::project_full_id_to_core_id(&recipient_full_id)
-                .map_err(|error| format!("project active recipient full_id: {error}"))?
+            if arkret_sdk::project_did_to_core_id(&recipient_did)
+                .map_err(|error| format!("project active recipient did: {error}"))?
                 != *recipient_principal_id
             {
                 return Err(
-                    "active recipient full_id does not match durable Welcome recipient".to_owned(),
+                    "active recipient did does not match durable Welcome recipient".to_owned(),
                 );
             }
             Ok(arkret_sdk::MlsEndpointIdentity::human_device(
@@ -1509,7 +1509,7 @@ pub(super) fn verify_welcome_claim_envelope_signer(
             .map_err(|error| format!("claim_envelope signature verification failed: {error}"));
     }
 
-    let (requester_full_id, requester_device_id, requester_authorize_event_id) = match &envelope
+    let (requester_did, requester_device_id, requester_authorize_event_id) = match &envelope
         .trust_binding
     {
         arkret_sdk::MlsRequesterTrustBinding::RequesterDevice {
@@ -1525,9 +1525,9 @@ pub(super) fn verify_welcome_claim_envelope_signer(
                 .ok_or_else(|| {
                     "claim_envelope device signature kid has no DID URL fragment".to_owned()
                 })?;
-            let full_id = arkret_sdk::DidFullId::new(controller.to_owned())
-                .map_err(|error| format!("claim_envelope requester DidFullId: {error}"))?;
-            let projected = arkret_sdk::project_full_id_to_core_id(&full_id).map_err(|error| {
+            let did = arkret_sdk::Did::new(controller.to_owned())
+                .map_err(|error| format!("claim_envelope requester Did: {error}"))?;
+            let projected = arkret_sdk::project_did_to_core_id(&did).map_err(|error| {
                 format!("claim_envelope requester DidCoreId projection: {error}")
             })?;
             if projected != envelope.requester_actor_id {
@@ -1537,7 +1537,7 @@ pub(super) fn verify_welcome_claim_envelope_signer(
                 );
             }
             (
-                full_id,
+                did,
                 requester_device_id,
                 requester_device_authorize_event_id,
             )
@@ -1552,40 +1552,40 @@ pub(super) fn verify_welcome_claim_envelope_signer(
             unreachable!("pairwise claim envelopes are verified above")
         }
     };
-    let requester_full_id = requester_full_id.as_str();
+    let requester_did = requester_did.as_str();
     let requester_device_id = requester_device_id.as_str();
     if crate::identity::device_directory::cached_device_authorize_event_id(
-        requester_full_id,
+        requester_did,
         requester_device_id,
     )
     .as_ref()
         != Some(requester_authorize_event_id)
     {
         return Err(format!(
-            "claim_envelope device authorization is not the current accepted Event for {requester_full_id}/{requester_device_id}"
+            "claim_envelope device authorization is not the current accepted Event for {requester_did}/{requester_device_id}"
         ));
     }
     let verifying_key = match crate::identity::device_directory::cached_device_signing_key(
-        requester_full_id,
+        requester_did,
         requester_device_id,
     ) {
         crate::identity::device_directory::CacheLookup::Hit(material) => {
             let bytes = material.ed25519_bytes().map_err(|err| {
-                format!("claim_envelope signer key decode ({requester_full_id}/{requester_device_id}): {err}")
+                format!("claim_envelope signer key decode ({requester_did}/{requester_device_id}): {err}")
             })?;
             VerifyingKey::from_bytes(&bytes).map_err(|err| {
-                format!("claim_envelope signer key invalid ({requester_full_id}/{requester_device_id}): {err}")
+                format!("claim_envelope signer key invalid ({requester_did}/{requester_device_id}): {err}")
             })?
         }
         crate::identity::device_directory::CacheLookup::NegativeHit => {
             return Err(format!(
-                "claim_envelope signer {requester_full_id}/{requester_device_id} is revoked / \
+                "claim_envelope signer {requester_did}/{requester_device_id} is revoked / \
                  absent in directory (negative verdict); Welcome rejected (YGN-SEC-01)"
             ));
         }
         crate::identity::device_directory::CacheLookup::Miss => {
             return Err(format!(
-                "claim_envelope signer key for {requester_full_id}/{requester_device_id} not in \
+                "claim_envelope signer key for {requester_did}/{requester_device_id} not in \
                  device-directory cache; fail-closed (YGN-SEC-01)"
             ));
         }

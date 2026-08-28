@@ -197,36 +197,39 @@ impl LocalStateStore {
         self.load().client_blocklist_revision
     }
 
-    /// Append `did` to the personal blocklist. Idempotent — duplicate
-    /// DIDs are not inserted twice. `reason` is shown back to the user
+    /// Append `actor_id` to the personal blocklist. Idempotent — duplicate
+    /// actor IDs are not inserted twice. `reason` is shown back to the user
     /// in Settings → Privacy; pass `None` to skip.
     ///
     /// Persists synchronously to disk; the caller is responsible for
     /// pushing the new list to soland via
     /// `ak.account_data.set("ak.account.blocklist", …)`.
-    pub fn block_user(&mut self, did: impl AsRef<str>, reason: Option<String>) -> bool {
+    pub fn block_user(&mut self, actor_id: impl AsRef<str>, reason: Option<String>) -> bool {
         self.ensure_cached_loaded();
         let changed = crate::account_data::block_user_in(
             &mut self.cached.client_blocklist,
-            did.as_ref(),
+            actor_id.as_ref(),
             reason,
             chrono::Utc::now(),
         );
         if changed {
             self.cached
                 .pending_personal_block_sagas
-                .insert(did.as_ref().trim().to_owned());
+                .insert(actor_id.as_ref().trim().to_owned());
             let _ = self.flush();
         }
         changed
     }
 
-    /// Remove every entry for `did` from the personal blocklist.
+    /// Remove every entry for `actor_id` from the personal blocklist.
     /// Returns `true` when at least one entry was removed.
-    pub fn unblock_user(&mut self, did: impl AsRef<str>) -> bool {
+    pub fn unblock_user(&mut self, actor_id: impl AsRef<str>) -> bool {
         self.ensure_cached_loaded();
         let changed =
-            crate::account_data::unblock_user_in(&mut self.cached.client_blocklist, did.as_ref());
+            crate::account_data::unblock_user_in(
+                &mut self.cached.client_blocklist,
+                actor_id.as_ref(),
+            );
         if changed {
             let _ = self.flush();
         }

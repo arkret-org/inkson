@@ -35,9 +35,9 @@ const STALE_SECRET_STORAGE_SERIES: &str = "ak:backup_series:01964137-1000-7000-8
 const ACTIVE_MLS_HISTORY_SERIES: &str = "ak:backup_series:01964137-1000-7000-8000-0000000000b1";
 
 fn authority() -> arkret_sdk::PrincipalAuthorityKey {
-    let full_id = arkret_sdk::DidFullId::new(ACTOR).unwrap();
+    let did = arkret_sdk::Did::new(ACTOR).unwrap();
     arkret_sdk::PrincipalAuthorityKey::new(
-        arkret_sdk::project_full_id_to_core_id(&full_id).unwrap(),
+        arkret_sdk::project_did_to_core_id(&did).unwrap(),
         arkret_sdk::DidCoreId::new("ak:did_core:web:server.example").unwrap(),
     )
 }

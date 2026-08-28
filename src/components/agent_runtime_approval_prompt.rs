@@ -334,7 +334,7 @@ pub fn AgentRuntimeApprovalPrompt(
                                 return;
                             };
                             let server_url = account.server_url.to_string();
-                            let controller = account.full_id().to_string();
+                            let controller = account.did().to_string();
                             let body = match parse_runtime_key_approval_request(
                                 &approve_request.request_json,
                             ) {
@@ -369,8 +369,8 @@ pub fn AgentRuntimeApprovalPrompt(
                                     async move {
                                         let description = api.describe_cached().await?;
                                         let service_id = description.service_id.to_string();
-                                        let service_full_id =
-                                            description.service_resolution.full_id.to_string();
+                                        let service_did =
+                                            description.service_resolution.did.to_string();
                                         let submitter = api.event_submitter()?;
                                         let authorization =
                                             build_agent_key_authorization_for_pairing(
@@ -386,11 +386,11 @@ pub fn AgentRuntimeApprovalPrompt(
                                         let requested_scope_disclosure =
                                             build_requested_scope_disclosure_for_pairing(
                                                 &controller,
-                                                &service_full_id,
+                                                &service_did,
                                                 &key_state,
                                                 &body,
                                             )?;
-                                        let agent_full_id = body.agent_id.clone();
+                                        let agent_did = body.agent_id.clone();
                                         let authorize_submission = submitter
                                             .prepare_initial_submissions(std::slice::from_ref(
                                                 &authorize_event,
@@ -431,7 +431,7 @@ pub fn AgentRuntimeApprovalPrompt(
                                             &api,
                                             state_store,
                                             &account,
-                                            &agent_full_id,
+                                            &agent_did,
                                             &key_state.principal_control_realm_id,
                                             key_state.controller_authorization_ref.as_str(),
                                         )

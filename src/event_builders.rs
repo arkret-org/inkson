@@ -396,8 +396,8 @@ fn build_realm_bootstrap_membership_intent(
     };
 
     let actor_id = facets.actor_id.as_str();
-    let recipient_service_id = arkret_sdk::project_full_id_to_core_id(
-        &arkret_sdk::DidFullId::new(facets.notary_did.clone())
+    let recipient_service_id = arkret_sdk::project_did_to_core_id(
+        &arkret_sdk::Did::new(facets.notary_did.clone())
             .map_err(|err| anyhow::anyhow!("invalid creator service DID: {err}"))?,
     )?;
     let mut service_origin = url::Url::parse(&facets.notary_service_origin)
@@ -482,8 +482,8 @@ pub(crate) fn parse_wire_enum<T: serde::de::DeserializeOwned>(
 pub(crate) fn test_single_signer_notary(
     signer_did: &str,
 ) -> anyhow::Result<arkret_sdk::NotaryValue> {
-    let full_id = arkret_sdk::DidFullId::new(signer_did.to_owned())?;
-    let actor_id = arkret_sdk::project_full_id_to_core_id(&full_id)?;
+    let did = arkret_sdk::Did::new(signer_did.to_owned())?;
+    let actor_id = arkret_sdk::project_did_to_core_id(&did)?;
     let public_key = [7_u8; 32];
     let descriptor = arkret_sdk::NotarySignerDescriptor {
         actor_id,
@@ -678,16 +678,16 @@ fn build_realm_create_event_for_principal_server(
 /// controller only executes the Event under the DID delegation returned by
 /// provisioning.
 pub fn managed_agent_inception_notary(
-    agent_full_id: &arkret_sdk::DidFullId,
+    agent_did: &arkret_sdk::Did,
     root_public_key_multibase: &str,
 ) -> anyhow::Result<arkret_sdk::NotaryValue> {
-    let actor_id = arkret_sdk::project_full_id_to_core_id(agent_full_id)?;
+    let actor_id = arkret_sdk::project_did_to_core_id(agent_did)?;
     let public_key = arkret_sdk::decode_ed25519_multibase(root_public_key_multibase)?;
     let descriptor = arkret_sdk::NotarySignerDescriptor {
         actor_id,
         verification_method: arkret_sdk::DidUrl::new(format!(
             "{}#{}",
-            agent_full_id, root_public_key_multibase
+            agent_did, root_public_key_multibase
         ))
         .map_err(anyhow::Error::msg)?,
         key_kind: arkret_sdk::NotaryKeyKind::Ed25519Raw32,
@@ -773,15 +773,15 @@ pub fn build_managed_agent_pcr_bootstrap_steps(
 /// what enforces that: there is no point at which a member exists carrying an id
 /// that the next authoring pass would have to rewrite.
 pub fn build_direct_conversation_founding_steps(
-    founder_id: &arkret_sdk::DidFullId,
-    peer_id: &arkret_sdk::DidFullId,
+    founder_id: &arkret_sdk::Did,
+    peer_id: &arkret_sdk::Did,
     notary: arkret_sdk::NotaryValue,
     trust_domain: arkret_sdk::TrustDomainId,
     _input: &arkret_sdk::DirectConversationFoundingInput,
 ) -> anyhow::Result<Vec<crate::event_submit::EventUnitStep>> {
     let created_at = event_timestamp();
-    let founder_actor = arkret_sdk::project_full_id_to_core_id(founder_id)?;
-    let peer_actor = arkret_sdk::project_full_id_to_core_id(peer_id)?;
+    let founder_actor = arkret_sdk::project_did_to_core_id(founder_id)?;
+    let peer_actor = arkret_sdk::project_did_to_core_id(peer_id)?;
     let create_payload = arkret_sdk::direct_conversation_realm_create_payload(
         arkret_sdk::GenesisSalt::generate()?,
         trust_domain,
@@ -849,7 +849,7 @@ pub fn build_direct_conversation_founding_steps(
             let create = &authored[0];
             let strand_payload = arkret_sdk::direct_conversation_main_strand_create_payload(
                 create.realm_id.clone(),
-                arkret_sdk::project_full_id_to_core_id(&founder)?,
+                arkret_sdk::project_did_to_core_id(&founder)?,
                 created_at,
             );
             Ok(vec![
@@ -1535,7 +1535,7 @@ fn build_plaintext_visible_services_event_for_principal_server(
         .filter(|service| !service.is_empty())
         .map(|service| -> anyhow::Result<PlaintextVisibleService> {
             // ServiceDescribe exposes the canonical DidCoreId, while manual
-            // configuration may still supply a resolvable full DID. Accept
+            // configuration may still supply a resolvable DID. Accept
             // both wire-valid representations and normalize to DidCoreId.
             let service_id = arkret_sdk::DidCoreId::new(service.to_owned())
                 .or_else(|_| crate::mls_api_helpers::principal_core_id(service))
@@ -1621,9 +1621,9 @@ fn build_member_state_transition_event_with_binding(
         "ban" => MembershipPayloadState::Ban,
         other => return Err(anyhow::anyhow!("unknown membership state {other}")),
     };
-    let member_did = crate::mls_api_helpers::principal_core_id(member_actor_id)
+    let member_id = crate::mls_api_helpers::principal_core_id(member_actor_id)
         .map_err(|err| anyhow::anyhow!("member actor_id not a valid core_id: {err}"))?;
-    let member_cell_subject = member_did.as_str().to_owned();
+    let member_cell_subject = member_id.as_str().to_owned();
     // Strong `membership_payload` (`event-payload.schema.json`). The schema's
     // `allOf` if/then makes `realm_id` + `actor_id` + `delivery_status`
     // REQUIRED whenever `membership == "join"`; we carry `realm_id` for every
@@ -1644,9 +1644,9 @@ fn build_member_state_transition_event_with_binding(
         } else {
             DeliveryStatus::Unroutable
         };
-        MembershipPayload::join(realm_value, member_did, delivery_status, reason)
+        MembershipPayload::join(realm_value, member_id, delivery_status, reason)
     } else {
-        MembershipPayload::transition(membership, member_did, reason).with_realm_id(realm_value)
+        MembershipPayload::transition(membership, member_id, reason).with_realm_id(realm_value)
     };
     if let Some(delivery_binding) = delivery_binding {
         membership_payload = membership_payload.with_delivery_binding(delivery_binding);
@@ -1855,18 +1855,33 @@ mod notary_derivation_tests {
 
     use super::*;
 
+    #[test]
+    fn realm_bootstrap_members_require_stable_core_ids() {
+        let members = parse_realm_bootstrap_members(&[
+            " ak:did_core:web:alice.example ".to_owned(),
+            "ak:did_core:web:alice.example".to_owned(),
+        ])
+        .expect("canonical did_core_id seed members are accepted");
+        assert_eq!(members.len(), 1);
+        assert_eq!(members[0].actor_id, "ak:did_core:web:alice.example");
+
+        let error = parse_realm_bootstrap_members(&["did:web:alice.example".to_owned()])
+            .expect_err("DID values are not stable Realm member identities");
+        assert!(error.to_string().contains("did_core_id"));
+    }
+
     fn agent_resolution() -> arkret_sdk::ResolutionCommitment {
         arkret_sdk::ResolutionCommitment {
-            full_id: arkret_sdk::DidFullId::new("did:web:agent.example").unwrap(),
+            did: arkret_sdk::Did::new("did:web:agent.example").unwrap(),
             method_history_head: format!("sha256:{}", "8".repeat(64)),
             version_id: "1-Qmfixture".to_owned(),
         }
     }
 
     fn agent_notary() -> arkret_sdk::NotaryValue {
-        let full_id = arkret_sdk::DidFullId::new("did:web:agent.example").unwrap();
+        let did = arkret_sdk::Did::new("did:web:agent.example").unwrap();
         let root = arkret_sdk::ed25519_pubkey_to_did_key_multibase(&[7_u8; 32]);
-        managed_agent_inception_notary(&full_id, &root).unwrap()
+        managed_agent_inception_notary(&did, &root).unwrap()
     }
 
     #[test]

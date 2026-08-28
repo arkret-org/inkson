@@ -15,7 +15,7 @@ use arkret_sdk::{
     AgentKeyApprovalEvidence, AgentKeyApprovalEvidenceKind, AgentKeyAuthorizePayload,
     AgentKeyPairRequestBody, AgentKeySupersession, AgentPairingBootstrap,
     AgentRequestedScopeDisclosure, AgentRuntimeApprovalControllerProjection,
-    AgentSigningKeyBinding, CapabilityActionId, DidCoreId, DidFullId, DidUrl, GrantConstraint,
+    AgentSigningKeyBinding, CapabilityActionId, Did, DidCoreId, DidUrl, GrantConstraint,
     GrantConstraintEffect, GrantConstraintKind, GrantConstraintSubkind, Hash, KeyState,
     NonEmptyString, OpaqueLocalId, ProducerEventProof, RealmId, RequestId, ServiceOperationId,
 };
@@ -23,7 +23,7 @@ use chrono::Utc;
 use serde_json::{Value, json};
 
 pub fn build_agent_provision_intent(
-    controller_full_id: &DidFullId,
+    controller_did: &Did,
     controller_principal_server_id: &DidCoreId,
     controller_realm_id: &RealmId,
     agent_id: &DidCoreId,
@@ -33,7 +33,7 @@ pub fn build_agent_provision_intent(
     requested_scope_digest: &Hash,
 ) -> anyhow::Result<crate::operation::LocalOperation> {
     let created_at = crate::clock::now_utc();
-    let controller_actor_id = arkret_sdk::project_full_id_to_core_id(controller_full_id)?;
+    let controller_actor_id = arkret_sdk::project_did_to_core_id(controller_did)?;
     Ok(crate::operation::LocalOperation::new(
         arkret_bootstrap::build_agent_provision_intent(
             &controller_actor_id,
@@ -468,13 +468,13 @@ pub fn into_agent_key_pair_request(
 
 pub fn build_requested_scope_disclosure_for_pairing(
     controller_id: &str,
-    service_full_id: &str,
+    service_did: &str,
     key_state: &KeyState,
     request: &AgentRuntimeApprovalControllerProjection,
 ) -> anyhow::Result<AgentRequestedScopeDisclosure> {
-    let controller_id = DidFullId::new(controller_id.trim().to_owned())?;
+    let controller_id = Did::new(controller_id.trim().to_owned())?;
     let agent_id = request.agent_id.clone();
-    let controller_actor_id = arkret_sdk::project_full_id_to_core_id(&controller_id)?;
+    let controller_actor_id = arkret_sdk::project_did_to_core_id(&controller_id)?;
     let agent_actor_id = agent_id.clone();
     if key_state.controller_id != controller_actor_id {
         anyhow::bail!("agent key_state.controller_id does not match the signed-in controller");
@@ -494,8 +494,8 @@ pub fn build_requested_scope_disclosure_for_pairing(
         .strip_prefix("agent_pairing_request:")
         .ok_or_else(|| anyhow::anyhow!("agent pairing_request_id is invalid"))?;
     let requested_scope = key_state.requested_scope.clone();
-    let verifier_did = arkret_sdk::DidFullId::new(service_full_id.trim().to_owned())?;
-    let verifier_service_id = arkret_sdk::project_full_id_to_core_id(&verifier_did)?;
+    let verifier_did = arkret_sdk::Did::new(service_did.trim().to_owned())?;
+    let verifier_service_id = arkret_sdk::project_did_to_core_id(&verifier_did)?;
     if request.proof_of_possession.audience != verifier_service_id {
         anyhow::bail!("runtime request audience does not match the current service");
     }
@@ -669,8 +669,8 @@ pub fn prepare_agent_key_authorize_pairing(
     key_state: &KeyState,
     request: &AgentRuntimeApprovalControllerProjection,
 ) -> anyhow::Result<AgentKeyAuthorizePairingPlan> {
-    let controller = DidFullId::new(controller_id.trim().to_owned())?;
-    let controller_actor_id = arkret_sdk::project_full_id_to_core_id(&controller)?;
+    let controller = Did::new(controller_id.trim().to_owned())?;
+    let controller_actor_id = arkret_sdk::project_did_to_core_id(&controller)?;
     if key_state.controller_id != controller_actor_id {
         anyhow::bail!("agent key_state.controller_id does not match the signed-in controller");
     }

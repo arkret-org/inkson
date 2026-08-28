@@ -4,7 +4,7 @@
 
 pub(crate) async fn fetch_complete_identity_history(
     http: &arkret_sdk::http_client::Client,
-    did: &arkret_sdk::DidFullId,
+    did: &arkret_sdk::Did,
 ) -> anyhow::Result<arkret_sdk::IdentityLogListOutcome> {
     let mut entries = Vec::new();
     let mut cursor: Option<String> = None;
@@ -46,7 +46,7 @@ pub(crate) async fn fetch_complete_identity_history(
 }
 
 pub(crate) struct FrozenAuthorityHistoryResolver {
-    did: arkret_sdk::DidFullId,
+    did: arkret_sdk::Did,
     history: serde_json::Value,
 }
 
@@ -62,7 +62,7 @@ impl FrozenAuthorityHistoryResolver {
 impl arkret_sdk::AuthorityDidHistoryResolver for FrozenAuthorityHistoryResolver {
     fn resolve_complete_history(
         &self,
-        did: &arkret_sdk::DidFullId,
+        did: &arkret_sdk::Did,
     ) -> Result<arkret_sdk::IdentityLogListOutcome, arkret_sdk::AuthorityHistoryUnavailable> {
         if did != &self.did {
             return Err(arkret_sdk::AuthorityHistoryUnavailable {

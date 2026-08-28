@@ -7,7 +7,7 @@ pub(super) struct ChatComposerContext {
     pub embedded: bool,
     pub selected_channel_info: Option<ChannelEntity>,
     pub authority: arkret_sdk::PrincipalAuthorityKey,
-    pub full_id: arkret_sdk::DidFullId,
+    pub did: arkret_sdk::Did,
     pub principal_id: String,
     pub account_display_label: String,
     pub participants: Vec<SpaceParticipant>,
@@ -19,7 +19,7 @@ pub(super) struct ChatComposerContext {
     pub selected_realm_pending_mls_binding_reason: Option<String>,
     pub active_sidecar_session: Option<crate::sidecar::HostedSidecarState>,
     pub sidecar_send_block_reason: Option<String>,
-    pub public_agent_dids: std::collections::BTreeSet<String>,
+    pub public_agent_ids: std::collections::BTreeSet<String>,
     pub own_controller_handle: Option<String>,
     pub mention_insert_request: Option<Signal<Option<MentionInsertRequest>>>,
     pub mentions_enabled: bool,
@@ -83,7 +83,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
         embedded: _,
         selected_channel_info,
         authority: sidecar_authority,
-        full_id: sidecar_full_id,
+        did: sidecar_did,
         principal_id,
         account_display_label,
         participants: participants_for_messages,
@@ -95,7 +95,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
         selected_realm_pending_mls_binding_reason,
         active_sidecar_session,
         sidecar_send_block_reason,
-        public_agent_dids,
+        public_agent_ids,
         own_controller_handle,
         mention_insert_request,
         mentions_enabled,
@@ -192,7 +192,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
         let mut request_signal = mention_insert_request;
         let request_participants = participants_for_messages.clone();
         let request_principal_id = principal_id.clone();
-        let request_public_agent_dids = public_agent_dids.clone();
+        let request_public_agent_ids = public_agent_ids.clone();
         let request_controller_handle = own_controller_handle.clone();
         use_effect(use_reactive(
             (&mentions_enabled,),
@@ -223,12 +223,12 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                 .or_else(|| {
                     let participant = request_participants
                         .iter()
-                        .find(|participant| participant.did.trim() == request.target_id.trim())?;
+                        .find(|participant| participant.principal_id.trim() == request.target_id.trim())?;
                     mention_candidate_for_explicit_target(
                         participant,
                         &request_participants,
                         &request_principal_id,
-                        &request_public_agent_dids,
+                        &request_public_agent_ids,
                         None,
                         request_controller_handle.as_deref(),
                     )
@@ -263,9 +263,9 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
     let typing_authority = sidecar_authority.clone();
     let scheduled_send_authority = sidecar_authority.clone();
     let plaintext_sidecar_authority = sidecar_authority.clone();
-    let plaintext_sidecar_full_id = sidecar_full_id.clone();
+    let plaintext_sidecar_did = sidecar_did.clone();
     let secure_sidecar_authority = sidecar_authority;
-    let secure_sidecar_full_id = sidecar_full_id;
+    let secure_sidecar_did = sidecar_did;
     rsx! {
             if !visible_channels_empty {
             div { class: "{composer_class}", "data-testid": "chat-composer",
@@ -596,7 +596,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                 let mut candidates: Vec<crate::messaging::mentions::MentionCandidate> =
                                     participants_for_messages
                                         .iter()
-                                        .filter(|p| agent_candidate_is_visible(p, &public_agent_dids, &principal_id))
+                                        .filter(|p| agent_candidate_is_visible(p, &public_agent_ids, &principal_id))
                                         .filter_map(|p| mention_candidate_for_participant(
                                             p,
                                             &participants_for_messages,
@@ -604,7 +604,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                         ))
                                         .collect();
                                 candidates.sort_by_key(|candidate| {
-                                    if candidate.did.trim() == principal_id.trim() {
+                                    if candidate.subject_id.trim() == principal_id.trim() {
                                         0u8
                                     } else if candidate.is_agent
                                         && candidate.controller_subject_id.trim()
@@ -636,18 +636,18 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                                     let candidate_label =
                                                         format!("@{}", candidate.insert_label());
                                                     let candidate_is_self =
-                                                        candidate.did.trim() == principal_id.trim();
+                                                        candidate.subject_id.trim() == principal_id.trim();
                                                     let candidate_agent_slug = candidate
                                                         .is_agent
                                                         .then(|| candidate.agent_slug_at_time.clone());
                                                     rsx! {
                                                         Button {
                                                             variant: ButtonVariant::Secondary,
-                                                            key: "{candidate.did}",
+                                                            key: "{candidate.subject_id}",
                                                             r#type: "button",
                                                             class: "mention-suggestion",
                                                             "data-testid": "mention-suggestion",
-                                                            "data-mention-did": "{candidate.did}",
+                                                            "data-mention-subject-id": "{candidate.subject_id}",
                                                             title: "@{candidate.insert_label()}",
                                                             onclick: {
                                                                 let candidate = candidate.clone();
@@ -798,7 +798,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                 div {
                                     class: "mention-chip",
                                     "data-testid": "mention-chip",
-                                    "data-mention-did": "{chip.did}",
+                                    "data-mention-subject-id": "{chip.subject_id}",
                                     span { "@{chip.insert_label()}" }
                                     if !chip.subtitle.is_empty() {
                                         span { class: "mention-chip-subtitle", "{chip.subtitle}" }
@@ -807,8 +807,8 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                         variant: ButtonVariant::Secondary,
                                         r#type: "button",
                                         onclick: {
-                                            let did = chip.did.clone();
-                                            move |_| mention_picker_state.write().remove(&did)
+                                            let subject_id = chip.subject_id.clone();
+                                            move |_| mention_picker_state.write().remove(&subject_id)
                                         },
                                         "\u{00d7}"
                                     }
@@ -1190,7 +1190,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                             move |_| {
                                 let own_controller_handle = own_controller_handle.clone();
                                 let authority_for_sidecar = plaintext_sidecar_authority.clone();
-                                let full_id_for_sidecar = plaintext_sidecar_full_id.clone();
+                                let did_for_sidecar = plaintext_sidecar_did.clone();
                                 let device_id_for_sidecar = sidecar_device_id.clone();
                                 let body = chat_draft().trim().to_owned();
                                 if body.is_empty() {
@@ -1282,7 +1282,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                             api_token.clone(),
                                             &trace_id,
                                             &authority_for_sidecar,
-                                            &full_id_for_sidecar,
+                                            &did_for_sidecar,
                                             &device_id_for_sidecar,
                                             &realm,
                                             &strand_id,
@@ -1624,7 +1624,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                             move |_| {
                                 let own_controller_handle = own_controller_handle.clone();
                                 let authority_for_sidecar = secure_sidecar_authority.clone();
-                                let full_id_for_sidecar = secure_sidecar_full_id.clone();
+                                let did_for_sidecar = secure_sidecar_did.clone();
                                 let device_id_for_sidecar = sidecar_device_id.clone();
                                 if pending_mls_binding {
                                     status_msg.set(
@@ -1729,7 +1729,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                             api_token.clone(),
                                             &trace_id,
                                             &authority_for_sidecar,
-                                            &full_id_for_sidecar,
+                                            &did_for_sidecar,
                                             &device_id_for_sidecar,
                                             &realm_for_sidecar,
                                             &strand_for_sidecar,

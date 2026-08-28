@@ -44,22 +44,22 @@ async function settleWithin<T>(
   ]);
 }
 
-function coreIdForFullId(fullId: string) {
-  if (fullId.startsWith("did:web:")) {
-    return `ak:did_core:web:${fullId.slice("did:web:".length)}`;
+function coreIdForDid(did: string) {
+  if (did.startsWith("did:web:")) {
+    return `ak:did_core:web:${did.slice("did:web:".length)}`;
   }
-  throw new Error(`unsupported E2E account DID method: ${fullId}`);
+  throw new Error(`unsupported E2E account DID method: ${did}`);
 }
 
 export function testLocalConfig(
   overrides: Partial<{
     serverUrl: string;
-    fullId: string;
+    did: string;
     deviceId: string;
   }> = {},
 ) {
   const serverUrl = overrides.serverUrl ?? DEFAULT_SERVER_URL;
-  const fullId = overrides.fullId ?? DEFAULT_ACCOUNT_DID;
+  const did = overrides.did ?? DEFAULT_ACCOUNT_DID;
   const deviceId = overrides.deviceId ?? DEFAULT_DEVICE_ID;
   return {
     principal_servers: [serverUrl],
@@ -67,13 +67,13 @@ export function testLocalConfig(
       profile_id: "ak:profile:e2e-alice",
       authority: {
         principal_id:
-          fullId === DEFAULT_ACCOUNT_DID
+          did === DEFAULT_ACCOUNT_DID
             ? DEFAULT_ACCOUNT_CORE_ID
-            : coreIdForFullId(fullId),
+            : coreIdForDid(did),
         principal_server_id: DEFAULT_SERVER_AUDIENCE,
       },
       resolution: {
-        full_id: fullId,
+        did: did,
         method_history_head: "e2e-method-history-head",
         version_id: "1",
         resolution_event_ref: `ak:event:${"A".repeat(44)}`,
@@ -271,13 +271,13 @@ export async function writeLocalConfig(
   page: import("@playwright/test").Page,
   overrides: Partial<{
     server_url: string;
-    full_id: string;
+    did: string;
     device_id: string;
   }>,
 ) {
   const nextConfig = testLocalConfig({
     serverUrl: overrides.server_url,
-    fullId: overrides.full_id,
+    did: overrides.did,
     deviceId: overrides.device_id,
   });
   await page.evaluate((config) => {
@@ -360,7 +360,7 @@ export async function writeLocalConfigAndReload(
   page: import("@playwright/test").Page,
   overrides: Partial<{
     server_url: string;
-    full_id: string;
+    did: string;
     device_id: string;
   }>,
 ) {

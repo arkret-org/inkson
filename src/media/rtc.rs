@@ -232,7 +232,7 @@ pub struct MediaJoinRequest {
     /// resolve to one of these; an empty set fails closed.
     pub media_service_ids: Vec<String>,
     /// Evaluator-produced route material for every accepted stable service
-    /// identity. A bare full DID, DID document, URL or generic principal
+    /// identity. A DID, DID document, URL or generic principal
     /// resolution is intentionally not accepted at this boundary.
     pub verified_media_routes: Vec<RouteResolution>,
     /// Local evidence that the selected `ak.realm.media_service` event is
@@ -299,14 +299,14 @@ impl MediaJoinRequest {
             if cached.service_kind != "media_service"
                 || record.service_kind != "media_service"
                 || record.service_id != *service_id
-                || record.full_id != cached.full_id
+                || record.did != cached.did
                 || record.method_history_head != cached.method_history_head
                 || record.version_id != cached.version_id
-                || authenticated.normalized_did_document.id != cached.full_id
+                || authenticated.normalized_did_document.id != cached.did
             {
                 return Err(RtcClientError::TokenIssuerUnauthorised);
             }
-            route_pairs.push((service_id.clone(), cached.full_id.clone()));
+            route_pairs.push((service_id.clone(), cached.did.clone()));
         }
 
         let mut anchors = MediaServiceAnchors::new(route_pairs)
@@ -420,7 +420,7 @@ fn register_media_service_keys(
     route: &RouteResolution,
 ) -> Result<(), RtcClientError> {
     let document = &route.authenticated_resolution().normalized_did_document;
-    let service_id = route.route().full_id.as_str();
+    let service_id = route.route().did.as_str();
 
     let mut registered = 0usize;
     for method in document.verification_methods.keys() {

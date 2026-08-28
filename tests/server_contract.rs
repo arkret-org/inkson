@@ -32,9 +32,9 @@ fn snapshot_contract_hash(seed: u8) -> arkret_sdk::Hash {
     arkret_sdk::Hash::new(format!("sha256:{}", format!("{seed:02x}").repeat(32))).unwrap()
 }
 
-fn service_resolution(full_id: &str) -> serde_json::Value {
+fn service_resolution(did: &str) -> serde_json::Value {
     json!({
-        "full_id": full_id,
+        "did": did,
         "method_history_head": "sha256:fixture",
         "version_id": "fixture-v1"
     })

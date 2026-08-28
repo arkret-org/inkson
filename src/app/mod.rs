@@ -279,7 +279,7 @@ fn AppBootstrap() -> Element {
     .into_iter()
     .filter(|node| !initial_control_realm_ids.contains(&node.id))
     .collect::<Vec<_>>();
-    let initial_realm_tree_owner_did = initial_state_store
+    let initial_realm_tree_owner_id = initial_state_store
         .active_principal_id()
         .unwrap_or_default();
     let initial_sidebar_width = load_sidebar_width_preference(&initial_state_store);
@@ -300,11 +300,11 @@ fn AppBootstrap() -> Element {
         .unwrap_or_else(|| "night".to_owned());
     // Rehydrate the persisted primary handle for the booted account so any
     // signed-out diagnostics can identify the account by handle on a fresh
-    // load, instead of falling back to the raw DID. Reads the per-account entry
+    // load, instead of falling back to the raw principal ID. Reads the per-account entry
     // by DID (not the active account), so it works regardless of which account
     // is currently active.
     let initial_account_primary_handle = initial_state_store
-        .primary_handle_for_did(crate::app::principal_id_text(&initial_principal_id))
+        .primary_handle_for_principal_id(crate::app::principal_id_text(&initial_principal_id))
         .unwrap_or_default();
     let config_store = use_signal(LocalConfigStore::default);
     let mut state_store = use_context::<AppStateStore>().0;
@@ -405,7 +405,7 @@ fn AppBootstrap() -> Element {
     let initial_push_state =
         crate::push::push_status_label(initial_local_state.push_registration.as_ref());
     let initial_realm_tree_nodes_for_signal = initial_realm_tree_nodes.clone();
-    let initial_realm_tree_owner_did_for_signal = initial_realm_tree_owner_did.clone();
+    let initial_realm_tree_owner_id_for_signal = initial_realm_tree_owner_id.clone();
     let mut sync_cursor = use_signal(move || initial_sync_cursor);
     // Liveness counter for the per-realm `events/subscribe` engine
     // (`crate::realm_events_engine`). Bumped when that engine folds fresh realm
@@ -427,7 +427,7 @@ fn AppBootstrap() -> Element {
                 .collect(),
         );
     }
-    let mut realm_tree_owner_did = use_signal(move || initial_realm_tree_owner_did_for_signal);
+    let mut realm_tree_owner_id = use_signal(move || initial_realm_tree_owner_id_for_signal);
     let mut projection_events = use_signal(Vec::<ProjectionEvent>::new);
     let mut device_queue = use_signal(|| 0usize);
     let push_state = use_signal(move || initial_push_state);
@@ -438,16 +438,16 @@ fn AppBootstrap() -> Element {
     // Realm-tree nodes are an in-memory account projection. Invalidate them as
     // soon as the account signal changes; connect() will repopulate them from
     // the new account. Keeping the owner separately also prevents the render
-    // between the DID change and this effect from exposing the old account.
+    // between the principal change and this effect from exposing the old account.
     use_effect(move || {
         let current_account = crate::app::principal_id_owned(principal_id());
-        if realm_tree_owner_did.peek().as_str() != current_account {
+        if realm_tree_owner_id.peek().as_str() != current_account {
             realm_tree_nodes.set(Vec::new());
             projection_events.set(Vec::new());
             sync_cursor.set(String::new());
             selected_realm_id.set(String::new());
             device_queue.set(0);
-            realm_tree_owner_did.set(current_account);
+            realm_tree_owner_id.set(current_account);
         }
     });
     let mut last_error = use_signal(|| Option::<String>::None);
@@ -856,7 +856,7 @@ fn AppBootstrap() -> Element {
         &route,
         has_session,
         crate::app::principal_id_text(&principal_id()),
-        &realm_tree_owner_did(),
+        &realm_tree_owner_id(),
     ) {
         realm_tree_nodes()
     } else {
@@ -2135,12 +2135,12 @@ fn AppBootstrap() -> Element {
                             {
                                 {
                                     let active_principal_id = crate::app::principal_id_owned(principal_id());
-                                    let self_did = if active_principal_id.trim().is_empty() {
+                                    let self_principal_id = if active_principal_id.trim().is_empty() {
                                         let configured = config_store
                                             .read()
                                             .load()
                                             .active_account
-                                            .map(|account| account.full_id().to_string())
+                                            .map(|account| account.principal_id().to_string())
                                             .unwrap_or_default();
                                         if configured.trim().is_empty() {
                                             state_store
@@ -2156,7 +2156,7 @@ fn AppBootstrap() -> Element {
                                     };
                                     let primary_handle = account_primary_handle();
                                     let self_label = if primary_handle.trim().is_empty() {
-                                        actor_display_label(&state_store.read(), &self_did)
+                                        actor_display_label(&state_store.read(), &self_principal_id)
                                     } else {
                                         primary_handle
                                     };
@@ -2173,14 +2173,14 @@ fn AppBootstrap() -> Element {
                                                 class: "sidebar-nav-item contact-sidebar-row contact-sidebar-user-row",
                                                 r#type: "button",
                                                 "data-testid": "contact-sidebar-self-row",
-                                                "data-peer": "{self_did}",
+                                                "data-peer": "{self_principal_id}",
                                                 "aria-expanded": if own_agents_expanded() { "true" } else { "false" },
                                                 "aria-label": "{self_agents_button_label}",
                                                 title: "{self_agents_button_label}",
                                                 onclick: move |_| own_agents_expanded.toggle(),
                                                 span { class: "sidebar-nav-icon contact-sidebar-user-avatar",
                                                     crate::components::IdentityAvatar {
-                                                        seed: self_did.clone(),
+                                                        seed: self_principal_id.clone(),
                                                         alt_text: self_label.clone(),
                                                         blob_ref: Some(topbar_avatar_blob_ref.clone()),
                                                         class: "avatar-img".to_owned(),
@@ -2210,7 +2210,7 @@ fn AppBootstrap() -> Element {
                                                                 .as_ref()
                                                                 .map(ToString::to_string)
                                                                 .unwrap_or_default();
-                                                            let controller_id = self_did.clone();
+                                                            let controller_id = self_principal_id.clone();
                                                             let opening_key = format!("owned-agent:{agent_id}");
                                                             let opening_target = direct_chat_opening();
                                                             let chat_open_blocked = opening_target.is_some();
@@ -4035,7 +4035,7 @@ fn AppBootstrap() -> Element {
                 NotificationsDrawer {
                     open: notifications_drawer_open,
                     principal_id: active_account()
-                        .map(|account| account.full_id().to_string())
+                        .map(|account| account.principal_id().to_string())
                         .unwrap_or_default(),
                     device_id: device_id(),
                     token,

@@ -17,8 +17,8 @@ pub(crate) async fn prepare_principal_successor_seal(
 ) -> anyhow::Result<PrincipalSuccessorSealContext> {
     let signer = crate::event_signer::active_signer()
         .ok_or_else(|| anyhow::anyhow!("active device signer is required for principal commit"))?;
-    let principal = arkret_sdk::DidFullId::new(signer.signer_did().to_owned())?;
-    let actor_id = arkret_sdk::project_full_id_to_core_id(&principal)?;
+    let principal = arkret_sdk::Did::new(signer.signer_did().to_owned())?;
+    let actor_id = arkret_sdk::project_did_to_core_id(&principal)?;
     if contact_event.actor_id != actor_id {
         anyhow::bail!("prepared principal Event actor does not match the active signer");
     }

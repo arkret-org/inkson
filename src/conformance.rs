@@ -31,13 +31,13 @@ pub fn profile_ready(server: Option<&ServiceDescribe>, profile_id: &str) -> bool
 
 #[cfg(test)]
 mod tests {
-    use arkret_wire::{DidFullId, ProfileId, ServiceKind, TrustDomainId};
+    use arkret_wire::{Did, ProfileId, ServiceKind, TrustDomainId};
 
     use super::*;
 
     fn principal_server_description(bundles: Vec<String>) -> ServiceDescribe {
         ServiceDescribe::development(
-            DidFullId::new("did:web:soland.example".to_owned()).unwrap(),
+            Did::new("did:web:soland.example".to_owned()).unwrap(),
             TrustDomainId::new("ak:trust_domain:example.net").unwrap(),
             ServiceKind::PrincipalServer,
             bundles,

@@ -372,12 +372,12 @@ mod directory_refresh_tests {
         status: AgentLifecycleState,
         runtime_state: AgentRuntimeState,
     ) -> AgentView {
-        let agent_id = arkret_sdk::project_full_id_to_core_id(
-            &arkret_sdk::DidFullId::new("did:web:agents.example:summary").unwrap(),
+        let agent_id = arkret_sdk::project_did_to_core_id(
+            &arkret_sdk::Did::new("did:web:agents.example:summary").unwrap(),
         )
         .unwrap();
-        let controller_id = arkret_sdk::project_full_id_to_core_id(
-            &arkret_sdk::DidFullId::new("did:web:alice.example").unwrap(),
+        let controller_id = arkret_sdk::project_did_to_core_id(
+            &arkret_sdk::Did::new("did:web:alice.example").unwrap(),
         )
         .unwrap();
         let scope = requested_scope_for_presets(
@@ -445,7 +445,7 @@ mod directory_refresh_tests {
                 test_pairing_view(AgentLifecycleState::Paused, AgentRuntimeState::Ready)
             }
         };
-        let agent_full_id = row.agent.agent_id;
+        let agent_did = row.agent.agent_id;
         let key_state = row.key_state.unwrap();
         let requested_scope_digest = arkret_signatures::agent::agent_requested_scope_digest(
             &key_state.agent_id,
@@ -454,7 +454,7 @@ mod directory_refresh_tests {
         )
         .unwrap();
         AgentRenewPairingOutcome {
-            agent_id: agent_full_id,
+            agent_id: agent_did,
             principal_control_realm_id: key_state.principal_control_realm_id,
             controller_authorization_ref: key_state.controller_authorization_ref,
             requested_scope_digest,
@@ -816,7 +816,7 @@ fn spawn_set_agent_enabled(
                 .ok_or_else(|| anyhow::anyhow!("active controller signer is unavailable"))?;
             let signer_account_scope = crate::secure_key_store::active_device_seed_scope();
             let device_id = super::bootstrap::controller_signer_device_id(
-                account.full_id(),
+                account.did(),
                 &account.authority,
                 signer.as_ref(),
                 signer_account_scope.as_ref(),
@@ -825,7 +825,7 @@ fn spawn_set_agent_enabled(
                 &submitter,
                 submitter.http(),
                 signer.as_ref(),
-                account.full_id(),
+                account.did(),
                 device_id.as_str(),
                 key_state.principal_control_realm_id.as_str(),
                 state_store,
@@ -866,7 +866,7 @@ fn spawn_set_agent_enabled(
                 &submitter,
                 submitter.http(),
                 signer.as_ref(),
-                account.full_id(),
+                account.did(),
                 device_id.as_str(),
                 key_state.principal_control_realm_id.as_str(),
                 state_store,
@@ -1053,14 +1053,14 @@ fn spawn_provision_agent(
             last_op_status.set(format!("Slug is invalid: {error}"));
             return;
         }
-        let controller_full_id = account.full_id().clone();
+        let controller_did = account.did().clone();
         let (controller_recovery_evidence, controller_principal_server_id) = match state_store
             .read()
             .recovery_material_evidence()
         {
             Some(evidence)
                 if evidence.controller_authority.as_ref() == Some(&account.authority)
-                    && evidence.principal_id == controller_full_id =>
+                    && evidence.principal_did == controller_did =>
             {
                 let principal_server_id = evidence
                     .controller_authority
@@ -1121,7 +1121,7 @@ fn spawn_provision_agent(
                     return;
                 }
             };
-        let full_id = match arkret_sdk::DidFullId::new(agent_inception.did.clone()) {
+        let did = match arkret_sdk::Did::new(agent_inception.did.clone()) {
             Ok(value) => value,
             Err(error) => {
                 last_op_status.set(format!("Create failed: generated Agent DID: {error}"));
@@ -1131,7 +1131,7 @@ fn spawn_provision_agent(
         let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
         if let Err(error) = crate::managed_agent_identity::store_keys_durable(
             secure_store.as_ref(),
-            full_id.as_str(),
+            did.as_str(),
             &agent_did_keys,
         )
         .await
@@ -1160,7 +1160,7 @@ fn spawn_provision_agent(
                     return;
                 }
             };
-        if inception_outcome.did != full_id {
+        if inception_outcome.did != did {
             last_op_status.set("Create failed: inception response DID mismatch".to_owned());
             return;
         }
@@ -1174,7 +1174,7 @@ fn spawn_provision_agent(
         let prepare = AgentProvisionRequestBody::Prepare {
             operation_id: operation_id.clone(),
             idempotency_key: idempotency_key.clone(),
-            full_id: full_id.clone(),
+            did: did.clone(),
             controller_principal_server_id,
             slug: slug.clone(),
             requested_scope: requested_scope.clone(),
@@ -1192,15 +1192,15 @@ fn spawn_provision_agent(
         {
             Ok(AgentProvisionOutcome::AwaitingControllerEvent {
                 agent_id,
-                full_id: returned_full_id,
+                did: returned_did,
                 initial_resolution,
                 controller_realm_id,
                 allocation_handle,
                 controller_authorization_ref,
                 requested_scope_digest,
-            }) if returned_full_id == full_id => (
+            }) if returned_did == did => (
                 agent_id,
-                returned_full_id,
+                returned_did,
                 initial_resolution,
                 controller_realm_id,
                 allocation_handle,
@@ -1235,7 +1235,7 @@ fn spawn_provision_agent(
         };
         let (
             agent_id,
-            full_id,
+            did,
             initial_resolution,
             controller_realm_id,
             allocation_handle,
@@ -1252,7 +1252,7 @@ fn spawn_provision_agent(
                     return;
                 }
             };
-        if initial_resolution.full_id != full_id
+        if initial_resolution.did != did
             || initial_resolution.version_id != agent_inception.version_id
             || initial_resolution.method_history_head != prepared_inception_head
         {
@@ -1262,16 +1262,16 @@ fn spawn_provision_agent(
             );
             return;
         }
-        let projected_agent_id = match arkret_sdk::project_full_id_to_core_id(&full_id) {
+        let projected_agent_id = match arkret_sdk::project_did_to_core_id(&did) {
             Ok(value) => value,
             Err(error) => {
-                last_op_status.set(format!("Create failed: allocated full ID: {error}"));
+                last_op_status.set(format!("Create failed: allocated DID: {error}"));
                 return;
             }
         };
         if projected_agent_id != agent_id {
             last_op_status.set(
-                "Create failed: allocated full ID does not project to the allocated Agent ID"
+                "Create failed: allocated DID does not project to the allocated Agent ID"
                     .to_owned(),
             );
             return;
@@ -1327,7 +1327,7 @@ fn spawn_provision_agent(
             return;
         }
         let agent_notary = match crate::event_builders::managed_agent_inception_notary(
-            &full_id,
+            &did,
             &agent_inception.root_public_key_multibase,
         ) {
             Ok(value) => value,
@@ -1390,7 +1390,7 @@ fn spawn_provision_agent(
             }
         };
         let draft = match build_agent_provision_intent(
-            &controller_full_id,
+            &controller_did,
             &controller_principal_server_id,
             &controller_realm_id,
             &agent_id,
@@ -1434,7 +1434,7 @@ fn spawn_provision_agent(
             operation_id,
             idempotency_key,
             agent_id: agent_id.clone(),
-            full_id: full_id.clone(),
+            did: did.clone(),
             principal_control_realm_id: principal_control_realm_id.clone(),
             allocation_handle: allocation_handle.clone(),
             slug: slug.clone(),
@@ -1452,14 +1452,14 @@ fn spawn_provision_agent(
         {
             Ok(AgentProvisionOutcome::AwaitingPcrGenesis {
                 agent_id: returned_agent_id,
-                full_id: returned_full_id,
+                did: returned_did,
                 initial_resolution: returned_resolution,
                 principal_control_realm_id: returned_realm_id,
                 allocation_handle: returned_allocation,
                 controller_authorization_ref: returned_authorization,
                 requested_scope_digest: returned_digest,
             }) if returned_agent_id == agent_id
-                && returned_full_id == full_id
+                && returned_did == did
                 && returned_resolution == initial_resolution
                 && returned_realm_id == principal_control_realm_id
                 && returned_allocation == allocation_handle
@@ -1495,7 +1495,7 @@ fn spawn_provision_agent(
             }
         };
         let controller_realm_for_seal = controller_realm_id.clone();
-        let controller_id_for_seal = controller_full_id.clone();
+        let controller_id_for_seal = controller_did.clone();
         if let Err(error) = with_authed_api(&base, api_token.clone(), move |api| async move {
             super::bootstrap::seal_self_principal_event_current(
                 &api,
@@ -1566,14 +1566,14 @@ fn spawn_provision_agent(
             {
                 Ok(AgentProvisionOutcome::AwaitingDidBinding {
                     agent_id: returned_agent_id,
-                    full_id: returned_full_id,
+                    did: returned_did,
                     initial_resolution: returned_resolution,
                     principal_control_realm_id: returned_realm_id,
                     allocation_handle: returned_allocation,
                     controller_authorization_ref: returned_authorization,
                     requested_scope_digest: returned_digest,
                 }) if returned_agent_id == agent_id
-                    && returned_full_id == full_id
+                    && returned_did == did
                     && returned_resolution == initial_resolution
                     && returned_realm_id == principal_control_realm_id
                     && returned_allocation == allocation_handle
@@ -1647,7 +1647,7 @@ fn spawn_provision_agent(
                     return;
                 }
             };
-        if binding_outcome.did != full_id
+        if binding_outcome.did != did
             || binding_outcome.status == arkret_sdk::DidOperationSubmitStatus::Pending
         {
             last_op_status.set(

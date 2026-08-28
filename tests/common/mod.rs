@@ -14,10 +14,9 @@
 use inkson::operation::LocalOperation;
 
 pub fn test_notary(signer_did: &str) -> arkret_sdk::NotaryValue {
-    let full_id =
-        arkret_sdk::DidFullId::new(signer_did.to_owned()).expect("test notary DID is canonical");
-    let actor_id = arkret_sdk::project_full_id_to_core_id(&full_id)
-        .expect("test notary DID projects to a core id");
+    let did = arkret_sdk::Did::new(signer_did.to_owned()).expect("test notary DID is canonical");
+    let actor_id =
+        arkret_sdk::project_did_to_core_id(&did).expect("test notary DID projects to a core id");
     let public_key = [7_u8; 32];
     let descriptor = arkret_sdk::NotarySignerDescriptor {
         actor_id,

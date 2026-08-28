@@ -26,10 +26,10 @@ mod device_identity_proof_tests {
 
     fn signed_message_envelope_inner(
         signer: &crate::event_signer::InksonEventSigner,
-        actor_full_id: &str,
+        actor_did: &str,
         device_id: Option<&str>,
     ) -> Value {
-        let actor_id = crate::mls_api_helpers::principal_core_id(actor_full_id).unwrap();
+        let actor_id = crate::mls_api_helpers::principal_core_id(actor_did).unwrap();
         let mut envelope = json!({
             "kind": "ak.message.create",
             "realm_id": "ak:realm:AtlzwcCCnyKBD2b_hQX9YJKlbvZu2jVHq9qsQsIaBWHI",
@@ -57,7 +57,7 @@ mod device_identity_proof_tests {
         let proof_created_at = chrono::DateTime::parse_from_rfc3339("2026-06-16T00:00:00.000Z")
             .unwrap()
             .with_timezone(&chrono::Utc);
-        let did = arkret_sdk::DidFullId::new(actor_full_id.to_owned()).unwrap();
+        let did = arkret_sdk::Did::new(actor_did.to_owned()).unwrap();
         let mut proof = arkret_sdk::ProducerEventProof {
             kind: "detached_jws".to_owned(),
             verification_method: verification_method.clone(),
@@ -71,7 +71,7 @@ mod device_identity_proof_tests {
             jws: String::new(),
         };
         let binding_bytes = proof
-            .canonical_binding_bytes(&arkret_sdk::project_full_id_to_core_id(&did).unwrap())
+            .canonical_binding_bytes(&arkret_sdk::project_did_to_core_id(&did).unwrap())
             .unwrap();
         proof.jws = signer.detached_jws_over(&binding_bytes).unwrap();
         envelope.as_object_mut().unwrap().insert(
@@ -87,8 +87,8 @@ mod device_identity_proof_tests {
         crate::identity::device_directory::public_key_from_directory_value(&did).unwrap()
     }
 
-    fn core_id(full_id: &str) -> String {
-        crate::mls_api_helpers::principal_core_id(full_id)
+    fn core_id(did: &str) -> String {
+        crate::mls_api_helpers::principal_core_id(did)
             .unwrap()
             .to_string()
     }
@@ -373,9 +373,9 @@ mod device_identity_proof_tests {
 mod act_on_behalf_tests {
     use super::super::*;
 
-    fn agent_participant(did: &str) -> SpaceParticipant {
+    fn agent_participant(principal_id: &str) -> SpaceParticipant {
         SpaceParticipant {
-            did: did.to_owned(),
+            principal_id: principal_id.to_owned(),
             display_name: Some("Summary Assistant".to_owned()),
             handle_label: None,
             display_name_rank: 1,

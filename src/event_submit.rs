@@ -988,8 +988,8 @@ fn normalized_recovery_gate_cache_key(
     let principal = arkret_sdk::DidCoreId::new(authority_principal.to_owned())
         .ok()
         .or_else(|| {
-            let full = arkret_sdk::DidFullId::new(authority_principal.to_owned()).ok()?;
-            arkret_sdk::project_full_id_to_core_id(&full).ok()
+            let did = arkret_sdk::Did::new(authority_principal.to_owned()).ok()?;
+            arkret_sdk::project_did_to_core_id(&did).ok()
         })?;
     let device = arkret_sdk::DeviceId::new(device_id.to_owned()).ok()?;
     Some(format!("{principal}\u{1f}{device}"))
@@ -1800,12 +1800,12 @@ impl EventSubmitter {
         Ok(())
     }
 
-    pub(crate) async fn service_full_id(&self) -> anyhow::Result<String> {
+    pub(crate) async fn service_did(&self) -> anyhow::Result<String> {
         Ok(self
             .describe_cached()
             .await?
             .service_resolution
-            .full_id
+            .did
             .to_string())
     }
 
@@ -2015,7 +2015,7 @@ impl EventSubmitter {
     >(
         &self,
         realm_id: &str,
-        _controller_id: &arkret_sdk::DidFullId,
+        _controller_id: &arkret_sdk::Did,
         state_store: S,
     ) -> anyhow::Result<(arkret_sdk::RealmSealFrontierView, arkret_sdk::Seal)> {
         let (view, receipts) = self.seals_frontier_realm_state(realm_id).await?;

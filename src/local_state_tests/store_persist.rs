@@ -974,7 +974,7 @@ fn active_account_match_uses_exact_authority_while_resolution_relocates() {
 }
 
 #[test]
-fn full_id_relocation_reuses_the_same_authority_local_state() {
+fn did_relocation_reuses_the_same_authority_local_state() {
     let path = temp_state_path("same-core-local-state");
     let mut store = LocalStateStore::with_path(path);
     store.switch_test_account("did:webvh:zSameScid:old.example:users:alice");
@@ -1000,12 +1000,11 @@ fn same_principal_core_on_different_servers_uses_distinct_local_state() {
     let authority_a = test_authority_at_server(principal, "ak:did_core:webvh:zServerA");
     let authority_b = test_authority_at_server(principal, "ak:did_core:webvh:zServerB");
 
-    let full_id = arkret_sdk::DidFullId::new(
-        "did:webvh:zSamePrincipal:principal.example:users:alice".to_owned(),
-    )
-    .unwrap();
-    let account_a = super::test_account_context_for_authority(&full_id, authority_a.clone());
-    let account_b = super::test_account_context_for_authority(&full_id, authority_b.clone());
+    let did =
+        arkret_sdk::Did::new("did:webvh:zSamePrincipal:principal.example:users:alice".to_owned())
+            .unwrap();
+    let account_a = super::test_account_context_for_authority(&did, authority_a.clone());
+    let account_b = super::test_account_context_for_authority(&did, authority_b.clone());
     assert!(store.switch_active_account(&account_a).unwrap());
     store.save_sync_cursor("sx:authority-a");
 
@@ -1030,7 +1029,7 @@ fn accepted_context_promotion_keeps_pending_device_for_new_account() {
     assert!(store.pending_login().is_some());
 
     // A DID never seen on this browser is a new account.
-    let newcomer = arkret_sdk::DidFullId::new("did:web:newcomer.example".to_owned()).unwrap();
+    let newcomer = arkret_sdk::Did::new("did:web:newcomer.example".to_owned()).unwrap();
     let is_new = store.promote_accepted_context_for_test(&newcomer);
     assert!(is_new, "an unknown DID adopts as a new account");
     assert!(store.pending_login().is_none(), "pending is cleared");
@@ -1083,7 +1082,7 @@ fn accepted_context_promotion_preserves_returning_account_entry() {
         store.load().sync_cursor.is_none(),
         "anonymous pre-DID state must not expose Alice's projections"
     );
-    let alice = arkret_sdk::DidFullId::new("did:web:alice.example".to_owned()).unwrap();
+    let alice = arkret_sdk::Did::new("did:web:alice.example".to_owned()).unwrap();
     let switched = store.promote_accepted_context_for_test(&alice);
     assert!(
         switched,
@@ -1130,6 +1129,7 @@ fn fresh_pending_login_never_moves_previous_account_onboarding_fields() {
         device_id: "ak:device:019f0000-0000-7000-8000-000000000099".to_owned(),
         trust_domain: "ak:trust_domain:auth.example".to_owned(),
         bound_principal_id: None,
+        bound_principal_did: None,
     };
     store
         .set_pending_account_handoff(Some(handoff.clone()))
@@ -1141,7 +1141,7 @@ fn fresh_pending_login_never_moves_previous_account_onboarding_fields() {
         &recovery_key,
     )
     .unwrap();
-    let previous_did = checkpoint.full_id.clone();
+    let previous_did = checkpoint.did.clone();
     store
         .set_pending_principal_registration(Some(checkpoint))
         .unwrap();
@@ -1161,7 +1161,7 @@ fn fresh_pending_login_never_moves_previous_account_onboarding_fields() {
         "anonymous registration must not inherit the previous account's profile"
     );
 
-    let newcomer = arkret_sdk::DidFullId::new("did:web:new.example".to_owned()).unwrap();
+    let newcomer = arkret_sdk::Did::new("did:web:new.example".to_owned()).unwrap();
     assert!(store.promote_accepted_context_for_test(&newcomer));
     assert!(store.load().sync_cursor.is_none());
     assert!(store.pending_account_handoff().is_none());
@@ -1177,7 +1177,7 @@ fn fresh_pending_login_never_moves_previous_account_onboarding_fields() {
     assert_eq!(store.load().sync_cursor.as_deref(), Some("sx:old"));
     assert_eq!(
         store
-            .primary_handle_for_did("ak:did_core:web:old.example")
+            .primary_handle_for_principal_id("ak:did_core:web:old.example")
             .as_deref(),
         Some("old-user")
     );
@@ -1198,7 +1198,7 @@ fn fresh_pending_login_never_moves_previous_account_onboarding_fields() {
         store
             .pending_principal_registration()
             .as_ref()
-            .map(|pending| pending.full_id.as_str()),
+            .map(|pending| pending.did.as_str()),
         Some(previous_did.as_str()),
         "fresh registration must not expose the old identity draft anonymously"
     );
@@ -1232,6 +1232,7 @@ fn accepted_context_promotion_moves_the_unfinished_handoff_with_its_registration
         device_id: device.to_owned(),
         trust_domain: "ak:trust_domain:auth.example".to_owned(),
         bound_principal_id: None,
+        bound_principal_did: None,
     };
     let recovery_key = crate::recovery_crypto::generate_recovery_key().unwrap();
     let checkpoint = crate::identity::principal_registration::prepare_registration_checkpoint(
@@ -1240,7 +1241,7 @@ fn accepted_context_promotion_moves_the_unfinished_handoff_with_its_registration
         &recovery_key,
     )
     .unwrap();
-    let did = checkpoint.full_id.clone();
+    let did = checkpoint.did.clone();
 
     store
         .set_pending_account_handoff(Some(handoff.clone()))
@@ -1281,7 +1282,7 @@ fn accepted_context_promotion_moves_the_unfinished_handoff_with_its_registration
         store
             .pending_principal_registration()
             .as_ref()
-            .map(|pending| pending.full_id.as_str()),
+            .map(|pending| pending.did.as_str()),
         Some(did.as_str())
     );
 }
@@ -1319,11 +1320,14 @@ fn returning_login_clears_consumed_handoff_from_anonymous_namespace() {
             retry_after_ms: None,
             device_id: device.to_owned(),
             trust_domain: "ak:trust_domain:auth.example".to_owned(),
-            bound_principal_id: Some(arkret_sdk::DidFullId::new(principal.to_owned()).unwrap()),
+            bound_principal_id: Some(
+                arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example".to_owned()).unwrap(),
+            ),
+            bound_principal_did: Some(arkret_sdk::Did::new(principal.to_owned()).unwrap()),
         }))
         .unwrap();
 
-    let principal_id = arkret_sdk::DidFullId::new(principal.to_owned()).unwrap();
+    let principal_id = arkret_sdk::Did::new(principal.to_owned()).unwrap();
     assert!(store.promote_accepted_context_for_test(&principal_id));
     assert!(
         store.pending_account_handoff().is_some(),

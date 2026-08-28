@@ -282,10 +282,10 @@ fn verify_member_identity_proof(identity: &MemberIdentity) -> bool {
         // key → fail-closed.
         None => return false,
     };
-    let Ok(controller_full_id) = arkret_sdk::DidFullId::new(controller.to_owned()) else {
+    let Ok(controller_did) = arkret_sdk::Did::new(controller.to_owned()) else {
         return false;
     };
-    let Ok(controller_core_id) = arkret_sdk::project_full_id_to_core_id(&controller_full_id) else {
+    let Ok(controller_core_id) = arkret_sdk::project_did_to_core_id(&controller_did) else {
         return false;
     };
     if controller_core_id != identity.actor_id {
@@ -343,13 +343,8 @@ mod tests {
     /// Build a `ak.member.identity.update` payload whose `member_identity`
     /// proof is a real Ed25519 signature over the canonical payload bytes,
     /// signed by `signer`. `verification_method` selects `actor#device`.
-    fn signed_payload(
-        actor_full_id: &str,
-        device_id: &str,
-        name: &str,
-        signer: &SigningKey,
-    ) -> Value {
-        let actor_id = crate::mls_api_helpers::principal_core_id(actor_full_id).unwrap();
+    fn signed_payload(actor_did: &str, device_id: &str, name: &str, signer: &SigningKey) -> Value {
+        let actor_id = crate::mls_api_helpers::principal_core_id(actor_did).unwrap();
         let mut identity = MemberIdentity {
             schema: arkret_sdk::SchemaId::MEMBER_IDENTITY_V1.to_owned(),
             realm_id: RealmId::new(TEST_REALM).unwrap(),
@@ -364,10 +359,8 @@ mod tests {
                 .with_timezone(&chrono::Utc),
             expires_at: None,
             proof: MemberIdentityProof {
-                verification_method: arkret_sdk::DidUrl::new(format!(
-                    "{actor_full_id}#{device_id}"
-                ))
-                .unwrap(),
+                verification_method: arkret_sdk::DidUrl::new(format!("{actor_did}#{device_id}"))
+                    .unwrap(),
                 signature_algorithm: MemberIdentitySignatureAlgorithm::Ed25519,
                 payload_digest: arkret_sdk::Hash::new(
                     "sha256:0000000000000000000000000000000000000000000000000000000000000000",
@@ -403,11 +396,11 @@ mod tests {
     #[test]
     fn ingests_inline_event_and_resolves_current_identity() {
         let mut store = MemberIdentityStore::new();
-        let actor_full_id = "did:web:alice.example";
-        let actor_id = crate::mls_api_helpers::principal_core_id(actor_full_id).unwrap();
+        let actor_did = "did:web:alice.example";
+        let actor_id = crate::mls_api_helpers::principal_core_id(actor_did).unwrap();
         let signer = SigningKey::from_bytes(&[7u8; 32]);
         seed_directory(actor_id.as_str(), TEST_DEVICE, &signer);
-        let payload = signed_payload(actor_full_id, TEST_DEVICE, "Alice v1", &signer);
+        let payload = signed_payload(actor_did, TEST_DEVICE, "Alice v1", &signer);
         let parsed: MemberIdentityUpdatePayload = serde_json::from_value(payload.clone()).unwrap();
         let IdentityPayloadCarrier::MemberIdentity { member_identity } = &parsed.identity_payload
         else {

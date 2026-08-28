@@ -370,7 +370,7 @@ pub(super) fn SecureStoreEffects(state: SecureStoreEffectState) -> Element {
                             Ok(()) => {
                                 tracing::info!(
                                     target: "secure_store",
-                                    principal = %active_signer_account.full_id(),
+                                    principal = %active_signer_account.did(),
                                     device_id = %stable_device_id,
                                     "IndexedDB account-bound device identity signer bootstrap succeeded"
                                 );
@@ -404,7 +404,7 @@ pub(super) fn SecureStoreEffects(state: SecureStoreEffectState) -> Element {
                                 }
                                 tracing::warn!(
                                     target: "secure_store",
-                                    principal = %active_signer_account.full_id(),
+                                    principal = %active_signer_account.did(),
                                     device_id = %stable_device_id,
                                     %error,
                                     "IndexedDB account-bound device identity signer bootstrap failed; session discarded"
@@ -450,7 +450,7 @@ pub(super) fn SecureStoreEffects(state: SecureStoreEffectState) -> Element {
 
 /// A durable signing seed identifies a key, not the account identity that
 /// authorizes that key. Rebind the freshly loaded key to the active account's
-/// full DID on every boot before session refresh or Event authoring can run.
+/// DID on every boot before session refresh or Event authoring can run.
 // The only production caller lives inside the `#[cfg(target_arch = "wasm32")]`
 // secure-store upgrade block above; the remaining callers are this file's
 // `#[cfg(test)]` tests. Gate on the union of both so native non-test builds
@@ -473,12 +473,12 @@ fn bind_active_signer_to_account_session(
         }
     }
     let signer = crate::event_signer::bind_active_signer_principal_device_id(
-        account.full_id(),
+        account.did(),
         account.device_id.as_str(),
     )
     .map_err(|error| anyhow::anyhow!("bind active account signer: {error}"))?
     .ok_or_else(|| anyhow::anyhow!("active device identity signer is not installed"))?;
-    if signer.signer_did() != account.full_id().as_str()
+    if signer.signer_did() != account.did().as_str()
         || signer.device_id() != Some(account.device_id.as_str())
     {
         anyhow::bail!("active signer binding did not preserve the account/device identity");
@@ -492,16 +492,16 @@ mod account_signer_boot_tests {
     use crate::state::PersistedSessionGrant;
 
     fn account(principal: &str, device: &str) -> crate::config::ActiveAccountContext {
-        let full_id = arkret_sdk::DidFullId::new(principal.to_owned()).unwrap();
+        let did = arkret_sdk::Did::new(principal.to_owned()).unwrap();
         let authority = arkret_sdk::PrincipalAuthorityKey::new(
-            arkret_sdk::project_full_id_to_core_id(&full_id).unwrap(),
+            arkret_sdk::project_did_to_core_id(&did).unwrap(),
             arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example".to_owned()).unwrap(),
         );
         crate::config::ActiveAccountContext::new(
             "ak:profile:boot-test".to_owned(),
             authority,
             arkret_sdk::PrincipalResolutionProjection {
-                full_id,
+                did,
                 method_history_head: "boot-test-head".to_owned(),
                 version_id: "1".to_owned(),
                 resolution_event_ref: "boot-test-event".to_owned(),
@@ -528,7 +528,7 @@ mod account_signer_boot_tests {
     }
 
     #[test]
-    fn boot_rebinds_loaded_device_key_to_active_account_full_id() {
+    fn boot_rebinds_loaded_device_key_to_active_account_did() {
         let _guard = crate::event_signer::ActiveSignerTestGuard::replace(None);
         let device = "ak:device:019f0000-0000-7000-8000-000000000041";
         let principal = "did:webvh:z6mkfixture:boot.example";
@@ -539,8 +539,8 @@ mod account_signer_boot_tests {
         )
         .unwrap();
 
-        let principal_full = arkret_sdk::DidFullId::new(principal.to_owned()).unwrap();
-        let principal_core = arkret_sdk::project_full_id_to_core_id(&principal_full).unwrap();
+        let principal_full = arkret_sdk::Did::new(principal.to_owned()).unwrap();
+        let principal_core = arkret_sdk::project_did_to_core_id(&principal_full).unwrap();
         let grant = session_grant(principal_core.to_string(), device);
         bind_active_signer_to_account_session(&account(principal, device), Some(&grant)).unwrap();
 
@@ -561,9 +561,8 @@ mod account_signer_boot_tests {
         )
         .unwrap();
         let other =
-            arkret_sdk::DidFullId::new("did:webvh:z6mkfixtureother:other.example".to_owned())
-                .unwrap();
-        let other_core = arkret_sdk::project_full_id_to_core_id(&other).unwrap();
+            arkret_sdk::Did::new("did:webvh:z6mkfixtureother:other.example".to_owned()).unwrap();
+        let other_core = arkret_sdk::project_did_to_core_id(&other).unwrap();
         let grant = session_grant(other_core.to_string(), device);
 
         let error =

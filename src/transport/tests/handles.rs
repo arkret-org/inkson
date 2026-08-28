@@ -33,7 +33,7 @@ fn resolve_handle_request_body_carries_lookup_context() {
         requester: Some("did:web:alice.example"),
         audience: Some("ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-"),
         realm_id: Some("ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-"),
-        expected_did: Some("did:web:bob.example"),
+        expected_principal_id: Some("ak:did_core:web:bob.example"),
         proof_challenge: Some("ak:challenge:test"),
         proofs: &[],
     };
@@ -90,7 +90,7 @@ fn canonical_invitee_handle_accepts_display_alias() {
 fn handle_resolution_exposes_delivery_binding_without_requiring_it_for_invites() {
     let realm_id = "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-";
     let resolved: ResolveHandleView = serde_json::from_value(json!({
-        "did": "did:web:bob.example",
+        "principal_id": "ak:did_core:web:bob.example",
         "handle": "bob:local.host",
         "handle_claim": {
             "subject": "ak:did_core:web:bob.example",
@@ -106,7 +106,10 @@ fn handle_resolution_exposes_delivery_binding_without_requiring_it_for_invites()
     }))
     .unwrap();
 
-    assert_eq!(resolved.subject_did(), Some("did:web:bob.example"));
+    assert_eq!(
+        resolved.subject_id().as_str(),
+        "ak:did_core:web:bob.example"
+    );
     assert_eq!(
         resolved
             .member_delivery_binding_ref()
@@ -117,11 +120,14 @@ fn handle_resolution_exposes_delivery_binding_without_requiring_it_for_invites()
     );
 
     let missing_binding: ResolveHandleView = serde_json::from_value(json!({
-        "did": "did:web:bob.example",
+        "principal_id": "ak:did_core:web:bob.example",
         "handle": "bob:local.host",
         "audience": realm_id
     }))
     .unwrap();
-    assert_eq!(missing_binding.subject_did(), Some("did:web:bob.example"));
+    assert_eq!(
+        missing_binding.subject_id().as_str(),
+        "ak:did_core:web:bob.example"
+    );
     assert!(missing_binding.member_delivery_binding_ref().is_none());
 }

@@ -477,7 +477,7 @@ mod tests {
             ttl_seconds: 300,
             refresh_lead_seconds: 60,
             turn_required: false,
-            issuer_did: arkret_sdk::DidFullId::new("did:web:media.example").unwrap(),
+            issuer_did: arkret_sdk::Did::new("did:web:media.example").unwrap(),
         }
     }
 

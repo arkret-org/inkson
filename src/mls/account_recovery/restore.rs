@@ -462,27 +462,27 @@ async fn verify_active_series_range_completeness(
             });
             continue;
         }
-        let issuer_full_id = attestation_event
+        let issuer_did = attestation_event
             .proofs
             .first()
             .and_then(arkret_sdk::EventProof::as_producer)
             .and_then(|proof| proof.verification_method.as_str().split_once('#'))
             .map(|(controller, _)| controller.to_owned())
             .ok_or_else(|| anyhow!("range-completeness proof omits issuer DID fragment"))?;
-        let issuer_full_id = arkret_sdk::DidFullId::new(issuer_full_id)?;
-        if arkret_sdk::project_full_id_to_core_id(&issuer_full_id)? != issuer_actor {
+        let issuer_did = arkret_sdk::Did::new(issuer_did)?;
+        if arkret_sdk::project_did_to_core_id(&issuer_did)? != issuer_actor {
             return Err(anyhow!(
                 "range-completeness proof controller differs from issuer"
             ));
         }
         let document =
-            crate::mls::governance_proof::resolve_proof_signer_document(api, &issuer_full_id)
+            crate::mls::governance_proof::resolve_proof_signer_document(api, &issuer_did)
                 .await
                 .map_err(anyhow::Error::msg)?;
         let mut resolver = crate::mls::governance_proof::StaticProofDidResolver::default();
         resolver
             .documents
-            .insert(issuer_full_id.as_str().to_owned(), document);
+            .insert(issuer_did.as_str().to_owned(), document);
         let outer_verified = attestation_event
             .proofs
             .iter()
@@ -527,7 +527,7 @@ async fn verify_active_series_range_completeness(
             if absolute_method != proof.verification_method {
                 return false;
             }
-            let Ok(controller) = arkret_sdk::project_full_id_to_core_id(&resolved.did) else {
+            let Ok(controller) = arkret_sdk::project_did_to_core_id(&resolved.did) else {
                 return false;
             };
             if controller != issuer_actor {
@@ -570,7 +570,7 @@ async fn verify_active_series_range_completeness(
             });
             continue;
         }
-        if !resolver.supports(&issuer_full_id) {
+        if !resolver.supports(&issuer_did) {
             first_error.get_or_insert_with(|| {
                 "range-completeness issuer DID was not authority-resolved".to_owned()
             });

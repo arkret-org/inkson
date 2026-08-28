@@ -361,9 +361,9 @@ fn principal_core_key(value: &str) -> Option<String> {
         .ok()
         .map(|id| id.as_str().to_owned())
         .or_else(|| {
-            arkret_sdk::DidFullId::new(value.to_owned())
+            arkret_sdk::Did::new(value.to_owned())
                 .ok()
-                .and_then(|id| arkret_sdk::project_full_id_to_core_id(&id).ok())
+                .and_then(|id| arkret_sdk::project_did_to_core_id(&id).ok())
                 .map(|id| id.as_str().to_owned())
         })
 }
@@ -1593,7 +1593,7 @@ async fn retain_current_history_secret_durable(
         .active_account()
         .ok_or_else(|| anyhow::anyhow!("active account context is unavailable"))?;
     anyhow::ensure!(
-        account.full_id().as_str() == actor_id && account.device_id.as_str() == device_id,
+        account.did().as_str() == actor_id && account.device_id.as_str() == device_id,
         "MLS history retention identity does not match the active account"
     );
     let derived = {
@@ -1633,7 +1633,7 @@ pub(crate) async fn submit_mls_admission_for_invitee(
         .active_account()
         .ok_or_else(|| anyhow::anyhow!("active account context is unavailable"))?;
     anyhow::ensure!(
-        account.full_id().as_str() == actor_id && account.device_id.as_str() == device_id,
+        account.did().as_str() == actor_id && account.device_id.as_str() == device_id,
         "MLS admission identity does not match the active account"
     );
     let needs_mls_admission = {
@@ -1975,7 +1975,7 @@ pub(super) fn realm_mls_roster_matches_complete_membership_hint(
     let Some(account) = crate::app::SessionContext::get().active_account() else {
         return false;
     };
-    if account.full_id().as_str() != actor_id || account.device_id.as_str() != device_id {
+    if account.did().as_str() != actor_id || account.device_id.as_str() != device_id {
         return false;
     }
     crate::mls::runtime::realm_mls_roster_matches_complete_membership_hint(
@@ -2074,7 +2074,7 @@ pub(crate) async fn reconcile_mls_admissions_for_realm(
         .active_account()
         .ok_or_else(|| anyhow::anyhow!("active account context is unavailable"))?;
     anyhow::ensure!(
-        account.full_id().as_str() == actor_id && account.device_id.as_str() == device_id,
+        account.did().as_str() == actor_id && account.device_id.as_str() == device_id,
         "MLS admission reconcile identity does not match the active account"
     );
     // Only Realms this device can admit into: holding MLS state ⇒ able to build
@@ -2230,7 +2230,7 @@ async fn ensure_mls_genesis_frontier_for_invite(
         .active_account()
         .ok_or_else(|| anyhow::anyhow!("active account context is unavailable"))?;
     anyhow::ensure!(
-        account.full_id().as_str() == actor_id && account.device_id.as_str() == device_id,
+        account.did().as_str() == actor_id && account.device_id.as_str() == device_id,
         "MLS genesis identity does not match the active account"
     );
     {
@@ -2365,7 +2365,7 @@ async fn ensure_mls_governance_proof_for_next_commit(
         .active_account()
         .ok_or_else(|| anyhow::anyhow!("active account context is unavailable"))?;
     anyhow::ensure!(
-        account.full_id().as_str() == actor_id && account.device_id.as_str() == device_id,
+        account.did().as_str() == actor_id && account.device_id.as_str() == device_id,
         "MLS governance proof identity does not match the active account"
     );
     refresh_mls_governance_target_basis(api, state_store, realm_id, added_claims).await?;

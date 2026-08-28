@@ -5,19 +5,19 @@ use dioxus::prelude::{ReadableExt, SyncSignal, WritableExt};
 use crate::state::LocalStateStore;
 
 pub(crate) fn controller_signer_device_id(
-    controller_full_id: &arkret_sdk::DidFullId,
+    controller_did: &arkret_sdk::Did,
     controller_authority: &arkret_sdk::PrincipalAuthorityKey,
     signer: &crate::event_signer::InksonEventSigner,
     signer_account_scope: Option<&crate::secure_key_store::ActiveDeviceSeedScope>,
 ) -> anyhow::Result<arkret_sdk::DeviceId> {
     let signer_binding_matches = match signer_account_scope {
         Some(scope) => scope.authority == *controller_authority,
-        None => signer.signer_did() == controller_full_id.as_str(),
+        None => signer.signer_did() == controller_did.as_str(),
     };
     if !signer_binding_matches {
         anyhow::bail!(
             "active signer is not bound to controller {} (signer DID: {}, account authority: {:?})",
-            controller_full_id,
+            controller_did,
             signer.signer_did(),
             signer_account_scope.map(|scope| &scope.authority)
         );
@@ -54,7 +54,7 @@ fn has_managed_agent_pcr_create(events: &[arkret_sdk::Event]) -> bool {
 async fn submit_managed_agent_pcr_seal(
     http: &arkret_sdk::http_client::Client,
     signer: &crate::event_signer::InksonEventSigner,
-    controller_id: &arkret_sdk::DidFullId,
+    controller_id: &arkret_sdk::Did,
     device_id: &str,
     realm_id: &str,
     events: &[arkret_sdk::Event],
@@ -113,7 +113,7 @@ pub(crate) async fn ensure_managed_agent_pcr_seal_current<
     submitter: &crate::event_submit::EventSubmitter,
     http: &arkret_sdk::http_client::Client,
     signer: &crate::event_signer::InksonEventSigner,
-    controller_id: &arkret_sdk::DidFullId,
+    controller_id: &arkret_sdk::Did,
     device_id: &str,
     realm_id: &str,
     state_store: S,
@@ -225,7 +225,7 @@ pub(crate) fn managed_agent_seal_head_receipt_unavailable(error: &anyhow::Error)
 /// authoritative until this successor Seal is accepted.
 pub(crate) async fn seal_self_principal_event_current(
     api: &crate::transport::TransportClient,
-    controller_id: &arkret_sdk::DidFullId,
+    controller_id: &arkret_sdk::Did,
     realm_id: &arkret_sdk::RealmId,
     expected_event_id: &arkret_sdk::EventId,
 ) -> anyhow::Result<arkret_sdk::Seal> {
@@ -234,7 +234,7 @@ pub(crate) async fn seal_self_principal_event_current(
     let predecessor = submitter
         .seals_frontier_realm_head(realm_id.as_str())
         .await?;
-    let controller_actor_id = arkret_sdk::project_full_id_to_core_id(controller_id)?;
+    let controller_actor_id = arkret_sdk::project_did_to_core_id(controller_id)?;
     let mut accepted = submitter
         .backfill(realm_id.as_str())
         .await?
@@ -290,7 +290,7 @@ pub(crate) async fn seal_managed_agent_pcr_current(
         .ok_or_else(|| anyhow::anyhow!("active controller signer is unavailable"))?;
     let signer_account_scope = crate::secure_key_store::active_device_seed_scope();
     let device_id = controller_signer_device_id(
-        account.full_id(),
+        account.did(),
         &account.authority,
         signer.as_ref(),
         signer_account_scope.as_ref(),
@@ -301,7 +301,7 @@ pub(crate) async fn seal_managed_agent_pcr_current(
         &submitter,
         &http,
         signer.as_ref(),
-        account.full_id(),
+        account.did(),
         device_id.as_str(),
         realm_id.as_str(),
         state_store,
@@ -326,7 +326,7 @@ pub(crate) async fn bootstrap_provisioned_agent(
         .ok_or_else(|| anyhow::anyhow!("active controller signer is unavailable"))?;
     let signer_account_scope = crate::secure_key_store::active_device_seed_scope();
     let device_id = controller_signer_device_id(
-        account.full_id(),
+        account.did(),
         &account.authority,
         signer.as_ref(),
         signer_account_scope.as_ref(),
@@ -353,7 +353,7 @@ pub(crate) async fn bootstrap_provisioned_agent(
         &submitter,
         &http,
         signer.as_ref(),
-        account.full_id(),
+        account.did(),
         device_id.as_str(),
         realm_id,
         state_store,
@@ -409,7 +409,7 @@ pub(crate) async fn bootstrap_provisioned_agent(
             &submitter,
             &http,
             signer.as_ref(),
-            account.full_id(),
+            account.did(),
             device_id.as_str(),
             realm_id,
             state_store,
@@ -499,7 +499,7 @@ pub(crate) async fn bootstrap_provisioned_agent(
             &submitter,
             &http,
             signer.as_ref(),
-            account.full_id(),
+            account.did(),
             device_id.as_str(),
             realm_id,
             state_store,
@@ -527,12 +527,12 @@ mod tests {
 
     const TEST_DEVICE_ID: &str = "ak:device:01964137-0000-7000-8000-000000000001";
 
-    fn controller(full_id: &str) -> (arkret_sdk::DidFullId, arkret_sdk::PrincipalAuthorityKey) {
-        let full_id = arkret_sdk::DidFullId::new(full_id.to_owned()).unwrap();
-        let principal_id = arkret_sdk::project_full_id_to_core_id(&full_id).unwrap();
+    fn controller(did: &str) -> (arkret_sdk::Did, arkret_sdk::PrincipalAuthorityKey) {
+        let did = arkret_sdk::Did::new(did.to_owned()).unwrap();
+        let principal_id = arkret_sdk::project_did_to_core_id(&did).unwrap();
         let server_id = arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap();
         (
-            full_id,
+            did,
             arkret_sdk::PrincipalAuthorityKey::new(principal_id, server_id),
         )
     }

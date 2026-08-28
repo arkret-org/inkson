@@ -547,8 +547,8 @@ fn build_mls_welcome_payload_with_requester(
         } => {
             let pairwise_actor_id = crate::mls_api_helpers::principal_core_id(actor_id)
                 .map_err(|error| format!("invalid pairwise requester actor id: {error}"))?;
-            let expected_controller = arkret_sdk::project_full_id_to_core_id(
-                &arkret_sdk::DidFullId::new(
+            let expected_controller = arkret_sdk::project_did_to_core_id(
+                &arkret_sdk::Did::new(
                     verification_method
                         .as_str()
                         .split('#')
@@ -765,16 +765,16 @@ fn sign_welcome_claim_envelope(
         None => crate::event_signer::bootstrap_default_signer("inkson")
             .map_err(|err| format!("MLS Welcome device signer bootstrap: {err}"))?,
     };
-    let signer_full_id = arkret_sdk::DidFullId::new(signer.signer_did().to_owned())
-        .map_err(|err| format!("MLS Welcome signer full DID: {err}"))?;
-    let signer_actor_id = arkret_sdk::project_full_id_to_core_id(&signer_full_id)
+    let signer_did = arkret_sdk::Did::new(signer.signer_did().to_owned())
+        .map_err(|err| format!("MLS Welcome signer DID: {err}"))?;
+    let signer_actor_id = arkret_sdk::project_did_to_core_id(&signer_did)
         .map_err(|err| format!("MLS Welcome signer actor projection: {err}"))?;
     if signer_actor_id.as_str() != actor_id {
         return Err(
-            "MLS Welcome active signer full DID does not project to requester_actor_id".to_owned(),
+            "MLS Welcome active signer DID does not project to requester_actor_id".to_owned(),
         );
     }
-    let expected_kid = format!("{signer_full_id}#{sender_device_id}");
+    let expected_kid = format!("{signer_did}#{sender_device_id}");
     if signer.verification_method() != expected_kid {
         return Err(
             "MLS Welcome active signer verification method is not the exact requester device method"
@@ -1028,13 +1028,13 @@ mod tests {
     #[test]
     fn welcome_signature_uses_active_device_signer() {
         let actor = "ak:did_core:web:alice.example";
-        let actor_full_id = "did:web:alice.example";
+        let actor_did = "did:web:alice.example";
         let device = "ak:device:01904100-0000-7000-8000-0000000000a1";
-        let verification_method = format!("{actor_full_id}#{device}");
+        let verification_method = format!("{actor_did}#{device}");
         let active_signer = std::sync::Arc::new(
             crate::event_signer::build_ed25519_signer_with_verification_method(
                 [7u8; 32],
-                actor_full_id,
+                actor_did,
                 verification_method.clone(),
             ),
         );

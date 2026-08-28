@@ -835,7 +835,7 @@ mod tests {
         profile: &str,
         principal: &str,
         service: &str,
-        full_id: &str,
+        did: &str,
         device: &str,
         route: &str,
     ) -> ActiveAccountContext {
@@ -846,7 +846,7 @@ mod tests {
                 arkret_sdk::DidCoreId::new(service.to_owned()).unwrap(),
             ),
             arkret_sdk::PrincipalResolutionProjection {
-                full_id: arkret_sdk::DidFullId::new(full_id.to_owned()).unwrap(),
+                did: arkret_sdk::Did::new(did.to_owned()).unwrap(),
                 method_history_head: "head-1".to_owned(),
                 version_id: "1".to_owned(),
                 resolution_event_ref: format!("ak:event:{}", "A".repeat(44)),
@@ -890,10 +890,8 @@ mod tests {
 
         let mut relocated = first;
         relocated.resolution = arkret_sdk::PrincipalResolutionProjection {
-            full_id: arkret_sdk::DidFullId::new(
-                "did:webvh:zAlice:new.example:people:alice".to_owned(),
-            )
-            .unwrap(),
+            did: arkret_sdk::Did::new("did:webvh:zAlice:new.example:people:alice".to_owned())
+                .unwrap(),
             method_history_head: "head-2".to_owned(),
             version_id: "2".to_owned(),
             resolution_event_ref: format!("ak:event:{}", "B".repeat(44)),

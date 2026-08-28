@@ -40,8 +40,8 @@ pub(super) fn test_authority_at_server(
     principal_server: &str,
 ) -> arkret_sdk::PrincipalAuthorityKey {
     let principal_id = arkret_sdk::DidCoreId::new(principal.to_owned()).unwrap_or_else(|_| {
-        let full_id = arkret_sdk::DidFullId::new(principal.to_owned()).expect("full principal DID");
-        arkret_sdk::project_full_id_to_core_id(&full_id).expect("principal core projection")
+        let did = arkret_sdk::Did::new(principal.to_owned()).expect("principal DID");
+        arkret_sdk::project_did_to_core_id(&did).expect("principal core projection")
     });
     arkret_sdk::PrincipalAuthorityKey::new(
         principal_id,
@@ -60,22 +60,20 @@ pub(super) fn test_device_id() -> arkret_sdk::DeviceId {
     arkret_sdk::DeviceId::new("ak:device:01964137-0000-7000-8000-000000000001".to_owned()).unwrap()
 }
 
-pub(super) fn test_account_context(
-    full_id: &arkret_sdk::DidFullId,
-) -> crate::config::ActiveAccountContext {
-    let authority = test_authority(full_id.as_str());
-    test_account_context_for_authority(full_id, authority)
+pub(super) fn test_account_context(did: &arkret_sdk::Did) -> crate::config::ActiveAccountContext {
+    let authority = test_authority(did.as_str());
+    test_account_context_for_authority(did, authority)
 }
 
 pub(super) fn test_account_context_for_authority(
-    full_id: &arkret_sdk::DidFullId,
+    did: &arkret_sdk::Did,
     authority: arkret_sdk::PrincipalAuthorityKey,
 ) -> crate::config::ActiveAccountContext {
     crate::config::ActiveAccountContext::new(
         test_profile_id(&authority),
         authority,
         arkret_sdk::PrincipalResolutionProjection {
-            full_id: full_id.clone(),
+            did: did.clone(),
             method_history_head: "test-head".to_owned(),
             version_id: "test-version".to_owned(),
             resolution_event_ref: "test-event".to_owned(),
@@ -92,8 +90,8 @@ impl LocalStateStore {
         if principal == crate::state::ANONYMOUS_ACCOUNT_NAMESPACE {
             return false;
         }
-        let full_id = arkret_sdk::DidFullId::new(principal.to_owned()).unwrap();
-        let account = test_account_context(&full_id);
+        let did = arkret_sdk::Did::new(principal.to_owned()).unwrap();
+        let account = test_account_context(&did);
         let was_known = self
             .known_profile_id_for_authority(&account.authority)
             .is_some();
@@ -102,7 +100,7 @@ impl LocalStateStore {
     }
 
     pub(super) fn primary_handle_for_test_principal(&self, principal: &str) -> Option<String> {
-        self.primary_handle_for_did(principal)
+        self.primary_handle_for_principal_id(principal)
     }
 
     pub(super) fn begin_test_pending_login(&mut self, device_id: &str, dpop_jkt: Option<&str>) {

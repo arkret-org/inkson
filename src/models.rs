@@ -20,7 +20,7 @@ pub struct CurrentAccount {
     ///
     /// This is deliberately typed as a core id: the account viewer does not
     /// return resolution material and callers must not persist this value as a
-    /// full DID or bind an Event signer to it.
+    /// DID or bind an Event signer to it.
     pub principal_id: arkret_sdk::DidCoreId,
     #[serde(default)]
     pub handle: String,
@@ -483,7 +483,7 @@ mod tests {
     #[test]
     fn operation_support_comes_only_from_registered_bundle_membership() {
         let description = arkret_sdk::ServiceDescribe::development(
-            arkret_sdk::DidFullId::new("did:webvh:z6mkfixture:service.example").unwrap(),
+            arkret_sdk::Did::new("did:webvh:z6mkfixture:service.example").unwrap(),
             arkret_sdk::TrustDomainId::new("ak:trust_domain:example.net").unwrap(),
             arkret_sdk::ServiceKind::PrincipalServer,
             vec![
@@ -501,7 +501,7 @@ mod tests {
         ));
 
         let unrelated = arkret_sdk::ServiceDescribe::development(
-            arkret_sdk::DidFullId::new("did:webvh:z6mkfixture:service.example").unwrap(),
+            arkret_sdk::Did::new("did:webvh:z6mkfixture:service.example").unwrap(),
             arkret_sdk::TrustDomainId::new("ak:trust_domain:example.net").unwrap(),
             arkret_sdk::ServiceKind::PrincipalServer,
             vec![
@@ -789,7 +789,7 @@ pub use arkret_models_collaboration::governance::authorization::AuthzInviteList;
 pub use arkret_models_collaboration::governance::authorization::GrantList;
 /// `POST /_arkret/self/moderation/report` response. soland emits the SDK
 /// `ModerationReportOutcome` wire shape verbatim (`status: "submitted"`,
-/// `routed_to: Vec<DidFullId>` — scalar DIDs only, no fragments, per
+/// `routed_to: Vec<Did>` — scalar DIDs only, no fragments, per
 /// `service-operation-dtos.schema.json#/$defs/ModerationReportOutcome`).
 pub use arkret_models_collaboration::governance::moderation::ModerationReportOutcome;
 pub use arkret_models_collaboration::objects::blob::BlobUploadOutcome;
@@ -804,21 +804,9 @@ pub use arkret_models_integration::models_push::PushRegisterDeviceOutcome;
 // ── Directory ───────────────────────────────────────────────────
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct DirectoryDidDocumentJson(pub Value);
-
-impl std::fmt::Display for DirectoryDidDocumentJson {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ResolveHandleView {
-    #[serde(default)]
-    pub did: String,
+    pub principal_id: arkret_sdk::DidCoreId,
     pub handle: String,
-    pub did_document: Option<DirectoryDidDocumentJson>,
     #[serde(default)]
     pub verified: bool,
     #[serde(default)]
@@ -852,15 +840,8 @@ pub struct ResolveHandleView {
 }
 
 impl ResolveHandleView {
-    pub fn subject_did(&self) -> Option<&str> {
-        (!self.did.trim().is_empty())
-            .then_some(self.did.as_str())
-            .or_else(|| {
-                self.handle_claim
-                    .as_ref()
-                    .and_then(|claim| claim.subject.as_ref())
-                    .map(|subject| subject.as_str())
-            })
+    pub fn subject_id(&self) -> &arkret_sdk::DidCoreId {
+        &self.principal_id
     }
 
     pub fn member_delivery_binding_ref(
@@ -876,13 +857,9 @@ impl ResolveHandleView {
 
 impl From<arkret_models_discovery::DirectoryHandleResolutionOutcome> for ResolveHandleView {
     fn from(outcome: arkret_models_discovery::DirectoryHandleResolutionOutcome) -> Self {
-        // The server-side `DirectoryHandleResolutionOutcome` has no
-        // `did_document` field (this resolve endpoint never emits one), so it
-        // is always `None` here — behavior-equivalent to the prior wire decode.
         Self {
-            did: outcome.principal_id.as_str().to_owned(),
+            principal_id: outcome.principal_id,
             handle: outcome.handle,
-            did_document: None,
             verified: outcome.verified,
             claims: outcome.claims,
             audience: outcome.audience,
@@ -905,7 +882,7 @@ impl From<arkret_models_discovery::DirectoryHandleResolutionOutcome> for Resolve
 ///
 /// YOU-05-006: the former hand-rolled weakly-typed mirror (all-`String`
 /// fields) duplicated the SDK's authoritative strongly-typed model
-/// (`DidFullId` / `Handle` / `DateTime<Utc>`) and had already drifted in field
+/// (`Did` / `Handle` / `DateTime<Utc>`) and had already drifted in field
 /// declaration order. Re-export the SDK type; `subject_id` (principal
 /// DID) remains the ONLY authoritative field — the `*_at_time` fields
 /// are compose-time audit metadata only.

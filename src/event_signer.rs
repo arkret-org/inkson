@@ -52,7 +52,7 @@ use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex, OnceLock};
 
 use arkret_sdk::signatures::proof::EventSigner as SdkEventSigner;
-use arkret_sdk::{DidFullId, DidUrl, Hash, PayloadSigner, WireError};
+use arkret_sdk::{Did, DidUrl, Hash, PayloadSigner, WireError};
 use arkret_wire::PayloadSignature;
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -193,7 +193,7 @@ pub struct InksonEventSigner {
 
 struct InksonPayloadSignerAdapter<'a> {
     owner: &'a InksonEventSigner,
-    did: DidFullId,
+    did: Did,
     /// Typed DID URL: `arkret_wire::PayloadSigner::verification_method_id`
     /// returns `&DidUrl`, so the adapter owns the validated form rather than
     /// re-parsing a `String` on every call.
@@ -201,7 +201,7 @@ struct InksonPayloadSignerAdapter<'a> {
 }
 
 impl PayloadSigner for InksonPayloadSignerAdapter<'_> {
-    fn signer_did(&self) -> &DidFullId {
+    fn signer_did(&self) -> &Did {
         &self.did
     }
 
@@ -257,12 +257,12 @@ impl PayloadSigner for InksonPayloadSignerAdapter<'_> {
 /// profile from silently inheriting the other one's header shape.
 struct InksonSealSignerAdapter<'a> {
     owner: &'a InksonEventSigner,
-    did: DidFullId,
+    did: Did,
     verification_method: DidUrl,
 }
 
 impl PayloadSigner for InksonSealSignerAdapter<'_> {
-    fn signer_did(&self) -> &DidFullId {
+    fn signer_did(&self) -> &Did {
         &self.did
     }
 
@@ -310,20 +310,17 @@ impl std::fmt::Debug for InksonEventSigner {
 }
 
 impl InksonEventSigner {
-    fn full_id_for_actor(
-        &self,
-        actor_id: &arkret_sdk::DidCoreId,
-    ) -> Result<DidFullId, EventSignerError> {
-        let full_id = DidFullId::new(self.signer_did.clone())
+    fn did_for_actor(&self, actor_id: &arkret_sdk::DidCoreId) -> Result<Did, EventSignerError> {
+        let did = Did::new(self.signer_did.clone())
             .map_err(|error| EventSignerError::Encoding(error.to_string()))?;
-        let projected = arkret_sdk::project_full_id_to_core_id(&full_id)
+        let projected = arkret_sdk::project_did_to_core_id(&did)
             .map_err(|error| EventSignerError::Encoding(error.to_string()))?;
         if &projected != actor_id {
             return Err(EventSignerError::Encoding(
-                "active signer full_id does not project to Event actor_id".to_owned(),
+                "active signer did does not project to Event actor_id".to_owned(),
             ));
         }
-        Ok(full_id)
+        Ok(did)
     }
 
     /// Wrap an arbitrary SDK [`SdkEventSigner`] (HSM, WebAuthn,
@@ -421,12 +418,12 @@ impl InksonEventSigner {
     /// identity, not the local key DID.
     pub(crate) fn payload_signer_adapter_for_principal(
         &self,
-        principal_id: &DidFullId,
+        principal_did: &Did,
     ) -> Result<impl PayloadSigner + '_, EventSignerError> {
-        let verification_method = self.verification_method_for_principal(principal_id)?;
+        let verification_method = self.verification_method_for_principal(principal_did)?;
         Ok(InksonPayloadSignerAdapter {
             owner: self,
-            did: principal_id.clone(),
+            did: principal_did.clone(),
             verification_method,
         })
     }
@@ -437,16 +434,16 @@ impl InksonEventSigner {
     /// real error, not a case to paper over with a `String`.
     pub(crate) fn verification_method_for_principal(
         &self,
-        principal_id: &DidFullId,
+        principal_did: &Did,
     ) -> Result<DidUrl, EventSignerError> {
         let raw = match self.device_id.as_deref() {
-            Some(device_id) => format!("{principal_id}#{device_id}"),
-            None if self.signer_did == principal_id.as_str() => {
+            Some(device_id) => format!("{principal_did}#{device_id}"),
+            None if self.signer_did == principal_did.as_str() => {
                 self.verification_method.as_str().to_owned()
             }
             None => {
                 return Err(EventSignerError::Encoding(format!(
-                    "principal-bound signing for {principal_id} requires a bound device_id"
+                    "principal-bound signing for {principal_did} requires a bound device_id"
                 )));
             }
         };
@@ -518,7 +515,7 @@ impl InksonEventSigner {
             .transpose()?;
         let signer = InksonPayloadSignerAdapter {
             owner: self,
-            did: DidFullId::new(self.signer_did.clone())
+            did: Did::new(self.signer_did.clone())
                 .map_err(|error| EventSignerError::Encoding(error.to_string()))?,
             verification_method: verification_method.clone(),
         };
@@ -558,7 +555,7 @@ impl InksonEventSigner {
         })?;
         let signer = InksonSealSignerAdapter {
             owner: self,
-            did: self.full_id_for_actor(&create.actor_id)?,
+            did: self.did_for_actor(&create.actor_id)?,
             verification_method: DidUrl::new(format!("{}#{device_id}", self.signer_did))
                 .map_err(|error| EventSignerError::Encoding(error.to_string()))?,
         };
@@ -591,7 +588,7 @@ impl InksonEventSigner {
         })?;
         let signer = InksonSealSignerAdapter {
             owner: self,
-            did: self.full_id_for_actor(&create.actor_id)?,
+            did: self.did_for_actor(&create.actor_id)?,
             verification_method: DidUrl::new(format!("{}#{device_id}", self.signer_did))
                 .map_err(|error| EventSignerError::Encoding(error.to_string()))?,
         };
@@ -627,7 +624,7 @@ impl InksonEventSigner {
         })?;
         let signer = InksonSealSignerAdapter {
             owner: self,
-            did: self.full_id_for_actor(&principal.actor_id)?,
+            did: self.did_for_actor(&principal.actor_id)?,
             verification_method: DidUrl::new(format!("{}#{device_id}", self.signer_did))
                 .map_err(|error| EventSignerError::Encoding(error.to_string()))?,
         };
@@ -647,7 +644,7 @@ impl InksonEventSigner {
     /// controller DID and the authenticated `<controller>#<device_id>` method.
     pub fn sign_managed_agent_pcr_event_seal(
         &self,
-        controller_id: &arkret_sdk::DidFullId,
+        controller_id: &arkret_sdk::Did,
         events: &[arkret_sdk::Event],
         predecessor: Option<&arkret_sdk::Seal>,
         availability: Option<&arkret_sdk::SealAvailabilityReceiptIssueOutcome>,
@@ -731,13 +728,13 @@ impl InksonEventSigner {
         event: &arkret_sdk::Event,
     ) -> Result<DidUrl, EventSignerError> {
         // Event actors are canonical core ids, while a proof verification
-        // method is necessarily a full DID URL. Recover only the
-        // already-installed signer's exact full id and prove that it projects
+        // method is necessarily a DID URL. Recover only the
+        // already-installed signer's exact DID and prove that it projects
         // to the authoring principal (`executed_by ?? actor_id`); never treat
-        // the core id in `executed_by` as a full DID or resolve a generic
+        // the core id in `executed_by` as a DID or resolve a generic
         // "current" DID from it.
         let authoring_principal = event.executed_by.as_ref().unwrap_or(&event.actor_id);
-        let controller = self.full_id_for_actor(authoring_principal)?;
+        let controller = self.did_for_actor(authoring_principal)?;
         let raw = if let Some(device_id) = self.device_id.as_deref() {
             format!("{controller}#{device_id}")
         } else {
@@ -939,7 +936,7 @@ pub fn bind_active_signer_device_id(
 /// Event and Seal proofs must name `<principal>#<device_id>` while continuing
 /// to use that same key material.
 pub fn bind_active_signer_principal_device_id(
-    principal_id: &DidFullId,
+    principal_did: &Did,
     device_id: &str,
 ) -> Result<Option<Arc<InksonEventSigner>>, anyhow::Error> {
     let Some(active) = active_signer() else {
@@ -952,8 +949,8 @@ pub fn bind_active_signer_principal_device_id(
     };
     arkret_sdk::DeviceId::new(device_id.clone())
         .map_err(|err| anyhow::anyhow!("invalid device_id for event signer: {err}"))?;
-    let signer_did = principal_id.to_string();
-    let verification_method = format!("{principal_id}#{device_id}");
+    let signer_did = principal_did.to_string();
+    let verification_method = format!("{principal_did}#{device_id}");
     DidUrl::new(verification_method.clone())
         .map_err(|err| anyhow::anyhow!("invalid principal verification method: {err}"))?;
     if active.signer_did == signer_did
@@ -1298,7 +1295,7 @@ mod tests {
         let _g = reset();
         let signer =
             build_ed25519_device_signer([19u8; 32], "did:key:zlocal-device-key", TEST_DEVICE_ID);
-        let controller = DidFullId::new("did:web:controller.example").unwrap();
+        let controller = Did::new("did:web:controller.example").unwrap();
 
         let adapter = signer
             .payload_signer_adapter_for_principal(&controller)
@@ -1321,7 +1318,7 @@ mod tests {
         ));
         let public_key = local.public_key_multibase();
         install_active_signer(local);
-        let principal = DidFullId::new("did:web:principal.example").unwrap();
+        let principal = Did::new("did:web:principal.example").unwrap();
 
         let rebound = bind_active_signer_principal_device_id(&principal, TEST_DEVICE_ID)
             .unwrap()
@@ -1419,8 +1416,7 @@ mod tests {
     #[test]
     fn seal_signer_binds_and_verifies_the_frozen_descriptor_kid() {
         let seed = [21_u8; 32];
-        let principal =
-            DidFullId::new("did:webvh:z6mkfixture:principal.example".to_owned()).unwrap();
+        let principal = Did::new("did:webvh:z6mkfixture:principal.example".to_owned()).unwrap();
         let verification_method = DidUrl::new(format!("{principal}#{TEST_DEVICE_ID}")).unwrap();
         let owner = build_ed25519_device_signer(seed, principal.as_str(), TEST_DEVICE_ID);
         let signer = InksonSealSignerAdapter {
@@ -1433,7 +1429,7 @@ mod tests {
             signer.sign_payload(canonical_body).unwrap().into();
         let public_key = SigningKey::from_bytes(&seed).verifying_key().to_bytes();
         let descriptor = arkret_sdk::NotarySignerDescriptor {
-            actor_id: arkret_sdk::project_full_id_to_core_id(&principal).unwrap(),
+            actor_id: arkret_sdk::project_did_to_core_id(&principal).unwrap(),
             verification_method,
             key_kind: arkret_sdk::NotaryKeyKind::Ed25519Raw32,
             jose_algorithm: arkret_sdk::NotaryJoseAlgorithm::Ed25519,
@@ -1502,7 +1498,7 @@ mod tests {
     }
 
     #[test]
-    fn sign_delegated_event_roots_proof_in_executor_full_did() {
+    fn sign_delegated_event_roots_proof_in_executor_did() {
         let _g = reset();
         let signer =
             build_ed25519_device_signer([9u8; 32], "did:web:controller.example", TEST_DEVICE_ID);
@@ -1525,7 +1521,7 @@ mod tests {
 
         signer
             .sign_envelope(&mut event)
-            .expect("delegated Event signs through the controller's full DID");
+            .expect("delegated Event signs through the controller's DID");
 
         assert_eq!(
             producer_proof(&event).verification_method,

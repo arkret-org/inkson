@@ -504,7 +504,7 @@ fn device_authorization_probe_from_account_viewer(
 /// device bootstrap, while every later or key-mismatched device must use the
 /// user-approved pairing/recovery flow from key-management.md §5.1.
 pub(super) async fn probe_device_authorization(
-    actor: &arkret_sdk::DidFullId,
+    actor: &arkret_sdk::Did,
     device: &str,
     principal_api: &TransportClient,
     did_cache: arkret_sdk::identity::DidResolutionCache,
@@ -530,7 +530,7 @@ pub(super) async fn probe_device_authorization(
 /// accepted device through the founding enrollment endpoint.
 async fn current_event_signer_matches_directory(
     principal_api: &TransportClient,
-    actor: &arkret_sdk::DidFullId,
+    actor: &arkret_sdk::Did,
     device: &str,
     did_cache: arkret_sdk::identity::DidResolutionCache,
 ) -> anyhow::Result<bool> {
@@ -539,12 +539,12 @@ async fn current_event_signer_matches_directory(
         None => crate::event_signer::bootstrap_default_signer("inkson")
             .map_err(|error| anyhow::anyhow!("bootstrap device signer: {error}"))?,
     };
-    let actor_id = arkret_sdk::project_full_id_to_core_id(actor)?;
+    let actor_id = arkret_sdk::project_did_to_core_id(actor)?;
     let signer = crate::event_signer::bind_active_signer_device_id(device)
         .map_err(|error| anyhow::anyhow!("bind event signer device: {error}"))?
         .unwrap_or(signer);
-    let signer_full_id = arkret_sdk::DidFullId::new(signer.signer_did().to_owned())?;
-    if arkret_sdk::project_full_id_to_core_id(&signer_full_id)? != actor_id {
+    let signer_did = arkret_sdk::Did::new(signer.signer_did().to_owned())?;
+    if arkret_sdk::project_did_to_core_id(&signer_did)? != actor_id {
         return Ok(false);
     }
     let Some(public_key) = signer.public_key_multibase() else {
@@ -1021,8 +1021,8 @@ pub(super) fn connect(
                     canonical_actor_hint.trim().to_owned(),
                 )
                 .or_else(|_| {
-                    let full = arkret_sdk::DidFullId::new(canonical_actor_hint.trim().to_owned())?;
-                    arkret_sdk::project_full_id_to_core_id(&full)
+                    let did = arkret_sdk::Did::new(canonical_actor_hint.trim().to_owned())?;
+                    arkret_sdk::project_did_to_core_id(&did)
                 });
                 let Ok(canonical_principal_id) = canonical_principal_id else {
                     invalidate_bootstrap_session(
@@ -1072,7 +1072,7 @@ pub(super) fn connect(
                     );
                     return;
                 }
-                let canonical_actor = accepted_account.full_id().to_string();
+                let canonical_actor = accepted_account.did().to_string();
                 let canonical_runtime_principal = Some(canonical_principal_id.clone());
                 let mut profiles = config_store.read().load_profiles();
                 let profile_id =
@@ -1302,7 +1302,7 @@ pub(super) fn connect(
                     &session,
                     bootstrap_session_generation,
                     probe_device_authorization(
-                        accepted_account.full_id(),
+                        accepted_account.did(),
                         &device,
                         &authed,
                         ctx.did_cache.peek().clone(),
@@ -1346,7 +1346,7 @@ pub(super) fn connect(
                                         &session,
                                         bootstrap_session_generation,
                                         probe_device_authorization(
-                                            accepted_account.full_id(),
+                                            accepted_account.did(),
                                             &device,
                                             &authed,
                                             ctx.did_cache.peek().clone(),

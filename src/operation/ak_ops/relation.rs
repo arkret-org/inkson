@@ -41,15 +41,15 @@ pub(crate) fn relation_create_payload(
 }
 
 /// `created_by` carries a `did_core_id` (`zh/models/common-fields.md` §4.1).
-/// Callers hand this module whichever spelling they hold, so a full `did:` URI
+/// Callers hand this module whichever spelling they hold, so a `did:` URI
 /// is projected through the registered adapter rather than rejected.
 fn actor_core_id(actor: &str) -> anyhow::Result<arkret_sdk::DidCoreId> {
     if let Ok(core) = arkret_sdk::DidCoreId::new(actor.to_owned()) {
         return Ok(core);
     }
-    let full = arkret_sdk::DidFullId::new(actor.to_owned())
+    let did = arkret_sdk::Did::new(actor.to_owned())
         .map_err(|err| anyhow::anyhow!("invalid actor id {actor:?}: {err:?}"))?;
-    arkret_sdk::project_full_id_to_core_id(&full)
+    arkret_sdk::project_did_to_core_id(&did)
         .map_err(|err| anyhow::anyhow!("invalid actor id {actor:?}: {err:?}"))
 }
 

@@ -7,20 +7,20 @@ fn test_client_config(
     credential: impl Into<String>,
 ) -> ClientConfig {
     let principal = principal.as_ref();
-    let full = if let Some(rest) = principal.strip_prefix("ak:did_core:web:") {
-        arkret_sdk::DidFullId::new(format!("did:web:{rest}")).unwrap()
+    let did = if let Some(rest) = principal.strip_prefix("ak:did_core:web:") {
+        arkret_sdk::Did::new(format!("did:web:{rest}")).unwrap()
     } else {
-        arkret_sdk::DidFullId::new(principal.to_owned()).unwrap()
+        arkret_sdk::Did::new(principal.to_owned()).unwrap()
     };
     let authority = arkret_sdk::PrincipalAuthorityKey::new(
-        arkret_sdk::project_full_id_to_core_id(&full).unwrap(),
+        arkret_sdk::project_did_to_core_id(&did).unwrap(),
         arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example".to_owned()).unwrap(),
     );
     let account = crate::identity::active_account::ActiveAccountContext::new(
         "ak:profile:019b0000-0000-7000-8000-000000000001".to_owned(),
         authority,
         arkret_sdk::PrincipalResolutionProjection {
-            full_id: full,
+            did,
             method_history_head: "head-1".to_owned(),
             version_id: "1".to_owned(),
             resolution_event_ref: format!("ak:event:{}", "A".repeat(44)),
@@ -786,7 +786,7 @@ fn boot_state_waits_for_secure_store_before_auth_state_is_known() {
         "ak:device:01964137-0000-7000-8000-000000000001",
     );
     assert_eq!(
-        session_boot_state_from_bootstrap_material("", false, account.full_id().as_str(), false),
+        session_boot_state_from_bootstrap_material("", false, account.did().as_str(), false),
         SessionBootState::Restoring
     );
     assert_eq!(
@@ -794,16 +794,11 @@ fn boot_state_waits_for_secure_store_before_auth_state_is_known() {
         SessionBootState::Restoring
     );
     assert_eq!(
-        session_boot_state_from_bootstrap_material("", false, account.full_id().as_str(), true),
+        session_boot_state_from_bootstrap_material("", false, account.did().as_str(), true),
         SessionBootState::Unauthenticated
     );
     assert_eq!(
-        session_boot_state_from_bootstrap_material(
-            "sx-live",
-            false,
-            account.full_id().as_str(),
-            false,
-        ),
+        session_boot_state_from_bootstrap_material("sx-live", false, account.did().as_str(), false,),
         SessionBootState::Checking
     );
 }
@@ -857,10 +852,8 @@ fn rehydrated_session_credential_only_matches_active_config() {
     let mut successor = predecessor.clone();
     successor
         .update_resolution(arkret_sdk::PrincipalResolutionProjection {
-            full_id: arkret_sdk::DidFullId::new(
-                "did:webvh:zAlice:new.example:people:alice".to_owned(),
-            )
-            .unwrap(),
+            did: arkret_sdk::Did::new("did:webvh:zAlice:new.example:people:alice".to_owned())
+                .unwrap(),
             method_history_head: "head-2".to_owned(),
             version_id: "2".to_owned(),
             resolution_event_ref: format!("ak:event:{}", "B".repeat(44)),
@@ -966,11 +959,11 @@ fn session_boot_state_leaves_restoring_when_secure_store_is_ready_without_materi
         "ak:device:01964137-0000-7000-8000-000000000001",
     );
     assert_eq!(
-        session_boot_state_from_bootstrap_material("", false, account.full_id().as_str(), false,),
+        session_boot_state_from_bootstrap_material("", false, account.did().as_str(), false,),
         SessionBootState::Restoring
     );
     assert_eq!(
-        session_boot_state_from_bootstrap_material("", false, account.full_id().as_str(), true),
+        session_boot_state_from_bootstrap_material("", false, account.did().as_str(), true),
         SessionBootState::Unauthenticated
     );
     assert_eq!(
@@ -1104,8 +1097,8 @@ fn bootstrap_account_coordinates() -> (
     arkret_sdk::PrincipalAuthorityKey,
     arkret_sdk::DeviceId,
 ) {
-    let full_id = arkret_sdk::DidFullId::new("did:web:inkson.example".to_owned()).unwrap();
-    let principal_id = arkret_sdk::project_full_id_to_core_id(&full_id).unwrap();
+    let did = arkret_sdk::Did::new("did:web:inkson.example".to_owned()).unwrap();
+    let principal_id = arkret_sdk::project_did_to_core_id(&did).unwrap();
     (
         url::Url::parse("http://localhost:8080").unwrap(),
         arkret_sdk::PrincipalAuthorityKey::new(

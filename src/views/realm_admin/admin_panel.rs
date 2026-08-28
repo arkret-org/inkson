@@ -1437,7 +1437,7 @@ pub fn RealmAdminPanel(
                                     status_msg.set("rotate failed: active account context is unavailable".to_owned());
                                     return;
                                 };
-                                if account.full_id().as_str() != actor_id
+                                if account.did().as_str() != actor_id
                                     || account.device_id.as_str() != device
                                 {
                                     status_msg.set("rotate failed: active account authority changed".to_owned());

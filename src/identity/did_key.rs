@@ -19,7 +19,7 @@ pub fn encode_x25519_multibase(public_key: &[u8]) -> String {
     arkret_sdk::encode_multibase_base58btc(bytes)
 }
 
-/// Compose a full `did:key` DID URL from a verifying key
+/// Compose a `did:key` DID URL from a verifying key
 /// (`did:key:z<...>`).
 pub fn did_key_from_verifying_key(verifying_key: &VerifyingKey) -> String {
     format!(

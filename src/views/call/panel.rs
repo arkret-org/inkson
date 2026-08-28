@@ -77,7 +77,9 @@ pub fn CallPanel(
     let mut call_seq = use_signal(|| 0_u64);
     let mut active_realm = use_signal(|| selected_realm_id.clone());
     let mut peer_input = use_signal(|| peer.clone());
-    let mut group_input = use_signal(|| "did:web:bob.example\ndid:web:carol.example".to_owned());
+    let mut group_input = use_signal(|| {
+        "ak:did_core:web:bob.example\nak:did_core:web:carol.example".to_owned()
+    });
     let mut want_video_signal = use_signal(|| want_video);
     let mut media_plaintext_confirmed = use_signal(|| false);
 
@@ -271,7 +273,7 @@ pub fn CallPanel(
                     None => existing_call,
                 };
                 let (
-                    media_dids,
+                    media_service_ids,
                     focus_id,
                     known_actor_devices,
                     known_participant_identities,
@@ -282,9 +284,9 @@ pub fn CallPanel(
                 ) = {
                     let store = state_store.read();
                     let snapshot = store.load();
-                    let (media_dids, focus_id) = media_service_selection(&snapshot, &realm_id);
+                    let (media_service_ids, focus_id) = media_service_selection(&snapshot, &realm_id);
                     (
-                        media_dids,
+                        media_service_ids,
                         focus_id,
                         call_state_participant_actor_device_map(&snapshot, &realm_id, &call),
                         call_state_participant_identities(&snapshot, &realm_id, &call),
@@ -321,7 +323,7 @@ pub fn CallPanel(
                 // token exchange never runs with unverified or empty routes.
                 let verified_media_routes =
                     match crate::media::service_route::evaluate_media_routes(
-                        &media_dids,
+                        &media_service_ids,
                         &route_origins,
                     )
                     .await
@@ -350,7 +352,7 @@ pub fn CallPanel(
                     } else {
                         DesiredMedia::audio_only()
                     },
-                    media_service_ids: media_dids,
+                    media_service_ids: media_service_ids,
                     verified_media_routes,
                     governance_evidence,
                 };
@@ -600,7 +602,7 @@ pub fn CallPanel(
                             class: "input",
                             "data-testid": "call-peer-input",
                             value: "{peer_input}",
-                            placeholder: "did:web:bob.example",
+                            placeholder: "ak:did_core:web:bob.example",
                             oninput: move |e| peer_input.set(e.value()),
                         }
                         label { "Group participants (SFU)" }
@@ -735,7 +737,7 @@ pub fn CallPanel(
                                             return;
                                         };
                                         let (
-                                            media_dids,
+                                            media_service_ids,
                                             focus_id,
                                             known_participant_identities,
                                             known_participant_devices,
@@ -745,10 +747,10 @@ pub fn CallPanel(
                                         ) = {
                                             let store = state_store.read();
                                             let snapshot = store.load();
-                                            let (media_dids, focus_id) =
+                                            let (media_service_ids, focus_id) =
                                                 media_service_selection(&snapshot, &realm_id);
                                             (
-                                                media_dids,
+                                                media_service_ids,
                                                 focus_id,
                                                 call_state_participant_identities(
                                                     &snapshot, &realm_id, &call,
@@ -775,7 +777,7 @@ pub fn CallPanel(
                                             // fail-closed gate as the outgoing path.
                                             let verified_media_routes =
                                                 match crate::media::service_route::evaluate_media_routes(
-                                                    &media_dids,
+                                                    &media_service_ids,
                                                     &route_origins,
                                                 )
                                                 .await
@@ -797,7 +799,7 @@ pub fn CallPanel(
                                                 focus_id: focus_id.clone(),
                                                 epoch_id: 0,
                                                 desired_media: if want_video { DesiredMedia::audio_video() } else { DesiredMedia::audio_only() },
-                                                media_service_ids: media_dids,
+                                                media_service_ids: media_service_ids,
                                                 verified_media_routes,
                                                 governance_evidence,
                                             };

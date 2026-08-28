@@ -73,8 +73,8 @@ pub struct PersistedOidcScaffold {
     /// obtains a server-authoritative handoff and compares this candidate only
     /// after that handoff reports `Bound`.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub expected_principal_full_id: Option<arkret_sdk::DidFullId>,
-    /// Durable device belonging to [`Self::expected_principal_full_id`]. The
+    pub expected_principal_did: Option<arkret_sdk::Did>,
+    /// Durable device belonging to [`Self::expected_principal_did`]. The
     /// OIDC transaction itself always uses [`Self::device_id`], a separate
     /// pending holder namespace.
     #[serde(skip_serializing_if = "Option::is_none")]

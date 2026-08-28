@@ -189,7 +189,7 @@ pub fn DidResolutionHealthBanner(health: Signal<DidResolutionHealth>) -> Element
 #[cfg(test)]
 mod tests {
     use arkret_sdk::{
-        DidDocument, DidFullId, ServiceDescribe, ServiceKind, TransportBinding, TrustDomainId,
+        Did, DidDocument, ServiceDescribe, ServiceKind, TransportBinding, TrustDomainId,
     };
     use chrono::Duration;
 
@@ -197,7 +197,7 @@ mod tests {
 
     fn identity_description(protocol_version: &str) -> ServiceDescribe {
         let mut description = ServiceDescribe::development(
-            DidFullId::new("did:web:identity.example".to_owned()).expect("valid did"),
+            Did::new("did:web:identity.example".to_owned()).expect("valid did"),
             TrustDomainId::new("ak:trust_domain:identity.example").expect("valid trust domain"),
             ServiceKind::IdentityRegistry,
             vec!["ak.operation_bundle.identity_registry.describe.v1".to_owned()],
@@ -212,7 +212,7 @@ mod tests {
 
     fn cache_with_entry(ttl: Duration, now: DateTime<Utc>) -> DidResolutionCache {
         let cache = DidResolutionCache::new(8);
-        let did = DidFullId::new("did:web:alice.example".to_owned()).expect("valid did");
+        let did = Did::new("did:web:alice.example".to_owned()).expect("valid did");
         let document = DidDocument::new(did.clone(), "owner", "z6Mksample");
         // `did:web` publishes no method proof.
         cache

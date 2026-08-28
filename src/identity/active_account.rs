@@ -1,6 +1,4 @@
-use arkret_sdk::{
-    DeviceId, DidCoreId, DidFullId, PrincipalAuthorityKey, PrincipalResolutionProjection,
-};
+use arkret_sdk::{DeviceId, Did, DidCoreId, PrincipalAuthorityKey, PrincipalResolutionProjection};
 use serde::{Deserialize, Serialize};
 use url::Url;
 
@@ -60,7 +58,7 @@ impl ActiveAccountContext {
     /// Construct from a projection that the caller has already accepted after
     /// attestation, method-history and freshness verification.
     ///
-    /// This constructor is crate-private so raw network responses and bare full
+    /// This constructor is crate-private so raw network responses and DID
     /// DIDs cannot create authenticated application state outside the identity
     /// boundary.
     pub(crate) fn new(
@@ -78,7 +76,7 @@ impl ActiveAccountContext {
         authority
             .validate()
             .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-        let projected = arkret_sdk::project_full_id_to_core_id(&resolution.full_id)
+        let projected = arkret_sdk::project_did_to_core_id(&resolution.did)
             .map_err(|error| anyhow::anyhow!(error.to_string()))?;
         if projected != authority.principal_id {
             return Err(anyhow::anyhow!(
@@ -107,21 +105,21 @@ impl ActiveAccountContext {
         &self.authority.principal_id
     }
 
-    pub fn full_id(&self) -> &DidFullId {
-        &self.resolution.full_id
+    pub fn did(&self) -> &Did {
+        &self.resolution.did
     }
 
     pub fn same_authority(&self, other: &Self) -> bool {
         self.authority == other.authority
     }
 
-    /// Replace the complete accepted projection atomically. A bare full DID is
+    /// Replace the complete accepted projection atomically. A DID is
     /// intentionally not accepted by this API.
     pub(crate) fn update_resolution(
         &mut self,
         next: PrincipalResolutionProjection,
     ) -> anyhow::Result<()> {
-        let projected = arkret_sdk::project_full_id_to_core_id(&next.full_id)
+        let projected = arkret_sdk::project_did_to_core_id(&next.did)
             .map_err(|error| anyhow::anyhow!(error.to_string()))?;
         if projected != self.authority.principal_id {
             return Err(anyhow::anyhow!(
@@ -192,9 +190,9 @@ mod tests {
         DidCoreId::new(value.to_owned()).unwrap()
     }
 
-    fn projection(full_id: &str, revision: u32) -> PrincipalResolutionProjection {
+    fn projection(did: &str, revision: u32) -> PrincipalResolutionProjection {
         PrincipalResolutionProjection {
-            full_id: DidFullId::new(full_id.to_owned()).unwrap(),
+            did: Did::new(did.to_owned()).unwrap(),
             method_history_head: format!("head-{revision}"),
             version_id: revision.to_string(),
             resolution_event_ref: format!(

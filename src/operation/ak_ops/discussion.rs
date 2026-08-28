@@ -32,12 +32,12 @@ pub fn discussion_strand_create(
 ) -> anyhow::Result<TypedOperationBuilder> {
     let typed_realm_id = arkret_sdk::RealmId::new(trim_realm_id(realm_id))
         .map_err(|e| anyhow::anyhow!("invalid realm_id: {e:?}"))?;
-    let did = crate::mls_api_helpers::principal_core_id(actor)
+    let actor_id = crate::mls_api_helpers::principal_core_id(actor)
         .map_err(|e| anyhow::anyhow!("invalid actor DID: {e:?}"))?;
     // No caller-supplied Strand id: the object is derived from this create
     // Event, so the payload omits it and the projection keys the optimistic row
     // by the holder-local operation id until the accepted id arrives.
-    let mut strand = arkret_sdk::StrandCreateObject::new(typed_realm_id, did)
+    let mut strand = arkret_sdk::StrandCreateObject::new(typed_realm_id, actor_id)
         .with_metadata_title(title)
         .with_metadata_field("category", serde_json::json!(category))
         .with_metadata_field("has_synthesis", serde_json::json!(with_synthesis))
@@ -77,9 +77,9 @@ pub fn initial_default_discussion_strand_create(
 ) -> anyhow::Result<TypedOperationBuilder> {
     let typed_realm_id = arkret_sdk::RealmId::new(trim_realm_id(realm_id))
         .map_err(|e| anyhow::anyhow!("invalid realm_id: {e:?}"))?;
-    let did = crate::mls_api_helpers::principal_core_id(actor)
+    let actor_id = crate::mls_api_helpers::principal_core_id(actor)
         .map_err(|e| anyhow::anyhow!("invalid actor DID: {e:?}"))?;
-    let strand = arkret_sdk::StrandCreateObject::new(typed_realm_id, did)
+    let strand = arkret_sdk::StrandCreateObject::new(typed_realm_id, actor_id)
         .with_track("discussion", arkret_sdk::StrandTrack::discussion_primary());
     Ok(TypedOperationBuilder::new::<
         arkret_sdk::event_spec::StrandCreate,
@@ -143,9 +143,9 @@ pub fn scoped_discussion_strand_create(
 ) -> anyhow::Result<TypedOperationBuilder> {
     let typed_realm_id = arkret_sdk::RealmId::new(trim_realm_id(realm_id))
         .map_err(|e| anyhow::anyhow!("invalid realm_id: {e:?}"))?;
-    let did = crate::mls_api_helpers::principal_core_id(actor)
+    let actor_id = crate::mls_api_helpers::principal_core_id(actor)
         .map_err(|e| anyhow::anyhow!("invalid actor DID: {e:?}"))?;
-    let mut strand = arkret_sdk::StrandCreateObject::new(typed_realm_id, did)
+    let mut strand = arkret_sdk::StrandCreateObject::new(typed_realm_id, actor_id)
         .with_metadata_title(title)
         .with_track("discussion", arkret_sdk::StrandTrack::discussion_primary());
     strand.scope_circle_id = Some(circle_id_value(circle_id)?);

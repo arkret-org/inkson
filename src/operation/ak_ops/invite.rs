@@ -16,13 +16,13 @@ pub fn invite_create_structured(
     // digest strings are parsed into SDK newtypes so malformed wire is a
     // build-time error, and `x_role` is carried via the typed extension
     // map (re-prefixed on serialize).
-    let invitee_did = arkret_sdk::DidCoreId::new(invitee.to_owned())
+    let invitee_id = arkret_sdk::DidCoreId::new(invitee.to_owned())
         .map_err(|err| anyhow::anyhow!("invitee not a core_id {invitee:?}: {err}"))?;
     let digest = arkret_sdk::Hash::new(introduction_evidence_digest.to_owned())
         .map_err(|err| anyhow::anyhow!("introduction_evidence_digest invalid: {err}"))?;
     let mut payload =
         arkret_models_collaboration::governance::membership_invite::InviteCreatePayload::new(
-            invitee_did,
+            invitee_id,
             invite_delivery_target,
             digest,
             chrono::Utc::now() + chrono::Duration::days(7),

@@ -256,13 +256,13 @@ pub(crate) struct AgentParticipantMetadata {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct SpaceParticipant {
-    pub(crate) did: String,
+    pub(crate) principal_id: String,
     pub(crate) display_name: Option<String>,
     pub(crate) handle_label: Option<String>,
     pub(crate) display_name_rank: u8,
     pub(crate) role: SpaceParticipantRole,
     pub(crate) is_self: bool,
-    /// `true` when selector mention metadata identifies this DID as an agent.
+    /// `true` when selector mention metadata identifies this principal as an agent.
     /// Surfaces a 🤖 badge in member lists,
     /// @mention picker rows, and chat sender attribution so operators
     /// can immediately distinguish bot/agent principals from real

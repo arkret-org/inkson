@@ -114,12 +114,11 @@ fn recovery_state_with_key_is_configured() {
 
 #[test]
 fn webvh_recovery_metadata_is_looked_up_by_stable_core_id() {
-    let full_id = arkret_sdk::DidFullId::new(
-        "did:webvh:zQ3shExampleScid:alice.example:webvh:user".to_owned(),
-    )
-    .unwrap();
-    let core_id = arkret_sdk::project_full_id_to_core_id(&full_id).unwrap();
-    assert_ne!(full_id.as_str(), core_id.as_str());
+    let did =
+        arkret_sdk::Did::new("did:webvh:zQ3shExampleScid:alice.example:webvh:user".to_owned())
+            .unwrap();
+    let core_id = arkret_sdk::project_did_to_core_id(&did).unwrap();
+    assert_ne!(did.as_str(), core_id.as_str());
 
     let state = RecoveryState {
         recovery_key_fingerprint: "sha256:configured".to_owned(),

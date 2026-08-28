@@ -660,7 +660,12 @@ pub struct PendingAccountHandoff {
     /// Existing principal returned by a bound account handoff. Presence
     /// selects Recovery-Key re-anchor instead of identity creation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub bound_principal_id: Option<arkret_sdk::DidFullId>,
+    pub bound_principal_id: Option<arkret_sdk::DidCoreId>,
+    /// Published DID paired with `bound_principal_id` by the Account
+    /// Authority. Recovery and DID-proof flows use this value; stable storage
+    /// and object identity use `bound_principal_id`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bound_principal_did: Option<arkret_sdk::Did>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -681,7 +686,7 @@ pub struct PendingPrincipalRegistration {
     pub device_id: String,
     pub trust_domain: String,
     #[serde(rename = "did")]
-    pub full_id: arkret_sdk::DidFullId,
+    pub did: arkret_sdk::Did,
     pub version_id: String,
     /// Durable explicit-abandonment challenge projected by the Account
     /// Authority together with its authoritative reauthentication decision.
@@ -733,7 +738,8 @@ pub struct PendingIdentityAbandonment {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct RecoveryMaterialEvidence {
-    pub principal_id: arkret_sdk::DidFullId,
+    pub principal_id: arkret_sdk::DidCoreId,
+    pub principal_did: arkret_sdk::Did,
     pub device_id: arkret_sdk::DeviceId,
     pub principal_control_realm_id: arkret_sdk::RealmId,
     pub pcr_genesis_unit: arkret_wire::PcrGenesisUnit,
@@ -1298,7 +1304,7 @@ pub struct ClientLocalState {
     /// from the account viewer. Persisted per-account so the signed-out
     /// re-login screen's account selector can label each known account by its
     /// handle (never the raw DID) — read by DID via
-    /// [`LocalStateStore::primary_handle_for_did`] without making the account
+    /// [`LocalStateStore::primary_handle_for_principal_id`] without making the account
     /// active.
     pub primary_handle: String,
 }
@@ -1459,7 +1465,7 @@ pub struct PersistedSessionGrant {
     pub audience: String,
     /// Stable core principal ID (`DidCoreId`) the grant authorizes. A record
     /// holding anything else is invalid and the session is unusable; it is
-    /// never repaired by back-projecting a full DID.
+    /// never repaired by back-projecting a DID.
     pub principal_id: arkret_sdk::DidCoreId,
     /// Device id bound to the grant.
     pub device_id: arkret_sdk::DeviceId,

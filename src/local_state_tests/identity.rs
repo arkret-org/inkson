@@ -110,8 +110,8 @@ fn explicit_device_reset_deletes_identity_keys_but_signin_reset_does_not() {
     let path = temp_state_path("explicit-device-reset");
     let secure = crate::secure_key_store::MemorySecureKeyStore::new();
     let account = "did:web:alice.example";
-    let account_full_id = arkret_sdk::DidFullId::new(account.to_owned()).unwrap();
-    let account_context = super::test_account_context(&account_full_id);
+    let account_did = arkret_sdk::Did::new(account.to_owned()).unwrap();
+    let account_context = super::test_account_context(&account_did);
     let user_store = crate::secure_key_store::UserLocalStore::new(
         account_context.authority.clone(),
         account_context.device_id.clone(),

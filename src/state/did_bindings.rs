@@ -41,7 +41,7 @@
 //! `raw_operations` (512) and `mls_governance_proofs` (16) already use.
 
 use arkret_sdk::identity::AcceptedDidBinding;
-use arkret_sdk::{DidFullId, TrustDomainId};
+use arkret_sdk::{Did, TrustDomainId};
 
 use super::*;
 #[cfg(test)]
@@ -105,7 +105,7 @@ impl LocalStateStore {
     /// being upgraded — matching the store's own downgrade rule.
     pub(crate) fn accepted_did_binding_status(
         &self,
-        did: &DidFullId,
+        did: &Did,
         now: chrono::DateTime<chrono::Utc>,
     ) -> Option<arkret_sdk::identity::DidBindingStatus> {
         use arkret_sdk::identity::{BindingFreshness, DidBindingStatus, binding_freshness_at};
@@ -197,7 +197,7 @@ mod tests {
 
     fn document(did: &str) -> arkret_sdk::DidDocument {
         arkret_sdk::DidDocument {
-            id: DidFullId::new(did.to_owned()).expect("valid did"),
+            id: Did::new(did.to_owned()).expect("valid did"),
             verification_methods: BTreeMap::from([(
                 format!("{did}#key-1"),
                 "z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK".to_owned(),
@@ -300,7 +300,7 @@ mod tests {
                 .hydrate_did_binding_store()
                 .ordinary_lookup(
                     &scope.key(
-                        &DidFullId::new(peer.to_owned()).expect("did"),
+                        &Did::new(peer.to_owned()).expect("did"),
                         DidBindingPurpose::Principal,
                         None
                     ),
@@ -339,13 +339,13 @@ mod tests {
         }
 
         impl DidResolver for CountingDidResolver {
-            fn supports(&self, _did: &DidFullId) -> bool {
+            fn supports(&self, _did: &Did) -> bool {
                 true
             }
 
             fn resolve_did(
                 &self,
-                did: &DidFullId,
+                did: &Did,
             ) -> arkret_sdk::identity::Result<arkret_sdk::identity::ResolvedDid> {
                 self.calls.fetch_add(1, Ordering::SeqCst);
                 Err(arkret_sdk::identity::IdentityError::Protocol(format!(
@@ -356,7 +356,7 @@ mod tests {
 
         let scope = scope("https://alpha.example");
         let peer = "did:web:peer.example";
-        let peer_did = DidFullId::new(peer.to_owned()).expect("did");
+        let peer_did = Did::new(peer.to_owned()).expect("did");
         let (mut first_boot, path) = temp_store("restart");
         first_boot.switch_test_account("did:web:alice.example");
         first_boot.store_accepted_did_bindings(vec![record(
@@ -389,7 +389,7 @@ mod tests {
 
         // An unknown DID misses locally; only *then* may a caller escalate.
         let unknown = scope.key(
-            &DidFullId::new("did:web:stranger.example".to_owned()).expect("did"),
+            &Did::new("did:web:stranger.example".to_owned()).expect("did"),
             DidBindingPurpose::DeviceSigner,
             None,
         );

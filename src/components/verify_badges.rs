@@ -93,7 +93,7 @@ pub fn TrustCacheBadge(peer: String) -> Element {
     let cache = use_context::<Signal<DidResolutionCache>>();
     let state_store = crate::app::SessionContext::get().state_store;
     let now = Utc::now();
-    let state = match arkret_sdk::DidFullId::new(peer.clone()) {
+    let state = match arkret_sdk::Did::new(peer.clone()) {
         Ok(did) => {
             let session_state = {
                 let guard = cache.read();
@@ -144,7 +144,7 @@ pub fn TrustCacheBadge(peer: String) -> Element {
 
 #[cfg(test)]
 mod tests {
-    use arkret_sdk::{DidDocument, DidFullId};
+    use arkret_sdk::{Did, DidDocument};
     use chrono::Duration;
 
     use super::*;
@@ -152,7 +152,7 @@ mod tests {
     // ── Y3 TRUST-CACHE display degradation ───────────────────────────
 
     fn sample_entry(ttl_secs: i64, now: DateTime<Utc>) -> CachedResolution {
-        let did = DidFullId::new("did:web:alice.example".to_owned()).expect("valid did");
+        let did = Did::new("did:web:alice.example".to_owned()).expect("valid did");
         CachedResolution::new(
             DidDocument::new(did, "key-1", "z6Mksample"),
             now,

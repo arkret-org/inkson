@@ -8,8 +8,8 @@ pub(crate) async fn resolve_accepted<P: std::fmt::Display + ?Sized>(
         .ok_or_else(|| anyhow::anyhow!("principal-control operation has no active account"))?;
     let principal = principal.to_string();
     let principal_id = if principal.starts_with("did:") {
-        let full_id = arkret_sdk::DidFullId::new(principal)?;
-        arkret_sdk::project_full_id_to_core_id(&full_id)?
+        let did = arkret_sdk::Did::new(principal)?;
+        arkret_sdk::project_did_to_core_id(&did)?
     } else {
         arkret_sdk::DidCoreId::new(principal)?
     };

@@ -41,7 +41,7 @@ pub(super) struct ChatTimelineContext {
     pub plaintext_service_id: String,
     pub base_url: String,
     pub focus_message_id: String,
-    pub blocked_dids: std::collections::BTreeSet<String>,
+    pub blocked_actor_ids: std::collections::BTreeSet<String>,
     pub selected_channel_security_encrypted: bool,
     pub visible_channels_empty: bool,
     pub visible_message_count: usize,
@@ -70,7 +70,7 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
         plaintext_service_id,
         base_url,
         focus_message_id,
-        blocked_dids: blocked_did_set,
+        blocked_actor_ids: blocked_actor_id_set,
         selected_channel_security_encrypted,
         visible_channels_empty,
         visible_message_count,
@@ -590,7 +590,7 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
                                     {
                                         let sender_participant = participants_for_messages
                                             .iter()
-                                            .find(|p| p.did == msg.sender);
+                                            .find(|p| p.principal_id == msg.sender);
                                         let sender_is_agent = sender_participant
                                             .map(|participant| participant.is_agent)
                                             .unwrap_or(false);
@@ -787,7 +787,7 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
                                     }
                                 }
                                 {
-                                    let sender_blocked = blocked_did_set.contains(&msg.sender)
+                                    let sender_blocked = blocked_actor_id_set.contains(&msg.sender)
                                         && !blocked_show_anyway.read().contains(&msg.id);
                                     let content_kind = if msg.redacted {
                                         "msg-content redacted"
@@ -821,7 +821,7 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
                                     }
                                 }
                                 if !msg.redacted
-                                    && blocked_did_set.contains(&msg.sender)
+                                    && blocked_actor_id_set.contains(&msg.sender)
                                     && !blocked_show_anyway.read().contains(&msg.id)
                                 {
                                     Button {

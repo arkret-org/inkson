@@ -198,8 +198,8 @@ pub async fn verify_recovery_authority_evidence(
     evidence: &crate::state::RecoveryMaterialEvidence,
 ) -> anyhow::Result<()> {
     evidence.pcr_genesis_unit.validate_ordered_envelopes()?;
-    if evidence.pcr_genesis_unit.create().actor_id
-        != arkret_sdk::project_full_id_to_core_id(&evidence.principal_id)?
+    if arkret_sdk::project_did_to_core_id(&evidence.principal_did)? != evidence.principal_id
+        || evidence.pcr_genesis_unit.create().actor_id != evidence.principal_id
         || evidence.pcr_genesis_unit.create().realm_id != evidence.principal_control_realm_id
         || evidence.pcr_genesis_unit.founding_authorize().realm_id
             != evidence.principal_control_realm_id
@@ -297,7 +297,7 @@ pub async fn fetch_active_recovery_policy(
 }
 
 pub fn build_signed_genesis_recovery_policy_for_session_device(
-    principal_id: &arkret_sdk::DidFullId,
+    principal_did: &arkret_sdk::Did,
     trust_domain: &str,
     device_id: &arkret_sdk::DeviceId,
     key_material: &arkret_sdk::identity_root::IdentityRecoveryKeyMaterial,
@@ -306,9 +306,9 @@ pub fn build_signed_genesis_recovery_policy_for_session_device(
         if signer.device_id() != Some(device_id.as_str()) {
             anyhow::bail!("active signer is not bound to current session device `{device_id}`");
         }
-        let verification_method = format!("{principal_id}#{device_id}");
+        let verification_method = format!("{principal_did}#{device_id}");
         return build_signed_genesis_recovery_policy_with_raw_signer(
-            principal_id,
+            principal_did,
             trust_domain,
             key_material,
             &verification_method,
@@ -316,9 +316,9 @@ pub fn build_signed_genesis_recovery_policy_for_session_device(
         );
     }
 
-    let signer = default_principal_scoped_recovery_policy_signer(principal_id, device_id)?;
+    let signer = default_principal_scoped_recovery_policy_signer(principal_did, device_id)?;
     build_signed_genesis_recovery_policy_with_signer(
-        principal_id,
+        principal_did,
         trust_domain,
         key_material,
         &signer,
@@ -326,7 +326,7 @@ pub fn build_signed_genesis_recovery_policy_for_session_device(
 }
 
 fn default_principal_scoped_recovery_policy_signer(
-    principal_id: &arkret_sdk::DidFullId,
+    principal_did: &arkret_sdk::Did,
     device_id: &arkret_sdk::DeviceId,
 ) -> anyhow::Result<crate::event_signer::InksonEventSigner> {
     let store = crate::secure_key_store::default_secure_key_store("inkson");
@@ -335,22 +335,22 @@ fn default_principal_scoped_recovery_policy_signer(
     Ok(
         crate::event_signer::build_ed25519_signer_with_verification_method(
             material.seed,
-            principal_id.as_str(),
-            format!("{principal_id}#{device_id}"),
+            principal_did.as_str(),
+            format!("{principal_did}#{device_id}"),
         ),
     )
 }
 
 fn build_signed_genesis_recovery_policy_with_signer(
-    principal_id: &arkret_sdk::DidFullId,
+    principal_did: &arkret_sdk::Did,
     trust_domain: &str,
     key_material: &arkret_sdk::identity_root::IdentityRecoveryKeyMaterial,
     signer: &crate::event_signer::InksonEventSigner,
 ) -> anyhow::Result<Value> {
     let verification_method =
-        principal_scoped_recovery_policy_verification_method(principal_id, signer)?;
+        principal_scoped_recovery_policy_verification_method(principal_did, signer)?;
     build_signed_genesis_recovery_policy_with_raw_signer(
-        principal_id,
+        principal_did,
         trust_domain,
         key_material,
         verification_method,
@@ -359,7 +359,7 @@ fn build_signed_genesis_recovery_policy_with_signer(
 }
 
 fn build_signed_genesis_recovery_policy_with_raw_signer(
-    principal_id: &arkret_sdk::DidFullId,
+    principal_did: &arkret_sdk::Did,
     trust_domain: &str,
     key_material: &arkret_sdk::identity_root::IdentityRecoveryKeyMaterial,
     verification_method: &str,
@@ -370,18 +370,18 @@ fn build_signed_genesis_recovery_policy_with_raw_signer(
     if trust_domain.is_empty() {
         anyhow::bail!("trust_domain is required");
     }
-    principal_scoped_recovery_policy_verification_method_id(principal_id, verification_method)?;
+    principal_scoped_recovery_policy_verification_method_id(principal_did, verification_method)?;
     let issued_at = chrono::Utc::now();
     let key_expires_at = issued_at + chrono::Duration::days(3650);
-    let recovery_proof_ref = DidUrl::new(format!("{principal_id}#recovery-proof-0"))
+    let recovery_proof_ref = DidUrl::new(format!("{principal_did}#recovery-proof-0"))
         .map_err(|error| anyhow::anyhow!(error))?;
-    let backup_hpke_ref = DidUrl::new(format!("{principal_id}#backup-hpke-0"))
+    let backup_hpke_ref = DidUrl::new(format!("{principal_did}#backup-hpke-0"))
         .map_err(|error| anyhow::anyhow!(error))?;
     let did_root_signing_ref =
         DidUrl::new(verification_method.to_owned()).map_err(|error| anyhow::anyhow!(error))?;
     let policy_body = UnsignedRecoveryPolicyBody {
         policy_id: PolicyId::new(format!("ak:policy:{}", crate::operation::uuid_v7()))?,
-        principal_id: arkret_sdk::project_full_id_to_core_id(principal_id)?,
+        principal_id: arkret_sdk::project_did_to_core_id(principal_did)?,
         version: 1,
         supersedes: None,
         trust_domain: TrustDomainId::new(trust_domain.to_owned())?,
@@ -464,20 +464,20 @@ fn build_signed_genesis_recovery_policy_with_raw_signer(
 }
 
 fn principal_scoped_recovery_policy_verification_method<'a>(
-    principal_id: &arkret_sdk::DidFullId,
+    principal_did: &arkret_sdk::Did,
     signer: &'a crate::event_signer::InksonEventSigner,
 ) -> anyhow::Result<&'a str> {
     let verification_method = signer.verification_method().trim();
-    principal_scoped_recovery_policy_verification_method_id(principal_id, verification_method)?;
+    principal_scoped_recovery_policy_verification_method_id(principal_did, verification_method)?;
     Ok(verification_method)
 }
 
 fn principal_scoped_recovery_policy_verification_method_id(
-    principal_id: &arkret_sdk::DidFullId,
+    principal_did: &arkret_sdk::Did,
     verification_method: &str,
 ) -> anyhow::Result<()> {
     if verification_method
-        .strip_prefix(principal_id.as_str())
+        .strip_prefix(principal_did.as_str())
         .and_then(|rest| rest.strip_prefix('#'))
         .is_some_and(|fragment| !fragment.trim().is_empty())
     {
@@ -486,21 +486,21 @@ fn principal_scoped_recovery_policy_verification_method_id(
     anyhow::bail!(
         "active signer verification_method `{}` is not scoped to principal_id `{}`; recovery policy requires a principal signing key such as `{}`",
         verification_method,
-        principal_id,
-        format_args!("{principal_id}#<device_id>"),
+        principal_did,
+        format_args!("{principal_did}#<device_id>"),
     )
 }
 
 pub async fn ensure_active_recovery_policy(
     api: &TransportClient,
-    principal_id: &arkret_sdk::DidFullId,
+    principal_did: &arkret_sdk::Did,
     principal_authority: &arkret_sdk::PrincipalAuthorityKey,
     device_id: &arkret_sdk::DeviceId,
     principal_control_realm_id: &arkret_sdk::RealmId,
     accepted_pcr_genesis_unit: &arkret_wire::PcrGenesisUnit,
     key_material: &arkret_sdk::identity_root::IdentityRecoveryKeyMaterial,
 ) -> anyhow::Result<RecoveryPolicySummary> {
-    let principal_core_id = arkret_sdk::project_full_id_to_core_id(principal_id)?;
+    let principal_core_id = arkret_sdk::project_did_to_core_id(principal_did)?;
     if principal_core_id != principal_authority.principal_id {
         anyhow::bail!("recovery policy principal projection does not match account authority");
     }
@@ -511,14 +511,14 @@ pub async fn ensure_active_recovery_policy(
 
     let description = api.describe().await?;
     let body = build_signed_genesis_recovery_policy_for_session_device(
-        principal_id,
+        principal_did,
         description.trust_domain.as_str(),
         device_id,
         key_material,
     )?;
     publish_recovery_policy(
         api,
-        principal_id,
+        principal_did,
         principal_authority,
         device_id,
         principal_control_realm_id,
@@ -539,14 +539,14 @@ pub async fn ensure_active_recovery_policy(
 #[allow(clippy::expect_used)]
 async fn publish_recovery_policy(
     api: &TransportClient,
-    principal_id: &arkret_sdk::DidFullId,
+    principal_did: &arkret_sdk::Did,
     principal_authority: &arkret_sdk::PrincipalAuthorityKey,
     device_id: &arkret_sdk::DeviceId,
     principal_control_realm_id: &arkret_sdk::RealmId,
     accepted_pcr_genesis_unit: &arkret_wire::PcrGenesisUnit,
     policy_value: Value,
 ) -> anyhow::Result<arkret_sdk::RecoveryPolicyPublishOutcome> {
-    let principal_core_id = arkret_sdk::project_full_id_to_core_id(principal_id)?;
+    let principal_core_id = arkret_sdk::project_did_to_core_id(principal_did)?;
     if principal_core_id != principal_authority.principal_id {
         anyhow::bail!("recovery policy principal projection does not match account authority");
     }
@@ -780,7 +780,7 @@ pub fn build_recovery_unlock_proof_from_words(
 
 pub async fn ensure_recovery_policy(
     api: &TransportClient,
-    principal_id: &arkret_sdk::DidFullId,
+    principal_did: &arkret_sdk::Did,
     principal_authority: &arkret_sdk::PrincipalAuthorityKey,
     device_id: &arkret_sdk::DeviceId,
     principal_control_realm_id: &arkret_sdk::RealmId,
@@ -794,7 +794,7 @@ pub async fn ensure_recovery_policy(
     )?;
     ensure_active_recovery_policy(
         api,
-        principal_id,
+        principal_did,
         principal_authority,
         device_id,
         principal_control_realm_id,

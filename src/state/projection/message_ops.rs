@@ -58,7 +58,7 @@ pub(crate) fn first_string_in_candidates<'a>(
 }
 
 pub(crate) fn message_actor_from_candidates<'a>(candidates: &[&'a Value]) -> Option<&'a str> {
-    first_string_in_candidates(candidates, &["actor_id", "sender_actor_id", "actor"])
+    first_string_in_candidates(candidates, &["actor_id"])
 }
 
 fn discussion_event_kind(value: &Value) -> Option<&str> {

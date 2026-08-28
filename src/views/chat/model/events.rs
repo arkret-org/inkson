@@ -1043,20 +1043,7 @@ fn verify_chat_envelope_proof_with_local_identity(
             // all agree, and a directory NegativeHit (revoked/absent device)
             // is never overridden.
             let local_key = local_identity.and_then(|(_, local_actor, local_device)| {
-                // `actor_id` in the envelope and the local account identity
-                // can spell the same principal in different Arkret id forms
-                // (full `did:webvh:…` vs core `ak:did_core:…`); compare the
-                // projected core ids before concluding this is not the local
-                // author.
-                let same_principal = local_actor == proof_controller
-                    || match (
-                        crate::mls_api_helpers::principal_core_id(local_actor),
-                        crate::mls_api_helpers::principal_core_id(proof_controller),
-                    ) {
-                        (Ok(local_core), Ok(proof_core)) => local_core == proof_core,
-                        _ => false,
-                    };
-                if !same_principal || local_device.as_str() != device {
+                if local_actor != proof_controller || local_device.as_str() != device {
                     return None;
                 }
                 let signer = crate::event_signer::active_signer()?;
@@ -1399,9 +1386,9 @@ fn verification_method_device_fragment<'a>(
         .map(|(head, _)| head)
         .unwrap_or(verification_method);
     let (controller, fragment) = no_query.split_once('#')?;
-    let controller_matches = arkret_sdk::DidFullId::new(controller.to_owned())
+    let controller_matches = arkret_sdk::Did::new(controller.to_owned())
         .ok()
-        .and_then(|full_id| arkret_sdk::project_full_id_to_core_id(&full_id).ok())
+        .and_then(|did| arkret_sdk::project_did_to_core_id(&did).ok())
         .is_some_and(|core_id| core_id.as_str() == actor);
     (controller_matches && fragment.starts_with("ak:device:")).then_some(fragment)
 }
@@ -1417,12 +1404,10 @@ fn persistent_proof_controllers_match(envelope: &Value, expected_controller: &st
         .iter()
         .filter_map(|proof| proof.get("verification_method").and_then(Value::as_str))
         .any(|verification_method| {
-            arkret_sdk::DidFullId::new(
-                verification_method_controller(verification_method).to_owned(),
-            )
-            .ok()
-            .and_then(|full_id| arkret_sdk::project_full_id_to_core_id(&full_id).ok())
-            .is_some_and(|core_id| core_id.as_str() == expected_controller)
+            arkret_sdk::Did::new(verification_method_controller(verification_method).to_owned())
+                .ok()
+                .and_then(|did| arkret_sdk::project_did_to_core_id(&did).ok())
+                .is_some_and(|core_id| core_id.as_str() == expected_controller)
         })
 }
 
@@ -1634,15 +1619,14 @@ pub(crate) fn chat_message_from_event_with_sidecar(
     } else {
         reactions_from_candidates(&candidates)
     };
+    let sender = message_actor_from_candidates(&candidates)?.to_owned();
     Some(ChatMessage {
         realm_id: first_string_in_candidates(&candidates, &["realm_id"])
             .unwrap_or(realm_id)
             .to_owned(),
         id: event_id,
         protocol_message_id,
-        sender: message_actor_from_candidates(&candidates)
-            .unwrap_or("did:web:unknown")
-            .to_owned(),
+        sender,
         // AKP-0008 §4.10 — act-on-behalf carries a signed envelope-level
         // `executed_by`. When present and distinct from the actor, the
         // renderer shows the "controller via agent" double signature.
@@ -1803,7 +1787,9 @@ pub(crate) fn poll_cards_from_events_with_sidecar(
         if let Some((poll_ref, selections)) =
             crate::messaging::polls::poll_response_from_content(&content)
         {
-            let actor = message_actor_from_candidates(&candidates).unwrap_or("did:web:unknown");
+            let Some(actor) = message_actor_from_candidates(&candidates) else {
+                continue;
+            };
             if let Some(index) = by_poll_id.get(&poll_ref).copied() {
                 cards[index].vote_choices(actor, &selections);
             }

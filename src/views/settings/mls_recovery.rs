@@ -105,14 +105,15 @@ fn start_recovery_key_generation(
     let base = account.server_url.to_string();
     let authority = account.authority.clone();
     let session = token();
-    let actor = account.full_id().to_string();
+    let actor = account.did().to_string();
     let account_key = account.principal_id().clone();
     let device = account.device_id.to_string();
     let Some(recovery_material_evidence) = state_store.read().recovery_material_evidence() else {
         action_status.set("Frozen PCR authority evidence is required".to_owned());
         return;
     };
-    if recovery_material_evidence.principal_id != *account.full_id()
+    if recovery_material_evidence.principal_id != *account.principal_id()
+        || recovery_material_evidence.principal_did != *account.did()
         || recovery_material_evidence.device_id != account.device_id
     {
         action_status.set("Frozen PCR authority evidence does not match this account".to_owned());
@@ -231,7 +232,7 @@ pub fn SettingsMlsRecoveryPanel(
             async move {
                 let base = account.server_url.to_string();
                 let session = token();
-                let actor = account.full_id().to_string();
+                let actor = account.did().to_string();
                 let account_key = account.principal_id().clone();
                 let authority = account.authority.clone();
                 if base.trim().is_empty() || session.trim().is_empty() || actor.trim().is_empty() {

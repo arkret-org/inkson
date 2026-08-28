@@ -32,9 +32,9 @@ struct LocalMlsDevice {
     group: Option<ArkretMlsGroup>,
 }
 
-fn principal_core_id(principal_full_id: &str) -> anyhow::Result<arkret_sdk::DidCoreId> {
-    let full_id = arkret_sdk::DidFullId::new(principal_full_id.trim().to_owned())?;
-    arkret_sdk::project_full_id_to_core_id(&full_id).map_err(anyhow::Error::msg)
+fn principal_core_id(principal_did: &str) -> anyhow::Result<arkret_sdk::DidCoreId> {
+    let did = arkret_sdk::Did::new(principal_did.trim().to_owned())?;
+    arkret_sdk::project_did_to_core_id(&did).map_err(anyhow::Error::msg)
 }
 
 impl LocalMlsDevice {

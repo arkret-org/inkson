@@ -284,10 +284,10 @@ fn sign_chat_fixture(value: &mut Value) {
             } else {
                 arkret_sdk::DidCoreId::new(actor_id.clone()).unwrap()
             };
-            // Proof fixtures need an exact full DID for their verification
+            // Proof fixtures need an exact DID for their verification
             // URL. These fixtures use reversible did:web ids only; production
             // code never performs this core-to-full reconstruction.
-            let signer_full_id = actor_id
+            let signer_did = actor_id
                 .strip_prefix("ak:did_core:web:")
                 .map(|suffix| format!("did:web:{suffix}"))
                 .unwrap_or_else(|| actor_id.clone());
@@ -296,8 +296,8 @@ fn sign_chat_fixture(value: &mut Value) {
             object.remove("unsigned");
             let signer = crate::event_signer::build_ed25519_signer_with_verification_method(
                 CHAT_FIXTURE_SEED,
-                &signer_full_id,
-                format!("{signer_full_id}#{CHAT_FIXTURE_DEVICE}"),
+                &signer_did,
+                format!("{signer_did}#{CHAT_FIXTURE_DEVICE}"),
             );
             // The `encoding.md` §6 preimage comes from the SDK. A fixture signer
             // that restates the rule is how this file once signed bytes no
@@ -2913,23 +2913,20 @@ fn late_recovery_guards_allow_sidecar_plaintext_when_all_pass() {
 }
 
 #[test]
-fn treats_core_id_and_full_did_spellings_of_same_principal_as_own_sender() {
-    // The synced envelope's `actor_id` (core id) and `account.did` (full DID)
-    // can spell the same principal differently; both directions must count as
-    // own so the author's echo stays on the author's side.
-    assert!(is_own_message_sender(
+fn rejects_did_fallback_when_comparing_message_senders() {
+    assert!(!is_own_message_sender(
         "ak:did_core:web:alice.example",
-        "did:web:alice.example"
+        "ak:did_core:web:alice.example"
     ));
-    assert!(is_own_message_sender(
-        "did:web:alice.example",
+    assert!(!is_own_message_sender(
+        "ak:did_core:web:alice.example",
         "ak:did_core:web:alice.example"
     ));
     assert!(!is_own_message_sender(
         "ak:did_core:web:bob.example",
-        "did:web:alice.example"
+        "ak:did_core:web:alice.example"
     ));
-    assert!(!is_own_message_sender("", "did:web:alice.example"));
+    assert!(!is_own_message_sender("", "ak:did_core:web:alice.example"));
 }
 
 #[test]
@@ -2937,22 +2934,22 @@ fn treats_canonical_principal_id_as_own_sender() {
     let participants = Vec::new();
 
     assert!(is_own_message_sender(
-        "did:web:alice.example",
-        "did:web:alice.example"
+        "ak:did_core:web:alice.example",
+        "ak:did_core:web:alice.example"
     ));
     assert_eq!(
         sender_display_label(
-            "did:web:alice.example",
-            "did:web:alice.example",
+            "ak:did_core:web:alice.example",
+            "ak:did_core:web:alice.example",
             "",
             &participants
         ),
-        crate::views::helpers::short_protocol_id("did:web:alice.example")
+        crate::views::helpers::short_protocol_id("ak:did_core:web:alice.example")
     );
     assert_eq!(
         sender_display_label(
-            "did:web:alice.example",
-            "did:web:alice.example",
+            "ak:did_core:web:alice.example",
+            "ak:did_core:web:alice.example",
             "Alice Local",
             &participants,
         ),
@@ -2960,8 +2957,8 @@ fn treats_canonical_principal_id_as_own_sender() {
     );
     assert_eq!(
         sender_display_label(
-            "did:web:local.host:users:alice",
-            "did:web:local.host:users:alice",
+            "ak:did_core:web:local.host:users:alice",
+            "ak:did_core:web:local.host:users:alice",
             "alice:local.host",
             &participants,
         ),
@@ -2972,7 +2969,7 @@ fn treats_canonical_principal_id_as_own_sender() {
 #[test]
 fn participant_display_name_prefers_local_remark() {
     let participants = vec![SpaceParticipant {
-        did: "did:web:bob.example".to_owned(),
+        principal_id: "ak:did_core:web:bob.example".to_owned(),
         display_name: Some("Bobby".to_owned()),
         handle_label: None,
         display_name_rank: 0,
@@ -2984,8 +2981,8 @@ fn participant_display_name_prefers_local_remark() {
 
     assert_eq!(
         sender_display_label(
-            "did:web:bob.example",
-            "did:web:alice.example",
+            "ak:did_core:web:bob.example",
+            "ak:did_core:web:alice.example",
             "Alice",
             &participants,
         ),
@@ -2993,19 +2990,19 @@ fn participant_display_name_prefers_local_remark() {
     );
     assert_eq!(
         sender_display_label(
-            "did:web:carol.example",
-            "did:web:alice.example",
+            "ak:did_core:web:carol.example",
+            "ak:did_core:web:alice.example",
             "Alice",
             &participants
         ),
-        crate::views::helpers::short_protocol_id("did:web:carol.example")
+        crate::views::helpers::short_protocol_id("ak:did_core:web:carol.example")
     );
 }
 
 #[test]
 fn sender_display_label_does_not_invent_domain_for_localpart() {
     let participants = vec![SpaceParticipant {
-        did: "did:web:local.host:users:alice".to_owned(),
+        principal_id: "ak:did_core:web:local.host:users:alice".to_owned(),
         display_name: Some("alice".to_owned()),
         handle_label: None,
         display_name_rank: 2,
@@ -3017,8 +3014,8 @@ fn sender_display_label_does_not_invent_domain_for_localpart() {
 
     assert_eq!(
         sender_display_label(
-            "did:web:local.host:users:alice",
-            "did:web:local.host:users:alice",
+            "ak:did_core:web:local.host:users:alice",
+            "ak:did_core:web:local.host:users:alice",
             "alice",
             &participants,
         ),
@@ -3029,7 +3026,7 @@ fn sender_display_label_does_not_invent_domain_for_localpart() {
 #[test]
 fn own_sender_label_prefers_account_handle_over_did_derived_materialized_id() {
     let participants = vec![SpaceParticipant {
-        did: "did:web:auth.local.host:users:01ktwstvaef1dby1xf5mnkxss8".to_owned(),
+        principal_id: "ak:did_core:web:auth.local.host:users:01ktwstvaef1dby1xf5mnkxss8".to_owned(),
         display_name: None,
         handle_label: None,
         display_name_rank: u8::MAX,
@@ -3041,8 +3038,8 @@ fn own_sender_label_prefers_account_handle_over_did_derived_materialized_id() {
 
     assert_eq!(
         sender_display_label(
-            "did:web:auth.local.host:users:01ktwstvaef1dby1xf5mnkxss8",
-            "did:web:auth.local.host:users:01ktwstvaef1dby1xf5mnkxss8",
+            "ak:did_core:web:auth.local.host:users:01ktwstvaef1dby1xf5mnkxss8",
+            "ak:did_core:web:auth.local.host:users:01ktwstvaef1dby1xf5mnkxss8",
             "alice:local.host",
             &participants,
         ),
@@ -3053,7 +3050,7 @@ fn own_sender_label_prefers_account_handle_over_did_derived_materialized_id() {
 #[test]
 fn sender_display_label_prefers_projection_handle_label() {
     let participants = vec![SpaceParticipant {
-        did: "did:web:example.com:users:bob".to_owned(),
+        principal_id: "ak:did_core:web:example.com:users:bob".to_owned(),
         display_name: Some("bob".to_owned()),
         handle_label: Some("bob:example.com".to_owned()),
         display_name_rank: 2,
@@ -3065,8 +3062,8 @@ fn sender_display_label_prefers_projection_handle_label() {
 
     assert_eq!(
         sender_display_label(
-            "did:web:example.com:users:bob",
-            "did:web:local.host:users:alice",
+            "ak:did_core:web:example.com:users:bob",
+            "ak:did_core:web:local.host:users:alice",
             "alice:local.host",
             &participants,
         ),
@@ -3089,7 +3086,7 @@ fn participant_roster_ignores_noncanonical_identity_fields() {
     let projection = json!({
         "members": [
             {
-                "did": "did:web:bob.example",
+                "did": "ak:did_core:web:bob.example",
                 "display_name": "Bob Example",
                 "remark": "Bob from ops"
             }
@@ -3101,7 +3098,7 @@ fn participant_roster_ignores_noncanonical_identity_fields() {
         Some(&projection),
         &store,
         "ak:realm:A_UALC69_WeDbu3WQ3suidUfmxa1MAW5tIIxjRS1C9yE",
-        "did:web:alice.example",
+        "ak:did_core:web:alice.example",
     );
     assert_eq!(participants.len(), 1);
     assert!(participants[0].is_self);
@@ -3124,11 +3121,11 @@ fn participant_roster_rejects_naked_handle_field() {
         Some(&projection),
         &store,
         "ak:realm:A_UALC69_WeDbu3WQ3suidUfmxa1MAW5tIIxjRS1C9yE",
-        "did:web:alice.example",
+        "ak:did_core:web:alice.example",
     );
     let bob = participants
         .iter()
-        .find(|participant| participant.did == "ak:did_core:web:example.com:users:bob")
+        .find(|participant| participant.principal_id == "ak:did_core:web:example.com:users:bob")
         .unwrap();
 
     assert!(mention_label_for_participant(bob).is_none());
@@ -3157,11 +3154,11 @@ fn extracts_participant_handle_label_from_inline_handle_claims() {
         Some(&projection),
         &store,
         "ak:realm:A_UALC69_WeDbu3WQ3suidUfmxa1MAW5tIIxjRS1C9yE",
-        "did:web:alice.example",
+        "ak:did_core:web:alice.example",
     );
     let bob = participants
         .iter()
-        .find(|participant| participant.did == "ak:did_core:web:bob.example")
+        .find(|participant| participant.principal_id == "ak:did_core:web:bob.example")
         .unwrap();
 
     assert_eq!(
@@ -3173,7 +3170,7 @@ fn extracts_participant_handle_label_from_inline_handle_claims() {
 #[test]
 fn mention_label_for_participant_never_derives_handle_from_did() {
     let participant = SpaceParticipant {
-        did: "did:web:example.com:users:bob".to_owned(),
+        principal_id: "ak:did_core:web:example.com:users:bob".to_owned(),
         display_name: None,
         handle_label: None,
         display_name_rank: u8::MAX,
@@ -3189,7 +3186,7 @@ fn mention_label_for_participant_never_derives_handle_from_did() {
 #[test]
 fn mention_label_for_participant_requires_handle() {
     let participant = SpaceParticipant {
-        did: "did:webvh:zQmed2r1bBnz5cpB6SoL1UxvqNQPQpimEnHy7Rc9VLLrifC:local.host:webvh:01ks6dnzv"
+        principal_id: "ak:did_core:webvh:zQmed2r1bBnz5cpB6SoL1UxvqNQPQpimEnHy7Rc9VLLrifC"
             .to_owned(),
         display_name: None,
         handle_label: None,
@@ -3211,7 +3208,7 @@ fn agent_metadata_from_mentions_recovers_selector_audit_metadata() {
         protocol_message_id: Some(
             "ak:message:AS8XThowW7JnZc80U10gJh-_lqkA-iSQ-LAvBXj6_9O5".to_owned(),
         ),
-        sender: "did:web:example.com:users:bob".to_owned(),
+        sender: "ak:did_core:web:example.com:users:bob".to_owned(),
         executed_by: None,
         body: "@alice:example.com/summary".to_owned(),
         content_format: None,
@@ -3228,12 +3225,12 @@ fn agent_metadata_from_mentions_recovers_selector_audit_metadata() {
         error: None,
         mentions: vec![MentionNode::mention(
             arkret_sdk::Mention::new(
-                crate::mls_api_helpers::principal_core_id("did:web:agents.example:summary")
+                crate::mls_api_helpers::principal_core_id("ak:did_core:web:agents.example:summary")
                     .unwrap(),
             )
             .with_display_name_at_time("Summary Assistant")
             .with_agent_selector_metadata(
-                crate::mls_api_helpers::principal_core_id("did:web:example.com:users:alice")
+                crate::mls_api_helpers::principal_core_id("ak:did_core:web:example.com:users:alice")
                     .unwrap(),
                 arkret_sdk::Handle::parse("alice:example.com").unwrap(),
                 "summary",
@@ -3263,11 +3260,11 @@ fn agent_metadata_from_mentions_recovers_selector_audit_metadata() {
 
 #[test]
 fn mention_audit_metadata_cannot_promote_or_rebind_an_agent() {
-    let agent_id = "did:web:agents.example:summary";
+    let agent_id = "ak:did_core:web:agents.example:summary";
     let mut authoritative = std::collections::BTreeMap::from([(
         agent_id.to_owned(),
         AgentParticipantMetadata {
-            controller_id: "did:web:example.com:users:alice".to_owned(),
+            controller_id: "ak:did_core:web:example.com:users:alice".to_owned(),
             controller_handle: "alice:example.com".to_owned(),
             agent_slug: "summary".to_owned(),
             display_name: "summary".to_owned(),
@@ -3277,16 +3274,16 @@ fn mention_audit_metadata_cannot_promote_or_rebind_an_agent() {
         (
             agent_id.to_owned(),
             AgentParticipantMetadata {
-                controller_id: "did:web:example.com:users:mallory".to_owned(),
+                controller_id: "ak:did_core:web:example.com:users:mallory".to_owned(),
                 controller_handle: "mallory:example.com".to_owned(),
                 agent_slug: "stolen".to_owned(),
                 display_name: "Forged Agent".to_owned(),
             },
         ),
         (
-            "did:web:example.com:users:bob".to_owned(),
+            "ak:did_core:web:example.com:users:bob".to_owned(),
             AgentParticipantMetadata {
-                controller_id: "did:web:example.com:users:alice".to_owned(),
+                controller_id: "ak:did_core:web:example.com:users:alice".to_owned(),
                 controller_handle: "alice:example.com".to_owned(),
                 agent_slug: "review".to_owned(),
                 display_name: "Forged Bob Agent".to_owned(),
@@ -3298,7 +3295,7 @@ fn mention_audit_metadata_cannot_promote_or_rebind_an_agent() {
 
     assert_eq!(authoritative.len(), 1);
     let summary = authoritative.get(agent_id).unwrap();
-    assert_eq!(summary.controller_id, "did:web:example.com:users:alice");
+    assert_eq!(summary.controller_id, "ak:did_core:web:example.com:users:alice");
     assert_eq!(summary.controller_handle, "alice:example.com");
     assert_eq!(summary.agent_slug, "summary");
     assert_eq!(summary.display_name, "summary");
@@ -3306,9 +3303,9 @@ fn mention_audit_metadata_cannot_promote_or_rebind_an_agent() {
 
 #[test]
 fn owned_agent_ids_only_select_current_controllers_agents() {
-    let controller = "did:web:example.com:users:alice";
+    let controller = "ak:did_core:web:example.com:users:alice";
     let own_agent = arkret_sdk::Mention::new(
-        crate::mls_api_helpers::principal_core_id("did:web:agents.example:summary").unwrap(),
+        crate::mls_api_helpers::principal_core_id("ak:did_core:web:agents.example:summary").unwrap(),
     )
     .with_agent_selector_metadata(
         crate::mls_api_helpers::principal_core_id(controller).unwrap(),
@@ -3316,10 +3313,10 @@ fn owned_agent_ids_only_select_current_controllers_agents() {
         "summary",
     );
     let other_agent = arkret_sdk::Mention::new(
-        crate::mls_api_helpers::principal_core_id("did:web:agents.example:review").unwrap(),
+        crate::mls_api_helpers::principal_core_id("ak:did_core:web:agents.example:review").unwrap(),
     )
     .with_agent_selector_metadata(
-        crate::mls_api_helpers::principal_core_id("did:web:example.com:users:bob").unwrap(),
+        crate::mls_api_helpers::principal_core_id("ak:did_core:web:example.com:users:bob").unwrap(),
         arkret_sdk::Handle::parse("bob:example.com").unwrap(),
         "review",
     );
@@ -3338,9 +3335,9 @@ fn owned_agent_ids_only_select_current_controllers_agents() {
 
 #[test]
 fn composer_owned_agent_ids_keep_verified_picker_agent_before_handle_loads() {
-    let controller = "did:web:example.com:users:alice";
+    let controller = "ak:did_core:web:example.com:users:alice";
     let picker = vec![crate::messaging::mentions::MentionCandidate {
-        did: "did:web:agents.example:summary".to_owned(),
+        subject_id: "ak:did_core:web:agents.example:summary".to_owned(),
         display_name: "Summary Assistant".to_owned(),
         insert_label: "me/summary".to_owned(),
         subtitle: "Your agent".to_owned(),
@@ -3380,9 +3377,9 @@ fn owned_agent_mentions_do_not_reopen_sidecar_from_private_composer() {
 
 #[test]
 fn direct_chat_disables_mention_ui_triggers_and_send_metadata() {
-    let principal_id = "did:web:example.com:users:alice";
+    let principal_id = "ak:did_core:web:example.com:users:alice";
     let stale_picker = vec![crate::messaging::mentions::MentionCandidate {
-        did: "did:web:example.com:users:bob".to_owned(),
+        subject_id: "ak:did_core:web:example.com:users:bob".to_owned(),
         display_name: "Bob".to_owned(),
         insert_label: "bob:example.com".to_owned(),
         subtitle: String::new(),
@@ -3573,7 +3570,7 @@ fn mention_only_participation_does_not_expose_agent_in_roster() {
 #[test]
 fn participant_roster_rows_groups_agents_under_visible_controller() {
     let controller = SpaceParticipant {
-        did: "did:web:example.com:users:alice".to_owned(),
+        principal_id: "ak:did_core:web:example.com:users:alice".to_owned(),
         display_name: Some("Alice".to_owned()),
         handle_label: Some("alice:example.com".to_owned()),
         display_name_rank: 0,
@@ -3583,7 +3580,7 @@ fn participant_roster_rows_groups_agents_under_visible_controller() {
         agent_metadata: None,
     };
     let agent = SpaceParticipant {
-        did: "did:web:agents.example:summary".to_owned(),
+        principal_id: "ak:did_core:web:agents.example:summary".to_owned(),
         display_name: Some("Summary Assistant".to_owned()),
         handle_label: None,
         display_name_rank: 1,
@@ -3591,13 +3588,13 @@ fn participant_roster_rows_groups_agents_under_visible_controller() {
         is_self: false,
         is_agent: true,
         agent_metadata: Some(AgentParticipantMetadata {
-            controller_id: controller.did.clone(),
+            controller_id: controller.principal_id.clone(),
             controller_handle: "alice:example.com".to_owned(),
             agent_slug: "summary".to_owned(),
             display_name: "Summary Assistant".to_owned(),
         }),
     };
-    let visible = std::collections::BTreeSet::from([agent.did.clone()]);
+    let visible = std::collections::BTreeSet::from([agent.principal_id.clone()]);
     assert_eq!(
         participant_roster_display_label(&crate::state::LocalStateStore::default(), &controller,),
         "alice:example.com"
@@ -3610,9 +3607,9 @@ fn participant_roster_rows_groups_agents_under_visible_controller() {
     assert_eq!(rows.len(), 1);
     match &rows[0] {
         ParticipantRosterRow::ControllerWithAgents { controller, agents } => {
-            assert_eq!(controller.did, "did:web:example.com:users:alice");
+            assert_eq!(controller.principal_id, "ak:did_core:web:example.com:users:alice");
             assert_eq!(agents.len(), 1);
-            assert_eq!(agents[0].did, "did:web:agents.example:summary");
+            assert_eq!(agents[0].principal_id, "ak:did_core:web:agents.example:summary");
         }
         ParticipantRosterRow::Participant(_) => panic!("expected grouped controller row"),
     }
@@ -3629,7 +3626,7 @@ fn participant_roster_rows_groups_agents_under_visible_controller() {
 
 #[test]
 fn direct_agent_peer_visibility_does_not_require_reply_participation() {
-    let agent = "did:web:example.com:agents:aa";
+    let agent = "ak:did_core:web:example.com:agents:aa";
     let projected_members = std::collections::BTreeSet::from([agent.to_owned()]);
     assert!(direct_agent_is_conversation_peer(
         agent,
@@ -3642,7 +3639,7 @@ fn direct_agent_peer_visibility_does_not_require_reply_participation() {
         &std::collections::BTreeSet::new()
     ));
     assert!(!direct_agent_is_conversation_peer(
-        "did:web:example.com:agents:other",
+        "ak:did_core:web:example.com:agents:other",
         agent,
         &projected_members
     ));
@@ -3651,7 +3648,7 @@ fn direct_agent_peer_visibility_does_not_require_reply_participation() {
 #[test]
 fn mention_candidate_for_own_agent_uses_me_alias() {
     let controller = SpaceParticipant {
-        did: "did:web:example.com:users:alice".to_owned(),
+        principal_id: "ak:did_core:web:example.com:users:alice".to_owned(),
         display_name: Some("Alice".to_owned()),
         handle_label: Some("alice:example.com".to_owned()),
         display_name_rank: 0,
@@ -3661,7 +3658,7 @@ fn mention_candidate_for_own_agent_uses_me_alias() {
         agent_metadata: None,
     };
     let agent = SpaceParticipant {
-        did: "did:web:agents.example:summary".to_owned(),
+        principal_id: "ak:did_core:web:agents.example:summary".to_owned(),
         display_name: Some("Summary Assistant".to_owned()),
         handle_label: None,
         display_name_rank: 1,
@@ -3669,20 +3666,20 @@ fn mention_candidate_for_own_agent_uses_me_alias() {
         is_self: false,
         is_agent: true,
         agent_metadata: Some(AgentParticipantMetadata {
-            controller_id: controller.did.clone(),
+            controller_id: controller.principal_id.clone(),
             controller_handle: "alice:example.com".to_owned(),
             agent_slug: "summary".to_owned(),
             display_name: "Summary Assistant".to_owned(),
         }),
     };
     let participants = vec![controller.clone(), agent.clone()];
-    let candidate = mention_candidate_for_participant(&agent, &participants, &controller.did)
+    let candidate = mention_candidate_for_participant(&agent, &participants, &controller.principal_id)
         .expect("agent mention candidate");
     assert_eq!(candidate.display_name, "Summary Assistant");
     assert_eq!(candidate.insert_label(), "me/summary");
     assert_eq!(
         candidate.controller_subject_id,
-        "did:web:example.com:users:alice"
+        "ak:did_core:web:example.com:users:alice"
     );
     assert_eq!(candidate.controller_handle_at_time, "alice:example.com");
     assert_eq!(candidate.agent_slug_at_time, "summary");
@@ -3691,7 +3688,7 @@ fn mention_candidate_for_own_agent_uses_me_alias() {
 #[test]
 fn mention_candidate_for_current_user_uses_structured_me_alias() {
     let participant = SpaceParticipant {
-        did: "did:web:example.com:users:alice".to_owned(),
+        principal_id: "ak:did_core:web:example.com:users:alice".to_owned(),
         display_name: Some("Alice".to_owned()),
         handle_label: None,
         display_name_rank: 0,
@@ -3704,10 +3701,10 @@ fn mention_candidate_for_current_user_uses_structured_me_alias() {
     let candidate = mention_candidate_for_participant(
         &participant,
         std::slice::from_ref(&participant),
-        &participant.did,
+        &participant.principal_id,
     )
     .expect("current-user mention candidate");
-    assert_eq!(candidate.did, participant.did);
+    assert_eq!(candidate.subject_id, participant.principal_id);
     assert_eq!(candidate.insert_label(), "me");
     assert_eq!(candidate.subtitle, "You");
 
@@ -3715,7 +3712,7 @@ fn mention_candidate_for_current_user_uses_structured_me_alias() {
         true,
         "ping @me",
         std::slice::from_ref(&candidate),
-        &participant.did,
+        &participant.principal_id,
     );
     let mention = mentions[0].as_mention().expect("structured self mention");
     assert_eq!(
@@ -3724,7 +3721,7 @@ fn mention_candidate_for_current_user_uses_structured_me_alias() {
     );
     assert_eq!(mention.mention_text_original.as_deref(), Some("@me"));
 
-    let typed_mentions = composer_mention_nodes(true, "ping @me", &[], &participant.did);
+    let typed_mentions = composer_mention_nodes(true, "ping @me", &[], &participant.principal_id);
     let typed_mention = typed_mentions[0]
         .as_mention()
         .expect("typed structured self mention");
@@ -3734,14 +3731,14 @@ fn mention_candidate_for_current_user_uses_structured_me_alias() {
     );
     assert_eq!(typed_mention.mention_text_original.as_deref(), Some("@me"));
 
-    assert!(composer_mention_nodes(true, "ask @me/summary", &[], &participant.did).is_empty());
+    assert!(composer_mention_nodes(true, "ask @me/summary", &[], &participant.principal_id).is_empty());
 }
 
 #[test]
 fn resolved_owned_agent_chip_suppresses_duplicate_directory_lookup() {
-    let controller = "did:web:example.com:users:alice";
+    let controller = "ak:did_core:web:example.com:users:alice";
     let mention = arkret_sdk::Mention::new(
-        crate::mls_api_helpers::principal_core_id("did:web:agents.example:summary").unwrap(),
+        crate::mls_api_helpers::principal_core_id("ak:did_core:web:agents.example:summary").unwrap(),
     )
     .with_agent_selector_metadata(
         crate::mls_api_helpers::principal_core_id(controller).unwrap(),
@@ -3779,27 +3776,27 @@ fn resolved_owned_agent_chip_suppresses_duplicate_directory_lookup() {
 #[test]
 fn owned_agent_inventory_enriches_existing_realm_member_metadata() {
     let slugs = std::collections::BTreeMap::from([(
-        "did:web:agents.example:summary".to_owned(),
+        "ak:did_core:web:agents.example:summary".to_owned(),
         "summary".to_owned(),
     )]);
     let metadata = owned_agent_metadata(
         &slugs,
-        "did:web:example.com:users:alice",
+        "ak:did_core:web:example.com:users:alice",
         Some("alice:example.com"),
     );
     let summary = metadata
-        .get("did:web:agents.example:summary")
+        .get("ak:did_core:web:agents.example:summary")
         .expect("owned agent metadata");
-    assert_eq!(summary.controller_id, "did:web:example.com:users:alice");
+    assert_eq!(summary.controller_id, "ak:did_core:web:example.com:users:alice");
     assert_eq!(summary.controller_handle, "alice:example.com");
     assert_eq!(summary.agent_slug, "summary");
 }
 
 #[test]
 fn explicit_member_click_builds_user_and_owned_agent_mentions() {
-    let principal_id = "did:web:example.com:users:alice";
+    let principal_id = "ak:did_core:web:example.com:users:alice";
     let member = SpaceParticipant {
-        did: "did:web:example.com:users:bob".to_owned(),
+        principal_id: "ak:did_core:web:example.com:users:bob".to_owned(),
         display_name: Some("Bob".to_owned()),
         handle_label: None,
         display_name_rank: 0,
@@ -3817,11 +3814,11 @@ fn explicit_member_click_builds_user_and_owned_agent_mentions() {
         Some("alice:example.com"),
     )
     .expect("explicit member mention");
-    assert_eq!(clicked_member.did, member.did);
+    assert_eq!(clicked_member.principal_id, member.principal_id);
     assert!(!clicked_member.is_agent);
 
     let unannotated_owned_agent = SpaceParticipant {
-        did: "did:web:agents.example:summary".to_owned(),
+        principal_id: "ak:did_core:web:agents.example:summary".to_owned(),
         display_name: None,
         handle_label: None,
         display_name_rank: u8::MAX,
@@ -3845,7 +3842,7 @@ fn explicit_member_click_builds_user_and_owned_agent_mentions() {
     assert_eq!(clicked_agent.agent_slug_at_time, "summary");
 
     let before_handle_load = owned_agent_mention_candidate(
-        &unannotated_owned_agent.did,
+        &unannotated_owned_agent.principal_id,
         Some("summary"),
         principal_id,
         None,
@@ -3867,7 +3864,7 @@ fn explicit_member_click_builds_user_and_owned_agent_mentions() {
 #[test]
 fn mention_candidate_for_other_agent_keeps_canonical_controller_handle() {
     let controller = SpaceParticipant {
-        did: "did:web:example.com:users:bob".to_owned(),
+        principal_id: "ak:did_core:web:example.com:users:bob".to_owned(),
         display_name: Some("Bob".to_owned()),
         handle_label: Some("bob:example.com".to_owned()),
         display_name_rank: 0,
@@ -3877,7 +3874,7 @@ fn mention_candidate_for_other_agent_keeps_canonical_controller_handle() {
         agent_metadata: None,
     };
     let agent = SpaceParticipant {
-        did: "did:web:agents.example:summary".to_owned(),
+        principal_id: "ak:did_core:web:agents.example:summary".to_owned(),
         display_name: Some("Summary Assistant".to_owned()),
         handle_label: None,
         display_name_rank: 1,
@@ -3885,7 +3882,7 @@ fn mention_candidate_for_other_agent_keeps_canonical_controller_handle() {
         is_self: false,
         is_agent: true,
         agent_metadata: Some(AgentParticipantMetadata {
-            controller_id: controller.did.clone(),
+            controller_id: controller.principal_id.clone(),
             controller_handle: "bob:example.com".to_owned(),
             agent_slug: "summary".to_owned(),
             display_name: "Summary Assistant".to_owned(),
@@ -3894,7 +3891,7 @@ fn mention_candidate_for_other_agent_keeps_canonical_controller_handle() {
     let participants = vec![controller, agent.clone()];
 
     let candidate =
-        mention_candidate_for_participant(&agent, &participants, "did:web:example.com:users:alice")
+        mention_candidate_for_participant(&agent, &participants, "ak:did_core:web:example.com:users:alice")
             .expect("agent mention candidate");
 
     assert_eq!(candidate.insert_label(), "bob:example.com/summary");
@@ -3903,7 +3900,7 @@ fn mention_candidate_for_other_agent_keeps_canonical_controller_handle() {
 #[test]
 fn agent_candidate_visibility_keeps_owned_agents_and_hides_private_remote_agents() {
     let own_controller = SpaceParticipant {
-        did: "did:web:example.com:users:alice".to_owned(),
+        principal_id: "ak:did_core:web:example.com:users:alice".to_owned(),
         display_name: Some("Alice".to_owned()),
         handle_label: Some("alice:example.com".to_owned()),
         display_name_rank: 0,
@@ -3913,7 +3910,7 @@ fn agent_candidate_visibility_keeps_owned_agents_and_hides_private_remote_agents
         agent_metadata: None,
     };
     let own_agent = SpaceParticipant {
-        did: "did:web:agents.example:alice-summary".to_owned(),
+        principal_id: "ak:did_core:web:agents.example:alice-summary".to_owned(),
         display_name: Some("Alice Summary".to_owned()),
         handle_label: None,
         display_name_rank: 1,
@@ -3921,14 +3918,14 @@ fn agent_candidate_visibility_keeps_owned_agents_and_hides_private_remote_agents
         is_self: false,
         is_agent: true,
         agent_metadata: Some(AgentParticipantMetadata {
-            controller_id: own_controller.did.clone(),
+            controller_id: own_controller.principal_id.clone(),
             controller_handle: "alice:example.com".to_owned(),
             agent_slug: "summary".to_owned(),
             display_name: "Alice Summary".to_owned(),
         }),
     };
     let remote_agent = SpaceParticipant {
-        did: "did:web:agents.example:bob-summary".to_owned(),
+        principal_id: "ak:did_core:web:agents.example:bob-summary".to_owned(),
         display_name: Some("Bob Summary".to_owned()),
         handle_label: None,
         display_name_rank: 1,
@@ -3936,13 +3933,13 @@ fn agent_candidate_visibility_keeps_owned_agents_and_hides_private_remote_agents
         is_self: false,
         is_agent: true,
         agent_metadata: Some(AgentParticipantMetadata {
-            controller_id: "did:web:example.com:users:bob".to_owned(),
+            controller_id: "ak:did_core:web:example.com:users:bob".to_owned(),
             controller_handle: "bob:example.com".to_owned(),
             agent_slug: "summary".to_owned(),
             display_name: "Bob Summary".to_owned(),
         }),
     };
-    let principal_id = own_controller.did.as_str();
+    let principal_id = own_controller.principal_id.as_str();
     let visible = std::collections::BTreeSet::new();
 
     assert!(agent_candidate_is_visible(
@@ -3957,7 +3954,7 @@ fn agent_candidate_visibility_keeps_owned_agents_and_hides_private_remote_agents
     ));
     assert!(agent_candidate_is_visible(
         &remote_agent,
-        &std::collections::BTreeSet::from([remote_agent.did.clone()]),
+        &std::collections::BTreeSet::from([remote_agent.principal_id.clone()]),
         principal_id
     ));
     let sidecar_mentions = sidecar_owned_agent_participants(
@@ -3971,14 +3968,14 @@ fn agent_candidate_visibility_keeps_owned_agents_and_hides_private_remote_agents
     assert_eq!(sidecar_mentions, vec![own_agent.clone()]);
     assert_eq!(
         readable_participation_agent_ids(&[own_agent.clone(), remote_agent], principal_id),
-        vec![own_agent.did]
+        vec![own_agent.principal_id]
     );
 }
 
 #[test]
 fn sidecar_presence_excludes_realm_humans_and_foreign_agents() {
     let controller = SpaceParticipant {
-        did: "did:web:example.com:users:alice".to_owned(),
+        principal_id: "ak:did_core:web:example.com:users:alice".to_owned(),
         display_name: Some("Alice".to_owned()),
         handle_label: Some("alice:example.com".to_owned()),
         display_name_rank: 0,
@@ -3988,7 +3985,7 @@ fn sidecar_presence_excludes_realm_humans_and_foreign_agents() {
         agent_metadata: None,
     };
     let realm_human = SpaceParticipant {
-        did: "did:web:example.com:users:bob".to_owned(),
+        principal_id: "ak:did_core:web:example.com:users:bob".to_owned(),
         display_name: Some("Bob".to_owned()),
         handle_label: Some("bob:example.com".to_owned()),
         display_name_rank: 1,
@@ -3998,7 +3995,7 @@ fn sidecar_presence_excludes_realm_humans_and_foreign_agents() {
         agent_metadata: None,
     };
     let owned_agent = SpaceParticipant {
-        did: "did:web:agents.example:alice-summary".to_owned(),
+        principal_id: "ak:did_core:web:agents.example:alice-summary".to_owned(),
         display_name: Some("Alice Summary".to_owned()),
         handle_label: None,
         display_name_rank: 1,
@@ -4006,14 +4003,14 @@ fn sidecar_presence_excludes_realm_humans_and_foreign_agents() {
         is_self: false,
         is_agent: true,
         agent_metadata: Some(AgentParticipantMetadata {
-            controller_id: controller.did.clone(),
+            controller_id: controller.principal_id.clone(),
             controller_handle: "alice:example.com".to_owned(),
             agent_slug: "summary".to_owned(),
             display_name: "Alice Summary".to_owned(),
         }),
     };
     let foreign_agent = SpaceParticipant {
-        did: "did:web:agents.example:bob-summary".to_owned(),
+        principal_id: "ak:did_core:web:agents.example:bob-summary".to_owned(),
         display_name: Some("Bob Summary".to_owned()),
         handle_label: None,
         display_name_rank: 1,
@@ -4021,7 +4018,7 @@ fn sidecar_presence_excludes_realm_humans_and_foreign_agents() {
         is_self: false,
         is_agent: true,
         agent_metadata: Some(AgentParticipantMetadata {
-            controller_id: realm_human.did.clone(),
+            controller_id: realm_human.principal_id.clone(),
             controller_handle: "bob:example.com".to_owned(),
             agent_slug: "summary".to_owned(),
             display_name: "Bob Summary".to_owned(),
@@ -4035,7 +4032,7 @@ fn sidecar_presence_excludes_realm_humans_and_foreign_agents() {
             owned_agent.clone(),
             foreign_agent,
         ],
-        &controller.did,
+        &controller.principal_id,
     );
 
     assert_eq!(visible, vec![controller, owned_agent]);
@@ -4044,7 +4041,7 @@ fn sidecar_presence_excludes_realm_humans_and_foreign_agents() {
 #[test]
 fn mention_candidate_without_handle_is_not_displayed_as_did() {
     let participant = SpaceParticipant {
-        did: "did:web:bob.example".to_owned(),
+        principal_id: "ak:did_core:web:bob.example".to_owned(),
         display_name: Some("Bob Example".to_owned()),
         handle_label: None,
         display_name_rank: 0,
@@ -4058,7 +4055,7 @@ fn mention_candidate_without_handle_is_not_displayed_as_did() {
         mention_candidate_for_participant(
             &participant,
             std::slice::from_ref(&participant),
-            "did:web:alice.example",
+            "ak:did_core:web:alice.example",
         )
         .is_none()
     );
@@ -4084,15 +4081,15 @@ fn mention_candidate_uses_cached_member_handle() {
         Some(&projection),
         &store,
         "ak:realm:A_UALC69_WeDbu3WQ3suidUfmxa1MAW5tIIxjRS1C9yE",
-        "did:web:alice.example",
+        "ak:did_core:web:alice.example",
     );
     let bob = participants
         .iter()
-        .find(|participant| participant.did == "ak:did_core:web:bob.example")
+        .find(|participant| participant.principal_id == "ak:did_core:web:bob.example")
         .expect("bob participant");
-    let candidate = mention_candidate_for_participant(bob, &participants, "did:web:alice.example")
+    let candidate = mention_candidate_for_participant(bob, &participants, "ak:did_core:web:alice.example")
         .expect("member mention candidate");
-    assert_eq!(candidate.did, "ak:did_core:web:bob.example");
+    assert_eq!(candidate.subject_id, "ak:did_core:web:bob.example");
     assert_eq!(candidate.display_name, "bob:local.host");
     assert_eq!(candidate.insert_label(), "bob:local.host");
     assert_eq!(candidate.subtitle, "");
@@ -4118,12 +4115,12 @@ fn late_join_discussion_sender_resolves_cached_member_handle() {
         "membership": "join"
     }]});
     let participants =
-        space_participants(Some(&projection), &store, realm, "did:web:reader.example");
+        space_participants(Some(&projection), &store, realm, "ak:did_core:web:reader.example");
 
     assert_eq!(
         sender_display_label(
             sender,
-            "did:web:reader.example",
+            "ak:did_core:web:reader.example",
             "reader:local.host",
             &participants,
         ),
@@ -4133,9 +4130,9 @@ fn late_join_discussion_sender_resolves_cached_member_handle() {
 
 #[test]
 fn unresolved_historical_sender_uses_the_shared_protocol_id_fallback() {
-    let sender = "did:webvh:zQmHistoricalAuthor0123456789abcdefghijk";
+    let sender = "ak:did_core:webvh:zQmHistoricalAuthor0123456789abcdefghijk";
     assert_eq!(
-        sender_display_label(sender, "did:web:alice.example", "Alice", &[]),
+        sender_display_label(sender, "ak:did_core:web:alice.example", "Alice", &[]),
         crate::views::helpers::short_protocol_id(sender)
     );
 }
@@ -4309,9 +4306,9 @@ fn presence_maps_from_sync_events_prefers_account_subscribe_presence() {
     let sent_at = now - chrono::Duration::seconds(5);
     let expires_at = now + chrono::Duration::seconds(55);
     let participants = vec![
-        "did:web:alice.example".to_owned(),
-        "did:web:bob.example".to_owned(),
-        "did:web:carol.example".to_owned(),
+        "ak:did_core:web:alice.example".to_owned(),
+        "ak:did_core:web:bob.example".to_owned(),
+        "ak:did_core:web:carol.example".to_owned(),
     ];
     let events = vec![
         json!({
@@ -4338,30 +4335,30 @@ fn presence_maps_from_sync_events_prefers_account_subscribe_presence() {
     ];
 
     let (states, labels, status_messages) =
-        presence_maps_from_sync_events(&events, &participants, "did:web:alice.example", "Alice")
+        presence_maps_from_sync_events(&events, &participants, "ak:did_core:web:alice.example", "Alice")
             .expect("presence events should match participants");
 
     assert_eq!(
-        states.get("did:web:alice.example"),
+        states.get("ak:did_core:web:alice.example"),
         Some(&"online".to_owned())
     );
     assert_eq!(
-        states.get("did:web:bob.example"),
+        states.get("ak:did_core:web:bob.example"),
         Some(&"online".to_owned())
     );
     assert_eq!(
-        states.get("did:web:carol.example"),
+        states.get("ak:did_core:web:carol.example"),
         Some(&"offline".to_owned())
     );
     assert_eq!(
-        labels.get("did:web:alice.example"),
+        labels.get("ak:did_core:web:alice.example"),
         Some(&"Alice".to_owned())
     );
     assert_eq!(
-        status_messages.get("did:web:bob.example"),
+        status_messages.get("ak:did_core:web:bob.example"),
         Some(&"On vacation until May 5".to_owned())
     );
-    assert!(!states.contains_key("did:web:mallory.example"));
+    assert!(!states.contains_key("ak:did_core:web:mallory.example"));
 }
 
 #[test]
@@ -4392,8 +4389,8 @@ fn presence_projection_refresh_key_changes_without_a_cursor_advance() {
 fn presence_maps_from_sync_events_aggregates_live_device_envelopes() {
     let now = chrono::Utc::now();
     let participants = vec![
-        "did:web:alice.example".to_owned(),
-        "did:web:bob.example".to_owned(),
+        "ak:did_core:web:alice.example".to_owned(),
+        "ak:did_core:web:bob.example".to_owned(),
     ];
     let events = vec![
         json!({
@@ -4435,12 +4432,12 @@ fn presence_maps_from_sync_events_aggregates_live_device_envelopes() {
     ];
 
     let (states, _, status_messages) =
-        presence_maps_from_sync_events(&events, &participants, "did:web:alice.example", "Alice")
+        presence_maps_from_sync_events(&events, &participants, "ak:did_core:web:alice.example", "Alice")
             .expect("live remote presence should match participants");
 
-    assert_eq!(states.get("did:web:bob.example"), Some(&"dnd".to_owned()));
+    assert_eq!(states.get("ak:did_core:web:bob.example"), Some(&"dnd".to_owned()));
     assert_eq!(
-        status_messages.get("did:web:bob.example"),
+        status_messages.get("ak:did_core:web:bob.example"),
         Some(&"Available soon".to_owned())
     );
 }

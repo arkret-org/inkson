@@ -48,12 +48,12 @@ pub async fn refresh_pending_onboarding(
             // the bound account scope and the pending store is deliberately
             // consumed. A reload must reconcile with that exact promoted key,
             // not require the now-obsolete pre-principal copy.
-            let full_id = handoff
+            let principal_id = handoff
                 .bound_principal_id
                 .as_ref()
                 .ok_or_else(|| anyhow::anyhow!("account handoff holder key is unavailable"))?;
             let authority = arkret_sdk::PrincipalAuthorityKey::new(
-                arkret_sdk::project_full_id_to_core_id(full_id)?,
+                principal_id.clone(),
                 arkret_sdk::DidCoreId::new(handoff.audience.clone())?,
             );
             let user_store =
@@ -125,13 +125,11 @@ fn reconcile_snapshot(
             handoff.reserved_identity = identity_creation_lease.reserved_identity;
             handoff.retry_after_ms = None;
             handoff.bound_principal_id = None;
+            handoff.bound_principal_did = None;
         }
-        arkret_sdk::AccountHandoffBinding::Bound {
-            principal_id,
-            full_id,
-        } => {
-            if arkret_sdk::project_full_id_to_core_id(&full_id)? != principal_id {
-                anyhow::bail!("bound onboarding full_id does not project to its principal_id");
+        arkret_sdk::AccountHandoffBinding::Bound { principal_id, did } => {
+            if arkret_sdk::project_did_to_core_id(&did)? != principal_id {
+                anyhow::bail!("bound onboarding did does not project to its principal_id");
             }
             handoff.lease_id = None;
             handoff.lease_fence = None;
@@ -139,10 +137,8 @@ fn reconcile_snapshot(
             handoff.identity_creation_state = None;
             handoff.reserved_identity = None;
             handoff.retry_after_ms = None;
-            // Downstream signer, secure-store and recovery scopes require the
-            // method-full DID. Persisting only the stable core id makes the
-            // same founding device look like an unknown replacement device.
-            handoff.bound_principal_id = Some(full_id);
+            handoff.bound_principal_id = Some(principal_id);
+            handoff.bound_principal_did = Some(did);
         }
         arkret_sdk::AccountHandoffBinding::IdentityCreationBusy { .. } => {
             anyhow::bail!("onboarding snapshot no longer grants this holder the active lease");
@@ -307,7 +303,7 @@ pub(crate) fn checkpoint_continues_bound_creation(
     let Some(bound) = handoff.bound_principal_id.as_ref() else {
         return false;
     };
-    checkpoint.full_id == *bound
+    arkret_sdk::project_did_to_core_id(&checkpoint.did).as_ref() == Ok(bound)
         && checkpoint.device_id == handoff.device_id
         && checkpoint.principal_server_url == handoff.principal_server_url
         && checkpoint.gate_account_base == handoff.gate_account_base
@@ -400,6 +396,7 @@ mod tests {
             device_id: "ak:device:019f0000-0000-7000-8000-000000000001".to_owned(),
             trust_domain: "ak:trust_domain:auth.example".to_owned(),
             bound_principal_id: None,
+            bound_principal_did: None,
         };
         let recovery_key = crate::recovery_crypto::generate_recovery_key().unwrap();
         let checkpoint = crate::identity::principal_registration::prepare_registration_checkpoint(
@@ -424,7 +421,8 @@ mod tests {
         handoff.lease_fence = None;
         handoff.lease_expires_at = None;
         handoff.identity_creation_state = None;
-        handoff.bound_principal_id = Some(checkpoint.full_id.clone());
+        handoff.bound_principal_id = Some(arkret_sdk::project_did_to_core_id(&checkpoint.did).unwrap());
+        handoff.bound_principal_did = Some(checkpoint.did.clone());
         (
             crate::state::isolated_store_for_tests("bound-onboarding-continuation"),
             handoff,
@@ -460,25 +458,26 @@ mod tests {
     }
 
     #[test]
-    fn bound_snapshot_keeps_the_method_full_principal_id() {
+    fn bound_snapshot_keeps_distinct_stable_id_and_did() {
         let (_store, handoff, checkpoint) =
             bound_continuation_fixture(PendingPrincipalRegistrationStage::RegisterRequestPrepared);
-        let full_id = checkpoint.full_id.clone();
-        let core_id = arkret_sdk::project_full_id_to_core_id(&full_id).unwrap();
+        let did = checkpoint.did.clone();
+        let core_id = arkret_sdk::project_did_to_core_id(&did).unwrap();
         let snapshot = arkret_sdk::AccountOnboardingSnapshot {
             handoff_request_id: arkret_sdk::RequestId::new(handoff.request_id.clone()).unwrap(),
             account_subject: handoff.account_subject.clone().unwrap(),
             observed_at: chrono::Utc::now(),
             binding: arkret_sdk::AccountHandoffBinding::Bound {
-                principal_id: core_id,
-                full_id: full_id.clone(),
+                principal_id: core_id.clone(),
+                did: did.clone(),
             },
             goal: arkret_sdk::AccountOnboardingGoal::CompleteIdentity,
         };
 
         let reconciled = reconcile_snapshot(handoff, snapshot).unwrap();
 
-        assert_eq!(reconciled.bound_principal_id.as_ref(), Some(&full_id));
+        assert_eq!(reconciled.bound_principal_id.as_ref(), Some(&core_id));
+        assert_eq!(reconciled.bound_principal_did.as_ref(), Some(&did));
         assert!(reconciled.lease_id.is_none());
         assert!(reconciled.identity_creation_state.is_none());
     }
@@ -648,7 +647,11 @@ mod tests {
         bound_elsewhere.lease_expires_at = None;
         bound_elsewhere.identity_creation_state = None;
         bound_elsewhere.bound_principal_id = Some(
-            arkret_sdk::DidFullId::new("did:webvh:z6mkfixture:other.example".to_owned()).unwrap(),
+            arkret_sdk::DidCoreId::new("ak:did_core:webvh:z6mkfixture:other.example".to_owned())
+                .unwrap(),
+        );
+        bound_elsewhere.bound_principal_did = Some(
+            arkret_sdk::Did::new("did:webvh:z6mkfixture:other.example".to_owned()).unwrap(),
         );
         assert_eq!(
             registration_checkpoint_disposition(

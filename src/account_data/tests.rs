@@ -276,12 +276,12 @@ fn realm_remark_unpin_builder_can_tombstone_empty_remark() {
 #[test]
 fn contact_remark_serialises_minimal_private_payload() {
     let saved_at = "2026-06-05T00:00:00.000Z".parse().unwrap();
-    let actor_did = crate::mls_api_helpers::principal_core_id("did:web:alice.example").unwrap();
-    let remark = ContactRemark::new(actor_did.clone(), "Alice from Ops", saved_at);
+    let actor_id = crate::mls_api_helpers::principal_core_id("did:web:alice.example").unwrap();
+    let remark = ContactRemark::new(actor_id.clone(), "Alice from Ops", saved_at);
     let wire = serde_json::to_value(&remark).unwrap();
     assert_eq!(wire["version"], 1);
     assert_eq!(wire["subject"]["kind"], "human");
-    assert_eq!(wire["subject"]["principal_id"], actor_did.as_str());
+    assert_eq!(wire["subject"]["principal_id"], actor_id.as_str());
     assert!(wire.get("actor_id").is_none());
     assert_eq!(wire["petname"], "Alice from Ops");
     assert!(wire.get("note").is_none());
@@ -291,7 +291,7 @@ fn contact_remark_serialises_minimal_private_payload() {
         version: 1,
         subject: ContactRemarkSubject {
             kind: "human".to_owned(),
-            principal_id: actor_did,
+            principal_id: actor_id,
         },
         petname: " ".to_owned(),
         global_display_name_at_save: None,
@@ -308,12 +308,12 @@ fn contact_remark_serialises_minimal_private_payload() {
 #[test]
 fn contact_remark_pinned_builder_preserves_private_fields() {
     let actor_id = "did:web:alice.example";
-    let actor_did = crate::mls_api_helpers::principal_core_id(actor_id).unwrap();
+    let actor_id = crate::mls_api_helpers::principal_core_id(actor_id).unwrap();
     let existing = ContactRemark {
         version: 1,
         subject: ContactRemarkSubject {
             kind: "human".to_owned(),
-            principal_id: actor_did.clone(),
+            principal_id: actor_id.clone(),
         },
         petname: "Alice from Ops".to_owned(),
         global_display_name_at_save: None,
@@ -326,7 +326,7 @@ fn contact_remark_pinned_builder_preserves_private_fields() {
     };
 
     let next = ContactRemark::with_pinned_preserving_fields(
-        actor_did,
+        actor_id,
         Some(&existing),
         true,
         "2026-06-06T00:00:00.000Z".parse().unwrap(),
@@ -356,33 +356,33 @@ fn typed_blocklist_entries_filter_by_closed_mode_surface_and_expiry() {
     let created_at = "2026-08-02T00:00:00.000Z".parse().unwrap();
     let mut entry = new_blocklist_entry(
         BlocklistUiTargetKind::Actor,
-        "did:web:alice.example",
+        "ak:did_core:web:alice.example",
         Some("spam".to_owned()),
         vec![AccountBlocklistSurface::Messages],
         None,
         created_at,
     )
     .unwrap();
-    assert!(is_blocked(&[entry.clone()], "did:web:alice.example"));
+    assert!(is_blocked(&[entry.clone()], "ak:did_core:web:alice.example"));
     assert!(!suppresses_notifications(
         &[entry.clone()],
-        "did:web:alice.example",
+        "ak:did_core:web:alice.example",
         &[AccountBlocklistSurface::Notifications],
     ));
 
     entry.mode = AccountBlocklistMode::Mute;
-    assert!(!is_blocked(&[entry.clone()], "did:web:alice.example"));
+    assert!(!is_blocked(&[entry.clone()], "ak:did_core:web:alice.example"));
     entry.applies_to = vec![AccountBlocklistSurface::Notifications];
     assert!(suppresses_notifications(
         &[entry.clone()],
-        "did:web:alice.example",
+        "ak:did_core:web:alice.example",
         &[AccountBlocklistSurface::Notifications],
     ));
 
     entry.expires_at = Some("2020-01-01T00:00:00.000Z".parse().unwrap());
     assert!(!suppresses_notifications(
         &[entry],
-        "did:web:alice.example",
+        "ak:did_core:web:alice.example",
         &[AccountBlocklistSurface::Notifications],
     ));
 }
@@ -396,7 +396,7 @@ fn typed_blocklist_mutators_dedupe_and_unblock_exact_targets() {
     assert!(block_target_in(
         &mut entries,
         BlocklistUiTargetKind::Actor,
-        "did:web:alice.example",
+        "ak:did_core:web:alice.example",
         None,
         vec![AccountBlocklistSurface::Messages],
         None,
@@ -405,7 +405,7 @@ fn typed_blocklist_mutators_dedupe_and_unblock_exact_targets() {
     assert!(!block_target_in(
         &mut entries,
         BlocklistUiTargetKind::Actor,
-        "did:web:alice.example",
+        "ak:did_core:web:alice.example",
         None,
         vec![AccountBlocklistSurface::Messages],
         None,
@@ -426,13 +426,13 @@ fn typed_blocklist_mutators_dedupe_and_unblock_exact_targets() {
     let domain_target = entries[1].target.clone();
     assert!(unblock_target_in(&mut entries, &domain_target));
     assert_eq!(entries.len(), 1);
-    assert!(unblock_user_in(&mut entries, "did:web:alice.example"));
+    assert!(unblock_user_in(&mut entries, "ak:did_core:web:alice.example"));
     assert!(entries.is_empty());
 }
 
 #[test]
 fn blocklist_payload_uses_cas_revision_and_preserves_empty_clear() {
-    let holder_id = "did:web:owner.example";
+    let holder_id = "ak:did_core:web:owner.example";
     let body = build_blocklist_account_data_body(holder_id, 7, &[]).unwrap();
     assert_eq!(body["holder_id"], "ak:did_core:web:owner.example");
     assert_eq!(body["version"], 7);
@@ -446,7 +446,7 @@ fn blocklist_payload_uses_cas_revision_and_preserves_empty_clear() {
 
 #[test]
 fn blocklist_payload_rejects_wrong_holder_id_and_zero_revision() {
-    let holder_id = "did:web:owner.example";
+    let holder_id = "ak:did_core:web:owner.example";
     let body = build_blocklist_account_data_body(holder_id, 2, &[]).unwrap();
     assert!(blocklist_entries_from_account_data(&body, "did:web:other.example").is_err());
 

@@ -304,8 +304,8 @@ pub async fn author_pairing_request_body(
         .ok_or_else(|| anyhow::anyhow!("no active authority can approve device pairing"))?;
     let signer = crate::event_signer::active_signer()
         .ok_or_else(|| anyhow::anyhow!("no active device signer can approve device pairing"))?;
-    let principal = arkret_sdk::DidFullId::new(signer.signer_did().to_owned())?;
-    if arkret_sdk::project_full_id_to_core_id(&principal)? != active_scope.authority.principal_id {
+    let principal = arkret_sdk::Did::new(signer.signer_did().to_owned())?;
+    if arkret_sdk::project_did_to_core_id(&principal)? != active_scope.authority.principal_id {
         anyhow::bail!("active pairing signer does not match the active authority");
     }
     if signer.device_id() != Some(active_scope.device_id.as_str()) {
@@ -320,7 +320,7 @@ pub async fn author_pairing_request_body(
         _ => anyhow::bail!("accepted-device target attestation must use a base64url signature"),
     };
     let created_at = chrono::Utc::now();
-    let principal_actor = arkret_sdk::project_full_id_to_core_id(&principal)?;
+    let principal_actor = arkret_sdk::project_did_to_core_id(&principal)?;
     let authorize_payload = arkret_sdk::UnsignedDeviceAuthorizePayload::new(
         principal_actor.clone(),
         attestation.device_id.clone(),
@@ -412,7 +412,7 @@ pub async fn author_pairing_request_body(
 /// and its target-owned attestation binding.
 pub async fn verify_authorized_pairing_event(
     http: &arkret_sdk::http_client::Client,
-    principal: &arkret_sdk::DidFullId,
+    principal: &arkret_sdk::Did,
     outcome: &arkret_sdk::DevicePairingStatusOutcome,
     attestation: &arkret_sdk::DevicePairingTargetAttestation,
 ) -> anyhow::Result<arkret_sdk::Event> {
@@ -442,7 +442,7 @@ pub async fn verify_authorized_pairing_event(
         .into_iter()
         .find(|event| &event.event_id == event_ref)
         .ok_or_else(|| anyhow::anyhow!("authorized device Event is not accepted"))?;
-    let principal_actor = arkret_sdk::project_full_id_to_core_id(principal)?;
+    let principal_actor = arkret_sdk::project_did_to_core_id(principal)?;
     if event.kind != arkret_sdk::EventKind::DeviceAuthorize || event.actor_id != principal_actor {
         anyhow::bail!(
             "authorized pairing status does not reference this principal's authorize Event"

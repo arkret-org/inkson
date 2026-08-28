@@ -14,7 +14,7 @@ pub(crate) struct ResolveHandleContext<'a> {
     pub(crate) requester: Option<&'a str>,
     pub(crate) audience: Option<&'a str>,
     pub(crate) realm_id: Option<&'a str>,
-    pub(crate) expected_did: Option<&'a str>,
+    pub(crate) expected_principal_id: Option<&'a str>,
     pub(crate) proof_challenge: Option<&'a str>,
     /// Detached-JWS proofs answering `proof_challenge`. The wire element is the
     /// SDK `PayloadProof` (digest over the unsigned request payload), never an
@@ -40,17 +40,18 @@ pub(crate) fn resolve_handle_request_body(
         ),
         None => None,
     };
-    let expected_did = match non_empty(context.expected_did) {
-        Some(did) => Some(
-            crate::mls_api_helpers::principal_core_id(&did)
-                .map_err(|err| anyhow::anyhow!("invalid expected_did `{did}`: {err}"))?,
+    let expected_principal_id = match non_empty(context.expected_principal_id) {
+        Some(principal_id) => Some(
+            arkret_sdk::DidCoreId::new(principal_id.clone()).map_err(|err| {
+                anyhow::anyhow!("invalid expected_principal_id `{principal_id}`: {err}")
+            })?,
         ),
         None => None,
     };
     let requester = match non_empty(context.requester) {
-        Some(did) => Some(
-            crate::mls_api_helpers::principal_core_id(&did)
-                .map_err(|err| anyhow::anyhow!("invalid requester `{did}`: {err}"))?,
+        Some(requester) => Some(
+            arkret_sdk::DidCoreId::new(requester.clone())
+                .map_err(|err| anyhow::anyhow!("invalid requester `{requester}`: {err}"))?,
         ),
         None => None,
     };
@@ -64,7 +65,7 @@ pub(crate) fn resolve_handle_request_body(
     };
     Ok(arkret_models_discovery::DirectoryResolveHandleRequestBody {
         handle: handle.to_owned(),
-        expected_principal_id: expected_did,
+        expected_principal_id,
         proof_challenge: non_empty(context.proof_challenge),
         claim_presentations: Vec::new(),
         intent,
@@ -79,6 +80,6 @@ pub(crate) fn canonical_invitee_handle(target: &str) -> anyhow::Result<String> {
     parse_user_handle(target)
         .map(|handle| handle.handle)
         .ok_or_else(|| {
-            anyhow::anyhow!("invitee must be a DID or canonical handle `<localpart>:<domain>`")
+            anyhow::anyhow!("invitee must be a canonical handle `<localpart>:<domain>`")
         })
 }

@@ -66,7 +66,7 @@ pub fn prepare_registration_checkpoint(
         lease_fence,
         device_id: device_id.trim().to_owned(),
         trust_domain: handoff.trust_domain.clone(),
-        full_id: arkret_sdk::DidFullId::new(draft.did)?,
+        did: arkret_sdk::Did::new(draft.did)?,
         version_id: draft.version_id,
         identity_abandonment: None,
         root_public_key_multibase: draft.root_public_key_multibase,
@@ -137,7 +137,7 @@ pub fn recover_registration_checkpoint_from_reservation(
         anyhow::bail!("Recovery Key does not match the reserved root pre-rotation chain");
     }
     let genesis_hlc = crate::signing_stamp::issue_realm_genesis_hlc_with_secret(
-        reserved.full_id.as_str(),
+        reserved.did.as_str(),
         handoff.device_id.trim(),
         &key_material.root_seed,
     )?
@@ -152,7 +152,7 @@ pub fn recover_registration_checkpoint_from_reservation(
         lease_fence,
         device_id: handoff.device_id.trim().to_owned(),
         trust_domain: handoff.trust_domain.clone(),
-        full_id: reserved.full_id,
+        did: reserved.did,
         version_id: validated.did_version_id,
         identity_abandonment: None,
         root_public_key_multibase: key_material.root_public_key_multikey.clone(),
@@ -305,7 +305,7 @@ pub fn prepare_genesis_draft(
         return Ok(checkpoint.clone());
     }
 
-    let principal_id = checkpoint.full_id.clone();
+    let principal_id = checkpoint.did.clone();
     let created_at = chrono::DateTime::parse_from_rfc3339(&checkpoint.genesis_created_at)
         .context("persisted genesis creation time is invalid")?
         .with_timezone(&Utc);
@@ -378,7 +378,7 @@ pub async fn complete_account_handoff_binding(
         anyhow::bail!("account handoff holder key does not match the current DPoP key");
     }
     if let Some(bound) = handoff.bound_principal_id.as_ref()
-        && bound != &checkpoint.full_id
+        && arkret_sdk::project_did_to_core_id(&checkpoint.did).as_ref() != Ok(bound)
     {
         anyhow::bail!("bound account principal does not match the frozen registration draft");
     }
@@ -403,7 +403,7 @@ pub async fn complete_account_handoff_binding(
             dpop.sdk_account_handoff_auth(account_handoff_grant),
         ))
         .build()?;
-    let expected_principal_id = arkret_sdk::project_full_id_to_core_id(&checkpoint.full_id)?;
+    let expected_principal_id = arkret_sdk::project_did_to_core_id(&checkpoint.did)?;
     let prepared =
         crate::identity::account_auth::load_prepared_identity_creation_request(handoff, checkpoint)
             .await?;
@@ -413,7 +413,7 @@ pub async fn complete_account_handoff_binding(
         checkpoint_stage = ?checkpoint.stage,
         server_account_bound = handoff.bound_principal_id.is_some(),
         lease_fence = checkpoint.lease_fence,
-        checkpoint_full_id = %checkpoint.full_id,
+        checkpoint_did = %checkpoint.did,
         storage_principal_id = %expected_principal_id,
         "identity registration continuation state classified"
     );
@@ -723,7 +723,7 @@ async fn verify_registration_terminal_evidence(
     receipt: &arkret_sdk::AccountBindingReceipt,
     _account_client: &arkret_sdk::http_client::Client,
 ) -> anyhow::Result<()> {
-    let authority_full_id = arkret_sdk::DidFullId::new(
+    let authority_did = arkret_sdk::Did::new(
         receipt
             .proof
             .verification_method
@@ -732,7 +732,7 @@ async fn verify_registration_terminal_evidence(
             .map(|(controller, _)| controller.to_owned())
             .context("Account Authority receipt proof omits DID fragment")?,
     )?;
-    if arkret_sdk::project_full_id_to_core_id(&authority_full_id)? != receipt.account_authority_id {
+    if arkret_sdk::project_did_to_core_id(&authority_did)? != receipt.account_authority_id {
         anyhow::bail!("Account Authority receipt proof controller mismatch");
     }
     // Both the Account Authority service DID and the newly-created principal
@@ -745,7 +745,7 @@ async fn verify_registration_terminal_evidence(
             .build()?;
     let authority_history = crate::identity::history::fetch_complete_identity_history(
         &principal_client,
-        &authority_full_id,
+        &authority_did,
     )
     .await
     .context("fetch complete Account Authority DID history from Principal Server")?;
@@ -754,7 +754,7 @@ async fn verify_registration_terminal_evidence(
     garth::verify_binding_receipt_at_issuance(receipt, &authority_resolver)
         .map_err(|error| anyhow!("verify Account Authority receipt at issuance: {error}"))?;
 
-    let principal_id = checkpoint.full_id.clone();
+    let principal_id = checkpoint.did.clone();
     let history =
         crate::identity::history::fetch_complete_identity_history(&principal_client, &principal_id)
             .await
@@ -902,6 +902,7 @@ mod tests {
             device_id: device_id.to_owned(),
             trust_domain: "ak:trust_domain:principal.example".to_owned(),
             bound_principal_id: None,
+            bound_principal_did: None,
         }
     }
 
@@ -921,7 +922,7 @@ mod tests {
 
         let recovered = recover_registration_checkpoint_from_reservation(&renewed, &key).unwrap();
 
-        assert_eq!(recovered.full_id, first.full_id);
+        assert_eq!(recovered.did, first.did);
         assert_eq!(recovered.did_operation, first.did_operation);
         assert_eq!(recovered.lease_fence, 2);
         assert_eq!(recovered.device_id, renewed.device_id);

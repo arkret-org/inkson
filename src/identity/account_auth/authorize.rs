@@ -149,7 +149,7 @@ pub fn build_persisted_oidc_scaffold(
     device_id: &str,
     issuer: &str,
     principal_trust_domain: &arkret_sdk::TrustDomainId,
-    expected_principal_full_id: Option<&arkret_sdk::DidFullId>,
+    expected_principal_did: Option<&arkret_sdk::Did>,
     expected_device_id: Option<&arkret_sdk::DeviceId>,
 ) -> PersistedOidcScaffold {
     PersistedOidcScaffold {
@@ -165,7 +165,7 @@ pub fn build_persisted_oidc_scaffold(
         issuer: issuer.to_owned(),
         gate_account_base: gate_account_base.to_owned(),
         principal_trust_domain: principal_trust_domain.to_string(),
-        expected_principal_full_id: expected_principal_full_id.cloned(),
+        expected_principal_did: expected_principal_did.cloned(),
         expected_device_id: expected_device_id.cloned(),
     }
 }

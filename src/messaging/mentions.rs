@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 /// One row in the mention picker dropdown.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MentionCandidate {
-    pub did: String,
+    pub subject_id: String,
     pub display_name: String,
     #[serde(default)]
     pub insert_label: String,
@@ -48,7 +48,7 @@ pub struct MentionPickerState {
     /// replaces this exact range so choosing a member after typing `@bo`
     /// updates the text at the cursor position instead of appending.
     pub active_range: Option<(usize, usize)>,
-    /// DIDs already inserted into the current draft. The picker uses
+    /// Subject IDs already inserted into the current draft. The picker uses
     /// this to render `mention-chip` rows above the textarea and to
     /// avoid suggesting the same actor twice.
     pub inserted: Vec<MentionCandidate>,
@@ -79,17 +79,20 @@ impl MentionPickerState {
         self.active_range = Some((start, end));
     }
 
-    /// Filter `candidates` down to those whose `display_name` or `did`
+    /// Filter `candidates` down to those whose `display_name` or `subject_id`
     /// matches the current query (case-insensitive substring). The popover is
     /// scroll-bounded by CSS, so the model keeps every match available; this
     /// matters for controllers with more than a handful of personal agents.
     pub fn filter<'a>(&self, candidates: &'a [MentionCandidate]) -> Vec<&'a MentionCandidate> {
         let q = self.query.trim().to_ascii_lowercase();
-        let inserted: std::collections::BTreeSet<&str> =
-            self.inserted.iter().map(|c| c.did.as_str()).collect();
+        let inserted: std::collections::BTreeSet<&str> = self
+            .inserted
+            .iter()
+            .map(|c| c.subject_id.as_str())
+            .collect();
         candidates
             .iter()
-            .filter(|c| !inserted.contains(c.did.as_str()))
+            .filter(|c| !inserted.contains(c.subject_id.as_str()))
             .filter(|c| {
                 if q.is_empty() {
                     true
@@ -97,7 +100,7 @@ impl MentionPickerState {
                     c.display_name.to_ascii_lowercase().contains(&q)
                         || c.insert_label.to_ascii_lowercase().contains(&q)
                         || c.subtitle.to_ascii_lowercase().contains(&q)
-                        || c.did.to_ascii_lowercase().contains(&q)
+                        || c.subject_id.to_ascii_lowercase().contains(&q)
                 }
             })
             .collect()
@@ -109,7 +112,7 @@ impl MentionPickerState {
         if self
             .inserted
             .iter()
-            .any(|existing| existing.did == candidate.did)
+            .any(|existing| existing.subject_id == candidate.subject_id)
         {
             return false;
         }
@@ -117,9 +120,9 @@ impl MentionPickerState {
         true
     }
 
-    /// Drop the chip with the given DID, if present.
-    pub fn remove(&mut self, did: &str) {
-        self.inserted.retain(|c| c.did != did);
+    /// Drop the chip with the given subject ID, if present.
+    pub fn remove(&mut self, subject_id: &str) {
+        self.inserted.retain(|c| c.subject_id != subject_id);
     }
 
     /// Clear all picker state — typically called when the user has
@@ -217,7 +220,7 @@ mod tests {
 
     fn alice() -> MentionCandidate {
         MentionCandidate {
-            did: "did:web:alice.example".into(),
+            subject_id: "ak:did_core:web:alice.example".into(),
             display_name: "Alice".into(),
             insert_label: String::new(),
             subtitle: String::new(),
@@ -230,7 +233,7 @@ mod tests {
 
     fn bob() -> MentionCandidate {
         MentionCandidate {
-            did: "did:web:bob.example".into(),
+            subject_id: "ak:did_core:web:bob.example".into(),
             display_name: "Bob".into(),
             insert_label: String::new(),
             subtitle: String::new(),
@@ -248,7 +251,7 @@ mod tests {
         let candidates = vec![alice(), bob()];
         let filtered = state.filter(&candidates);
         assert_eq!(filtered.len(), 1);
-        assert_eq!(filtered[0].did, "did:web:alice.example");
+        assert_eq!(filtered[0].subject_id, "ak:did_core:web:alice.example");
     }
 
     #[test]
@@ -258,19 +261,19 @@ mod tests {
         let candidates = vec![
             alice(),
             MentionCandidate {
-                did: "did:web:agents.example:summary".into(),
+                subject_id: "ak:did_core:web:agents.example:summary".into(),
                 display_name: "Summary Assistant".into(),
                 insert_label: "alice:example.com/summary".into(),
                 subtitle: "agent of alice:example.com".into(),
                 is_agent: true,
-                controller_subject_id: "did:web:example.com:users:alice".into(),
+                controller_subject_id: "ak:did_core:web:example.com:users:alice".into(),
                 controller_handle_at_time: "alice:example.com".into(),
                 agent_slug_at_time: "summary".into(),
             },
         ];
         let filtered = state.filter(&candidates);
         assert_eq!(filtered.len(), 1);
-        assert_eq!(filtered[0].did, "did:web:agents.example:summary");
+        assert_eq!(filtered[0].subject_id, "ak:did_core:web:agents.example:summary");
         assert_eq!(filtered[0].insert_label(), "alice:example.com/summary");
     }
 
@@ -281,19 +284,19 @@ mod tests {
         let candidates = vec![alice(), bob()];
         let filtered = state.filter(&candidates);
         assert_eq!(filtered.len(), 1);
-        assert_eq!(filtered[0].did, "did:web:bob.example");
+        assert_eq!(filtered[0].subject_id, "ak:did_core:web:bob.example");
     }
 
     #[test]
     fn picker_keeps_all_owned_agent_matches_available() {
         let candidates = (0..12)
             .map(|index| MentionCandidate {
-                did: format!("did:web:agents.example:agent-{index}"),
+                subject_id: format!("ak:did_core:web:agents.example:agent-{index}"),
                 display_name: format!("agent-{index}"),
                 insert_label: format!("me/agent-{index}"),
                 subtitle: "Your agent".to_owned(),
                 is_agent: true,
-                controller_subject_id: "did:web:alice.example".to_owned(),
+                controller_subject_id: "ak:did_core:web:alice.example".to_owned(),
                 controller_handle_at_time: "alice:example.com".to_owned(),
                 agent_slug_at_time: format!("agent-{index}"),
             })

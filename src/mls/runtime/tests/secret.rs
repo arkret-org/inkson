@@ -3,10 +3,10 @@
 use crate::mls::runtime::*;
 use crate::secure_key_store::{MemorySecureKeyStore, SecureKeyStore, SecureKeyStoreError};
 
-fn authority(principal_full_id: &str, server_id: &str) -> arkret_sdk::PrincipalAuthorityKey {
-    let full_id = arkret_sdk::DidFullId::new(principal_full_id).unwrap();
+fn authority(principal_did: &str, server_id: &str) -> arkret_sdk::PrincipalAuthorityKey {
+    let did = arkret_sdk::Did::new(principal_did).unwrap();
     arkret_sdk::PrincipalAuthorityKey::new(
-        arkret_sdk::project_full_id_to_core_id(&full_id).unwrap(),
+        arkret_sdk::project_did_to_core_id(&did).unwrap(),
         arkret_sdk::DidCoreId::new(server_id).unwrap(),
     )
 }

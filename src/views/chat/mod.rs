@@ -63,11 +63,6 @@ fn principal_core_key(value: &str) -> Option<String> {
     arkret_sdk::DidCoreId::new(value.to_owned())
         .ok()
         .map(|id| id.as_str().to_owned())
-        .or_else(|| {
-            crate::mls_api_helpers::principal_core_id(value)
-                .ok()
-                .map(|id| id.as_str().to_owned())
-        })
 }
 
 fn same_principal_core(left: &str, right: &str) -> bool {
@@ -459,7 +454,7 @@ fn owned_agent_ids_from_composer(
                 same_principal_core(&candidate.controller_subject_id, controller_id)
             })
             .filter(|candidate| selector_slugs.contains(candidate.agent_slug_at_time.trim()))
-            .filter_map(|candidate| principal_core_key(&candidate.did)),
+            .filter_map(|candidate| principal_core_key(&candidate.subject_id)),
     );
     agent_ids.sort_unstable();
     agent_ids.dedup();
@@ -506,10 +501,10 @@ fn validate_native_prepared_sidecar_binding(
     context_attach_event: &arkret_sdk::Event,
     sidecar_id: &arkret_sdk::SidecarId,
     source_strand_id: &arkret_sdk::StrandId,
-    controller_id: &arkret_sdk::DidFullId,
+    controller_id: &arkret_sdk::Did,
     source_realm_id: &arkret_sdk::RealmId,
 ) -> anyhow::Result<()> {
-    let controller_actor = arkret_sdk::project_full_id_to_core_id(controller_id)?;
+    let controller_actor = arkret_sdk::project_did_to_core_id(controller_id)?;
     if let Some(create) = create_event
         && (create.kind != arkret_sdk::EventKind::SidecarCreate
             || create.actor_id != controller_actor
@@ -604,11 +599,11 @@ fn sign_prepared_sidecar_event(
     draft: &arkret_sdk::PreparedEventDraft,
     digest_suite: arkret_sdk::DigestSuite,
     expected_kind: &str,
-    controller_id: &arkret_sdk::DidFullId,
+    controller_id: &arkret_sdk::Did,
     device_id: &str,
     source_realm_id: &arkret_sdk::RealmId,
 ) -> anyhow::Result<arkret_sdk::AuthoredEvent> {
-    let controller_actor = arkret_sdk::project_full_id_to_core_id(controller_id)?;
+    let controller_actor = arkret_sdk::project_did_to_core_id(controller_id)?;
     let mut event = draft.unsigned_event()?;
     let digest = arkret_sdk::Hash::new(event.event_digest_with_digest_suite(digest_suite)?)?;
     if event.digest_suite() != digest_suite
@@ -656,7 +651,7 @@ async fn ensure_owned_agent_sidecar(
     api_token: String,
     trace_id: &str,
     authority: &arkret_sdk::PrincipalAuthorityKey,
-    controller_full_id: &arkret_sdk::DidFullId,
+    controller_did: &arkret_sdk::Did,
     device_id: &arkret_sdk::DeviceId,
     realm_id: &str,
     strand_id: &str,
@@ -733,7 +728,7 @@ async fn ensure_owned_agent_sidecar(
     );
     let ceremony_operation_id = operation_id.clone();
     let ceremony_controller = controller.clone();
-    let ceremony_controller_full_id = controller_full_id.clone();
+    let ceremony_controller_did = controller_did.clone();
     let ceremony_realm = source_realm.clone();
     let ceremony_strand = source_strand.clone();
     let ceremony_context = context_ref.clone();
@@ -778,7 +773,7 @@ async fn ensure_owned_agent_sidecar(
                                 &create_event_draft,
                                 source_digest_suite,
                                 arkret_sdk::EventKind::SidecarCreate.as_str(),
-                                &ceremony_controller_full_id,
+                                &ceremony_controller_did,
                                 &ceremony_device,
                                 &ceremony_realm,
                             )?;
@@ -789,7 +784,7 @@ async fn ensure_owned_agent_sidecar(
                                 &context_attach_event_draft,
                                 source_digest_suite,
                                 arkret_sdk::EventKind::SidecarContextAttach.as_str(),
-                                &ceremony_controller_full_id,
+                                &ceremony_controller_did,
                                 &ceremony_device,
                                 &ceremony_realm,
                             )?;
@@ -798,7 +793,7 @@ async fn ensure_owned_agent_sidecar(
                                 &context_attach_event,
                                 &sidecar_id,
                                 &ceremony_strand,
-                                &ceremony_controller_full_id,
+                                &ceremony_controller_did,
                                 &ceremony_realm,
                             )?;
                             let request = arkret_sdk::sidecar_operations::SidecarEnsureRequestBody::Commit(
@@ -853,7 +848,7 @@ async fn ensure_owned_agent_sidecar(
                                 &context_attach_event_draft,
                                 source_digest_suite,
                                 arkret_sdk::EventKind::SidecarContextAttach.as_str(),
-                                &ceremony_controller_full_id,
+                                &ceremony_controller_did,
                                 &ceremony_device,
                                 &ceremony_realm,
                             )?;
@@ -862,7 +857,7 @@ async fn ensure_owned_agent_sidecar(
                                 &context_attach_event,
                                 &sidecar_id,
                                 &ceremony_strand,
-                                &ceremony_controller_full_id,
+                                &ceremony_controller_did,
                                 &ceremony_realm,
                             )?;
                             let request = arkret_sdk::sidecar_operations::SidecarEnsureRequestBody::Attach(
@@ -1202,7 +1197,7 @@ fn sidecar_agent_label(agent_ids: &[String], participants: &[SpaceParticipant]) 
         .map(|agent_id| {
             participants
                 .iter()
-                .find(|participant| participant.did == *agent_id)
+                .find(|participant| participant.principal_id == *agent_id)
                 .and_then(|participant| {
                     participant
                         .agent_metadata
@@ -1242,11 +1237,11 @@ fn composer_mention_nodes(
     for chip in picker {
         if mentions.iter().any(|node| {
             node.as_mention()
-                .is_some_and(|mention| same_principal_core(mention.subject_id.as_str(), &chip.did))
+                .is_some_and(|mention| same_principal_core(mention.subject_id.as_str(), &chip.subject_id))
         }) {
             continue;
         }
-        let Ok(subject_id) = crate::mls_api_helpers::principal_core_id(&chip.did) else {
+        let Ok(subject_id) = arkret_sdk::DidCoreId::new(chip.subject_id.clone()) else {
             continue;
         };
         // `@me/<slug>` is allowed into the draft before the signed account
@@ -1275,7 +1270,7 @@ fn composer_mention_nodes(
             mention = mention.with_handle_at_time(handle);
         }
         if let (Ok(controller_subject_id), Ok(controller_handle)) = (
-            crate::mls_api_helpers::principal_core_id(&chip.controller_subject_id),
+            arkret_sdk::DidCoreId::new(chip.controller_subject_id.clone()),
             arkret_sdk::Handle::parse(&chip.controller_handle_at_time),
         ) && !chip.agent_slug_at_time.trim().is_empty()
         {
@@ -1293,7 +1288,7 @@ fn composer_mention_nodes(
                 same_principal_core(mention.subject_id.as_str(), principal_id)
             })
         })
-        && let Ok(subject_id) = crate::mls_api_helpers::principal_core_id(principal_id)
+        && let Ok(subject_id) = arkret_sdk::DidCoreId::new(principal_id.to_owned())
     {
         mentions.push(MentionNode::mention(
             arkret_sdk::Mention::new(subject_id).with_mention_text_original("@me".to_owned()),
@@ -1380,7 +1375,7 @@ pub fn ChatPanel(
         return rsx! {};
     };
     let authority = active_account.authority.clone();
-    let full_id = active_account.full_id().clone();
+    let did = active_account.did().clone();
     let account_device_id = active_account.device_id.clone();
     let mut sidecar_session_state = use_context::<crate::sidecar::HostedSidecarStateContext>().0;
     // Embedded Strand shells do not receive a route-owned Sidecar prop. Read
@@ -1612,7 +1607,7 @@ pub fn ChatPanel(
             });
         });
     }
-    let blocked_did_set: std::collections::BTreeSet<String> = state_store
+    let blocked_actor_id_set: std::collections::BTreeSet<String> = state_store
         .read()
         .client_blocklist()
         .into_iter()
@@ -1966,9 +1961,9 @@ pub fn ChatPanel(
     } else {
         String::new()
     };
-    let projected_member_dids = participants
+    let projected_member_ids = participants
         .iter()
-        .map(|participant| participant.did.clone())
+        .map(|participant| participant.principal_id.clone())
         .collect::<std::collections::BTreeSet<_>>();
     let own_controller_handle = participants
         .iter()
@@ -1997,7 +1992,7 @@ pub fn ChatPanel(
     let mut known_agent_ids = participants_for_messages
         .iter()
         .filter(|participant| participant.is_agent)
-        .map(|participant| participant.did.clone())
+        .map(|participant| participant.principal_id.clone())
         .collect::<Vec<_>>();
     known_agent_ids.sort();
     known_agent_ids.dedup();
@@ -2030,22 +2025,22 @@ pub fn ChatPanel(
         realm_live_epoch(),
         readable_participation_agent_ids.join(",")
     );
-    let mut public_agent_dids = std::collections::BTreeSet::new();
-    public_agent_dids.extend(
+    let mut public_agent_ids = std::collections::BTreeSet::new();
+    public_agent_ids.extend(
         agent_participation_visibility()
             .into_iter()
             .filter_map(|(agent_id, visible)| visible.then_some(agent_id)),
     );
-    let known_agent_did_set = known_agent_ids
+    let known_agent_id_set = known_agent_ids
         .iter()
         .map(String::as_str)
         .collect::<std::collections::BTreeSet<_>>();
-    public_agent_dids.extend(
+    public_agent_ids.extend(
         visible_messages
             .iter()
             .filter(|message| message.reply_to.is_some())
             .map(|message| message.sender.trim())
-            .filter(|sender| known_agent_did_set.contains(sender))
+            .filter(|sender| known_agent_id_set.contains(sender))
             .map(ToOwned::to_owned),
     );
     // A Sidecar's membership boundary is controller-private and the server
@@ -2054,24 +2049,24 @@ pub fn ChatPanel(
     // Realm discussions; doing so hid the exact principals that make up this
     // private Circle and left the panel showing only the controller.
     if sidecar_mode {
-        public_agent_dids.extend(known_agent_ids.iter().cloned());
+        public_agent_ids.extend(known_agent_ids.iter().cloned());
     }
     if direct_mode {
-        public_agent_dids.extend(
+        public_agent_ids.extend(
             known_agent_ids
                 .iter()
                 .filter(|agent_id| {
                     direct_agent_is_conversation_peer(
                         agent_id,
                         &direct_peer_id,
-                        &projected_member_dids,
+                        &projected_member_ids,
                     )
                 })
                 .cloned(),
         );
     }
     participants.retain(|participant| {
-        !participant.is_agent || public_agent_dids.contains(&participant.did)
+        !participant.is_agent || public_agent_ids.contains(&participant.principal_id)
     });
     let sidecar_owned_agents = sidecar_owned_agent_participants(&participants, &principal_id);
     // Actor mentions in a Sidecar are intentionally narrower than the Realm
@@ -2090,20 +2085,20 @@ pub fn ChatPanel(
         participants.clone()
     };
 
-    let mut participant_dids_for_presence = presence_participants
+    let mut participant_ids_for_presence = presence_participants
         .iter()
-        .map(|participant| participant.did.clone())
+        .map(|participant| participant.principal_id.clone())
         .filter(|did| !did.trim().is_empty())
         .collect::<Vec<_>>();
-    participant_dids_for_presence.sort();
-    participant_dids_for_presence.dedup();
-    let has_remote_presence = participant_dids_for_presence
+    participant_ids_for_presence.sort();
+    participant_ids_for_presence.dedup();
+    let has_remote_presence = participant_ids_for_presence
         .iter()
         .any(|did| did != &principal_id);
     let presence_sync_key = format!(
         "{}|{}",
         selected_realm_id,
-        participant_dids_for_presence.join(",")
+        participant_ids_for_presence.join(",")
     );
     let discussion_feed_loading = !visible_channels_empty
         && visible_message_count == 0
@@ -2161,7 +2156,7 @@ pub fn ChatPanel(
                 agent_participation_sync_key: agent_participation_sync_key.clone(),
                 selected_scope_circle: selected_scope_circle.clone(),
                 readable_participation_agent_ids: readable_participation_agent_ids.clone(),
-                participant_dids_for_presence: participant_dids_for_presence.clone(),
+                participant_ids_for_presence: participant_ids_for_presence.clone(),
                 account_display_label: account_display_label.clone(),
                 has_remote_presence,
                 presence_sync_key: presence_sync_key.clone(),
@@ -2924,7 +2919,7 @@ pub fn ChatPanel(
                         plaintext_service_id: plaintext_service_id.clone(),
                         base_url: base_url.clone(),
                         focus_message_id: focus_message_id.clone(),
-                        blocked_dids: blocked_did_set.clone(),
+                        blocked_actor_ids: blocked_actor_id_set.clone(),
                         selected_channel_security_encrypted,
                         visible_channels_empty,
                         visible_message_count,
@@ -2984,7 +2979,7 @@ pub fn ChatPanel(
                             }
                             for agent in &sidecar_owned_agents {
                                 {
-                                    let agent_id = agent.did.clone();
+                                    let agent_id = agent.principal_id.clone();
                                     let slug = agent.agent_metadata.as_ref()
                                         .map(|metadata| metadata.agent_slug.trim().to_owned())
                                         .filter(|slug| !slug.is_empty())
@@ -3029,17 +3024,17 @@ pub fn ChatPanel(
                             "data-testid": "presence-list",
                             for participant in &presence_participants {
                                 {
-                                    let did_attr = participant.did.clone();
+                                    let principal_id_attr = participant.principal_id.clone();
                                     let live_labels = presence_labels();
                                     let display = display_label_for_actor(
                                         &state_store.read(),
                                         &participants,
                                         &live_labels,
-                                        &participant.did,
+                                        &participant.principal_id,
                                     );
                                     let state = presence_states
                                         .read()
-                                        .get(&participant.did)
+                                        .get(&participant.principal_id)
                                         .cloned()
                                         .unwrap_or_else(|| {
                                             if participant.is_self {
@@ -3051,16 +3046,16 @@ pub fn ChatPanel(
                                     let state_for_class = state.clone();
                                     let status_message = presence_status_messages
                                         .read()
-                                        .get(&participant.did)
+                                        .get(&participant.principal_id)
                                         .cloned();
                                     rsx! {
                                         div {
                                             class: "presence-row presence-row-{state_for_class}",
                                             "data-testid": "presence-row",
-                                            "data-actor-did": "{did_attr}",
+                                            "data-actor-did": "{principal_id_attr",
                                             "data-presence-state": "{state}",
                                             span { class: "presence-dot presence-dot-{state}" }
-                                            span { class: "presence-name", title: "{did_attr}",
+                                            span { class: "presence-name", title: "{principal_id_attr",
                                                 "{display}"
                                                 if participant.is_self {
                                                     SelfAttributionBadge {
@@ -3085,7 +3080,7 @@ pub fn ChatPanel(
                     }
                     div { class: "discussion-detail-section",
                         div { class: "discussion-subhead", span { "Space users" } }
-                        for row in participant_roster_rows(&participants, &public_agent_dids) {
+                        for row in participant_roster_rows(&participants, &public_agent_ids) {
                             {
                                 match row {
                                     ParticipantRosterRow::Participant(participant) => {
@@ -3104,7 +3099,7 @@ pub fn ChatPanel(
                                         }
                                     }
                                     ParticipantRosterRow::ControllerWithAgents { controller, agents } => {
-                                        let controller_id = controller.did.clone();
+                                        let controller_id = controller.principal_id.clone();
                                         let agent_count = agents.len();
                                         let display_label = participant_roster_display_label(
                                             &state_store.read(),
@@ -3618,7 +3613,7 @@ pub fn ChatPanel(
                     embedded,
                     selected_channel_info: selected_channel_info.clone(),
                     authority: authority.clone(),
-                    full_id: full_id.clone(),
+                    did: did.clone(),
                     principal_id: principal_id.clone(),
                     account_display_label: account_display_label.clone(),
                     participants: composer_participants.clone(),
@@ -3630,7 +3625,7 @@ pub fn ChatPanel(
                     selected_realm_pending_mls_binding_reason: selected_realm_pending_mls_binding_reason.clone(),
                     active_sidecar_session: sidecar_session.clone(),
                     sidecar_send_block_reason: sidecar_send_block_reason.clone(),
-                    public_agent_dids: public_agent_dids.clone(),
+                    public_agent_ids: public_agent_ids.clone(),
                     own_controller_handle: own_controller_handle.clone(),
                     mention_insert_request,
                     mentions_enabled: composer::chat_mentions_enabled(direct_mode),

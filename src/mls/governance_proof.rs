@@ -54,13 +54,13 @@ pub(crate) struct StaticProofDidResolver {
 }
 
 impl DidResolver for StaticProofDidResolver {
-    fn supports(&self, did: &arkret_sdk::DidFullId) -> bool {
+    fn supports(&self, did: &arkret_sdk::Did) -> bool {
         self.documents.contains_key(did.as_str())
     }
 
     fn resolve_did(
         &self,
-        did: &arkret_sdk::DidFullId,
+        did: &arkret_sdk::Did,
     ) -> arkret_sdk::identity::Result<arkret_sdk::identity::ResolvedDid> {
         self.documents
             .get(did.as_str())
@@ -428,7 +428,7 @@ pub(crate) fn verify_native_agent_external_trust<S: GovernanceProofStateStore>(
 
 pub(crate) async fn resolve_proof_signer_document(
     api: &crate::transport::TransportClient,
-    did: &arkret_sdk::DidFullId,
+    did: &arkret_sdk::Did,
 ) -> Result<arkret_sdk::DidDocument, String> {
     let http = api
         .sdk_http_client()

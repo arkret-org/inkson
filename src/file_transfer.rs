@@ -116,7 +116,7 @@ pub async fn upload_actor_private_file(
     plaintext: Vec<u8>,
 ) -> anyhow::Result<FileTransferUploadResult> {
     let http = api.sdk_http_client()?;
-    let actor = arkret_sdk::DidFullId::new(actor_id.trim().to_owned())?;
+    let actor = arkret_sdk::Did::new(actor_id.trim().to_owned())?;
     let principal_control_realm_id =
         crate::identity::principal_control::resolve_accepted(&http, &actor).await?;
     let prepared = prepare_actor_private_file(
@@ -314,7 +314,7 @@ fn prepare_actor_private_file(
     if device_id.trim().is_empty() {
         anyhow::bail!("device_id is required for file transfer");
     }
-    let actor = arkret_sdk::DidFullId::new(actor_id.trim().to_owned())?;
+    let actor = arkret_sdk::Did::new(actor_id.trim().to_owned())?;
     let updated_hlc = crate::signing_stamp::issue_protocol_hlc(
         actor.as_str(),
         device_id.trim(),

@@ -15,7 +15,7 @@ pub(super) fn ChatEffects(
     agent_participation_sync_key: String,
     selected_scope_circle: Option<String>,
     readable_participation_agent_ids: Vec<String>,
-    participant_dids_for_presence: Vec<String>,
+    participant_ids_for_presence: Vec<String>,
     account_display_label: String,
     has_remote_presence: bool,
     presence_sync_key: String,
@@ -429,7 +429,7 @@ pub(super) fn ChatEffects(
         let realm = selected_realm_id.clone();
         let actor = principal_id.clone();
         let strand = selected_channel_value.clone();
-        let participants_for_sync = participant_dids_for_presence.clone();
+        let participants_for_sync = participant_ids_for_presence.clone();
         let typing_actors_for_sync = typing_actors;
         let typing_next_expires_at_ms_for_sync = typing_next_expires_at_ms;
         let presence_states_for_sync = presence_states;

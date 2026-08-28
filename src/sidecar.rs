@@ -1025,12 +1025,9 @@ fn event_actor_id(event: &arkret_sdk::Event) -> Option<arkret_sdk::DidCoreId> {
     event.proofs.iter().find_map(|proof| {
         let proof = proof.as_producer()?;
         let controller = proof.verification_method.as_str().split_once('#')?.0;
-        let full_id = arkret_sdk::DidFullId::new(controller.to_owned()).ok()?;
-        (arkret_sdk::project_full_id_to_core_id(&full_id)
-            .ok()
-            .as_ref()
-            == Some(&event.actor_id))
-        .then(|| event.actor_id.clone())
+        let did = arkret_sdk::Did::new(controller.to_owned()).ok()?;
+        (arkret_sdk::project_did_to_core_id(&did).ok().as_ref() == Some(&event.actor_id))
+            .then(|| event.actor_id.clone())
     })
 }
 
@@ -1421,7 +1418,7 @@ fn refold_sidecar_exchanges_with_decrypt_report(
                 let Some(hlc) = event.hlc.clone() else {
                     continue;
                 };
-                let Some(actor_full_id) = event_actor_id(&event) else {
+                let Some(actor_did) = event_actor_id(&event) else {
                     continue;
                 };
                 let exchange_key = (strand_id.clone(), binding.exchange_id.as_str().to_owned());
@@ -1438,7 +1435,7 @@ fn refold_sidecar_exchanges_with_decrypt_report(
                             garth::projection::SidecarExchangeRequestFact {
                                 event_id: event.event_id.clone(),
                                 hlc,
-                                actor_id: actor_full_id.clone(),
+                                actor_id: actor_did.clone(),
                                 actor_seq: event.actor_seq,
                                 event_digest: event_digest.clone(),
                                 exchange_id: binding.exchange_id.clone(),
@@ -1452,7 +1449,7 @@ fn refold_sidecar_exchanges_with_decrypt_report(
                             garth::projection::SidecarExchangeAgentFact {
                                 event_id: event.event_id.clone(),
                                 hlc,
-                                actor_id: actor_full_id,
+                                actor_id: actor_did,
                                 binding,
                                 refs_after: event_refs_after(&event),
                             },
@@ -1481,7 +1478,7 @@ fn refold_sidecar_exchanges_with_decrypt_report(
                 let Some(hlc) = event.hlc.clone() else {
                     continue;
                 };
-                let Some(actor_full_id) = event_actor_id(&event) else {
+                let Some(actor_did) = event_actor_id(&event) else {
                     continue;
                 };
                 let exchange_key = (strand_id, control.exchange_id.as_str().to_owned());
@@ -1489,7 +1486,7 @@ fn refold_sidecar_exchanges_with_decrypt_report(
                     garth::projection::SidecarExchangeControlFact {
                         event_id: event.event_id.clone(),
                         hlc,
-                        actor_id: actor_full_id,
+                        actor_id: actor_did,
                         actor_seq: event.actor_seq,
                         event_digest,
                         // §7.2.3: the outer refs MUST cover the plaintext
@@ -1777,12 +1774,12 @@ pub fn HostedSidecarContextBar(base_url: String, api_token: String, device_id: S
     let merged_base = base_url.clone();
     let merged_token = api_token.clone();
     let merged_authority = active_account.authority.clone();
-    let merged_full_id = active_account.full_id().clone();
+    let merged_did = active_account.did().clone();
     let merged_device = active_account.device_id.clone();
     let sidecar_base = base_url;
     let sidecar_token = api_token;
     let sidecar_authority = active_account.authority.clone();
-    let sidecar_full_id = active_account.full_id().clone();
+    let sidecar_did = active_account.did().clone();
     let sidecar_device = active_account.device_id.clone();
     // Fold-cache evidence deliberately does NOT ride on this strip.
     //
@@ -1825,7 +1822,7 @@ pub fn HostedSidecarContextBar(base_url: String, api_token: String, device_id: S
                                 merged_base.clone(),
                                 merged_token.clone(),
                                 merged_authority.clone(),
-                                merged_full_id.clone(),
+                                merged_did.clone(),
                                 current.controller_id.clone(),
                                 merged_device.clone(),
                                 &current,
@@ -1857,7 +1854,7 @@ pub fn HostedSidecarContextBar(base_url: String, api_token: String, device_id: S
                                 sidecar_base.clone(),
                                 sidecar_token.clone(),
                                 sidecar_authority.clone(),
-                                sidecar_full_id.clone(),
+                                sidecar_did.clone(),
                                 current.controller_id.clone(),
                                 sidecar_device.clone(),
                                 &current,
@@ -1898,7 +1895,7 @@ pub fn push_sidecar_display_mode(
     base_url: String,
     api_token: String,
     authority: arkret_sdk::PrincipalAuthorityKey,
-    controller_full_id: arkret_sdk::DidFullId,
+    controller_did: arkret_sdk::Did,
     controller_id: String,
     device_id: arkret_sdk::DeviceId,
     session: &HostedSidecarState,
@@ -1918,7 +1915,7 @@ pub fn push_sidecar_display_mode(
         }
     };
     let updated_hlc = match crate::signing_stamp::issue_account_data_hlc(
-        controller_full_id.as_str(),
+        controller_did.as_str(),
         context_ref.3.as_str(),
     ) {
         Ok(hlc) => hlc,

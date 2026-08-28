@@ -10,11 +10,9 @@ mod personal_agent_tests {
         summarize_runtime_key_approval_request,
     };
 
-    fn agent_initial_resolution(
-        full_id: &arkret_sdk::DidFullId,
-    ) -> arkret_sdk::ResolutionCommitment {
+    fn agent_initial_resolution(did: &arkret_sdk::Did) -> arkret_sdk::ResolutionCommitment {
         arkret_sdk::ResolutionCommitment {
-            full_id: full_id.clone(),
+            did: did.clone(),
             method_history_head: format!("sha256:{}", "8".repeat(64)),
             version_id: "1-Qmfixture".to_owned(),
         }
@@ -317,9 +315,9 @@ mod personal_agent_tests {
         let outcome = arkret_sdk::AgentProvisionComplete {
             agent_id: crate::mls_api_helpers::principal_core_id("did:web:agents.example:summary")
                 .unwrap(),
-            full_id: arkret_sdk::DidFullId::new("did:web:agents.example:summary").unwrap(),
+            did: arkret_sdk::Did::new("did:web:agents.example:summary").unwrap(),
             initial_resolution: agent_initial_resolution(
-                &arkret_sdk::DidFullId::new("did:web:agents.example:summary").unwrap(),
+                &arkret_sdk::Did::new("did:web:agents.example:summary").unwrap(),
             ),
             principal_control_realm_id: arkret_sdk::RealmId::new(
                 "ak:realm:AQ4lJ43jR05ytJIf7AGNbPU_MuY1FqT_ny_e8MhCCnwc",
@@ -368,9 +366,9 @@ mod personal_agent_tests {
         let outcome = arkret_sdk::AgentProvisionComplete {
             agent_id: crate::mls_api_helpers::principal_core_id("did:web:agents.example:summary")
                 .unwrap(),
-            full_id: arkret_sdk::DidFullId::new("did:web:agents.example:summary").unwrap(),
+            did: arkret_sdk::Did::new("did:web:agents.example:summary").unwrap(),
             initial_resolution: agent_initial_resolution(
-                &arkret_sdk::DidFullId::new("did:web:agents.example:summary").unwrap(),
+                &arkret_sdk::Did::new("did:web:agents.example:summary").unwrap(),
             ),
             principal_control_realm_id: arkret_sdk::RealmId::new(
                 "ak:realm:AQ4lJ43jR05ytJIf7AGNbPU_MuY1FqT_ny_e8MhCCnwc",
@@ -488,7 +486,7 @@ mod personal_agent_tests {
     #[test]
     fn runtime_key_authorize_event_binds_request_and_scope() {
         let controller = "did:web:controller.example";
-        let service_full_id = "did:web:arkret.example";
+        let service_did = "did:web:arkret.example";
         let service_id = "ak:did_core:web:arkret.example";
         let agent = "did:web:agents.example:summary";
         let verification_method =
@@ -500,10 +498,10 @@ mod personal_agent_tests {
         ));
         let _signer_guard = crate::event_signer::ActiveSignerTestGuard::replace(Some(signer));
         let scope = requested_scope_for_presets(&[], &AgentServiceScopePreset::DEFAULTS).unwrap();
-        let agent_did = arkret_sdk::DidFullId::new(agent.to_owned()).unwrap();
-        let controller_did = arkret_sdk::DidFullId::new(controller.to_owned()).unwrap();
-        let agent_actor_id = arkret_sdk::project_full_id_to_core_id(&agent_did).unwrap();
-        let controller_actor_id = arkret_sdk::project_full_id_to_core_id(&controller_did).unwrap();
+        let agent_did = arkret_sdk::Did::new(agent.to_owned()).unwrap();
+        let controller_did = arkret_sdk::Did::new(controller.to_owned()).unwrap();
+        let agent_actor_id = arkret_sdk::project_did_to_core_id(&agent_did).unwrap();
+        let controller_actor_id = arkret_sdk::project_did_to_core_id(&controller_did).unwrap();
         let created_at = chrono::DateTime::<chrono::Utc>::from_timestamp_millis(
             crate::clock::now_utc().timestamp_millis(),
         )
@@ -570,7 +568,7 @@ mod personal_agent_tests {
 
         let disclosure = build_requested_scope_disclosure_for_pairing(
             controller,
-            service_full_id,
+            service_did,
             &key_state,
             &request,
         )
@@ -726,12 +724,11 @@ mod personal_agent_tests {
         ));
         let _signer_guard = crate::event_signer::ActiveSignerTestGuard::replace(Some(signer));
         let scope = requested_scope_for_presets(&[], &AgentServiceScopePreset::DEFAULTS).unwrap();
-        let agent_actor_id = arkret_sdk::project_full_id_to_core_id(
-            &arkret_sdk::DidFullId::new(agent.to_owned()).unwrap(),
-        )
-        .unwrap();
-        let controller_actor_id = arkret_sdk::project_full_id_to_core_id(
-            &arkret_sdk::DidFullId::new(controller.to_owned()).unwrap(),
+        let agent_actor_id =
+            arkret_sdk::project_did_to_core_id(&arkret_sdk::Did::new(agent.to_owned()).unwrap())
+                .unwrap();
+        let controller_actor_id = arkret_sdk::project_did_to_core_id(
+            &arkret_sdk::Did::new(controller.to_owned()).unwrap(),
         )
         .unwrap();
         let key_state: arkret_sdk::KeyState = serde_json::from_value(serde_json::json!({

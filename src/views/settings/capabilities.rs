@@ -45,8 +45,8 @@ struct CapabilityRow {
     realm_id: String,
     action: String,
     scope: String,
-    issuer_did: String,
-    subject_did: String,
+    issuer_id: String,
+    subject: String,
     expires_at: String,
     issuer_authority_refs: Vec<String>,
 }
@@ -66,8 +66,8 @@ fn decode_capability_row(grant: &CapabilityGrant, queried_realm_id: &str) -> Cap
             .first()
             .and_then(|resource| serde_json::to_string(resource).ok())
             .unwrap_or_default(),
-        issuer_did: grant.issuer.as_str().to_owned(),
-        subject_did: match &grant.subject {
+        issuer_id: grant.issuer.as_str().to_owned(),
+        subject: match &grant.subject {
             CapabilitySubject::CoreDid(did) => did.as_str().to_owned(),
             CapabilitySubject::Condition(selector) => {
                 serde_json::to_string(selector).unwrap_or_else(|_| "condition".to_owned())
@@ -208,9 +208,9 @@ pub fn CapabilitiesSettingsCard(principal_id: Signal<String>, token: Signal<Stri
                     for row in rows.read().iter().cloned() {
                         {
                             let issuer_did_label =
-                                actor_display_label(&state_store.read(), &row.issuer_did);
+                                actor_display_label(&state_store.read(), &row.issuer_id);
                             let subject_did_label =
-                                actor_display_label(&state_store.read(), &row.subject_did);
+                                actor_display_label(&state_store.read(), &row.subject);
                             rsx! {
                                 li {
                                     class: "event",
@@ -218,8 +218,8 @@ pub fn CapabilitiesSettingsCard(principal_id: Signal<String>, token: Signal<Stri
                                     "data-capability-id": "{row.capability_id}",
                                     "data-action": "{row.action}",
                                     "data-scope": "{row.scope}",
-                                    "data-issuer-did": "{row.issuer_did}",
-                                    "data-subject-did": "{row.subject_did}",
+                                    "data-issuer-id": "{row.issuer_id}",
+                                    "data-subject": "{row.subject}",
                                     "data-expires-at": "{row.expires_at}",
                                     div { class: "event-head",
                                         span { "{row.action}" }
@@ -227,7 +227,7 @@ pub fn CapabilitiesSettingsCard(principal_id: Signal<String>, token: Signal<Stri
                                     }
                                     div {
                                         class: "muted",
-                                        title: "{row.issuer_did} → {row.subject_did}",
+                                        title: "{row.issuer_id} → {row.subject}",
                                         "issued by {issuer_did_label} → {subject_did_label}"
                                     }
                                     div { class: "muted mono", "scope {row.scope}" }
@@ -245,7 +245,7 @@ pub fn CapabilitiesSettingsCard(principal_id: Signal<String>, token: Signal<Stri
                                         // Subject-only self-service: any member
                                         // may drop a grant they hold, with no
                                         // revoke authority involved.
-                                        if !my_core_id.is_empty() && row.subject_did == my_core_id {
+                                        if !my_core_id.is_empty() && row.subject == my_core_id {
                                             Button {
                                                 variant: ButtonVariant::Destructive,
                                                 "data-testid": "capability-relinquish-button",
@@ -532,8 +532,8 @@ mod tests {
             "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-"
         );
         assert_eq!(row.action, "ak.message.create");
-        assert_eq!(row.issuer_did, "ak:did_core:web:alice.example");
-        assert_eq!(row.subject_did, "ak:did_core:web:bob.example");
+        assert_eq!(row.issuer_id, "ak:did_core:web:alice.example");
+        assert_eq!(row.subject, "ak:did_core:web:bob.example");
         assert!(row.expires_at.starts_with("2026-12-31"));
         assert_eq!(row.issuer_authority_refs.len(), 1);
     }
@@ -547,7 +547,7 @@ mod tests {
             })),
             "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-",
         );
-        assert!(row.subject_did.contains("condition"));
+        assert!(row.subject.contains("condition"));
     }
 
     #[test]

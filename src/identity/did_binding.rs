@@ -39,7 +39,7 @@ use arkret_sdk::identity::{
 };
 #[cfg(test)]
 use arkret_sdk::identity::{FreshnessProfile, FreshnessRequirement};
-use arkret_sdk::{DidDocument, DidFullId, DidUrl, Hash, TrustDomainId};
+use arkret_sdk::{Did, DidDocument, DidUrl, Hash, TrustDomainId};
 use chrono::{DateTime, Duration, Utc};
 
 /// Hard cap on persisted bindings per account.
@@ -157,7 +157,7 @@ impl DidBindingScope {
     /// resolution, so a reader cannot know it before the lookup.
     pub(crate) fn key(
         &self,
-        did: &DidFullId,
+        did: &Did,
         purpose: DidBindingPurpose,
         verification_method: Option<DidUrl>,
     ) -> VerifiedDidBindingKey {
@@ -391,7 +391,7 @@ mod tests {
 
     pub(crate) fn document(did: &str) -> DidDocument {
         DidDocument {
-            id: DidFullId::new(did.to_owned()).expect("valid did"),
+            id: Did::new(did.to_owned()).expect("valid did"),
             verification_methods: std::collections::BTreeMap::from([(
                 format!("{did}#key-1"),
                 "z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK".to_owned(),

@@ -118,9 +118,9 @@ pub(super) fn data_event_auth_context(
     let actor_id = intent.executed_by().unwrap_or_else(|| intent.actor_id());
     let signer = crate::event_signer::active_signer()
         .ok_or_else(|| anyhow::anyhow!("active signer is required for AuthContext"))?;
-    let did = arkret_sdk::DidFullId::new(signer.signer_did().to_owned())?;
-    if arkret_sdk::project_full_id_to_core_id(&did)? != *actor_id {
-        anyhow::bail!("active signer full_id does not project to AuthContext actor");
+    let did = arkret_sdk::Did::new(signer.signer_did().to_owned())?;
+    if arkret_sdk::project_did_to_core_id(&did)? != *actor_id {
+        anyhow::bail!("active signer did does not project to AuthContext actor");
     }
     Ok(arkret_sdk::AuthContext {
         key_id: data_event_key_id_for(intent),

@@ -503,7 +503,7 @@ pub(crate) mod tests {
             vec![binding]
         };
         arkret_sdk::ServiceDescribe::development(
-            arkret_sdk::DidFullId::new("did:web:server.example").unwrap(),
+            arkret_sdk::Did::new("did:web:server.example").unwrap(),
             arkret_sdk::TrustDomainId::new("ak:trust_domain:server.example").unwrap(),
             arkret_sdk::ServiceKind::PrincipalServer,
             bundles,

@@ -481,7 +481,7 @@ fn ContactRow(
                                                             let realm_id = coordinates.realm_id.clone();
                                                             let actor = crate::app::SessionContext::get()
                                                                 .active_account()
-                                                                .map(|account| account.full_id().clone());
+                                                                .map(|account| account.did().clone());
                                                             match actor {
                                                                 Some(actor) => match with_authed_api(
                                                                     &base,
@@ -518,8 +518,8 @@ fn ContactRow(
                                                 DirectConversationEntry::ReadyToCreate => {
                                                     let actor = crate::app::SessionContext::get()
                                                         .active_account()
-                                                        .map(|account| account.full_id().clone());
-                                                    let peer_id = arkret_sdk::DidFullId::new(peer.clone()).ok();
+                                                        .map(|account| account.did().clone());
+                                                    let peer_id = arkret_sdk::Did::new(peer.clone()).ok();
                                                     match (actor, peer_id) {
                                                         (Some(actor), Some(peer_id)) => {
                                                             row_status.set(tr("contacts.dm.creating"));

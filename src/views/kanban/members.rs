@@ -77,13 +77,13 @@ impl RealmRosterPagination {
     }
 }
 
-/// Collect a deduped list of actor DIDs that have authored *any*
+/// Collect a deduped list of actor IDs that have authored *any*
 /// queued / accepted raw operation that targets the given strand id
 /// (matched against `target_ref`, `strand_id`, or `object.id`). This
 /// gives the "who's interacted with this Strand" list shown on the
 /// sidebar's Participants tab even before the server returns a
 /// canonical discussion-roster projection.
-pub(super) fn strand_participant_dids(
+pub(super) fn strand_participant_ids(
     raw_operations: &[RawOperationRecord],
     strand_id: &str,
 ) -> Vec<String> {
@@ -91,7 +91,7 @@ pub(super) fn strand_participant_dids(
     if strand_id.is_empty() {
         return Vec::new();
     }
-    let mut dids: BTreeSet<String> = BTreeSet::new();
+    let mut actor_ids: BTreeSet<String> = BTreeSet::new();
     for op in raw_operations {
         let payload = &op.payload;
         let target = json_path_string(Some(payload), &["body", "target_ref"])
@@ -110,12 +110,12 @@ pub(super) fn strand_participant_dids(
             &["payload", "actor_id"][..],
             &["actor_id"][..],
         ] {
-            if let Some(did) = json_path_string(Some(payload), path) {
-                dids.insert(did);
+            if let Some(actor_id) = json_path_string(Some(payload), path) {
+                actor_ids.insert(actor_id);
             }
         }
     }
-    let mut out: Vec<String> = dids.into_iter().collect();
+    let mut out: Vec<String> = actor_ids.into_iter().collect();
     out.sort();
     out
 }

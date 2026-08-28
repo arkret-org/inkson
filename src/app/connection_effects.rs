@@ -155,7 +155,7 @@ pub(super) fn ConnectionEffects(state: ConnectionEffectState) -> Element {
             let Some(actor) = active_account
                 .peek()
                 .as_ref()
-                .map(|account| account.full_id().clone())
+                .map(|account| account.did().clone())
             else {
                 return;
             };

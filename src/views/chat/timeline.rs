@@ -104,12 +104,8 @@ pub(super) fn DiscussionParticipantRow(
     nested_agent: bool,
     show_binding_details: bool,
 ) -> Element {
-    let participant_did_attr = participant.did.clone();
-    let participant_did_label = short_protocol_id(&participant_did_attr);
-    let binding_host = participant
-        .did
-        .strip_prefix("did:web:")
-        .map(|rest| rest.split(':').next().unwrap_or(rest).to_owned());
+    let participant_id_attr = participant.principal_id.clone();
+    let participant_id_label = short_protocol_id(&participant_id_attr);
     let owner_label = agent_controller_label(&participant, &participants);
     let selector_label = agent_selector_label(&participant);
     let agent_slug = participant
@@ -138,7 +134,7 @@ pub(super) fn DiscussionParticipantRow(
             "data-testid": if nested_agent { "discussion-agent-row" } else { "discussion-user-row" },
             "data-agent-controller-id": "{controller_id_attr}",
             crate::components::IdentityAvatar {
-                seed: participant_did_attr.clone(),
+                seed: participant_id_attr.clone(),
                 alt_text: display_label.clone(),
                 class: "avatar-img participant-avatar".to_owned(),
             }
@@ -146,7 +142,7 @@ pub(super) fn DiscussionParticipantRow(
                 strong {
                     ActorIdentityLabel {
                         label: identity_label,
-                        title: Some(participant_did_attr.clone()),
+                        title: Some(participant_id_attr.clone()),
                         class: Some("mono participant-did".to_owned()),
                         test_id: Some("participant".to_owned()),
                         self_badge_test_id: Some("participant-self-badge".to_owned()),
@@ -154,15 +150,6 @@ pub(super) fn DiscussionParticipantRow(
                         is_self: participant.is_self,
                         agent_slug,
                         agent_selector: None,
-                    }
-                    if !participant.is_agent {
-                        if let Some(host) = binding_host.as_ref() {
-                            span { class: "binding-context",
-                                "data-testid": "binding-context",
-                                {crate::i18n::tr("chat.binding_context.separator")}
-                                span { class: "binding-context-host", "{host}" }
-                            }
-                        }
                     }
                 }
                 if let Some(owner) = owner_label.as_ref() {
@@ -188,8 +175,8 @@ pub(super) fn DiscussionParticipantRow(
                 if show_binding_details {
                     details { class: "binding-context-details",
                         summary { class: "muted", {crate::i18n::tr("chat.binding_context.details")} }
-                        div { class: "mono muted", title: "{participant_did_attr}",
-                            "{participant_did_label}"
+                        div { class: "mono muted", title: "{participant_id_attr}",
+                            "{participant_id_label}"
                         }
                         if let Some(selector) = selector_label.clone() {
                             div { class: "mono muted", "@{selector}" }

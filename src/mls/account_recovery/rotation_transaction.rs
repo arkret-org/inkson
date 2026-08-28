@@ -3,7 +3,7 @@ pub(super) use arkret_models_collaboration::events_payloads::key_backup::Control
 use arkret_models_collaboration::events_payloads::key_backup::resolve_controller_backup_trust_anchor;
 use arkret_models_crypto::{BackupKind, BackupSeriesEraseRequestBody, BackupSeriesEraseStatus};
 use arkret_wire::{
-    BackupObjectRef, BackupRotationKind, BackupSeriesId, Base64UrlString, DidFullId,
+    BackupObjectRef, BackupRotationKind, BackupSeriesId, Base64UrlString, Did,
     EventsSubmitBatchRequestBody, Hash, LeaseBasisRef, RiskTier, SchemaId, SecurityTransactionStep,
     TransactionId, UnsignedClientStepAttestation,
 };
@@ -175,7 +175,7 @@ pub(crate) async fn execute_device_revoke_security_rotation(
         &trust_anchor,
     )?;
 
-    let principal = DidFullId::new(actor_id.to_owned())?;
+    let principal = Did::new(actor_id.to_owned())?;
     let control_realm =
         crate::identity::principal_control::resolve_accepted(&http, &principal).await?;
     let frontier = submitter
@@ -362,7 +362,7 @@ async fn drive_security_rotation(
 ) -> Result<CompletedSecurityRotation> {
     let http = api.sdk_http_client()?;
     let submitter = api.event_submitter()?;
-    let principal = DidFullId::new(actor_id.to_owned())?;
+    let principal = Did::new(actor_id.to_owned())?;
     let control_realm =
         crate::identity::principal_control::resolve_accepted(&http, &principal).await?;
     let transaction_id = transaction.transaction_id.clone();
@@ -686,9 +686,9 @@ pub(super) fn build_active_series_event(
 ) -> Result<crate::operation::LocalOperation> {
     let signer = crate::event_signer::active_signer()
         .ok_or_else(|| anyhow!("active device signer is required"))?;
-    let principal_full_id = DidFullId::new(actor_id.to_owned())?;
+    let principal_did = Did::new(actor_id.to_owned())?;
     let principal = crate::mls_api_helpers::principal_core_id(actor_id)?;
-    let verification_method = signer.verification_method_for_principal(&principal_full_id)?;
+    let verification_method = signer.verification_method_for_principal(&principal_did)?;
     let backup_kind = match kind {
         BackupRotationKind::SecretStorage => BackupKind::SecretStorage,
         BackupRotationKind::MlsHistory => BackupKind::MlsHistory,

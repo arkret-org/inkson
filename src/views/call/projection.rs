@@ -137,13 +137,13 @@ fn value_has_backend_direct_transcript_ref(value: &Value) -> bool {
     }
 }
 
-/// Derive the realm's anchored media-service DIDs and preferred focus from
+/// Derive the realm's anchored media-service IDs and preferred focus from
 /// the local `ak.realm.media_service` projection.
 pub(super) fn media_service_selection(
     state: &crate::state::ClientLocalState,
     realm_id: &str,
 ) -> (Vec<String>, String) {
-    let mut dids = BTreeSet::new();
+    let mut service_ids = BTreeSet::new();
     let mut focus_ids = Vec::<String>::new();
     for record in &state.raw_operations {
         let kind = record
@@ -158,7 +158,7 @@ pub(super) fn media_service_selection(
         }
         let body = operation_body(&record.payload);
         if let Some(service_id) = body.get("service_id").and_then(|v| v.as_str()) {
-            dids.insert(service_id.to_owned());
+            service_ids.insert(service_id.to_owned());
         }
         if let Some(foci) = body.get("foci").and_then(|v| v.as_array()) {
             for focus in foci {
@@ -171,12 +171,12 @@ pub(super) fn media_service_selection(
             }
         }
     }
-    let media_dids: Vec<String> = dids.into_iter().collect();
+    let media_service_ids: Vec<String> = service_ids.into_iter().collect();
     let focus_id = focus_ids
         .into_iter()
         .next()
-        .unwrap_or_else(|| default_focus_id(&media_dids));
-    (media_dids, focus_id)
+        .unwrap_or_else(|| default_focus_id(&media_service_ids));
+    (media_service_ids, focus_id)
 }
 
 pub(super) fn media_governance_evidence(
@@ -257,12 +257,12 @@ fn latest_body_for_kind(
 }
 
 /// Fallback used only before the media-service projection is hydrated. A
-/// real media join still fails closed when the anchored issuer DID set is
+/// real media join still fails closed when the anchored issuer service-ID set is
 /// empty.
-pub(super) fn default_focus_id(media_dids: &[String]) -> String {
-    media_dids
+pub(super) fn default_focus_id(media_service_ids: &[String]) -> String {
+    media_service_ids
         .first()
-        .and_then(|did| did.rsplit(':').next())
+        .and_then(|service_id| service_id.rsplit(':').next())
         .map(|host| host.to_owned())
         .unwrap_or_else(|| "default".to_owned())
 }
@@ -425,11 +425,8 @@ pub(super) fn build_roster(
 ) -> anyhow::Result<Vec<CallParticipantView>> {
     let mut ids = BTreeSet::new();
     let mut roster = Vec::new();
-    for full_id in std::iter::once(actor).chain(peers.iter().map(String::as_str)) {
-        let full_id = arkret_sdk::DidFullId::new(full_id.trim().to_owned())?;
-        let actor_id = arkret_sdk::project_full_id_to_core_id(&full_id)
-            .map_err(anyhow::Error::msg)?
-            .to_string();
+    for actor_id in std::iter::once(actor).chain(peers.iter().map(String::as_str)) {
+        let actor_id = arkret_sdk::DidCoreId::new(actor_id.trim().to_owned())?.to_string();
         if !ids.insert(actor_id.clone()) {
             continue;
         }
@@ -451,10 +448,7 @@ pub(super) fn set_local_state(
     muted: bool,
     sharing: bool,
 ) {
-    let Ok(actor) = arkret_sdk::DidFullId::new(actor.trim().to_owned()) else {
-        return;
-    };
-    let Ok(actor) = arkret_sdk::project_full_id_to_core_id(&actor) else {
+    let Ok(actor) = arkret_sdk::DidCoreId::new(actor.trim().to_owned()) else {
         return;
     };
     let mut roster = participants();

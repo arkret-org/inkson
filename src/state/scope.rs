@@ -22,7 +22,7 @@ impl LocalStateStore {
     }
 
     /// Whether `principal` is the foreground identity. Equality is based on
-    /// the stable DID core id, so a legitimate full-id resolution update does
+    /// the stable DID core id, so a legitimate DID resolution update does
     /// not create a second local account namespace.
     pub fn active_account_matches(&self, principal: &arkret_sdk::DidCoreId) -> bool {
         self.active_authority()
@@ -71,8 +71,8 @@ impl LocalStateStore {
 
     /// Record one specific account's primary handle without relying on which
     /// account happens to be active when an asynchronous lookup completes.
-    pub fn set_primary_handle_for_did(&mut self, did: &str, handle: &str) {
-        let Ok(principal_id) = arkret_sdk::DidCoreId::new(did.trim().to_owned()) else {
+    pub fn set_primary_handle_for_principal_id(&mut self, principal_id: &str, handle: &str) {
+        let Ok(principal_id) = arkret_sdk::DidCoreId::new(principal_id.trim().to_owned()) else {
             return;
         };
         if self.active_account_matches(&principal_id) {
@@ -80,12 +80,12 @@ impl LocalStateStore {
         }
     }
 
-    /// Read a SPECIFIC account's persisted primary handle by DID, without making
+    /// Read a SPECIFIC account's persisted primary handle by principal id, without making
     /// that account active. Returns `None` for the active account's in-memory
-    /// value too (prefers the live `cached` copy when `did` is active so an
+    /// value too (prefers the live `cached` copy when the principal is active so an
     /// unflushed set is observed). Empty string is normalised to `None`.
-    pub fn primary_handle_for_did(&self, did: &str) -> Option<String> {
-        let Ok(principal_id) = arkret_sdk::DidCoreId::new(did.trim().to_owned()) else {
+    pub fn primary_handle_for_principal_id(&self, principal_id: &str) -> Option<String> {
+        let Ok(principal_id) = arkret_sdk::DidCoreId::new(principal_id.trim().to_owned()) else {
             return None;
         };
         if !self.active_account_matches(&principal_id) {
@@ -309,11 +309,8 @@ impl LocalStateStore {
     }
 
     #[cfg(test)]
-    pub fn promote_accepted_context_for_test(
-        &mut self,
-        principal_id: &arkret_sdk::DidFullId,
-    ) -> bool {
-        self.switch_active_account(&crate::state::tests::test_account_context(principal_id))
+    pub fn promote_accepted_context_for_test(&mut self, principal_did: &arkret_sdk::Did) -> bool {
+        self.switch_active_account(&crate::state::tests::test_account_context(principal_did))
             .unwrap()
     }
 

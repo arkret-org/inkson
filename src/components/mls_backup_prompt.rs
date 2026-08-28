@@ -825,7 +825,7 @@ pub fn MlsBackupPrompt(
         let base = base_url();
         let session = token();
         let authority = account_for_backup.authority.clone();
-        let actor = account_for_backup.full_id().to_string();
+        let actor = account_for_backup.did().to_string();
         let account_key = account_for_backup.principal_id().clone();
         let device = account_for_backup.device_id.to_string();
         let local_recovery_key_configured = crate::views::recovery::local_recovery_key_fingerprint(
@@ -911,7 +911,7 @@ pub fn MlsBackupPrompt(
         let base = base_url();
         let session = token();
         let authority = account_for_regenerate.authority.clone();
-        let actor = account_for_regenerate.full_id().to_string();
+        let actor = account_for_regenerate.did().to_string();
         let account_key = account_for_regenerate.principal_id().clone();
         let device = account_for_regenerate.device_id.to_string();
         if base.trim().is_empty() || session.trim().is_empty() || actor.trim().is_empty() {

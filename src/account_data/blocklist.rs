@@ -45,7 +45,7 @@ impl BlocklistUiTargetKind {
         }
     }
 
-    pub const fn is_did(self) -> bool {
+    pub const fn is_identity(self) -> bool {
         !matches!(self, Self::Domain)
     }
 }
@@ -78,7 +78,7 @@ pub const fn blocklist_surface_label(surface: AccountBlocklistSurface) -> &'stat
 
 pub fn normalize_blocklist_value(kind: BlocklistUiTargetKind, value: &str) -> String {
     let trimmed = value.trim();
-    if kind.is_did() {
+    if kind.is_identity() {
         return trimmed.to_owned();
     }
     let mut value = trimmed
@@ -106,7 +106,7 @@ fn target_from_ui(
             };
             Ok(AccountBlocklistTarget::Did(AccountBlocklistDidTarget {
                 kind,
-                actor_id: crate::mls_api_helpers::principal_core_id(&value)
+                actor_id: arkret_sdk::DidCoreId::new(value)
                     .map_err(|error| error.to_string())?,
             }))
         }
@@ -209,18 +209,18 @@ pub fn new_blocklist_entry(
     Ok(entry)
 }
 
-pub fn is_blocked(list: &[AccountBlocklistPayloadEntry], did: &str) -> bool {
-    actor_entries_filter_surface(list, did, AccountBlocklistSurface::Messages, false)
+pub fn is_blocked(list: &[AccountBlocklistPayloadEntry], actor_id: &str) -> bool {
+    actor_entries_filter_surface(list, actor_id, AccountBlocklistSurface::Messages, false)
 }
 
 pub fn suppresses_notifications(
     list: &[AccountBlocklistPayloadEntry],
-    did: &str,
+    actor_id: &str,
     related_surfaces: &[AccountBlocklistSurface],
 ) -> bool {
     related_surfaces
         .iter()
-        .any(|surface| actor_entries_filter_surface(list, did, *surface, true))
+        .any(|surface| actor_entries_filter_surface(list, actor_id, *surface, true))
 }
 
 pub fn hides_actor_messages(entry: &AccountBlocklistPayloadEntry) -> bool {
@@ -234,11 +234,11 @@ pub fn hides_actor_messages(entry: &AccountBlocklistPayloadEntry) -> bool {
 
 fn actor_entries_filter_surface(
     list: &[AccountBlocklistPayloadEntry],
-    did: &str,
+    actor_id: &str,
     surface: AccountBlocklistSurface,
     include_mute: bool,
 ) -> bool {
-    let Ok(needle) = crate::mls_api_helpers::principal_core_id(did) else {
+    let Ok(needle) = arkret_sdk::DidCoreId::new(actor_id.trim().to_owned()) else {
         return false;
     };
     let now = chrono::Utc::now();
@@ -269,14 +269,14 @@ fn entry_filters_surface(
 
 pub fn block_user_in(
     list: &mut Vec<AccountBlocklistPayloadEntry>,
-    did: &str,
+    actor_id: &str,
     reason_code: Option<String>,
     created_at: chrono::DateTime<chrono::Utc>,
 ) -> bool {
     block_target_in(
         list,
         BlocklistUiTargetKind::Actor,
-        did,
+        actor_id,
         reason_code,
         DEFAULT_BLOCKLIST_APPLIES_TO.to_vec(),
         None,
@@ -308,8 +308,8 @@ pub fn block_target_in(
     true
 }
 
-pub fn unblock_user_in(list: &mut Vec<AccountBlocklistPayloadEntry>, did: &str) -> bool {
-    let Ok(needle) = crate::mls_api_helpers::principal_core_id(did) else {
+pub fn unblock_user_in(list: &mut Vec<AccountBlocklistPayloadEntry>, actor_id: &str) -> bool {
+    let Ok(needle) = arkret_sdk::DidCoreId::new(actor_id.trim().to_owned()) else {
         return false;
     };
     let before = list.len();
@@ -340,7 +340,7 @@ pub fn build_blocklist_account_data_body(
     entries: &[AccountBlocklistPayloadEntry],
 ) -> Result<Value, String> {
     let payload = AccountBlocklistPayload {
-        holder_id: crate::mls_api_helpers::principal_core_id(holder_id.trim())
+        holder_id: arkret_sdk::DidCoreId::new(holder_id.trim().to_owned())
             .map_err(|error| error.to_string())?,
         version,
         entries: entries.to_vec(),
@@ -370,7 +370,7 @@ pub fn blocklist_payload_from_account_data(
     let payload: AccountBlocklistPayload =
         serde_json::from_value(value.clone()).map_err(|error| error.to_string())?;
     payload.validate().map_err(|error| error.to_string())?;
-    let expected_holder_id = crate::mls_api_helpers::principal_core_id(expected_holder_id)
+    let expected_holder_id = arkret_sdk::DidCoreId::new(expected_holder_id.trim().to_owned())
         .map_err(|error| error.to_string())?;
     if payload.holder_id != expected_holder_id {
         return Err("account blocklist holder_id does not match the active account".to_owned());

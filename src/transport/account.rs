@@ -131,8 +131,7 @@ pub async fn update_profile(
 
     let viewer = account_viewer(submitter.http()).await?;
     let principal_id = viewer.principal_id.clone();
-    let evidence_principal_id =
-        arkret_sdk::project_full_id_to_core_id(&authority_evidence.principal_id)?;
+    let evidence_principal_id = authority_evidence.principal_id.clone();
     authority_evidence
         .pcr_genesis_unit
         .validate_ordered_envelopes()?;
@@ -528,7 +527,7 @@ async fn verify_contact_request_receipt(
     if request_digest != expected_request_digest {
         anyhow::bail!("Contact request receipt does not bind the exact resolved Event");
     }
-    let issuer_full_id = arkret_sdk::DidFullId::new(
+    let issuer_did = arkret_sdk::Did::new(
         receipt
             .signature
             .verification_method
@@ -537,12 +536,12 @@ async fn verify_contact_request_receipt(
             .map(|(controller, _)| controller.to_owned())
             .ok_or_else(|| anyhow::anyhow!("Contact receipt verification method omits fragment"))?,
     )?;
-    if arkret_sdk::project_full_id_to_core_id(&issuer_full_id)? != receipt.core.issuer {
+    if arkret_sdk::project_did_to_core_id(&issuer_did)? != receipt.core.issuer {
         anyhow::bail!("Contact receipt proof controller differs from issuer");
     }
     let history =
-        crate::identity::history::fetch_complete_identity_history(http, &issuer_full_id).await?;
-    if history.did != issuer_full_id
+        crate::identity::history::fetch_complete_identity_history(http, &issuer_did).await?;
+    if history.did != issuer_did
         || history.method != arkret_sdk::DidMethodUri::Webvh
         || history.native_history == Some(false)
         || history.has_more
@@ -551,7 +550,7 @@ async fn verify_contact_request_receipt(
         anyhow::bail!("Contact receipt issuer did not return complete native did:webvh history");
     }
     let history_point = arkret_signatures::webvh::validate_webvh_history_at(
-        &issuer_full_id,
+        &issuer_did,
         &history.entries,
         receipt.core.accepted_at,
     )
@@ -565,7 +564,7 @@ async fn verify_contact_request_receipt(
     }
     let resolved_key =
         arkret_sdk::resolve_verification_method_key_from_document(&document, verification_method)?;
-    if resolved_key.absolutize(&issuer_full_id)? != receipt.signature.verification_method {
+    if resolved_key.absolutize(&issuer_did)? != receipt.signature.verification_method {
         anyhow::bail!("Contact receipt verification method resolved to another issuer key");
     }
     let verifying_key =
@@ -582,7 +581,7 @@ fn did_document_assertion_method_contains(
     document: &arkret_sdk::DidDocument,
     expected: &str,
 ) -> bool {
-    fn matches_reference(issuer: &arkret_sdk::DidFullId, reference: &str, expected: &str) -> bool {
+    fn matches_reference(issuer: &arkret_sdk::Did, reference: &str, expected: &str) -> bool {
         if reference == expected {
             return true;
         }
@@ -711,8 +710,8 @@ pub async fn direct_conversation_found(
 pub async fn create_direct_conversation_from_resolve(
     submitter: &crate::event_submit::EventSubmitter,
     resolve: &arkret_sdk::DirectConversationResolveOutcome,
-    founder_id: &arkret_sdk::DidFullId,
-    peer_id: &arkret_sdk::DidFullId,
+    founder_id: &arkret_sdk::Did,
+    peer_id: &arkret_sdk::Did,
 ) -> anyhow::Result<arkret_sdk::DirectConversationFoundingAcceptanceOutcome> {
     let arkret_sdk::DirectConversationResolveOutcome::CreationRequired {
         next_founding_input,
@@ -1020,7 +1019,7 @@ pub async fn identity_resolve(
     http: &arkret_sdk::http_client::Client,
     did: &str,
 ) -> anyhow::Result<IdentityResolveOutcome> {
-    let subject = arkret_sdk::DidFullId::new(did.to_owned())
+    let subject = arkret_sdk::Did::new(did.to_owned())
         .map_err(|err| anyhow::anyhow!("invalid did `{did}`: {err}"))?;
     let body = arkret_models_identity::IdentityResolveRequestBody {
         did: subject,
@@ -1399,18 +1398,17 @@ pub(crate) async fn account_data_snapshot(
 /// is resolved here rather than left to the server — soland used to author these
 /// Events under its own DID, which put every holder's value for one key into a
 /// single cell keyed by the service.
-fn account_data_holder()
--> anyhow::Result<(arkret_sdk::DidFullId, arkret_sdk::PrincipalAuthorityKey)> {
+fn account_data_holder() -> anyhow::Result<(arkret_sdk::Did, arkret_sdk::PrincipalAuthorityKey)> {
     let scope = crate::secure_key_store::active_device_seed_scope()
         .ok_or_else(|| anyhow::anyhow!("no active account; cannot author an account_data Event"))?;
     let signer = crate::event_signer::active_signer()
         .ok_or_else(|| anyhow::anyhow!("active account signer is unavailable"))?;
-    let full_id = arkret_sdk::DidFullId::new(signer.signer_did().to_owned())?;
+    let did = arkret_sdk::Did::new(signer.signer_did().to_owned())?;
     anyhow::ensure!(
-        arkret_sdk::project_full_id_to_core_id(&full_id)? == scope.authority.principal_id,
+        arkret_sdk::project_did_to_core_id(&did)? == scope.authority.principal_id,
         "active signer does not match the account authority"
     );
-    Ok((full_id, scope.authority))
+    Ok((did, scope.authority))
 }
 
 /// Build and sign the `ak.account_data.set` the endpoint now requires.

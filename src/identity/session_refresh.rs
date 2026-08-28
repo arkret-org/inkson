@@ -409,7 +409,7 @@ pub(crate) fn load_account_session_grant_with_secure_store(
     if !grant_matches_principal_server(&grant, account.server_url.as_str()) {
         anyhow::bail!("session grant does not match the accepted account server");
     }
-    if !grant_matches_full_principal(&grant, account.full_id()) {
+    if !grant_matches_principal_did(&grant, account.did()) {
         anyhow::bail!("session grant does not match the accepted account principal");
     }
     if grant.device_id != account.device_id {
@@ -672,11 +672,11 @@ pub(crate) fn persisted_grant_principal_id(
     Ok(grant.principal_id.clone())
 }
 
-pub(crate) fn grant_matches_full_principal(
+pub(crate) fn grant_matches_principal_did(
     grant: &PersistedSessionGrant,
-    principal_id: &arkret_sdk::DidFullId,
+    principal_did: &arkret_sdk::Did,
 ) -> bool {
-    let Ok(expected_core_id) = arkret_sdk::project_full_id_to_core_id(principal_id) else {
+    let Ok(expected_core_id) = arkret_sdk::project_did_to_core_id(principal_did) else {
         return false;
     };
     grant_matches_principal_id(grant, &expected_core_id)
@@ -722,14 +722,13 @@ fn mint_session_grant_refresh_proof(
     )?;
     let signer = crate::event_signer::active_signer()
         .ok_or_else(|| anyhow::anyhow!("active device identity signer is not installed"))?;
-    let principal_full_id = arkret_sdk::DidFullId::new(signer.signer_did().to_owned())
-        .map_err(|error| anyhow::anyhow!("soft logout restore signer full_id: {error}"))?;
-    if arkret_sdk::project_full_id_to_core_id(&principal_full_id)? != principal_core {
-        anyhow::bail!("active signer full_id does not project to the refresh principal_id");
+    let principal_did = arkret_sdk::Did::new(signer.signer_did().to_owned())
+        .map_err(|error| anyhow::anyhow!("soft logout restore signer did: {error}"))?;
+    if arkret_sdk::project_did_to_core_id(&principal_did)? != principal_core {
+        anyhow::bail!("active signer did does not project to the refresh principal_id");
     }
-    let verification_method =
-        arkret_sdk::DidUrl::new(format!("{principal_full_id}#{device_id}"))
-            .map_err(|error| anyhow::anyhow!("soft logout restore verification method: {error}"))?;
+    let verification_method = arkret_sdk::DidUrl::new(format!("{principal_did}#{device_id}"))
+        .map_err(|error| anyhow::anyhow!("soft logout restore verification method: {error}"))?;
     let session_intent_digest = arkret_sdk::session_grant_refresh_request_digest(
         &grant.grant_jwt,
         &predecessor_session_grant_id,
@@ -851,29 +850,27 @@ mod tests {
     }
 
     #[test]
-    fn session_grant_core_id_matches_its_full_principal_without_string_equality() {
-        let full_id =
-            arkret_sdk::DidFullId::new("did:webvh:z6mkfixture:alice.example".to_owned()).unwrap();
-        let core_id = arkret_sdk::project_full_id_to_core_id(&full_id).unwrap();
+    fn session_grant_core_id_matches_its_principal_did_without_string_equality() {
+        let did = arkret_sdk::Did::new("did:webvh:z6mkfixture:alice.example".to_owned()).unwrap();
+        let core_id = arkret_sdk::project_did_to_core_id(&did).unwrap();
         let grant = test_persisted_grant(core_id.as_str());
 
-        assert!(grant_matches_full_principal(&grant, &full_id));
+        assert!(grant_matches_principal_did(&grant, &did));
         assert!(grant_matches_principal_id(&grant, &core_id));
-        assert_ne!(grant.principal_id.as_str(), full_id.as_str());
+        assert_ne!(grant.principal_id.as_str(), did.as_str());
     }
 
     /// A persisted grant that stores anything other than a `DidCoreId` is an
-    /// invalid record. It MUST NOT be repaired by back-projecting a full DID —
+    /// invalid record. It MUST NOT be repaired by back-projecting a DID —
     /// the session is simply unusable and the caller re-authenticates.
     #[test]
-    fn session_grant_holding_a_full_id_is_rejected_rather_than_back_projected() {
-        let full_id =
-            arkret_sdk::DidFullId::new("did:webvh:z6mkfixture:alice.example".to_owned()).unwrap();
+    fn session_grant_holding_a_did_is_rejected_rather_than_back_projected() {
+        let did = arkret_sdk::Did::new("did:webvh:z6mkfixture:alice.example".to_owned()).unwrap();
         let mut persisted = serde_json::to_value(test_persisted_grant(
             "ak:did_core:webvh:z6mkfixture:alice.example",
         ))
         .unwrap();
-        persisted["principal_id"] = serde_json::Value::String(full_id.to_string());
+        persisted["principal_id"] = serde_json::Value::String(did.to_string());
 
         assert!(serde_json::from_value::<PersistedSessionGrant>(persisted).is_err());
     }
@@ -911,9 +908,8 @@ mod tests {
 
     #[test]
     fn onboarding_grant_restore_uses_the_explicit_account_without_an_active_scope() {
-        let full_id =
-            arkret_sdk::DidFullId::new("did:webvh:z6mkfixture:alice.example".to_owned()).unwrap();
-        let principal_id = arkret_sdk::project_full_id_to_core_id(&full_id).unwrap();
+        let did = arkret_sdk::Did::new("did:webvh:z6mkfixture:alice.example".to_owned()).unwrap();
+        let principal_id = arkret_sdk::project_did_to_core_id(&did).unwrap();
         let grant = test_persisted_grant(principal_id.as_str());
         let authority = arkret_sdk::PrincipalAuthorityKey::new(
             principal_id,
@@ -924,7 +920,7 @@ mod tests {
             "ak:profile:test".to_owned(),
             authority.clone(),
             arkret_sdk::PrincipalResolutionProjection {
-                full_id,
+                did,
                 method_history_head: "head-test".to_owned(),
                 version_id: "version-test".to_owned(),
                 resolution_event_ref: "event-test".to_owned(),

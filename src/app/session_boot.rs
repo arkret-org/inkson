@@ -382,7 +382,7 @@ pub(super) async fn inject_test_session_grant(
         tracing::warn!("test session injection skipped: active account context is unavailable");
         return None;
     };
-    let principal_full_id = expected_account.full_id().clone();
+    let principal_did = expected_account.did().clone();
     let account_key = expected_account.principal_id().clone();
     // The browser fixture starts with the account DID already present in the
     // config signals, but a fresh LocalStateStore can still be scoped to the
@@ -396,12 +396,12 @@ pub(super) async fn inject_test_session_grant(
         .active_account;
     let Some(configured_account) = configured_account.filter(|account| {
         account.principal_id() == &account_key
-            && account.full_id() == &principal_full_id
+            && account.did() == &principal_did
             && account.device_id.as_str() == device_id
             && account.server_url.as_str() == server_url
     }) else {
         tracing::warn!(
-            principal_id = %principal_full_id,
+            principal_id = %principal_did,
             device_id,
             server_url,
             "test session injection skipped: active account config does not match fixture"
@@ -423,7 +423,7 @@ pub(super) async fn inject_test_session_grant(
         .and_then(Value::as_bool)
         == Some(true)
     {
-        crate::event_submit::remember_verified_recovery_gate(principal_full_id.as_str(), device_id);
+        crate::event_submit::remember_verified_recovery_gate(principal_did.as_str(), device_id);
     }
     for (fixture_field, private_data_key) in [
         ("local_recovery_state", "recovery.state.v1"),
@@ -448,7 +448,7 @@ pub(super) async fn inject_test_session_grant(
     }
     if let Some(value) = parsed.get("pending_principal_registration").cloned() {
         match serde_json::from_value::<crate::state::PendingPrincipalRegistration>(value) {
-            Ok(registration) if registration.full_id == principal_full_id => {
+            Ok(registration) if registration.did == principal_did => {
                 if let Err(error) = state_store
                     .write()
                     .set_pending_principal_registration(Some(registration))
@@ -590,7 +590,7 @@ pub(super) async fn inject_test_session_grant(
         return None;
     }
     if let Err(error) =
-        crate::event_signer::bind_active_signer_principal_device_id(&principal_full_id, device_id)
+        crate::event_signer::bind_active_signer_principal_device_id(&principal_did, device_id)
     {
         tracing::warn!(
             ?error,

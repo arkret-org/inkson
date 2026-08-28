@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::sync::{LazyLock, RwLock};
 
 use arkret_sdk::signatures::PublicKeyMaterial;
-use arkret_sdk::{DidDocument, DidFullId};
+use arkret_sdk::{Did, DidDocument};
 use arkret_wire::event_kind_str;
 
 use crate::transport::TransportClient;
@@ -18,12 +18,12 @@ pub type DidAnchorFuture<'a> = std::pin::Pin<Box<dyn std::future::Future<Output 
 /// Retained for DID-resolution callers. Device authorization no longer reads
 /// business authority from the DID document.
 pub trait DidAnchor: Send + Sync {
-    fn resolve_did_document(&self, actor: &DidFullId) -> Option<DidDocument>;
+    fn resolve_did_document(&self, actor: &Did) -> Option<DidDocument>;
 
     fn ensure_actor_document<'a>(
         &'a self,
         http: &'a reqwest::Client,
-        actor: &'a DidFullId,
+        actor: &'a Did,
     ) -> DidAnchorFuture<'a> {
         let _ = (http, actor);
         Box::pin(async { true })
@@ -401,9 +401,9 @@ pub fn verify_signal_envelope_proof_at(
     now: chrono::DateTime<chrono::Utc>,
 ) -> bool {
     let controller = verification_method_controller(&envelope.proof.verification_method);
-    let controller_matches_sender = arkret_sdk::DidFullId::new(controller.to_owned())
+    let controller_matches_sender = arkret_sdk::Did::new(controller.to_owned())
         .ok()
-        .and_then(|full_id| arkret_sdk::project_full_id_to_core_id(&full_id).ok())
+        .and_then(|did| arkret_sdk::project_did_to_core_id(&did).ok())
         .is_some_and(|core_id| core_id == envelope.sender_actor_id);
     if envelope.validate_structural().is_err()
         || !controller_matches_sender

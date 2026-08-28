@@ -664,14 +664,14 @@ fn range_completeness(input: Value) -> Result<Value> {
         arkret_sdk::range_completeness_root_with_suite(&range_events, digest_suite)
             .map_err(|error| anyhow::anyhow!("derive fixture completeness root: {error}"))?;
 
-    let issuer_full_id = arkret_sdk::DidFullId::new("did:web:server.local")?;
+    let issuer_did = arkret_sdk::Did::new("did:web:server.local")?;
     let issuer = arkret_sdk::DidCoreId::new("ak:did_core:web:server.local")?;
-    let verification_method = arkret_sdk::DidUrl::new(format!("{issuer_full_id}#notary-key"))
+    let verification_method = arkret_sdk::DidUrl::new(format!("{issuer_did}#notary-key"))
         .map_err(|error| anyhow::anyhow!("fixture verification method: {error}"))?;
     let signing_key = ed25519_dalek::SigningKey::from_bytes(&[0x5a_u8; 32]);
     let signer = Ed25519PayloadSigner::new(
         signing_key.clone(),
-        issuer_full_id.clone(),
+        issuer_did.clone(),
         verification_method.clone(),
     );
     let observed_at = arkret_sdk::canonical::normalize_timestamp_canonical(chrono::Utc::now());
@@ -698,9 +698,9 @@ fn range_completeness(input: Value) -> Result<Value> {
         witness_attestation: arkret_sdk::RangeCompletenessAttestationWitnessAttestation {
             witnesses: vec![
                 arkret_sdk::RangeCompletenessAttestationWitnessAttestationWitnessesItem {
-                    issuer: issuer.clone(),
+                    witness_id: issuer.clone(),
                     verification_method: verification_method.clone(),
-                    controlling_organization: issuer.clone(),
+                    controlling_organization_id: issuer.clone(),
                     attested_at: Some(observed_at),
                     extra: BTreeMap::new(),
                 },
@@ -934,12 +934,12 @@ fn ingress_receipts(input: Value) -> Result<Value> {
         let received_at = authorization_lease.issued_at;
         let receipt_unix_ms = u64::try_from(received_at.timestamp_millis())
             .context("ingress receipt time predates the Unix epoch")?;
-        let qualified_ingress_id = arkret_wire::DidFullId::new("did:web:server.local".to_owned())
-            .context("construct ingress service full id")?;
+        let qualified_ingress_did = arkret_wire::Did::new("did:web:server.local".to_owned())
+            .context("construct ingress service DID")?;
         let mut receipt = arkret_wire::IngressReceipt {
             receipt_id: arkret_wire::ReceiptId::new_v7_at(receipt_unix_ms),
             event_digest: event_digest.clone(),
-            qualified_ingress_id,
+            qualified_ingress_did,
             received_at,
             ingress_frontier: vec![submission.event.event_id.clone()],
             proofs: Vec::new(),

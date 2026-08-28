@@ -1186,23 +1186,18 @@ pub fn DirectoryPanel(
                 if let Some(ref resolved) = handle_result() {
                     {
                         // F-REMARK-FANOUT-1: surface the user's chosen alias
-                        // (if any) for the resolved DID, with the canonical
-                        // DID kept verbatim in `title` for verification.
+                        // (if any) for the resolved stable principal id, with
+                        // the canonical id kept verbatim in `title`.
                         let resolved_display =
-                            actor_display_label(&state_store.read(), &resolved.did);
-                        let resolved_did_attr = resolved.did.clone();
-                        let resolved_did_document = resolved.did_document.clone();
+                            actor_display_label(&state_store.read(), resolved.principal_id.as_str());
+                        let resolved_principal_id_attr = resolved.principal_id.clone();
                         rsx! {
                             div { class: "event", "data-testid": "handle-result",
                                 div { class: "event-head",
                                     span { "Resolved" }
                                     span { "{resolved.handle}" }
                                 }
-                                div { class: "entity-title", title: "{resolved_did_attr}", "{resolved_display}" }
-                                if let Some(doc) = resolved_did_document {
-                                    div { class: "muted", "DID document loaded" }
-                                    div { class: "muted", "{doc}" }
-                                }
+                                div { class: "entity-title", title: "{resolved_principal_id_attr}", "{resolved_display}" }
                             }
                         }
                     }

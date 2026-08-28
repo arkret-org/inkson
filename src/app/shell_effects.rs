@@ -82,7 +82,7 @@ pub(super) fn ShellEffects(state: ShellEffectState) -> Element {
         personal_handles_status.set("Loading handles".to_owned());
         state_store
             .write()
-            .set_primary_handle_for_did(&lookup_actor, "");
+            .set_primary_handle_for_principal_id(&lookup_actor, "");
 
         let base = lookup_base_url;
         let actor = lookup_actor;
@@ -125,7 +125,7 @@ pub(super) fn ShellEffects(state: ShellEffectState) -> Element {
             let primary_handle = crate::transport::account::primary_handle_from_viewer(&viewer);
             handle_store
                 .write()
-                .set_primary_handle_for_did(&actor, &primary_handle);
+                .set_primary_handle_for_principal_id(&actor, &primary_handle);
             try_set_signal(current_account_display_name, display_name);
             try_set_signal(current_account_avatar_blob_ref, avatar_blob_ref);
             try_set_signal(current_device_display_name, device_display_name);
@@ -148,7 +148,7 @@ pub(super) fn ShellEffects(state: ShellEffectState) -> Element {
         }
         state_store
             .write()
-            .set_primary_handle_for_did(&account, &handle);
+            .set_primary_handle_for_principal_id(&account, &handle);
     });
 
     let mut previous_unread_notification_count = use_signal(|| Option::<usize>::None);
@@ -309,7 +309,7 @@ pub(super) fn ShellEffects(state: ShellEffectState) -> Element {
                             .map(|handle| handle.canonical().to_owned());
                         let directory_handles = display_handles_from_directory_response(&res);
                         if let Some(directory_primary_handle) = directory_primary_handle {
-                            handle_store.write().set_primary_handle_for_did(
+                            handle_store.write().set_primary_handle_for_principal_id(
                                 &lookup_subject,
                                 &directory_primary_handle,
                             );

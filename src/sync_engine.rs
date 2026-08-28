@@ -62,17 +62,17 @@ use crate::transport::TransportClient;
 
 /// Normalize an account-sync principal coordinate to its stable Core DID.
 ///
-/// The account subscribe context carries the accepted Full DID while the
-/// account index is keyed by Core DID. Treating the Full DID as a Core DID
+/// The account subscribe context carries the accepted DID while the
+/// account index is keyed by Core DID. Treating the DID as a Core DID
 /// makes every legitimate response look as if it belongs to a different
 /// account and discards the projection after login or reload.
 fn sync_principal_core_id(principal_id: &str) -> Option<arkret_sdk::DidCoreId> {
     arkret_sdk::DidCoreId::new(principal_id.to_owned())
         .ok()
         .or_else(|| {
-            arkret_sdk::DidFullId::new(principal_id.to_owned())
+            arkret_sdk::Did::new(principal_id.to_owned())
                 .ok()
-                .and_then(|full_id| arkret_sdk::project_full_id_to_core_id(&full_id).ok())
+                .and_then(|did| arkret_sdk::project_did_to_core_id(&did).ok())
         })
 }
 
@@ -140,7 +140,7 @@ pub struct SyncEngineContext {
     /// deferred by unacknowledged to-device key material.
     pub realm_live_epoch: crate::runtime::input::ValueCell<u64>,
     /// Session-scoped DID resolution cache handle, provided by `app.rs` via
-    /// `use_context_provider`. Exact full-DID proof prefetches use this cache;
+    /// `use_context_provider`. Exact DID proof prefetches use this cache;
     /// lifecycle reset remains responsible for clearing it. Realm projections
     /// carrying only a principal core never select or invalidate an authority
     /// instance through this handle.
@@ -792,7 +792,7 @@ pub async fn run_sync_engine(
     ctx: SyncEngineContext,
 ) {
     ctx.projection_sink.sync_status(SyncStatusEvent::Connecting);
-    let actor_id = match arkret_sdk::DidFullId::new(ctx.principal_id.trim().to_owned()) {
+    let actor_id = match arkret_sdk::Did::new(ctx.principal_id.trim().to_owned()) {
         Ok(actor_id) => actor_id,
         Err(error) => {
             ctx.projection_sink.sync_status(SyncStatusEvent::Terminal {
@@ -1036,7 +1036,7 @@ async fn run_circle_scope_rotate_pass(
     }
     let base = ctx.account.server_url.as_str().to_owned();
     let token = ctx.token.get();
-    let actor_id = ctx.account.full_id().to_string();
+    let actor_id = ctx.account.did().to_string();
     let authority = ctx.account.authority.clone();
     let device_id = ctx.account.device_id.clone();
     if base.trim().is_empty()
@@ -1528,7 +1528,7 @@ async fn run_idle_self_update_pass(
     }
     let base = ctx.account.server_url.as_str().to_owned();
     let token = ctx.token.get();
-    let actor_id = ctx.account.full_id().to_string();
+    let actor_id = ctx.account.did().to_string();
     let authority = ctx.account.authority.clone();
     let device_id = ctx.account.device_id.clone();
     if base.trim().is_empty()
@@ -1943,8 +1943,8 @@ fn proof_bearing_sender_device(
             let no_query = method.split_once('?').map_or(method, |(head, _)| head);
             no_query.split_once('#').map_or(no_query, |(head, _)| head)
         };
-        let controller = arkret_sdk::DidFullId::new(controller.to_owned()).ok()?;
-        let controller_core = arkret_sdk::project_full_id_to_core_id(&controller).ok()?;
+        let controller = arkret_sdk::Did::new(controller.to_owned()).ok()?;
+        let controller_core = arkret_sdk::project_did_to_core_id(&controller).ok()?;
         (controller_core == proof_subject).then_some(controller)
     })?;
     let device = object
@@ -2642,8 +2642,8 @@ struct LocalMembershipMetadata {
 fn accepted_human_event_signing_device(event: &arkret_sdk::Event) -> Option<arkret_sdk::DeviceId> {
     let proof = event.proofs.iter().find_map(|proof| proof.as_producer())?;
     let (controller, fragment) = proof.verification_method.as_str().split_once('#')?;
-    let controller = arkret_sdk::DidFullId::new(controller.to_owned()).ok()?;
-    let controller = arkret_sdk::project_full_id_to_core_id(&controller).ok()?;
+    let controller = arkret_sdk::Did::new(controller.to_owned()).ok()?;
+    let controller = arkret_sdk::project_did_to_core_id(&controller).ok()?;
     if controller != event.actor_id {
         return None;
     }
@@ -3174,19 +3174,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn account_sync_principal_accepts_core_and_full_did_coordinates() {
-        let full_id = arkret_sdk::DidFullId::new(
+    fn account_sync_principal_accepts_core_and_did_coordinates() {
+        let did = arkret_sdk::Did::new(
             "did:webvh:QmXtc5b64aWwQfPjtwNmmqdZbnMCFzm8b6Qqdob9iKq1YA:soland.example:webvh:alice"
                 .to_owned(),
         )
         .unwrap();
-        let core_id = arkret_sdk::project_full_id_to_core_id(&full_id).unwrap();
+        let core_id = arkret_sdk::project_did_to_core_id(&did).unwrap();
 
         assert_eq!(
             sync_principal_core_id(core_id.as_str()),
             Some(core_id.clone())
         );
-        assert_eq!(sync_principal_core_id(full_id.as_str()), Some(core_id));
+        assert_eq!(sync_principal_core_id(did.as_str()), Some(core_id));
         assert!(sync_principal_core_id("not-a-did").is_none());
     }
 

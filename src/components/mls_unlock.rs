@@ -115,7 +115,7 @@ pub fn MlsUnlockPrompt(
         };
         let base = base_url();
         let session = token();
-        let actor = active_account.full_id().to_string();
+        let actor = active_account.did().to_string();
         let device = device_id();
         let mut state_store = state_store;
         let needs_mls_unlock = needs_mls_unlock;

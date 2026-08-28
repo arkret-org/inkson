@@ -1550,7 +1550,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                     projection,
                                                 );
                                                 let realm_member_count = realm_member_rows.len();
-                                                let participant_set: BTreeSet<String> = strand_participant_dids(
+                                                let participant_set: BTreeSet<String> = strand_participant_ids(
                                                     &store.raw_operations,
                                                     &card.primary_strand_id,
                                                 )

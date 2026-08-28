@@ -592,7 +592,7 @@ fn late_join_synthesis_author_resolves_handle_from_roster_actor_did() {
 #[test]
 fn synthesis_author_uses_the_same_persisted_self_handle_as_member_surfaces() {
     let actor = "ak:did_core:web:current-account.example";
-    let full_id = "did:web:current-account.example";
+    let did = "did:web:current-account.example";
     let mut card = test_card(
         "ak:strand:AF3DijehNxWqPlABWhHV2X7qV7ZeRCJQ7el0rZYaSQXs",
         "U",
@@ -609,8 +609,8 @@ fn synthesis_author_uses_the_same_persisted_self_handle_as_member_surfaces() {
     });
     let rows = realm_member_roster(Some(&projection));
     let mut store = isolated_store_for_tests("synthesis-current-account-handle");
-    store.switch_test_account(full_id);
-    store.set_primary_handle_for_did(actor, "alice:local.host");
+    store.switch_test_account(did);
+    store.set_primary_handle_for_principal_id(actor, "alice:local.host");
     let context = CardAuthorDisplayContext {
         realm_id: TEST_REALM_ID,
         member_rows: &rows,
@@ -652,7 +652,7 @@ fn synthesis_new_entry_appends_without_replacing_existing_entries() {
 }
 
 #[test]
-fn strand_participant_dids_filters_by_target_strand_and_pulls_unique_actors() {
+fn strand_participant_ids_filters_by_target_strand_and_pulls_unique_actors() {
     let ops = vec![
         RawOperationRecord {
             operation_id: "op-a".to_owned(),
@@ -696,18 +696,18 @@ fn strand_participant_dids_filters_by_target_strand_and_pulls_unique_actors() {
             }),
         },
     ];
-    let dids = strand_participant_dids(
+    let actor_ids = strand_participant_ids(
         &ops,
         "ak:strand:AOh8dxjVYDgM4sgWMvKYvKA-rHBR4-IIEc7fiwGJ7P1w",
     );
     assert_eq!(
-        dids,
+        actor_ids,
         vec![
             "ak:did_core:web:alice.example".to_owned(),
             "ak:did_core:web:bob.example".to_owned(),
         ]
     );
-    assert!(strand_participant_dids(&ops, "").is_empty());
+    assert!(strand_participant_ids(&ops, "").is_empty());
 }
 
 /// Canonical Synthesis round-trip: the editor emits a ContentBlock at the

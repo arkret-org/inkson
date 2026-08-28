@@ -720,7 +720,7 @@ fn seal_signal_envelope_with_signer(
 ) -> anyhow::Result<arkret_wire::SignalEnvelope> {
     let verification_method = arkret_sdk::DidUrl::new(signer.verification_method().to_owned())
         .map_err(anyhow::Error::msg)?;
-    let signer_full_id = arkret_sdk::DidFullId::new(
+    let signer_did = arkret_sdk::Did::new(
         verification_method
             .as_str()
             .split_once('#')
@@ -728,7 +728,7 @@ fn seal_signal_envelope_with_signer(
             .ok_or_else(|| anyhow::anyhow!("signal signer method has no controller"))?
             .to_owned(),
     )?;
-    if arkret_sdk::project_full_id_to_core_id(&signer_full_id)? != header.sender_actor_id {
+    if arkret_sdk::project_did_to_core_id(&signer_did)? != header.sender_actor_id {
         anyhow::bail!("signal signer does not control sender_actor_id");
     }
     let mut envelope = arkret_wire::SignalEnvelope {

@@ -24,7 +24,7 @@ use arkret_sdk::identity::{
     DidWebvhLogOutcome, DidWebvhResolver, ResolverFailMode, ResolverPolicy,
     host_is_safe_for_outbound,
 };
-use arkret_sdk::{DidDocument, DidFullId};
+use arkret_sdk::{Did, DidDocument};
 use chrono::{DateTime, Duration, Utc};
 
 /// Deployment profile drives resolver policy for long-lived principals.
@@ -109,7 +109,7 @@ pub enum VerifyError {
 /// `DidWebResolver::insert_from_https_response`).
 pub fn verify_principal(
     resolver: &CompositeDidResolver,
-    principal: &DidFullId,
+    principal: &Did,
 ) -> Result<DidDocument, VerifyError> {
     resolver
         .policy()
@@ -264,7 +264,7 @@ impl ResolverDidAnchor {
     /// here on a hit. `did-usage-and-verification.md` §5: a `Stale` binding is
     /// still a hit — TTL expiry alone MUST NOT escalate an ordinary read into
     /// an online resolution.
-    fn accepted_document(&self, actor: &DidFullId, now: DateTime<Utc>) -> Option<DidDocument> {
+    fn accepted_document(&self, actor: &Did, now: DateTime<Utc>) -> Option<DidDocument> {
         let state = self.bindings.as_ref()?;
         let key = state.scope.key(actor, state.purpose, None);
         state
@@ -320,7 +320,7 @@ impl ResolverDidAnchor {
     /// can be exercised with synthetic responses. Returns whether ingest
     /// succeeded (the same fail-closed verdict the live fetch path applies).
     #[cfg(test)]
-    fn ingest_web_for_test(&self, actor: &DidFullId, outcome: DidWebDocumentOutcome) -> bool {
+    fn ingest_web_for_test(&self, actor: &Did, outcome: DidWebDocumentOutcome) -> bool {
         self.web
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -334,7 +334,7 @@ impl ResolverDidAnchor {
     /// fail-closed on any failure. A method not allowed by the active policy
     /// (including `did:key`) is a no-op `false` — the synchronous
     /// trait method then fails the policy gate too.
-    async fn ingest_actor_document(&self, http: &reqwest::Client, actor: &DidFullId) -> bool {
+    async fn ingest_actor_document(&self, http: &reqwest::Client, actor: &Did) -> bool {
         if !policy_for(self.profile).permits(actor) {
             return false;
         }
@@ -409,7 +409,7 @@ impl ResolverDidAnchor {
         &self,
         http: &reqwest::Client,
         trusted_base_url: &url::Url,
-        service: &DidFullId,
+        service: &Did,
     ) -> bool {
         if !policy_for(self.profile).permits(service) || service.method() != "webvh" {
             return false;
@@ -471,7 +471,7 @@ impl ResolverDidAnchor {
 }
 
 impl crate::identity::device_directory::DidAnchor for ResolverDidAnchor {
-    fn resolve_did_document(&self, actor: &DidFullId) -> Option<DidDocument> {
+    fn resolve_did_document(&self, actor: &Did) -> Option<DidDocument> {
         let now = Utc::now();
         // DID-P2-B step 1: a durable accepted binding is a zero-network hit and
         // is checked before the session cache, because it is the layer that
@@ -496,7 +496,7 @@ impl crate::identity::device_directory::DidAnchor for ResolverDidAnchor {
     fn ensure_actor_document<'a>(
         &'a self,
         http: &'a reqwest::Client,
-        actor: &'a DidFullId,
+        actor: &'a Did,
     ) -> crate::identity::device_directory::DidAnchorFuture<'a> {
         Box::pin(self.ingest_actor_document(http, actor))
     }
@@ -677,10 +677,7 @@ async fn fetch_did_bytes_from_url(
     Some((content_type, body.to_vec()))
 }
 
-fn trusted_webvh_urls(
-    trusted_base_url: &url::Url,
-    service: &DidFullId,
-) -> Option<(url::Url, url::Url)> {
+fn trusted_webvh_urls(trusted_base_url: &url::Url, service: &Did) -> Option<(url::Url, url::Url)> {
     if !matches!(trusted_base_url.scheme(), "http" | "https") {
         return None;
     }
@@ -721,7 +718,7 @@ fn did_document_content_type_allowed(content_type: &str) -> bool {
 /// the URL, content-type and document `id`.
 pub(crate) async fn fetch_did_web_document(
     http: &reqwest::Client,
-    did: &DidFullId,
+    did: &Did,
 ) -> Option<DidWebDocumentOutcome> {
     let url = DidWebResolver::document_url(did).ok()?;
     let (content_type, body) = fetch_did_bytes(http, &url, DID_WEB_MAX_DOCUMENT_BYTES).await?;
@@ -738,7 +735,7 @@ pub(crate) async fn fetch_did_web_document(
 /// `ingest_log`, not here.
 async fn fetch_did_webvh_document(
     http: &reqwest::Client,
-    did: &DidFullId,
+    did: &Did,
 ) -> Option<(DidWebvhDocumentOutcome, DidWebvhLogOutcome)> {
     let doc_url = DidWebvhResolver::document_url(did).ok()?;
     let log_url = DidWebvhResolver::log_url(did).ok()?;
@@ -783,7 +780,7 @@ async fn fetch_did_webvh_document(
 pub fn resolve_with_cache(
     resolver: &CompositeDidResolver,
     cache: &DidResolutionCache,
-    principal: &DidFullId,
+    principal: &Did,
     now: DateTime<Utc>,
 ) -> Result<DidDocument, VerifyError> {
     // 1) Fresh cache hit: reuse directly. `get` also lazily evicts expired entries.
@@ -812,8 +809,8 @@ pub fn resolve_with_cache(
 mod tests {
     use super::*;
 
-    fn parse(did: &str) -> DidFullId {
-        DidFullId::new(did.to_owned()).expect("valid did")
+    fn parse(did: &str) -> Did {
+        Did::new(did.to_owned()).expect("valid did")
     }
 
     #[test]
@@ -851,7 +848,7 @@ mod tests {
         }
     }
 
-    fn sample_document(did_str: &str) -> (DidFullId, DidDocument) {
+    fn sample_document(did_str: &str) -> (Did, DidDocument) {
         let did = parse(did_str);
         let doc = DidDocument::new(did.clone(), "key-1", "z6Mksample");
         (did, doc)
@@ -943,11 +940,7 @@ mod tests {
     /// Serialize a `DidDocument` into the exact `did.json` body shape the SDK
     /// `insert_from_https_response` validates (the round-trip the helper's own
     /// tests use).
-    fn web_outcome(
-        did: &DidFullId,
-        document: &DidDocument,
-        content_type: &str,
-    ) -> DidWebDocumentOutcome {
+    fn web_outcome(did: &Did, document: &DidDocument, content_type: &str) -> DidWebDocumentOutcome {
         DidWebDocumentOutcome {
             url: DidWebResolver::document_url(did).unwrap(),
             content_type: content_type.to_owned(),

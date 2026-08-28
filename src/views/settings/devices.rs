@@ -93,7 +93,7 @@ struct ResolvedPairingApprovalPayload {
 #[serde(deny_unknown_fields)]
 struct PairingApprovalPayload {
     schema: arkret_sdk::NonEmptyString,
-    principal_id: arkret_sdk::DidFullId,
+    principal_id: arkret_sdk::DidCoreId,
     pairing_code: arkret_sdk::DevicePairingCode,
     new_device_pubkey: arkret_sdk::PublicKey,
     challenge_proof: arkret_sdk::DevicePairingChallengeProof,
@@ -160,7 +160,7 @@ fn build_pair_payload(
         |value: &str| arkret_sdk::NonEmptyString::new(value.to_owned()).map_err(anyhow::Error::msg);
     let payload = PairingApprovalPayload {
         schema: non_empty(arkret_sdk::SchemaId::DEVICE_PAIRING_OPERATIONS_V1)?,
-        principal_id: arkret_sdk::DidFullId::new(principal_id.to_owned())?,
+        principal_id: arkret_sdk::DidCoreId::new(principal_id.to_owned())?,
         pairing_code: arkret_sdk::DevicePairingCode::new(pairing_code.to_owned())
             .map_err(anyhow::Error::msg)?,
         new_device_pubkey: arkret_sdk::PublicKey {
@@ -681,7 +681,7 @@ fn render_device_row(
     let device_id_label = short_protocol_id(&row.device_id);
     // Friendly name is the primary label; the short device-id fragment
     // (`#<suffix>`) disambiguates devices that share a display name, and
-    // the full id stays reachable via the row tooltip.
+    // the DID stays reachable via the row tooltip.
     let id_suffix = crate::identity::device_name::device_id_short_suffix(&row.device_id);
     let has_name = !row.display_name.is_empty();
     let primary_label = if has_name {
@@ -1558,7 +1558,7 @@ fn render_pair_strand(
                                             let verification = async {
                                                 let attestation = extract_device_pairing_target_attestation(&handoff_link)
                                                     .ok_or_else(|| anyhow::anyhow!("saved pairing handoff omitted target attestation"))?;
-                                                let principal = arkret_sdk::DidFullId::new(principal)?;
+                                                let principal = arkret_sdk::Did::new(principal)?;
                                                 let http = crate::transport::TransportClient::unauthenticated(&base)?
                                                     .sdk_http_client()?;
                                                 crate::identity::device_pairing::verify_authorized_pairing_event(

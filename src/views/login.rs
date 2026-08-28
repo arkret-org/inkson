@@ -567,13 +567,13 @@ pub fn LoginPanel(
         let ui_locale = i18n.read().0.code().to_owned();
         let loaded_config = config_store.read().load();
         let live_actor = active_account()
-            .map(|account| account.full_id().to_string())
+            .map(|account| account.did().to_string())
             .unwrap_or_default();
         let persisted_actor = if live_actor.trim().is_empty() {
             loaded_config
                 .active_account
                 .as_ref()
-                .map(|account| account.full_id().to_string())
+                .map(|account| account.did().to_string())
                 .unwrap_or_default()
         } else {
             live_actor
@@ -1014,18 +1014,16 @@ fn restore_oidc_callback_device_seed_scope(
     Ok(pending_store)
 }
 
-fn returning_sign_in_principal(
-    persisted_actor: &str,
-) -> Result<Option<arkret_sdk::DidFullId>, String> {
+fn returning_sign_in_principal(persisted_actor: &str) -> Result<Option<arkret_sdk::Did>, String> {
     let actor = persisted_actor.trim();
     if actor.is_empty() {
         return Ok(None);
     }
-    let full_id = arkret_sdk::DidFullId::new(actor.to_owned())
+    let did = arkret_sdk::Did::new(actor.to_owned())
         .map_err(|error| format!("The saved current principal resolution is invalid: {error}"))?;
-    arkret_sdk::project_full_id_to_core_id(&full_id)
+    arkret_sdk::project_did_to_core_id(&did)
         .map_err(|error| format!("The saved account principal cannot be projected: {error}"))?;
-    Ok(Some(full_id))
+    Ok(Some(did))
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -1040,7 +1038,7 @@ enum AuthenticatedAccountRoute {
 #[allow(clippy::expect_used)]
 fn authenticated_account_route(
     disposition: &AccountHandoffDisposition,
-    candidate_principal: Option<&arkret_sdk::DidFullId>,
+    candidate_principal: Option<&arkret_sdk::Did>,
     candidate_device: Option<&arkret_sdk::DeviceId>,
 ) -> AuthenticatedAccountRoute {
     match disposition {
@@ -1050,7 +1048,7 @@ fn authenticated_account_route(
         AccountHandoffDisposition::IdentityCreationBusy { .. } => {
             AuthenticatedAccountRoute::IdentityCreationBusy
         }
-        AccountHandoffDisposition::Bound { full_id, .. } => {
+        AccountHandoffDisposition::Bound { did, .. } => {
             let candidates =
                 candidate_principal
                     .zip(candidate_device)
@@ -1060,7 +1058,7 @@ fn authenticated_account_route(
                         signer_ref: format!("inkson-secure-store:{device_id}"),
                     });
             let normalized =
-                garth::normalize_local_evidence(full_id, LocalEvidenceHydration::Ready, candidates);
+                garth::normalize_local_evidence(did, LocalEvidenceHydration::Ready, candidates);
             match garth::route_bound_session(disposition, normalized)
                 .expect("a bound handoff always has a bound-session route")
             {
@@ -1202,6 +1200,7 @@ fn pending_handoff_from_authority(
         reserved_identity,
         retry_after_ms,
         bound_principal_id,
+        bound_principal_did,
     ) = match disposition {
         AccountHandoffDisposition::IdentityCreationActive(lease) => (
             Some(lease.identity_creation_lease_id.clone()),
@@ -1209,6 +1208,7 @@ fn pending_handoff_from_authority(
             Some(lease.expires_at),
             Some(lease.state),
             lease.reserved_identity.clone(),
+            None,
             None,
             None,
         ),
@@ -1223,10 +1223,18 @@ fn pending_handoff_from_authority(
             None,
             Some(*retry_after_ms),
             None,
+            None,
         ),
-        AccountHandoffDisposition::Bound { full_id, .. } => {
-            (None, None, None, None, None, None, Some(full_id.clone()))
-        }
+        AccountHandoffDisposition::Bound { principal_id, did } => (
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(principal_id.clone()),
+            Some(did.clone()),
+        ),
     };
     crate::state::PendingAccountHandoff {
         principal_server_url: principal_server_url.to_owned(),
@@ -1248,6 +1256,7 @@ fn pending_handoff_from_authority(
         device_id: device_id.to_owned(),
         trust_domain: trust_domain.to_owned(),
         bound_principal_id,
+        bound_principal_did,
     }
 }
 
@@ -1357,7 +1366,7 @@ pub(crate) fn commit_completed_login_dpop_key(
     )
     .map_err(|error| format!("activate account device signer: {error}"))?;
     crate::event_signer::bind_active_signer_principal_device_id(
-        account.full_id(),
+        account.did(),
         prepared.device_id.as_str(),
     )
     .map_err(|error| format!("bind account device signer principal: {error}"))?;
@@ -1452,7 +1461,7 @@ pub(crate) async fn prepare_oidc_authorization(
     principal_server_url: &str,
     device_id: &str,
     entry_point: OidcEntryPoint,
-    expected_principal_full_id: Option<&arkret_sdk::DidFullId>,
+    expected_principal_did: Option<&arkret_sdk::Did>,
     expected_device_id: Option<&arkret_sdk::DeviceId>,
     ui_locale: &str,
 ) -> Result<PreparedOidcAuthorization, String> {
@@ -1494,7 +1503,7 @@ pub(crate) async fn prepare_oidc_authorization(
         device_id,
         &discovery.issuer,
         &resolver.principal_trust_domain,
-        expected_principal_full_id,
+        expected_principal_did,
         expected_device_id,
     );
     persist_oidc_scaffold(&scaffold)
@@ -1638,10 +1647,10 @@ async fn finish_oidc_callback(
         });
     if let (Some(pending_handoff), Some(expected_principal), Some(returning_device)) = (
         resumable_handoff,
-        scaffold.expected_principal_full_id.as_ref(),
+        scaffold.expected_principal_did.as_ref(),
         scaffold.expected_device_id.as_ref(),
     ) && pending_handoff
-        .bound_principal_id
+        .bound_principal_did
         .as_ref()
         .is_some_and(|bound| bound == expected_principal)
     {
@@ -1649,7 +1658,7 @@ async fn finish_oidc_callback(
             crate::identity::account_auth::load_account_handoff_grant(&pending_handoff)
                 .map_err(|error| format!("Load resumable account handoff failed: {error}"))?
                 .ok_or_else(|| "Resumable account handoff credential is unavailable.".to_owned())?;
-        let principal_id = arkret_sdk::project_full_id_to_core_id(expected_principal)
+        let principal_id = arkret_sdk::project_did_to_core_id(expected_principal)
             .map_err(|error| format!("Project resumable account principal: {error}"))?;
         match exchange_bound_handoff_session(
             &principal_server_url,
@@ -1722,7 +1731,7 @@ async fn finish_oidc_callback(
         .map_err(|error| format!("Account handoff outcome failed validation: {error}"))?;
     let account_route = authenticated_account_route(
         &disposition,
-        scaffold.expected_principal_full_id.as_ref(),
+        scaffold.expected_principal_did.as_ref(),
         scaffold.expected_device_id.as_ref(),
     );
     let pending_handoff = pending_handoff_from_authority(
@@ -1750,10 +1759,7 @@ async fn finish_oidc_callback(
     record_authenticated_account_route(&pending_handoff, &disposition, &account_route);
     if let (
         AuthenticatedAccountRoute::ReturningSession(returning_device),
-        AccountHandoffDisposition::Bound {
-            principal_id,
-            full_id,
-        },
+        AccountHandoffDisposition::Bound { principal_id, did },
     ) = (&account_route, &disposition)
     {
         match exchange_bound_handoff_session(
@@ -1762,7 +1768,7 @@ async fn finish_oidc_callback(
             &pending_handoff,
             &handoff.account_handoff_grant,
             principal_id.clone(),
-            full_id.clone(),
+            did.clone(),
             returning_device.clone(),
             &dpop_handle,
         )
@@ -1775,7 +1781,7 @@ async fn finish_oidc_callback(
             Err(ReturningSessionExchangeError::DeviceSetupRequired(error)) => {
                 tracing::warn!(
                     %error,
-                    principal_id = %pending_handoff.bound_principal_id.as_ref().map(arkret_sdk::DidFullId::as_str).unwrap_or_default(),
+                    principal_id = %pending_handoff.bound_principal_id.as_ref().map(arkret_sdk::DidCoreId::as_str).unwrap_or_default(),
                     device_id = %returning_device,
                     "returning-device authority rejected the durable device; entering device setup"
                 );
@@ -1810,7 +1816,7 @@ async fn exchange_bound_handoff_session(
     pending_handoff: &crate::state::PendingAccountHandoff,
     handoff_grant: &str,
     principal_id: arkret_sdk::DidCoreId,
-    full_id: arkret_sdk::DidFullId,
+    did: arkret_sdk::Did,
     device_id: arkret_sdk::DeviceId,
     dpop_handle: &crate::identity::account_auth::grant_dpop::DpopHandle,
 ) -> Result<CompletedLogin, ReturningSessionExchangeError> {
@@ -1820,7 +1826,7 @@ async fn exchange_bound_handoff_session(
 
     let mut correlation =
         crate::identity::account_auth::transition::LoginCorrelation::for_handoff(pending_handoff)
-            .with_principal_id(full_id.as_str())
+            .with_principal_id(did.as_str())
             .with_device_id(device_id.as_str());
     let outcome = issue_bound_handoff_session(
         principal_server_url,
@@ -1828,7 +1834,7 @@ async fn exchange_bound_handoff_session(
         pending_handoff,
         handoff_grant,
         principal_id,
-        full_id,
+        did,
         device_id,
         dpop_handle,
         &mut correlation,
@@ -1890,7 +1896,7 @@ pub(crate) async fn issue_bound_handoff_session(
     pending_handoff: &crate::state::PendingAccountHandoff,
     handoff_grant: &str,
     principal_id: arkret_sdk::DidCoreId,
-    full_id: arkret_sdk::DidFullId,
+    did: arkret_sdk::Did,
     device_id: arkret_sdk::DeviceId,
     dpop_handle: &crate::identity::account_auth::grant_dpop::DpopHandle,
     correlation: &mut crate::identity::account_auth::transition::LoginCorrelation,
@@ -1938,11 +1944,8 @@ pub(crate) async fn issue_bound_handoff_session(
                 Some(device_id.as_str()),
             )
             .map_err(|error| format!("Activate returning-device signer: {error}"))?;
-            crate::event_signer::bind_active_signer_principal_device_id(
-                &full_id,
-                device_id.as_str(),
-            )
-            .map_err(|error| format!("Bind returning-device signer: {error}"))?;
+            crate::event_signer::bind_active_signer_principal_device_id(&did, device_id.as_str())
+                .map_err(|error| format!("Bind returning-device signer: {error}"))?;
             let signer = crate::event_signer::active_signer()
                 .ok_or_else(|| "Returning-device signer is not active.".to_owned())?;
 
@@ -1964,7 +1967,7 @@ pub(crate) async fn issue_bound_handoff_session(
                 crate::identity::account_auth::session_grant_jwt_digest(handoff_grant),
             )
             .map_err(|error| format!("Hash AccountHandoff credential: {error}"))?;
-            let verification_method = arkret_sdk::DidUrl::new(format!("{full_id}#{device_id}"))
+            let verification_method = arkret_sdk::DidUrl::new(format!("{did}#{device_id}"))
                 .map_err(|error| format!("Build accepted-device method: {error}"))?;
             let unsigned_proof = arkret_wire::UnsignedAcceptedDeviceIssuePossessionProof {
                 context: arkret_wire::AcceptedDevicePossessionProofContext::V1,
@@ -2188,17 +2191,17 @@ mod tests {
         .expect("dpop record")
     }
 
-    fn test_active_account(full_id: &str, device_id: &str) -> crate::config::ActiveAccountContext {
-        let full_id = arkret_sdk::DidFullId::new(full_id.to_owned()).unwrap();
+    fn test_active_account(did: &str, device_id: &str) -> crate::config::ActiveAccountContext {
+        let did = arkret_sdk::Did::new(did.to_owned()).unwrap();
         let authority = arkret_sdk::PrincipalAuthorityKey::new(
-            arkret_sdk::project_full_id_to_core_id(&full_id).unwrap(),
+            arkret_sdk::project_did_to_core_id(&did).unwrap(),
             arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example".to_owned()).unwrap(),
         );
         crate::config::ActiveAccountContext::new(
             "ak:profile:test".to_owned(),
             authority,
             arkret_sdk::PrincipalResolutionProjection {
-                full_id,
+                did,
                 method_history_head: "head-test".to_owned(),
                 version_id: "version-test".to_owned(),
                 resolution_event_ref: "event-test".to_owned(),
@@ -2255,6 +2258,7 @@ mod tests {
             device_id: "ak:device:019f0000-0000-7000-8000-000000000001".to_owned(),
             trust_domain: "ak:trust_domain:auth.example".to_owned(),
             bound_principal_id: None,
+            bound_principal_did: None,
         }
     }
 
@@ -2482,8 +2486,8 @@ mod tests {
     #[test]
     fn core_only_profile_is_not_repaired_into_resolution_material() {
         let principal =
-            arkret_sdk::DidFullId::new("did:webvh:z6mkfixture:alice.example".to_owned()).unwrap();
-        let principal_core = arkret_sdk::project_full_id_to_core_id(&principal).unwrap();
+            arkret_sdk::Did::new("did:webvh:z6mkfixture:alice.example".to_owned()).unwrap();
+        let principal_core = arkret_sdk::project_did_to_core_id(&principal).unwrap();
         assert!(returning_sign_in_principal(principal_core.as_str()).is_err());
     }
 
@@ -2494,8 +2498,11 @@ mod tests {
             "alice:auth.example",
         );
         handoff.oidc_state = Some("state-a".to_owned());
-        handoff.bound_principal_id =
-            Some(arkret_sdk::DidFullId::new("did:web:alice.example".to_owned()).unwrap());
+        handoff.bound_principal_id = Some(
+            arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example".to_owned()).unwrap(),
+        );
+        handoff.bound_principal_did =
+            Some(arkret_sdk::Did::new("did:web:alice.example".to_owned()).unwrap());
 
         assert!(can_resume_returning_handoff_for_callback(
             &handoff,
@@ -2518,14 +2525,14 @@ mod tests {
 
     #[test]
     fn bound_handoff_uses_returning_device_only_for_the_same_account() {
-        let alice = arkret_sdk::DidFullId::new("did:web:alice.example".to_owned()).unwrap();
-        let bob = arkret_sdk::DidFullId::new("did:web:bob.example".to_owned()).unwrap();
+        let alice = arkret_sdk::Did::new("did:web:alice.example".to_owned()).unwrap();
+        let bob = arkret_sdk::Did::new("did:web:bob.example".to_owned()).unwrap();
         let device =
             arkret_sdk::DeviceId::new("ak:device:01964137-0000-7000-8000-000000000001".to_owned())
                 .unwrap();
         let disposition = AccountHandoffDisposition::Bound {
-            principal_id: arkret_sdk::project_full_id_to_core_id(&alice).unwrap(),
-            full_id: alice.clone(),
+            principal_id: arkret_sdk::project_did_to_core_id(&alice).unwrap(),
+            did: alice.clone(),
         };
 
         assert_eq!(
@@ -2547,7 +2554,7 @@ mod tests {
     #[test]
     fn server_identity_creation_states_ignore_local_returning_candidates() {
         let principal =
-            arkret_sdk::DidFullId::new("did:webvh:z6mkfixture:alice.example".to_owned()).unwrap();
+            arkret_sdk::Did::new("did:webvh:z6mkfixture:alice.example".to_owned()).unwrap();
         let device =
             arkret_sdk::DeviceId::new("ak:device:01964137-0000-7000-8000-000000000001".to_owned())
                 .unwrap();

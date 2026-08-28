@@ -332,7 +332,7 @@ fn verify_authorization_incarnation_is_retained_join(
 
 async fn current_ordinary_human_endpoint_authorization(
     http: &arkret_sdk::http_client::Client,
-    requester_full_id: &arkret_sdk::DidFullId,
+    requester_did: &arkret_sdk::Did,
     device_id: &arkret_sdk::DeviceId,
 ) -> anyhow::Result<arkret_sdk::RequesterEndpointAuthorization> {
     let requester_device_authorize_event_id =
@@ -342,10 +342,9 @@ async fn current_ordinary_human_endpoint_authorization(
         )
         .await
         .map_err(anyhow::Error::msg)?;
-    let keys =
-        crate::transport::keys::query_keys(http, requester_full_id.as_str(), device_id.as_str())
-            .await?;
-    let actor_id = arkret_sdk::project_full_id_to_core_id(requester_full_id)?;
+    let keys = crate::transport::keys::query_keys(http, requester_did.as_str(), device_id.as_str())
+        .await?;
+    let actor_id = arkret_sdk::project_did_to_core_id(requester_did)?;
     let generation = keys.device_generations.get(&actor_id).ok_or_else(|| {
         anyhow::anyhow!("history request device generation is absent from the PCR projection")
     })?;
@@ -382,11 +381,11 @@ pub async fn author_and_create_ordinary_human_request(
     api: &crate::transport::TransportClient,
     secure_store: &dyn SecureKeyStore,
     authority: &arkret_sdk::PrincipalAuthorityKey,
-    requester_full_id: &arkret_sdk::DidFullId,
+    requester_did: &arkret_sdk::Did,
     device_id: &arkret_sdk::DeviceId,
     plan: OrdinaryHumanHistoryRequestPlan,
 ) -> anyhow::Result<(arkret_sdk::HistoryKeyRequestCreateOutcome, u64)> {
-    let requester_actor_id = arkret_sdk::project_full_id_to_core_id(requester_full_id)?;
+    let requester_actor_id = arkret_sdk::project_did_to_core_id(requester_did)?;
     if requester_actor_id != authority.principal_id {
         anyhow::bail!("history request actor differs from the explicit account authority");
     }
@@ -415,7 +414,7 @@ pub async fn author_and_create_ordinary_human_request(
 
     let http = http_client(api)?;
     let endpoint_authorization =
-        current_ordinary_human_endpoint_authorization(&http, requester_full_id, device_id).await?;
+        current_ordinary_human_endpoint_authorization(&http, requester_did, device_id).await?;
     let (trusted_history_base_basis, trusted_current_basis, _) =
         request_trust_bases(state_store, &plan.effective_scope)?;
     let (_, public_key) =
@@ -425,7 +424,7 @@ pub async fn author_and_create_ordinary_human_request(
     if signer.device_id() != Some(device_id.as_str()) {
         anyhow::bail!("history request signer is not bound to the explicit current device");
     }
-    let verification_method = signer.verification_method_for_principal(requester_full_id)?;
+    let verification_method = signer.verification_method_for_principal(requester_did)?;
     let request = arkret_sdk::HistoryKeyRequest::build_signed_proof(
         verification_method.clone(),
         crate::clock::now_utc(),
@@ -505,8 +504,8 @@ pub async fn author_and_create_native_agent_request(
 
     let signer = crate::event_signer::active_signer()
         .ok_or_else(|| anyhow::anyhow!("history request has no active Agent endpoint signer"))?;
-    let signer_full_id = arkret_sdk::DidFullId::new(signer.signer_did().to_owned())?;
-    if arkret_sdk::project_full_id_to_core_id(&signer_full_id)? != plan.requester_agent_id
+    let signer_did = arkret_sdk::Did::new(signer.signer_did().to_owned())?;
+    if arkret_sdk::project_did_to_core_id(&signer_did)? != plan.requester_agent_id
         || signer.verification_method() != plan.requester_agent_verification_method.as_str()
     {
         anyhow::bail!("history request signer differs from the explicit Agent endpoint");
@@ -829,7 +828,7 @@ fn build_signed_member_response(
 async fn build_member_source_attempt(
     state_store: SyncSignal<LocalStateStore>,
     api: &crate::transport::TransportClient,
-    source_full_id: &arkret_sdk::DidFullId,
+    source_did: &arkret_sdk::Did,
     source_actor_id: &arkret_sdk::DidCoreId,
     source_device_id: &arkret_sdk::DeviceId,
     request_record: &arkret_sdk::HistoryKeyRequestRecord,
@@ -871,7 +870,7 @@ async fn build_member_source_attempt(
     if signer.device_id() != Some(source_device_id.as_str()) {
         anyhow::bail!("history source signer is not bound to the explicit current device");
     }
-    let verification_method = signer.verification_method_for_principal(source_full_id)?;
+    let verification_method = signer.verification_method_for_principal(source_did)?;
     let (source_signer_evidence_ref, source_signer_evidence_digest) =
         current_member_signer_evidence_coordinates(
             state_store,
@@ -1111,11 +1110,11 @@ pub async fn converge_member_history_recovery(
     api: &crate::transport::TransportClient,
     secure_store: &dyn SecureKeyStore,
     authority: &arkret_sdk::PrincipalAuthorityKey,
-    requester_full_id: &arkret_sdk::DidFullId,
+    requester_did: &arkret_sdk::Did,
     device_id: &arkret_sdk::DeviceId,
     now: chrono::DateTime<chrono::Utc>,
 ) -> anyhow::Result<HistoryRecoveryConvergenceOutcome> {
-    let actor_id = arkret_sdk::project_full_id_to_core_id(requester_full_id)?;
+    let actor_id = arkret_sdk::project_did_to_core_id(requester_did)?;
     if actor_id != authority.principal_id {
         anyhow::bail!("history convergence actor differs from the explicit account authority");
     }
@@ -1124,7 +1123,7 @@ pub async fn converge_member_history_recovery(
     let missing = crate::mls::runtime::missing_external_history_ranges(
         state_store,
         authority,
-        requester_full_id.as_str(),
+        requester_did.as_str(),
         device_id,
     )
     .map_err(anyhow::Error::msg)?;
@@ -1191,7 +1190,7 @@ pub async fn converge_member_history_recovery(
             api,
             secure_store,
             authority,
-            requester_full_id,
+            requester_did,
             device_id,
             OrdinaryHumanHistoryRequestPlan {
                 request_id,
@@ -1270,7 +1269,7 @@ pub async fn converge_member_history_recovery(
                 let bundle = build_member_source_attempt(
                     state_store,
                     api,
-                    requester_full_id,
+                    requester_did,
                     &actor_id,
                     device_id,
                     &request_record,

@@ -32,7 +32,7 @@ use arkret_models_identity::{
     validate_service_current_record_url,
 };
 use arkret_sdk::identity::{DidKeyResolver, DidResolver as _, DidWebResolver};
-use arkret_sdk::{DidCoreId, DidFullId};
+use arkret_sdk::{Did, DidCoreId};
 use chrono::{DateTime, Utc};
 use garth::{
     PrefetchedRouteSource, RouteResolution, ServiceDescribeBinding, ServiceRouteCandidate,
@@ -394,20 +394,20 @@ async fn fetch_route_material_from_origin(
         "fetched service resolution targets a different service"
     );
 
-    // Method-scoped DID document for the record's full id.
-    let full_id: DidFullId = record.record.full_id.clone();
-    let document = match full_id.method() {
+    // Method-scoped DID document for the record's DID.
+    let did: Did = record.record.did.clone();
+    let document = match did.method() {
         "web" => {
-            let outcome = crate::identity::did_resolver::fetch_did_web_document(http, &full_id)
+            let outcome = crate::identity::did_resolver::fetch_did_web_document(http, &did)
                 .await
-                .with_context(|| format!("did:web document fetch refused for {full_id}"))?;
+                .with_context(|| format!("did:web document fetch refused for {did}"))?;
             DidWebResolver::new()
-                .insert_from_https_response(&full_id, outcome)
+                .insert_from_https_response(&did, outcome)
                 .map_err(|error| anyhow::anyhow!("did:web document rejected: {error}"))?
         }
         "key" => {
             DidKeyResolver::new()
-                .resolve_did(&full_id)
+                .resolve_did(&did)
                 .map_err(|error| anyhow::anyhow!("did:key expansion failed: {error}"))?
                 .document
         }

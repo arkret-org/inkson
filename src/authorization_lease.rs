@@ -494,8 +494,8 @@ impl LocalPrincipalAuthority {
         digest_suite: arkret_sdk::DigestSuite,
         signer: &crate::event_signer::InksonEventSigner,
     ) -> anyhow::Result<ControlProposalAuthorityAck> {
-        let signer_principal = arkret_sdk::DidFullId::new(signer.signer_did().to_owned())?;
-        if arkret_sdk::project_full_id_to_core_id(&signer_principal)? != self.signer_actor_id {
+        let signer_principal = arkret_sdk::Did::new(signer.signer_did().to_owned())?;
+        if arkret_sdk::project_did_to_core_id(&signer_principal)? != self.signer_actor_id {
             anyhow::bail!("active signer does not project to the proposal authority actor");
         }
         let verification_method = signer.verification_method_for_principal(&signer_principal)?;
@@ -546,9 +546,9 @@ fn is_managed_agent_pcr_control(event: &arkret_sdk::Event) -> bool {
     if executor == &event.actor_id || fragment != "managed-controller" {
         return false;
     }
-    arkret_sdk::DidFullId::new(controller.to_owned())
+    arkret_sdk::Did::new(controller.to_owned())
         .ok()
-        .and_then(|full_id| arkret_sdk::project_full_id_to_core_id(&full_id).ok())
+        .and_then(|did| arkret_sdk::project_did_to_core_id(&did).ok())
         .is_some_and(|core_id| core_id == event.actor_id)
 }
 
@@ -852,7 +852,7 @@ pub(crate) mod test_support {
             )
             .unwrap(),
             event_digest: arkret_sdk::Hash::new(format!("sha256:{}", "d".repeat(64))).unwrap(),
-            qualified_ingress_id: arkret_sdk::DidFullId::new(
+            qualified_ingress_did: arkret_sdk::Did::new(
                 "did:webvh:z6mkfixture:ingress.example".to_owned(),
             )
             .unwrap(),
@@ -948,8 +948,8 @@ mod tests {
     fn managed_agent_pcr_control_uses_the_delegated_local_authority() {
         let mut managed = event();
         managed.actor_id = arkret_sdk::DidCoreId::new("ak:did_core:web:agent.example").unwrap();
-        let controller = arkret_sdk::DidFullId::new("did:web:alice.example").unwrap();
-        managed.executed_by = Some(arkret_sdk::project_full_id_to_core_id(&controller).unwrap());
+        let controller = arkret_sdk::Did::new("did:web:alice.example").unwrap();
+        managed.executed_by = Some(arkret_sdk::project_did_to_core_id(&controller).unwrap());
         managed.authorization_ref = Some(
             arkret_sdk::AuthorizationRef::new("did:web:agent.example#managed-controller").unwrap(),
         );
@@ -1041,9 +1041,9 @@ mod tests {
     }
 
     fn self_pcr_create_for_submission(provision: &arkret_sdk::Event) -> arkret_sdk::Event {
-        let full_id = arkret_sdk::DidFullId::new("did:web:alice.example").unwrap();
+        let did = arkret_sdk::Did::new("did:web:alice.example").unwrap();
         let notary = crate::event_builders::managed_agent_inception_notary(
-            &full_id,
+            &did,
             &arkret_sdk::ed25519_pubkey_to_did_key_multibase(&[7_u8; 32]),
         )
         .unwrap();
@@ -1051,7 +1051,7 @@ mod tests {
             arkret_sdk::GenesisSalt::new("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA").unwrap(),
             None,
             arkret_sdk::ResolutionCommitment {
-                full_id,
+                did,
                 method_history_head: format!("sha256:{}", "8".repeat(64)),
                 version_id: "1-fixture".to_owned(),
             },
@@ -1153,12 +1153,12 @@ mod tests {
             crate::event_builders::build_managed_agent_pcr_bootstrap_steps(
                 "did:web:agent.example",
                 arkret_sdk::ResolutionCommitment {
-                    full_id: arkret_sdk::DidFullId::new("did:web:agent.example").unwrap(),
+                    did: arkret_sdk::Did::new("did:web:agent.example").unwrap(),
                     method_history_head: format!("sha256:{}", "8".repeat(64)),
                     version_id: "1-Qmfixture".to_owned(),
                 },
                 crate::event_builders::managed_agent_inception_notary(
-                    &arkret_sdk::DidFullId::new("did:web:agent.example").unwrap(),
+                    &arkret_sdk::Did::new("did:web:agent.example").unwrap(),
                     &arkret_sdk::ed25519_pubkey_to_did_key_multibase(&[7_u8; 32]),
                 )
                 .unwrap(),

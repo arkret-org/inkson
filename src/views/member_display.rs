@@ -289,7 +289,7 @@ pub(crate) fn resolve_member_display(
     let primary_handle = [subject_id.as_deref(), Some(row.actor_id.as_str())]
         .into_iter()
         .flatten()
-        .find_map(|did| store.primary_handle_for_did(did))
+        .find_map(|principal_id| store.primary_handle_for_principal_id(principal_id))
         .and_then(|handle| {
             crate::identity::handle::parse_user_handle(&handle).map(|parsed| parsed.display)
         })
@@ -317,30 +317,30 @@ pub(crate) fn resolve_member_display(
     }
 }
 
-/// Canonical actor label for surfaces that only have a DID and no Realm
+/// Canonical actor label for surfaces that only have a stable principal id and no Realm
 /// roster row. An accepted human Contact's global petname wins; verified
 /// handles remain the secondary fallback and the protocol id is last.
-pub(crate) fn actor_display_label(store: &LocalStateStore, did: &str) -> String {
+pub(crate) fn actor_display_label(store: &LocalStateStore, principal_id: &str) -> String {
     store
-        .active_contact_remark(did)
+        .active_contact_remark(principal_id)
         .and_then(|remark| {
             let petname = remark.petname.trim();
             (!petname.is_empty()).then(|| petname.to_owned())
         })
         .or_else(|| {
             store
-                .primary_handle_for_did(did)
+                .primary_handle_for_principal_id(principal_id)
                 .and_then(|handle| crate::identity::handle::parse_user_handle(&handle))
                 .map(|parsed| parsed.display)
         })
         .or_else(|| {
             store
-                .cached_member_handle_lookup(did, None, None)
+                .cached_member_handle_lookup(principal_id, None, None)
                 .and_then(|entry| entry.primary_handle)
                 .and_then(|handle| crate::identity::handle::parse_user_handle(&handle))
                 .map(|parsed| parsed.display)
         })
-        .unwrap_or_else(|| short_protocol_id(did))
+        .unwrap_or_else(|| short_protocol_id(principal_id))
 }
 
 /// Realm roster variant. A petname is joined only through a unique verified

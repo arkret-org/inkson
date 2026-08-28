@@ -613,7 +613,7 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
                                             );
                                             return;
                                         };
-                                        let actor_id = account.full_id().clone();
+                                        let actor_id = account.did().clone();
                                         let install_actor_id = account.principal_id().clone();
                                         let circle = install_circle_id();
                                         let approve_actions = parse_applet_approval_actions(

@@ -794,18 +794,17 @@ fn realm_bootstrap_carries_alias_as_a_facet_event_not_on_the_closed_realm_object
 #[test]
 fn managed_agent_pcr_prepare_builds_an_exact_ref_free_create() {
     select_authoring_principal_server();
-    let agent_full_id = arkret_sdk::DidFullId::new("did:web:agent.example").unwrap();
+    let agent_did = arkret_sdk::Did::new("did:web:agent.example").unwrap();
     let root_public_key = arkret_sdk::ed25519_pubkey_to_did_key_multibase(&[7_u8; 32]);
     let events = common::author_unit(
         event_builders::build_managed_agent_pcr_bootstrap_steps(
-            agent_full_id.as_str(),
+            agent_did.as_str(),
             arkret_sdk::ResolutionCommitment {
-                full_id: agent_full_id.clone(),
+                did: agent_did.clone(),
                 method_history_head: format!("sha256:{}", "8".repeat(64)),
                 version_id: "1-Qmfixture".to_owned(),
             },
-            event_builders::managed_agent_inception_notary(&agent_full_id, &root_public_key)
-                .unwrap(),
+            event_builders::managed_agent_inception_notary(&agent_did, &root_public_key).unwrap(),
             TEST_ACTOR_ID,
             "did:web:alice.example#delegation-0",
             "ak:trust_domain:server.example",

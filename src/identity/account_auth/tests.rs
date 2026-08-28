@@ -255,8 +255,7 @@ fn persisted_scaffold_carries_returning_account_candidate() {
     .unwrap();
     let trust_domain =
         arkret_sdk::TrustDomainId::new("ak:trust_domain:principal.example".to_owned()).unwrap();
-    let expected =
-        arkret_sdk::DidFullId::new("did:webvh:z6mkfixture:alice.example".to_owned()).unwrap();
+    let expected = arkret_sdk::Did::new("did:webvh:z6mkfixture:alice.example".to_owned()).unwrap();
 
     let scaffold = build_persisted_oidc_scaffold(
         &bundle,
@@ -272,10 +271,7 @@ fn persisted_scaffold_carries_returning_account_candidate() {
         ),
     );
 
-    assert_eq!(
-        scaffold.expected_principal_full_id.as_ref(),
-        Some(&expected)
-    );
+    assert_eq!(scaffold.expected_principal_did.as_ref(), Some(&expected));
     assert!(scaffold.expected_device_id.is_some());
 }
 
@@ -476,7 +472,7 @@ fn resolve_gate_account_base_fails_closed_without_account_authority() {
 
 fn principal_description() -> arkret_sdk::ServiceDescribe {
     let mut description = arkret_sdk::ServiceDescribe::development(
-        arkret_sdk::DidFullId::new("did:webvh:z6mkfixture:principal.example".to_owned()).unwrap(),
+        arkret_sdk::Did::new("did:webvh:z6mkfixture:principal.example".to_owned()).unwrap(),
         arkret_sdk::TrustDomainId::new("ak:trust_domain:principal.example".to_owned()).unwrap(),
         arkret_sdk::ServiceKind::PrincipalServer,
         vec![

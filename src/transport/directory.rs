@@ -189,13 +189,13 @@ pub async fn verified_directory_client(
 
 #[cfg(test)]
 mod route_tests {
-    use arkret_sdk::{DidFullId, ServiceKind, TransportBinding, TrustDomainId};
+    use arkret_sdk::{Did, ServiceKind, TransportBinding, TrustDomainId};
 
     use super::list_handles_http_json_base;
 
     fn description(service_kind: ServiceKind, bundles: Vec<String>) -> arkret_sdk::ServiceDescribe {
         arkret_sdk::ServiceDescribe::development(
-            DidFullId::new("did:web:directory.example").unwrap(),
+            Did::new("did:web:directory.example").unwrap(),
             TrustDomainId::new("ak:trust_domain:directory.example").unwrap(),
             service_kind,
             bundles,
@@ -423,7 +423,7 @@ pub async fn list_handles_for_subject(
 ) -> anyhow::Result<arkret_models_discovery::DirectorySubjectHandleList> {
     use arkret_models_discovery::DirectoryListHandlesForSubjectRequestBody;
 
-    let subject_did = crate::mls_api_helpers::principal_core_id(subject)
+    let subject_id = crate::mls_api_helpers::principal_core_id(subject)
         .map_err(|err| anyhow::anyhow!("invalid subject DID `{subject}`: {err}"))?;
     let realm = match realm_id.map(str::trim).filter(|s| !s.is_empty()) {
         Some(r) => Some(
@@ -433,7 +433,7 @@ pub async fn list_handles_for_subject(
         None => None,
     };
     let body = DirectoryListHandlesForSubjectRequestBody {
-        subject: subject_did,
+        subject: subject_id,
         realm_id: realm,
         intent: intent.map(|value| value.as_str().to_owned()),
         requester: None,

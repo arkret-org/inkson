@@ -10,7 +10,7 @@ use arkret_models_crypto::{
 };
 use arkret_wire::{
     BackupObjectRef, BackupRotationBinding, BackupRotationKind, BackupRotationPlan, BackupSeriesId,
-    CanonicalPublicMaterial, DidCoreId, DidFullId, EventId, EventsSubmitBatchRequestBody, Hash,
+    CanonicalPublicMaterial, Did, DidCoreId, EventId, EventsSubmitBatchRequestBody, Hash,
     IssueRecoveryCompletionGrantOutcome, IssueRecoveryCompletionGrantRequest, PreparedEventUnit,
     RecoveryPreparedPlan, RecoveryTransactionCreateRequest,
     SecurityRotationTransactionCreateRequest, SecurityTransaction,
@@ -105,11 +105,11 @@ pub fn sign_terminal_receipt_continue(
         .accepted_steps
         .first()
         .ok_or_else(|| anyhow::anyhow!("accepted re-anchor unit is missing"))?;
-    let signer_full_id = DidFullId::new(signer.signer_did().to_owned())?;
-    if arkret_sdk::project_full_id_to_core_id(&signer_full_id)? != resource.principal_id {
+    let signer_did = Did::new(signer.signer_did().to_owned())?;
+    if arkret_sdk::project_did_to_core_id(&signer_did)? != resource.principal_id {
         anyhow::bail!("recovery receipt signer does not control the recovered principal");
     }
-    let verification_method = signer.verification_method_for_principal(&signer_full_id)?;
+    let verification_method = signer.verification_method_for_principal(&signer_did)?;
     let receipt = UnsignedRecoveryReceipt::new(
         UnsignedRecoveryReceiptBody {
             receipt_id: binding.terminal_receipt_id.clone(),

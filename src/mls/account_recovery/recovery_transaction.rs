@@ -38,7 +38,7 @@ pub(crate) struct CompletedFreshDeviceRecovery {
 
 pub(crate) async fn prepare_pcr_policy_recovery(
     api: &crate::transport::TransportClient,
-    principal_full_id: &arkret_sdk::DidFullId,
+    principal_did: &arkret_sdk::Did,
     session: &arkret_sdk::RecoverySessionState,
     proof_outcome: &arkret_sdk::RecoverySessionProofSubmitOutcome,
     recovery_words: &str,
@@ -52,10 +52,10 @@ pub(crate) async fn prepare_pcr_policy_recovery(
         .recovery_session(session.recovery_session_id.as_str())
         .await?;
     verified_session.validate()?;
-    if arkret_sdk::project_full_id_to_core_id(principal_full_id)?
+    if arkret_sdk::project_did_to_core_id(principal_did)?
         != verified_session.principal_authority.principal_id
     {
-        anyhow::bail!("selected recovery principal full_id does not match the verified session");
+        anyhow::bail!("selected recovery principal did does not match the verified session");
     }
     if verified_session.state != arkret_sdk::SessionState::Verified
         || verified_session.identity_model != arkret_sdk::RecoveryIdentityModel::PcrPolicy
@@ -78,7 +78,7 @@ pub(crate) async fn prepare_pcr_policy_recovery(
 
     let http = api.sdk_http_client()?;
     let history =
-        crate::identity::history::fetch_complete_identity_history(&http, principal_full_id).await?;
+        crate::identity::history::fetch_complete_identity_history(&http, principal_did).await?;
     if history.method != arkret_sdk::DidMethodUri::Webvh || history.native_history != Some(true) {
         anyhow::bail!("principal DID does not expose native did:webvh history");
     }
@@ -213,7 +213,7 @@ pub(crate) async fn prepare_pcr_policy_recovery(
         created_at,
         digest_suite,
     )?;
-    let root_did = arkret_sdk::DidFullId::new(
+    let root_did = arkret_sdk::Did::new(
         root_verification_method
             .split_once('#')
             .map_or(root_verification_method.as_str(), |(did, _)| did)
@@ -395,19 +395,14 @@ fn reject_terminal_recovery_transaction(
 pub(crate) async fn execute_pcr_policy_recovery(
     api: &crate::transport::TransportClient,
     mut state_store: dioxus::prelude::SyncSignal<crate::state::LocalStateStore>,
-    principal_full_id: &arkret_sdk::DidFullId,
+    principal_did: &arkret_sdk::Did,
     session: &arkret_sdk::RecoverySessionState,
     proof_outcome: &arkret_sdk::RecoverySessionProofSubmitOutcome,
     recovery_words: &str,
 ) -> anyhow::Result<CompletedFreshDeviceRecovery> {
-    let prepared = prepare_pcr_policy_recovery(
-        api,
-        principal_full_id,
-        session,
-        proof_outcome,
-        recovery_words,
-    )
-    .await?;
+    let prepared =
+        prepare_pcr_policy_recovery(api, principal_did, session, proof_outcome, recovery_words)
+            .await?;
     let session = &prepared.verified_session;
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
     let recovery_material =

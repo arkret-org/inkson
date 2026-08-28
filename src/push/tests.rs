@@ -4,7 +4,7 @@ use super::*;
 
 fn push_gateway_describe(providers: &[&str]) -> ServiceDescribe {
     let mut describe = ServiceDescribe::development(
-        arkret_wire::DidFullId::new("did:web:push.example".to_owned()).unwrap(),
+        arkret_wire::Did::new("did:web:push.example".to_owned()).unwrap(),
         arkret_wire::TrustDomainId::new("ak:trust_domain:test".to_owned()).unwrap(),
         arkret_wire::ServiceKind::PushGateway,
         vec![

@@ -280,9 +280,9 @@ pub async fn load_prepared_identity_creation_request(
         .as_ref()
         .ok_or_else(|| anyhow::anyhow!("registration checkpoint omits account subject"))?;
     // AccountRegisterRequestBody carries the protocol/core DID. The checkpoint
-    // carries the project/full DID, so deriving the storage coordinate here is
-    // essential: using full_id makes every persisted request look absent.
-    let principal_id = arkret_sdk::project_full_id_to_core_id(&checkpoint.full_id)?;
+    // carries the project/DID, so deriving the storage coordinate here is
+    // essential: using did makes every persisted request look absent.
+    let principal_id = arkret_sdk::project_did_to_core_id(&checkpoint.did)?;
     let secure_store = default_secure_key_store("inkson");
     let key = prepared_identity_creation_request_secret_key(
         account_subject,
@@ -315,7 +315,7 @@ pub fn clear_prepared_identity_creation_request_for_checkpoint(
         return Ok(());
     };
     let device_id = arkret_sdk::DeviceId::new(checkpoint.device_id.clone())?;
-    let principal_id = arkret_sdk::project_full_id_to_core_id(&checkpoint.full_id)?;
+    let principal_id = arkret_sdk::project_did_to_core_id(&checkpoint.did)?;
     clear_prepared_identity_creation_request(
         &device_id,
         account_subject,
@@ -332,12 +332,12 @@ mod tests {
     fn prepared_request_keys_are_isolated_by_account_principal_and_lease() {
         let account_a = arkret_sdk::Hash::new(format!("sha256:{}", "a".repeat(64))).unwrap();
         let account_b = arkret_sdk::Hash::new(format!("sha256:{}", "b".repeat(64))).unwrap();
-        let alice = arkret_sdk::project_full_id_to_core_id(
-            &arkret_sdk::DidFullId::new("did:webvh:z6mkfixture:alice.example".to_owned()).unwrap(),
+        let alice = arkret_sdk::project_did_to_core_id(
+            &arkret_sdk::Did::new("did:webvh:z6mkfixture:alice.example".to_owned()).unwrap(),
         )
         .unwrap();
-        let bob = arkret_sdk::project_full_id_to_core_id(
-            &arkret_sdk::DidFullId::new("did:webvh:z6mkfixturebob:bob.example".to_owned()).unwrap(),
+        let bob = arkret_sdk::project_did_to_core_id(
+            &arkret_sdk::Did::new("did:webvh:z6mkfixturebob:bob.example".to_owned()).unwrap(),
         )
         .unwrap();
         let baseline = prepared_identity_creation_request_secret_key(&account_a, &alice, "lease-a");
@@ -386,6 +386,7 @@ mod tests {
             device_id: "ak:device:01900000-0000-7000-8000-000000000000".to_owned(),
             trust_domain: "arkret:trust-domain:principal.example".to_owned(),
             bound_principal_id: None,
+            bound_principal_did: None,
         }
     }
 

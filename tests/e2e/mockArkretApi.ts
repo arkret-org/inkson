@@ -191,8 +191,8 @@ const currentPrincipalServiceRecord =
 export const CURRENT_PRINCIPAL_SERVER_ID = String(
   currentPrincipalServiceRecord.service_id,
 );
-export const CURRENT_PRINCIPAL_SERVER_FULL_ID = String(
-  currentPrincipalServiceRecord.full_id,
+export const CURRENT_PRINCIPAL_SERVER_DID = String(
+  currentPrincipalServiceRecord.did,
 );
 
 function canonicalJson(value: unknown): string {
@@ -1873,7 +1873,7 @@ export async function mockArkretApi(
         proofs: [
           {
             kind: "detached_jws",
-            verification_method: `${CURRENT_PRINCIPAL_SERVER_FULL_ID}#mimi-group-info`,
+            verification_method: `${CURRENT_PRINCIPAL_SERVER_DID}#mimi-group-info`,
             payload_digest: `sha256:${"0".repeat(64)}`,
             created_at: "2026-04-28T12:00:00.000Z",
             jws: "e30..c2ln",
@@ -1924,7 +1924,7 @@ export async function mockArkretApi(
         proofs: [
           {
             kind: "detached_jws",
-            verification_method: `${CURRENT_PRINCIPAL_SERVER_FULL_ID}#mimi-identifier-query`,
+            verification_method: `${CURRENT_PRINCIPAL_SERVER_DID}#mimi-identifier-query`,
             payload_digest: `sha256:${"0".repeat(64)}`,
             created_at: "2026-04-28T12:00:00.000Z",
             jws: "e30..c2ln",
@@ -2598,7 +2598,7 @@ export async function mockArkretApi(
       return json(route, {
         service_id: CURRENT_PRINCIPAL_SERVER_ID,
         service_resolution: {
-          full_id: CURRENT_PRINCIPAL_SERVER_FULL_ID,
+          did: CURRENT_PRINCIPAL_SERVER_DID,
           method_history_head: "development-unverified",
           version_id: "development-unverified",
         },
@@ -2825,7 +2825,7 @@ export async function mockArkretApi(
       const body = await route.request().postDataJSON();
       return json(route, {
         did_document:
-          body.did === CURRENT_PRINCIPAL_SERVER_FULL_ID
+          body.did === CURRENT_PRINCIPAL_SERVER_DID
             ? serverDidDocument
             : { id: body.did },
         key_log_head: null,
@@ -3153,7 +3153,7 @@ export async function mockArkretApi(
                   expires_at: "2036-08-24T00:00:00.000Z",
                 },
                 proof: {
-                  verification_method: `${CURRENT_PRINCIPAL_SERVER_FULL_ID}#notary-key`,
+                  verification_method: `${CURRENT_PRINCIPAL_SERVER_DID}#notary-key`,
                   created_at: attestedAt,
                   jws: "fixture",
                 },
@@ -3208,7 +3208,7 @@ export async function mockArkretApi(
           proofs: [
             {
               kind: "detached_jws",
-              verification_method: `${CURRENT_PRINCIPAL_SERVER_FULL_ID}#handle-claim-key`,
+              verification_method: `${CURRENT_PRINCIPAL_SERVER_DID}#handle-claim-key`,
               payload_digest: `sha256:${"0".repeat(64)}`,
               created_at: "2026-04-28T12:00:00.000Z",
               proof_purpose: "holder_acceptance",
@@ -4095,7 +4095,7 @@ export async function mockArkretApi(
         issued_at: "2026-05-19T00:00:00.000Z",
         signature: {
           alg: "Ed25519",
-          kid: `${CURRENT_PRINCIPAL_SERVER_FULL_ID}#media-ice`,
+          kid: `${CURRENT_PRINCIPAL_SERVER_DID}#media-ice`,
           sig: "placeholder",
         },
       });
@@ -4119,7 +4119,7 @@ export async function mockArkretApi(
       return json(route, {
         report_id: "ak:report:e2e",
         status: "queued",
-        routed_to: [`${CURRENT_PRINCIPAL_SERVER_FULL_ID}#moderation`],
+        routed_to: [`${CURRENT_PRINCIPAL_SERVER_DID}#moderation`],
       });
     }
 
@@ -4262,7 +4262,7 @@ function principalServiceDescribe() {
   return {
     service_id: CURRENT_PRINCIPAL_SERVER_ID,
     service_resolution: {
-      full_id: CURRENT_PRINCIPAL_SERVER_FULL_ID,
+      did: CURRENT_PRINCIPAL_SERVER_DID,
       method_history_head: currentPrincipalServiceRecord.method_history_head,
       version_id: currentPrincipalServiceRecord.version_id,
     },
@@ -4415,7 +4415,7 @@ function mimiProviderDirectory() {
     },
     proof: {
       kind: "detached_jws",
-      verification_method: `${CURRENT_PRINCIPAL_SERVER_FULL_ID}#mimi-provider`,
+      verification_method: `${CURRENT_PRINCIPAL_SERVER_DID}#mimi-provider`,
       payload_digest: `sha256:${"0".repeat(64)}`,
       created_at: "2026-04-28T12:00:00.000Z",
       jws: "e30..c2ln",

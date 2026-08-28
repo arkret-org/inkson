@@ -304,7 +304,7 @@ test("connect refresh canonicalizes stale account and device identity", async ({
   const canonicalDeviceId = "ak:device:01964137-0000-7000-8000-0000000000a1";
   await expect(latestTestId(page, "status-label")).toContainText("Online");
   await writeLocalConfigAndReload(page, {
-    full_id: staleDid,
+    did: staleDid,
     device_id: staleDeviceId,
   });
   await expect(latestTestId(page, "client-shell")).toBeVisible({
@@ -331,7 +331,7 @@ test("connect refresh canonicalizes stale account and device identity", async ({
     .poll(() => readLocalConfig(page))
     .toMatchObject({
       active_account: {
-        resolution: { full_id: "did:web:alice.example" },
+        resolution: { did: "did:web:alice.example" },
         device_id: canonicalDeviceId,
       },
     });

@@ -33,22 +33,22 @@ fn decode_founding_device_public_key(device_public_key: &str) -> anyhow::Result<
 }
 
 pub fn build_founding_authorize_payload(
-    principal_id: arkret_sdk::DidFullId,
+    principal_did: arkret_sdk::Did,
     device_id: arkret_sdk::DeviceId,
     device_public_key: String,
     hpke_key: String,
     created_at: DateTime<Utc>,
     signer: &crate::event_signer::InksonEventSigner,
 ) -> anyhow::Result<arkret_sdk::DeviceAuthorizePayload> {
-    let principal_core_id = arkret_sdk::project_full_id_to_core_id(&principal_id)?;
+    let principal_id = arkret_sdk::project_did_to_core_id(&principal_did)?;
     let payload = arkret_sdk::UnsignedDeviceAuthorizePayload::new(
-        principal_core_id.clone(),
+        principal_id.clone(),
         device_id,
         non_empty(device_public_key)?,
         non_empty(hpke_key)?,
         algorithms()?,
         Some(non_empty("Ed25519".to_owned())?),
-        arkret_sdk::DeviceOrPrincipalRef::Principal(principal_core_id),
+        arkret_sdk::DeviceOrPrincipalRef::Principal(principal_id),
         None,
         created_at,
         None,
@@ -68,7 +68,7 @@ pub fn build_founding_authorize_payload(
 
 #[allow(clippy::too_many_arguments)]
 pub fn build_genesis_unit(
-    principal_id: arkret_sdk::DidFullId,
+    principal_did: arkret_sdk::Did,
     principal_server_id: arkret_sdk::DidCoreId,
     genesis_salt: arkret_sdk::GenesisSalt,
     trust_domain: arkret_sdk::TrustDomainId,
@@ -83,9 +83,9 @@ pub fn build_genesis_unit(
     hpke_key: String,
     device_signer: &crate::event_signer::InksonEventSigner,
 ) -> anyhow::Result<arkret_wire::PcrGenesisUnit> {
-    let principal_core_id = arkret_sdk::project_full_id_to_core_id(&principal_id)?;
+    let principal_id = arkret_sdk::project_did_to_core_id(&principal_did)?;
     let payload = build_founding_authorize_payload(
-        principal_id.clone(),
+        principal_did.clone(),
         device_id,
         device_public_key,
         hpke_key,
@@ -117,10 +117,10 @@ pub fn build_genesis_unit(
         decode_founding_device_public_key(payload.device_public_key.as_str())?;
     let founding_notary =
         arkret_sdk::NotaryValue::single_signer(arkret_sdk::NotarySignerDescriptor {
-            actor_id: principal_core_id.clone(),
+            actor_id: principal_id.clone(),
             verification_method: arkret_sdk::DidUrl::new(format!(
                 "{}#{}",
-                principal_id, payload.device_id
+                principal_did, payload.device_id
             ))
             .map_err(anyhow::Error::msg)?,
             key_kind: arkret_sdk::NotaryKeyKind::Ed25519Raw32,
@@ -133,9 +133,9 @@ pub fn build_genesis_unit(
     founding_notary.validate()?;
     let mut create = arkret_bootstrap::build_self_principal_pcr_create(
         arkret_bootstrap::SelfPrincipalPcrCreateInput {
-            principal_id: principal_core_id.clone(),
+            principal_id: principal_id.clone(),
             principal_server_id,
-            principal_full_id: principal_id.clone(),
+            principal_did: principal_did.clone(),
             notary: founding_notary,
             genesis_salt,
             trust_domain,
@@ -144,7 +144,7 @@ pub fn build_genesis_unit(
                 arkret_bootstrap::DID_INCEPTION_REF_ROLE,
             ),
             initial_resolution: arkret_sdk::ResolutionCommitment {
-                full_id: principal_id.clone(),
+                did: principal_did.clone(),
                 method_history_head: did_inception_log_head,
                 version_id: did_inception_version_id,
             },
@@ -154,7 +154,7 @@ pub fn build_genesis_unit(
         },
         &|event| crate::operation::cell_write_projector(event, arkret_sdk::DigestSuite::Sha256),
     )?;
-    let root_did = arkret_sdk::DidFullId::new(format!("did:key:{root_public_key_multibase}"))?;
+    let root_did = arkret_sdk::Did::new(format!("did:key:{root_public_key_multibase}"))?;
     let root_method = did_key_verification_method(root_public_key_multibase)?;
     let root_signer = arkret_sdk::Ed25519PayloadSigner::from_did_key_seed(
         *root_seed,
@@ -173,7 +173,7 @@ pub fn build_genesis_unit(
     let realm_id = create.realm_id.clone();
     let principal_server_id = create.principal_server_id.clone();
     let authorize_hlc = crate::signing_stamp::issue_protocol_hlc_with_secret(
-        principal_id.as_str(),
+        principal_did.as_str(),
         device_signer
             .device_id()
             .ok_or_else(|| anyhow::anyhow!("founding signer is not bound to a device"))?,
@@ -184,7 +184,7 @@ pub fn build_genesis_unit(
     let mut authorize =
         arkret_sdk::TypedEventDraft::<arkret_sdk::event_spec::DeviceAuthorize>::new(
             arkret_sdk::ScopeRef::Realm { realm_id },
-            principal_core_id,
+            principal_id,
             principal_server_id,
             payload,
         )?
