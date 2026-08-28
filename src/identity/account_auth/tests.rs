@@ -443,7 +443,7 @@ fn authorize_url_falls_back_to_native_client_id() {
 /// `gate_account_base` derivation uses the strong `account_authority`.
 #[test]
 fn resolve_gate_account_base_prefers_account_authority() {
-    let mut metadata = arkret_sdk::AuthMetadata::minimal("production");
+    let mut metadata = arkret_sdk::AuthMetadata::minimal();
     metadata.account_authority = Some(arkret_sdk::AccountAuthority {
         origin: "https://aa.example".to_owned(),
         gate_account_base: "https://aa.example/_arkret/gate/account".to_owned(),
@@ -454,7 +454,7 @@ fn resolve_gate_account_base_prefers_account_authority() {
 
 #[test]
 fn resolve_gate_account_base_derives_from_account_authority_origin() {
-    let mut metadata = arkret_sdk::AuthMetadata::minimal("production");
+    let mut metadata = arkret_sdk::AuthMetadata::minimal();
     metadata.account_authority = Some(arkret_sdk::AccountAuthority {
         origin: "https://aa.example".to_owned(),
         gate_account_base: String::new(),
@@ -465,7 +465,7 @@ fn resolve_gate_account_base_derives_from_account_authority_origin() {
 
 #[test]
 fn resolve_gate_account_base_fails_closed_without_account_authority() {
-    let metadata = arkret_sdk::AuthMetadata::minimal("production");
+    let metadata = arkret_sdk::AuthMetadata::minimal();
     let error = resolve_gate_account_base("https://principal.example", &metadata).unwrap_err();
     assert!(
         error
