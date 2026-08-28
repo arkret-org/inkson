@@ -535,7 +535,7 @@ fn recovery_public_key_successor_is_sealed_with_final_series_metadata() {
 
     assert_eq!(&successor.series_id, &genesis.series_id);
     assert_eq!(successor.series_seq, 1);
-    assert_eq!(successor.supersedes.as_ref(), Some(&genesis.backup_id));
+    assert_eq!(successor.supersedes_id.as_ref(), Some(&genesis.backup_id));
     let successor_wire = key_backup_wire(&successor);
     let (secret, version) = open_mls_account_secret_recovery_public_key_backup(
         &recovery_sk,
