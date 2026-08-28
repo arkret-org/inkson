@@ -196,8 +196,8 @@ pub(crate) fn build_mls_keypackage_claim_request(
     requester: &str,
     requester_device_id: &str,
     requester_device_authorize_event_id: &arkret_sdk::EventId,
-    source_service_id: &str,
-    destination_service_id: &str,
+    source_id: &str,
+    destination_id: &str,
     claim_request_id: &str,
     target_device_id: Option<&str>,
     mls_group_id: &str,
@@ -217,8 +217,8 @@ pub(crate) fn build_mls_keypackage_claim_request(
             verification_method,
             signer: signer.as_ref(),
         },
-        source_service_id,
-        destination_service_id,
+        source_id,
+        destination_id,
         claim_request_id,
         target_device_id,
         None,
@@ -230,8 +230,8 @@ pub(crate) fn build_pairwise_mls_keypackage_claim_request(
     target_principal_id: &str,
     intended_realm_id: &str,
     requester: &crate::mls::pairwise_identity::PairwiseSigningMaterial,
-    source_service_id: &str,
-    destination_service_id: &str,
+    source_id: &str,
+    destination_id: &str,
     claim_request_id: &str,
     target_device_id: Option<&str>,
     mls_group_id: &str,
@@ -262,8 +262,8 @@ pub(crate) fn build_pairwise_mls_keypackage_claim_request(
             verification_method,
             signer: requester.signer.as_ref(),
         },
-        source_service_id,
-        destination_service_id,
+        source_id,
+        destination_id,
         claim_request_id,
         target_device_id,
         Some(target_pairwise_verification_method),
@@ -290,8 +290,8 @@ fn build_mls_keypackage_claim_request_with_requester(
     intended_realm_id: &str,
     requester: arkret_sdk::DidCoreId,
     requester_authority: ClaimRequester<'_>,
-    source_service_id: &str,
-    destination_service_id: &str,
+    source_id: &str,
+    destination_id: &str,
     claim_request_id: &str,
     target_device_id: Option<&str>,
     target_pairwise_verification_method: Option<arkret_sdk::DidUrl>,
@@ -304,9 +304,9 @@ fn build_mls_keypackage_claim_request_with_requester(
         .transpose()?
         .into_iter()
         .collect::<Vec<_>>();
-    let source_service_id = arkret_sdk::DidCoreId::new(source_service_id.trim().to_owned())?;
-    let destination_service_id =
-        arkret_sdk::DidCoreId::new(destination_service_id.trim().to_owned())?;
+    let source_id = arkret_sdk::DidCoreId::new(source_id.trim().to_owned())?;
+    let destination_id =
+        arkret_sdk::DidCoreId::new(destination_id.trim().to_owned())?;
     let signed_at = crate::clock::now_utc();
     let unsigned = arkret_sdk::PeerKeyPackagesClaimUnsignedRequest {
         claim_request_id: arkret_sdk::Base64UrlString::new(claim_request_id.trim().to_owned())
@@ -333,8 +333,8 @@ fn build_mls_keypackage_claim_request_with_requester(
         last_resort_allowed: Some(false),
     };
     let service_binding = arkret_sdk::KeyPackagesClaimServiceBinding {
-        source_service_id,
-        destination_service_id,
+        source_id,
+        destination_id,
     };
     let (mut requester_authorization, signer) = match requester_authority {
         ClaimRequester::Device {

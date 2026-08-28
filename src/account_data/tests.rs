@@ -220,7 +220,7 @@ fn realm_remark_pinned_builder_preserves_private_fields() {
         tags: vec!["work".to_owned()],
         pinned: false,
         verified_title_at_save: Some("Engineering".to_owned()),
-        verified_owning_organizations_at_save: vec![
+        verified_owning_organization_ids_at_save: vec![
             crate::mls_api_helpers::principal_core_id("did:web:acme.example").unwrap(),
         ],
         saved_at: "2026-06-01T00:00:00.000Z".parse().unwrap(),
@@ -240,8 +240,8 @@ fn realm_remark_pinned_builder_preserves_private_fields() {
     assert_eq!(next.tags, existing.tags);
     assert_eq!(next.verified_title_at_save, existing.verified_title_at_save);
     assert_eq!(
-        next.verified_owning_organizations_at_save,
-        existing.verified_owning_organizations_at_save
+        next.verified_owning_organization_ids_at_save,
+        existing.verified_owning_organization_ids_at_save
     );
     assert_eq!(next.saved_at, existing.saved_at);
     assert_eq!(

@@ -774,7 +774,7 @@ fn merge_synced_raw_operation_payload(existing: &Value, mut incoming: Value) -> 
         // The accepted invite authoring path pins this from its typed delivery
         // target. Realm Event projections intentionally do not repeat the
         // private service route, so preserve it for deferred MLS claim retry.
-        "recipient_service_id",
+        "recipient_id",
         // The producer's draft-time object handle. Losing it would strand every
         // reference other rows recorded against the temporary id (see below).
         "local_temporary_target_ref",

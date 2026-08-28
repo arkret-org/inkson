@@ -71,7 +71,7 @@ impl garth::HistoryResponseCapabilityOpener for ResponseCapabilityOpener<'_> {
             request_digest: receipt.request_digest.clone(),
             response_capability_commitment: receipt.response_capability_commitment.clone(),
             effective_scope: receipt.effective_scope.clone(),
-            release_service_id: receipt.release_service_id.clone(),
+            release_id: receipt.release_id.clone(),
             release_service_binding_ref: receipt.release_service_binding_ref.clone(),
             release_service_resolution_ref: receipt.release_service_resolution_ref.clone(),
             release_service_resolution_sequence: receipt.release_service_resolution_sequence,

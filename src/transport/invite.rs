@@ -19,10 +19,10 @@ impl InviteeResolution {
     fn invite_address(&self) -> arkret_sdk::InviteAddress {
         arkret_sdk::InviteAddress {
             subject_id: self.principal_id.clone(),
-            recipient_service_id: self.invite_delivery_target.recipient_service_id.clone(),
+            recipient_id: self.invite_delivery_target.recipient_id.clone(),
             service_resolution: self.invite_delivery_target.service_resolution.clone(),
             route_assistance: None,
-            recipient_service_kind: self.invite_delivery_target.recipient_service_kind.clone(),
+            recipient_kind: self.invite_delivery_target.recipient_kind.clone(),
         }
     }
 }
@@ -71,14 +71,14 @@ fn explicit_invitee_resolution(
 
 fn invite_address(
     subject_id: &str,
-    recipient_service_id: &str,
+    recipient_id: &str,
 ) -> anyhow::Result<arkret_sdk::InviteAddress> {
     let _subject = arkret_sdk::DidCoreId::new(subject_id.trim().to_owned())
         .map_err(|err| anyhow::anyhow!("invalid invite subject core_id `{subject_id}`: {err}"))?;
-    let _recipient_service = arkret_sdk::DidCoreId::new(recipient_service_id.trim().to_owned())
+    let _recipient_service = arkret_sdk::DidCoreId::new(recipient_id.trim().to_owned())
         .map_err(|err| {
             anyhow::anyhow!(
-                "invalid invite recipient service core_id `{recipient_service_id}`: {err}"
+                "invalid invite recipient service core_id `{recipient_id}`: {err}"
             )
         })?;
     anyhow::bail!(
@@ -123,7 +123,7 @@ fn invitee_from_target_json(target: &str) -> anyhow::Result<Option<InviteeResolu
         let locator: arkret_sdk::PrincipalLocator = serde_json::from_value(value)?;
         return invitee_from_principal_locator(locator).map(Some);
     }
-    if value.get("subject_id").is_some() && value.get("recipient_service_id").is_some() {
+    if value.get("subject_id").is_some() && value.get("recipient_id").is_some() {
         let address: arkret_sdk::InviteAddress = serde_json::from_value(value)?;
         return explicit_invitee_resolution(address, None).map(Some);
     }
@@ -197,7 +197,7 @@ fn parse_explicit_invite_target(target: &str) -> anyhow::Result<Option<InviteeRe
         if let Some(value) = token_value(token, &["did", "subject", "subject_id", "target"]) {
             subject = Some(value);
         } else if let Some(value) =
-            token_value(token, &["server", "service", "recipient_service_id"])
+            token_value(token, &["server", "service", "recipient_id"])
         {
             server = Some(value);
         }
@@ -356,7 +356,7 @@ impl crate::transport::TransportClient {
             .await?;
         let subject = resolved.subject_id();
         let recipient_service = resolved_member_delivery_binding(&resolved)?
-            .map(|binding| binding.recipient_service_id)
+            .map(|binding| binding.recipient_id)
             .ok_or_else(|| {
                 anyhow::anyhow!(
                     "directory handle result did not include a recipient service; use DID + server"
@@ -439,12 +439,12 @@ impl crate::transport::TransportClient {
         realm_id: &str,
         actor_id: &str,
         contact_did: &str,
-        recipient_service_id: Option<&str>,
+        recipient_id: Option<&str>,
     ) -> anyhow::Result<(String, String)> {
         let contact_did = contact_did.trim();
         arkret_sdk::Did::new(contact_did.to_owned())
             .map_err(|err| anyhow::anyhow!("invalid contact DID `{contact_did}`: {err}"))?;
-        let recipient_service_id = recipient_service_id
+        let recipient_id = recipient_id
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .ok_or_else(|| {
@@ -452,9 +452,9 @@ impl crate::transport::TransportClient {
                     "contact `{contact_did}` has no attested recipient service; use the invite link path instead"
                 )
             })?;
-        let _recipient_service = arkret_sdk::DidCoreId::new(recipient_service_id.to_owned())
+        let _recipient_service = arkret_sdk::DidCoreId::new(recipient_id.to_owned())
             .map_err(|err| {
-                anyhow::anyhow!("invalid contact recipient service `{recipient_service_id}`: {err}")
+                anyhow::anyhow!("invalid contact recipient service `{recipient_id}`: {err}")
             })?;
         let _ = (
             realm_id,
@@ -545,7 +545,7 @@ mod invite_addressing_tests {
         let locator = json!({
             "schema": arkret_sdk::SchemaId::PRINCIPAL_LOCATOR_V1,
             "subject_id": "ak:did_core:web:bob.example",
-            "recipient_service_id": "ak:did_core:web:ps.bob.example",
+            "recipient_id": "ak:did_core:web:ps.bob.example",
             "service_resolution": {
                 "current_record_url": "https://ps.bob.example/_arkret/open/services/ak%3Adid_core%3Aweb%3Aps.bob.example/resolution"
             },
@@ -567,7 +567,7 @@ mod invite_addressing_tests {
         let invitee = invitee_from_principal_locator(locator).expect("principal locator");
         assert_eq!(invitee.principal_id.as_str(), "ak:did_core:web:bob.example");
         assert_eq!(
-            invitee.invite_delivery_target.recipient_service_id.as_str(),
+            invitee.invite_delivery_target.recipient_id.as_str(),
             "ak:did_core:web:ps.bob.example"
         );
         assert_eq!(invitee.introduction_evidence.kind(), "locator_ref");
@@ -577,7 +577,7 @@ mod invite_addressing_tests {
     fn invite_target_json_accepts_invite_address_as_explicit() {
         let raw_invite_address = json!({
             "subject_id": "ak:did_core:web:bob.example",
-            "recipient_service_id": "ak:did_core:web:ps.bob.example",
+            "recipient_id": "ak:did_core:web:ps.bob.example",
             "service_resolution": {
                 "current_record_url": "https://ps.bob.example/_arkret/open/services/ak%3Adid_core%3Aweb%3Aps.bob.example/resolution"
             },

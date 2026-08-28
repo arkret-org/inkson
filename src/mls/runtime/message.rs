@@ -83,7 +83,7 @@ pub(crate) struct WelcomeConsumeCandidate {
     pub(crate) claim_request_id: arkret_sdk::Base64UrlString,
     pub(crate) recipient_principal_id: arkret_sdk::DidCoreId,
     pub(crate) recipient: arkret_sdk::MlsWelcomeRecipient,
-    pub(crate) recipient_service_id: arkret_sdk::DidCoreId,
+    pub(crate) recipient_id: arkret_sdk::DidCoreId,
     pub(crate) welcome_event_id: String,
     pub(crate) realm_id: String,
     pub(crate) strand_id: Option<String>,
@@ -1016,7 +1016,7 @@ fn welcome_consume_candidate(
             },
         )?,
         recipient: payload.recipient,
-        recipient_service_id: receipt.destination_service_id.clone(),
+        recipient_id: receipt.destination_id.clone(),
         welcome_event_id: entry.welcome_event_id.clone()?,
         realm_id: realm_id.to_owned(),
         strand_id,
@@ -1131,7 +1131,7 @@ pub(crate) fn sign_welcome_consume_request(
             .map_err(|error| error.to_string())?,
         recipient_principal_id: candidate.recipient_principal_id.clone(),
         recipient,
-        recipient_service_id: candidate.recipient_service_id.clone(),
+        recipient_id: candidate.recipient_id.clone(),
         realm_id: arkret_sdk::RealmId::new(candidate.realm_id.clone())
             .map_err(|error| error.to_string())?,
         mls_group_id: arkret_sdk::NonEmptyString::new(&candidate.mls_group_id)

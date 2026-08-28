@@ -2514,8 +2514,8 @@ export async function mockArkretApi(
         body.requester ??
         CURRENT_PRINCIPAL_SERVER_ID;
       const memberDeliveryBinding = {
-        recipient_service_id: CURRENT_PRINCIPAL_SERVER_ID,
-        recipient_service_kind: "principal_server",
+        recipient_id: CURRENT_PRINCIPAL_SERVER_ID,
+        recipient_kind: "principal_server",
         binding_source: "explicit",
         delivery_modes: ["events", "sync", "to_device", "push", "keypackages"],
       };
@@ -2565,7 +2565,7 @@ export async function mockArkretApi(
             subject,
             handle: subjectPrimaryHandle,
             issuer: CURRENT_PRINCIPAL_SERVER_ID,
-            issuer_service_id: CURRENT_PRINCIPAL_SERVER_ID,
+            vouching_id: CURRENT_PRINCIPAL_SERVER_ID,
             binding_state: "verified",
             claim_kind: "handle_binding",
             visibility: "public",
@@ -3036,7 +3036,7 @@ export async function mockArkretApi(
         ],
         explicit_address_behavior: "quarantine",
         unknown_invites: "quarantine",
-        denied_subjects: ["ak:did_core:web:spammer.example"],
+        denied_subject_ids: ["ak:did_core:web:spammer.example"],
         disclosure: { high_trust: "outcome", low_trust: "opaque" },
       });
     }

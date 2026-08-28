@@ -542,10 +542,10 @@ fn principal_locator(input: Value) -> Result<Value> {
     let mut locator = arkret_sdk::PrincipalLocator {
         schema: arkret_sdk::PrincipalLocator::SCHEMA.to_owned(),
         subject_id: input.subject_id,
-        recipient_service_id: authority.service_id,
+        recipient_id: authority.service_id,
         service_resolution,
         route_assistance: None,
-        recipient_service_kind: None,
+        recipient_kind: None,
         issued_at,
         expires_at,
         locator_ref_digest,

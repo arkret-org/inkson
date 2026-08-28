@@ -749,7 +749,7 @@ fn local_pending_invite_profile_from_raw_operation(
     if !matches!(state.as_str(), "pending" | "pending_invite" | "invite") {
         return None;
     }
-    let direct_invitee = trimmed_string(payload.get("invitee"))
+    let direct_invitee = trimmed_string(payload.get("invitee_id"))
         .and_then(|invitee| arkret_sdk::DidCoreId::new(invitee).ok())
         .map(|invitee| invitee.as_str().to_owned());
     let invite_id = trimmed_string(payload.get("invite_id").or_else(|| payload.get("id")));
@@ -831,7 +831,7 @@ fn raw_operation_invite_ref(payload: &Value) -> Option<String> {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct AcceptedInviteClaimRoute {
-    destination_service_id: String,
+    destination_id: String,
     target_device_id: Option<String>,
 }
 
@@ -859,7 +859,7 @@ fn accepted_invite_claim_route(
                 raw_operation_path_string(payload, &["signing_device_id"]),
             ))
         })?;
-    let destination_service_id = state
+    let destination_id = state
         .raw_operations
         .iter()
         .rev()
@@ -873,7 +873,7 @@ fn accepted_invite_claim_route(
             {
                 return None;
             }
-            let service_id = raw_operation_path_string(payload, &["recipient_service_id"])?;
+            let service_id = raw_operation_path_string(payload, &["recipient_id"])?;
             arkret_sdk::DidCoreId::new(service_id.clone())
                 .ok()
                 .map(|_| service_id)
@@ -885,7 +885,7 @@ fn accepted_invite_claim_route(
         .ok()?
         .map(|device| device.to_string());
     Some(AcceptedInviteClaimRoute {
-        destination_service_id,
+        destination_id,
         target_device_id,
     })
 }
@@ -907,11 +907,11 @@ fn claim_target_device_id(
 fn raw_member_actor_id(payload: &Value) -> Option<String> {
     raw_operation_path_string(payload, &["body", "actor_id"])
         .or_else(|| raw_operation_path_string(payload, &["body", "member"]))
-        .or_else(|| raw_operation_path_string(payload, &["body", "invitee"]))
+        .or_else(|| raw_operation_path_string(payload, &["body", "invitee_id"]))
         .or_else(|| raw_operation_path_string(payload, &["payload", "actor_id"]))
         .or_else(|| raw_operation_path_string(payload, &["payload", "member"]))
-        .or_else(|| raw_operation_path_string(payload, &["payload", "invitee"]))
-        .or_else(|| trimmed_string(payload.get("member").or_else(|| payload.get("invitee"))))
+        .or_else(|| raw_operation_path_string(payload, &["payload", "invitee_id"]))
+        .or_else(|| trimmed_string(payload.get("member").or_else(|| payload.get("invitee_id"))))
         .or_else(|| trimmed_string(payload.get("actor_id")))
         .and_then(|actor_id| arkret_sdk::DidCoreId::new(actor_id).ok())
         .map(|actor_id| actor_id.as_str().to_owned())
@@ -931,9 +931,9 @@ fn raw_member_membership(payload: &Value) -> Option<String> {
 }
 
 fn raw_invite_create_invitee(payload: &Value) -> Option<String> {
-    raw_operation_path_string(payload, &["body", "invitee"])
-        .or_else(|| raw_operation_path_string(payload, &["payload", "invitee"]))
-        .or_else(|| trimmed_string(payload.get("invitee")))
+    raw_operation_path_string(payload, &["body", "invitee_id"])
+        .or_else(|| raw_operation_path_string(payload, &["payload", "invitee_id"]))
+        .or_else(|| trimmed_string(payload.get("invitee_id")))
         .or_else(|| raw_member_actor_id(payload))
 }
 
@@ -1550,7 +1550,7 @@ fn PendingInviteRow(
                                                         event_kind_str::INVITE_REVOKE
                                                     },
                                                     "invite_id": invite_id.clone(),
-                                                    "invitee": direct_invitee.clone(),
+                                                    "invitee_id": direct_invitee.clone(),
                                                     "state": "revoked",
                                                     "event_id": resp.event_id,
                                                 }),
@@ -1733,7 +1733,7 @@ pub(crate) async fn submit_mls_admission_for_invitee(
                 &invitee_id,
                 &realm_id,
                 requester,
-                Some(&claim_route.destination_service_id),
+                Some(&claim_route.destination_id),
                 &claim_request_id,
                 None,
                 &group_id,
@@ -1747,7 +1747,7 @@ pub(crate) async fn submit_mls_admission_for_invitee(
                 &realm_id,
                 &actor_id,
                 &device_id,
-                Some(&claim_route.destination_service_id),
+                Some(&claim_route.destination_id),
                 &claim_request_id,
                 target_device_id,
                 &group_id,
@@ -3101,7 +3101,7 @@ pub fn RealmMembersPanel(
                                                             .map(|c| {
                                                                 (
                                                                     crate::models::contact_peer_id(c).to_string(),
-                                                                    c.peer_service_id.as_ref().map(ToString::to_string),
+                                                                    c.peer_id.as_ref().map(ToString::to_string),
                                                                 )
                                                             })
                                                             .collect();
@@ -3129,13 +3129,13 @@ pub fn RealmMembersPanel(
                                                             let mut last_err = String::new();
                                                             let mut ok_invites =
                                                                 Vec::<(String, String, String, Option<String>)>::new();
-                                                            for (did, recipient_service_id) in targets {
+                                                            for (did, recipient_id) in targets {
                                                                 match api
                                                                     .invite_contact_to_realm(
                                                                         &realm,
                                                                         &actor,
                                                                         &did,
-                                                                        recipient_service_id.as_deref(),
+                                                                        recipient_id.as_deref(),
                                                                     )
                                                                     .await
                                                                 {
@@ -3145,7 +3145,7 @@ pub fn RealmMembersPanel(
                                                                             did,
                                                                             event_id.clone(),
                                                                             invite_id,
-                                                                            recipient_service_id,
+                                                                            recipient_id,
                                                                         ));
                                                                         frontier_state.set(event_id);
                                                                     }
@@ -3156,7 +3156,7 @@ pub fn RealmMembersPanel(
                                                                 let mut next_members = members.read().clone();
                                                                 {
                                                                     let mut store = state_store.write();
-                                                                    for (did, event_id, invite_id, recipient_service_id) in ok_invites {
+                                                                    for (did, event_id, invite_id, recipient_id) in ok_invites {
                                                                         upsert_pending_invite_profile(&mut next_members, &did, None, Some(&invite_id));
                                                                         store.append_raw_operation(
                                                                             event_id.clone(),
@@ -3164,10 +3164,10 @@ pub fn RealmMembersPanel(
                                                                             json!({
                                                                                 "kind": event_kind_str::INVITE_CREATE,
                                                                                 "invite_id": invite_id,
-                                                                                "invitee": did,
+                                                                                "invitee_id": did,
                                                                                 "state": "pending",
                                                                                 "event_id": event_id,
-                                                                                "recipient_service_id": recipient_service_id,
+                                                                                "recipient_id": recipient_id,
                                                                             }),
                                                                         );
                                                                     }
@@ -3337,11 +3337,11 @@ pub fn RealmMembersPanel(
                                                                         json!({
                                                                             "kind": event_kind_str::INVITE_CREATE,
                                                                             "invite_id": invite_id.clone(),
-                                                                            "invitee": invitee_id.clone(),
+                                                                            "invitee_id": invitee_id.clone(),
                                                                             "invitee_label": invitee_label.clone(),
                                                                             "state": "pending",
                                                                             "event_id": submitted.event_id,
-                                                                            "recipient_service_id": invitee.invite_delivery_target.recipient_service_id,
+                                                                            "recipient_id": invitee.invite_delivery_target.recipient_id,
                                                                         }),
                                                                     );
                                                                 }

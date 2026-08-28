@@ -384,7 +384,7 @@ test("realm admin page handles metadata, modal member invite, epoch rotation and
   expect(inviteBody.payload.invitee).toBe("ak:did_core:web:carol.example");
   expect(inviteBody.payload.invite_delivery_target).toEqual(
     expect.objectContaining({
-      recipient_service_id: CURRENT_PRINCIPAL_SERVER_ID,
+      recipient_id: CURRENT_PRINCIPAL_SERVER_ID,
       service_resolution: expect.objectContaining({
         current_record_url: expect.stringMatching(/^https:\/\//),
       }),

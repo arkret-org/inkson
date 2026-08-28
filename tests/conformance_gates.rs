@@ -667,7 +667,7 @@ fn realm_bootstrap_delivery_binding_policy_matches_payload_schema() {
         .cloned()
         .expect("bootstrap chain emits ak.realm.delivery_binding_policy");
     assert_eq!(
-        policy.payload["allowed_recipient_services"],
+        policy.payload["allowed_recipient_ids"],
         serde_json::json!(["ak:did_core:web:server.example"]),
         "the recipient-service allow-list must stay a closed DID list, never the \
          [\"*\"] unrestricted sentinel"

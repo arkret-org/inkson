@@ -855,12 +855,12 @@ fn require_proof_fails_when_unsigned() {
 fn invite_helpers_emit_canonical_kinds() {
     let invite_id = "ak:invite:AY6DJbBwavsGTQuBZZiqqw9MVcqPZ8QX8invQ3i2kpi7";
     let invite_delivery_target = arkret_sdk::InviteDeliveryTarget {
-        recipient_service_id: arkret_sdk::DidCoreId::new("ak:did_core:web:server.example").unwrap(),
+        recipient_id: arkret_sdk::DidCoreId::new("ak:did_core:web:server.example").unwrap(),
         service_resolution: arkret_sdk::ServiceResolutionCarrier::CurrentRecordUrl {
             current_record_url: "https://server.example/_arkret/open/services/ak%3Adid_core%3Aweb%3Aserver.example/resolution".to_owned(),
             pinned_record_digest: None,
         },
-        recipient_service_kind: Some("principal_server".to_owned()),
+        recipient_kind: Some("principal_server".to_owned()),
     };
     let introduction_evidence_digest =
         crate::canonical::canonical_sha256(&json!({"kind": "explicit_address"})).unwrap();
@@ -878,7 +878,7 @@ fn invite_helpers_emit_canonical_kinds() {
     let created = authored(&create);
     let derived_invite_id = arkret_sdk::InviteId::from_event_id(created.event_id()).to_string();
     assert!(!create.payload().contains_key("invite_id"));
-    assert_eq!(create.payload()["invitee"], "ak:did_core:web:bob.example");
+    assert_eq!(create.payload()["invitee_id"], "ak:did_core:web:bob.example");
     assert_eq!(
         create.payload()["invite_delivery_target"],
         serde_json::to_value(invite_delivery_target).unwrap()
@@ -955,7 +955,7 @@ fn invite_helpers_emit_canonical_kinds() {
     assert_eq!(cancel.kind().as_str(), "ak.invite.cancel");
     assert_eq!(cancel.payload()["invite_id"], invite_id);
     assert_eq!(cancel.payload()["reason"], "expired");
-    assert_eq!(cancel.payload()["invitee"], "ak:did_core:web:bob.example");
+    assert_eq!(cancel.payload()["invitee_id"], "ak:did_core:web:bob.example");
     // `target_state` is the signed operand of the lifecycle `transition_to`
     // projection; without it the cancel has no derivable cell write.
     assert_eq!(cancel.payload()["target_state"], "revoked");
@@ -973,7 +973,7 @@ fn invite_helpers_emit_canonical_kinds() {
     .unwrap();
     let frozen_pre_state = arkret_sdk::schema::FrozenPreState::from([(
         lifecycle_cell,
-        serde_json::json!({"invitee": "ak:did_core:web:bob.example"}),
+        serde_json::json!({"invitee_id": "ak:did_core:web:bob.example"}),
     )]);
     let cancelled = authored(&cancel);
     let cancel_writes = arkret_sdk::schema::project_registered_cell_writes_with_pre_state(
@@ -1021,7 +1021,7 @@ fn invite_helpers_emit_canonical_kinds() {
     assert_eq!(revoke.kind().as_str(), "ak.invite.revoke");
     assert_eq!(revoke.payload()["target_state"], "revoked");
     assert_eq!(revoke.payload()["reason"], "admin_revoke");
-    assert!(!revoke.payload().contains_key("invitee"));
+    assert!(!revoke.payload().contains_key("invitee_id"));
 }
 
 #[test]

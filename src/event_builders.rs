@@ -396,7 +396,7 @@ fn build_realm_bootstrap_membership_intent(
     };
 
     let actor_id = facets.actor_id.as_str();
-    let recipient_service_id = arkret_sdk::project_did_to_core_id(
+    let recipient_id = arkret_sdk::project_did_to_core_id(
         &arkret_sdk::Did::new(facets.notary_did.clone())
             .map_err(|err| anyhow::anyhow!("invalid creator service DID: {err}"))?,
     )?;
@@ -426,16 +426,16 @@ fn build_realm_bootstrap_membership_intent(
     let current_record_url = format!(
         "{}{}",
         service_origin.origin().ascii_serialization(),
-        arkret_sdk::canonical_service_current_record_path(&recipient_service_id)
+        arkret_sdk::canonical_service_current_record_path(&recipient_id)
     );
     let service_resolution = ServiceResolutionCarrier::CurrentRecordUrl {
         current_record_url,
         pinned_record_digest: None,
     };
-    service_resolution.validate_shape(&recipient_service_id)?;
+    service_resolution.validate_shape(&recipient_id)?;
     let creator_delivery_binding = MemberDeliveryBinding {
-        recipient_service_id,
-        recipient_service_kind: RecipientServiceKind::PrincipalServer,
+        recipient_id,
+        recipient_kind: RecipientServiceKind::PrincipalServer,
         binding_scope: BindingScope::Realm,
         binding_source: BindingSource::RealmPolicy,
         delivery_modes: [
@@ -969,10 +969,10 @@ fn build_realm_delivery_binding_policy(
                 .collect(),
         ),
         did_document_default_allowed: Some(false),
-        allowed_recipient_services: Some(arkret_sdk::AllowedRecipientServices::Allowlist(vec![
+        allowed_recipient_ids: Some(arkret_sdk::AllowedRecipientServices::Allowlist(vec![
             recipient_service,
         ])),
-        required_endorsers: Some(BTreeSet::new()),
+        required_endorser_ids: Some(BTreeSet::new()),
         unroutable_membership_allowed: Some(true),
         rebind_authorization: Some(arkret_sdk::RebindAuthorization::Member),
         handover_grace_seconds: None,

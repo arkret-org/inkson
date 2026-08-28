@@ -10,7 +10,7 @@
 //! (`GET /_arkret/self/realms/{realm_id}/organizations`) via
 //! [`crate::transport::TransportClient::list_realm_organizations`]. The server only returns
 //! `verified_active` / `revoked_or_expired` rows plus
-//! `declared_organization_hints`.
+//! `declared_organization_hint_ids`.
 //!
 //! Write side: binding a Realm to an organization and signing organization-side
 //! statements (and revocations) is the organization DID controller's authority,
@@ -267,7 +267,7 @@ fn dto_from_hint(id: &str) -> OrgRelationshipDto {
 fn dtos_from_list(list: &RealmOrganizationRelationshipList) -> Vec<OrgRelationshipDto> {
     let mut out: Vec<OrgRelationshipDto> = list.relationships.iter().map(dto_from_row).collect();
     out.extend(
-        list.declared_organization_hints
+        list.declared_organization_hint_ids
             .iter()
             .map(|id| dto_from_hint(id.as_str())),
     );

@@ -9,7 +9,7 @@ use super::*;
 /// are NEVER used as the current display value directly.
 ///
 /// `TODO(R3.2.1)`: feed the Realm-scoped roster handle-claim snapshot +
-/// accepted_issuers + a locally cached verified handle in here. Until the
+/// accepted_issuer_ids + a locally cached verified handle in here. Until the
 /// live claim cache + `list_handles_for_subject` plumbing lands we pass an
 /// empty snapshot, so the renderer steps down to the cached/name/DID
 /// fallback ladder (each visually degraded) instead of inventing a
@@ -29,7 +29,7 @@ pub(crate) fn mention_label_from_node(mention: &MentionNode) -> Option<String> {
     let rendered = crate::views::helpers::render_actor_mention(
         mention.subject_id.as_str(),
         &[],  // claim_set_snapshot — TODO(R3.2.1) roster handle-claim evidence
-        &[],  // accepted_issuers — TODO(R3.2.1) Realm policy
+        &[],  // accepted_issuer_ids — TODO(R3.2.1) Realm policy
         None, // context (target Realm id)
         None, // cached verified handle — TODO(R3.2.1) local cache
         display_name,

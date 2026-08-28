@@ -6,11 +6,11 @@
 //!   (consent_grant / locator_ref / shared_realm / same_principal_server / explicit_address).
 //! - `explicit_address_behavior` — drop / quarantine / notify for raw-address invites.
 //! - `disclosure.high_trust` — whether contacts learn the invite outcome.
-//! - `denied_subjects` — list of subjects barred from inviting, with removal.
+//! - `denied_subject_ids` — list of subjects barred from inviting, with removal.
 //!
 //! YOU-01-006: the form edits a `arkret_sdk::InviteReceivePolicy` held whole in
 //! a signal. On GET we keep the *entire* server policy (including the
-//! `trusted_*` / `denied_principal_services` lists this form does not surface);
+//! `trusted_*` / `denied_principal_ids` lists this form does not surface);
 //! on SET we stamp the required `schema` constant and `subject_id = principal_id`
 //! and post the same object back, so server-stored lists survive the round-trip
 //! and the body satisfies the soland handler (which deserialises the SDK type
@@ -137,7 +137,7 @@ fn constraints_lines(constraints: &arkret_wire::ReceivePolicyConstraints) -> Vec
     if let Some(domains) = constraints.allowed_handle_domains.as_ref() {
         lines.push(format!("handle domains: {}", domains.join(", ")));
     }
-    if let Some(services) = constraints.trusted_directory_services.as_ref() {
+    if let Some(services) = constraints.trusted_directory_ids.as_ref() {
         lines.push(format!(
             "directory services: {}",
             services
@@ -412,7 +412,7 @@ fn InvitePolicySettingsCardBody(
                 div { class: "muted", {tr("invite_policy.disclosure_hint")} }
             }
 
-            // ── denied_subjects ─────────────────────────────────────────
+            // ── denied_subject_ids ─────────────────────────────────────────
             if let Some(server_constraints) = constraints.read().as_ref() {
                 div { class: "settings-subsection", "data-testid": "invite-policy-server-caps",
                     strong { class: "settings-subsection-title", {tr("invite_policy.server_caps_title")} }
@@ -435,11 +435,11 @@ fn InvitePolicySettingsCardBody(
 
             div { class: "settings-subsection",
                 strong { class: "settings-subsection-title", {tr("invite_policy.blocked_title")} }
-                if current.denied_subjects.is_empty() {
+                if current.denied_subject_ids.is_empty() {
                     div { class: "muted", "data-testid": "invite-policy-blocked-empty", {tr("invite_policy.blocked_empty")} }
                 } else {
                     div { class: "settings-list",
-                        for subject in current.denied_subjects.iter().map(|d| d.as_str().to_owned()) {
+                        for subject in current.denied_subject_ids.iter().map(|d| d.as_str().to_owned()) {
                             div {
                                 class: "metric invite-policy-blocked-row",
                                 "data-testid": "invite-policy-blocked-row",
@@ -452,7 +452,7 @@ fn InvitePolicySettingsCardBody(
                                         let subject = subject.clone();
                                         move |_| {
                                             let mut next = policy.read().clone();
-                                            next.denied_subjects.retain(|s| s.as_str() != subject);
+                                            next.denied_subject_ids.retain(|s| s.as_str() != subject);
                                             policy.set(next);
                                             status.set(tr("invite_policy.unblocked_hint"));
                                         }

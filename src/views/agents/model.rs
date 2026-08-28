@@ -495,8 +495,8 @@ pub fn build_requested_scope_disclosure_for_pairing(
         .ok_or_else(|| anyhow::anyhow!("agent pairing_request_id is invalid"))?;
     let requested_scope = key_state.requested_scope.clone();
     let verifier_did = arkret_sdk::Did::new(service_did.trim().to_owned())?;
-    let verifier_service_id = arkret_sdk::project_did_to_core_id(&verifier_did)?;
-    if request.proof_of_possession.audience != verifier_service_id {
+    let verifier_id = arkret_sdk::project_did_to_core_id(&verifier_did)?;
+    if request.proof_of_possession.audience != verifier_id {
         anyhow::bail!("runtime request audience does not match the current service");
     }
     let signer = crate::event_signer::active_signer()
@@ -522,7 +522,7 @@ pub fn build_requested_scope_disclosure_for_pairing(
         agent_id,
         controller_id: controller_actor_id,
         requested_scope,
-        verifier_service_id,
+        verifier_id,
         audience: NonEmptyString::new(ServiceOperationId::GATE_ACCOUNT_COMMAND_PAIR_AGENT_KEY_V1)
             .map_err(anyhow::Error::msg)?,
         challenge: NonEmptyString::new(pairing_request_id.as_str().to_owned())

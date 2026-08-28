@@ -473,7 +473,7 @@ fn inkson_accepts_server_contract_payloads() {
             "content_digest": blob_digest,
             "size_bytes": 23,
             "received_at": "2026-04-28T12:00:00.000Z",
-            "issuer_service_id": "ak:did_core:web:server.local",
+            "issuer_id": "ak:did_core:web:server.local",
             "signature": {
                 "kid": "ak:did_core:web:server.local",
                 "signature_algorithm": "Ed25519",
@@ -827,7 +827,7 @@ fn local_remarks_do_not_leak_into_event_push_search_log_or_directory_surfaces() 
                 arkret_models_discovery::RealmMemberCountBucketLabel::OneToTen,
             )),
             summary: Some("Public description".to_owned()),
-            owning_organizations: Vec::new(),
+            owning_organization_ids: Vec::new(),
             preview_ref: None,
             discoverability: Some("public".to_owned()),
             history_access: None,

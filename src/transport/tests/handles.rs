@@ -97,8 +97,8 @@ fn handle_resolution_exposes_delivery_binding_without_requiring_it_for_invites()
             "audience": realm_id,
             "created_at": "2026-06-12T08:00:00.000Z",
             "member_delivery_binding": {
-                "recipient_service_id": "ak:did_core:web:local.host",
-                "recipient_service_kind": "principal_server",
+                "recipient_id": "ak:did_core:web:local.host",
+                "recipient_kind": "principal_server",
                 "binding_source": "explicit",
                 "delivery_modes": ["events"]
             }
@@ -114,7 +114,7 @@ fn handle_resolution_exposes_delivery_binding_without_requiring_it_for_invites()
         resolved
             .member_delivery_binding_ref()
             .unwrap()
-            .recipient_service_id
+            .recipient_id
             .as_str(),
         "ak:did_core:web:local.host"
     );

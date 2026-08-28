@@ -377,7 +377,7 @@ async fn resolve_agent_selector_mentions(
         };
         let mention = arkret_sdk::Mention::new(outcome.subject)
             .with_agent_selector_metadata(
-                outcome.controller_subject,
+                outcome.controller_subject_id,
                 controller_handle,
                 outcome.agent_slug,
             )

@@ -69,7 +69,7 @@ pub async fn effective_grants(
 /// `GET /_arkret/self/realms/{realm_id}/organizations`).
 ///
 /// The server only returns `verified_active` / `revoked_or_expired`
-/// lifecycle rows plus `declared_organization_hints` (owning-organization
+/// lifecycle rows plus `declared_organization_hint_ids` (owning-organization
 /// DIDs with no verified statement). This is read-only: binding
 /// and organization-side signing happen in the admin console (sodmin).
 pub async fn list_realm_organizations(

@@ -836,7 +836,7 @@ pub fn DirectoryPanel(
                         let org_handle = value_str(&org, "handle", "");
                         let discoverability = value_str(&org, "discoverability", "unknown");
                         let profile_visibility = value_str(&org, "profile_visibility", "unknown");
-                        let directory_services = value_vec(&org, "directory_services");
+                        let directory_ids = value_vec(&org, "directory_ids");
                         let proof_count = value_vec(&org, "proofs").len();
                         // YGN-ORG-04: a single `verified` bool is not enough —
                         // show the proof-backed relationship the organization
@@ -903,11 +903,11 @@ pub fn DirectoryPanel(
                                     }
                                     span { class: "badge badge-info", "Discoverability: {discoverability}" }
                                     span { class: "badge badge-info", "Profile: {profile_visibility}" }
-                                    span { class: "badge badge-success", "{directory_services.len()} directory service(s)" }
+                                    span { class: "badge badge-success", "{directory_ids.len()} directory service(s)" }
                                     span { class: "badge badge-warning", "{proof_count} proof(s)" }
                                 }
-                                if !directory_services.is_empty() {
-                                    div { class: "muted", "Directory services: {directory_services.join(\", \")}" }
+                                if !directory_ids.is_empty() {
+                                    div { class: "muted", "Directory services: {directory_ids.join(\", \")}" }
                                 }
                                 div { class: "actions",
                                     Button {

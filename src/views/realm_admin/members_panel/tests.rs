@@ -405,9 +405,9 @@ fn accepted_invite_route_binds_delivery_service_and_accepting_device() {
         serde_json::json!({
             "kind": "ak.invite.create",
             "invite_id": invite_id,
-            "invitee": invitee,
+            "invitee_id": invitee,
             "event_id": "ak:event:A4CYJzQmAt__oBoyRdn8Kbzp9uK8Qv1wxZwStS_7lUHA",
-            "recipient_service_id": "ak:did_core:web:principal.example"
+            "recipient_id": "ak:did_core:web:principal.example"
         }),
     );
     store.upsert_raw_operation(
@@ -416,7 +416,7 @@ fn accepted_invite_route_binds_delivery_service_and_accepting_device() {
         serde_json::json!({
             "kind": "ak.invite.create",
             "invite_id": invite_id,
-            "invitee": invitee,
+            "invitee_id": invitee,
             "event_id": "ak:event:A4CYJzQmAt__oBoyRdn8Kbzp9uK8Qv1wxZwStS_7lUHA"
         }),
     );
@@ -435,7 +435,7 @@ fn accepted_invite_route_binds_delivery_service_and_accepting_device() {
     assert_eq!(
         accepted_invite_claim_route(&store, realm_id, invitee),
         Some(AcceptedInviteClaimRoute {
-            destination_service_id: "ak:did_core:web:principal.example".to_owned(),
+            destination_id: "ak:did_core:web:principal.example".to_owned(),
             target_device_id: Some(device_id.to_owned()),
         })
     );
@@ -461,9 +461,9 @@ fn accepted_human_invite_route_fails_closed_without_exact_accepting_device() {
         serde_json::json!({
             "kind": "ak.invite.create",
             "invite_id": invite_id,
-            "invitee": invitee,
+            "invitee_id": invitee,
             "event_id": "ak:event:A4CYJzQmAt__oBoyRdn8Kbzp9uK8Qv1wxZwStS_7lUHA",
-            "recipient_service_id": "ak:did_core:web:principal.example"
+            "recipient_id": "ak:did_core:web:principal.example"
         }),
     );
     store.append_raw_operation(
@@ -480,7 +480,7 @@ fn accepted_human_invite_route_fails_closed_without_exact_accepting_device() {
     assert_eq!(
         accepted_invite_claim_route(&store, realm_id, invitee),
         Some(AcceptedInviteClaimRoute {
-            destination_service_id: "ak:did_core:web:principal.example".to_owned(),
+            destination_id: "ak:did_core:web:principal.example".to_owned(),
             target_device_id: None,
         })
     );
@@ -492,7 +492,7 @@ fn accepted_human_invite_route_fails_closed_without_exact_accepting_device() {
 #[test]
 fn pairwise_claim_selector_never_reuses_a_human_device_coordinate() {
     let route = AcceptedInviteClaimRoute {
-        destination_service_id: "ak:did_core:web:principal.example".to_owned(),
+        destination_id: "ak:did_core:web:principal.example".to_owned(),
         target_device_id: Some("ak:device:0196419b-0000-7000-8000-000000000002".to_owned()),
     };
 
@@ -541,7 +541,7 @@ fn projected_member_profiles_restore_pending_invites_from_raw_operations() {
         Some(realm_id.to_owned()),
         serde_json::json!({
             "kind": "ak.invite.create",
-            "invitee": "ak:did_core:web:bob.example",
+            "invitee_id": "ak:did_core:web:bob.example",
             "invitee_label": "bob:example.com",
             "state": "pending"
         }),
@@ -591,7 +591,7 @@ fn projected_member_profiles_promote_invite_accept_to_join_from_raw_operations()
         serde_json::json!({
             "kind": "ak.invite.create",
             "invite_id": invite_id,
-            "invitee": "ak:did_core:web:bob.example",
+            "invitee_id": "ak:did_core:web:bob.example",
             "invitee_label": "bob:example.com",
             "state": "pending"
         }),
@@ -641,7 +641,7 @@ fn queued_invite_accept_does_not_promote_join_or_trigger_admission() {
         serde_json::json!({
             "kind": "ak.invite.create",
             "invite_id": invite_id,
-            "invitee": "ak:did_core:web:bob.example",
+            "invitee_id": "ak:did_core:web:bob.example",
             "invitee_label": "bob:example.com",
             "state": "pending"
         }),
@@ -684,7 +684,7 @@ fn projected_member_profiles_drop_locally_cancelled_pending_invites() {
         serde_json::json!({
             "kind": "ak.invite.create",
             "invite_id": invite_id,
-            "invitee": "ak:did_core:web:bob.example",
+            "invitee_id": "ak:did_core:web:bob.example",
             "invitee_label": "bob:example.com",
             "state": "pending"
         }),
@@ -724,7 +724,7 @@ fn raw_pending_invite_does_not_override_join_projection() {
         Some(realm_id.to_owned()),
         serde_json::json!({
             "kind": "ak.invite.create",
-            "invitee": "ak:did_core:web:bob.example",
+            "invitee_id": "ak:did_core:web:bob.example",
             "state": "pending"
         }),
     );

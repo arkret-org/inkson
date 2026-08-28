@@ -46,7 +46,7 @@ pub fn moderation_report(
         description,
         reporter: did_id(actor)?,
         provenance: Some(arkret_sdk::ModerationReportProvenance::SelfAuthored),
-        source_provider: None,
+        source_provider_id: None,
         evidence_refs: None,
         evidence_package: None,
         franking_proof: None,

@@ -165,7 +165,7 @@ pub struct RenderedMention {
 ///
 /// Step 1: Realm-scoped projection runs §3.2.1 primary handle selection
 /// over `claim_set_snapshot` (the roster handle-claim evidence) +
-/// `accepted_issuers` policy. When a verified primary handle wins it is
+/// `accepted_issuer_ids` policy. When a verified primary handle wins it is
 /// shown as `@{localpart}:{domain}`.
 ///
 /// Step 2 (live `ak.find.directory.read.list_handles_for_subject.v1` resolution) is
@@ -482,7 +482,7 @@ mod tests {
             issuer: Some(
                 crate::mls_api_helpers::principal_core_id("did:web:issuer.acme.example").unwrap(),
             ),
-            issuer_service_id: None,
+            vouching_id: None,
             binding_state: Some(HandleBindingState::Verified),
             claim_kind: None,
             visibility: None,
@@ -563,7 +563,7 @@ mod tests {
             issuer: Some(
                 crate::mls_api_helpers::principal_core_id("did:web:issuer.acme.example").unwrap(),
             ),
-            issuer_service_id: None,
+            vouching_id: None,
             binding_state: Some(HandleBindingState::Verified),
             claim_kind: None,
             visibility: None,

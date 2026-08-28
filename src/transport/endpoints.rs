@@ -278,12 +278,12 @@ impl MlsEndpoints<'_> {
         intended_realm_id: &str,
         requester: &str,
         requester_device_id: &str,
-        destination_service_id: Option<&str>,
+        destination_id: Option<&str>,
         claim_request_id: &str,
         target_device_id: Option<&str>,
         mls_group_id: &str,
     ) -> anyhow::Result<arkret_sdk::KeyPackagesClaimOutcome> {
-        let destination_service_id = destination_service_id
+        let destination_id = destination_id
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .ok_or_else(|| {
@@ -291,7 +291,7 @@ impl MlsEndpoints<'_> {
                     "KeyPackage claim requires the destination service DID from the accepted invite delivery binding"
                 )
             })?;
-        let source_service_id = self.transport.describe_cached().await?.service_id.clone();
+        let source_id = self.transport.describe_cached().await?.service_id.clone();
         let requester_device_authorize_event_id =
             crate::mls::admission::current_requester_device_authorize_event_id(
                 self.transport.http(),
@@ -305,8 +305,8 @@ impl MlsEndpoints<'_> {
             requester,
             requester_device_id,
             &requester_device_authorize_event_id,
-            source_service_id.as_str(),
-            destination_service_id,
+            source_id.as_str(),
+            destination_id,
             claim_request_id,
             target_device_id,
             mls_group_id,
@@ -326,8 +326,8 @@ impl MlsEndpoints<'_> {
             .map_err(|error| anyhow::anyhow!("KeyPackage claim outcome is invalid: {error}"))?;
         let receipt = &outcome.claim_receipt;
         if receipt.request != expected_request
-            || receipt.source_service_id != expected_service_binding.source_service_id
-            || receipt.destination_service_id != expected_service_binding.destination_service_id
+            || receipt.source_id != expected_service_binding.source_id
+            || receipt.destination_id != expected_service_binding.destination_id
             || receipt.request_digest != expected_request_digest
             || receipt.expires_at <= chrono::Utc::now()
         {
@@ -338,7 +338,7 @@ impl MlsEndpoints<'_> {
         let destination_resolution = self
             .transport
             .http()
-            .open_service_resolution(&receipt.destination_service_id)
+            .open_service_resolution(&receipt.destination_id)
             .await
             .map_err(anyhow::Error::from)?;
         arkret_sdk::verify_peer_keypackage_claim_receipt_signature(
@@ -357,12 +357,12 @@ impl MlsEndpoints<'_> {
         target_principal_id: &str,
         intended_realm_id: &str,
         requester: &crate::mls::pairwise_identity::PairwiseSigningMaterial,
-        destination_service_id: Option<&str>,
+        destination_id: Option<&str>,
         claim_request_id: &str,
         target_device_id: Option<&str>,
         mls_group_id: &str,
     ) -> anyhow::Result<arkret_sdk::KeyPackagesClaimOutcome> {
-        let destination_service_id = destination_service_id
+        let destination_id = destination_id
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .ok_or_else(|| {
@@ -370,13 +370,13 @@ impl MlsEndpoints<'_> {
                     "KeyPackage claim requires the destination service DID from the accepted invite delivery binding"
                 )
             })?;
-        let source_service_id = self.transport.describe_cached().await?.service_id.clone();
+        let source_id = self.transport.describe_cached().await?.service_id.clone();
         let body = crate::mls_api_helpers::build_pairwise_mls_keypackage_claim_request(
             target_principal_id,
             intended_realm_id,
             requester,
-            source_service_id.as_str(),
-            destination_service_id,
+            source_id.as_str(),
+            destination_id,
             claim_request_id,
             target_device_id,
             mls_group_id,
@@ -396,8 +396,8 @@ impl MlsEndpoints<'_> {
             .map_err(|error| anyhow::anyhow!("KeyPackage claim outcome is invalid: {error}"))?;
         let receipt = &outcome.claim_receipt;
         if receipt.request != expected_request
-            || receipt.source_service_id != expected_service_binding.source_service_id
-            || receipt.destination_service_id != expected_service_binding.destination_service_id
+            || receipt.source_id != expected_service_binding.source_id
+            || receipt.destination_id != expected_service_binding.destination_id
             || receipt.request_digest != expected_request_digest
             || receipt.expires_at <= chrono::Utc::now()
         {
@@ -408,7 +408,7 @@ impl MlsEndpoints<'_> {
         let destination_resolution = self
             .transport
             .http()
-            .open_service_resolution(&receipt.destination_service_id)
+            .open_service_resolution(&receipt.destination_id)
             .await
             .map_err(anyhow::Error::from)?;
         arkret_sdk::verify_peer_keypackage_claim_receipt_signature(

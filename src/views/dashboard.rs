@@ -845,7 +845,7 @@ mod tests {
                 granted_by_peer_scopes: Vec::new(),
                 bidirectional_scopes: Vec::new(),
                 effective_scopes: Some(Vec::new()),
-                peer_service_id: None,
+                peer_id: None,
                 continuity_evidence: None,
                 direct_conversation: direct_ready.then(|| arkret_sdk::DirectConversationSummary {
                     realm_id: arkret_sdk::RealmId::new(

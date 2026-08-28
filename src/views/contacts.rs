@@ -213,8 +213,8 @@ fn ContactRow(
     // Cross-PS source: if the backend exposed the requester's PS in the list
     // row, pass `requester_service_id` through on respond for reverse
     // delivery. Otherwise use None and follow same-PS behavior.
-    let peer_service_id = contact
-        .peer_service_id
+    let peer_id = contact
+        .peer_id
         .as_ref()
         .map(ToString::to_string)
         .filter(|service_id| !service_id.trim().is_empty());
@@ -354,7 +354,7 @@ fn ContactRow(
                             let peer = peer.clone();
                             let request_event_ref =
                                 contact.request_event_ref.as_ref().map(ToString::to_string);
-                            let service = peer_service_id.clone();
+                            let service = peer_id.clone();
                             move |_| {
                                 run_contact_action(
                                     base.clone(),
@@ -378,7 +378,7 @@ fn ContactRow(
                             let peer = peer.clone();
                             let request_event_ref =
                                 contact.request_event_ref.as_ref().map(ToString::to_string);
-                            let service = peer_service_id.clone();
+                            let service = peer_id.clone();
                             move |_| {
                                 run_contact_action(
                                     base.clone(),

@@ -66,7 +66,7 @@ pub fn policy_for(profile: DeploymentProfile) -> ResolverPolicy {
     ResolverPolicy {
         allowed_methods: profile.allowed_principal_methods(),
         default_principal_method: Some(profile.default_principal_method().to_owned()),
-        trust_roots: Vec::new(),
+        trust_root_ids: Vec::new(),
         ttl: Some(chrono::Duration::minutes(15)),
         fail_mode: ResolverFailMode::FailClosed,
     }

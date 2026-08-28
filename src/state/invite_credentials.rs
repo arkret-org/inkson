@@ -164,7 +164,7 @@ mod tests {
         json!({
             "invite_id": invite_id,
             "realm_id": REALM_ID,
-            "inviter": "ak:did_core:web:alice.example",
+            "inviter_id": "ak:did_core:web:alice.example",
             "invite_token": token,
             "received_at": received_at,
             "expires_at": expires_at

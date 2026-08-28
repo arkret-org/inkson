@@ -423,11 +423,11 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
     // service_id matches the row's service_id. We materialize
     // once so the modal rendering doesn't re-filter on every paint.
     let trace_open_applet_id = trace_open_for();
-    let trace_target_service_id = applet_rows
+    let trace_target_id = applet_rows
         .iter()
         .find(|(id, ..)| Some(id) == trace_open_applet_id.as_ref())
         .map(|(_, did, ..)| did.clone());
-    let trace_events: Vec<_> = match &trace_target_service_id {
+    let trace_events: Vec<_> = match &trace_target_id {
         Some(target) => raw_ops
             .iter()
             .filter(|r| {
