@@ -114,7 +114,6 @@ pub(crate) fn local_redaction_tombstone_for_message(
         "realm_id": message.realm_id.clone(),
         "strand_id": message.strand_id.clone(),
         "actor_id": actor_id,
-        "sender": message.sender.clone(),
         "created_at": arkret_sdk::canonical::format_timestamp_canonical(redacted_at),
     });
     if let Some(message_id) = message
@@ -271,7 +270,7 @@ fn sort_reactions(reactions: &mut Vec<(String, Vec<String>)>) {
 fn reaction_actor_from_value(value: &Value) -> Option<&str> {
     value
         .as_str()
-        .or_else(|| value_string_at(value, &["actor", "actor_id", "sender", "sender_actor_id"]))
+        .or_else(|| value_string_at(value, &["actor_id"]))
 }
 
 fn push_reaction_summary_value(reactions: &mut Vec<(String, Vec<String>)>, value: &Value) {
@@ -320,9 +319,7 @@ fn push_reaction_list_value(reactions: &mut Vec<(String, Vec<String>)>, value: &
         let Some(key) = value_string_at(item, &["key", "reaction", "reaction_key"]) else {
             continue;
         };
-        let Some(actor) =
-            value_string_at(item, &["actor", "actor_id", "sender", "sender_actor_id"])
-        else {
+        let Some(actor) = value_string_at(item, &["actor_id"]) else {
             continue;
         };
         push_reaction_member(reactions, key, actor);
@@ -381,11 +378,7 @@ fn reaction_marker_from_event(event: &Value) -> Option<ReactionMarker> {
     if key.is_empty() {
         return None;
     }
-    let actor = first_string_in_candidates(
-        &candidates,
-        &["actor_id", "sender_actor_id", "actor", "sender"],
-    )?
-    .trim();
+    let actor = first_string_in_candidates(&candidates, &["actor_id"])?.trim();
     if actor.is_empty() {
         return None;
     }

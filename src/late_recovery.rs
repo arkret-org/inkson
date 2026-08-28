@@ -379,7 +379,7 @@ mod tests {
         let base = Utc.with_ymd_and_hms(2026, 5, 20, 0, 0, 0).unwrap();
         LateRecoveredEvent {
             event_id: "ak:event:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19".to_owned(),
-            actor_id: "did:web:alice.example".to_owned(),
+            actor_id: "ak:did_core:web:alice.example".to_owned(),
             original_received_at: base + Duration::minutes(orig_min),
             recovered_at: base + Duration::minutes(rec_min),
             actor_revoked_at_recovery: revoked,

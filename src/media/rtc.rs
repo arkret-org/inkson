@@ -420,13 +420,13 @@ fn register_media_service_keys(
     route: &RouteResolution,
 ) -> Result<(), RtcClientError> {
     let document = &route.authenticated_resolution().normalized_did_document;
-    let service_id = route.route().did.as_str();
+    let service_did = route.route().did.as_str();
 
     let mut registered = 0usize;
     for method in document.verification_methods.keys() {
         let resolved = resolve_verification_method_key_from_document(document, method)
             .map_err(|_| RtcClientError::TokenIssuerUnauthorised)?;
-        if resolved.did.as_str() != service_id {
+        if resolved.did.as_str() != service_did {
             return Err(RtcClientError::TokenIssuerUnauthorised);
         }
         let key_bytes = resolved
@@ -435,7 +435,7 @@ fn register_media_service_keys(
             .map_err(|_| RtcClientError::TokenIssuerUnauthorised)?;
         let verifying_key = VerifyingKey::from_bytes(&key_bytes)
             .map_err(|_| RtcClientError::TokenIssuerUnauthorised)?;
-        let kid = normalize_verification_method_kid(service_id, &resolved.verification_method);
+        let kid = normalize_verification_method_kid(service_did, &resolved.verification_method);
         anchors
             .insert_key(kid, verifying_key)
             .map_err(|_| RtcClientError::TokenIssuerUnauthorised)?;
@@ -448,13 +448,13 @@ fn register_media_service_keys(
     Ok(())
 }
 
-fn normalize_verification_method_kid(service_id: &str, method: &str) -> String {
+fn normalize_verification_method_kid(service_did: &str, method: &str) -> String {
     if method.starts_with("did:") {
         method.to_owned()
     } else if method.starts_with('#') {
-        format!("{service_id}{method}")
+        format!("{service_did}{method}")
     } else {
-        format!("{service_id}#{method}")
+        format!("{service_did}#{method}")
     }
 }
 
@@ -879,7 +879,7 @@ mod tests {
         let request = MediaJoinRequest {
             realm_id: "ak:realm:AVxu7KCm9qmiOqakDKBXUia9rbZ3NBurP875XbqG1rbs".to_owned(),
             call_id: "ak:call:AYf05kF8z4cSo8r6qmqXgu4KPuv2YtKBlsE00FOmblaz".to_owned(),
-            actor_id: "did:web:alice.example".to_owned(),
+            actor_id: "ak:did_core:web:alice.example".to_owned(),
             device_id: "ak:device:01904100-0000-7000-8000-000000000005".to_owned(),
             focus_id: "fra-1".to_owned(),
             epoch_id: 7,
@@ -946,7 +946,7 @@ mod tests {
         MediaJoinRequest {
             realm_id: "ak:realm:AVxu7KCm9qmiOqakDKBXUia9rbZ3NBurP875XbqG1rbs".to_owned(),
             call_id: "ak:call:AYf05kF8z4cSo8r6qmqXgu4KPuv2YtKBlsE00FOmblaz".to_owned(),
-            actor_id: "did:web:alice.example".to_owned(),
+            actor_id: "ak:did_core:web:alice.example".to_owned(),
             device_id: "ak:device:01904100-0000-7000-8000-000000000005".to_owned(),
             focus_id: "fra-1".to_owned(),
             epoch_id: 7,

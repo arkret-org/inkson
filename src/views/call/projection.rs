@@ -482,19 +482,22 @@ mod tests {
     fn participant_input_dedupes() {
         assert_eq!(
             participant_list_from_input(
-                "did:web:bob.example\ndid:web:carol.example, did:web:bob.example"
+                "ak:did_core:web:bob.example\nak:did_core:web:carol.example, ak:did_core:web:bob.example"
             ),
-            vec!["did:web:bob.example", "did:web:carol.example"]
+            vec![
+                "ak:did_core:web:bob.example",
+                "ak:did_core:web:carol.example"
+            ]
         );
     }
 
     #[test]
     fn roster_includes_actor_once() {
         let roster = build_roster(
-            "did:web:alice.example",
+            "ak:did_core:web:alice.example",
             &[
-                "did:web:bob.example".to_owned(),
-                "did:web:alice.example".to_owned(),
+                "ak:did_core:web:bob.example".to_owned(),
+                "ak:did_core:web:alice.example".to_owned(),
             ],
             &BTreeMap::new(),
         )

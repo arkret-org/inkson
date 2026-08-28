@@ -60,7 +60,7 @@ pub(super) fn SyncEffects(
             token: runtime_adapter::value_reader(token),
             state_store: runtime_adapter::state_store_handle(state_store),
             account: account.clone(),
-            principal_id: account.did().to_string(),
+            principal_id: account.principal_id().clone(),
             device_id: device_id(),
             live_device_id: runtime_adapter::value_cell(device_id),
             selected_realm_id: runtime_adapter::value_reader(selected_realm_id),

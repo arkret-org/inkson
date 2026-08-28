@@ -305,7 +305,7 @@ pub fn prepare_genesis_draft(
         return Ok(checkpoint.clone());
     }
 
-    let principal_id = checkpoint.did.clone();
+    let principal_did = checkpoint.did.clone();
     let created_at = chrono::DateTime::parse_from_rfc3339(&checkpoint.genesis_created_at)
         .context("persisted genesis creation time is invalid")?
         .with_timezone(&Utc);
@@ -318,7 +318,7 @@ pub fn prepare_genesis_draft(
         anyhow::bail!("persisted DID inception version does not match its checkpoint");
     }
     let unit = crate::identity::principal_genesis::build_genesis_unit(
-        principal_id,
+        principal_did,
         audience.clone(),
         arkret_sdk::GenesisSalt::new(checkpoint.genesis_salt.clone())?,
         arkret_sdk::TrustDomainId::new(checkpoint.trust_domain.clone())?,
@@ -378,7 +378,10 @@ pub async fn complete_account_handoff_binding(
         anyhow::bail!("account handoff holder key does not match the current DPoP key");
     }
     if let Some(bound) = handoff.bound_principal_id.as_ref()
-        && arkret_sdk::project_did_to_core_id(&checkpoint.did).as_ref() != Ok(bound)
+        && arkret_sdk::project_did_to_core_id(&checkpoint.did)
+            .ok()
+            .as_ref()
+            != Some(bound)
     {
         anyhow::bail!("bound account principal does not match the frozen registration draft");
     }
@@ -754,11 +757,13 @@ async fn verify_registration_terminal_evidence(
     garth::verify_binding_receipt_at_issuance(receipt, &authority_resolver)
         .map_err(|error| anyhow!("verify Account Authority receipt at issuance: {error}"))?;
 
-    let principal_id = checkpoint.did.clone();
-    let history =
-        crate::identity::history::fetch_complete_identity_history(&principal_client, &principal_id)
-            .await
-            .context("fetch complete principal did.jsonl history")?;
+    let principal_did = checkpoint.did.clone();
+    let history = crate::identity::history::fetch_complete_identity_history(
+        &principal_client,
+        &principal_did,
+    )
+    .await
+    .context("fetch complete principal did.jsonl history")?;
     if history.method != arkret_sdk::DidMethodUri::Webvh || history.native_history != Some(true) {
         anyhow::bail!("principal history is not a native did:webvh history");
     }

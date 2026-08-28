@@ -143,7 +143,7 @@ pub(super) fn DiscussionParticipantRow(
                     ActorIdentityLabel {
                         label: identity_label,
                         title: Some(participant_id_attr.clone()),
-                        class: Some("mono participant-did".to_owned()),
+                        class: Some("mono participant-id".to_owned()),
                         test_id: Some("participant".to_owned()),
                         self_badge_test_id: Some("participant-self-badge".to_owned()),
                         agent_badge_test_id: Some("member-badge-agent".to_owned()),

@@ -105,7 +105,7 @@ fn start_recovery_key_generation(
     let base = account.server_url.to_string();
     let authority = account.authority.clone();
     let session = token();
-    let actor = account.did().to_string();
+    let actor = account.principal_id().to_string();
     let account_key = account.principal_id().clone();
     let device = account.device_id.to_string();
     let Some(recovery_material_evidence) = state_store.read().recovery_material_evidence() else {
@@ -232,7 +232,7 @@ pub fn SettingsMlsRecoveryPanel(
             async move {
                 let base = account.server_url.to_string();
                 let session = token();
-                let actor = account.did().to_string();
+                let actor = account.principal_id().to_string();
                 let account_key = account.principal_id().clone();
                 let authority = account.authority.clone();
                 if base.trim().is_empty() || session.trim().is_empty() || actor.trim().is_empty() {

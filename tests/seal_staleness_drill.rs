@@ -28,8 +28,10 @@ mod common;
 use regex::Regex;
 use sha2::{Digest, Sha256};
 
-const TEST_ACTOR_ID: &str = "did:web:alice.example";
-const TEST_SERVICE_ID: &str = "did:web:server.example";
+const TEST_ACTOR_ID: &str = "ak:did_core:web:alice.example";
+const TEST_ACTOR_DID: &str = "did:web:alice.example";
+const TEST_SERVICE_ID: &str = "ak:did_core:web:server.example";
+const TEST_SERVICE_DID: &str = "did:web:server.example";
 
 fn test_genesis_salt() -> arkret_sdk::GenesisSalt {
     inkson::operation::set_authoring_principal_server_id(Some(
@@ -86,7 +88,7 @@ fn test_seal_ref(kind: &str) -> arkret_sdk::SealId {
 
 /// Attach the producer proof to an authored envelope.
 fn sign_real(mut envelope: arkret_sdk::AuthoredEvent) -> arkret_sdk::AuthoredEvent {
-    let signer_did = TEST_ACTOR_ID;
+    let signer_did = TEST_ACTOR_DID;
     let key_id = format!("{signer_did}#device");
     envelope
         .sign_ed25519(signer_did, key_id, &signing_key())
@@ -99,7 +101,7 @@ fn realm_create_envelope_carries_real_proof_and_real_anchor() {
     let envelope = event_builders::build_realm_create_event(
         test_genesis_salt(),
         TEST_ACTOR_ID,
-        common::test_notary(TEST_SERVICE_ID),
+        common::test_notary(TEST_SERVICE_DID),
         "Engineering",
         Some("Roadmap work"),
         "listed",
@@ -129,8 +131,8 @@ fn full_bootstrap_chain_carries_real_proofs_and_anchors() {
         event_builders::build_realm_bootstrap_steps(
             test_genesis_salt(),
             TEST_ACTOR_ID,
-            TEST_SERVICE_ID,
-            common::test_notary(TEST_SERVICE_ID),
+            TEST_SERVICE_DID,
+            common::test_notary(TEST_SERVICE_DID),
             "https://server.example",
             "Engineering",
             None,
@@ -142,7 +144,7 @@ fn full_bootstrap_chain_carries_real_proofs_and_anchors() {
             "restricted",
             "sha256",
             "ak:trust_domain:server.example",
-            &["did:web:server.example".to_owned()],
+            &[TEST_SERVICE_ID.to_owned()],
             None,
             None,
         )

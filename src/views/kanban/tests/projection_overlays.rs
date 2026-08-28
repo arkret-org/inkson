@@ -326,11 +326,11 @@ fn lifecycle_projection_builds_persisted_board_columns_and_cards() {
         board_space_id: Some(board_id.to_owned()),
         list_space_id: Some(list_id.to_owned()),
         rank: Some("U".to_owned()),
-        assigned_actor_ids: vec!["did:web:alice.example".to_owned()],
+        assigned_actor_ids: vec!["ak:did_core:web:alice.example".to_owned()],
         assigned_to_relations: vec![
             crate::state::projection_views::AssignedToRelationProjectionView {
                 relation_id: "ak:relation:ASc_XP_IqOBAY6GgbPMLFCeZmi0uBNaWvHazHgmn-B8K".to_owned(),
-                actor_id: "did:web:alice.example".to_owned(),
+                actor_id: "ak:did_core:web:alice.example".to_owned(),
             },
         ],
         schema_refs: Vec::new(),
@@ -340,7 +340,7 @@ fn lifecycle_projection_builds_persisted_board_columns_and_cards() {
             ("labels".to_owned(), json!(["demo", "db"])),
             ("due_at".to_owned(), json!("2026-05-22")),
         ]),
-        created_by: Some("did:web:acme.example:users:alice".to_owned()),
+        created_by: Some("ak:did_core:web:acme.example:users:alice".to_owned()),
         created_at: Some("2026-05-22T10:00:00.000Z".to_owned()),
         updated_by: None,
         updated_at: None,
@@ -361,12 +361,12 @@ fn lifecycle_projection_builds_persisted_board_columns_and_cards() {
     assert_eq!(card.description_body, "Projection description content");
     assert_eq!(card.synthesis, "Projection synthesis content");
     assert_eq!(card.labels, vec!["demo".to_owned(), "db".to_owned()]);
-    assert_eq!(card.assignee, "did:web:alice.example");
+    assert_eq!(card.assignee, "ak:did_core:web:alice.example");
     assert_eq!(
         card.assigned_to_relations,
         vec![CardAssignedToRelation {
             relation_id: "ak:relation:ASc_XP_IqOBAY6GgbPMLFCeZmi0uBNaWvHazHgmn-B8K".to_owned(),
-            actor_id: "did:web:alice.example".to_owned(),
+            actor_id: "ak:did_core:web:alice.example".to_owned(),
         }]
     );
     assert_eq!(card.due, "2026-05-22");

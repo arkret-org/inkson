@@ -35,7 +35,7 @@ use arkret_models_integration::{
     AppletManagedActorAuthorRequestBody, AppletManagedActorPurpose, AppletPackage,
     AppletRegistrationEpochEvidence,
 };
-use arkret_wire::{AppletRevokeMode, ScopeRef, event_kind_str};
+use arkret_wire::{AppletRevokeMode, DidCoreId, ScopeRef, event_kind_str};
 use dioxus::prelude::*;
 use dioxus_primitives::checkbox::CheckboxState;
 use serde_json::Value;
@@ -363,11 +363,20 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
     let registrations: Vec<_> = raw_ops
         .iter()
         .filter(|r| {
-            r.payload
+            let is_registration = r
+                .payload
                 .get("kind")
                 .and_then(Value::as_str)
                 .map(|k| k == event_kind_str::APPLET_REGISTRATION)
-                .unwrap_or(false)
+                .unwrap_or(false);
+            let has_stable_service_id = r
+                .payload
+                .get("body")
+                .and_then(|body| body.get("service_id"))
+                .and_then(Value::as_str)
+                .and_then(|value| DidCoreId::new(value.to_owned()).ok())
+                .is_some();
+            is_registration && has_stable_service_id
         })
         .cloned()
         .collect();
@@ -393,7 +402,7 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
                 .get("body")
                 .and_then(|b| b.get("service_id"))
                 .and_then(Value::as_str)
-                .unwrap_or("did:web:?")
+                .expect("registration rows were filtered by stable service_id")
                 .to_owned();
             let namespace = registration_namespace_label(r.payload.get("body"));
             let applet_id = format!("{service_id}@{namespace}");
@@ -462,7 +471,7 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
                             let service_id = r.payload.get("body")
                                 .and_then(|b| b.get("service_id"))
                                 .and_then(Value::as_str)
-                                .unwrap_or("did:web:?")
+                                .expect("registration rows were filtered by stable service_id")
                                 .to_owned();
                             let namespace = registration_namespace_label(r.payload.get("body"));
                             let op_id = r.operation_id.clone();
@@ -613,7 +622,7 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
                                             );
                                             return;
                                         };
-                                        let actor_id = account.did().clone();
+                                        let actor_id = account.principal_id().clone();
                                         let install_actor_id = account.principal_id().clone();
                                         let circle = install_circle_id();
                                         let approve_actions = parse_applet_approval_actions(

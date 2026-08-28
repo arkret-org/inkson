@@ -75,7 +75,7 @@ pub(super) fn content_edit_scope_for_tab(
 
 #[component]
 fn CardMemberMentionRow(
-    did: String,
+    member_id: String,
     label: String,
     #[props(default)] is_self: bool,
     agent_slug: Option<String>,
@@ -119,7 +119,7 @@ fn CardMemberMentionRow(
         div {
             class: "{row_class}",
             "data-testid": test_id,
-            "data-member-did": "{did}",
+            "data-member-id": "{member_id}",
             "data-agent-slug": agent_slug.as_deref(),
             "data-strand-participant": "{in_strand}",
             button {
@@ -128,7 +128,7 @@ fn CardMemberMentionRow(
                 "data-testid": "card-detail-member-mention-button",
                 "aria-label": "Mention {label}",
                 onclick: {
-                    let mention_target = did.clone();
+                    let mention_target = member_id.clone();
                     move |_| {
                         onmention.call(crate::views::chat::MentionInsertRequest::new(
                             mention_target.clone(),
@@ -139,8 +139,8 @@ fn CardMemberMentionRow(
                 span { class: "{dot_class}", title: "{dot_title}", "aria-label": "{dot_title}" }
                 ActorIdentityLabel {
                     label: label.clone(),
-                    title: Some(did.clone()),
-                    class: Some("card-detail-actor-did".to_owned()),
+                    title: Some(member_id.clone()),
+                    class: Some("card-detail-actor-id".to_owned()),
                     test_id: Some("card-detail-member".to_owned()),
                     self_badge_test_id: None,
                     agent_badge_test_id: None,
@@ -2593,7 +2593,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                         "data-testid": "card-detail-realm-members",
                                                                         for row in members {
                                                                             {
-                                                                                let did = row.actor_id.clone();
+                                                                                let member_id = row.actor_id.clone();
                                                                                 let is_self = card_member_is_current_account(row, &principal_id);
                                                                                 let store = state_store.read();
                                                                                  let label = crate::views::member_display::resolve_member_display(
@@ -2601,11 +2601,11 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                                      &realm_context,
                                                                                      row,
                                                                                  ).label;
-                                                                                let in_strand = participant_set.contains(&did);
+                                                                                let in_strand = participant_set.contains(&member_id);
                                                                                 rsx! {
                                                                                     CardMemberMentionRow {
-                                                                                        key: "{did}",
-                                                                                        did,
+                                                                                        key: "{member_id}",
+                                                                                        member_id,
                                                                                         label,
                                                                                         is_self,
                                                                                         agent_slug: None,
@@ -2617,7 +2617,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                                                 for (agent, slug) in &agents {
                                                                                                     CardMemberMentionRow {
                                                                                                         key: "{agent.actor_id}",
-                                                                                                        did: agent.actor_id.clone(),
+                                                                                                        member_id: agent.actor_id.clone(),
                                                                                                         label: (*slug).to_owned(),
                                                                                                         agent_slug: Some((*slug).to_owned()),
                                                                                                         in_strand: participant_set.contains(&agent.actor_id),
@@ -2634,7 +2634,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                             for (agent, slug) in agents {
                                                                                 CardMemberMentionRow {
                                                                                     key: "{agent.actor_id}",
-                                                                                    did: agent.actor_id.clone(),
+                                                                                    member_id: agent.actor_id.clone(),
                                                                                     label: slug.to_owned(),
                                                                                     agent_slug: Some(slug.to_owned()),
                                                                                     in_strand: participant_set.contains(&agent.actor_id),

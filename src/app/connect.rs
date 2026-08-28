@@ -844,13 +844,13 @@ pub(super) fn connect(
                     &mut session_credential,
                     &mut authed,
                 );
-                // Resolve the canonical actor DID from the account viewer. Three
+                // Resolve the canonical stable principal id from the account viewer. Three
                 // outcomes:
-                //   1. Ok with non-empty DID -> use it as canonical_actor.
+                //   1. Ok with non-empty id -> use it as the canonical principal id.
                 //   2. Err that looks like auth expiry -> try the shared session refresh path. If
                 //      the refreshed credential is still rejected, clear the stale session instead
                 //      of booting the shell with a bearer token the server will never accept.
-                //   3. Anything else (Ok with empty DID, transient 5xx, parse error, network
+                //   3. Anything else (Ok with empty id, transient 5xx, parse error, network
                 //      failure) -> fall back to the locally stored actor, log a diagnostic to
                 //      last_error so the sidebar/status surface can show it, and keep going so sync
                 //      still has a chance to populate realm_tree_nodes.
@@ -1017,13 +1017,8 @@ pub(super) fn connect(
                         crate::app::principal_id_owned(actor.clone())
                     }
                 };
-                let canonical_principal_id = arkret_sdk::DidCoreId::new(
-                    canonical_actor_hint.trim().to_owned(),
-                )
-                .or_else(|_| {
-                    let did = arkret_sdk::Did::new(canonical_actor_hint.trim().to_owned())?;
-                    arkret_sdk::project_did_to_core_id(&did)
-                });
+                let canonical_principal_id =
+                    arkret_sdk::DidCoreId::new(canonical_actor_hint.trim().to_owned());
                 let Ok(canonical_principal_id) = canonical_principal_id else {
                     invalidate_bootstrap_session(
                         &session,
@@ -1072,7 +1067,7 @@ pub(super) fn connect(
                     );
                     return;
                 }
-                let canonical_actor = accepted_account.did().to_string();
+                let canonical_actor = accepted_account.principal_id().to_string();
                 let canonical_runtime_principal = Some(canonical_principal_id.clone());
                 let mut profiles = config_store.read().load_profiles();
                 let profile_id =

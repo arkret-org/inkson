@@ -717,7 +717,7 @@ mod tests {
             space_create_event(LIST_A, "list", "Todos", Some(BOARD)),
             strand_create_event(
                 card,
-                "did:webvh:z6mkfixture:alice.example",
+                "ak:did_core:webvh:z6mkfixture:alice.example",
                 "golden card",
                 BOARD,
                 LIST_A,
@@ -817,7 +817,7 @@ mod tests {
             space_create_event(LIST_A, "list", "Todos", Some(BOARD)),
             strand_create_event(
                 "ak:strand:AaDn_ypTG8vV4ToKfz6JtG2xnepF9QDlafPZCT-UYPyR",
-                "did:web:alice.example",
+                "ak:did_core:web:alice.example",
                 "alice card",
                 BOARD,
                 LIST_A,
@@ -826,7 +826,7 @@ mod tests {
             ),
             strand_create_event(
                 "ak:strand:AfHHAbZEhEweHE9b7WfITgHFGzMsezbGka7mm16yesUQ",
-                "did:web:bob.example",
+                "ak:did_core:web:bob.example",
                 "bob card",
                 BOARD,
                 LIST_A,
@@ -858,7 +858,7 @@ mod tests {
             space_create_event(LIST_B, "list", "Doing", Some(BOARD)),
             strand_create_event(
                 strand,
-                "did:web:alice.example",
+                "ak:did_core:web:alice.example",
                 "moving card",
                 BOARD,
                 LIST_A,
@@ -891,7 +891,7 @@ mod tests {
             space_create_event(LIST_A, "list", "Todos", Some(BOARD)),
             strand_create_event(
                 strand,
-                "did:web:alice.example",
+                "ak:did_core:web:alice.example",
                 "doomed card",
                 BOARD,
                 LIST_A,
@@ -965,7 +965,7 @@ mod tests {
                     "body": {
                         "object": {
                             "realm_id": REALM,
-                            "created_by": "did:web:alice.example",
+                            "created_by": "ak:did_core:web:alice.example",
                             "metadata": {
                                 "title": "queued card",
                                 "fields": {
@@ -1072,7 +1072,7 @@ mod tests {
         // alias must migrate this relation as well as the List row itself.
         let mut canonical_card_create = strand_create_event(
             canonical_card,
-            "did:web:alice.example",
+            "ak:did_core:web:alice.example",
             "same card",
             BOARD,
             temporary_list,
@@ -1157,7 +1157,7 @@ mod tests {
             space_create_event(LIST_B, "list", "Doing", Some(BOARD)),
             strand_create_event(
                 strand,
-                "did:web:alice.example",
+                "ak:did_core:web:alice.example",
                 "moving card",
                 BOARD,
                 LIST_A,
@@ -1298,7 +1298,7 @@ mod tests {
 
     #[test]
     fn real_space_update_builder_rank_reorders_columns() {
-        let actor = "did:web:alice.example";
+        let actor = "ak:did_core:web:alice.example";
         let space_update_body = |space_id: &str, rank: &str| {
             crate::operation::ak_ops::space_update_patch(
                 REALM,
@@ -1342,7 +1342,7 @@ mod tests {
         let strand = "ak:strand:ATNM2hIwr2IImD7_Vm-Ze42J3ky6Xpa4CG1kNnH8_Zf3";
         let move_body = crate::operation::ak_ops::strand_position_cas_update(
             REALM,
-            "did:web:alice.example",
+            "ak:did_core:web:alice.example",
             "ak.strand.move",
             BOARD,
             strand,
@@ -1360,7 +1360,7 @@ mod tests {
             space_create_event(LIST_B, "list", "Doing", Some(BOARD)),
             strand_create_event(
                 strand,
-                "did:web:alice.example",
+                "ak:did_core:web:alice.example",
                 "moving card",
                 BOARD,
                 LIST_A,

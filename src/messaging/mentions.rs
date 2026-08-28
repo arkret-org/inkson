@@ -273,7 +273,10 @@ mod tests {
         ];
         let filtered = state.filter(&candidates);
         assert_eq!(filtered.len(), 1);
-        assert_eq!(filtered[0].subject_id, "ak:did_core:web:agents.example:summary");
+        assert_eq!(
+            filtered[0].subject_id,
+            "ak:did_core:web:agents.example:summary"
+        );
         assert_eq!(filtered[0].insert_label(), "alice:example.com/summary");
     }
 

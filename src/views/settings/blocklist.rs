@@ -1,6 +1,6 @@
 //! G3.Y3 — Personal blocklist settings page (`/settings/blocked-users`).
 //!
-//! Actor-private list of blocked DIDs. Spec
+//! Actor-private list of blocked stable identity ids. Spec
 //! `governance/content-moderation.md` §4 — personal blocklist is a
 //! client-side filter; spec `discovery/client-preferences.md` §2
 //! defines the `ak.account.blocklist` account_data shape.
@@ -8,7 +8,7 @@
 //! Surfaces:
 //! - `blocked-users-panel` wrapper
 //! - `blocked-users-list` list wrapper
-//! - `blocked-user-row[data-actor-did, data-blocked-at]` per entry
+//! - `blocked-user-row[data-actor-id, data-blocked-at]` per entry
 //! - `block-target-input`, `block-user-button`, `unblock-button`
 //! - `write-status`
 //!
@@ -50,14 +50,17 @@ fn target_kind_label(kind: crate::account_data::BlocklistUiTargetKind) -> &'stat
     }
 }
 
-/// Placeholder hint for the identifier input, by target kind. Actor uses the
-/// v1-core default principal method `did:webvh`, not `did:web`.
+/// Placeholder hint for the stable identifier input, by target kind.
 fn target_kind_placeholder(kind: crate::account_data::BlocklistUiTargetKind) -> &'static str {
     match kind {
-        crate::account_data::BlocklistUiTargetKind::Service => "did:web:server.acme.example",
+        crate::account_data::BlocklistUiTargetKind::Service => {
+            "ak:did_core:web:server.acme.example"
+        }
         crate::account_data::BlocklistUiTargetKind::Domain => "example.com",
-        crate::account_data::BlocklistUiTargetKind::Organization => "did:web:acme.example",
-        crate::account_data::BlocklistUiTargetKind::Actor => "did:webvh:<scid>:alice.example",
+        crate::account_data::BlocklistUiTargetKind::Organization => "ak:did_core:web:acme.example",
+        crate::account_data::BlocklistUiTargetKind::Actor => {
+            "ak:did_core:webvh:<scid>:alice.example"
+        }
     }
 }
 
@@ -73,7 +76,7 @@ fn expiry_choice_to_rfc3339(choice: &str) -> Option<chrono::DateTime<chrono::Utc
     Some(chrono::Utc::now() + duration)
 }
 
-fn is_valid_did_core_id(input: &str) -> bool {
+fn is_valid_identity_id(input: &str) -> bool {
     arkret_sdk::DidCoreId::new(input.trim().to_owned()).is_ok()
 }
 
@@ -100,17 +103,17 @@ pub fn BlocklistSettingsCard(principal_id: Signal<String>, token: Signal<String>
     let mut applies_to = use_signal(|| crate::account_data::DEFAULT_BLOCKLIST_APPLIES_TO.to_vec());
     let mut status = use_signal(String::new);
 
-    // Live validation: the identifier must parse as a DID for DID-shaped kinds
-    // (actor / service / organization) or as a domain for `domain`. At least
-    // one surface must be selected.
+    // Live validation: identity kinds (actor / service / organization) require
+    // a stable DidCoreId; `domain` requires a domain. At least one surface must
+    // be selected.
     let kind_now = target_kind();
-    let is_did_kind = kind_now.is_did();
+    let is_identity_kind = kind_now.is_identity();
     let raw_input = add_input();
     let input_trimmed = raw_input.trim();
     let input_empty = input_trimmed.is_empty();
     let input_valid = !input_empty
-        && if is_did_kind {
-            is_valid_did_core_id(input_trimmed)
+        && if is_identity_kind {
+            is_valid_identity_id(input_trimmed)
         } else {
             crate::views::settings::is_likely_valid_domain(input_trimmed)
         };
@@ -118,19 +121,19 @@ pub fn BlocklistSettingsCard(principal_id: Signal<String>, token: Signal<String>
     let has_session = !token().trim().is_empty();
     let can_block = input_valid && !applies_empty && has_session;
     let input_class = if input_empty {
-        "blocklist-did"
+        "blocklist-id"
     } else if input_valid {
-        "blocklist-did blocklist-did-valid"
+        "blocklist-id blocklist-id-valid"
     } else {
-        "blocklist-did blocklist-did-invalid"
+        "blocklist-id blocklist-id-invalid"
     };
-    let invalid_hint = if is_did_kind {
-        "Enter a valid did_core_id (e.g. ak:did_core:webvh:<scid>)."
+    let invalid_hint = if is_identity_kind {
+        "Enter a valid stable identity id (e.g. ak:did_core:webvh:<scid>)."
     } else {
         "Enter a valid domain (e.g. example.com)."
     };
-    let target_input_label = if is_did_kind {
-        "Target DID"
+    let target_input_label = if is_identity_kind {
+        "Target stable id"
     } else {
         "Target domain"
     };
@@ -179,7 +182,7 @@ pub fn BlocklistSettingsCard(principal_id: Signal<String>, token: Signal<String>
                                 div {
                                     class: "event",
                                     "data-testid": "blocked-user-row",
-                                    "data-actor-did": "{entry_value}",
+                                    "data-actor-id": "{entry_value}",
                                     "data-target-kind": "{kind}",
                                     "data-blocked-at": "{blocked_at}",
                                     div { class: "event-head",
@@ -198,7 +201,7 @@ pub fn BlocklistSettingsCard(principal_id: Signal<String>, token: Signal<String>
                                         Button {
                                             variant: ButtonVariant::Secondary,
                                             "data-testid": "unblock-button",
-                                            "data-actor-did": "{entry_value}",
+                                            "data-actor-id": "{entry_value}",
                                             disabled: !has_session,
                                             onclick: {
                                                 let target = entry.target.clone();
@@ -434,12 +437,12 @@ pub fn BlocklistSettingsCard(principal_id: Signal<String>, token: Signal<String>
 
 #[cfg(test)]
 mod tests {
-    use super::is_valid_did_core_id;
+    use super::is_valid_identity_id;
 
     #[test]
-    fn actor_block_target_requires_canonical_did_core_id() {
-        assert!(is_valid_did_core_id("ak:did_core:webvh:z6mkfixtureactor"));
-        assert!(!is_valid_did_core_id(
+    fn actor_block_target_requires_canonical_identity_id() {
+        assert!(is_valid_identity_id("ak:did_core:webvh:z6mkfixtureactor"));
+        assert!(!is_valid_identity_id(
             "did:webvh:z6mkfixtureactor:actor.example"
         ));
     }
@@ -449,8 +452,8 @@ mod tests {
         let mut store = crate::state::isolated_store_for_tests("settings-blocklist");
         assert!(store.client_blocklist().is_empty());
 
-        assert!(store.block_user("did:web:bob.example", None));
-        assert!(!store.block_user("did:web:bob.example", None));
+        assert!(store.block_user("ak:did_core:web:bob.example", None));
+        assert!(!store.block_user("ak:did_core:web:bob.example", None));
 
         let entries = store.client_blocklist();
         assert_eq!(entries.len(), 1);
@@ -461,7 +464,7 @@ mod tests {
         assert!(crate::account_data::target_is_actor(&entries[0].target));
         assert_eq!(
             store.pending_personal_block_sagas(),
-            std::collections::BTreeSet::from(["did:web:bob.example".to_owned()])
+            std::collections::BTreeSet::from(["ak:did_core:web:bob.example".to_owned()])
         );
 
         let remote = entries.clone();
@@ -471,11 +474,11 @@ mod tests {
         assert_eq!(store.client_blocklist_revision(), 4);
         assert_eq!(store.client_blocklist(), remote);
 
-        store.complete_personal_block_saga("did:web:bob.example");
+        store.complete_personal_block_saga("ak:did_core:web:bob.example");
         assert!(store.pending_personal_block_sagas().is_empty());
 
-        assert!(store.unblock_user("did:web:bob.example"));
-        assert!(!store.unblock_user("did:web:bob.example"));
+        assert!(store.unblock_user("ak:did_core:web:bob.example"));
+        assert!(!store.unblock_user("ak:did_core:web:bob.example"));
         assert!(store.client_blocklist().is_empty());
     }
 }

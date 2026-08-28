@@ -612,7 +612,7 @@ mod tests {
 
     #[test]
     fn local_index_search_does_not_hide_a_native_sidecar_source_strand() {
-        let actor_id = "did:web:alice.example";
+        let actor_id = "ak:did_core:web:alice.example";
         let realm_id = "ak:realm:Af2ZEitZ_Nla84KWtbRYoWWmZopTUKtZlKf7sz4QHbfy".to_owned();
         let source_strand_id = "ak:strand:AavbN9CgiOJRw5dWi7yMN2_jReUUAXLb-_EF2y2WL8lz".to_owned();
         let mut store = LocalStateStore::default();

@@ -567,13 +567,13 @@ pub fn LoginPanel(
         let ui_locale = i18n.read().0.code().to_owned();
         let loaded_config = config_store.read().load();
         let live_actor = active_account()
-            .map(|account| account.did().to_string())
+            .map(|account| account.principal_id().to_string())
             .unwrap_or_default();
         let persisted_actor = if live_actor.trim().is_empty() {
             loaded_config
                 .active_account
                 .as_ref()
-                .map(|account| account.did().to_string())
+                .map(|account| account.principal_id().to_string())
                 .unwrap_or_default()
         } else {
             live_actor
@@ -1048,17 +1048,27 @@ fn authenticated_account_route(
         AccountHandoffDisposition::IdentityCreationBusy { .. } => {
             AuthenticatedAccountRoute::IdentityCreationBusy
         }
-        AccountHandoffDisposition::Bound { did, .. } => {
+        AccountHandoffDisposition::Bound {
+            principal_id: authenticated_principal_id,
+            ..
+        } => {
             let candidates =
                 candidate_principal
                     .zip(candidate_device)
-                    .map(|(principal_id, device_id)| ReturningDeviceCandidate {
-                        principal_id: principal_id.clone(),
-                        device_id: device_id.clone(),
-                        signer_ref: format!("inkson-secure-store:{device_id}"),
+                    .and_then(|(principal_did, device_id)| {
+                        arkret_sdk::project_did_to_core_id(principal_did)
+                            .ok()
+                            .map(|principal_id| ReturningDeviceCandidate {
+                                principal_id,
+                                device_id: device_id.clone(),
+                                signer_ref: format!("inkson-secure-store:{device_id}"),
+                            })
                     });
-            let normalized =
-                garth::normalize_local_evidence(did, LocalEvidenceHydration::Ready, candidates);
+            let normalized = garth::normalize_local_evidence(
+                authenticated_principal_id,
+                LocalEvidenceHydration::Ready,
+                candidates,
+            );
             match garth::route_bound_session(disposition, normalized)
                 .expect("a bound handoff always has a bound-session route")
             {
@@ -2498,9 +2508,8 @@ mod tests {
             "alice:auth.example",
         );
         handoff.oidc_state = Some("state-a".to_owned());
-        handoff.bound_principal_id = Some(
-            arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example".to_owned()).unwrap(),
-        );
+        handoff.bound_principal_id =
+            Some(arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example".to_owned()).unwrap());
         handoff.bound_principal_did =
             Some(arkret_sdk::Did::new("did:web:alice.example".to_owned()).unwrap());
 

@@ -353,7 +353,7 @@ pub fn chinese_translations() -> TranslationDict {
         "realm_admin.admin_grant_hint",
         "授予或撤销此 Realm 的管理员权限。更改经签名后提交,服务器处理完成后生效。",
     );
-    dict.set("realm_admin.admin_subject_label", "管理员主体(DID)");
+    dict.set("realm_admin.admin_subject_label", "管理员主体 ID");
     dict.set("realm_admin.admin_grant_id_label", "Grant ID");
     dict.set(
         "realm_admin.admin_subject_required",

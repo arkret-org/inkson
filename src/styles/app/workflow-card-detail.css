@@ -225,7 +225,7 @@
   outline-offset: 3px;
   border-radius: 5px;
 }
-.card-detail-actor-did {
+.card-detail-actor-id {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

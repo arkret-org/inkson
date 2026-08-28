@@ -308,7 +308,7 @@ pub(super) fn encrypt_private_card_detail_patch_values_with_store_for_effective_
         })?;
     let (
         schedule_hash,
-        _member_dids,
+        _member_ids,
         encrypted_values,
         prepared_commit,
         new_snapshot,

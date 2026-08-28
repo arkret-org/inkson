@@ -69,7 +69,7 @@ pub(super) fn MlsRecoveryEffects(state: MlsRecoveryEffectState) -> Element {
             };
             let base = account.server_url.to_string();
             let session = token();
-            let actor = account.did().to_string();
+            let actor = account.principal_id().to_string();
             let device = account.device_id.clone();
             let authority = account.authority.clone();
             let generation = sync_generation();

@@ -394,7 +394,9 @@ pub(super) async fn emit_signal(
     let account = crate::app::SessionContext::get()
         .active_account()
         .ok_or_else(|| "active account context is unavailable".to_owned())?;
-    if account.did().as_str() != actor.trim() || account.device_id.as_str() != device.trim() {
+    if account.principal_id().as_str() != actor.trim()
+        || account.device_id.as_str() != device.trim()
+    {
         return Err("call signal identity does not match the active account".to_owned());
     }
     // Call signalling is Realm-scoped, so the effective scope has no Circle.

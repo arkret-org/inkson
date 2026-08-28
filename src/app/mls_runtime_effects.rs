@@ -85,7 +85,7 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
                 return;
             };
             let cursor = sync_freshness();
-            let actor = account.did().to_string();
+            let actor = account.principal_id().to_string();
             let device = account.device_id.clone();
             let authority = account.authority.clone();
             if !ready()
@@ -405,7 +405,7 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
             };
             let base = account.server_url.to_string();
             let credential = token();
-            let actor = account.did().to_string();
+            let actor = account.principal_id().to_string();
             let device = account.device_id.clone();
             let authority = account.authority.clone();
             if base.trim().is_empty()
@@ -503,7 +503,7 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
                 return;
             }
             let session = token();
-            let actor = account.did().to_string();
+            let actor = account.principal_id().to_string();
             let device = account.device_id.clone();
             if base.trim().is_empty() || session.trim().is_empty() || actor.trim().is_empty() {
                 return;
@@ -740,7 +740,7 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
                 return;
             };
             let session = token();
-            let actor = account.did().to_string();
+            let actor = account.principal_id().to_string();
             let description = server_description();
             let Some(bootstrap_key) = mls_welcome_bootstrap_key(
                 &account.server_url,

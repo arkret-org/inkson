@@ -838,7 +838,7 @@ struct AcceptedInviteClaimRoute {
 fn accepted_invite_claim_route(
     store: &LocalStateStore,
     realm_id: &str,
-    invitee_did: &str,
+    invitee_id: &str,
 ) -> Option<AcceptedInviteClaimRoute> {
     let state = store.load();
     let accepted = state
@@ -850,7 +850,7 @@ fn accepted_invite_claim_route(
             let payload = &record.payload;
             if raw_operation_payload_kind(payload).as_deref() != Some(event_kind_str::INVITE_ACCEPT)
                 || !raw_operation_is_accepted_fact(payload)
-                || raw_operation_path_string(payload, &["actor_id"]).as_deref() != Some(invitee_did)
+                || raw_operation_path_string(payload, &["actor_id"]).as_deref() != Some(invitee_id)
             {
                 return None;
             }
@@ -868,7 +868,7 @@ fn accepted_invite_claim_route(
             let payload = &record.payload;
             if raw_operation_payload_kind(payload).as_deref() != Some(event_kind_str::INVITE_CREATE)
                 || !raw_operation_is_accepted_fact(payload)
-                || raw_invite_create_invitee(payload).as_deref() != Some(invitee_did)
+                || raw_invite_create_invitee(payload).as_deref() != Some(invitee_id)
                 || raw_operation_invite_ref(payload).as_deref() != Some(accepted.0.as_str())
             {
                 return None;
@@ -1089,14 +1089,14 @@ fn MemberRowActions(
     token: Signal<String>,
     principal_id: String,
     selected_realm_id: String,
-    target_did: String,
+    target_id: String,
     target_label: String,
     can_remove: bool,
     is_self: bool,
     #[props(default)] leave_disabled_reason: Option<String>,
     sync_cursor: Signal<String>,
     mut status_msg: Signal<String>,
-    mut block_confirm_did: Signal<Option<String>>,
+    mut block_confirm_id: Signal<Option<String>>,
 ) -> Element {
     // A4 — base_url / state_store from session context instead of props.
     let base_url = crate::app::SessionContext::base_url_string();
@@ -1164,7 +1164,7 @@ fn MemberRowActions(
                     onclick: {
                         let base = base_url.clone();
                         let realm = selected_realm_id.clone();
-                        let target = target_did.clone();
+                        let target = target_id.clone();
                         let target_label = target_label.clone();
                         let actor_principal_id = principal_id.clone();
                         move |_| {
@@ -1234,7 +1234,7 @@ fn MemberRowActions(
                     onclick: {
                         let base = base_url.clone();
                         let realm = selected_realm_id.clone();
-                        let target = target_did.clone();
+                        let target = target_id.clone();
                         let target_label = target_label.clone();
                         let actor_principal_id = principal_id.clone();
                         move |_| {
@@ -1295,33 +1295,33 @@ fn MemberRowActions(
                     variant: ButtonVariant::Secondary,
                     "data-testid": "member-row-block-button",
                     onclick: {
-                        let target = target_did.clone();
-                        move |_| block_confirm_did.set(Some(target.clone()))
+                        let target = target_id.clone();
+                        move |_| block_confirm_id.set(Some(target.clone()))
                     },
                     {crate::i18n::tr("member.block")}
                 }
             }
         }
-        if !is_self && block_confirm_did().as_deref() == Some(target_did.as_str()) {
+        if !is_self && block_confirm_id().as_deref() == Some(target_id.as_str()) {
             div {
                 class: "event member-block-confirm",
                 "data-testid": "block-user-confirm-modal",
                 div { class: "entity-title", {crate::i18n::tr("member.block_confirm.title")} }
-                div { class: "muted", title: "{target_did}", "{target_label}" }
+                div { class: "muted", title: "{target_id}", "{target_label}" }
                 div { class: "muted", {crate::i18n::tr("member.block_confirm.body")} }
                 div { class: "actions",
                     Button {
                         variant: ButtonVariant::Primary,
                         "data-testid": "block-user-confirm-button",
                         onclick: {
-                            let target = target_did.clone();
+                            let target = target_id.clone();
                             let base = base_url.clone();
                             let target_label = target_label.clone();
                             move |_| {
                                 let changed = state_store
                                     .write()
                                     .block_user(&target, None);
-                                block_confirm_did.set(None);
+                                block_confirm_id.set(None);
                                 if changed {
                                     status_msg.set(format!("Blocked {target_label}"));
                                     let entries = state_store
@@ -1344,7 +1344,7 @@ fn MemberRowActions(
                     Button {
                         variant: ButtonVariant::Secondary,
                         "data-testid": "block-user-cancel-button",
-                        onclick: move |_| block_confirm_did.set(None),
+                        onclick: move |_| block_confirm_id.set(None),
                         {crate::i18n::tr("common.cancel")}
                     }
                 }
@@ -1420,7 +1420,7 @@ fn PendingInviteRow(
         div {
             class: "event member-row member-pending-invite-row",
             "data-testid": "pending-invite-row",
-            "data-member-did": "{member}",
+            "data-member-id": "{member}",
             div { class: "event-head member-row-main",
                 div {
                     class: "member-avatar member-avatar-pending",
@@ -1593,7 +1593,7 @@ async fn retain_current_history_secret_durable(
         .active_account()
         .ok_or_else(|| anyhow::anyhow!("active account context is unavailable"))?;
     anyhow::ensure!(
-        account.did().as_str() == actor_id && account.device_id.as_str() == device_id,
+        account.principal_id().as_str() == actor_id && account.device_id.as_str() == device_id,
         "MLS history retention identity does not match the active account"
     );
     let derived = {
@@ -1626,14 +1626,14 @@ pub(crate) async fn submit_mls_admission_for_invitee(
     realm_id: String,
     actor_id: String,
     device_id: String,
-    invitee_did: String,
+    invitee_id: String,
 ) -> anyhow::Result<Option<u64>> {
     let _authoring_guard = mls_admission_authoring_lock().lock().await;
     let account = crate::app::SessionContext::get()
         .active_account()
         .ok_or_else(|| anyhow::anyhow!("active account context is unavailable"))?;
     anyhow::ensure!(
-        account.did().as_str() == actor_id && account.device_id.as_str() == device_id,
+        account.principal_id().as_str() == actor_id && account.device_id.as_str() == device_id,
         "MLS admission identity does not match the active account"
     );
     let needs_mls_admission = {
@@ -1655,7 +1655,7 @@ pub(crate) async fn submit_mls_admission_for_invitee(
         tracing::warn!(
             target: "mls_admission",
             realm = %short_protocol_id(&realm_id),
-            invitee = %short_protocol_id(&invitee_did),
+            invitee = %short_protocol_id(&invitee_id),
             advanced,
             "admission deferred: drove the exact durable admission unit that already owns this Realm transition"
         );
@@ -1683,7 +1683,7 @@ pub(crate) async fn submit_mls_admission_for_invitee(
         .unwrap_or_else(|| actor_id.clone());
     let claim_route = {
         let store = state_store.read();
-        accepted_invite_claim_route(&store, &realm_id, &invitee_did)
+        accepted_invite_claim_route(&store, &realm_id, &invitee_id)
     }
     .ok_or_else(|| {
         anyhow::anyhow!(
@@ -1730,7 +1730,7 @@ pub(crate) async fn submit_mls_admission_for_invitee(
         mls_clients
             .mls()
             .claim_pairwise_key_package(
-                &invitee_did,
+                &invitee_id,
                 &realm_id,
                 requester,
                 Some(&claim_route.destination_service_id),
@@ -1743,7 +1743,7 @@ pub(crate) async fn submit_mls_admission_for_invitee(
         mls_clients
             .mls()
             .claim_key_package(
-                &invitee_did,
+                &invitee_id,
                 &realm_id,
                 &actor_id,
                 &device_id,
@@ -1975,7 +1975,7 @@ pub(super) fn realm_mls_roster_matches_complete_membership_hint(
     let Some(account) = crate::app::SessionContext::get().active_account() else {
         return false;
     };
-    if account.did().as_str() != actor_id || account.device_id.as_str() != device_id {
+    if account.principal_id().as_str() != actor_id || account.device_id.as_str() != device_id {
         return false;
     }
     crate::mls::runtime::realm_mls_roster_matches_complete_membership_hint(
@@ -2074,14 +2074,14 @@ pub(crate) async fn reconcile_mls_admissions_for_realm(
         .active_account()
         .ok_or_else(|| anyhow::anyhow!("active account context is unavailable"))?;
     anyhow::ensure!(
-        account.did().as_str() == actor_id && account.device_id.as_str() == device_id,
+        account.principal_id().as_str() == actor_id && account.device_id.as_str() == device_id,
         "MLS admission reconcile identity does not match the active account"
     );
     // Only Realms this device can admit into: holding MLS state ⇒ able to build
     // the commit + Welcome. Without a snapshot we are not an admit-capable
     // member and have nothing to reconcile.
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-    let group_member_dids: BTreeSet<String> = {
+    let group_member_ids: BTreeSet<String> = {
         let store = state_store.read();
         match crate::mls::runtime::mls_group_member_principal_ids_for_realm(
             &store,
@@ -2090,7 +2090,7 @@ pub(crate) async fn reconcile_mls_admissions_for_realm(
             &account.authority,
             &account.device_id,
         ) {
-            Some(dids) => dids.into_iter().collect(),
+            Some(ids) => ids.into_iter().collect(),
             None => {
                 // No local group roster: either no snapshot, the device
                 // snapshot secret could not be loaded, or the envelope failed
@@ -2113,11 +2113,11 @@ pub(crate) async fn reconcile_mls_admissions_for_realm(
         let store = state_store.read();
         admission_joined_members_for_realm(&store, &realm_id)
             .into_iter()
-            .filter(|did| {
-                let did = did.trim();
-                !did.is_empty()
-                    && !same_principal_core(did, &actor_id)
-                    && !group_member_dids.contains(did)
+            .filter(|id| {
+                let id = id.trim();
+                !id.is_empty()
+                    && !same_principal_core(id, &actor_id)
+                    && !group_member_ids.contains(id)
             })
             .collect()
     };
@@ -2132,18 +2132,18 @@ pub(crate) async fn reconcile_mls_admissions_for_realm(
             .map(short_protocol_id)
             .collect::<Vec<_>>()
             .join(","),
-        group_members = group_member_dids.len(),
+        group_members = group_member_ids.len(),
         "admission reconcile: attempting to admit joined members not yet in MLS group"
     );
     let mut outcome = MlsAdmissionReconcileOutcome::default();
-    for invitee_did in pending {
+    for invitee_id in pending {
         match submit_mls_admission_for_invitee(
             api,
             state_store,
             realm_id.clone(),
             actor_id.clone(),
             device_id.clone(),
-            invitee_did.clone(),
+            invitee_id.clone(),
         )
         .await
         {
@@ -2152,7 +2152,7 @@ pub(crate) async fn reconcile_mls_admissions_for_realm(
                 tracing::warn!(
                     target: "mls_admission",
                     realm = %short_protocol_id(&realm_id),
-                    invitee = %short_protocol_id(&invitee_did),
+                    invitee = %short_protocol_id(&invitee_id),
                     epoch,
                     "admission succeeded: Welcome produced for invitee"
                 );
@@ -2161,7 +2161,7 @@ pub(crate) async fn reconcile_mls_admissions_for_realm(
                 tracing::warn!(
                     target: "mls_admission",
                     realm = %short_protocol_id(&realm_id),
-                    invitee = %short_protocol_id(&invitee_did),
+                    invitee = %short_protocol_id(&invitee_id),
                     "admission no-op: realm not MLS-admittable from this device"
                 );
             }
@@ -2176,7 +2176,7 @@ pub(crate) async fn reconcile_mls_admissions_for_realm(
                 tracing::warn!(
                     target: "mls_admission",
                     realm = %short_protocol_id(&realm_id),
-                    invitee = %short_protocol_id(&invitee_did),
+                    invitee = %short_protocol_id(&invitee_id),
                     %error,
                     "admission deferred: claim/commit/welcome step failed (bounded retry scheduled)"
                 );
@@ -2230,7 +2230,7 @@ async fn ensure_mls_genesis_frontier_for_invite(
         .active_account()
         .ok_or_else(|| anyhow::anyhow!("active account context is unavailable"))?;
     anyhow::ensure!(
-        account.did().as_str() == actor_id && account.device_id.as_str() == device_id,
+        account.principal_id().as_str() == actor_id && account.device_id.as_str() == device_id,
         "MLS genesis identity does not match the active account"
     );
     {
@@ -2365,7 +2365,7 @@ async fn ensure_mls_governance_proof_for_next_commit(
         .active_account()
         .ok_or_else(|| anyhow::anyhow!("active account context is unavailable"))?;
     anyhow::ensure!(
-        account.did().as_str() == actor_id && account.device_id.as_str() == device_id,
+        account.principal_id().as_str() == actor_id && account.device_id.as_str() == device_id,
         "MLS governance proof identity does not match the active account"
     );
     refresh_mls_governance_target_basis(api, state_store, realm_id, added_claims).await?;
@@ -2500,7 +2500,7 @@ pub fn RealmMembersPanel(
     let mut status_msg = use_signal(String::new);
     let mut members = use_signal(Vec::<MemberProfile>::new);
     let mut owned_agents = use_signal(Vec::<MemberAgentRow>::new);
-    let block_confirm_did = use_signal(|| Option::<String>::None);
+    let block_confirm_id = use_signal(|| Option::<String>::None);
     let mut permissions = use_signal(RealmMemberCapabilities::default);
     let mut member_roster_section = use_signal(|| MemberRosterSection::Members);
     // Invite is now a modal launched from the list header "+" button.
@@ -2907,7 +2907,7 @@ pub fn RealmMembersPanel(
                                             let status_class = crate::views::agents::agent_state_badge_class(&available_agent.status);
                                             let status_label = crate::views::agents::agent_state_label(&available_agent.status).to_owned();
                                             rsx! {
-                                                div { class: "member-self-agent-row", "data-testid": "available-realm-agent-row", "data-agent-did": "{agent_id}",
+                                                div { class: "member-self-agent-row", "data-testid": "available-realm-agent-row", "data-agent-id": "{agent_id}",
                                                     div { class: "member-agent-summary",
                                                         div { class: "member-avatar member-avatar-agent",
                                                             crate::components::IdentityAvatar {
@@ -3266,12 +3266,12 @@ pub fn RealmMembersPanel(
                                                         let invitee_label = invitee
                                                             .handle
                                                             .clone()
-                                                            .unwrap_or_else(|| invitee.did.clone());
-                                                        let invitee_did = invitee.did.clone();
+                                                            .unwrap_or_else(|| invitee.principal_id.to_string());
+                                                        let invitee_id = invitee.principal_id.to_string();
                                                         let op = match ak_ops::invite_create_structured(
                                                             &realm,
                                                             &actor,
-                                                            &invitee_did,
+                                                            &invitee_id,
                                                             None,
                                                             invitee.invite_delivery_target.clone(),
                                                             &invitee.introduction_evidence_digest,
@@ -3337,7 +3337,7 @@ pub fn RealmMembersPanel(
                                                                         json!({
                                                                             "kind": event_kind_str::INVITE_CREATE,
                                                                             "invite_id": invite_id.clone(),
-                                                                            "invitee": invitee_did.clone(),
+                                                                            "invitee": invitee_id.clone(),
                                                                             "invitee_label": invitee_label.clone(),
                                                                             "state": "pending",
                                                                             "event_id": submitted.event_id,
@@ -3348,7 +3348,7 @@ pub fn RealmMembersPanel(
                                                                 let mut next_members = members.read().clone();
                                                                 upsert_pending_invite_profile(
                                                                     &mut next_members,
-                                                                    &invitee_did,
+                                                                    &invitee_id,
                                                                     Some(&invitee_label),
                                                                     Some(&invite_id),
                                                                 );
@@ -3604,7 +3604,7 @@ pub fn RealmMembersPanel(
                                     "data-testid": "member-group",
                                     "data-controller-id": "{member}",
                                     if selected_section != MemberRosterSection::MyAgents {
-                                    div { class: "event member-row member-controller-row", "data-testid": "member-row", "data-member-did": "{member}",
+                                    div { class: "event member-row member-controller-row", "data-testid": "member-row", "data-member-id": "{member}",
                                         div { class: "event-head member-row-main",
                                             if is_self {
                                                 div {
@@ -3707,14 +3707,14 @@ pub fn RealmMembersPanel(
                                             token,
                                             principal_id: principal_id.clone(),
                                             selected_realm_id: selected_realm_id.clone(),
-                                            target_did: member.clone(),
+                                            target_id: member.clone(),
                                             target_label: member_label.clone(),
                                             can_remove,
                                             is_self,
                                             leave_disabled_reason: self_leave_reason,
                                             sync_cursor,
                                             status_msg,
-                                            block_confirm_did,
+                                            block_confirm_id,
                                         }
                                     }
                                     }
@@ -3755,7 +3755,7 @@ pub fn RealmMembersPanel(
                                                             let can_enable = agent_in_realm;
                                                             let can_remove_agent = agent_in_realm;
                                                             rsx! {
-                                                                div { class: "member-self-agent-row", "data-testid": "member-self-agent-row", "data-agent-did": "{agent_id}",
+                                                                div { class: "member-self-agent-row", "data-testid": "member-self-agent-row", "data-agent-id": "{agent_id}",
                                                                     div { class: "member-agent-summary",
                                                                         div { class: "member-avatar member-avatar-agent",
                                                                             crate::components::IdentityAvatar {

@@ -2015,7 +2015,7 @@ impl EventSubmitter {
     >(
         &self,
         realm_id: &str,
-        _controller_id: &arkret_sdk::Did,
+        _controller_did: &arkret_sdk::Did,
         state_store: S,
     ) -> anyhow::Result<(arkret_sdk::RealmSealFrontierView, arkret_sdk::Seal)> {
         let (view, receipts) = self.seals_frontier_realm_state(realm_id).await?;

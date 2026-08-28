@@ -241,8 +241,10 @@ fn test_signing_key() -> &'static SigningKey {
 
 const TEST_REALM_ID: &str = "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-";
 const TEST_SPACE_ID: &str = "ak:space:AQM8rE4gp8l4axkSbbb9_dkqwWE8ZPYHwFsC24o2mrIL";
-const TEST_ACTOR_ID: &str = "did:web:alice.example";
-const TEST_SERVICE_ID: &str = "did:web:server.example";
+const TEST_ACTOR_ID: &str = "ak:did_core:web:alice.example";
+const TEST_ACTOR_DID: &str = "did:web:alice.example";
+const TEST_SERVICE_ID: &str = "ak:did_core:web:server.example";
+const TEST_SERVICE_DID: &str = "did:web:server.example";
 const TEST_INVITEE_DID: &str = "did:web:bob.example";
 const TEST_ANCHOR_REF: &str =
     "ak:seal:sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
@@ -272,7 +274,7 @@ fn wire_envelope(operation: LocalOperation) -> arkret_sdk::AuthoredEvent {
 /// A genesis unit's members are authored together, and every one of them is
 /// CBA-exempt, so there is nothing left to stamp before signing.
 fn sign_authored(envelope: &mut arkret_sdk::AuthoredEvent) {
-    let signer_did = TEST_ACTOR_ID;
+    let signer_did = TEST_ACTOR_DID;
     let key_id = format!("{signer_did}#device");
     envelope
         .sign_ed25519(signer_did, key_id, test_signing_key())
@@ -288,8 +290,8 @@ fn authored_realm_bootstrap(
         event_builders::build_realm_bootstrap_steps(
             test_genesis_salt(),
             TEST_ACTOR_ID,
-            TEST_SERVICE_ID,
-            common::test_notary(TEST_SERVICE_ID),
+            TEST_SERVICE_DID,
+            common::test_notary(TEST_SERVICE_DID),
             "https://server.example",
             "Engineering",
             None,
@@ -336,7 +338,7 @@ fn wire_envelope_from_intent(intent: inkson::operation::EventIntent) -> arkret_s
         }
     }
     let mut envelope = common::author_intent_at_seq(intent, 1);
-    let signer_did = TEST_ACTOR_ID;
+    let signer_did = TEST_ACTOR_DID;
     let key_id = format!("{signer_did}#device");
     envelope
         .sign_ed25519(signer_did, key_id, test_signing_key())
@@ -487,7 +489,7 @@ fn build_realm_create_event_matches_event_schema() {
     let envelope = event_builders::build_realm_create_event(
         test_genesis_salt(),
         TEST_ACTOR_ID,
-        common::test_notary(TEST_SERVICE_ID),
+        common::test_notary(TEST_SERVICE_DID),
         "Engineering",
         Some("Roadmap work"),
         "listed",
@@ -643,7 +645,7 @@ fn build_plaintext_visible_services_event_matches_event_schema() {
     let envelope = event_builders::build_plaintext_visible_services_event(
         TEST_REALM_ID,
         TEST_ACTOR_ID,
-        &["did:web:server.example".to_owned()],
+        &[TEST_SERVICE_ID.to_owned()],
     )
     .expect("build_plaintext_visible_services_event succeeds")
     .expect("non-empty service list yields Some(envelope)");
@@ -712,7 +714,7 @@ fn blank_alias_is_absence_and_emits_no_alias_event() {
 /// object schema-valid AND must materialize exactly one dedicated facet Event.
 #[test]
 fn realm_bootstrap_keeps_plaintext_services_off_the_closed_realm_object() {
-    let events = authored_realm_bootstrap(&["did:web:server.example".to_owned()], None);
+    let events = authored_realm_bootstrap(&[TEST_SERVICE_ID.to_owned()], None);
 
     let mut create = events
         .iter()
@@ -828,7 +830,7 @@ fn sas_key_verification_device_message_matches_device_message_schema() {
     let from_device = "ak:device:01904100-0000-7000-8000-0000000000aa";
     let target_device = "ak:device:01904100-0000-7000-8000-0000000000bb";
     let proof = event_builders::build_signed_device_verification_proof(
-        TEST_ACTOR_ID,
+        TEST_ACTOR_DID,
         from_device,
         target_device,
         "sas_key",

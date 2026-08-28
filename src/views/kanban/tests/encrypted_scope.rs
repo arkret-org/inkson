@@ -123,7 +123,7 @@ fn content_block_json(body: &str) -> String {
 fn encrypted_scope_blocks_plaintext_strand_update_payload() {
     let event = crate::operation::ak_ops::strand_update_patch(
         TEST_REALM_ID,
-        "did:web:alice.example",
+        "ak:did_core:web:alice.example",
         DEMO_STRAND_LEGAL_REVIEW_ID,
         json!({
             "content": {"$op": "set", "value": {
@@ -151,7 +151,7 @@ fn encrypted_scope_blocks_plaintext_strand_update_payload() {
 fn unknown_scope_security_blocks_plaintext_private_content_fail_closed() {
     let private_update = crate::operation::ak_ops::strand_update_patch(
         TEST_REALM_ID,
-        "did:web:alice.example",
+        "ak:did_core:web:alice.example",
         DEMO_STRAND_LEGAL_REVIEW_ID,
         json!({
             "content": {"$op": "set", "value": {
@@ -181,7 +181,7 @@ fn unknown_scope_security_blocks_plaintext_private_content_fail_closed() {
     // while the projection is in flight.
     let board_create = crate::operation::ak_ops::space_create(
         TEST_REALM_ID,
-        "did:web:alice.example",
+        "ak:did_core:web:alice.example",
         "board",
         "Roadmap",
         None,
@@ -380,7 +380,7 @@ fn kanban_write_does_not_consume_pending_welcome_without_checkpoint() {
     let bob_device = "ak:device:01904100-0000-7000-8000-0000000000b2";
     let _account_scope = active_account_scope(bob_actor, bob_device);
     let alice = ArkretMlsIdentity::new_test_human_device(
-        crate::mls_api_helpers::principal_core_id("did:web:alice.example").unwrap(),
+        crate::mls_api_helpers::principal_core_id("ak:did_core:web:alice.example").unwrap(),
         DeviceId::new("ak:device:01904100-0000-7000-8000-0000000000a1".to_owned()).unwrap(),
     )
     .unwrap();
@@ -398,7 +398,7 @@ fn kanban_write_does_not_consume_pending_welcome_without_checkpoint() {
         "device_message_id": "ak:device_message:01904100-0000-7000-8000-0000000000e1",
         "kind": "ak.mls.welcome",
         "sender_principal_id": crate::mls_api_helpers::principal_core_id(
-            "did:web:alice.example"
+            "ak:did_core:web:alice.example"
         ).unwrap(),
         "sender_device_id": "ak:device:01904100-0000-7000-8000-0000000000a1",
         "recipient_principal_id": bob_principal_id,
@@ -456,7 +456,7 @@ fn kanban_write_waits_for_runtime_to_apply_pending_welcome() {
     let bob_device = "ak:device:01904100-0000-7000-8000-0000000000b3";
     let _account_scope = active_account_scope(bob_actor, bob_device);
     let alice = ArkretMlsIdentity::new_test_human_device(
-        crate::mls_api_helpers::principal_core_id("did:web:alice.example").unwrap(),
+        crate::mls_api_helpers::principal_core_id("ak:did_core:web:alice.example").unwrap(),
         DeviceId::new("ak:device:01904100-0000-7000-8000-0000000000a1".to_owned()).unwrap(),
     )
     .unwrap();
@@ -475,7 +475,7 @@ fn kanban_write_waits_for_runtime_to_apply_pending_welcome() {
         "device_message_id": "ak:device_message:01904100-0000-7000-8000-0000000000e2",
         "kind": "ak.mls.welcome",
         "sender_principal_id": crate::mls_api_helpers::principal_core_id(
-            "did:web:alice.example"
+            "ak:did_core:web:alice.example"
         ).unwrap(),
         "sender_device_id": "ak:device:01904100-0000-7000-8000-0000000000a1",
         "recipient_principal_id": bob_principal_id,
@@ -833,7 +833,7 @@ fn encrypted_write_accepts_resolvable_did_for_active_core_identity() {
         patch.clone(),
         "ak:space:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
         "ak:strand:AbQHDTvS4ZELwYOPkH_Rdpweaio8GKWhHTHvvDJIAgzZ",
-        "did:web:alice.example",
+        "ak:did_core:web:alice.example",
         device,
         &mut state,
         &secure,
@@ -854,7 +854,7 @@ fn encrypted_write_rejects_did_for_a_different_active_identity() {
         json!({"summary": {"$op": "set", "value": "metadata summary"}}),
         "ak:space:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
         "ak:strand:AbQHDTvS4ZELwYOPkH_Rdpweaio8GKWhHTHvvDJIAgzZ",
-        "did:web:bob.example",
+        "ak:did_core:web:bob.example",
         device,
         &mut state,
         &secure,
@@ -871,7 +871,7 @@ fn encrypted_write_rejects_did_for_a_different_active_identity() {
 fn encrypted_scope_allows_structural_strand_position_update() {
     let event = crate::operation::ak_ops::strand_position_update(
         TEST_REALM_ID,
-        "did:web:alice.example",
+        "ak:did_core:web:alice.example",
         DEMO_STRAND_LEGAL_REVIEW_ID,
         json!({
             "board_space_id": "ak:space:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-",
@@ -891,7 +891,7 @@ fn encrypted_scope_allows_structural_strand_position_update() {
 fn encrypted_scope_allows_content_only_metadata_create_payloads() {
     let strand = crate::operation::ak_ops::kanban_card_strand_create(
         TEST_REALM_ID,
-        "did:web:alice.example",
+        "ak:did_core:web:alice.example",
         "ak:space:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-",
         "ak:space:AQM8rE4gp8l4axkSbbb9_dkqwWE8ZPYHwFsC24o2mrIL",
         "private card title",
@@ -901,7 +901,7 @@ fn encrypted_scope_allows_content_only_metadata_create_payloads() {
     .build("inkson");
     let space = crate::operation::ak_ops::space_create(
         TEST_REALM_ID,
-        "did:web:alice.example",
+        "ak:did_core:web:alice.example",
         "list",
         "private list title",
         Some("ak:space:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-"),
@@ -925,7 +925,7 @@ fn encrypted_scope_allows_content_only_metadata_create_payloads() {
 fn encrypted_scope_never_blocks_container_metadata_but_blocks_plaintext_private_content() {
     let board = crate::operation::ak_ops::space_create(
         TEST_REALM_ID,
-        "did:web:alice.example",
+        "ak:did_core:web:alice.example",
         "board",
         "ZZTEST board title",
         None,
@@ -941,7 +941,7 @@ fn encrypted_scope_never_blocks_container_metadata_but_blocks_plaintext_private_
 
     let list = crate::operation::ak_ops::space_create(
         TEST_REALM_ID,
-        "did:web:alice.example",
+        "ak:did_core:web:alice.example",
         "list",
         "Todos list title",
         Some("ak:space:Acu6LoN-LFmj9DSd_alwrkXEKF2pIHOHM94FS3OE0CC9"),
@@ -957,7 +957,7 @@ fn encrypted_scope_never_blocks_container_metadata_but_blocks_plaintext_private_
 
     let list_rank_update = crate::operation::ak_ops::space_update_patch(
         TEST_REALM_ID,
-        "did:web:alice.example",
+        "ak:did_core:web:alice.example",
         "ak:space:Af1Pi9BryFSPKbIS5B4pB9_rXFtOAL3hL4MoyX6i-uCE",
         json!({ "rank": "r000" }),
     )
@@ -972,7 +972,7 @@ fn encrypted_scope_never_blocks_container_metadata_but_blocks_plaintext_private_
     // Counter-case: plaintext private body in a strand update is still blocked.
     let private_update = crate::operation::ak_ops::strand_update_patch(
         TEST_REALM_ID,
-        "did:web:alice.example",
+        "ak:did_core:web:alice.example",
         DEMO_STRAND_LEGAL_REVIEW_ID,
         json!({
             "content": {"$op": "set", "value": {
@@ -993,7 +993,7 @@ fn encrypted_scope_never_blocks_container_metadata_but_blocks_plaintext_private_
 fn encrypted_scope_allows_strand_summary_metadata_update() {
     let event = crate::operation::ak_ops::strand_update_patch(
         TEST_REALM_ID,
-        "did:web:alice.example",
+        "ak:did_core:web:alice.example",
         DEMO_STRAND_LEGAL_REVIEW_ID,
         json!({
             "metadata.summary": {"$op": "set", "value": "metadata summary"},

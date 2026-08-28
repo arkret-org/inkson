@@ -75,7 +75,7 @@ struct MockServiceAuthority {
     resolution: arkret_sdk::AuthenticatedServiceResolution,
     signing_key: ed25519_dalek::SigningKey,
     service_id: arkret_sdk::DidCoreId,
-    full_id: arkret_sdk::DidFullId,
+    did: arkret_sdk::Did,
     verification_method: arkret_sdk::DidUrl,
 }
 
@@ -126,8 +126,8 @@ fn demo_realm_genesis() -> Result<Value> {
     let producer_key_material = arkret_sdk::ed25519_pubkey_to_did_key_multibase(
         producer_signing_key.verifying_key().as_bytes(),
     );
-    let producer_full_id = arkret_sdk::DidFullId::new(format!("did:key:{producer_key_material}"))?;
-    let producer_id = arkret_wire::project_full_id_to_core_id(&producer_full_id)?;
+    let producer_did = arkret_sdk::Did::new(format!("did:key:{producer_key_material}"))?;
+    let producer_id = arkret_wire::project_did_to_core_id(&producer_did)?;
     let notary_public_key = authority.signing_key.verifying_key().to_bytes();
     let notary = arkret_sdk::NotaryValue::single_signer(arkret_sdk::NotarySignerDescriptor {
         actor_id: authority.service_id.clone(),
@@ -168,8 +168,8 @@ fn demo_realm_genesis() -> Result<Value> {
             arkret_sdk::DigestSuite::Sha256,
         )?;
     event.sign_ed25519(
-        producer_full_id.as_str(),
-        format!("{producer_full_id}#device"),
+        producer_did.as_str(),
+        format!("{producer_did}#device"),
         &producer_signing_key,
     )?;
     let realm_id = event.realm_id.clone();
@@ -183,7 +183,7 @@ fn demo_realm_genesis() -> Result<Value> {
     let facets = inkson::event_builders::RealmBootstrapFacets {
         principal_server_id: authority.service_id.clone(),
         actor_id: producer_id.to_string(),
-        notary_did: authority.full_id.to_string(),
+        notary_did: authority.did.to_string(),
         notary_service_origin: "https://server.local".to_owned(),
         title: "Arkret Demo Realm".to_owned(),
         summary: Some("SDK-authored E2E Realm fixture".to_owned()),
@@ -219,8 +219,8 @@ fn demo_realm_genesis() -> Result<Value> {
                 arkret_sdk::DigestSuite::Sha256,
             )?;
         followup.sign_ed25519(
-            producer_full_id.as_str(),
-            format!("{producer_full_id}#device"),
+            producer_did.as_str(),
+            format!("{producer_did}#device"),
             &producer_signing_key,
         )?;
         events.push(followup.event().clone());
@@ -266,7 +266,7 @@ fn realm_genesis_seal(input: Value) -> Result<Value> {
     let signer_evidence_ref = signer_evidence.evidence_ref()?;
     let admission_signer = arkret_signatures::Ed25519PayloadSigner::new(
         authority.signing_key.clone(),
-        authority.full_id.clone(),
+        authority.did.clone(),
         authority.verification_method.clone(),
     );
     for event in &mut input.events {
@@ -359,7 +359,7 @@ fn realm_genesis_seal(input: Value) -> Result<Value> {
 
     let signer = arkret_signatures::Ed25519PayloadSigner::new(
         authority.signing_key,
-        authority.full_id,
+        authority.did,
         authority.verification_method,
     );
     let physical_ms = chrono::Utc::now().timestamp_millis().max(0) as u64;
@@ -418,7 +418,7 @@ fn realm_genesis_seal(input: Value) -> Result<Value> {
 fn mock_service_authority() -> Result<MockServiceAuthority> {
     use arkret_identity::{DidKeyResolver, DidResolver};
     use arkret_sdk::{
-        AuthenticatedServiceResolution, DidFullId, DidUrl, ResolutionCommitment,
+        AuthenticatedServiceResolution, Did, DidUrl, ResolutionCommitment,
         ResolutionDidBindingEvidenceKind, ResolutionDidBindingEvidenceReceipt,
         ResolutionMethodEvidenceBoundary, ResolutionMethodHistoryEvidence,
         ServiceResolutionRecordCore, route_binding_describe_digest, sign_service_resolution_record,
@@ -429,17 +429,17 @@ fn mock_service_authority() -> Result<MockServiceAuthority> {
     let signing_key = SigningKey::from_bytes(&[31_u8; 32]);
     let key_material =
         arkret_sdk::ed25519_pubkey_to_did_key_multibase(signing_key.verifying_key().as_bytes());
-    let full_id = DidFullId::new(format!("did:key:{key_material}"))?;
-    let service_id = arkret_wire::project_full_id_to_core_id(&full_id)?;
+    let did = Did::new(format!("did:key:{key_material}"))?;
+    let service_id = arkret_wire::project_did_to_core_id(&did)?;
     let verification_method =
-        DidUrl::new(format!("{full_id}#{key_material}")).map_err(|error| anyhow::anyhow!(error))?;
-    let document = DidKeyResolver::new().resolve_did(&full_id)?.document;
+        DidUrl::new(format!("{did}#{key_material}")).map_err(|error| anyhow::anyhow!(error))?;
+    let document = DidKeyResolver::new().resolve_did(&did)?.document;
     let document_digest =
         arkret_sdk::Hash::new(arkret_sdk::canonical::canonical_sha256(&document)?)?;
-    let full_id_digest = arkret_sdk::canonical::sha256_digest(full_id.as_str().as_bytes());
-    let history_position = format!("synthetic-full-id-{full_id_digest}");
+    let did_digest = arkret_sdk::canonical::sha256_digest(did.as_str().as_bytes());
+    let history_position = format!("synthetic-did-{did_digest}");
     let commitment = ResolutionCommitment {
-        full_id: full_id.clone(),
+        did: did.clone(),
         method_history_head: history_position.clone(),
         version_id: history_position.clone(),
     };
@@ -454,10 +454,10 @@ fn mock_service_authority() -> Result<MockServiceAuthority> {
         ServiceResolutionRecordCore {
             service_id: service_id.clone(),
             service_kind: "principal_server".to_owned(),
-            full_id,
+            did,
             method_history_head: history_position.clone(),
             version_id: history_position.clone(),
-            resolution_event_ref: format!("did-key-full-id-{full_id_digest}"),
+            resolution_event_ref: format!("did-key-did-{did_digest}"),
             record_sequence: 0,
             previous_record_digest: None,
             current_record_url: format!(
@@ -502,17 +502,17 @@ fn mock_service_authority() -> Result<MockServiceAuthority> {
         resolution,
         signing_key,
         service_id,
-        full_id: signer_did_from_method(&verification_method)?,
+        did: signer_did_from_method(&verification_method)?,
         verification_method,
     })
 }
 
-fn signer_did_from_method(method: &arkret_sdk::DidUrl) -> Result<arkret_sdk::DidFullId> {
+fn signer_did_from_method(method: &arkret_sdk::DidUrl) -> Result<arkret_sdk::Did> {
     let (controller, _) = method
         .as_str()
         .split_once('#')
         .context("mock service verification method has no fragment")?;
-    arkret_sdk::DidFullId::new(controller.to_owned()).map_err(anyhow::Error::msg)
+    arkret_sdk::Did::new(controller.to_owned()).map_err(anyhow::Error::msg)
 }
 
 fn service_resolution() -> Result<Value> {

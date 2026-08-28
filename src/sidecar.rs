@@ -1988,8 +1988,8 @@ mod tests {
     ) -> HostedSidecarState {
         HostedSidecarState {
             trace_id: "019f0000-0000-7000-8000-000000000001".to_owned(),
-            controller_id: "did:web:alice.example".to_owned(),
-            addressed_agent_ids: vec!["did:web:agents.example:assistant".to_owned()],
+            controller_id: "ak:did_core:web:alice.example".to_owned(),
+            addressed_agent_ids: vec!["ak:did_core:web:agents.example:assistant".to_owned()],
             addressed_agent_label: "Assistant".to_owned(),
             source_realm_id: "ak:realm:AUqzNZlfuL-7z087TbZhKOdYyKUNPAa2o_neyoFRh3o2".to_owned(),
             source_strand_id: "ak:strand:AUvEs_-d1tc81yDszBZAVWapgIr3Gs6ofbmtZSLQNejL".to_owned(),

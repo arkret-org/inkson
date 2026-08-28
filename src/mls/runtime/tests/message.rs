@@ -1030,7 +1030,7 @@ fn encrypted_write_uses_device_key_snapshot_when_ready() {
     super::seed_current_group_state_ref(&mut state, realm);
     seed_complete_rfc9420_projection(&mut state, realm, actor);
 
-    let (_schedule_hash, member_dids, encrypted_values, _commit, _new_envelope, _) =
+    let (_schedule_hash, member_ids, encrypted_values, _commit, _new_envelope, _) =
         encrypt_values_with_device_snapshot(
             &mut state,
             &store,
@@ -1042,7 +1042,7 @@ fn encrypted_write_uses_device_key_snapshot_when_ready() {
         )
         .unwrap();
 
-    assert_eq!(member_dids.len(), 1);
+    assert_eq!(member_ids.len(), 1);
     assert_eq!(encrypted_values.len(), 1);
     assert!(encrypted_values[0].get("ciphertext").is_some());
     assert!(state.mls_snapshot_for(realm).is_some());

@@ -901,7 +901,7 @@ pub(super) fn RealmsSection(
                                         let federation_policy = realm_federation_policy();
                                         let digest_algorithm = realm_digest_algorithm();
                                         let actor = active_account()
-                                            .map(|account| account.did().to_string())
+                                            .map(|account| account.principal_id().to_string())
                                             .unwrap_or_default();
                                         let configured_plaintext_service_id =
                                             plaintext_service_id.clone();

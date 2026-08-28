@@ -178,7 +178,7 @@ pub(super) fn AccountRecoveryEffects(
         account_recovery_detection_key_seen.set(Some(detection_key.clone()));
         tracing::debug!(target: "recovery_diag", key = %detection_key, "recovery_state re-fetch (authoritative recovery policy)");
         let recovery_material_evidence = state_store.read().recovery_material_evidence();
-        let gate_actor = account.did().clone();
+        let gate_actor = account.principal_id().clone();
         let gate_device = device_id();
         let remember_actor = actor_id;
         let remember_device = gate_device.clone();

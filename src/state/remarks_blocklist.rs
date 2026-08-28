@@ -225,11 +225,10 @@ impl LocalStateStore {
     /// Returns `true` when at least one entry was removed.
     pub fn unblock_user(&mut self, actor_id: impl AsRef<str>) -> bool {
         self.ensure_cached_loaded();
-        let changed =
-            crate::account_data::unblock_user_in(
-                &mut self.cached.client_blocklist,
-                actor_id.as_ref(),
-            );
+        let changed = crate::account_data::unblock_user_in(
+            &mut self.cached.client_blocklist,
+            actor_id.as_ref(),
+        );
         if changed {
             let _ = self.flush();
         }
@@ -314,9 +313,9 @@ impl LocalStateStore {
         self.load().pending_personal_block_sagas
     }
 
-    pub fn complete_personal_block_saga(&mut self, peer_did: &str) {
+    pub fn complete_personal_block_saga(&mut self, peer_id: &str) {
         self.ensure_cached_loaded();
-        if self.cached.pending_personal_block_sagas.remove(peer_did) {
+        if self.cached.pending_personal_block_sagas.remove(peer_id) {
             let _ = self.flush();
         }
     }

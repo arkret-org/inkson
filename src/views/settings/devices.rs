@@ -1923,7 +1923,7 @@ mod tests {
     #[test]
     fn pair_payload_carries_required_fields() {
         let raw = build_pair_payload(
-            "did:web:alice",
+            "ak:did_core:web:alice",
             "device-1",
             "abc-123",
             "7H2K9M4Q",
@@ -1938,7 +1938,7 @@ mod tests {
             parsed["schema"],
             arkret_sdk::SchemaId::DEVICE_PAIRING_OPERATIONS_V1
         );
-        assert_eq!(parsed["principal_id"], "did:web:alice");
+        assert_eq!(parsed["principal_id"], "ak:did_core:web:alice");
         assert_eq!(parsed["pairing_code"], "7H2K9M4Q");
         assert_eq!(parsed["new_device_pubkey"]["kid"], "device-1");
         // Spec-canonical field name is `key`, not `public_key` — the gate body
@@ -1962,7 +1962,7 @@ mod tests {
     #[test]
     fn build_pair_payload_omits_request_id_when_absent() {
         let raw = build_pair_payload(
-            "did:web:alice",
+            "ak:did_core:web:alice",
             "device-1",
             "abc-123",
             "7H2K9M4Q",

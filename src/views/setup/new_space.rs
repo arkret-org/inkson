@@ -76,14 +76,14 @@ pub(super) fn NewSpaceSection(
     let session_context = crate::app::SessionContext::get();
     let base_url = crate::app::SessionContext::base_url_string();
     let mut state_store = session_context.state_store;
-    let principal_did = session_context
+    let principal_id = session_context
         .active_account()
-        .map(|account| account.did().to_string())
+        .map(|account| account.principal_id().to_string())
         .unwrap_or_default();
-    let principal_did_for_create = principal_did.clone();
-    let principal_did_for_archive = principal_did.clone();
-    let principal_did_for_restore = principal_did.clone();
-    let principal_did_for_tombstone = principal_did;
+    let principal_id_for_create = principal_id.clone();
+    let principal_id_for_archive = principal_id.clone();
+    let principal_id_for_restore = principal_id.clone();
+    let principal_id_for_tombstone = principal_id;
     let has_session = !token().trim().is_empty();
     let draft_state_label = tr("setup.state.draft");
     let status_strings = SpaceStatusStrings::resolve();
@@ -410,7 +410,7 @@ pub(super) fn NewSpaceSection(
                                 let kind = new_space_kind();
                                 let parent_id = new_space_parent_id();
                                 let default_realm_id = new_space_default_realm_id();
-                                let actor = principal_did_for_create.clone();
+                                        let actor = principal_id_for_create.clone();
                                 new_space_state.set(tr("setup.space.state.submitting_create"));
                                 spawn(async move {
                                     match authed_api(&base, api_token).and_then(|api| api.event_submitter()) {
@@ -560,7 +560,7 @@ pub(super) fn NewSpaceSection(
                                         let strings = strings.clone();
                                         let api_token = token();
                                         let base = base.clone();
-                                        let actor = principal_did_for_archive.clone();
+                                        let actor = principal_id_for_archive.clone();
                                         let space_id = new_space_created_id();
                                         let realm_id = new_space_realm_id();
                                         new_space_state.set(tr("setup.space.state.submitting_archive"));
@@ -599,7 +599,7 @@ pub(super) fn NewSpaceSection(
                                         let strings = strings.clone();
                                         let api_token = token();
                                         let base = base.clone();
-                                        let actor = principal_did_for_restore.clone();
+                                        let actor = principal_id_for_restore.clone();
                                         let space_id = new_space_created_id();
                                         let realm_id = new_space_realm_id();
                                         new_space_state.set(tr("setup.space.state.submitting_restore"));
@@ -638,7 +638,7 @@ pub(super) fn NewSpaceSection(
                                         let strings = strings.clone();
                                         let api_token = token();
                                         let base = base.clone();
-                                        let actor = principal_did_for_tombstone.clone();
+                                        let actor = principal_id_for_tombstone.clone();
                                         let space_id = new_space_created_id();
                                         let realm_id = new_space_realm_id();
                                         new_space_state.set(tr("setup.space.state.submitting_tombstone"));

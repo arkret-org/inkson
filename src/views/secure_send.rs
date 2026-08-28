@@ -29,7 +29,7 @@ use crate::state::{LocalSealView, LocalStateStore, MoveSubmissionState};
 /// Result of the local MLS encrypt step.
 ///
 /// * `schedule_hash` — post-encrypt group key-schedule hash (B3d governance).
-/// * `member_dids` — every principal DID in the group (membership sanity check).
+/// * `member_ids` — every stable principal id in the group (membership sanity check).
 /// * encrypted content — typed MLS payload + AAD, or `None` on failure.
 /// * commit envelope — the SDK self-update commit, when the encrypt advanced the epoch (a forced
 ///   `ak.mls.commit` is then emitted).
@@ -47,7 +47,7 @@ pub(crate) type LocalMlsEncryptResult = (
 
 /// Encrypt `plaintext_bytes` under the Realm MLS group and return the
 /// structured MLS payload + the canonical AAD it was bound to, plus the
-/// post-encrypt schedule hash, member DID set, optional self-update commit
+/// post-encrypt schedule hash, member id set, optional self-update commit
 /// envelope, and the post-commit snapshot to persist on accept.
 ///
 /// Runs on wasm: the underlying `mls::runtime::encrypt_message_with_device_snapshot`
@@ -140,7 +140,7 @@ fn run_local_mls_encrypt_for_event(
         .map_err(|_| crate::mls::runtime::MlsRuntimeError::EncryptionTransitionPending)?;
     let (
         schedule_hash,
-        member_dids,
+        member_ids,
         payload,
         metadata_payload,
         commit_envelope,
@@ -164,7 +164,7 @@ fn run_local_mls_encrypt_for_event(
     )?;
     Ok((
         Some(schedule_hash),
-        member_dids,
+        member_ids,
         Some(payload),
         metadata_payload,
         commit_envelope,
@@ -288,7 +288,7 @@ pub(crate) fn build_secure_send(
     let seal_ref = seal_view.move_seal_ref();
     let (
         local_schedule_hash,
-        local_member_dids,
+        local_member_ids,
         encrypted_message,
         encrypted_metadata_message,
         real_commit_envelope,
@@ -316,7 +316,7 @@ pub(crate) fn build_secure_send(
     let Some(_local_schedule_hash) = local_schedule_hash else {
         return Err("Send Secure could not derive the MLS key schedule hash".to_owned());
     };
-    if local_member_dids.is_empty() {
+    if local_member_ids.is_empty() {
         return Err("Send Secure could not resolve MLS group members".to_owned());
     }
 

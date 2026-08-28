@@ -644,7 +644,7 @@ impl InksonEventSigner {
     /// controller DID and the authenticated `<controller>#<device_id>` method.
     pub fn sign_managed_agent_pcr_event_seal(
         &self,
-        controller_id: &arkret_sdk::Did,
+        controller_did: &arkret_sdk::Did,
         events: &[arkret_sdk::Event],
         predecessor: Option<&arkret_sdk::Seal>,
         availability: Option<&arkret_sdk::SealAvailabilityReceiptIssueOutcome>,
@@ -657,8 +657,8 @@ impl InksonEventSigner {
         })?;
         let signer = InksonSealSignerAdapter {
             owner: self,
-            did: controller_id.clone(),
-            verification_method: DidUrl::new(format!("{controller_id}#{device_id}"))
+            did: controller_did.clone(),
+            verification_method: DidUrl::new(format!("{controller_did}#{device_id}"))
                 .map_err(|error| EventSignerError::Encoding(error.to_string()))?,
         };
         arkret_bootstrap::build_managed_agent_pcr_event_seal(

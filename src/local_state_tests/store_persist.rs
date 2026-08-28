@@ -1327,8 +1327,8 @@ fn returning_login_clears_consumed_handoff_from_anonymous_namespace() {
         }))
         .unwrap();
 
-    let principal_id = arkret_sdk::Did::new(principal.to_owned()).unwrap();
-    assert!(store.promote_accepted_context_for_test(&principal_id));
+    let principal_did = arkret_sdk::Did::new(principal.to_owned()).unwrap();
+    assert!(store.promote_accepted_context_for_test(&principal_did));
     assert!(
         store.pending_account_handoff().is_some(),
         "handoff remains recoverable on the target account until completion commits"

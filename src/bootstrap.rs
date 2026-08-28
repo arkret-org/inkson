@@ -1368,7 +1368,7 @@ mod tests {
         serde_json::json!({
             "device_message_id": device_message_id,
             "kind": "ak.mls.welcome",
-            "sender_principal_id": "did:webvh:alice.example",
+            "sender_principal_id": "ak:did_core:webvh:alice.example",
             "sender_device_id": "ak:device:0196419b-0000-7000-8000-000000000001",
             "recipient_principal_id": "ak:did_core:webvh:bob.example",
             "recipient_device_id": "ak:device:0196419b-0000-7000-8000-000000000002",

@@ -519,9 +519,9 @@ fn ContactRow(
                                                     let actor = crate::app::SessionContext::get()
                                                         .active_account()
                                                         .map(|account| account.did().clone());
-                                                    let peer_id = arkret_sdk::Did::new(peer.clone()).ok();
-                                                    match (actor, peer_id) {
-                                                        (Some(actor), Some(peer_id)) => {
+                                                    let peer_did = arkret_sdk::Did::new(peer.clone()).ok();
+                                                    match (actor, peer_did) {
+                                                        (Some(actor), Some(peer_did)) => {
                                                             row_status.set(tr("contacts.dm.creating"));
                                                             let resolve_for_create = outcome.clone();
                                                             match with_authed_api(
@@ -532,7 +532,7 @@ fn ContactRow(
                                                                         &api.event_submitter()?,
                                                                         &resolve_for_create,
                                                                         &actor,
-                                                                        &peer_id,
+                                                                        &peer_did,
                                                                     )
                                                                     .await
                                                                 },

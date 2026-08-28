@@ -291,7 +291,7 @@ mod tests {
             ReadPositionKey {
                 realm_id: "ak:realm:ALxDZio2znRUoLNW5_OmFXNttc8yHs8Jw8_b6vk0QYXo".to_owned(),
                 scope_ref: "ak:strand:ADwF2djA89rz9_4IdkNGlnaJ5yxcM3Vl64T-npVeF8-M".to_owned(),
-                actor_id: "did:web:b".to_owned(),
+                actor_id: "ak:did_core:web:b".to_owned(),
             },
             "ak:message:AFrxbbWNTU3fu27uUUMC3ilKugGpnApLyJXvm-E-33Mo".to_owned(),
             1,

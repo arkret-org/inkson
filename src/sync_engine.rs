@@ -60,22 +60,6 @@ use crate::runtime::projection::{ClientProjectionEvent, ProjectionSink, SyncStat
 use crate::state::{LocalStateStore, RawOperationRecord};
 use crate::transport::TransportClient;
 
-/// Normalize an account-sync principal coordinate to its stable Core DID.
-///
-/// The account subscribe context carries the accepted DID while the
-/// account index is keyed by Core DID. Treating the DID as a Core DID
-/// makes every legitimate response look as if it belongs to a different
-/// account and discards the projection after login or reload.
-fn sync_principal_core_id(principal_id: &str) -> Option<arkret_sdk::DidCoreId> {
-    arkret_sdk::DidCoreId::new(principal_id.to_owned())
-        .ok()
-        .or_else(|| {
-            arkret_sdk::Did::new(principal_id.to_owned())
-                .ok()
-                .and_then(|did| arkret_sdk::project_did_to_core_id(&did).ok())
-        })
-}
-
 /// Connection-status label surfaced to the app shell's status signal.
 /// A pure sync-layer concept (no Dioxus state, no rendering); the app views
 /// consume it via the `crate::views::ConnectionState` re-export.
@@ -121,7 +105,7 @@ pub struct SyncEngineContext {
     pub token: crate::runtime::input::ValueReader<String>,
     pub state_store: crate::runtime::input::StateStoreHandle,
     pub account: crate::config::ActiveAccountContext,
-    pub principal_id: String,
+    pub principal_id: arkret_sdk::DidCoreId,
     /// YOU-02-004R (§5.6) — the local device id, needed by the idle
     /// self-update driver to load the device snapshot secret and build the
     /// background `self_update_commit`. Sourced from the active profile config
@@ -359,9 +343,7 @@ impl AccountStepCommitter for InksonAccountCommitter {
             // not publish a fake business update that remounts resources
             // and fans out viewer/backups/invites requests.
             self.ctx.state_store.write(|store| {
-                if sync_principal_core_id(&self.ctx.principal_id)
-                    .is_some_and(|principal_id| store.active_account_matches(&principal_id))
-                {
+                if store.active_account_matches(&self.ctx.principal_id) {
                     store.save_sync_cursor(cursor);
                 } else {
                     tracing::warn!(
@@ -669,21 +651,19 @@ impl
             crate::transport::RequestContext::new(self.ctx.token.get()),
         );
 
-        if !self.ctx.principal_id.trim().is_empty() {
-            let submitter = crate::event_submit::EventSubmitter::new(http.clone())
-                .with_state_store(self.ctx.state_store.clone());
-            if let Err(error) = submitter.drain_outbound().await {
-                tracing::debug!(
-                    ?error,
-                    "account post-commit deferred durable outbound drain"
-                );
-            }
-            if let Err(error) = submitter
-                .drain_mls_outbound(self.ctx.state_store.clone())
-                .await
-            {
-                tracing::debug!(?error, "account post-commit deferred MLS outbound drain");
-            }
+        let submitter = crate::event_submit::EventSubmitter::new(http.clone())
+            .with_state_store(self.ctx.state_store.clone());
+        if let Err(error) = submitter.drain_outbound().await {
+            tracing::debug!(
+                ?error,
+                "account post-commit deferred durable outbound drain"
+            );
+        }
+        if let Err(error) = submitter
+            .drain_mls_outbound(self.ctx.state_store.clone())
+            .await
+        {
+            tracing::debug!(?error, "account post-commit deferred MLS outbound drain");
         }
 
         // `/authz/invites` is an initial/bootstrap projection only. Live
@@ -695,9 +675,7 @@ impl
                 Ok(invites) => {
                     let invite_notifications = invites.invites;
                     self.ctx.state_store.write(|store| {
-                        if !sync_principal_core_id(&self.ctx.principal_id)
-                            .is_some_and(|principal_id| store.active_account_matches(&principal_id))
-                        {
+                        if !store.active_account_matches(&self.ctx.principal_id) {
                             tracing::warn!(
                                 response_principal = %self.ctx.principal_id,
                                 active_principal = ?store.active_principal_id(),
@@ -709,7 +687,7 @@ impl
                             apply_notification_projection(
                                 store,
                                 &response,
-                                &self.ctx.principal_id,
+                                self.ctx.principal_id.as_str(),
                                 step.initial,
                                 Some(invite_notifications),
                             );
@@ -792,29 +770,12 @@ pub async fn run_sync_engine(
     ctx: SyncEngineContext,
 ) {
     ctx.projection_sink.sync_status(SyncStatusEvent::Connecting);
-    let actor_id = match arkret_sdk::Did::new(ctx.principal_id.trim().to_owned()) {
-        Ok(actor_id) => actor_id,
-        Err(error) => {
-            ctx.projection_sink.sync_status(SyncStatusEvent::Terminal {
-                reason: format!("invalid account DID: {error}"),
-            });
-            return;
-        }
-    };
+    let actor_id = ctx.principal_id.clone();
     let device_id = match arkret_sdk::DeviceId::new(ctx.device_id.trim().to_owned()) {
         Ok(device_id) => device_id,
         Err(error) => {
             ctx.projection_sink.sync_status(SyncStatusEvent::Terminal {
                 reason: format!("invalid device id: {error}"),
-            });
-            return;
-        }
-    };
-    let actor_core_id = match crate::mls_api_helpers::principal_core_id(actor_id.as_str()) {
-        Ok(actor_core_id) => actor_core_id,
-        Err(error) => {
-            ctx.projection_sink.sync_status(SyncStatusEvent::Terminal {
-                reason: format!("invalid account principal identity: {error}"),
             });
             return;
         }
@@ -834,7 +795,7 @@ pub async fn run_sync_engine(
         .client_runtime
         .client()
         .run_account_steps(
-            actor_core_id,
+            actor_id,
             device_id,
             &provider,
             AccountStepHandlers::new(&committer, &hook),
@@ -1036,7 +997,7 @@ async fn run_circle_scope_rotate_pass(
     }
     let base = ctx.account.server_url.as_str().to_owned();
     let token = ctx.token.get();
-    let actor_id = ctx.account.did().to_string();
+    let actor_id = ctx.account.principal_id().to_string();
     let authority = ctx.account.authority.clone();
     let device_id = ctx.account.device_id.clone();
     if base.trim().is_empty()
@@ -1528,7 +1489,7 @@ async fn run_idle_self_update_pass(
     }
     let base = ctx.account.server_url.as_str().to_owned();
     let token = ctx.token.get();
-    let actor_id = ctx.account.did().to_string();
+    let actor_id = ctx.account.principal_id().to_string();
     let authority = ctx.account.authority.clone();
     let device_id = ctx.account.device_id.clone();
     if base.trim().is_empty()
@@ -2012,12 +1973,7 @@ pub fn apply_response(
     // check previously lived inside the later projection write, after device
     // revocation handling; a late response for the signed-out account could
     // therefore clear the newly signed-in account first.
-    let response_principal = sync_principal_core_id(&principal_id);
-    if !state_store.read(|store| {
-        response_principal
-            .as_ref()
-            .is_some_and(|principal_id| store.active_account_matches(principal_id))
-    }) {
+    if !state_store.read(|store| store.active_account_matches(&principal_id)) {
         tracing::warn!(
             response_principal = %principal_id,
             active_principal = ?state_store.read(|store| store.active_principal_id()),
@@ -2148,12 +2104,12 @@ pub fn apply_response(
                 store,
                 response,
                 &ctx.account.authority,
-                &principal_id,
+                principal_id.as_str(),
             );
             apply_notification_projection(
                 store,
                 response,
-                &principal_id,
+                principal_id.as_str(),
                 is_full_sync,
                 invite_notifications,
             );
@@ -2355,12 +2311,9 @@ fn sync_realm_state_events(body: &Value) -> Vec<Value> {
 
 fn response_revokes_local_device(
     response: &AccountSyncStep,
-    principal_id: &str,
+    principal_id: &arkret_sdk::DidCoreId,
     device_id: &str,
 ) -> bool {
-    let Ok(principal_id) = crate::mls_api_helpers::principal_core_id(principal_id.trim()) else {
-        return false;
-    };
     let device_id = device_id.trim();
     if device_id.is_empty() {
         return false;
@@ -2796,11 +2749,7 @@ fn ingest_member_identity_events_from_projection(
             let Some(map) = entry.as_object() else {
                 continue;
             };
-            let Some(actor_id) = map
-                .get("actor_id")
-                .or_else(|| map.get("did"))
-                .and_then(Value::as_str)
-            else {
+            let Some(actor_id) = map.get("actor_id").and_then(Value::as_str) else {
                 continue;
             };
             // Inline events have priority — they're complete envelopes.
@@ -2837,14 +2786,9 @@ fn projection_event_kind(event: &Value) -> &str {
         .unwrap_or("")
 }
 
-/// Read the actor DID string from the event, falling back to the roster entry.
+/// Read the stable actor id from the event, falling back to the roster entry.
 fn projection_event_actor_id<'a>(event: &'a Value, fallback: Option<&'a Value>) -> Option<&'a str> {
-    let from = |value: &'a Value| {
-        value
-            .get("actor_id")
-            .or_else(|| value.get("did"))
-            .and_then(Value::as_str)
-    };
+    let from = |value: &'a Value| value.get("actor_id").and_then(Value::as_str);
     from(event).or_else(|| fallback.and_then(from))
 }
 
@@ -3172,23 +3116,6 @@ mod tests {
     use serde_json::{Value, json};
 
     use super::*;
-
-    #[test]
-    fn account_sync_principal_accepts_core_and_did_coordinates() {
-        let did = arkret_sdk::Did::new(
-            "did:webvh:QmXtc5b64aWwQfPjtwNmmqdZbnMCFzm8b6Qqdob9iKq1YA:soland.example:webvh:alice"
-                .to_owned(),
-        )
-        .unwrap();
-        let core_id = arkret_sdk::project_did_to_core_id(&did).unwrap();
-
-        assert_eq!(
-            sync_principal_core_id(core_id.as_str()),
-            Some(core_id.clone())
-        );
-        assert_eq!(sync_principal_core_id(did.as_str()), Some(core_id));
-        assert!(sync_principal_core_id("not-a-did").is_none());
-    }
 
     #[test]
     fn local_device_revocation_rotates_the_live_device_id() {
@@ -4285,8 +4212,7 @@ mod tests {
 
     #[test]
     fn accepted_device_revoke_targets_current_local_device() {
-        let actor = "did:web:alice.example";
-        let actor_core = "ak:did_core:web:alice.example";
+        let actor = arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example".to_owned()).unwrap();
         let device = "ak:device:0196419b-0000-7000-8000-000000000001";
         let mut response = empty_response("ak:cursor:device-revoke");
         response.realm_projections.insert(
@@ -4296,7 +4222,7 @@ mod tests {
                     "event_id": "ak:event:AV624IkuHj3HmxAYE6uyYmBa4Est3gGGdnOsjn71z5L2",
                     "kind": "ak.device.revoke",
                     "payload": {
-                        "principal_id": actor_core,
+                        "principal_id": actor.as_str(),
                         "device_id": device,
                         "revoked_by": "ak:device:0196419b-0000-7000-8000-000000000004",
                         "revoked_at": "2026-07-14T02:00:00.000Z",
@@ -4306,22 +4232,24 @@ mod tests {
             }),
         );
 
-        assert!(response_revokes_local_device(&response, actor, device));
+        assert!(response_revokes_local_device(&response, &actor, device));
         assert!(!response_revokes_local_device(
             &response,
-            actor,
+            &actor,
             "ak:device:0196419b-0000-7000-8000-0000000000ff"
         ));
+        let other_actor =
+            arkret_sdk::DidCoreId::new("ak:did_core:web:mallory.example".to_owned()).unwrap();
         assert!(!response_revokes_local_device(
             &response,
-            "did:web:mallory.example",
+            &other_actor,
             device
         ));
     }
 
     #[test]
     fn malformed_or_non_state_device_revoke_does_not_trigger_local_wipe() {
-        let actor = "did:web:alice.example";
+        let actor = arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example".to_owned()).unwrap();
         let device = "ak:device:0196419b-0000-7000-8000-000000000001";
         let mut response = empty_response("ak:cursor:malformed-device-revoke");
         response.realm_projections.insert(
@@ -4329,16 +4257,16 @@ mod tests {
             json!({
                 "state": { "events": [{
                     "kind": "ak.device.revoke",
-                    "principal_id": actor,
+                    "principal_id": actor.as_str(),
                     "device_id": device
                 }]},
                 "timeline": { "events": [{
                     "kind": "ak.device.revoke",
-                    "payload": { "principal_id": actor, "device_id": device }
+                    "payload": { "principal_id": actor.as_str(), "device_id": device }
                 }]}
             }),
         );
 
-        assert!(!response_revokes_local_device(&response, actor, device));
+        assert!(!response_revokes_local_device(&response, &actor, device));
     }
 }

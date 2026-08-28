@@ -817,7 +817,7 @@ mod rotation_resume_tests {
                 "ak:transaction:01964137-0000-7000-8000-000000000033",
             )
             .unwrap(),
-            actor_id: "did:webvh:z6mkfixture:alice.example".to_owned(),
+            actor_id: "ak:did_core:webvh:z6mkfixture".to_owned(),
             current_device_id: "ak:device:01964137-0000-7000-8000-000000000011".to_owned(),
         };
 

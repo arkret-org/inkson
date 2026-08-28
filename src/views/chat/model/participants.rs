@@ -3,10 +3,13 @@ use super::*;
 pub(crate) fn normalize_participant_id(value: &str) -> Option<String> {
     arkret_sdk::DidCoreId::new(value.trim().to_owned())
         .ok()
-        .map(|principal_id| principal_id.into_inner())
+        .map(|principal_id| principal_id.to_string())
 }
 
-pub(crate) fn clean_participant_display_name(value: &str, principal_id: Option<&str>) -> Option<String> {
+pub(crate) fn clean_participant_display_name(
+    value: &str,
+    principal_id: Option<&str>,
+) -> Option<String> {
     let trimmed = value.trim();
     if trimmed.is_empty() || trimmed.starts_with("did:") || principal_id == Some(trimmed) {
         None

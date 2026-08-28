@@ -41,11 +41,9 @@ pub(crate) fn resolve_handle_request_body(
         None => None,
     };
     let expected_principal_id = match non_empty(context.expected_principal_id) {
-        Some(principal_id) => Some(
-            arkret_sdk::DidCoreId::new(principal_id.clone()).map_err(|err| {
-                anyhow::anyhow!("invalid expected_principal_id `{principal_id}`: {err}")
-            })?,
-        ),
+        Some(principal_id) => Some(arkret_sdk::DidCoreId::new(principal_id.clone()).map_err(
+            |err| anyhow::anyhow!("invalid expected_principal_id `{principal_id}`: {err}"),
+        )?),
         None => None,
     };
     let requester = match non_empty(context.requester) {
@@ -79,7 +77,5 @@ pub(crate) fn resolve_handle_request_body(
 pub(crate) fn canonical_invitee_handle(target: &str) -> anyhow::Result<String> {
     parse_user_handle(target)
         .map(|handle| handle.handle)
-        .ok_or_else(|| {
-            anyhow::anyhow!("invitee must be a canonical handle `<localpart>:<domain>`")
-        })
+        .ok_or_else(|| anyhow::anyhow!("invitee must be a canonical handle `<localpart>:<domain>`"))
 }

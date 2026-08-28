@@ -334,7 +334,7 @@ pub fn AgentRuntimeApprovalPrompt(
                                 return;
                             };
                             let server_url = account.server_url.to_string();
-                            let controller = account.did().to_string();
+                            let controller_did = account.did().to_string();
                             let body = match parse_runtime_key_approval_request(
                                 &approve_request.request_json,
                             ) {
@@ -364,7 +364,7 @@ pub fn AgentRuntimeApprovalPrompt(
                                 let result = with_authed_api(&server_url, api_token, move |api| {
                                     let body = body.clone();
                                     let key_state = key_state.clone();
-                                    let controller = controller.clone();
+                                    let controller_did = controller_did.clone();
                                     let account = approval_account.clone();
                                     async move {
                                         let description = api.describe_cached().await?;
@@ -375,7 +375,7 @@ pub fn AgentRuntimeApprovalPrompt(
                                         let authorization =
                                             build_agent_key_authorization_for_pairing(
                                                 &submitter,
-                                                &controller,
+                                                &controller_did,
                                                 &service_id,
                                                 &key_state,
                                                 &body,
@@ -385,7 +385,7 @@ pub fn AgentRuntimeApprovalPrompt(
                                             authorization.authorize_event;
                                         let requested_scope_disclosure =
                                             build_requested_scope_disclosure_for_pairing(
-                                                &controller,
+                                                &controller_did,
                                                 &service_did,
                                                 &key_state,
                                                 &body,

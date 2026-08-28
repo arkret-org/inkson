@@ -221,9 +221,9 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                     request_controller_handle.as_deref(),
                 )
                 .or_else(|| {
-                    let participant = request_participants
-                        .iter()
-                        .find(|participant| participant.principal_id.trim() == request.target_id.trim())?;
+                    let participant = request_participants.iter().find(|participant| {
+                        participant.principal_id.trim() == request.target_id.trim()
+                    })?;
                     mention_candidate_for_explicit_target(
                         participant,
                         &request_participants,

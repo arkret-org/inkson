@@ -467,14 +467,14 @@ pub fn into_agent_key_pair_request(
 }
 
 pub fn build_requested_scope_disclosure_for_pairing(
-    controller_id: &str,
+    controller_did: &str,
     service_did: &str,
     key_state: &KeyState,
     request: &AgentRuntimeApprovalControllerProjection,
 ) -> anyhow::Result<AgentRequestedScopeDisclosure> {
-    let controller_id = Did::new(controller_id.trim().to_owned())?;
+    let controller_did = Did::new(controller_did.trim().to_owned())?;
     let agent_id = request.agent_id.clone();
-    let controller_actor_id = arkret_sdk::project_did_to_core_id(&controller_id)?;
+    let controller_actor_id = arkret_sdk::project_did_to_core_id(&controller_did)?;
     let agent_actor_id = agent_id.clone();
     if key_state.controller_id != controller_actor_id {
         anyhow::bail!("agent key_state.controller_id does not match the signed-in controller");
@@ -504,7 +504,7 @@ pub fn build_requested_scope_disclosure_for_pairing(
     let verification_method = arkret_sdk::DidUrl::new(
         signer
             .device_id()
-            .map(|device_id| format!("{}#{device_id}", controller_id.as_str()))
+            .map(|device_id| format!("{}#{device_id}", controller_did.as_str()))
             .unwrap_or_else(|| signer.verification_method().to_owned()),
     )
     .map_err(|error| anyhow::anyhow!("agent disclosure verification method is invalid: {error}"))?;
@@ -628,12 +628,12 @@ pub struct AgentKeyAuthorizationForPairing {
 /// then replaced.
 pub async fn build_agent_key_authorization_for_pairing(
     submitter: &crate::event_submit::EventSubmitter,
-    controller_id: &str,
+    controller_did: &str,
     service_id: &str,
     key_state: &KeyState,
     request: &AgentRuntimeApprovalControllerProjection,
 ) -> anyhow::Result<AgentKeyAuthorizationForPairing> {
-    let plan = prepare_agent_key_authorize_pairing(controller_id, service_id, key_state, request)?;
+    let plan = prepare_agent_key_authorize_pairing(controller_did, service_id, key_state, request)?;
     let authored = submitter
         .author_for_direct_submission(&crate::operation::LocalOperation::new(
             plan.intent().clone(),
@@ -664,12 +664,12 @@ impl AgentKeyAuthorizePairingPlan {
 
 /// Build the authorize write and the binding material it will commit to.
 pub fn prepare_agent_key_authorize_pairing(
-    controller_id: &str,
+    controller_did: &str,
     service_id: &str,
     key_state: &KeyState,
     request: &AgentRuntimeApprovalControllerProjection,
 ) -> anyhow::Result<AgentKeyAuthorizePairingPlan> {
-    let controller = Did::new(controller_id.trim().to_owned())?;
+    let controller = Did::new(controller_did.trim().to_owned())?;
     let controller_actor_id = arkret_sdk::project_did_to_core_id(&controller)?;
     if key_state.controller_id != controller_actor_id {
         anyhow::bail!("agent key_state.controller_id does not match the signed-in controller");

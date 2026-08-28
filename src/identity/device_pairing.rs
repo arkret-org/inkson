@@ -509,7 +509,7 @@ mod tests {
     fn request_message() -> Value {
         json!({
             "kind": "ak.key.verification.request",
-            "sender_principal_id": "did:web:alice",
+            "sender_principal_id": "ak:did_core:web:alice",
             "sender_device_id": "ak:device:existing",
             "expires_at": "2026-06-17T12:00:00.000Z",
             "content": {

@@ -370,20 +370,20 @@ mod tests {
     #[test]
     fn actor_is_current_account_requires_exact_non_empty_match() {
         assert!(actor_is_current_account(
-            "did:web:auth.local.host:users:alice",
-            " did:web:auth.local.host:users:alice "
+            "ak:did_core:web:auth.local.host:users:alice",
+            " ak:did_core:web:auth.local.host:users:alice "
         ));
         assert!(!actor_is_current_account(
             "",
-            "did:web:auth.local.host:users:alice"
+            "ak:did_core:web:auth.local.host:users:alice"
         ));
         assert!(!actor_is_current_account(
-            "did:web:auth.local.host:users:alice",
+            "ak:did_core:web:auth.local.host:users:alice",
             ""
         ));
         assert!(!actor_is_current_account(
-            "did:web:auth.local.host:users:bob",
-            "did:web:auth.local.host:users:alice"
+            "ak:did_core:web:auth.local.host:users:bob",
+            "ak:did_core:web:auth.local.host:users:alice"
         ));
     }
 
@@ -392,6 +392,6 @@ mod tests {
         assert!(!MLS_LOCKED_FIELD_PLACEHOLDER.contains("24-word"));
         assert!(!MLS_LOCKED_FIELD_PLACEHOLDER.contains("Recovery Key"));
         assert!(MLS_LOCKED_FIELD_PLACEHOLDER.contains("MLS Welcome"));
-        assert!(MLS_LOCKED_FIELD_PLACEHOLDER.contains("history key"));
+        assert!(MLS_LOCKED_FIELD_PLACEHOLDER.contains("authorized history source"));
     }
 }

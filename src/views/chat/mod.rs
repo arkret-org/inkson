@@ -501,10 +501,10 @@ fn validate_native_prepared_sidecar_binding(
     context_attach_event: &arkret_sdk::Event,
     sidecar_id: &arkret_sdk::SidecarId,
     source_strand_id: &arkret_sdk::StrandId,
-    controller_id: &arkret_sdk::Did,
+    controller_did: &arkret_sdk::Did,
     source_realm_id: &arkret_sdk::RealmId,
 ) -> anyhow::Result<()> {
-    let controller_actor = arkret_sdk::project_did_to_core_id(controller_id)?;
+    let controller_actor = arkret_sdk::project_did_to_core_id(controller_did)?;
     if let Some(create) = create_event
         && (create.kind != arkret_sdk::EventKind::SidecarCreate
             || create.actor_id != controller_actor
@@ -599,11 +599,11 @@ fn sign_prepared_sidecar_event(
     draft: &arkret_sdk::PreparedEventDraft,
     digest_suite: arkret_sdk::DigestSuite,
     expected_kind: &str,
-    controller_id: &arkret_sdk::Did,
+    controller_did: &arkret_sdk::Did,
     device_id: &str,
     source_realm_id: &arkret_sdk::RealmId,
 ) -> anyhow::Result<arkret_sdk::AuthoredEvent> {
-    let controller_actor = arkret_sdk::project_did_to_core_id(controller_id)?;
+    let controller_actor = arkret_sdk::project_did_to_core_id(controller_did)?;
     let mut event = draft.unsigned_event()?;
     let digest = arkret_sdk::Hash::new(event.event_digest_with_digest_suite(digest_suite)?)?;
     if event.digest_suite() != digest_suite
@@ -620,10 +620,10 @@ fn sign_prepared_sidecar_event(
     let signer = crate::event_signer::active_signer()
         .ok_or_else(|| anyhow::anyhow!("active device signer is required for Sidecar commit"))?;
     let expected_verification_method =
-        arkret_sdk::DidUrl::new(format!("{controller_id}#{device_id}"))
+        arkret_sdk::DidUrl::new(format!("{controller_did}#{device_id}"))
             .map_err(anyhow::Error::msg)?;
     if signer.device_id() != Some(device_id)
-        || signer.verification_method_for_principal(controller_id)? != expected_verification_method
+        || signer.verification_method_for_principal(controller_did)? != expected_verification_method
     {
         anyhow::bail!("active Sidecar signer is not bound to the authenticated controller device");
     }
@@ -1236,8 +1236,9 @@ fn composer_mention_nodes(
     let mut mentions = parse_mention_nodes(body);
     for chip in picker {
         if mentions.iter().any(|node| {
-            node.as_mention()
-                .is_some_and(|mention| same_principal_core(mention.subject_id.as_str(), &chip.subject_id))
+            node.as_mention().is_some_and(|mention| {
+                same_principal_core(mention.subject_id.as_str(), &chip.subject_id)
+            })
         }) {
             continue;
         }
@@ -2906,7 +2907,7 @@ pub fn ChatPanel(
                         strand_scope_lookup: strand_scope_lookup.clone(),
                         private_sidecar_strand_ids: private_sidecar_strand_ids.clone(),
                         authority: authority.clone(),
-                        principal_id: principal_id.clone(),
+                        principal_id: active_account.principal_id().clone(),
                         account_display_label: account_display_label.clone(),
                         participants: participants_for_messages.clone(),
                         selected_realm_id: selected_realm_id.clone(),
@@ -3052,7 +3053,7 @@ pub fn ChatPanel(
                                         div {
                                             class: "presence-row presence-row-{state_for_class}",
                                             "data-testid": "presence-row",
-                                            "data-actor-did": "{principal_id_attr",
+                                            "data-actor-id": "{principal_id_attr}",
                                             "data-presence-state": "{state}",
                                             span { class: "presence-dot presence-dot-{state}" }
                                             span { class: "presence-name", title: "{principal_id_attr",

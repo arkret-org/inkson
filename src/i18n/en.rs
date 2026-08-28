@@ -279,7 +279,7 @@ pub fn english_translations() -> TranslationDict {
         "realm_admin.admin_grant_hint",
         "Grant or revoke admin rights for this Realm. The change is signed and takes effect once the server processes it.",
     );
-    dict.set("realm_admin.admin_subject_label", "Admin subject (DID)");
+    dict.set("realm_admin.admin_subject_label", "Admin subject id");
     dict.set("realm_admin.admin_grant_id_label", "Grant ID");
     dict.set(
         "realm_admin.admin_subject_required",

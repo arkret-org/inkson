@@ -401,7 +401,7 @@ pub(super) async fn inject_test_session_grant(
             && account.server_url.as_str() == server_url
     }) else {
         tracing::warn!(
-            principal_id = %principal_did,
+            principal_did = %principal_did,
             device_id,
             server_url,
             "test session injection skipped: active account config does not match fixture"

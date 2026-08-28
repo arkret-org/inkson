@@ -1679,7 +1679,7 @@ pub(crate) fn preview_welcome_security_frontiers(
     device_id: &DeviceId,
     messages_value: &serde_json::Value,
 ) -> Result<Vec<WelcomeSecurityFrontierPreview>, String> {
-    let principal_did = authority.principal_id.clone();
+    let principal_id = authority.principal_id.clone();
     let device_id_typed = device_id.clone();
     let mut previews = Vec::new();
     for entry in collect_welcome_message_entries(messages_value) {
@@ -1709,7 +1709,7 @@ pub(crate) fn preview_welcome_security_frontiers(
         })?;
         let identity = arkret_sdk::ArkretMlsIdentity::restore_from_private_state(
             arkret_sdk::MlsEndpointIdentity::human_device(
-                principal_did.clone(),
+                principal_id.clone(),
                 device_id_typed.clone(),
             ),
             &serialized_state,
@@ -1754,7 +1754,7 @@ pub(crate) fn apply_welcome_messages_with_device_snapshot(
     // error (the readiness status machinery keys off these).
     let secret = load_device_snapshot_secret(secure_store, authority, device_id)
         .map_err(MlsRuntimeError::DeviceSecret)?;
-    let principal_did = authority.principal_id.clone();
+    let principal_id = authority.principal_id.clone();
     let device_id_typed = device_id.clone();
     // Per-welcome failures no longer abort the loop or get swallowed: each is
     // counted and the first reason retained so callers can report partial
@@ -1803,7 +1803,7 @@ pub(crate) fn apply_welcome_messages_with_device_snapshot(
                 Ok(Some(serialized_state)) => {
                     match arkret_sdk::ArkretMlsIdentity::restore_from_private_state(
                         arkret_sdk::MlsEndpointIdentity::human_device(
-                            principal_did.clone(),
+                            principal_id.clone(),
                             device_id_typed.clone(),
                         ),
                         &serialized_state,
@@ -2166,7 +2166,7 @@ pub(crate) fn encrypt_values_with_device_snapshot_for_effective_scope(
         None
     };
     let schedule_hash = group.schedule_hash();
-    let member_dids = group
+    let member_ids = group
         .member_principal_ids()
         .map_err(|error| MlsRuntimeError::Identity(error.to_string()))?;
     let post_state = group
@@ -2192,7 +2192,7 @@ pub(crate) fn encrypt_values_with_device_snapshot_for_effective_scope(
         // counter restarts at their count.
         return Ok((
             schedule_hash,
-            member_dids,
+            member_ids,
             encrypted_values,
             commit_envelope,
             Some(new_envelope.with_app_messages_observed(sent)),
@@ -2207,7 +2207,7 @@ pub(crate) fn encrypt_values_with_device_snapshot_for_effective_scope(
         .map_err(MlsRuntimeError::Commit)?;
     Ok((
         schedule_hash,
-        member_dids,
+        member_ids,
         encrypted_values,
         None,
         None,
@@ -2371,7 +2371,7 @@ pub(crate) fn encrypt_message_with_device_snapshot(
         None
     };
     let schedule_hash = group.schedule_hash();
-    let member_dids = group
+    let member_ids = group
         .member_principal_ids()
         .map_err(|error| MlsRuntimeError::Identity(error.to_string()))?;
     let post_state = group
@@ -2396,7 +2396,7 @@ pub(crate) fn encrypt_message_with_device_snapshot(
         // above ride the NEW epoch (§5.6 counter restarts at `sent`).
         return Ok((
             schedule_hash,
-            member_dids,
+            member_ids,
             encrypted,
             encrypted_metadata,
             commit_envelope,
@@ -2412,7 +2412,7 @@ pub(crate) fn encrypt_message_with_device_snapshot(
         .map_err(MlsRuntimeError::Commit)?;
     Ok((
         schedule_hash,
-        member_dids,
+        member_ids,
         encrypted,
         encrypted_metadata,
         None,

@@ -571,7 +571,7 @@ fn realm_join_and_discovery_authoring_rejects_values_outside_spec_enums() {
             crate::event_signer::build_ed25519_signer([43_u8; 32], "did:web:alice.example"),
         )));
     let realm_id = "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-";
-    let actor_id = "did:web:alice.example";
+    let actor_id = "ak:did_core:web:alice.example";
 
     assert!(
         serde_json::from_value::<arkret_sdk::RealmJoinRuleValue>(json!("members_only")).is_err()

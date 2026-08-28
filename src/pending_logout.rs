@@ -346,7 +346,7 @@ mod tests {
             ),
             base_url: url::Url::parse("https://soland.example").unwrap(),
             session_credential: "session-credential".to_owned(),
-            principal_id: "did:web:soland.example:users:01".to_owned(),
+            principal_id: "ak:did_core:web:soland.example:users:01".to_owned(),
             created_at,
         }
     }

@@ -27,10 +27,10 @@ fn normalize_did_method_entry(value: &str) -> Result<String, String> {
     Ok(format!("did:{method}"))
 }
 
-fn normalize_did_list(raw: &str, label: &str) -> Result<Vec<String>, String> {
+fn normalize_principal_id_list(raw: &str, label: &str) -> Result<Vec<String>, String> {
     let mut values = Vec::new();
     for value in split_policy_list(raw) {
-        arkret_sdk::Did::new(value.clone()).map_err(|err| format!("{label}: {err}"))?;
+        arkret_sdk::DidCoreId::new(value.clone()).map_err(|err| format!("{label}: {err}"))?;
         if !values.iter().any(|existing| existing == &value) {
             values.push(value);
         }
@@ -41,8 +41,8 @@ fn normalize_did_list(raw: &str, label: &str) -> Result<Vec<String>, String> {
 pub(crate) fn build_principal_admission_join_policy(
     enabled: bool,
     methods_raw: &str,
-    allowed_dids_raw: &str,
-    denied_dids_raw: &str,
+    allowed_ids_raw: &str,
+    denied_ids_raw: &str,
 ) -> Result<Option<Value>, String> {
     if !enabled {
         return Ok(None);
@@ -54,10 +54,10 @@ pub(crate) fn build_principal_admission_join_policy(
             methods.push(method);
         }
     }
-    let allowed_dids = normalize_did_list(allowed_dids_raw, "allowed principal DID")?;
-    let denied_dids = normalize_did_list(denied_dids_raw, "denied principal DID")?;
-    if methods.is_empty() && allowed_dids.is_empty() && denied_dids.is_empty() {
-        return Err("principal admission requires a method, allowlist DID, or denylist DID".into());
+    let allowed_ids = normalize_principal_id_list(allowed_ids_raw, "allowed principal id")?;
+    let denied_ids = normalize_principal_id_list(denied_ids_raw, "denied principal id")?;
+    if methods.is_empty() && allowed_ids.is_empty() && denied_ids.is_empty() {
+        return Err("principal admission requires a method, allowlist id, or denylist id".into());
     }
     let mut gate = json!({
         "gate_id": "principal-admission",
@@ -67,11 +67,11 @@ pub(crate) fn build_principal_admission_join_policy(
     if !methods.is_empty() {
         gate["allowed_did_methods"] = json!(methods);
     }
-    if !allowed_dids.is_empty() {
-        gate["allowed_principal_dids"] = json!(allowed_dids);
+    if !allowed_ids.is_empty() {
+        gate["allowed_principal_ids"] = json!(allowed_ids);
     }
-    if !denied_dids.is_empty() {
-        gate["denied_principal_dids"] = json!(denied_dids);
+    if !denied_ids.is_empty() {
+        gate["denied_principal_ids"] = json!(denied_ids);
     }
     Ok(Some(json!({
         "gates": [gate],

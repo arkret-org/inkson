@@ -127,17 +127,7 @@ fn organization_preview_value(preview: arkret_models_discovery::OrganizationPrev
 }
 
 fn actor_preview_value(preview: arkret_models_discovery::ActorPreview) -> Value {
-    let mut value = serde_json::to_value(preview).unwrap_or(Value::Null);
-    // The SDK wire model correctly names the canonical identifier `actor_id`,
-    // while this view's local rendering model historically uses `did` for
-    // keys, titles and actions. Keep that translation at the typed boundary
-    // instead of making every renderer understand two shapes.
-    if let Some(object) = value.as_object_mut()
-        && let Some(actor_id) = object.remove("actor_id")
-    {
-        object.insert("did".to_owned(), actor_id);
-    }
-    value
+    serde_json::to_value(preview).unwrap_or(Value::Null)
 }
 
 #[component]
@@ -840,8 +830,7 @@ pub fn DirectoryPanel(
             if active_tab() == DirectoryTab::Organizations {
                 for org in org_results() {
                     {
-                        let org_id = value_str_any(&org, &["organization_id", "id"], "-");
-                        let org_did = value_str_any(&org, &["organization_did", "did"], org_id.as_str());
+                        let org_id = value_str(&org, "organization_principal_id", "-");
                         let org_name = value_str_any(&org, &["display_name", "name"], "unknown");
                         let org_description = value_str(&org, "description", "");
                         let org_handle = value_str(&org, "handle", "");
@@ -862,7 +851,7 @@ pub fn DirectoryPanel(
                         } else {
                             "Policy inheritance: no linked realms".to_owned()
                         };
-                        let org_did_label = short_protocol_id(&org_did);
+                        let org_id_label = short_protocol_id(&org_id);
                         let actor_lookup_seed = if !org_handle.is_empty() {
                             org_handle.clone()
                         } else {
@@ -874,10 +863,9 @@ pub fn DirectoryPanel(
                                 class: "event",
                                 "data-testid": "org-result",
                                 "data-organization-id": "{org_id}",
-                                "data-organization-did": "{org_did}",
                                 div { class: "event-head",
                                     span { "organization" }
-                                    span { title: "{org_did}", "{org_did_label}" }
+                                    span { title: "{org_id}", "{org_id_label}" }
                                 }
                                 div { class: "entity-title",
                                     "{org_name}"
@@ -1070,11 +1058,11 @@ pub fn DirectoryPanel(
                             }
                             // G3.Y3 — directory-side `block-actor-button`.
                             // Navigates to the blocklist settings page
-                            // with the target DID prefilled via the
+                            // with the target stable identity id prefilled via the
                             // local state store, so the cotest
                             // `personal-blocklist` scenario can pick a
                             // peer from search results and block them
-                            // without typing the DID by hand.
+                            // without typing the id by hand.
                             //
                             // TODO(G3.Y3-followup): replace the route-only
                             // hop with an in-place block confirmation overlay
@@ -1083,7 +1071,7 @@ pub fn DirectoryPanel(
                             // a shortcut into `/settings/blocklist`.
                             {
                                 let actor_id = actor
-                                    .get("did")
+                                    .get("actor_id")
                                     .and_then(|v| v.as_str())
                                     .unwrap_or("")
                                     .to_owned();
@@ -1091,7 +1079,7 @@ pub fn DirectoryPanel(
                                     Link {
                                         class: "secondary",
                                         "data-testid": "block-actor-button",
-                                        "data-actor-did": "{actor_id}",
+                                        "data-actor-id": "{actor_id}",
                                         to: Route::SettingsSection {
                                             section: "blocklist".to_owned(),
                                             filter: String::new(),
@@ -1102,7 +1090,7 @@ pub fn DirectoryPanel(
                             }
                             {
                                 let actor_id = actor
-                                    .get("did")
+                                    .get("actor_id")
                                     .and_then(|v| v.as_str())
                                     .unwrap_or("")
                                     .to_owned();
@@ -1111,7 +1099,7 @@ pub fn DirectoryPanel(
                                 rsx! {
                                     div {
                                         class: "muted",
-                                        "data-testid": "actor-result-did",
+                                        "data-testid": "actor-result-id",
                                         title: "{actor_id}",
                                         "{actor_id_label}"
                                     }
@@ -1390,8 +1378,8 @@ mod tests {
         };
 
         let rendered = actor_preview_value(preview);
-        assert_eq!(rendered["did"], "ak:did_core:web:alice.example");
-        assert!(rendered.get("actor_id").is_none());
+        assert_eq!(rendered["actor_id"], "ak:did_core:web:alice.example");
+        assert!(rendered.get("did").is_none());
     }
 
     #[test]
@@ -1399,7 +1387,7 @@ mod tests {
         // YGN-ORG-04 acceptance: a declared-only Realm/organization with no
         // proof-backed relationship array shows no verified badge.
         let org = json!({
-            "organization_did": "did:web:hint.example",
+            "organization_principal_id": "ak:did_core:web:hint.example",
             "display_name": "Hinted Org",
             // A bare bool is intentionally ignored on its own.
             "verified_badge": true,
@@ -1410,7 +1398,7 @@ mod tests {
     #[test]
     fn active_relationships_are_badged() {
         let org = json!({
-            "organization_did": "did:web:acme.example",
+            "organization_principal_id": "ak:did_core:web:acme.example",
             "verified_relationships": [
                 { "relationship": "owner", "status": "active" },
                 { "relationship": "governance", "status": "active" },

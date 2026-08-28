@@ -710,8 +710,8 @@ pub async fn direct_conversation_found(
 pub async fn create_direct_conversation_from_resolve(
     submitter: &crate::event_submit::EventSubmitter,
     resolve: &arkret_sdk::DirectConversationResolveOutcome,
-    founder_id: &arkret_sdk::Did,
-    peer_id: &arkret_sdk::Did,
+    founder_did: &arkret_sdk::Did,
+    peer_did: &arkret_sdk::Did,
 ) -> anyhow::Result<arkret_sdk::DirectConversationFoundingAcceptanceOutcome> {
     let arkret_sdk::DirectConversationResolveOutcome::CreationRequired {
         next_founding_input,
@@ -722,8 +722,8 @@ pub async fn create_direct_conversation_from_resolve(
     let trust_domain = submitter.events_describe().await?.trust_domain;
     let notary = submitter.current_service_notary().await?;
     let steps = crate::event_builders::build_direct_conversation_founding_steps(
-        founder_id,
-        peer_id,
+        founder_did,
+        peer_did,
         notary,
         trust_domain,
         next_founding_input,

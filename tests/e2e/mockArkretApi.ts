@@ -2141,7 +2141,7 @@ export async function mockArkretApi(
         profile: {
           id: "ak:actor_profile:AbhO_nhWEZ7jojF3JULUGyzIUTiHNshUWblbkJCr7NbP",
           schema: "ak.schema.actor_profile.v1",
-          principal_id: "did:web:alice.example",
+          principal_id: "ak:did_core:web:alice.example",
           actor_kind: "user",
           display_name: displayName,
           handle: "alice.example",
@@ -2476,10 +2476,9 @@ export async function mockArkretApi(
       return json(route, {
         actors: [
           {
-            actor_id: "did:web:bob.example",
+            actor_id: "ak:did_core:web:bob.example",
             display_name: "Bob Example",
             preview: {
-              did: "did:web:bob.example",
               handle: "bob.example",
               display_name: "Bob Example",
             },
@@ -3029,7 +3028,7 @@ export async function mockArkretApi(
     ) {
       return json(route, {
         schema: "ak.schema.invite_receive_policy.v1",
-        subject_id: "did:web:alice.example",
+        subject_id: "ak:did_core:web:alice.example",
         holder_allowed_introduction_kinds: [
           "consent_grant",
           "locator_ref",
@@ -3037,7 +3036,7 @@ export async function mockArkretApi(
         ],
         explicit_address_behavior: "quarantine",
         unknown_invites: "quarantine",
-        denied_subjects: ["did:web:spammer.example"],
+        denied_subjects: ["ak:did_core:web:spammer.example"],
         disclosure: { high_trust: "outcome", low_trust: "opaque" },
       });
     }
@@ -4079,7 +4078,7 @@ export async function mockArkretApi(
         call_id:
           body.call_id ??
           "ak:call:AbhvODyrIRCskAIoS9IXLjMfD-Zsr8lwDpiCU_zLR4it",
-        actor_id: body.actor_id ?? "did:web:alice.example",
+        actor_id: body.actor_id ?? "ak:did_core:web:alice.example",
         device_id:
           body.device_id ?? "ak:device:01904100-0000-7000-8000-a11ce0000001",
         ice_servers: [

@@ -286,14 +286,14 @@ pub(super) fn toggle_sidebar_contact_pin(
         return;
     };
     let next = crate::account_data::ContactRemark::with_pinned_preserving_fields(
-        actor_id,
+        actor_id.clone(),
         existing.as_ref(),
         next_pinned,
         chrono::Utc::now(),
     );
     state_store
         .write()
-        .set_contact_remark(actor_id.clone(), next.clone());
+        .set_contact_remark(actor_id.to_string(), next.clone());
     crate::components::feedback::toast_success(
         if next_pinned {
             "contact.pinned"
@@ -302,7 +302,12 @@ pub(super) fn toggle_sidebar_contact_pin(
         },
         vec![],
     );
-    crate::views::settings::push_contact_remark_account_data(base_url, api_token, actor_id, next);
+    crate::views::settings::push_contact_remark_account_data(
+        base_url,
+        api_token,
+        actor_id.to_string(),
+        next,
+    );
 }
 
 pub(super) fn leave_sidebar_realm(

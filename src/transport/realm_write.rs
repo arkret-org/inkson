@@ -593,9 +593,9 @@ pub async fn leave_realm(
 pub async fn rejoin_direct_conversation(
     submitter: &EventSubmitter,
     realm_id: &arkret_sdk::RealmId,
-    actor_id: &arkret_sdk::Did,
+    actor_did: &arkret_sdk::Did,
 ) -> anyhow::Result<SubmitEventResult> {
-    let actor_id = arkret_sdk::project_did_to_core_id(actor_id)?;
+    let actor_id = arkret_sdk::project_did_to_core_id(actor_did)?;
     transition_member_state(
         submitter,
         realm_id.as_str(),
@@ -977,13 +977,13 @@ mod tests {
     use super::*;
 
     const REALM_ID: &str = "ak:realm:AT3p9polsnQ_WOix32QZimMdE2zPe62HptJu2PaO3V1h";
-    const ACTOR_ID: &str = "did:web:alice.example";
-    const SERVICE_ID: &str = "did:web:server.example";
+    const ACTOR_ID: &str = "ak:did_core:web:alice.example";
+    const SERVICE_DID: &str = "did:web:server.example";
 
     #[test]
     fn latest_alias_payload_folds_accepted_declaration_and_tombstone() {
         let declaration =
-            build_realm_alias_event(REALM_ID, ACTOR_ID, SERVICE_ID, "engineering").unwrap();
+            build_realm_alias_event(REALM_ID, ACTOR_ID, SERVICE_DID, "engineering").unwrap();
         let declaration_value = serde_json::to_value(declaration.payload()).unwrap();
         let tombstone =
             build_realm_alias_tombstone_event(REALM_ID, ACTOR_ID, declaration_value).unwrap();
@@ -1004,7 +1004,8 @@ mod tests {
 
     #[test]
     fn latest_alias_payload_ignores_unrelated_events() {
-        let alias = build_realm_alias_event(REALM_ID, ACTOR_ID, SERVICE_ID, "engineering").unwrap();
+        let alias =
+            build_realm_alias_event(REALM_ID, ACTOR_ID, SERVICE_DID, "engineering").unwrap();
         let unrelated = build_realm_state_event::<arkret_sdk::event_spec::RealmProfile>(
             REALM_ID,
             ACTOR_ID,

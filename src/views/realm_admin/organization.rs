@@ -214,7 +214,7 @@ pub(crate) fn phase_from_lifecycle(
 /// not define the wire type, only this display-side view.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct OrgRelationshipDto {
-    pub organization_did: String,
+    pub organization_id: String,
     pub organization_name: String,
     /// `owner` / `governance` / `sponsor` / `directory_certifier`, or empty for
     /// a declared hint (which carries no relationship).
@@ -238,27 +238,27 @@ fn enum_slug<T: serde::Serialize>(value: &T) -> String {
 
 /// Build a display row from a projected verified / revoked relationship row.
 fn dto_from_row(row: &RealmOrganizationRelationshipRow) -> OrgRelationshipDto {
-    let organization_did = row.organization_id.as_str().to_owned();
+    let organization_id = row.organization_id.as_str().to_owned();
     OrgRelationshipDto {
-        organization_name: short_protocol_id(&organization_did),
+        organization_name: short_protocol_id(&organization_id),
         relationship: enum_slug(&row.relationship),
         phase: phase_from_lifecycle(row.lifecycle_phase),
         control_scopes: row.control_scopes.iter().map(enum_slug).collect(),
         statement_id: Some(row.statement_id.clone()),
-        organization_did,
+        organization_id,
     }
 }
 
-/// Build a declared-hint display row from an owning-organization DID with no
+/// Build a declared-hint display row from an owning-organization id with no
 /// verified statement. A hint has no relationship, no scopes, and no statement.
-fn dto_from_hint(did: &str) -> OrgRelationshipDto {
+fn dto_from_hint(id: &str) -> OrgRelationshipDto {
     OrgRelationshipDto {
-        organization_name: short_protocol_id(did),
+        organization_name: short_protocol_id(id),
         relationship: String::new(),
         phase: OrgRelationshipPhase::DeclaredHint,
         control_scopes: Vec::new(),
         statement_id: None,
-        organization_did: did.to_owned(),
+        organization_id: id.to_owned(),
     }
 }
 
@@ -269,7 +269,7 @@ fn dtos_from_list(list: &RealmOrganizationRelationshipList) -> Vec<OrgRelationsh
     out.extend(
         list.declared_organization_hints
             .iter()
-            .map(|did| dto_from_hint(did.as_str())),
+            .map(|id| dto_from_hint(id.as_str())),
     );
     out
 }
@@ -350,7 +350,7 @@ pub fn RealmOrganizationPanel(
                         for rel in rows.clone() {
                             {
                                 let phase = rel.phase;
-                                let org_did = rel.organization_did.clone();
+                                let organization_id = rel.organization_id.clone();
                                 let scopes = rel.control_scopes.join(", ");
                                 let relationship_suffix = if rel.relationship.is_empty() {
                                     String::new()
@@ -361,7 +361,7 @@ pub fn RealmOrganizationPanel(
                                     div {
                                         class: "event nested-card",
                                         "data-testid": "org-relationship-row",
-                                        "data-organization-did": "{org_did}",
+                                        "data-organization-id": "{organization_id}",
                                         "data-phase": "{phase_slug(phase)}",
                                         div { class: "event-head",
                                             span { "{rel.organization_name}" }
@@ -371,7 +371,7 @@ pub fn RealmOrganizationPanel(
                                                 "{phase.label()}"
                                             }
                                         }
-                                        div { class: "muted", title: "{org_did}", "{short_protocol_id(&org_did)}{relationship_suffix}" }
+                                        div { class: "muted", title: "{organization_id}", "{short_protocol_id(&organization_id)}{relationship_suffix}" }
                                         div { class: "muted", "data-testid": "org-relationship-explainer", "{phase.explainer()}" }
                                         if !scopes.is_empty() {
                                             div { class: "muted", "data-testid": "org-relationship-scopes", "scopes: {scopes}" }
@@ -948,12 +948,15 @@ mod tests {
 
     #[test]
     fn hint_dto_carries_no_statement_or_relationship() {
-        let dto = dto_from_hint("did:webvh:hint.example:orgs:org1");
+        let dto = dto_from_hint("ak:did_core:webvh:hint.example:orgs:org1");
         assert_eq!(dto.phase, OrgRelationshipPhase::DeclaredHint);
         assert!(dto.statement_id.is_none());
         assert!(dto.relationship.is_empty());
         assert!(dto.control_scopes.is_empty());
-        // The DID is preserved verbatim; no fabricated display name.
-        assert_eq!(dto.organization_did, "did:webvh:hint.example:orgs:org1");
+        // The stable id is preserved verbatim; no fabricated display name.
+        assert_eq!(
+            dto.organization_id,
+            "ak:did_core:webvh:hint.example:orgs:org1"
+        );
     }
 }

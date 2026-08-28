@@ -41,8 +41,8 @@ pub fn RealmAdminPanel(
     let mut join_rule = use_signal(|| "public".to_owned());
     let mut principal_admission_enabled = use_signal(|| false);
     let mut principal_admission_methods = use_signal(|| "did:webvh".to_owned());
-    let mut principal_admission_allowed_dids = use_signal(String::new);
-    let mut principal_admission_denied_dids = use_signal(String::new);
+    let mut principal_admission_allowed_ids = use_signal(String::new);
+    let mut principal_admission_denied_ids = use_signal(String::new);
     let mut tighten_history_access = use_signal(|| false);
     let mut status_msg = use_signal(String::new);
     // Capability grant/revoke Move-strand inputs (see capability-grant-card)
@@ -76,10 +76,10 @@ pub fn RealmAdminPanel(
     // here, and the typed text is what the payload ships.
     let mut gov_reset_confirm_text = use_signal(String::new);
     // Realm-admin grant inputs (see realm-admin-grant-card). The subject is
-    // the DID being made / removed as admin; the grant id is minted
+    // the stable principal id being made / removed as admin; the grant id is minted
     // client-side on grant and re-entered on revoke (the soland reducer
     // locates the cell by grant_id).
-    let mut admin_subject_did = use_signal(String::new);
+    let mut admin_subject_id = use_signal(String::new);
     let mut admin_grant_id = use_signal(String::new);
     // Structured constraint inputs for the capability grant.
     // `cap_constraint_kind` chooses the family (`temporal` / `quota` /
@@ -1295,21 +1295,21 @@ pub fn RealmAdminPanel(
                         placeholder: "did:webvh, did:web",
                         oninput: move |event: FormEvent| principal_admission_methods.set(event.value()),
                     }
-                    Label { html_for: "principal-admission-allowed-dids-input", "Allowed principal DIDs" }
+                    Label { html_for: "principal-admission-allowed-ids-input", "Allowed principal ids" }
                     Textarea {
-                        id: "principal-admission-allowed-dids-input",
-                        "data-testid": "principal-admission-allowed-dids-input",
-                        value: "{principal_admission_allowed_dids}",
-                        placeholder: "did:web:alice.example",
-                        oninput: move |event: FormEvent| principal_admission_allowed_dids.set(event.value()),
+                        id: "principal-admission-allowed-ids-input",
+                        "data-testid": "principal-admission-allowed-ids-input",
+                        value: "{principal_admission_allowed_ids}",
+                        placeholder: "ak:did_core:webvh:<scid>:alice.example",
+                        oninput: move |event: FormEvent| principal_admission_allowed_ids.set(event.value()),
                     }
-                    Label { html_for: "principal-admission-denied-dids-input", "Denied principal DIDs" }
+                    Label { html_for: "principal-admission-denied-ids-input", "Denied principal ids" }
                     Textarea {
-                        id: "principal-admission-denied-dids-input",
-                        "data-testid": "principal-admission-denied-dids-input",
-                        value: "{principal_admission_denied_dids}",
-                        placeholder: "did:web:blocked.example",
-                        oninput: move |event: FormEvent| principal_admission_denied_dids.set(event.value()),
+                        id: "principal-admission-denied-ids-input",
+                        "data-testid": "principal-admission-denied-ids-input",
+                        value: "{principal_admission_denied_ids}",
+                        placeholder: "ak:did_core:webvh:<scid>:blocked.example",
+                        oninput: move |event: FormEvent| principal_admission_denied_ids.set(event.value()),
                     }
                 } else {
                     div { class: "muted", "Disabled" }
@@ -1344,8 +1344,8 @@ pub fn RealmAdminPanel(
                                 let join_policy = match build_principal_admission_join_policy(
                                     principal_admission_enabled(),
                                     &principal_admission_methods(),
-                                    &principal_admission_allowed_dids(),
-                                    &principal_admission_denied_dids(),
+                                    &principal_admission_allowed_ids(),
+                                    &principal_admission_denied_ids(),
                                 ) {
                                     Ok(policy) => policy,
                                     Err(err) => {
@@ -1437,7 +1437,7 @@ pub fn RealmAdminPanel(
                                     status_msg.set("rotate failed: active account context is unavailable".to_owned());
                                     return;
                                 };
-                                if account.did().as_str() != actor_id
+                                if account.principal_id().as_str() != actor_id
                                     || account.device_id.as_str() != device
                                 {
                                     status_msg.set("rotate failed: active account authority changed".to_owned());
@@ -2025,9 +2025,9 @@ pub fn RealmAdminPanel(
                 Input {
                     id: "realm-admin-subject-input",
                     "data-testid": "realm-admin-subject-input",
-                    value: "{admin_subject_did}",
-                    placeholder: "did:web:…",
-                    oninput: move |event: FormEvent| admin_subject_did.set(event.value()),
+                    value: "{admin_subject_id}",
+                    placeholder: "ak:did_core:…",
+                    oninput: move |event: FormEvent| admin_subject_id.set(event.value()),
                 }
                 Label { html_for: "realm-admin-grant-id-input", {crate::i18n::tr("realm_admin.admin_grant_id_label")} }
                 Input {
@@ -2049,7 +2049,7 @@ pub fn RealmAdminPanel(
                                 let base = base.clone();
                                 let realm = realm.clone();
                                 let api_token = token();
-                                let subject = admin_subject_did().trim().to_owned();
+                                let subject = admin_subject_id().trim().to_owned();
                                 let actor_id = actor_principal_id.trim().to_owned();
                                 if subject.is_empty() {
                                     status_msg.set(crate::i18n::tr("realm_admin.admin_subject_required"));

@@ -30,7 +30,7 @@ fn test_payload_proof(payload_digest: arkret_sdk::Hash) -> arkret_sdk::PayloadPr
 fn resolve_handle_request_body_carries_lookup_context() {
     let context = ResolveHandleContext {
         intent: Some("lookup"),
-        requester: Some("did:web:alice.example"),
+        requester: Some("ak:did_core:web:alice.example"),
         audience: Some("ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-"),
         realm_id: Some("ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-"),
         expected_principal_id: Some("ak:did_core:web:bob.example"),

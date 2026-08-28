@@ -383,7 +383,7 @@ mod act_on_behalf_tests {
             is_self: false,
             is_agent: true,
             agent_metadata: Some(AgentParticipantMetadata {
-                controller_id: "did:web:example.com:users:alice".to_owned(),
+                controller_id: "ak:did_core:web:example.com:users:alice".to_owned(),
                 controller_handle: "alice".to_owned(),
                 agent_slug: "summary".to_owned(),
                 display_name: "Summary Assistant".to_owned(),

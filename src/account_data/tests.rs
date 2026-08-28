@@ -307,8 +307,8 @@ fn contact_remark_serialises_minimal_private_payload() {
 
 #[test]
 fn contact_remark_pinned_builder_preserves_private_fields() {
-    let actor_id = "did:web:alice.example";
-    let actor_id = crate::mls_api_helpers::principal_core_id(actor_id).unwrap();
+    let actor_did = "did:web:alice.example";
+    let actor_id = crate::mls_api_helpers::principal_core_id(actor_did).unwrap();
     let existing = ContactRemark {
         version: 1,
         subject: ContactRemarkSubject {
@@ -363,7 +363,10 @@ fn typed_blocklist_entries_filter_by_closed_mode_surface_and_expiry() {
         created_at,
     )
     .unwrap();
-    assert!(is_blocked(&[entry.clone()], "ak:did_core:web:alice.example"));
+    assert!(is_blocked(
+        &[entry.clone()],
+        "ak:did_core:web:alice.example"
+    ));
     assert!(!suppresses_notifications(
         &[entry.clone()],
         "ak:did_core:web:alice.example",
@@ -371,7 +374,10 @@ fn typed_blocklist_entries_filter_by_closed_mode_surface_and_expiry() {
     ));
 
     entry.mode = AccountBlocklistMode::Mute;
-    assert!(!is_blocked(&[entry.clone()], "ak:did_core:web:alice.example"));
+    assert!(!is_blocked(
+        &[entry.clone()],
+        "ak:did_core:web:alice.example"
+    ));
     entry.applies_to = vec![AccountBlocklistSurface::Notifications];
     assert!(suppresses_notifications(
         &[entry.clone()],
@@ -426,7 +432,10 @@ fn typed_blocklist_mutators_dedupe_and_unblock_exact_targets() {
     let domain_target = entries[1].target.clone();
     assert!(unblock_target_in(&mut entries, &domain_target));
     assert_eq!(entries.len(), 1);
-    assert!(unblock_user_in(&mut entries, "ak:did_core:web:alice.example"));
+    assert!(unblock_user_in(
+        &mut entries,
+        "ak:did_core:web:alice.example"
+    ));
     assert!(entries.is_empty());
 }
 
@@ -475,8 +484,10 @@ fn blocklist_payload_round_trip_keeps_sdk_closed_types() {
     entry.mode = AccountBlocklistMode::Hide;
 
     let body =
-        build_blocklist_account_data_body("did:web:owner.example", 9, &[entry.clone()]).unwrap();
-    let decoded = blocklist_entries_from_account_data(&body, "did:web:owner.example").unwrap();
+        build_blocklist_account_data_body("ak:did_core:web:owner.example", 9, &[entry.clone()])
+            .unwrap();
+    let decoded =
+        blocklist_entries_from_account_data(&body, "ak:did_core:web:owner.example").unwrap();
     assert_eq!(decoded, vec![entry]);
     assert!(matches!(
         &decoded[0].target,

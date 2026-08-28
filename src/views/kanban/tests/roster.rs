@@ -91,7 +91,7 @@ fn realm_member_roster_ignores_removed_digest_key() {
 #[test]
 fn realm_member_roster_ignores_bare_did_strings() {
     let projection = json!({
-        "members": ["did:web:bob.example", "did:web:carol.example"]
+        "members": ["ak:did_core:web:bob.example", "ak:did_core:web:carol.example"]
     });
     let rows = realm_member_roster(Some(&projection));
     assert!(rows.is_empty());
@@ -139,10 +139,14 @@ fn member_display_label_uses_identity_name_when_no_verified_handle_exists() {
         schema: arkret_sdk::SchemaId::MEMBER_IDENTITY_V1.to_owned(),
         realm_id: arkret_sdk::RealmId::new("ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19")
             .unwrap(),
-        actor_id: crate::mls_api_helpers::principal_core_id("did:web:acme.example:users:alice")
-            .unwrap(),
-        subject_id: crate::mls_api_helpers::principal_core_id("did:web:acme.example:users:alice")
-            .unwrap(),
+        actor_id: crate::mls_api_helpers::principal_core_id(
+            "ak:did_core:web:acme.example:users:alice",
+        )
+        .unwrap(),
+        subject_id: crate::mls_api_helpers::principal_core_id(
+            "ak:did_core:web:acme.example:users:alice",
+        )
+        .unwrap(),
         display_profile: DisplayProfile {
             display_name: "Alice".to_owned(),
             avatar_blob_ref: None,
@@ -161,7 +165,7 @@ fn member_display_label_uses_identity_name_when_no_verified_handle_exists() {
     };
 
     let row = RealmMemberRow {
-        actor_id: "did:web:acme.example:users:alice".to_owned(),
+        actor_id: "ak:did_core:web:acme.example:users:alice".to_owned(),
         membership: Some("join".to_owned()),
         identity_event_ids: vec![],
         member_display_state_digest: None,
@@ -173,7 +177,7 @@ fn member_display_label_uses_identity_name_when_no_verified_handle_exists() {
 
     // Decryption-pending / no MemberIdentity → fall back to compact DID.
     let bare = RealmMemberRow {
-        actor_id: "did:webvh:zQmPr8aaaaaaaaaaaaaaaaa7h4q87ha".to_owned(),
+        actor_id: "ak:did_core:webvh:zQmPr8aaaaaaaaaaaaaaaaa7h4q87ha".to_owned(),
         membership: None,
         identity_event_ids: vec![],
         member_display_state_digest: None,
@@ -182,14 +186,14 @@ fn member_display_label_uses_identity_name_when_no_verified_handle_exists() {
         handle_claims_limited: false,
     };
     let label = member_label(&bare, None, None);
-    assert!(label.starts_with("did:webvh:"));
+    assert!(label.starts_with("ak:did_core:webvh:"));
     assert!(label.contains("..."));
 }
 
 #[test]
 fn member_display_label_prefers_inline_verified_handle_claim() {
     let row = RealmMemberRow {
-        actor_id: "did:webvh:zQmPairwiseActor".to_owned(),
+        actor_id: "ak:did_core:webvh:zQmPairwiseActor".to_owned(),
         membership: Some("join".to_owned()),
         identity_event_ids: vec![],
         member_display_state_digest: Some(
@@ -217,7 +221,7 @@ fn member_display_label_prefers_inline_verified_handle_claim() {
 #[test]
 fn member_display_label_rejects_unverified_or_noncanonical_handle_claims() {
     let row = RealmMemberRow {
-        actor_id: "did:webvh:zQmPairwiseActor".to_owned(),
+        actor_id: "ak:did_core:webvh:zQmPairwiseActor".to_owned(),
         membership: Some("join".to_owned()),
         identity_event_ids: vec![],
         member_display_state_digest: None,
@@ -242,7 +246,7 @@ fn member_display_label_rejects_unverified_or_noncanonical_handle_claims() {
     let undisclosed = RealmMemberRow {
         subject_id: None,
         handle_claims: vec![json!({
-            "subject": "did:webvh:zQmPairwiseActor",
+            "subject": "ak:did_core:webvh:zQmPairwiseActor",
             "handle": "hidden:acme.example",
             "binding_state": "verified"
         })],
@@ -258,7 +262,7 @@ fn member_display_label_uses_cached_directory_primary_handle() {
         membership: Some("join".to_owned()),
         identity_event_ids: vec![],
         member_display_state_digest: None,
-        subject_id: Some("did:webvh:zQmPrincipal".to_owned()),
+        subject_id: Some("ak:did_core:webvh:zQmPrincipal".to_owned()),
         handle_claims: Vec::new(),
         handle_claims_limited: false,
     };

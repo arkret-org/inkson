@@ -106,7 +106,7 @@ fn calendar_rsvp_operation_carries_the_complete_entry_and_effect() {
 
     let event = calendar_rsvp_operation(
         TEST_REALM_ID,
-        "did:web:auth.local.host:users:alice",
+        "ak:did_core:web:auth.local.host:users:alice",
         TEST_CALENDAR_STRAND_ID,
         "accepted",
         "2026-06-20T09:00:00[Asia/Shanghai]",
@@ -185,7 +185,7 @@ fn calendar_rsvp_without_an_observed_schedule_fails_closed() {
     assert!(
         calendar_rsvp_operation(
             TEST_REALM_ID,
-            "did:web:auth.local.host:users:alice",
+            "ak:did_core:web:auth.local.host:users:alice",
             TEST_CALENDAR_STRAND_ID,
             "accepted",
             "",
@@ -460,12 +460,12 @@ fn rsvp_display_shows_own_answer_and_aggregate() {
     let cells = vec![
         RsvpCellProjectionView {
             occurrence: None,
-            actor_id: "did:web:alice.example".to_owned(),
+            actor_id: "ak:did_core:web:alice.example".to_owned(),
             heads: vec![rsvp_head(1, FRONTIER, "accepted")],
         },
         RsvpCellProjectionView {
             occurrence: None,
-            actor_id: "did:web:bob.example".to_owned(),
+            actor_id: "ak:did_core:web:bob.example".to_owned(),
             heads: vec![rsvp_head(2, FRONTIER, "declined")],
         },
     ];
@@ -474,7 +474,7 @@ fn rsvp_display_shows_own_answer_and_aggregate() {
         &cells,
         &[FRONTIER.to_owned()],
         None,
-        "did:web:alice.example",
+        "ak:did_core:web:alice.example",
     );
     assert_eq!(display.own_status.as_deref(), Some("accepted"));
     assert!(!display.own_conflicted);
@@ -489,7 +489,7 @@ fn rsvp_display_surfaces_a_conflict_instead_of_choosing_a_side() {
     // it, so the card must not display one of them as the answer.
     let cells = vec![RsvpCellProjectionView {
         occurrence: None,
-        actor_id: "did:web:alice.example".to_owned(),
+        actor_id: "ak:did_core:web:alice.example".to_owned(),
         heads: vec![
             rsvp_head(1, FRONTIER, "accepted"),
             rsvp_head(2, FRONTIER, "declined"),
@@ -500,7 +500,7 @@ fn rsvp_display_surfaces_a_conflict_instead_of_choosing_a_side() {
         &cells,
         &[FRONTIER.to_owned()],
         None,
-        "did:web:alice.example",
+        "ak:did_core:web:alice.example",
     );
     assert!(display.own_conflicted);
     assert!(display.own_status.is_none());
@@ -513,7 +513,7 @@ fn rsvp_display_excludes_heads_resting_on_an_unknown_schedule() {
     let stale = "sha256:9999999999999999999999999999999999999999999999999999999999999999";
     let cells = vec![RsvpCellProjectionView {
         occurrence: None,
-        actor_id: "did:web:alice.example".to_owned(),
+        actor_id: "ak:did_core:web:alice.example".to_owned(),
         heads: vec![rsvp_head(1, stale, "accepted")],
     }];
 
@@ -521,7 +521,7 @@ fn rsvp_display_excludes_heads_resting_on_an_unknown_schedule() {
         &cells,
         &[FRONTIER.to_owned()],
         None,
-        "did:web:alice.example",
+        "ak:did_core:web:alice.example",
     );
     assert!(display.own_status.is_none());
     assert_eq!(display.excluded, 1);
@@ -534,12 +534,12 @@ fn rsvp_display_prefers_the_instance_answer_over_the_series_fallback() {
     let cells = vec![
         RsvpCellProjectionView {
             occurrence: None,
-            actor_id: "did:web:alice.example".to_owned(),
+            actor_id: "ak:did_core:web:alice.example".to_owned(),
             heads: vec![rsvp_head(1, FRONTIER, "accepted")],
         },
         RsvpCellProjectionView {
             occurrence: Some(occurrence.to_owned()),
-            actor_id: "did:web:alice.example".to_owned(),
+            actor_id: "ak:did_core:web:alice.example".to_owned(),
             heads: vec![rsvp_head(2, FRONTIER, "declined")],
         },
     ];
@@ -548,7 +548,7 @@ fn rsvp_display_prefers_the_instance_answer_over_the_series_fallback() {
         &cells,
         &[FRONTIER.to_owned()],
         Some(occurrence),
-        "did:web:alice.example",
+        "ak:did_core:web:alice.example",
     );
     // Instance overrides series; the two tiers are never unioned into a
     // conflict.

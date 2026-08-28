@@ -46,7 +46,7 @@ fn ordinary_event_submit_uses_garth_durable_outbound() {
         .unwrap_or_else(|error| panic!("failed to read {}: {error}", submit_path.display()));
     assert!(
         submit.contains("OutboundEngine::new(crate::outbound_store::InksonOutboundStore::open")
-            && submit.contains(".enqueue(")
+            && submit.contains(".enqueue_scoped(")
             && submit.contains("drain_outbound"),
         "ordinary Inkson SDK events must enter Garth's durable queue and resume after restart"
     );
@@ -91,8 +91,8 @@ fn mls_readiness_remains_checkpoint_proven() {
         submit.contains("PostAcceptAction::MlsAdmission")
             && submit.contains("submit_next_with_fence_and_hook")
             && submit.contains("drain_mls_outbound")
-            && submit.contains("checkpoint-proven accepted-artifact")
-            && submit.contains("this queue never installs its staged snapshot"),
+            && submit.contains("accepted-artifact consumer has independently proven")
+            && submit.contains("staged snapshot is never trusted as group readiness by itself"),
         "MLS admission must remain durable without treating ingress acceptance as group readiness"
     );
 

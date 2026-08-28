@@ -54,14 +54,14 @@ fn has_managed_agent_pcr_create(events: &[arkret_sdk::Event]) -> bool {
 async fn submit_managed_agent_pcr_seal(
     http: &arkret_sdk::http_client::Client,
     signer: &crate::event_signer::InksonEventSigner,
-    controller_id: &arkret_sdk::Did,
+    controller_did: &arkret_sdk::Did,
     device_id: &str,
     realm_id: &str,
     events: &[arkret_sdk::Event],
     predecessor: Option<&arkret_sdk::Seal>,
 ) -> anyhow::Result<arkret_sdk::Seal> {
     let hlc =
-        crate::signing_stamp::issue_protocol_hlc(controller_id.as_str(), device_id, realm_id)?;
+        crate::signing_stamp::issue_protocol_hlc(controller_did.as_str(), device_id, realm_id)?;
     let availability = match predecessor {
         Some(predecessor) => {
             let delta = crate::event_signer::pcr_successor_delta_digests(events, predecessor)?;
@@ -79,7 +79,7 @@ async fn submit_managed_agent_pcr_seal(
     };
     let seal = signer
         .sign_managed_agent_pcr_event_seal(
-            controller_id,
+            controller_did,
             events,
             predecessor,
             availability.as_ref(),
@@ -113,13 +113,13 @@ pub(crate) async fn ensure_managed_agent_pcr_seal_current<
     submitter: &crate::event_submit::EventSubmitter,
     http: &arkret_sdk::http_client::Client,
     signer: &crate::event_signer::InksonEventSigner,
-    controller_id: &arkret_sdk::Did,
+    controller_did: &arkret_sdk::Did,
     device_id: &str,
     realm_id: &str,
     state_store: S,
 ) -> anyhow::Result<(arkret_sdk::RealmSealFrontierView, arkret_sdk::Seal)> {
     let current = submitter
-        .seals_frontier_managed_agent_head(realm_id, controller_id, state_store.clone())
+        .seals_frontier_managed_agent_head(realm_id, controller_did, state_store.clone())
         .await;
     if current
         .as_ref()
@@ -151,7 +151,7 @@ pub(crate) async fn ensure_managed_agent_pcr_seal_current<
                 submit_managed_agent_pcr_seal(
                     http,
                     signer,
-                    controller_id,
+                    controller_did,
                     device_id,
                     realm_id,
                     &accepted_events,
@@ -189,7 +189,7 @@ pub(crate) async fn ensure_managed_agent_pcr_seal_current<
             submit_managed_agent_pcr_seal(
                 http,
                 signer,
-                controller_id,
+                controller_did,
                 device_id,
                 realm_id,
                 &accepted_events,
@@ -202,7 +202,7 @@ pub(crate) async fn ensure_managed_agent_pcr_seal_current<
 
     let expected = submitted.expect("managed PCR Seal submission branch always returns a Seal");
     let (view, head) = submitter
-        .seals_frontier_managed_agent_head(realm_id, controller_id, state_store)
+        .seals_frontier_managed_agent_head(realm_id, controller_did, state_store)
         .await?;
     if head.id != expected.id
         || head.state_root != expected.state_root
@@ -225,7 +225,7 @@ pub(crate) fn managed_agent_seal_head_receipt_unavailable(error: &anyhow::Error)
 /// authoritative until this successor Seal is accepted.
 pub(crate) async fn seal_self_principal_event_current(
     api: &crate::transport::TransportClient,
-    controller_id: &arkret_sdk::Did,
+    controller_did: &arkret_sdk::Did,
     realm_id: &arkret_sdk::RealmId,
     expected_event_id: &arkret_sdk::EventId,
 ) -> anyhow::Result<arkret_sdk::Seal> {
@@ -234,7 +234,7 @@ pub(crate) async fn seal_self_principal_event_current(
     let predecessor = submitter
         .seals_frontier_realm_head(realm_id.as_str())
         .await?;
-    let controller_actor_id = arkret_sdk::project_did_to_core_id(controller_id)?;
+    let controller_actor_id = arkret_sdk::project_did_to_core_id(controller_did)?;
     let mut accepted = submitter
         .backfill(realm_id.as_str())
         .await?
@@ -256,7 +256,7 @@ pub(crate) async fn seal_self_principal_event_current(
         .device_id()
         .ok_or_else(|| anyhow::anyhow!("active controller signer has no bound device id"))?;
     let hlc = crate::signing_stamp::issue_protocol_hlc(
-        controller_id.as_str(),
+        controller_did.as_str(),
         device_id,
         realm_id.as_str(),
     )?;
@@ -579,7 +579,7 @@ mod tests {
 
     #[test]
     fn controller_signer_accepts_account_scoped_device_did_key() {
-        let (controller_id, authority) = controller("did:web:alice.example");
+        let (controller_did, authority) = controller("did:web:alice.example");
         let account_scope = scope(authority.clone());
         let signer = crate::event_signer::build_ed25519_device_signer(
             [31_u8; 32],
@@ -588,7 +588,7 @@ mod tests {
         );
 
         assert_eq!(
-            controller_signer_device_id(&controller_id, &authority, &signer, Some(&account_scope),)
+            controller_signer_device_id(&controller_did, &authority, &signer, Some(&account_scope),)
                 .unwrap()
                 .as_str(),
             TEST_DEVICE_ID,
@@ -603,11 +603,11 @@ mod tests {
             TEST_DEVICE_ID,
         );
 
-        let (controller_id, authority) = controller("did:web:alice.example");
+        let (controller_did, authority) = controller("did:web:alice.example");
         let (_, other_authority) = controller("did:web:bob.example");
         let account_scope = scope(other_authority);
         let error =
-            controller_signer_device_id(&controller_id, &authority, &signer, Some(&account_scope))
+            controller_signer_device_id(&controller_did, &authority, &signer, Some(&account_scope))
                 .unwrap_err();
 
         assert!(error.to_string().contains("is not bound to controller"));
@@ -615,17 +615,17 @@ mod tests {
 
     #[test]
     fn controller_signer_rejects_controller_did_when_account_scope_differs() {
-        let (controller_id, authority) = controller("did:web:alice.example");
+        let (controller_did, authority) = controller("did:web:alice.example");
         let (_, other_authority) = controller("did:web:bob.example");
         let account_scope = scope(other_authority);
         let signer = crate::event_signer::build_ed25519_device_signer(
             [34_u8; 32],
-            controller_id.as_str(),
+            controller_did.as_str(),
             TEST_DEVICE_ID,
         );
 
         let error =
-            controller_signer_device_id(&controller_id, &authority, &signer, Some(&account_scope))
+            controller_signer_device_id(&controller_did, &authority, &signer, Some(&account_scope))
                 .unwrap_err();
 
         assert!(error.to_string().contains("is not bound to controller"));
@@ -633,15 +633,15 @@ mod tests {
 
     #[test]
     fn controller_signer_accepts_controller_identified_external_signer() {
-        let (controller_id, authority) = controller("did:web:alice.example");
+        let (controller_did, authority) = controller("did:web:alice.example");
         let signer = crate::event_signer::build_ed25519_device_signer(
             [33_u8; 32],
-            controller_id.as_str(),
+            controller_did.as_str(),
             TEST_DEVICE_ID,
         );
 
         assert_eq!(
-            controller_signer_device_id(&controller_id, &authority, &signer, None)
+            controller_signer_device_id(&controller_did, &authority, &signer, None)
                 .unwrap()
                 .as_str(),
             TEST_DEVICE_ID,

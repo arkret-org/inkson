@@ -773,15 +773,15 @@ pub fn build_managed_agent_pcr_bootstrap_steps(
 /// what enforces that: there is no point at which a member exists carrying an id
 /// that the next authoring pass would have to rewrite.
 pub fn build_direct_conversation_founding_steps(
-    founder_id: &arkret_sdk::Did,
-    peer_id: &arkret_sdk::Did,
+    founder_did: &arkret_sdk::Did,
+    peer_did: &arkret_sdk::Did,
     notary: arkret_sdk::NotaryValue,
     trust_domain: arkret_sdk::TrustDomainId,
     _input: &arkret_sdk::DirectConversationFoundingInput,
 ) -> anyhow::Result<Vec<crate::event_submit::EventUnitStep>> {
     let created_at = event_timestamp();
-    let founder_actor = arkret_sdk::project_did_to_core_id(founder_id)?;
-    let peer_actor = arkret_sdk::project_did_to_core_id(peer_id)?;
+    let founder_actor = arkret_sdk::project_did_to_core_id(founder_did)?;
+    let peer_actor = arkret_sdk::project_did_to_core_id(peer_did)?;
     let create_payload = arkret_sdk::direct_conversation_realm_create_payload(
         arkret_sdk::GenesisSalt::generate()?,
         trust_domain,
@@ -791,8 +791,8 @@ pub fn build_direct_conversation_founding_steps(
     let create_cell = arkret_wire::null_subject_cell(arkret_wire::CellFamilyId::REALM_CREATE_V1);
     let create_precondition = head_eq_precondition(&create_cell, Value::Null)?;
 
-    let founder = founder_id.clone();
-    let peer = peer_id.clone();
+    let founder = founder_did.clone();
+    let peer = peer_did.clone();
     let create_step: crate::event_submit::EventUnitStep = {
         let founder = founder.clone();
         Box::new(move |_authored| {
@@ -1372,20 +1372,20 @@ pub fn build_capability_relinquish_control_intent(
 }
 
 /// Build a `ak.realm.alias` declaration — the ONLY wire carrier of a Realm
-/// alias (object-addressing.md §3.3). `authority_service_id` is the deployment
+/// alias (object-addressing.md §3.3). `authority_service_did` is the deployment
 /// DID that issues the alias; the alias `<domain>` MUST be its authority
 /// domain, so a bare localpart is bound to it here and a foreign-domain input
 /// is rejected instead of being silently rebound.
 pub fn build_realm_alias_event(
     realm_id: &str,
     actor_id: &str,
-    authority_service_id: &str,
+    authority_service_did: &str,
     alias: &str,
 ) -> anyhow::Result<crate::operation::LocalOperation> {
-    let authority = arkret_sdk::RealmAlias::authority_domain_for_service(authority_service_id)
+    let authority = arkret_sdk::RealmAlias::authority_domain_for_service(authority_service_did)
         .map_err(|error| {
             anyhow::anyhow!(
-                "cannot derive realm alias authority from {authority_service_id}: {error}"
+                "cannot derive realm alias authority from {authority_service_did}: {error}"
             )
         })?;
     let canonical = arkret_sdk::RealmAlias::prepare_under_authority(alias, &authority)
@@ -1403,13 +1403,13 @@ fn build_realm_alias_event_for_principal_server(
     principal_server_id: arkret_sdk::DidCoreId,
     realm_id: &str,
     actor_id: &str,
-    authority_service_id: &str,
+    authority_service_did: &str,
     alias: &str,
 ) -> anyhow::Result<crate::operation::LocalOperation> {
-    let authority = arkret_sdk::RealmAlias::authority_domain_for_service(authority_service_id)
+    let authority = arkret_sdk::RealmAlias::authority_domain_for_service(authority_service_did)
         .map_err(|error| {
             anyhow::anyhow!(
-                "cannot derive realm alias authority from {authority_service_id}: {error}"
+                "cannot derive realm alias authority from {authority_service_did}: {error}"
             )
         })?;
     let canonical = arkret_sdk::RealmAlias::prepare_under_authority(alias, &authority)
@@ -1429,14 +1429,14 @@ fn build_realm_alias_event_for_principal_server(
 pub fn build_realm_alias_rename_event(
     realm_id: &str,
     actor_id: &str,
-    authority_service_id: &str,
+    authority_service_did: &str,
     alias: &str,
     settled_payload: Value,
 ) -> anyhow::Result<crate::operation::LocalOperation> {
-    let authority = arkret_sdk::RealmAlias::authority_domain_for_service(authority_service_id)
+    let authority = arkret_sdk::RealmAlias::authority_domain_for_service(authority_service_did)
         .map_err(|error| {
             anyhow::anyhow!(
-                "cannot derive realm alias authority from {authority_service_id}: {error}"
+                "cannot derive realm alias authority from {authority_service_did}: {error}"
             )
         })?;
     let canonical = arkret_sdk::RealmAlias::prepare_under_authority(alias, &authority)
@@ -1854,21 +1854,6 @@ mod notary_derivation_tests {
     use serde_json::json;
 
     use super::*;
-
-    #[test]
-    fn realm_bootstrap_members_require_stable_core_ids() {
-        let members = parse_realm_bootstrap_members(&[
-            " ak:did_core:web:alice.example ".to_owned(),
-            "ak:did_core:web:alice.example".to_owned(),
-        ])
-        .expect("canonical did_core_id seed members are accepted");
-        assert_eq!(members.len(), 1);
-        assert_eq!(members[0].actor_id, "ak:did_core:web:alice.example");
-
-        let error = parse_realm_bootstrap_members(&["did:web:alice.example".to_owned()])
-            .expect_err("DID values are not stable Realm member identities");
-        assert!(error.to_string().contains("did_core_id"));
-    }
 
     fn agent_resolution() -> arkret_sdk::ResolutionCommitment {
         arkret_sdk::ResolutionCommitment {

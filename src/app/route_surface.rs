@@ -80,7 +80,7 @@ pub(super) fn RouteSurface(state: RouteSurfaceState) -> Element {
     let RouteSurfaceState {
         content_route,
         navigation,
-        principal_id,
+        principal_id: principal_id_signal,
         device_id,
         token,
         account_recovery_configured,
@@ -436,7 +436,7 @@ pub(super) fn RouteSurface(state: RouteSurfaceState) -> Element {
                     | Route::Audit
                     | Route::Developer => rsx! {
                         crate::views::settings::SettingsPanel {
-                            principal_id,
+                            principal_id: principal_id_signal,
                             device_id,
                             token,
                             account_primary_handle: account_primary_handle(),
@@ -605,7 +605,7 @@ pub(super) fn RouteSurface(state: RouteSurfaceState) -> Element {
                         crate::views::onboarding::OnboardingPanel {
                             secure_store_ready: secure_store_bootstrap_ready(),
                             token,
-                            principal_id,
+                            principal_id: principal_id_signal,
                             device_id,
                             config_store,
                             account_primary_handle,
@@ -629,7 +629,7 @@ pub(super) fn RouteSurface(state: RouteSurfaceState) -> Element {
                     // A6.1 — global cross-Space message search panel.
                     Route::Search => rsx! {
                         crate::views::global_search::GlobalSearchPanel {
-                            principal_id,
+                            principal_id: principal_id_signal,
                             device_id,
                             initial_query: String::new(),
                         }

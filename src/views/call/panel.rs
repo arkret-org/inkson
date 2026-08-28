@@ -77,9 +77,8 @@ pub fn CallPanel(
     let mut call_seq = use_signal(|| 0_u64);
     let mut active_realm = use_signal(|| selected_realm_id.clone());
     let mut peer_input = use_signal(|| peer.clone());
-    let mut group_input = use_signal(|| {
-        "ak:did_core:web:bob.example\nak:did_core:web:carol.example".to_owned()
-    });
+    let mut group_input =
+        use_signal(|| "ak:did_core:web:bob.example\nak:did_core:web:carol.example".to_owned());
     let mut want_video_signal = use_signal(|| want_video);
     let mut media_plaintext_confirmed = use_signal(|| false);
 
@@ -284,7 +283,8 @@ pub fn CallPanel(
                 ) = {
                     let store = state_store.read();
                     let snapshot = store.load();
-                    let (media_service_ids, focus_id) = media_service_selection(&snapshot, &realm_id);
+                    let (media_service_ids, focus_id) =
+                        media_service_selection(&snapshot, &realm_id);
                     (
                         media_service_ids,
                         focus_id,
@@ -352,7 +352,7 @@ pub fn CallPanel(
                     } else {
                         DesiredMedia::audio_only()
                     },
-                    media_service_ids: media_service_ids,
+                    media_service_ids,
                     verified_media_routes,
                     governance_evidence,
                 };
@@ -984,7 +984,7 @@ pub fn CallPanel(
                         div { class: "call-grid", "data-testid": "call-grid",
                             for p in participants().iter() {
                                 {
-                                    let did = p.actor_id.clone();
+                                    let actor_id = p.actor_id.clone();
                                     let name = p.display_name.clone();
                                     let muted = p.muted;
                                     let speaking = p.speaking;
@@ -993,7 +993,7 @@ pub fn CallPanel(
                                         div {
                                             class: if speaking { "call-tile speaking" } else { "call-tile" },
                                             "data-testid": "call-participant-tile",
-                                            "data-actor-did": "{did}",
+                                            "data-actor-id": "{actor_id}",
                                             "data-muted": "{muted}",
                                             "data-speaking": "{speaking}",
                                             "data-screen-sharing": "{sharing}",

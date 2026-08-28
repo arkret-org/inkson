@@ -229,6 +229,12 @@ pub fn projection_events_from_sync_realms(
             if late_recovery_rejection.is_some() {
                 body.clear();
             }
+            let Some(sender) = projection_actor_id(event) else {
+                // A projected message without its stable accountable actor is
+                // not renderable identity state. Drop it instead of inventing
+                // a DID-shaped principal that could be mistaken for authority.
+                continue;
+            };
             events.push(ProjectionEvent {
                 realm_id: Some(realm_id.clone()),
                 strand_id: content
@@ -242,12 +248,8 @@ pub fn projection_events_from_sync_realms(
                 // fields use the role-explicit `sender_actor_*` schema names.
                 // Envelope attribution uses `actor_id`; derived notification
                 // projections use the role-explicit `sender_actor_id`.
-                sender: projection_actor_id(event)
-                    .unwrap_or("did:web:unknown")
-                    .to_owned(),
-                sender_display: projection_actor_id(event)
-                    .map(short_protocol_id)
-                    .unwrap_or_else(|| "server".to_owned()),
+                sender: sender.to_owned(),
+                sender_display: short_protocol_id(sender),
                 body,
                 timestamp: event
                     .get("created_at")

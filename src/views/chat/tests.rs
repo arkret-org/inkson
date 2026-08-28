@@ -13,7 +13,7 @@ fn test_device_id(value: &str) -> arkret_sdk::DeviceId {
 
 #[test]
 fn circle_scope_request_is_single_flight_and_semantically_deduplicated() {
-    let key = "https://example.test\u{1f}did:web:alice\u{1f}ak:realm:one";
+    let key = "https://example.test\u{1f}ak:did_core:web:alice\u{1f}ak:realm:one";
     assert!(!should_start_circle_scope_request("", "", false, key));
     assert!(should_start_circle_scope_request("grant", "", false, key));
     assert!(!should_start_circle_scope_request("grant", key, false, key));
@@ -22,7 +22,7 @@ fn circle_scope_request_is_single_flight_and_semantically_deduplicated() {
         "grant",
         key,
         false,
-        "https://example.test\u{1f}did:web:alice\u{1f}ak:realm:two",
+        "https://example.test\u{1f}ak:did_core:web:alice\u{1f}ak:realm:two",
     ));
 }
 
@@ -45,7 +45,7 @@ fn sidecar_projection_message_for_realm(
         realm_id: realm_id.to_owned(),
         id: id.to_owned(),
         protocol_message_id: None,
-        sender: "did:web:example.test:alice".to_owned(),
+        sender: "ak:did_core:web:example.test:alice".to_owned(),
         executed_by: None,
         body: body.to_owned(),
         content_format: None,
@@ -96,12 +96,15 @@ fn delivered_exchange_projection_fixture(
     request_event_id: &str,
 ) -> arkret_sdk::AgentSidecarExchangeProjection {
     let coordinator =
-        crate::mls_api_helpers::principal_core_id("did:web:example.test:agents:assistant").unwrap();
+        crate::mls_api_helpers::principal_core_id("ak:did_core:web:example.test:agents:assistant")
+            .unwrap();
     let request_event = arkret_sdk::EventId::new(request_event_id).unwrap();
     arkret_sdk::AgentSidecarExchangeProjection {
         schema: arkret_sdk::AgentSidecarExchangeProjectionSchema::V1,
-        controller_id: crate::mls_api_helpers::principal_core_id("did:web:example.test:alice")
-            .unwrap(),
+        controller_id: crate::mls_api_helpers::principal_core_id(
+            "ak:did_core:web:example.test:alice",
+        )
+        .unwrap(),
         sidecar_id: arkret_sdk::SidecarId::new(
             "ak:sidecar:AWea2MtI5dOI1LSRyI266_gQVrWUd0po0dxZiJNsH8kN",
         )
@@ -208,8 +211,10 @@ fn routed_request_binding_travels_only_in_encrypted_metadata_plaintext() {
         source_hlc: arkret_sdk::Hlc::new("01970e589d21-0001-a13f9c2e").unwrap(),
         client_order_key: arkret_sdk::NonEmptyString::new("device-1-1").unwrap(),
         addressed_agent_ids: vec![
-            crate::mls_api_helpers::principal_core_id("did:web:example.test:agents:assistant")
-                .unwrap(),
+            crate::mls_api_helpers::principal_core_id(
+                "ak:did_core:web:example.test:agents:assistant",
+            )
+            .unwrap(),
         ],
         completion_policy: arkret_sdk::AgentSidecarExchangeCompletionPolicy::Coordinator,
         coordinator_agent_id: None,
@@ -279,11 +284,7 @@ fn sign_chat_fixture(value: &mut Value) {
             else {
                 return;
             };
-            let actor_core_id = if actor_id.starts_with("did:") {
-                crate::mls_api_helpers::principal_core_id(&actor_id).unwrap()
-            } else {
-                arkret_sdk::DidCoreId::new(actor_id.clone()).unwrap()
-            };
+            let actor_core_id = arkret_sdk::DidCoreId::new(actor_id.clone()).unwrap();
             // Proof fixtures need an exact DID for their verification
             // URL. These fixtures use reversible did:web ids only; production
             // code never performs this core-to-full reconstruction.
@@ -353,10 +354,10 @@ fn sign_chat_fixtures(values: &mut [Value]) {
 
 #[test]
 fn parses_message_event_with_operation_body_shape() {
-    let event = json!({
+    let mut event = json!({
         "id": "ak:event:AZccWZlaAUrqgOzXQ7OucnyL0J8C4O-JnwPOLdtlGX9k",
         "type": "ak.message.create",
-        "actor": "did:web:alice.example",
+        "actor_id": "ak:did_core:web:alice.example",
         "realm_id": "ak:realm:A_UALC69_WeDbu3WQ3suidUfmxa1MAW5tIIxjRS1C9yE",
         "created_at": "2026-05-14T01:23:45.000Z",
         "causal": {"actor_seq": 42},
@@ -371,6 +372,7 @@ fn parses_message_event_with_operation_body_shape() {
             }]
         }
     });
+    sign_chat_fixture(&mut event);
 
     let message = chat_message_from_event(
         "ak:realm:Ag51V75jn75rRYCrxiU0PfMG0uo93vCh_5AfJiv15VPU",
@@ -392,7 +394,7 @@ fn parses_message_event_with_operation_body_shape() {
     );
     assert_eq!(message.body, "restored from durable history");
     assert_eq!(message.content_format, None);
-    assert_eq!(message.sender, "did:web:alice.example");
+    assert_eq!(message.sender, "ak:did_core:web:alice.example");
     assert_eq!(
         message.mentions[0].target_id(),
         "ak:did_core:web:bob.example"
@@ -487,7 +489,6 @@ fn folds_received_redaction_tombstone_onto_message() {
         "message_id": "ak:message:AST13ozMXrAgNmz6E-qiQFr9vg-w3JDZGPHpHPq_JTpY",
         "realm_id": "ak:realm:A_UALC69_WeDbu3WQ3suidUfmxa1MAW5tIIxjRS1C9yE",
         "strand_id": "ak:strand:A-KafHE4KSJLkmXVT_Mi2jvxt9YuOP_vQeOTOtjeaXSc",
-        "sender": "did:web:bob.example",
         "actor_id": "ak:did_core:web:bob.example",
         "created_at": "2026-05-14T01:23:45.000Z",
         "redacted": true,
@@ -652,7 +653,7 @@ fn production_chat_message_create_operation(
 fn chat_message_create_operation_emits_schema_canonical_content() {
     let op = production_chat_message_create_operation(
         "ak:realm:AT3p9polsnQ_WOix32QZimMdE2zPe62HptJu2PaO3V1h",
-        "did:web:alice.example",
+        "ak:did_core:web:alice.example",
         "ak:strand:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
         "local-message:test",
         "hello from chat",
@@ -718,7 +719,7 @@ fn chat_inline_content_declares_markdown_at_the_utf8_boundary() {
 fn chat_message_create_operation_blocks_sensitive_public_update() {
     let err = production_chat_message_create_operation(
         "ak:realm:AT3p9polsnQ_WOix32QZimMdE2zPe62HptJu2PaO3V1h",
-        "did:web:alice.example",
+        "ak:did_core:web:alice.example",
         "ak:strand:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
         "ak:message:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
         "Public update: root cause leaked token",
@@ -734,7 +735,7 @@ fn chat_message_create_operation_blocks_sensitive_public_update() {
 fn chat_message_create_operation_keeps_public_update_notification_projection_out_of_content() {
     let op = production_chat_message_create_operation(
         "ak:realm:AT3p9polsnQ_WOix32QZimMdE2zPe62HptJu2PaO3V1h",
-        "did:web:alice.example",
+        "ak:did_core:web:alice.example",
         "ak:strand:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
         "ak:message:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
         "SEV-1 public update: checkout latency is recovering",
@@ -764,7 +765,7 @@ fn chat_message_create_operation_embeds_audience_mentions_in_content_only() {
     let mentions = parse_mention_nodes("ping @here and @carol:example.com");
     let op = production_chat_message_create_operation(
         "ak:realm:AT3p9polsnQ_WOix32QZimMdE2zPe62HptJu2PaO3V1h",
-        "did:web:alice.example",
+        "ak:did_core:web:alice.example",
         "ak:strand:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
         "ak:message:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1",
         "ping @here and @carol:example.com",
@@ -793,10 +794,11 @@ fn chat_message_create_operation_embeds_audience_mentions_in_content_only() {
 fn chat_message_create_operation_embeds_agent_selector_mention_metadata() {
     let mentions = vec![MentionNode::mention(
         arkret_sdk::Mention::new(
-            crate::mls_api_helpers::principal_core_id("did:web:agent.example").unwrap(),
+            crate::mls_api_helpers::principal_core_id("ak:did_core:web:agent.example").unwrap(),
         )
         .with_agent_selector_metadata(
-            crate::mls_api_helpers::principal_core_id("did:web:example.com:users:alice").unwrap(),
+            crate::mls_api_helpers::principal_core_id("ak:did_core:web:example.com:users:alice")
+                .unwrap(),
             arkret_sdk::Handle::parse("alice:example.com").unwrap(),
             "summary",
         )
@@ -809,7 +811,7 @@ fn chat_message_create_operation_embeds_agent_selector_mention_metadata() {
     )];
     let op = production_chat_message_create_operation(
         "ak:realm:AT3p9polsnQ_WOix32QZimMdE2zPe62HptJu2PaO3V1h",
-        "did:web:bob.example",
+        "ak:did_core:web:bob.example",
         "ak:strand:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
         "ak:message:AcsFZ3o2tOdN3EFpNceeLV-aI3jZkB9S34_4YIwJ5DLy",
         "ask @alice:example.com/summary",
@@ -848,7 +850,7 @@ fn chat_message_create_operation_embeds_agent_selector_mention_metadata() {
 fn chat_message_create_operation_includes_reply_fields_only_when_present() {
     let op = production_chat_message_create_operation(
         "ak:realm:AT3p9polsnQ_WOix32QZimMdE2zPe62HptJu2PaO3V1h",
-        "did:web:alice.example",
+        "ak:did_core:web:alice.example",
         "ak:strand:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
         "ak:message:AcsFZ3o2tOdN3EFpNceeLV-aI3jZkB9S34_4YIwJ5DLy",
         "reply body",
@@ -875,7 +877,7 @@ fn chat_message_create_operation_includes_reply_fields_only_when_present() {
 fn chat_message_create_operation_rejects_event_id_reply_target() {
     let err = production_chat_message_create_operation(
         "ak:realm:AT3p9polsnQ_WOix32QZimMdE2zPe62HptJu2PaO3V1h",
-        "did:web:alice.example",
+        "ak:did_core:web:alice.example",
         "ak:strand:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
         "ak:message:AcsFZ3o2tOdN3EFpNceeLV-aI3jZkB9S34_4YIwJ5DLy",
         "reply body",
@@ -895,7 +897,7 @@ fn chat_message_reply_target_prefers_protocol_message_id() {
         protocol_message_id: Some(
             "ak:message:ARbUzETAsZ3suuQ0GSmBWTsNjmUnTEEl_ZnDOUWRPm-N".to_owned(),
         ),
-        sender: "did:web:example.com:users:bob".to_owned(),
+        sender: "ak:did_core:web:example.com:users:bob".to_owned(),
         executed_by: None,
         body: "hello".to_owned(),
         content_format: None,
@@ -928,7 +930,7 @@ fn chat_message_mutation_target_prefers_protocol_message_id_after_revision() {
         protocol_message_id: Some(
             "ak:message:ARbUzETAsZ3suuQ0GSmBWTsNjmUnTEEl_ZnDOUWRPm-N".to_owned(),
         ),
-        sender: "did:web:example.com:users:bob".to_owned(),
+        sender: "ak:did_core:web:example.com:users:bob".to_owned(),
         executed_by: None,
         body: "edited".to_owned(),
         content_format: None,
@@ -960,7 +962,7 @@ fn shared_pin_operations_use_pin_events_not_account_data() {
     let target_ref = "ak:message:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1";
     let add = shared_message_pin_add_operation(
         "ak:realm:AT3p9polsnQ_WOix32QZimMdE2zPe62HptJu2PaO3V1h",
-        "did:web:alice.example",
+        "ak:did_core:web:alice.example",
         &pin_scope,
         target_ref,
         "r100",
@@ -978,7 +980,7 @@ fn shared_pin_operations_use_pin_events_not_account_data() {
 
     let remove = shared_message_pin_remove_operation(
         "ak:realm:AT3p9polsnQ_WOix32QZimMdE2zPe62HptJu2PaO3V1h",
-        "did:web:alice.example",
+        "ak:did_core:web:alice.example",
         &pin_scope,
         target_ref,
     )
@@ -1010,7 +1012,7 @@ fn selected_discussion_shared_pin_uses_exact_strand_scope() {
     let target_ref = "ak:message:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1";
     let add = shared_message_pin_add_operation(
         realm_id,
-        "did:web:alice.example",
+        "ak:did_core:web:alice.example",
         &pin_scope,
         target_ref,
         "r100",
@@ -1053,7 +1055,7 @@ fn private_saved_item_uses_saved_account_data_not_pin_event() {
 
     let op = crate::account_data::build_private_account_data_set(
         "ak:realm:AT3p9polsnQ_WOix32QZimMdE2zPe62HptJu2PaO3V1h",
-        "did:web:alice.example",
+        "ak:did_core:web:alice.example",
         &item.account_data_key,
         wire,
         0,
@@ -1162,7 +1164,7 @@ fn optimistic_chat_ids_do_not_claim_protocol_identity() {
 
 #[test]
 fn restores_messages_from_local_raw_operations() {
-    let state = ClientLocalState {
+    let mut state = ClientLocalState {
         raw_operations: vec![crate::state::RawOperationRecord {
             operation_id: "ak:operation:local".to_owned(),
             realm_id: Some("ak:realm:AjwcYH9whQqNBoigPl_CUBVI-Uq5clybecpwS8awgc1Q".to_owned()),
@@ -1170,7 +1172,8 @@ fn restores_messages_from_local_raw_operations() {
             payload: json!({
                 "event_id": "ak:event:A4z3EXS8Sy0uqnc2LYMOAl9wdzpzu9JxTnPoGI2aWOf0",
                 "kind": "ak.message.create",
-                "actor": "did:web:alice.example",
+                "actor_id": "ak:did_core:web:alice.example",
+                "realm_id": "ak:realm:AjwcYH9whQqNBoigPl_CUBVI-Uq5clybecpwS8awgc1Q",
                 "body": "local fallback message",
                 "strand_id": "ak:strand:A2XzIPVUImfYgHnXgbHa3_vgjelzSn9R639KPlpGif5c",
                 "message_id": "chat-msg-local"
@@ -1178,6 +1181,7 @@ fn restores_messages_from_local_raw_operations() {
         }],
         ..ClientLocalState::default()
     };
+    sign_chat_fixture(&mut state.raw_operations[0].payload);
 
     let messages = chat_messages_from_local_state_with_sidecar(&state, None, None);
 
@@ -1190,7 +1194,7 @@ fn restores_messages_from_local_raw_operations() {
         messages[0].strand_id,
         "ak:strand:A2XzIPVUImfYgHnXgbHa3_vgjelzSn9R639KPlpGif5c"
     );
-    assert_eq!(messages[0].sender, "did:web:alice.example");
+    assert_eq!(messages[0].sender, "ak:did_core:web:alice.example");
     assert_eq!(messages[0].body, "local fallback message");
 }
 
@@ -1292,7 +1296,7 @@ fn chat_messages_read_projected_reaction_summary() {
         "message_id": "ak:message:AZhIGxyGMJYSpWhMOugJZewLoNM88CzSBohQQRpKgw1c",
         "body": "hello from alice",
         "reaction_summary": {
-            "+1": ["did:web:bob.example", "did:web:carol.example"]
+            "+1": ["ak:did_core:web:bob.example", "ak:did_core:web:carol.example"]
         }
     })];
     sign_chat_fixtures(&mut events);
@@ -1310,8 +1314,8 @@ fn chat_messages_read_projected_reaction_summary() {
         vec![(
             "+1".to_owned(),
             vec![
-                "did:web:bob.example".to_owned(),
-                "did:web:carol.example".to_owned()
+                "ak:did_core:web:bob.example".to_owned(),
+                "ak:did_core:web:carol.example".to_owned()
             ],
         )]
     );
@@ -1404,7 +1408,6 @@ fn chat_messages_fold_projection_reaction_target_ref_over_envelope_message_id() 
             "event_id": "ak:event:AOOI0zLj06bpcNgRMFMP4JOl0MZWGhQZ5j0hTISOImcg",
             "event_kind": "ak.message.create",
             "actor_id": "ak:did_core:web:alice.example",
-            "sender_actor_id": "did:web:alice.example",
             "realm_id": "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0",
             "created_at": "2026-07-08T01:44:39.000Z",
             "strand_id": "ak:strand:ARJxD7BSUwmnyinQVd_KxLCG7gwfyIFlTzeJk7F_phHE",
@@ -1414,7 +1417,6 @@ fn chat_messages_fold_projection_reaction_target_ref_over_envelope_message_id() 
                 "content": {"kind": "ak.content.text", "body": "projection hello"},
                 "event_id": "ak:event:AOOI0zLj06bpcNgRMFMP4JOl0MZWGhQZ5j0hTISOImcg",
                 "message_id": "ak:message:Al0hjLfzAqduLFaBFHqpVgugJnkcc6jI5BmYnNiihIUY",
-                "sender": "did:web:alice.example",
                 "strand_id": "ak:strand:ARJxD7BSUwmnyinQVd_KxLCG7gwfyIFlTzeJk7F_phHE",
                 "thread_id": "ak:strand:ARJxD7BSUwmnyinQVd_KxLCG7gwfyIFlTzeJk7F_phHE",
                 "track_name": "discussion"
@@ -1424,7 +1426,6 @@ fn chat_messages_fold_projection_reaction_target_ref_over_envelope_message_id() 
             "event_id": "ak:event:AzxKx70X-Q4e1QAhFVEYl97CXxmGGxXPaB1SM9Qi_kO0",
             "event_kind": "ak.reaction.add",
             "actor_id": "ak:did_core:web:bob.example",
-            "sender_actor_id": "did:web:bob.example",
             "realm_id": "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0",
             "created_at": "2026-07-08T01:44:43.000Z",
             "strand_id": "ak:strand:ARJxD7BSUwmnyinQVd_KxLCG7gwfyIFlTzeJk7F_phHE",
@@ -1433,7 +1434,6 @@ fn chat_messages_fold_projection_reaction_target_ref_over_envelope_message_id() 
             "payload": {
                 "event_id": "ak:event:AzxKx70X-Q4e1QAhFVEYl97CXxmGGxXPaB1SM9Qi_kO0",
                 "key": "+1",
-                "sender": "did:web:bob.example",
                 "target_ref": "ak:message:Al0hjLfzAqduLFaBFHqpVgugJnkcc6jI5BmYnNiihIUY"
             }
         }),
@@ -1617,7 +1617,7 @@ fn durable_redaction_folds_onto_controller_only_create() {
         protocol_message_id: Some(message_id.to_owned()),
         realm_id: realm_id.to_owned(),
         strand_id: "ak:strand:AbZt0K_NvenxSDAkOnSDRtorrvUXhGqxSoqT2bFL7m8H".to_owned(),
-        sender: "did:web:alice.example".to_owned(),
+        sender: "ak:did_core:web:alice.example".to_owned(),
         body: "sensitive body".to_owned(),
         content_format: None,
         timestamp: "10:00".to_owned(),
@@ -1920,7 +1920,6 @@ fn chat_messages_fold_nested_server_redacted_revision_tombstone_into_root_tombst
                 "redacted": true,
                 "redacted_at": "2026-05-22T10:05:00.000Z",
                 "redaction_ref": "ak:event:A1Dqt89EJm8Vurg41PAsnseqxyxB0Gg-Xr0WywWjcia0",
-                "sender": "did:web:bob.example",
                 "state": "redacted",
                 "strand_id": "ak:strand:ARJxD7BSUwmnyinQVd_KxLCG7gwfyIFlTzeJk7F_phHE"
             },
@@ -1938,7 +1937,6 @@ fn chat_messages_fold_nested_server_redacted_revision_tombstone_into_root_tombst
                 "redacted": true,
                 "redacted_at": "2026-05-22T10:05:00.000Z",
                 "redaction_ref": "ak:event:A1Dqt89EJm8Vurg41PAsnseqxyxB0Gg-Xr0WywWjcia0",
-                "sender": "did:web:bob.example",
                 "state": "redacted",
                 "message_id": "ak:message:AXLf0mAo4UUC50gymplf5Oowi6lfIjnA1pl45rHyZXXs"
             },
@@ -1969,7 +1967,7 @@ fn merge_chat_messages_dedupes_tombstones_by_protocol_message_id() {
             realm_id: "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0".to_owned(),
             id: id.to_owned(),
             protocol_message_id: Some(protocol_message_id.to_owned()),
-            sender: "did:web:bob.example".to_owned(),
+            sender: "ak:did_core:web:bob.example".to_owned(),
             executed_by: None,
             body: String::new(),
             content_format: None,
@@ -2057,7 +2055,7 @@ fn merge_chat_messages_keeps_newer_revision_when_older_create_arrives_late() {
             realm_id: "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0".to_owned(),
             id: id.to_owned(),
             protocol_message_id: Some(protocol_message_id.to_owned()),
-            sender: "did:web:bob.example".to_owned(),
+            sender: "ak:did_core:web:bob.example".to_owned(),
             executed_by: None,
             body: body.to_owned(),
             content_format: None,
@@ -2095,8 +2093,8 @@ fn merge_chat_messages_keeps_newer_revision_when_older_create_arrives_late() {
     incoming.reactions = vec![(
         "+1".to_owned(),
         vec![
-            "did:web:bob.example".to_owned(),
-            "did:web:carol.example".to_owned(),
+            "ak:did_core:web:bob.example".to_owned(),
+            "ak:did_core:web:carol.example".to_owned(),
         ],
     )];
 
@@ -2119,8 +2117,8 @@ fn merge_chat_messages_keeps_newer_revision_when_older_create_arrives_late() {
         vec![(
             "+1".to_owned(),
             vec![
-                "did:web:bob.example".to_owned(),
-                "did:web:carol.example".to_owned()
+                "ak:did_core:web:bob.example".to_owned(),
+                "ak:did_core:web:carol.example".to_owned()
             ],
         )]
     );
@@ -2300,7 +2298,7 @@ fn local_redaction_tombstone_replaces_raw_message_without_plaintext() {
         protocol_message_id: Some(
             "ak:message:Asg8IZtPYZi06QwoJAIWUIU5xUWxDRtHCQPTUuSSipb8".to_owned(),
         ),
-        sender: "did:web:bob.example".to_owned(),
+        sender: "ak:did_core:web:bob.example".to_owned(),
         executed_by: None,
         body: "secret".to_owned(),
         content_format: None,
@@ -2463,7 +2461,8 @@ fn moderation_appeal_prompts_read_control_plane_sync_state() {
         }),
     );
 
-    let prompts = moderation_appeal_prompts_from_sync_realms(&realms, "did:web:appellant.example");
+    let prompts =
+        moderation_appeal_prompts_from_sync_realms(&realms, "ak:did_core:web:appellant.example");
 
     assert_eq!(prompts.len(), 1);
     assert_eq!(
@@ -2498,8 +2497,11 @@ fn moderation_appeal_prompts_survive_sdk_event_round_trip() {
         "proofs": []
     }))
     .unwrap();
-    let prompts =
-        moderation_appeal_prompts_from_sdk_events(realm_id, &[event], "did:web:appellant.example");
+    let prompts = moderation_appeal_prompts_from_sdk_events(
+        realm_id,
+        &[event],
+        "ak:did_core:web:appellant.example",
+    );
 
     assert_eq!(prompts.len(), 1);
 }
@@ -2747,7 +2749,7 @@ fn poll_projection_merge_preserves_optimistic_message_render_id() {
         &draft,
     );
     projected.poll_id = wire_poll_id.to_owned();
-    projected.vote("did:web:bob.example", 1);
+    projected.vote("ak:did_core:web:bob.example", 1);
     let mut cards = vec![optimistic];
 
     merge_poll_cards(&mut cards, vec![projected]);
@@ -2768,7 +2770,7 @@ fn pending_message_refreshes_from_restored_private_plaintext_sidecar() {
         realm_id: realm.to_owned(),
         id: "ak:event:AJhsY0DZJGk1qN28pQapwgLRRgx7kyis3JdX2xGL1Cj8".to_owned(),
         protocol_message_id: Some(message_id.to_owned()),
-        sender: "did:web:alice.example".to_owned(),
+        sender: "ak:did_core:web:alice.example".to_owned(),
         executed_by: None,
         body: String::new(),
         content_format: None,
@@ -2915,12 +2917,12 @@ fn late_recovery_guards_allow_sidecar_plaintext_when_all_pass() {
 #[test]
 fn rejects_did_fallback_when_comparing_message_senders() {
     assert!(!is_own_message_sender(
-        "ak:did_core:web:alice.example",
+        "did:web:alice.example",
         "ak:did_core:web:alice.example"
     ));
     assert!(!is_own_message_sender(
         "ak:did_core:web:alice.example",
-        "ak:did_core:web:alice.example"
+        "did:web:alice.example"
     ));
     assert!(!is_own_message_sender(
         "ak:did_core:web:bob.example",
@@ -3230,8 +3232,10 @@ fn agent_metadata_from_mentions_recovers_selector_audit_metadata() {
             )
             .with_display_name_at_time("Summary Assistant")
             .with_agent_selector_metadata(
-                crate::mls_api_helpers::principal_core_id("ak:did_core:web:example.com:users:alice")
-                    .unwrap(),
+                crate::mls_api_helpers::principal_core_id(
+                    "ak:did_core:web:example.com:users:alice",
+                )
+                .unwrap(),
                 arkret_sdk::Handle::parse("alice:example.com").unwrap(),
                 "summary",
             )
@@ -3295,7 +3299,10 @@ fn mention_audit_metadata_cannot_promote_or_rebind_an_agent() {
 
     assert_eq!(authoritative.len(), 1);
     let summary = authoritative.get(agent_id).unwrap();
-    assert_eq!(summary.controller_id, "ak:did_core:web:example.com:users:alice");
+    assert_eq!(
+        summary.controller_id,
+        "ak:did_core:web:example.com:users:alice"
+    );
     assert_eq!(summary.controller_handle, "alice:example.com");
     assert_eq!(summary.agent_slug, "summary");
     assert_eq!(summary.display_name, "summary");
@@ -3305,7 +3312,8 @@ fn mention_audit_metadata_cannot_promote_or_rebind_an_agent() {
 fn owned_agent_ids_only_select_current_controllers_agents() {
     let controller = "ak:did_core:web:example.com:users:alice";
     let own_agent = arkret_sdk::Mention::new(
-        crate::mls_api_helpers::principal_core_id("ak:did_core:web:agents.example:summary").unwrap(),
+        crate::mls_api_helpers::principal_core_id("ak:did_core:web:agents.example:summary")
+            .unwrap(),
     )
     .with_agent_selector_metadata(
         crate::mls_api_helpers::principal_core_id(controller).unwrap(),
@@ -3607,9 +3615,15 @@ fn participant_roster_rows_groups_agents_under_visible_controller() {
     assert_eq!(rows.len(), 1);
     match &rows[0] {
         ParticipantRosterRow::ControllerWithAgents { controller, agents } => {
-            assert_eq!(controller.principal_id, "ak:did_core:web:example.com:users:alice");
+            assert_eq!(
+                controller.principal_id,
+                "ak:did_core:web:example.com:users:alice"
+            );
             assert_eq!(agents.len(), 1);
-            assert_eq!(agents[0].principal_id, "ak:did_core:web:agents.example:summary");
+            assert_eq!(
+                agents[0].principal_id,
+                "ak:did_core:web:agents.example:summary"
+            );
         }
         ParticipantRosterRow::Participant(_) => panic!("expected grouped controller row"),
     }
@@ -3673,8 +3687,9 @@ fn mention_candidate_for_own_agent_uses_me_alias() {
         }),
     };
     let participants = vec![controller.clone(), agent.clone()];
-    let candidate = mention_candidate_for_participant(&agent, &participants, &controller.principal_id)
-        .expect("agent mention candidate");
+    let candidate =
+        mention_candidate_for_participant(&agent, &participants, &controller.principal_id)
+            .expect("agent mention candidate");
     assert_eq!(candidate.display_name, "Summary Assistant");
     assert_eq!(candidate.insert_label(), "me/summary");
     assert_eq!(
@@ -3731,14 +3746,17 @@ fn mention_candidate_for_current_user_uses_structured_me_alias() {
     );
     assert_eq!(typed_mention.mention_text_original.as_deref(), Some("@me"));
 
-    assert!(composer_mention_nodes(true, "ask @me/summary", &[], &participant.principal_id).is_empty());
+    assert!(
+        composer_mention_nodes(true, "ask @me/summary", &[], &participant.principal_id).is_empty()
+    );
 }
 
 #[test]
 fn resolved_owned_agent_chip_suppresses_duplicate_directory_lookup() {
     let controller = "ak:did_core:web:example.com:users:alice";
     let mention = arkret_sdk::Mention::new(
-        crate::mls_api_helpers::principal_core_id("ak:did_core:web:agents.example:summary").unwrap(),
+        crate::mls_api_helpers::principal_core_id("ak:did_core:web:agents.example:summary")
+            .unwrap(),
     )
     .with_agent_selector_metadata(
         crate::mls_api_helpers::principal_core_id(controller).unwrap(),
@@ -3787,7 +3805,10 @@ fn owned_agent_inventory_enriches_existing_realm_member_metadata() {
     let summary = metadata
         .get("ak:did_core:web:agents.example:summary")
         .expect("owned agent metadata");
-    assert_eq!(summary.controller_id, "ak:did_core:web:example.com:users:alice");
+    assert_eq!(
+        summary.controller_id,
+        "ak:did_core:web:example.com:users:alice"
+    );
     assert_eq!(summary.controller_handle, "alice:example.com");
     assert_eq!(summary.agent_slug, "summary");
 }
@@ -3814,7 +3835,7 @@ fn explicit_member_click_builds_user_and_owned_agent_mentions() {
         Some("alice:example.com"),
     )
     .expect("explicit member mention");
-    assert_eq!(clicked_member.principal_id, member.principal_id);
+    assert_eq!(clicked_member.subject_id, member.principal_id);
     assert!(!clicked_member.is_agent);
 
     let unannotated_owned_agent = SpaceParticipant {
@@ -3890,9 +3911,12 @@ fn mention_candidate_for_other_agent_keeps_canonical_controller_handle() {
     };
     let participants = vec![controller, agent.clone()];
 
-    let candidate =
-        mention_candidate_for_participant(&agent, &participants, "ak:did_core:web:example.com:users:alice")
-            .expect("agent mention candidate");
+    let candidate = mention_candidate_for_participant(
+        &agent,
+        &participants,
+        "ak:did_core:web:example.com:users:alice",
+    )
+    .expect("agent mention candidate");
 
     assert_eq!(candidate.insert_label(), "bob:example.com/summary");
 }
@@ -4087,8 +4111,9 @@ fn mention_candidate_uses_cached_member_handle() {
         .iter()
         .find(|participant| participant.principal_id == "ak:did_core:web:bob.example")
         .expect("bob participant");
-    let candidate = mention_candidate_for_participant(bob, &participants, "ak:did_core:web:alice.example")
-        .expect("member mention candidate");
+    let candidate =
+        mention_candidate_for_participant(bob, &participants, "ak:did_core:web:alice.example")
+            .expect("member mention candidate");
     assert_eq!(candidate.subject_id, "ak:did_core:web:bob.example");
     assert_eq!(candidate.display_name, "bob:local.host");
     assert_eq!(candidate.insert_label(), "bob:local.host");
@@ -4114,8 +4139,12 @@ fn late_join_discussion_sender_resolves_cached_member_handle() {
         "actor_id": sender,
         "membership": "join"
     }]});
-    let participants =
-        space_participants(Some(&projection), &store, realm, "ak:did_core:web:reader.example");
+    let participants = space_participants(
+        Some(&projection),
+        &store,
+        realm,
+        "ak:did_core:web:reader.example",
+    );
 
     assert_eq!(
         sender_display_label(
@@ -4334,9 +4363,13 @@ fn presence_maps_from_sync_events_prefers_account_subscribe_presence() {
         }),
     ];
 
-    let (states, labels, status_messages) =
-        presence_maps_from_sync_events(&events, &participants, "ak:did_core:web:alice.example", "Alice")
-            .expect("presence events should match participants");
+    let (states, labels, status_messages) = presence_maps_from_sync_events(
+        &events,
+        &participants,
+        "ak:did_core:web:alice.example",
+        "Alice",
+    )
+    .expect("presence events should match participants");
 
     assert_eq!(
         states.get("ak:did_core:web:alice.example"),
@@ -4431,11 +4464,18 @@ fn presence_maps_from_sync_events_aggregates_live_device_envelopes() {
         }),
     ];
 
-    let (states, _, status_messages) =
-        presence_maps_from_sync_events(&events, &participants, "ak:did_core:web:alice.example", "Alice")
-            .expect("live remote presence should match participants");
+    let (states, _, status_messages) = presence_maps_from_sync_events(
+        &events,
+        &participants,
+        "ak:did_core:web:alice.example",
+        "Alice",
+    )
+    .expect("live remote presence should match participants");
 
-    assert_eq!(states.get("ak:did_core:web:bob.example"), Some(&"dnd".to_owned()));
+    assert_eq!(
+        states.get("ak:did_core:web:bob.example"),
+        Some(&"dnd".to_owned())
+    );
     assert_eq!(
         status_messages.get("ak:did_core:web:bob.example"),
         Some(&"Available soon".to_owned())
@@ -4487,8 +4527,9 @@ fn secure_content_block_round_trips_back_to_text() {
 
 #[test]
 fn chat_message_from_event_flags_encrypted_payload_as_decrypting() {
-    let event = json!({
+    let mut event = json!({
         "event_id": "evt:1",
+        "actor_id": "ak:did_core:web:alice.example",
         "content": {
             "type": "ak.message.create",
             "body": "[encrypted]",
@@ -4496,6 +4537,7 @@ fn chat_message_from_event_flags_encrypted_payload_as_decrypting() {
             "encrypted_content": {"ciphertext": "blob"},
         }
     });
+    sign_chat_fixture(&mut event);
     let msg = chat_message_from_event(
         "ak:realm:A_UALC69_WeDbu3WQ3suidUfmxa1MAW5tIIxjRS1C9yE",
         &event,
@@ -4506,9 +4548,10 @@ fn chat_message_from_event_flags_encrypted_payload_as_decrypting() {
 
 #[test]
 fn circle_scoped_message_does_not_require_forbidden_payload_scope_field() {
-    let event = json!({
+    let mut event = json!({
         "event_id": "ak:event:ASUb86fbFm5UEUFKFTuMNfbNsMTlueGP2DFFuE8vHwt0",
         "kind": "ak.message.create",
+        "actor_id": "ak:did_core:web:alice.example",
         "effective_scope": {
             "kind": "circle",
             "realm_id": "ak:realm:AZ50TDWNf7-ZvnbVpb3-bD97v_NiKs0krmIiZeXokdCg",
@@ -4521,6 +4564,7 @@ fn circle_scoped_message_does_not_require_forbidden_payload_scope_field() {
             "content": { "body": "private" }
         }
     });
+    sign_chat_fixture(&mut event);
 
     let message = chat_message_from_event(
         "ak:realm:AZ50TDWNf7-ZvnbVpb3-bD97v_NiKs0krmIiZeXokdCg",
@@ -4533,8 +4577,9 @@ fn circle_scoped_message_does_not_require_forbidden_payload_scope_field() {
 
 #[test]
 fn chat_message_from_event_keeps_bodyless_encrypted_payload_visible() {
-    let event = json!({
+    let mut event = json!({
         "event_id": "evt:bodyless",
+        "actor_id": "ak:did_core:web:alice.example",
         "content": {
             "type": "ak.message.create",
             "strand_id": "ak:strand:AI5OKPo7cL4WAh-kQD_G9aUudPNU0xGaEiCVn1F1nFGA",
@@ -4550,6 +4595,7 @@ fn chat_message_from_event_keeps_bodyless_encrypted_payload_visible() {
             },
         }
     });
+    sign_chat_fixture(&mut event);
 
     let msg = chat_message_from_event(
         "ak:realm:A_UALC69_WeDbu3WQ3suidUfmxa1MAW5tIIxjRS1C9yE",
@@ -4572,8 +4618,9 @@ fn chat_message_from_event_marks_failed_local_decrypt_as_key_missing() {
         crate::operation::uuid_v7()
     ));
     let store = LocalStateStore::with_path(temp);
-    let event = json!({
+    let mut event = json!({
         "event_id": "evt:key-missing",
+        "actor_id": "ak:did_core:web:bob.example",
         "content": {
             "type": "ak.message.create",
             "strand_id": "ak:strand:AI5OKPo7cL4WAh-kQD_G9aUudPNU0xGaEiCVn1F1nFGA",
@@ -4589,14 +4636,15 @@ fn chat_message_from_event_marks_failed_local_decrypt_as_key_missing() {
             },
         }
     });
-    let authority = test_authority("did:web:bob.example");
+    sign_chat_fixture(&mut event);
+    let authority = test_authority("ak:did_core:web:bob.example");
     let device_id = test_device_id("ak:device:01964137-0000-7000-8000-000000000001");
 
     let msg = chat_message_from_event_with_sidecar(
         "ak:realm:AacL7ZYuTtiI1Wvq5aTmbQo8CihIcuFhJ4WKAZZMxlxY",
         &event,
         Some(&store),
-        Some((&authority, "did:web:bob.example", &device_id)),
+        Some((&authority, "ak:did_core:web:bob.example", &device_id)),
     )
     .expect("message");
 
@@ -4612,7 +4660,7 @@ fn chat_message_from_event_marks_failed_local_decrypt_as_key_missing() {
 fn chat_message_revise_operation_retypes_event_target_to_message_id() {
     let op = chat_message_revise_operation(
         "ak:realm:AcLZB9aC8iMR8iBq1sUbB77yPclZIvptyHtZVgiszdI5",
-        "did:web:bob.example",
+        "ak:did_core:web:bob.example",
         "ak:event:AfzYurOSCYsUDGb3xQWTsa9dxNQ7f1QNrv24y4BoMawo",
         "edited",
     )
@@ -4644,7 +4692,7 @@ fn chat_message_revise_operation_addresses_message_target_via_message_id() {
     // `ak:message:` target passes through unchanged.
     let op = chat_message_revise_operation(
         "ak:realm:AcLZB9aC8iMR8iBq1sUbB77yPclZIvptyHtZVgiszdI5",
-        "did:web:bob.example",
+        "ak:did_core:web:bob.example",
         "ak:message:AfzYurOSCYsUDGb3xQWTsa9dxNQ7f1QNrv24y4BoMawo",
         "edited",
     )
@@ -4672,7 +4720,7 @@ fn chat_message_revise_operation_addresses_message_target_via_message_id() {
 fn chat_message_redact_operation_retypes_event_target_to_message_id() {
     let op = chat_message_redact_operation(
         "ak:realm:AcLZB9aC8iMR8iBq1sUbB77yPclZIvptyHtZVgiszdI5",
-        "did:web:bob.example",
+        "ak:did_core:web:bob.example",
         "ak:event:AfzYurOSCYsUDGb3xQWTsa9dxNQ7f1QNrv24y4BoMawo",
         "author_redaction",
     )
@@ -4699,7 +4747,7 @@ fn chat_message_redact_operation_retypes_event_target_to_message_id() {
 fn chat_message_redact_operation_uses_message_id_for_message_target() {
     let op = chat_message_redact_operation(
         "ak:realm:AcLZB9aC8iMR8iBq1sUbB77yPclZIvptyHtZVgiszdI5",
-        "did:web:bob.example",
+        "ak:did_core:web:bob.example",
         "ak:message:AfzYurOSCYsUDGb3xQWTsa9dxNQ7f1QNrv24y4BoMawo",
         "author_redaction",
     )
@@ -4724,7 +4772,7 @@ fn chat_message_redact_operation_uses_message_id_for_message_target() {
 fn chat_reaction_add_operation_uses_schema_target_ref() {
     let op = chat_reaction_add_operation(
         "ak:realm:AcLZB9aC8iMR8iBq1sUbB77yPclZIvptyHtZVgiszdI5",
-        "did:web:bob.example",
+        "ak:did_core:web:bob.example",
         "ak:event:AfzYurOSCYsUDGb3xQWTsa9dxNQ7f1QNrv24y4BoMawo",
         "+1",
     )
@@ -4770,7 +4818,7 @@ mod merge_duplicate_create_message_alignment_tests {
             protocol_message_id: Some(
                 "ak:message:AZhIGxyGMJYSpWhMOugJZewLoNM88CzSBohQQRpKgw1c".to_owned(),
             ),
-            sender: "did:web:bob.example".to_owned(),
+            sender: "ak:did_core:web:bob.example".to_owned(),
             executed_by: None,
             body: body.to_owned(),
             content_format: None,
@@ -4919,7 +4967,10 @@ mod merge_duplicate_create_message_alignment_tests {
             "original body",
             at("2026-07-07T06:19:20.000Z"),
         );
-        incoming.reactions = vec![("+1".to_owned(), vec!["did:web:carol.example".to_owned()])];
+        incoming.reactions = vec![(
+            "+1".to_owned(),
+            vec!["ak:did_core:web:carol.example".to_owned()],
+        )];
 
         merge_duplicate_create_message(&mut existing, incoming);
 
@@ -4931,7 +4982,10 @@ mod merge_duplicate_create_message_alignment_tests {
         assert_eq!(existing.revisions, vec!["original body".to_owned()]);
         assert_eq!(
             existing.reactions,
-            vec![("+1".to_owned(), vec!["did:web:carol.example".to_owned()])]
+            vec![(
+                "+1".to_owned(),
+                vec!["ak:did_core:web:carol.example".to_owned()]
+            )]
         );
     }
 
@@ -4944,7 +4998,10 @@ mod merge_duplicate_create_message_alignment_tests {
             "body",
             at("2026-07-07T06:19:20.000Z"),
         );
-        existing.reactions = vec![("+1".to_owned(), vec!["did:web:bob.example".to_owned()])];
+        existing.reactions = vec![(
+            "+1".to_owned(),
+            vec!["ak:did_core:web:bob.example".to_owned()],
+        )];
         let mut incoming = msg(
             "ak:event:AIS3CfzQ4_aXiTARf8qv5G4C8b5BRZ7VN-tyB7K8oZmA",
             "body",
@@ -4953,13 +5010,13 @@ mod merge_duplicate_create_message_alignment_tests {
         incoming.reactions = vec![
             (
                 "\u{2764}".to_owned(),
-                vec!["did:web:dave.example".to_owned()],
+                vec!["ak:did_core:web:dave.example".to_owned()],
             ),
             (
                 "+1".to_owned(),
                 vec![
-                    "did:web:carol.example".to_owned(),
-                    "did:web:bob.example".to_owned(),
+                    "ak:did_core:web:carol.example".to_owned(),
+                    "ak:did_core:web:bob.example".to_owned(),
                 ],
             ),
         ];
@@ -4972,13 +5029,13 @@ mod merge_duplicate_create_message_alignment_tests {
                 (
                     "+1".to_owned(),
                     vec![
-                        "did:web:bob.example".to_owned(),
-                        "did:web:carol.example".to_owned(),
+                        "ak:did_core:web:bob.example".to_owned(),
+                        "ak:did_core:web:carol.example".to_owned(),
                     ],
                 ),
                 (
                     "\u{2764}".to_owned(),
-                    vec!["did:web:dave.example".to_owned()]
+                    vec!["ak:did_core:web:dave.example".to_owned()]
                 ),
             ]
         );
@@ -4998,7 +5055,7 @@ mod merge_duplicate_create_message_alignment_tests {
             "strand_id": "ak:strand:ARJxD7BSUwmnyinQVd_KxLCG7gwfyIFlTzeJk7F_phHE",
             "message_id": "ak:message:AiMtOq_gs6Il6jSfTW_-c3OYzV-X5k9afNn8RSyisj38",
             "body": "hi",
-            "reaction_summary": { " +1 ": { "members": [" did:web:carol.example "] } },
+            "reaction_summary": { " +1 ": { "members": [" ak:did_core:web:carol.example "] } },
             "proofs": []
         })];
         sign_chat_fixtures(&mut events);
@@ -5011,7 +5068,10 @@ mod merge_duplicate_create_message_alignment_tests {
         assert_eq!(messages.len(), 1);
         assert_eq!(
             messages[0].reactions,
-            vec![("+1".to_owned(), vec!["did:web:carol.example".to_owned()])]
+            vec![(
+                "+1".to_owned(),
+                vec!["ak:did_core:web:carol.example".to_owned()]
+            )]
         );
     }
 

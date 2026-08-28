@@ -328,17 +328,17 @@ mod tests {
     fn managed_generation_binds_controller_generation_and_delegation() {
         let controller = AuthoringGeneration {
             authority_model: AuthoringAuthorityModel::AcceptedDevice,
-            authority_principal_id: "did:webvh:example:alice".to_owned(),
+            authority_principal_id: "ak:did_core:webvh:example".to_owned(),
             generation_ref: "2-QmCurrent".to_owned(),
         };
         let first = AuthoringGeneration::managed_agent(
-            "did:webvh:example:alice",
+            "ak:did_core:webvh:example",
             &controller,
             "did:webvh:example:agent#controller",
         )
         .unwrap();
         let second = AuthoringGeneration::managed_agent(
-            "did:webvh:example:alice",
+            "ak:did_core:webvh:example",
             &controller,
             "did:webvh:example:agent#different-controller",
         )

@@ -1495,11 +1495,11 @@ fn spawn_provision_agent(
             }
         };
         let controller_realm_for_seal = controller_realm_id.clone();
-        let controller_id_for_seal = controller_did.clone();
+        let controller_did_for_seal = controller_did.clone();
         if let Err(error) = with_authed_api(&base, api_token.clone(), move |api| async move {
             super::bootstrap::seal_self_principal_event_current(
                 &api,
-                &controller_id_for_seal,
+                &controller_did_for_seal,
                 &controller_realm_for_seal,
                 &provision_event_id,
             )

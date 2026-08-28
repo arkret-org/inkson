@@ -303,7 +303,10 @@ pub(crate) fn checkpoint_continues_bound_creation(
     let Some(bound) = handoff.bound_principal_id.as_ref() else {
         return false;
     };
-    arkret_sdk::project_did_to_core_id(&checkpoint.did).as_ref() == Ok(bound)
+    arkret_sdk::project_did_to_core_id(&checkpoint.did)
+        .ok()
+        .as_ref()
+        == Some(bound)
         && checkpoint.device_id == handoff.device_id
         && checkpoint.principal_server_url == handoff.principal_server_url
         && checkpoint.gate_account_base == handoff.gate_account_base
@@ -421,7 +424,8 @@ mod tests {
         handoff.lease_fence = None;
         handoff.lease_expires_at = None;
         handoff.identity_creation_state = None;
-        handoff.bound_principal_id = Some(arkret_sdk::project_did_to_core_id(&checkpoint.did).unwrap());
+        handoff.bound_principal_id =
+            Some(arkret_sdk::project_did_to_core_id(&checkpoint.did).unwrap());
         handoff.bound_principal_did = Some(checkpoint.did.clone());
         (
             crate::state::isolated_store_for_tests("bound-onboarding-continuation"),
@@ -650,9 +654,8 @@ mod tests {
             arkret_sdk::DidCoreId::new("ak:did_core:webvh:z6mkfixture:other.example".to_owned())
                 .unwrap(),
         );
-        bound_elsewhere.bound_principal_did = Some(
-            arkret_sdk::Did::new("did:webvh:z6mkfixture:other.example".to_owned()).unwrap(),
-        );
+        bound_elsewhere.bound_principal_did =
+            Some(arkret_sdk::Did::new("did:webvh:z6mkfixture:other.example".to_owned()).unwrap());
         assert_eq!(
             registration_checkpoint_disposition(
                 &checkpoint,

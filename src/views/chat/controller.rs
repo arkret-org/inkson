@@ -38,7 +38,7 @@ fn shared_pin_operation_body(
 pub(super) struct ChatCommandContext {
     pub base_url: String,
     pub authority: arkret_sdk::PrincipalAuthorityKey,
-    pub principal_id: String,
+    pub principal_id: arkret_sdk::DidCoreId,
     pub device_id: arkret_sdk::DeviceId,
     pub selected_realm_id: String,
     pub selected_channel_id: String,
@@ -347,7 +347,7 @@ impl ChatController {
                     crate::transport::moderation::report(
                         &submitter,
                         &draft.realm_id,
-                        &principal_id,
+                        principal_id.as_str(),
                         draft.effective_scope,
                         &draft.target_ref,
                         &draft.reason,
@@ -419,17 +419,8 @@ impl ChatController {
                 return;
             }
         };
-        let actor = match arkret_sdk::Did::new(context.principal_id.clone()) {
-            Ok(actor) => actor,
-            Err(error) => {
-                self.status_msg
-                    .set(format!("Private save failed: {error:#}"));
-                self.message_context_menu.set(None);
-                return;
-            }
-        };
         let hlc = match crate::signing_stamp::issue_account_data_hlc(
-            actor.as_str(),
+            context.principal_id.as_str(),
             context.device_id.as_str(),
         ) {
             Ok(hlc) => hlc,
@@ -523,14 +514,14 @@ impl ChatController {
         let operation = if removing {
             shared_message_pin_remove_operation(
                 &realm_id,
-                &context.principal_id,
+                context.principal_id.as_str(),
                 &pin_scope,
                 &target_ref,
             )
         } else {
             shared_message_pin_add_operation(
                 &realm_id,
-                &context.principal_id,
+                context.principal_id.as_str(),
                 &pin_scope,
                 &target_ref,
                 &rank,
@@ -643,13 +634,16 @@ impl ChatController {
         {
             if let Some((_, senders)) = message.reactions.iter_mut().find(|(key, _)| key == &emoji)
             {
-                if !senders.contains(&context.principal_id) {
-                    senders.push(context.principal_id.clone());
+                if !senders
+                    .iter()
+                    .any(|sender| sender == context.principal_id.as_str())
+                {
+                    senders.push(context.principal_id.to_string());
                 }
             } else {
                 message
                     .reactions
-                    .push((emoji.clone(), vec![context.principal_id.clone()]));
+                    .push((emoji.clone(), vec![context.principal_id.to_string()]));
             }
         }
         let state_store = crate::app::SessionContext::get().state_store;
@@ -657,7 +651,7 @@ impl ChatController {
             state_store,
             &context.selected_realm_id,
             &context.authority,
-            &context.principal_id,
+            context.principal_id.as_str(),
             &context.device_id,
             &target_ref,
             &emoji,
@@ -737,7 +731,7 @@ impl ChatController {
             {
                 Ok(content_block) => match chat_message_revise_operation_with_content(
                     &realm_id,
-                    &actor,
+                    actor.as_str(),
                     &target_ref,
                     content_block,
                 ) {
@@ -832,7 +826,7 @@ impl ChatController {
         spawn(async move {
             let operation = match chat_message_redact_operation(
                 &realm_id,
-                &actor,
+                actor.as_str(),
                 &target_ref,
                 "user requested tombstone",
             ) {
@@ -984,7 +978,7 @@ impl ChatController {
                     &seal_view,
                     &message.realm_id,
                     &authority,
-                    &actor,
+                    actor.as_str(),
                     &device_id,
                     &message.strand_id,
                     &retry_message_id,
@@ -1079,7 +1073,7 @@ impl ChatController {
             }
             let operation = match chat_message_create_operation_with_content(
                 &message.realm_id,
-                &actor,
+                actor.as_str(),
                 &message.strand_id,
                 &retry_message_id,
                 &message.body,
@@ -1100,7 +1094,7 @@ impl ChatController {
             };
             match submit_chat_operation_with_auth_refresh(
                 &base_url,
-                &actor,
+                actor.as_str(),
                 &message.realm_id,
                 api_token,
                 wait_for,
@@ -1116,7 +1110,7 @@ impl ChatController {
                         serde_json::to_value(AcceptedChatMessageOperation {
                             event_id: &submitted.event_id,
                             kind: event_kind_str::MESSAGE_CREATE,
-                            actor_id: &actor,
+                            actor_id: actor.as_str(),
                             body: &message.body,
                             content: &operation.payload()["content"],
                             strand_id: &message.strand_id,
@@ -1167,7 +1161,7 @@ impl ChatController {
             .iter_mut()
             .find(|card| card.message_id == message_id)
         {
-            card.vote(&context.principal_id, option_index);
+            card.vote(context.principal_id.as_str(), option_index);
         }
         if let Some(message) = self
             .messages
@@ -1191,7 +1185,7 @@ impl ChatController {
                 crate::transport::auth::with_authed_api(&base_url, api_token, |api| async move {
                     let operation = crate::messaging::polls::build_poll_vote_op(
                         &realm_id,
-                        &actor,
+                        actor.as_str(),
                         &strand_id,
                         &poll_ref,
                         &[option_id],

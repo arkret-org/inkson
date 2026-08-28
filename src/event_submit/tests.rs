@@ -21,7 +21,7 @@ fn test_authoring_generation() -> crate::identity::authoring_generation::Authori
     crate::identity::authoring_generation::AuthoringGeneration {
         authority_model:
             crate::identity::authoring_generation::AuthoringAuthorityModel::AcceptedDevice,
-        authority_principal_id: "did:web:alice.example".to_owned(),
+        authority_principal_id: "ak:did_core:web:alice.example".to_owned(),
         generation_ref: "1-QmCurrent".to_owned(),
     }
 }
@@ -985,7 +985,7 @@ fn queued_mls_admission_round_trips_exact_welcome_material() {
         test_authoring_generation(),
         Some(PostAcceptAction::MlsAdmission {
             realm_id: realm_id.to_owned(),
-            actor_id: "did:web:alice.example".to_owned(),
+            actor_id: "ak:did_core:web:alice.example".to_owned(),
             device_id: "ak:device:01904100-0000-7000-8000-000000000001".to_owned(),
             proposal_events: vec![proposal],
             stage: MlsAdmissionStage::WelcomesAuthored,

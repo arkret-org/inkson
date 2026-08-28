@@ -354,7 +354,7 @@ fn inkson_accepts_server_contract_payloads() {
     let authz: inkson::models::AuthzCheckOutcome = serde_json::from_value(json!({
         "decision": "allow",
         "reason_code": null,
-        "grants": [{"actor": "did:web:alice.example"}],
+        "matched_grants": [{"actor_id": "ak:did_core:web:alice.example"}],
         "obligations": []
     }))
     .unwrap();
@@ -410,7 +410,7 @@ fn inkson_accepts_server_contract_payloads() {
 
     let claimed: inkson::models::KeysClaimOutcome = serde_json::from_value(json!({
         "one_time_keys": {
-            "did:web:alice.example": {
+            "ak:did_core:web:alice.example": {
                 "ak:device:0196419b-0000-7000-8000-000000000000": {
                     "signed_curve25519": {
                         "key": "YWxpY2Utb3RrLTE",
@@ -431,12 +431,12 @@ fn inkson_accepts_server_contract_payloads() {
     assert!(!claimed.one_time_keys.is_empty());
 
     let device_send: inkson::models::DeviceMessagesSendOutcome = serde_json::from_value(json!({
-        "delivered": {"did:web:alice.example": ["dev_alice"]},
+        "delivered": {"ak:did_core:web:alice.example": ["dev_alice"]},
         "unknown_devices": {}
     }))
     .unwrap();
     assert_eq!(
-        device_send.delivered["did:web:alice.example"],
+        device_send.delivered["ak:did_core:web:alice.example"],
         json!(["dev_alice"])
     );
 

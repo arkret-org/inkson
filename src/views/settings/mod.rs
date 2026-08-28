@@ -2887,7 +2887,7 @@ pub fn SettingsPanel(
                                             div {
                                                 class: "actions",
                                                 "data-testid": "contact-remark-row",
-                                                "data-actor-did": "{actor_id}",
+                                                "data-actor-id": "{actor_id}",
                                                 span { title: "{actor_id}", "{actor_id_label}" }
                                                 span { class: "pill", {crate::i18n::tr("contacts.petname.badge")} }
                                                 span { "{remark.petname}" }

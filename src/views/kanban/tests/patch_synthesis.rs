@@ -406,9 +406,9 @@ fn engine_ingest_dedupes_resent_strand_update_by_canonical_event_id() {
         "U",
     );
     card.synthesis = "alice synthesis".to_owned();
-    card.created_by = "did:web:acme.example:users:alice".to_owned();
+    card.created_by = "ak:did_core:web:acme.example:users:alice".to_owned();
     card.created_at = "2026-05-22T09:00:00.000Z".to_owned();
-    card.updated_by = "did:web:acme.example:users:alice".to_owned();
+    card.updated_by = "ak:did_core:web:acme.example:users:alice".to_owned();
     card.updated_at = "2026-05-22T10:00:00.000Z".to_owned();
 
     let event = json!({
@@ -489,9 +489,9 @@ fn projection_synthesis_revision_leaves_multi_author_card_unattributed() {
         "U",
     );
     card.synthesis = "bob synthesis".to_owned();
-    card.created_by = "did:web:acme.example:users:alice".to_owned();
+    card.created_by = "ak:did_core:web:acme.example:users:alice".to_owned();
     card.created_at = "2026-05-22T09:00:00.000Z".to_owned();
-    card.updated_by = "did:web:acme.example:users:bob".to_owned();
+    card.updated_by = "ak:did_core:web:acme.example:users:bob".to_owned();
     card.updated_at = "2026-05-22T11:00:00.000Z".to_owned();
 
     let entries = card_synthesis_track_entries(&card, &[], &LocalStateStore::default());
@@ -551,7 +551,7 @@ fn card_synthesis_author_prefers_cached_member_primary_handle() {
 }
 
 #[test]
-fn late_join_synthesis_author_resolves_handle_from_roster_actor_did() {
+fn late_join_synthesis_author_resolves_handle_from_roster_actor_id() {
     let actor = "ak:did_core:webvh:zQmHistoricalAuthor";
     let mut card = test_card(
         "ak:strand:AFjQnGmj11wy2rA2YjgbfhdhIJlFu9cPeZN5Ld0XzQp4",
@@ -871,7 +871,7 @@ fn card_detail_update_patch_unsets_empty_optional_fields() {
     current.title = "Keep".to_owned();
     current.description = "old summary".to_owned();
     current.labels = vec!["old".to_owned()];
-    current.assignee = "did:web:bob.example".to_owned();
+    current.assignee = "ak:did_core:web:bob.example".to_owned();
     current.due = "2026-05-19".to_owned();
     let draft = CardDetailDraft {
         title: "Keep".to_owned(),
@@ -1058,7 +1058,7 @@ fn seed_strand_ids_are_valid_object_patch_targets() {
         // no longer be the demo Space id.
         let event = crate::operation::ak_ops::strand_update_patch(
             "ak:realm:AY61QviMxoJ0ALEn5U39bA7Qbi1BxHCrOq4950m2JRjM",
-            "did:web:acme.example:users:alice",
+            "ak:did_core:web:acme.example:users:alice",
             strand_id,
             json!({"tracks.synthesis.content": content_patch_value("demo synthesis")}),
         )

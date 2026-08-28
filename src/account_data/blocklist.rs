@@ -106,8 +106,7 @@ fn target_from_ui(
             };
             Ok(AccountBlocklistTarget::Did(AccountBlocklistDidTarget {
                 kind,
-                actor_id: arkret_sdk::DidCoreId::new(value)
-                    .map_err(|error| error.to_string())?,
+                actor_id: arkret_sdk::DidCoreId::new(value).map_err(|error| error.to_string())?,
             }))
         }
         BlocklistUiTargetKind::Domain => {

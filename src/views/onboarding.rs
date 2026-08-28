@@ -378,7 +378,7 @@ async fn commit_completed_account(
         .as_ref()
         .map(crate::identity::account_auth::transition::LoginCorrelation::for_handoff)
         .unwrap_or_default()
-        .with_principal_id(completed.account.did().as_str())
+        .with_principal_id(completed.account.principal_id().as_str())
         .with_device_id(completed.account.device_id.as_str());
     let result = async {
         let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
@@ -881,7 +881,10 @@ async fn check_device_setup_pairing(
             anyhow::bail!("another local device identity occupies this account namespace");
         }
     }
-    crate::event_signer::bind_active_signer_principal_device_id(&did, request.device_id.as_str())?;
+    crate::event_signer::bind_active_signer_principal_device_id(
+        &principal_did,
+        request.device_id.as_str(),
+    )?;
     Ok(outcome.state)
 }
 
@@ -1440,6 +1443,10 @@ async fn issue_recovery_completion_grant(
         .bound_principal_id
         .clone()
         .ok_or_else(|| anyhow::anyhow!("account handoff omits its bound principal"))?;
+    let principal_did = handoff
+        .bound_principal_did
+        .clone()
+        .ok_or_else(|| anyhow::anyhow!("account handoff omits its bound principal DID"))?;
     if session.principal_id != principal_id {
         anyhow::bail!("recovery session grant principal does not match the account handoff");
     }
@@ -1459,7 +1466,7 @@ async fn issue_recovery_completion_grant(
     )?;
     let account = resolve_handoff_active_account(
         handoff,
-        &principal_id,
+        &principal_did,
         persisted.device_id.clone(),
         state_store,
     )
@@ -1916,7 +1923,7 @@ async fn reissue_accepted_onboarding_session(
     .map_err(|error| AcceptedSessionReissueError::Contradiction(anyhow::anyhow!(error)))?;
     let mut correlation =
         crate::identity::account_auth::transition::LoginCorrelation::for_handoff(handoff)
-            .with_principal_id(account.did().as_str())
+            .with_principal_id(account.principal_id().as_str())
             .with_device_id(account.device_id.as_str());
     let issued = crate::views::login::issue_bound_handoff_session(
         &handoff.principal_server_url,
@@ -2919,9 +2926,9 @@ async fn activate_pending_registration_signer(
         None,
         Some(device),
     )?;
-    let principal_id = checkpoint.did.clone();
+    let principal_did = checkpoint.did.clone();
     Ok(
-        crate::event_signer::bind_active_signer_principal_device_id(&principal_id, device)?
+        crate::event_signer::bind_active_signer_principal_device_id(&principal_did, device)?
             .unwrap_or(signer),
     )
 }
@@ -3116,15 +3123,15 @@ async fn create_and_bind_identity(
                 }
                 Err(error) => return Err(error),
             };
-        let principal_id = checkpoint.did.clone();
-        let principal_core_id = arkret_sdk::project_did_to_core_id(&principal_id)?;
+        let principal_did = checkpoint.did.clone();
+        let principal_core_id = arkret_sdk::project_did_to_core_id(&principal_did)?;
         if completion.session_grant.principal_id != principal_core_id {
             anyhow::bail!("initial session grant principal does not match the registered identity");
         }
         let grant_jwt = completion.session_grant.grant_jwt.clone();
         let account = resolve_handoff_active_account(
             handoff,
-            &principal_id,
+            &principal_did,
             arkret_sdk::DeviceId::new(device.to_owned())?,
             state_store,
         )
@@ -3217,7 +3224,7 @@ async fn create_and_bind_identity(
                 .await;
         let correlation =
             crate::identity::account_auth::transition::LoginCorrelation::for_handoff(handoff)
-                .with_principal_id(account.did().as_str())
+                .with_principal_id(account.principal_id().as_str())
                 .with_device_id(account.device_id.as_str());
         let disposition = match garth::classify_bound_completion_resume(inventory.facts) {
             Ok(disposition) => disposition,
@@ -4849,9 +4856,8 @@ mod tests {
             Some("lease-1"),
             Some(1),
         );
-        handoff.bound_principal_id = Some(
-            arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example".to_owned()).unwrap(),
-        );
+        handoff.bound_principal_id =
+            Some(arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example".to_owned()).unwrap());
         handoff.bound_principal_did =
             Some(arkret_sdk::Did::new("did:web:alice.example".to_owned()).unwrap());
         let mut handoff_json = serde_json::to_value(&handoff).unwrap();

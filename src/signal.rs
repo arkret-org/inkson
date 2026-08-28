@@ -1092,9 +1092,9 @@ mod tests {
         use crate::event_signer::{ActiveSignerTestGuard, build_ed25519_device_signer};
 
         let seed = [15u8; 32];
-        let actor_id = "did:web:alice.example";
+        let actor_did = "did:web:alice.example";
         let device_id = "ak:device:01904100-0000-7000-8000-a11ce0000001";
-        let signer = Arc::new(build_ed25519_device_signer(seed, actor_id, device_id));
+        let signer = Arc::new(build_ed25519_device_signer(seed, actor_did, device_id));
         let _guard = ActiveSignerTestGuard::replace(Some(signer));
 
         let header = SignalHeader::new(
@@ -1131,7 +1131,7 @@ mod tests {
             encrypted_payload: encrypted.clone(),
             proof: arkret_wire::SignalProof {
                 kind: arkret_sdk::proof_kind::DETACHED_JWS.to_owned(),
-                verification_method: arkret_sdk::DidUrl::new(format!("{actor_id}#{device_id}"))
+                verification_method: arkret_sdk::DidUrl::new(format!("{actor_did}#{device_id}"))
                     .unwrap(),
                 envelope_digest: arkret_sdk::Hash::new(format!("sha256:{}", "0".repeat(64)))
                     .unwrap(),
