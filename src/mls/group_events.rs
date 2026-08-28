@@ -277,7 +277,7 @@ pub(crate) struct MlsCommitBasis {
     actor_id: String,
     effective_scope: arkret_sdk::ScopeRef,
     prev_epoch: u64,
-    base_group_state_ref: String,
+    base_group_state_ref: arkret_sdk::EventId,
     governance_binding: arkret_sdk::MlsGovernanceBindingPayload,
     commit_envelope: arkret_sdk::MlsCommitEnvelope,
     preconditions: Vec<crate::operation::Precondition>,
@@ -295,7 +295,7 @@ impl MlsCommitBasis {
     ) -> Result<crate::operation::LocalOperation, String> {
         let payload = arkret_sdk::MlsCommitPayload::new(
             self.prev_epoch,
-            self.base_group_state_ref,
+            self.base_group_state_ref.to_string(),
             proposal_refs,
             &self.commit_envelope,
             self.governance_binding,
@@ -348,13 +348,11 @@ pub(crate) fn mls_commit_basis_from_store(
         },
     };
 
-    let base_group_state_ref = state_store
-        .mls_group_state_ref_for_scope(
-            &effective_scope,
-            commit_envelope.group_id.as_str(),
-            prev_epoch,
-        )?
-        .to_string();
+    let base_group_state_ref = state_store.mls_group_state_ref_for_scope(
+        &effective_scope,
+        commit_envelope.group_id.as_str(),
+        prev_epoch,
+    )?;
     let governance_binding = crate::mls::governance_proof::cached_verified_binding_for_transition(
         state_store,
         &effective_scope,
@@ -369,11 +367,18 @@ pub(crate) fn mls_commit_basis_from_store(
         }
         None => governance_binding,
     };
+    let previous_epoch_head = crate::mls::governance_proof::cached_verified_mls_epoch_head(
+        state_store,
+        &effective_scope,
+        commit_envelope.group_id.as_str(),
+    )?;
     let preconditions = crate::mls::governance::mls_commit_preconditions(
         &effective_scope,
         commit_envelope.group_id.as_str(),
         prev_epoch,
+        &base_group_state_ref,
         previous_governance_binding,
+        previous_epoch_head,
     )
     .map_err(|err| format!("MLS commit preconditions failed: {err}"))?;
     Ok(MlsCommitBasis {

@@ -236,7 +236,7 @@ pub fn canonical_mls_remove_membership_frontier(
     Ok(frontier)
 }
 
-pub fn build_add_member_commit_for_effective_scope(
+pub(crate) fn build_add_member_commit_for_effective_scope(
     state_store: &crate::state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
@@ -244,6 +244,7 @@ pub fn build_add_member_commit_for_effective_scope(
     authority: &PrincipalAuthorityKey,
     device_id: &DeviceId,
     member_key_package: &arkret_sdk::MlsKeyPackageRecord,
+    member_authority_hint: &crate::mls::governance_proof::MlsLeafAuthorityHint,
 ) -> Result<
     (
         arkret_sdk::MlsAddMemberResult,
@@ -260,12 +261,13 @@ pub fn build_add_member_commit_for_effective_scope(
         authority,
         device_id,
         member_key_package,
+        std::slice::from_ref(member_authority_hint),
         None,
     )
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn build_add_member_commit_for_effective_scope_with_binding(
+pub(crate) fn build_add_member_commit_for_effective_scope_with_binding(
     state_store: &crate::state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
@@ -273,6 +275,7 @@ pub fn build_add_member_commit_for_effective_scope_with_binding(
     authority: &PrincipalAuthorityKey,
     device_id: &DeviceId,
     member_key_package: &arkret_sdk::MlsKeyPackageRecord,
+    member_authority_hints: &[crate::mls::governance_proof::MlsLeafAuthorityHint],
     sidecar_binding: Option<arkret_sdk::SidecarMlsBinding>,
 ) -> Result<
     (
@@ -331,10 +334,11 @@ pub fn build_add_member_commit_for_effective_scope_with_binding(
     let add = group
         .add_member_with_governance_binding(member_key_package, &governance_binding)
         .map_err(|err| MlsRuntimeError::Commit(err.to_string()))?;
-    crate::mls::governance_proof::install_cached_transition_leaf_bindings(
+    crate::mls::governance_proof::install_cached_transition_leaf_bindings_with_hints(
         state_store,
         &mut group,
         &governance_binding,
+        member_authority_hints,
     )
     .map_err(MlsRuntimeError::Commit)?;
     let post_state = group
@@ -356,7 +360,7 @@ pub fn build_add_member_commit_for_effective_scope_with_binding(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub fn build_add_members_commit_for_effective_scope_with_binding(
+pub(crate) fn build_add_members_commit_for_effective_scope_with_binding(
     state_store: &crate::state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
@@ -364,6 +368,7 @@ pub fn build_add_members_commit_for_effective_scope_with_binding(
     authority: &PrincipalAuthorityKey,
     device_id: &DeviceId,
     member_key_packages: &[arkret_sdk::MlsKeyPackageRecord],
+    member_authority_hints: &[crate::mls::governance_proof::MlsLeafAuthorityHint],
     sidecar_binding: Option<arkret_sdk::SidecarMlsBinding>,
 ) -> Result<
     (
@@ -427,10 +432,11 @@ pub fn build_add_members_commit_for_effective_scope_with_binding(
     let add = group
         .add_members_with_governance_binding(member_key_packages, &governance_binding)
         .map_err(|err| MlsRuntimeError::Commit(err.to_string()))?;
-    crate::mls::governance_proof::install_cached_transition_leaf_bindings(
+    crate::mls::governance_proof::install_cached_transition_leaf_bindings_with_hints(
         state_store,
         &mut group,
         &governance_binding,
+        member_authority_hints,
     )
     .map_err(MlsRuntimeError::Commit)?;
     let post_state = group

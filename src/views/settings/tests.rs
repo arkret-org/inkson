@@ -4,47 +4,6 @@ use arkret_wire::AccountDataKey;
 
 use super::*;
 
-/// F-BLOCKLIST-VALID-1: the live form validator should accept the
-/// DID Core shapes the rest of inkson routinely round-trips through
-/// soland (web, key, plc) and reject the obvious noise users paste
-/// in by accident. The point is to give *fast* feedback while the
-/// reducer remains the source of truth — so we don't try to be
-/// exhaustive about method-specific rules here.
-#[test]
-fn is_likely_valid_did_accepts_canonical_shapes_and_rejects_garbage() {
-    assert!(is_likely_valid_did("did:web:alice.example"));
-    assert!(is_likely_valid_did(
-        "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK"
-    ));
-    assert!(is_likely_valid_did("did:plc:abc123"));
-    assert!(is_likely_valid_did("  did:web:alice.example  "));
-
-    // Empty / missing scheme.
-    assert!(!is_likely_valid_did(""));
-    assert!(!is_likely_valid_did("   "));
-    assert!(!is_likely_valid_did("alice.example"));
-    // Missing method or method-specific id.
-    assert!(!is_likely_valid_did("did:"));
-    assert!(!is_likely_valid_did("did::alice"));
-    assert!(!is_likely_valid_did("did:web:"));
-    assert!(!is_likely_valid_did("did:web:   "));
-    // Non-alphanumeric method.
-    assert!(!is_likely_valid_did("did:we b:alice"));
-    assert!(!is_likely_valid_did("did:web-x:alice")); // DRIFT-ALLOW: negative test
-    // Round 4 (spec a77b995) — `.`/`-`/`_`/`:` are forbidden in
-    // the method segment; method MUST be lowercase ASCII alphanum.
-    assert!(!is_likely_valid_did("did:web.x:alice")); // DRIFT-ALLOW: negative test
-    assert!(!is_likely_valid_did("did:web_x:alice")); // DRIFT-ALLOW: negative test
-    assert!(!is_likely_valid_did("did:WEB:alice"));
-    // Whitespace inside method-specific id is rejected (round-4
-    // regex `^did:[a-z0-9]+:[^\s]+$`).
-    assert!(!is_likely_valid_did("did:web:alice example"));
-    // The method-specific id may still contain `:` (the splitn(2)
-    // keeps everything after the second `:`) — e.g. did:webvh nested
-    // delegations.
-    assert!(is_likely_valid_did("did:webvh:authority.example:zKey"));
-}
-
 /// The canonical `ak.read_receipt.preferences` body shape other devices
 /// read via `/sync` account_data. Locks the SDK/spec field names so a
 /// future rename can't silently desync devices.

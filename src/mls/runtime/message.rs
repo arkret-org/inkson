@@ -1673,7 +1673,7 @@ pub(crate) struct WelcomeSecurityFrontierPreview {
 /// verifier can use the transcript-authenticated post-Commit leaf set before
 /// any snapshot is persisted.
 pub(crate) fn preview_welcome_security_frontiers(
-    state_store: &crate::state::LocalStateStore,
+    checkpoint: &arkret_sdk::MlsGovernanceVerificationCheckpoint,
     secure_store: &dyn SecureKeyStore,
     authority: &PrincipalAuthorityKey,
     device_id: &DeviceId,
@@ -1727,9 +1727,7 @@ pub(crate) fn preview_welcome_security_frontiers(
             );
         }
         let leaves = crate::mls::governance_proof::reconstruct_transition_security_frontier(
-            state_store,
-            &group,
-            &binding,
+            checkpoint, &group, &binding,
         )?;
         previews.push(WelcomeSecurityFrontierPreview { binding, leaves });
     }
@@ -1887,11 +1885,22 @@ pub(crate) fn apply_welcome_messages_with_device_snapshot(
             );
             continue;
         };
-        if let Err(reason) = crate::mls::governance_proof::install_cached_transition_leaf_bindings(
-            state_store,
-            &mut group,
-            &welcome_binding,
-        ) {
+        let authority_hints =
+            match crate::mls::governance_proof::leaf_authority_hints_from_welcome(&typed_welcome) {
+                Ok(authority_hints) => authority_hints,
+                Err(reason) => {
+                    outcome.record_failure(format!("derive Welcome leaf authorities: {reason}"));
+                    continue;
+                }
+            };
+        if let Err(reason) =
+            crate::mls::governance_proof::install_cached_transition_leaf_bindings_with_hints(
+                state_store,
+                &mut group,
+                &welcome_binding,
+                &authority_hints,
+            )
+        {
             outcome.record_failure(format!("install Welcome T3 leaf bindings: {reason}"));
             continue;
         }

@@ -842,6 +842,11 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
                     Ok(_) => {}
                     Err(error) => {
                         bootstrap_retry_required = true;
+                        tracing::warn!(
+                            realm = %realm_label,
+                            %error,
+                            "MLS Welcome bootstrap remains pending"
+                        );
                         last_error_task.set(Some(format!("MLS Welcome bootstrap: {error}")));
                     }
                 }
@@ -975,6 +980,22 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
                         last_error_task.set(Some(format!("MLS coverage repair: {error}")));
                     }
                 }
+
+                // An invitee can enter the Realm before its administrator has
+                // finished the durable Commit -> Welcome saga. An empty first
+                // probe is therefore a convergence state, not a completed
+                // bootstrap. Keep polling the standard device-message plane
+                // while the accepted encrypted Realm has no local group
+                // snapshot; relying only on an unrelated account cursor edge
+                // can strand the one-time Welcome indefinitely.
+                let encrypted_realm_still_awaits_local_mls_state = {
+                    let state = state_store_for_probe.read();
+                    state.realm_projection_is_mls_encrypted(&creator_bootstrap_realm_id)
+                        && state
+                            .mls_snapshot_for(&creator_bootstrap_realm_id)
+                            .is_none()
+                };
+                bootstrap_retry_required |= encrypted_realm_still_awaits_local_mls_state;
 
                 // Account-wide recovery detection is intentionally centralized
                 // in `MlsRecoveryEffects`. This Realm bootstrap used to repeat

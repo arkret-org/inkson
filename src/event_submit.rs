@@ -13,6 +13,7 @@ use std::time::Duration;
 use arkret_sdk::ErrorEnvelope;
 use arkret_sdk::events::{CbaEffectPlane, cba_cell_family_plane};
 use arkret_wire::{CapabilityActionId, event_kind_str};
+use dioxus::prelude::{ReadableExt, WritableExt};
 #[cfg(test)]
 use garth::ScheduledSendSubmissionState;
 use garth::outbound::BoxOutboundFuture;
@@ -124,9 +125,109 @@ struct EventOutboundSubmitter<'a> {
     owner: &'a EventSubmitter,
     results: &'a OutboundAttemptResults,
     state_store: Option<crate::runtime::input::StateStoreHandle>,
+    accepted_mls_state_store: Option<dioxus::prelude::SyncSignal<crate::state::LocalStateStore>>,
 }
 
 impl EventOutboundSubmitter<'_> {
+    async fn converge_finalized_mls_admission(
+        &self,
+        mut state_store: dioxus::prelude::SyncSignal<crate::state::LocalStateStore>,
+        realm_id: &str,
+        device_id: &arkret_sdk::DeviceId,
+        commit: &arkret_sdk::AuthoredEvent,
+        staged_snapshot: &garth::QueuedMlsSnapshot,
+    ) -> Result<(), String> {
+        let seal_view = self
+            .owner
+            .seals_frontier_realm_view(realm_id)
+            .await
+            .map_err(|error| format!("refresh accepted Seal view after MLS admission: {error}"))?;
+        state_store.write().set_realm_seal_view(
+            realm_id.to_owned(),
+            crate::state::LocalSealView {
+                frontier: seal_view
+                    .seal_basis
+                    .leaves
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect(),
+                state_root: None,
+                ..Default::default()
+            },
+        );
+
+        let api = crate::transport::TransportClient::from_http(
+            self.owner.http.clone(),
+            crate::transport::RequestContext::new(""),
+        );
+        crate::mls::governance_proof::ensure_governance_checkpoint(&api, state_store, realm_id)
+            .await?;
+
+        let payload = serde_json::from_value::<arkret_sdk::MlsCommitPayload>(
+            serde_json::to_value(&commit.event().payload)
+                .map_err(|error| format!("encode accepted MLS Commit payload: {error}"))?,
+        )
+        .map_err(|error| format!("decode accepted MLS Commit payload: {error}"))?;
+        let authority = self.owner.authority().map_err(|error| error.to_string())?;
+        let snapshot_secret = crate::mls::runtime::load_device_snapshot_secret(
+            crate::secure_key_store::default_secure_key_store("inkson").as_ref(),
+            authority,
+            device_id,
+        )
+        .map_err(|error| format!("load MLS snapshot secret after admission: {error}"))?;
+        let staged = crate::mls::persistence::MlsSnapshotEnvelope::from(staged_snapshot.clone());
+        let staged_group = crate::mls::persistence::restore_envelope(
+            &staged,
+            &snapshot_secret,
+            payload.next_epoch(),
+        )
+        .map_err(|error| format!("restore staged MLS transition for proof input: {error}"))?;
+        if staged_group.group_id() != payload.mls_group_id()
+            || staged_group.epoch() != payload.next_epoch()
+        {
+            return Err(
+                "staged MLS transition differs from the accepted Commit group or epoch".to_owned(),
+            );
+        }
+        let leaves = staged_group
+            .security_frontier_leaves()
+            .map_err(|error| format!("derive accepted MLS transition frontier: {error}"))?;
+        let request = crate::mls::governance_proof::proof_request_for_scope(
+            &state_store.read(),
+            payload.governance_binding().effective_scope().clone(),
+            payload.mls_group_id(),
+            payload.base_epoch(),
+            payload.next_epoch(),
+            leaves.clone(),
+        )?;
+        crate::mls::governance_proof::fetch_verify_and_cache_expected_proof(
+            &api,
+            state_store,
+            &request,
+            &leaves,
+            payload.governance_binding(),
+        )
+        .await?;
+        crate::mls::runtime::converge_accepted_mls_artifacts(state_store, authority, device_id)
+            .await?;
+
+        let accepted = state_store
+            .read()
+            .mls_snapshot_for_scope(payload.governance_binding().effective_scope())
+            .is_some_and(|snapshot| {
+                snapshot.group_id == payload.mls_group_id()
+                    && snapshot.epoch == payload.next_epoch()
+                    && snapshot.group_state_event_id.as_ref() == Some(commit.event_id())
+            });
+        if !accepted {
+            return Err(
+                "checkpoint-proven MLS Commit did not materialize its accepted local state"
+                    .to_owned(),
+            );
+        }
+        Ok(())
+    }
+
     async fn submit_mls_admission_unit(
         &self,
         queued: &QueuedSdkEvent,
@@ -209,13 +310,9 @@ impl EventOutboundSubmitter<'_> {
                     event.event_id
                 )
             })?;
-        if arkret_sdk::canonical::canonical_json_bytes(resolved)?
-            != arkret_sdk::canonical::canonical_json_bytes(event)?
-            || arkret_sdk::Hash::new(resolved.event_digest_with_digest_suite(digest_suite)?)?
-                != digest
-        {
+        if !accepted_event_preserves_authored_envelope(resolved, event, digest_suite)? {
             anyhow::bail!(
-                "events.resolve returned different canonical bytes for Event {}",
+                "events.resolve did not preserve the exact producer-authored envelope for Event {}",
                 event.event_id
             );
         }
@@ -252,6 +349,11 @@ impl EventOutboundSubmitter<'_> {
             )),
             MlsAdmissionStage::CommitAcceptedWaitingSeal => {
                 if let Err(error) = self.verify_covering_seal(&commit).await {
+                    tracing::warn!(
+                        event_id = %commit.event_id,
+                        %error,
+                        "durable MLS admission Commit finality verification remains pending"
+                    );
                     return Ok(OutboundSubmitOutcome::RetryAfter {
                         delay: Duration::from_secs(1),
                         reason: format!("MLS Commit finality pending: {error:#}"),
@@ -304,24 +406,57 @@ impl EventOutboundSubmitter<'_> {
                 })
             }
             MlsAdmissionStage::WelcomesAcceptedWaitingSeal => {
-                let (welcomes, receipts, duplicate) = match queued.post_accept.as_ref() {
-                    Some(PostAcceptAction::MlsAdmission {
-                        welcomes,
-                        commit_ingress_receipts,
-                        commit_was_duplicate,
-                        ..
-                    }) => (
-                        welcomes.authored().to_vec(),
-                        commit_ingress_receipts.clone(),
-                        *commit_was_duplicate,
-                    ),
-                    _ => unreachable!("admission action was matched above"),
-                };
+                let (welcomes, receipts, duplicate, realm_id, device_id, staged_snapshot) =
+                    match queued.post_accept.as_ref() {
+                        Some(PostAcceptAction::MlsAdmission {
+                            welcomes,
+                            commit_ingress_receipts,
+                            commit_was_duplicate,
+                            realm_id,
+                            device_id,
+                            snapshot,
+                            ..
+                        }) => (
+                            welcomes.authored().to_vec(),
+                            commit_ingress_receipts.clone(),
+                            *commit_was_duplicate,
+                            realm_id.clone(),
+                            device_id.clone(),
+                            snapshot.clone(),
+                        ),
+                        _ => unreachable!("admission action was matched above"),
+                    };
                 for welcome in &welcomes {
                     if let Err(error) = self.verify_covering_seal(welcome).await {
+                        tracing::warn!(
+                            event_id = %welcome.event_id,
+                            %error,
+                            "durable MLS admission Welcome finality verification remains pending"
+                        );
                         return Ok(OutboundSubmitOutcome::RetryAfter {
                             delay: Duration::from_secs(1),
                             reason: format!("MLS Welcome finality pending: {error:#}"),
+                        });
+                    }
+                }
+                if let Some(state_store) = self.accepted_mls_state_store {
+                    let device_id = arkret_sdk::DeviceId::new(device_id)
+                        .map_err(|error| garth::Error::Protocol(error.to_string()))?;
+                    if let Err(error) = self
+                        .converge_finalized_mls_admission(
+                            state_store,
+                            &realm_id,
+                            &device_id,
+                            &commit,
+                            &staged_snapshot,
+                        )
+                        .await
+                    {
+                        return Ok(OutboundSubmitOutcome::RetryAfter {
+                            delay: Duration::from_secs(1),
+                            reason: format!(
+                                "accepted MLS admission artifacts remain pending: {error}"
+                            ),
                         });
                     }
                 }
@@ -517,18 +652,49 @@ where
         .copied()
         .ok_or_else(|| anyhow::anyhow!("Event {} has no accepted covering Seal", event.event_id))?;
     event.verify_event_id_matches_content_with_digest_suite(digest_suite)?;
-    let event_bytes = arkret_sdk::canonical::canonical_json_bytes(event)?;
     let exact_event_is_accepted = verified.checkpoint.accepted_events.iter().any(|accepted| {
-        arkret_sdk::canonical::canonical_json_bytes(accepted)
-            .is_ok_and(|accepted_bytes| accepted_bytes == event_bytes)
+        accepted_event_preserves_authored_envelope(accepted, event, digest_suite).unwrap_or(false)
     });
     if !exact_event_is_accepted {
         anyhow::bail!(
-            "Event {} is not byte-exact in the verified accepted closure",
+            "Event {} does not preserve its exact producer-authored envelope in the verified accepted closure",
             event.event_id
         );
     }
     Ok(digest_suite)
+}
+
+/// Compare a producer-authored Event with its accepted projection.
+///
+/// Acceptance appends exactly one Principal Server admission proof. That
+/// proof is outside the producer transcript but is part of the retained
+/// accepted envelope, so whole-envelope equality would reject every valid
+/// admission. Validate the closed accepted proof set first, then remove only
+/// that receiver-added proof and compare the producer-authored projection
+/// exactly. No producer proof or business field is normalized.
+pub(crate) fn accepted_event_preserves_authored_envelope(
+    accepted: &arkret_sdk::Event,
+    authored: &arkret_sdk::Event,
+    digest_suite: arkret_sdk::DigestSuite,
+) -> anyhow::Result<bool> {
+    if accepted.event_id != authored.event_id
+        || arkret_sdk::Hash::new(accepted.event_digest_with_digest_suite(digest_suite)?)?
+            != arkret_sdk::Hash::new(authored.event_digest_with_digest_suite(digest_suite)?)?
+        || accepted
+            .validate_principal_server_admission_binding(digest_suite)
+            .is_err()
+    {
+        return Ok(false);
+    }
+    let mut accepted_authored_projection = accepted.clone();
+    accepted_authored_projection
+        .proofs
+        .retain(|proof| proof.as_principal_server_admission().is_none());
+    let mut expected_authored_projection = authored.clone();
+    expected_authored_projection
+        .proofs
+        .retain(|proof| proof.as_principal_server_admission().is_none());
+    Ok(accepted_authored_projection == expected_authored_projection)
 }
 
 impl OutboundSubmitter for EventOutboundSubmitter<'_> {
@@ -662,6 +828,12 @@ impl OutboundSubmitter for EventOutboundSubmitter<'_> {
                         // lost. Preserve the exact Commit/Welcome/snapshot for
                         // duplicate confirmation or explicit repair on every
                         // deterministic response as well as transient errors.
+                        tracing::warn!(
+                            event_id = %item.transaction_id,
+                            local_operation_id = %queued.local_operation_id,
+                            %reason,
+                            "immutable MLS admission attempt remains durably queued"
+                        );
                         return Ok(mls_admission_repair_retry_outcome(&reason));
                     }
                     if let Some(details) = crate::api_error::actor_seq_cas_conflict_details(&error)
@@ -909,6 +1081,39 @@ fn pending_chat_local_operation_ids_from_snapshot(
         .collect()
 }
 
+fn pending_mls_admission_for_realm_from_snapshot(
+    snapshot: &garth::SendQueueSnapshot,
+    realm_id: &str,
+) -> bool {
+    snapshot
+        .items
+        .iter()
+        .any(|item| is_unfinished_mls_admission_record(item.status, &item.record, realm_id))
+}
+
+fn is_unfinished_mls_admission_record(
+    status: garth::SendQueueStatus,
+    record: &QueuedRecord,
+    realm_id: &str,
+) -> bool {
+    use garth::SendQueueStatus;
+
+    matches!(
+        status,
+        SendQueueStatus::Queued | SendQueueStatus::Sending | SendQueueStatus::Failed
+    ) && matches!(
+        record,
+        QueuedRecord::SdkEvent(queued)
+            if matches!(
+                queued.post_accept.as_ref(),
+                Some(PostAcceptAction::MlsAdmission {
+                    realm_id: queued_realm_id,
+                    ..
+                }) if queued_realm_id == realm_id
+            )
+    )
+}
+
 /// Project the holder-local ids of pending chat sends directly from the one
 /// durable Garth queue.
 ///
@@ -996,6 +1201,25 @@ impl EventSubmitter {
         self
     }
 
+    /// Whether this holder already owns an unfinished durable MLS admission
+    /// for the Realm. A queued admission freezes one Commit, its Welcomes and
+    /// the resulting snapshot as a single retry unit. Authoring another Add
+    /// while that unit waits for Seal finality would consume a second
+    /// one-time KeyPackage and race the predecessor epoch.
+    pub(crate) async fn has_pending_mls_admission_for_realm(
+        &self,
+        realm_id: &str,
+    ) -> anyhow::Result<bool> {
+        let outbound = OutboundEngine::new(crate::outbound_store::InksonOutboundStore::open(
+            self.authority()?,
+            crate::outbound_store::OutboundLane::MlsDurablePostAccept,
+        )?);
+        let snapshot = outbound.snapshot().await?;
+        Ok(pending_mls_admission_for_realm_from_snapshot(
+            &snapshot, realm_id,
+        ))
+    }
+
     pub(crate) fn authority(&self) -> anyhow::Result<&arkret_sdk::PrincipalAuthorityKey> {
         self.authority.as_ref().ok_or_else(|| {
             anyhow::anyhow!(
@@ -1079,6 +1303,7 @@ impl EventSubmitter {
             owner: self,
             results: &results,
             state_store: None,
+            accepted_mls_state_store: None,
         };
         loop {
             let fence = self.resolve_queue_generation_fence(&outbound).await?;
@@ -1216,6 +1441,7 @@ impl EventSubmitter {
             owner: self,
             results: &results,
             state_store: None,
+            accepted_mls_state_store: None,
         };
         loop {
             let fence = self.resolve_queue_generation_fence(&outbound).await?;
@@ -1351,6 +1577,7 @@ impl EventSubmitter {
             owner: self,
             results: &results,
             state_store: None,
+            accepted_mls_state_store: None,
         };
         let mut completed = 0usize;
         loop {
@@ -1382,12 +1609,35 @@ impl EventSubmitter {
         }
     }
 
-    /// Resume durable MLS Commit/Welcome admission delivery. Group readiness
-    /// is published separately by the checkpoint-proven accepted-artifact
-    /// consumer; this queue never installs its staged snapshot.
+    /// Resume durable MLS Commit/Welcome admission delivery from sync paths
+    /// that already drive accepted-artifact convergence after cursor advance.
     pub(crate) async fn drain_mls_outbound(
         &self,
         state_store: crate::runtime::input::StateStoreHandle,
+    ) -> anyhow::Result<usize> {
+        self.drain_mls_outbound_inner(state_store, None).await
+    }
+
+    /// Resume durable MLS admission delivery and explicitly converge accepted
+    /// artifacts once Commit and Welcome have checkpoint finality. The queued
+    /// staged snapshot is never trusted as group readiness by itself.
+    pub(crate) async fn drain_mls_outbound_with_accepted_store(
+        &self,
+        state_store: dioxus::prelude::SyncSignal<crate::state::LocalStateStore>,
+    ) -> anyhow::Result<usize> {
+        self.drain_mls_outbound_inner(
+            crate::app::runtime_adapter::state_store_handle(state_store),
+            Some(state_store),
+        )
+        .await
+    }
+
+    async fn drain_mls_outbound_inner(
+        &self,
+        state_store: crate::runtime::input::StateStoreHandle,
+        accepted_mls_state_store: Option<
+            dioxus::prelude::SyncSignal<crate::state::LocalStateStore>,
+        >,
     ) -> anyhow::Result<usize> {
         let _single_writer = outbound_submit_lock().lock().await;
         let outbound = OutboundEngine::new(crate::outbound_store::InksonOutboundStore::open(
@@ -1398,7 +1648,8 @@ impl EventSubmitter {
         let submitter = EventOutboundSubmitter {
             owner: self,
             results: &results,
-            state_store: Some(state_store.clone()),
+            state_store: Some(state_store),
+            accepted_mls_state_store,
         };
         let hook = InksonPostAcceptHook;
         let mut completed = 0usize;
@@ -2041,6 +2292,7 @@ impl EventSubmitter {
                 post_accept,
             )?,
             state_store,
+            None,
         )
         .await
     }
@@ -2061,14 +2313,15 @@ impl EventSubmitter {
             signed_event,
             authoring_generation,
         )?;
-        self.enqueue_and_drive_sdk_event(queued, None).await
+        self.enqueue_and_drive_sdk_event(queued, None, None).await
     }
 
     /// Persist an MLS Add commit together with the exact signed Welcome(s) and
-    /// post-commit snapshot before the first network write. Garth only marks the
-    /// commit item sent after the post-accept hook has delivered every Welcome
-    /// and durably installed the snapshot, so a reload at any await boundary can
-    /// resume the same immutable admission saga.
+    /// staged post-commit material before the first network write. Garth only
+    /// marks the outbound item sent after every Welcome reaches finality and the
+    /// accepted-artifact consumer has independently proven the winning
+    /// checkpoint and atomically published the snapshot/history secret. A reload
+    /// at any await boundary resumes the same immutable admission saga.
     pub(crate) async fn submit_mls_admission_with_snapshot(
         &self,
         commit: &crate::mls::admission::MlsAdmissionAuthoringPlan,
@@ -2077,13 +2330,31 @@ impl EventSubmitter {
         actor_id: String,
         device_id: String,
         snapshot: crate::mls::persistence::MlsSnapshotEnvelope,
-        state_store: crate::runtime::input::StateStoreHandle,
+        state_store: dioxus::prelude::SyncSignal<crate::state::LocalStateStore>,
     ) -> anyhow::Result<SubmitEventResult> {
         if welcomes.is_empty() {
             anyhow::bail!("MLS admission requires at least one Welcome");
         }
         let _single_writer = outbound_submit_lock().lock().await;
-        let mut authored = self.author_event_unit(commit.authoring_steps()).await?;
+        let welcome_count = welcomes.len();
+        let mut authoring_steps = commit.authoring_steps();
+        authoring_steps.push(Box::new(move |authored| {
+            let authored_commit = authored
+                .last()
+                .filter(|event| event.kind == arkret_sdk::EventKind::MlsCommit)
+                .ok_or_else(|| {
+                    anyhow::anyhow!("MLS Welcome authoring requires the final Commit")
+                })?;
+            welcomes
+                .into_iter()
+                .map(|step| step(authored_commit.event_id()).map_err(anyhow::Error::msg))
+                .collect()
+        }));
+        let mut authored = self.author_event_unit(authoring_steps).await?;
+        if authored.len() <= welcome_count {
+            anyhow::bail!("MLS admission unit produced no proposal Events or Commit");
+        }
+        let authored_welcomes = authored.split_off(authored.len() - welcome_count);
         let authored_commit = authored
             .pop()
             .ok_or_else(|| anyhow::anyhow!("MLS admission unit produced no Commit"))?;
@@ -2116,18 +2387,13 @@ impl EventSubmitter {
                 }
                 Err(error) => return Err(error),
             };
-        // The Commit is authored here because a Welcome names it by its FINAL
-        // `event_id`. Building the Welcomes from that value is what makes the
-        // reference real; the old path authored both against a draft id and then
-        // rewrote the Welcomes when the Commit's id moved.
+        // The Welcome names the Commit by its FINAL `event_id` and occupies the
+        // next position in the same actor chain. Authoring it in a second unit
+        // would read the pre-Commit remote frontier and freeze a stale
+        // `actor_seq`, even though transport correctly submits it after Commit.
         let digest_suite = authored_commit.digest_suite();
         let canonical_body_bytes = arkret_sdk::canonical::canonical_json_bytes(&authored_commit)?;
         let transport_idempotency_key = authored_commit.event_id().to_string();
-        let welcome_intents = welcomes
-            .into_iter()
-            .map(|step| step(authored_commit.event_id()).map_err(anyhow::Error::msg))
-            .collect::<anyhow::Result<Vec<_>>>()?;
-        let authored_welcomes = self.author_independent_events(welcome_intents).await?;
         for welcome in &authored_welcomes {
             let mut accepted_candidate = welcome.event().clone();
             accepted_candidate.actor_kind = Some(if accepted_candidate.executed_by.is_some() {
@@ -2167,6 +2433,7 @@ impl EventSubmitter {
                     snapshot: snapshot.into_queued(),
                 }),
             )?,
+            Some(crate::app::runtime_adapter::state_store_handle(state_store)),
             Some(state_store),
         )
         .await
@@ -2176,6 +2443,9 @@ impl EventSubmitter {
         &self,
         queued: QueuedSdkEvent,
         state_store: Option<crate::runtime::input::StateStoreHandle>,
+        accepted_mls_state_store: Option<
+            dioxus::prelude::SyncSignal<crate::state::LocalStateStore>,
+        >,
     ) -> anyhow::Result<SubmitEventResult> {
         let mut transaction_id = queued.local_operation_id.clone();
         let durable_post_accept = queued.post_accept.is_some();
@@ -2312,6 +2582,7 @@ impl EventSubmitter {
             owner: self,
             results: &results,
             state_store: state_store.clone(),
+            accepted_mls_state_store,
         };
         let hook = InksonPostAcceptHook;
         loop {

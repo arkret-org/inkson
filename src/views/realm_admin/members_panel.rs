@@ -1615,6 +1615,11 @@ async fn retain_current_history_secret_durable(
     Ok(Some((epoch, secret)))
 }
 
+fn mls_admission_authoring_lock() -> &'static tokio::sync::Mutex<()> {
+    static LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
+    LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
+}
+
 pub(crate) async fn submit_mls_admission_for_invitee(
     api: &crate::transport::TransportClient,
     state_store: SyncSignal<LocalStateStore>,
@@ -1623,6 +1628,7 @@ pub(crate) async fn submit_mls_admission_for_invitee(
     device_id: String,
     invitee_did: String,
 ) -> anyhow::Result<Option<u64>> {
+    let _authoring_guard = mls_admission_authoring_lock().lock().await;
     let account = crate::app::SessionContext::get()
         .active_account()
         .ok_or_else(|| anyhow::anyhow!("active account context is unavailable"))?;
@@ -1637,6 +1643,23 @@ pub(crate) async fn submit_mls_admission_for_invitee(
     };
     if !needs_mls_admission {
         return Ok(None);
+    }
+    let admission_submitter = api.event_submitter()?;
+    if admission_submitter
+        .has_pending_mls_admission_for_realm(&realm_id)
+        .await?
+    {
+        let advanced = admission_submitter
+            .drain_mls_outbound_with_accepted_store(state_store)
+            .await?;
+        tracing::warn!(
+            target: "mls_admission",
+            realm = %short_protocol_id(&realm_id),
+            invitee = %short_protocol_id(&invitee_did),
+            advanced,
+            "admission deferred: drove the exact durable admission unit that already owns this Realm transition"
+        );
+        anyhow::bail!("an exact durable MLS admission unit is still converging for this Realm");
     }
     let pairwise_requester = {
         let store = state_store.read();
@@ -1799,10 +1822,10 @@ pub(crate) async fn submit_mls_admission_for_invitee(
     let invitee_device_id = claim.device_id.clone();
     // Persist the entire fail-closed admission saga before the first write.
     // The durable outbound item submits Commit first, then the exact signed
-    // Welcome, then installs the snapshot/history secret. A page close between
-    // any two steps resumes from the same immutable material on the next sync
-    // drain instead of consuming the KeyPackage and losing the Welcome.
-    let post_accept_store = crate::app::runtime_adapter::state_store_handle(state_store);
+    // Welcome. Only the checkpoint-proven accepted-artifact consumer may publish
+    // the snapshot/history secret. A page close between any two steps resumes
+    // from the same immutable material on the next sync drain instead of
+    // consuming the KeyPackage and losing the Welcome.
     api.event_submitter()?
         .submit_mls_admission_with_snapshot(
             &admission.commit,
@@ -1811,7 +1834,7 @@ pub(crate) async fn submit_mls_admission_for_invitee(
             mls_actor_id,
             device_id.clone(),
             admission.snapshot,
-            post_accept_store,
+            state_store,
         )
         .await?;
     tracing::debug!(
@@ -2194,6 +2217,7 @@ pub(crate) async fn submit_mls_admission_for_invitees(
     device_id: String,
     invitees: Vec<String>,
 ) -> anyhow::Result<usize> {
+    let _authoring_guard = mls_admission_authoring_lock().lock().await;
     let account = crate::app::SessionContext::get()
         .active_account()
         .ok_or_else(|| anyhow::anyhow!("active account context is unavailable"))?;
@@ -2211,6 +2235,22 @@ pub(crate) async fn submit_mls_admission_for_invitees(
     };
     if !needs_mls_admission {
         return Ok(0);
+    }
+    let admission_submitter = api.event_submitter()?;
+    if admission_submitter
+        .has_pending_mls_admission_for_realm(&realm_id)
+        .await?
+    {
+        let advanced = admission_submitter
+            .drain_mls_outbound_with_accepted_store(state_store)
+            .await?;
+        tracing::warn!(
+            target: "mls_admission",
+            realm = %short_protocol_id(&realm_id),
+            advanced,
+            "batch admission deferred: drove the exact durable admission unit that already owns this Realm transition"
+        );
+        anyhow::bail!("an exact durable MLS admission unit is still converging for this Realm");
     }
     let pairwise_requester = {
         let store = state_store.read();
@@ -2360,7 +2400,6 @@ pub(crate) async fn submit_mls_admission_for_invitees(
         )
         .map_err(|err| anyhow::anyhow!(err))?
     };
-    let post_accept_store = crate::app::runtime_adapter::state_store_handle(state_store);
     api.event_submitter()?
         .submit_mls_admission_with_snapshot(
             &admission.commit,
@@ -2369,7 +2408,7 @@ pub(crate) async fn submit_mls_admission_for_invitees(
             mls_actor_id,
             device_id,
             admission.snapshot,
-            post_accept_store,
+            state_store,
         )
         .await?;
     Ok(claims.len())
@@ -2534,6 +2573,7 @@ async fn ensure_mls_governance_proof_for_next_commit(
         account.full_id().as_str() == actor_id && account.device_id.as_str() == device_id,
         "MLS governance proof identity does not match the active account"
     );
+    refresh_mls_governance_target_basis(api, state_store, realm_id, added_claims).await?;
     let leaves = if added_claims.is_empty() {
         crate::mls::governance_proof::current_security_frontier_leaves(
             &state_store.read(),
@@ -2583,6 +2623,68 @@ async fn ensure_mls_governance_proof_for_next_commit(
         .await
         .map(|_| ())
         .map_err(anyhow::Error::msg)
+}
+
+async fn refresh_mls_governance_target_basis(
+    api: &crate::transport::TransportClient,
+    mut state_store: SyncSignal<LocalStateStore>,
+    realm_id: &str,
+    added_claims: &[&arkret_sdk::KeyPackageClaimRecord],
+) -> anyhow::Result<()> {
+    const ATTEMPTS: usize = 20;
+    const DELAY: std::time::Duration = std::time::Duration::from_millis(250);
+
+    let (base_basis, requires_membership_advance) = {
+        let store = state_store.read();
+        let checkpoint = store
+            .trusted_mls_governance_checkpoint(realm_id)
+            .ok_or_else(|| anyhow::anyhow!("MLS governance checkpoint is unavailable"))?;
+        let requires_membership_advance = added_claims.iter().any(|claim| {
+            arkret_sdk::current_authorization_incarnation_from_verified_checkpoint(
+                &checkpoint,
+                &claim.principal_id,
+                None,
+            )
+            .is_err()
+        });
+        (checkpoint.basis, requires_membership_advance)
+    };
+    let submitter = api.event_submitter()?;
+    for attempt in 0..ATTEMPTS {
+        match submitter.seals_frontier_realm_view(realm_id).await {
+            Ok(view) if !requires_membership_advance || view.seal_basis != base_basis => {
+                state_store.write().set_realm_seal_view(
+                    realm_id.to_owned(),
+                    crate::state::LocalSealView {
+                        frontier: view
+                            .seal_basis
+                            .leaves
+                            .iter()
+                            .map(ToString::to_string)
+                            .collect(),
+                        ..Default::default()
+                    },
+                );
+                return Ok(());
+            }
+            Ok(_) if attempt + 1 < ATTEMPTS => {
+                crate::runtime_helpers::sleep_for(DELAY).await;
+            }
+            Ok(_) => {
+                anyhow::bail!(
+                    "joined MLS Add target was not covered by a newer accepted Realm Seal frontier"
+                );
+            }
+            Err(error)
+                if attempt + 1 < ATTEMPTS
+                    && crate::api_error::is_realm_seal_frontier_pending_error(&error) =>
+            {
+                crate::runtime_helpers::sleep_for(DELAY).await;
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    unreachable!("Realm Seal frontier refresh returns on its final attempt")
 }
 
 #[component]

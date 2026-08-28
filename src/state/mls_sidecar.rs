@@ -81,81 +81,42 @@ fn attach_group_state_ref_to_snapshot(
     true
 }
 
-fn projection_mls_genesis_event_id(
+fn checkpoint_mls_group_state_event_ids(
     state: &ClientLocalState,
     effective_scope: &arkret_sdk::ScopeRef,
     group_id: &str,
-) -> Option<arkret_sdk::EventId> {
-    projection_mls_genesis_event_ids(state, effective_scope, group_id)
-        .into_iter()
-        .next()
-}
-
-/// Every accepted `ak.mls.genesis` Event id the durable Realm projection
-/// carries for this exact `(effective_scope, group_id)`, in projection order.
-///
-/// The genesis cell is `cas_register`, so a healthy Realm exposes exactly one;
-/// more than one means the scope's genesis is contested and callers must fail
-/// closed instead of picking a winner locally.
-fn projection_mls_genesis_event_ids(
-    state: &ClientLocalState,
-    effective_scope: &arkret_sdk::ScopeRef,
-    group_id: &str,
+    epoch: u64,
 ) -> Vec<arkret_sdk::EventId> {
     let Some(realm_id) = effective_scope.realm_id_opt() else {
         return Vec::new();
     };
-    let realm_id = realm_id.as_str();
-    let Some(projection) = state.realm_tree_projections.get(realm_id) else {
+    let Some(checkpoint) = state.mls_governance_checkpoints.get(realm_id.as_str()) else {
         return Vec::new();
     };
-    let Some(events) = projection
-        .get("state")
-        .and_then(|state| state.get("events"))
-        .and_then(Value::as_array)
-    else {
-        return Vec::new();
-    };
-    events
+    checkpoint
+        .accepted_events
         .iter()
-        .filter_map(|event| {
-            let kind = event
-                .get("kind")
-                .or_else(|| event.get("event_kind"))
-                .and_then(Value::as_str)?;
-            if kind != arkret_sdk::EventKind::MlsGenesis.as_str() {
-                return None;
+        .filter_map(|event| match event.kind {
+            arkret_sdk::EventKind::MlsGenesis if epoch == 0 => {
+                let payload = serde_json::from_value::<arkret_sdk::MlsGenesisPayload>(
+                    serde_json::to_value(&event.payload).ok()?,
+                )
+                .ok()?;
+                (payload.mls_group_id.as_str() == group_id
+                    && payload.effective_scope == *effective_scope)
+                    .then(|| event.event_id.clone())
             }
-            if event
-                .get("realm_id")
-                .and_then(Value::as_str)
-                .is_some_and(|event_realm_id| event_realm_id != realm_id)
-            {
-                return None;
+            arkret_sdk::EventKind::MlsCommit => {
+                let payload = serde_json::from_value::<arkret_sdk::MlsCommitPayload>(
+                    serde_json::to_value(&event.payload).ok()?,
+                )
+                .ok()?;
+                (payload.next_epoch() == epoch
+                    && payload.mls_group_id() == group_id
+                    && payload.governance_binding().effective_scope() == effective_scope)
+                    .then(|| event.event_id.clone())
             }
-            let payload = event
-                .get("payload")
-                .or_else(|| event.get("content"))
-                .unwrap_or(event);
-            if payload.get("epoch").and_then(Value::as_u64) != Some(0) {
-                return None;
-            }
-            let event_group_id = payload
-                .get("mls_group_id")
-                .or_else(|| event.get("target_ref"))
-                .and_then(Value::as_str)?;
-            if event_group_id != group_id {
-                return None;
-            }
-            let projected_scope = payload.get("effective_scope")?;
-            let expected_scope = serde_json::to_value(effective_scope).ok()?;
-            if projected_scope != &expected_scope {
-                return None;
-            }
-            event
-                .get("event_id")
-                .and_then(Value::as_str)
-                .and_then(|event_id| arkret_sdk::EventId::new(event_id.to_owned()).ok())
+            _ => None,
         })
         .collect()
 }
@@ -1169,22 +1130,30 @@ impl LocalStateStore {
                             }
                         })
                     })
-            })
-            .or_else(|| {
-                (epoch == 0)
-                    .then(|| projection_mls_genesis_event_id(&state, effective_scope, group_id))
-                    .flatten()
-                    .map(|event_id| MlsGroupStateRefRecord {
-                        group_id: group_id.to_owned(),
-                        epoch,
-                        event_id,
-                    })
-            })
-            .ok_or_else(|| {
-                format!(
-                    "accepted MLS group-state Event is unavailable for scope {key} at epoch {epoch}"
-                )
-            })?;
+            });
+        let record = match record {
+            Some(record) => record,
+            None => {
+                let event_ids =
+                    checkpoint_mls_group_state_event_ids(&state, effective_scope, group_id, epoch);
+                let [event_id] = event_ids.as_slice() else {
+                    return Err(if event_ids.is_empty() {
+                        format!(
+                            "accepted MLS group-state Event is unavailable for scope {key} at epoch {epoch}"
+                        )
+                    } else {
+                        format!(
+                            "accepted MLS group-state Event is ambiguous for scope {key} at epoch {epoch}"
+                        )
+                    });
+                };
+                MlsGroupStateRefRecord {
+                    group_id: group_id.to_owned(),
+                    epoch,
+                    event_id: event_id.clone(),
+                }
+            }
+        };
         if record.group_id != group_id || record.epoch != epoch {
             return Err(format!(
                 "accepted MLS group-state Event does not match group {group_id} epoch {epoch}"
@@ -1193,18 +1162,9 @@ impl LocalStateStore {
         Ok(record.event_id)
     }
 
-    /// Stamp the accepted epoch-0 Event id onto a local snapshot that does not
-    /// carry one yet.
-    ///
-    /// [`crate::mls::persistence`] always mints a snapshot with
-    /// `group_state_event_id: None`, and the id is stamped
-    /// separately once the genesis Event comes back accepted. A device that
-    /// loses that accept response — or re-syncs the group before the local
-    /// stamp lands — therefore holds a genuine epoch-0 snapshot with no
-    /// reference. A durable Realm projection is accepted server state, so
-    /// recover the exact epoch-0 reference from it, but only when its group and
-    /// effective scope match the local executable snapshot.
-    pub fn reconcile_mls_genesis_group_state_ref_from_projection(
+    /// Attach the exact accepted epoch-zero Event from the verified governance
+    /// checkpoint to a local snapshot that does not yet carry its transition.
+    pub fn reconcile_mls_genesis_group_state_ref_from_checkpoint(
         &mut self,
         realm_id: &str,
         circle_id: Option<&str>,
@@ -1219,50 +1179,28 @@ impl LocalStateStore {
         }
         let scope = mls_realm_or_circle_scope(realm_id, circle_id)?;
         let genesis_ids =
-            projection_mls_genesis_event_ids(&self.cached, &scope, &snapshot.group_id);
-        let Some(event_id) = genesis_ids.first().cloned() else {
+            checkpoint_mls_group_state_event_ids(&self.cached, &scope, &snapshot.group_id, 0);
+        let [event_id] = genesis_ids.as_slice() else {
+            if genesis_ids.len() > 1 {
+                return Err("verified checkpoint has ambiguous MLS Genesis Events".to_owned());
+            }
             return Ok(false);
         };
-        // A locally recorded epoch-0 reference whose Event id appears nowhere
-        // in the accepted projection was never on the wire — the classic case
-        // is a build-time id persisted before the durable submit queue
-        // re-authored the envelope (actor chain, HLC, CBA basis are all in the
-        // digest preimage, so authoring changes the id). That is bookkeeping
-        // damage, not a fork: the local group state is the very state the
-        // accepted genesis exported. Repair it from the projection, but only
-        // while the projection shows exactly one genesis for this scope —
-        // a contested genesis still fails closed below.
-        if genesis_ids.len() == 1
-            && let Some(current) = self.cached.mls_group_state_refs.get(&key)
+        if let Some(current) = self.cached.mls_group_state_refs.get(&key)
             && current.group_id == snapshot.group_id
             && current.epoch == 0
-            && !genesis_ids.contains(&current.event_id)
+            && &current.event_id != event_id
         {
-            tracing::warn!(
-                %realm_id,
-                stale_event_id = %current.event_id,
-                accepted_event_id = %event_id,
-                "repairing MLS genesis group-state reference that never matched an accepted Event",
+            return Err(
+                "local MLS Genesis reference differs from the verified checkpoint".to_owned(),
             );
-            let record = MlsGroupStateRefRecord {
-                group_id: snapshot.group_id.clone(),
-                epoch: 0,
-                event_id,
-            };
-            self.cached
-                .mls_group_state_refs
-                .insert(key.clone(), record.clone());
-            attach_group_state_ref_to_snapshot(&mut self.cached, &key, &record);
-            self.flush()
-                .map_err(|error| format!("persist repaired MLS group-state reference: {error}"))?;
-            return Ok(true);
         }
         self.record_mls_group_state_ref_for_effective_scope(
             realm_id.to_owned(),
             circle_id,
             &snapshot.group_id,
             0,
-            event_id,
+            event_id.clone(),
         )?;
         Ok(true)
     }
@@ -1808,7 +1746,7 @@ mod tests {
     }
 
     #[test]
-    fn accepted_genesis_projection_repairs_missing_group_state_reference() {
+    fn realm_projection_is_not_mls_group_state_authority() {
         let path = std::env::temp_dir().join(format!(
             "inkson-mls-projection-genesis-reference-{}-{}.json",
             std::process::id(),
@@ -1857,15 +1795,14 @@ mod tests {
             }),
         );
 
-        assert_eq!(
-            store
-                .mls_group_state_ref_for_effective_scope(realm_id, None, group_id, 0)
-                .unwrap(),
-            event_id
-        );
         assert!(
             store
-                .reconcile_mls_genesis_group_state_ref_from_projection(realm_id, None)
+                .mls_group_state_ref_for_effective_scope(realm_id, None, group_id, 0)
+                .is_err()
+        );
+        assert!(
+            !store
+                .reconcile_mls_genesis_group_state_ref_from_checkpoint(realm_id, None)
                 .unwrap()
         );
         let restored = LocalStateStore::with_path(&path);
@@ -1874,13 +1811,13 @@ mod tests {
                 .mls_snapshot_for(realm_id)
                 .unwrap()
                 .group_state_event_id,
-            Some(event_id)
+            None
         );
         let _ = std::fs::remove_file(path);
     }
 
     #[test]
-    fn phantom_local_genesis_reference_is_repaired_from_projection() {
+    fn realm_projection_cannot_replace_a_local_group_state_reference() {
         let path = std::env::temp_dir().join(format!(
             "inkson-mls-projection-genesis-phantom-{}-{}.json",
             std::process::id(),
@@ -1888,8 +1825,6 @@ mod tests {
         ));
         let realm_id = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
         let group_id = "010203";
-        // The build-time id persisted before the durable queue re-authored the
-        // envelope — it never reached the server.
         let phantom_event_id =
             arkret_sdk::EventId::new("ak:event:ASeq_1SMGFgL0OgySv7t3u5l9Sr1eV_HZwUb7tMFwZON")
                 .unwrap();
@@ -1944,15 +1879,15 @@ mod tests {
         );
 
         assert!(
-            store
-                .reconcile_mls_genesis_group_state_ref_from_projection(realm_id, None)
+            !store
+                .reconcile_mls_genesis_group_state_ref_from_checkpoint(realm_id, None)
                 .unwrap()
         );
         assert_eq!(
             store
                 .mls_group_state_ref_for_effective_scope(realm_id, None, group_id, 0)
                 .unwrap(),
-            accepted_event_id
+            phantom_event_id
         );
         let restored = LocalStateStore::with_path(&path);
         assert_eq!(
@@ -1960,13 +1895,13 @@ mod tests {
                 .mls_snapshot_for(realm_id)
                 .unwrap()
                 .group_state_event_id,
-            Some(accepted_event_id)
+            Some(phantom_event_id)
         );
         let _ = std::fs::remove_file(path);
     }
 
     #[test]
-    fn contested_genesis_projection_still_fails_closed() {
+    fn contested_projection_cannot_influence_mls_group_state() {
         let path = std::env::temp_dir().join(format!(
             "inkson-mls-projection-genesis-contested-{}-{}.json",
             std::process::id(),
@@ -2018,8 +1953,6 @@ mod tests {
                 local_event_id.clone(),
             )
             .unwrap();
-        // Two accepted genesis events for the same scope: the genesis cell is
-        // contested, so the local reference must NOT be silently rewritten.
         store.save_realm_tree_projection(
             realm_id,
             json!({
@@ -2033,9 +1966,9 @@ mod tests {
         );
 
         assert!(
-            store
-                .reconcile_mls_genesis_group_state_ref_from_projection(realm_id, None)
-                .is_err()
+            !store
+                .reconcile_mls_genesis_group_state_ref_from_checkpoint(realm_id, None)
+                .unwrap()
         );
         assert_eq!(
             store
@@ -2047,7 +1980,7 @@ mod tests {
     }
 
     #[test]
-    fn genesis_projection_with_another_group_is_not_used_as_authoring_reference() {
+    fn unrelated_projection_group_is_not_an_authoring_reference() {
         let path = std::env::temp_dir().join(format!(
             "inkson-mls-projection-genesis-mismatch-{}-{}.json",
             std::process::id(),
@@ -2099,7 +2032,7 @@ mod tests {
         );
         assert!(
             !store
-                .reconcile_mls_genesis_group_state_ref_from_projection(realm_id, None)
+                .reconcile_mls_genesis_group_state_ref_from_checkpoint(realm_id, None)
                 .unwrap()
         );
         let _ = std::fs::remove_file(path);

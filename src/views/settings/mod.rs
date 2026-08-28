@@ -338,47 +338,12 @@ pub(crate) fn push_blocklist_account_data(
     });
 }
 
-/// F-BLOCKLIST-VALID-1: client-side DID format sanity check for live form
-/// validation. Matches the canonical DID Core scheme (`did:<method>:<id>`)
-/// where method is at least one ASCII letter / digit and id is at least one
-/// printable character. Reused by the blocklist add form (and intended to
-/// gradually replace the bare `starts_with("did:")` check in the contact
-/// remark add form too). The point is to give the user *live* feedback
-/// while typing, not to enforce server-side DID validity — the soland
-/// reducer still has final say.
-pub(crate) fn is_likely_valid_did(input: &str) -> bool {
-    let trimmed = input.trim();
-    let Some(rest) = trimmed.strip_prefix("did:") else {
-        return false;
-    };
-    let mut parts = rest.splitn(2, ':');
-    let Some(method) = parts.next() else {
-        return false;
-    };
-    let Some(id) = parts.next() else {
-        return false;
-    };
-    // Round 4 (spec a77b995) — tightened method regex to
-    // `^did:[a-z0-9]+:[^\s]+$`. The method segment MUST be lowercase
-    // ASCII alphanumeric (no `.`/`-`/`_`/`:`); the method-specific id
-    // MUST NOT contain whitespace.
-    if method.is_empty()
-        || !method
-            .chars()
-            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit())
-        || id.trim().is_empty()
-        || id.chars().any(char::is_whitespace)
-    {
-        return false;
-    }
-    true
-}
-
 /// Client-side DNS-domain sanity check for the blocklist `domain` target
 /// (`client-preferences.md` §3.5 / `content-moderation.md` §4.3). Like
-/// [`is_likely_valid_did`] this only powers *live* form feedback — the wire
-/// value is normalized by `account_data::normalize_blocklist_value` and the
-/// real DID/claim resolution happens client-side before the block applies.
+/// the typed DID parser used by the blocklist card, this only powers *live*
+/// form feedback. The wire value is normalized by
+/// `account_data::normalize_blocklist_value` and the real DID/claim resolution
+/// happens client-side before the block applies.
 /// Accepts a bare multi-label domain (`example.com`, `sub.acme.example`);
 /// rejects schemes, ports, paths, whitespace, `@`, and single-label inputs.
 pub(crate) fn is_likely_valid_domain(input: &str) -> bool {
@@ -655,10 +620,6 @@ pub fn SettingsPanel(
     let mut avatar_crop_x = use_signal(|| 0_i32);
     let mut avatar_crop_y = use_signal(|| 0_i32);
     let mut avatar_refresh_nonce = use_signal(|| 0_u64);
-    let mut blocklist_snapshot = use_signal(|| state_store.read().client_blocklist());
-    let mut blocklist_did_input = use_signal(String::new);
-    let mut blocklist_reason_input = use_signal(String::new);
-    let mut blocklist_status = use_signal(String::new);
     let mut mimi_directory = use_signal(|| "Not loaded".to_owned());
     let mut mimi_receipt = use_signal(|| "No MIMI action receipt".to_owned());
     let blocked_count = blocked_release_workflows().len();
@@ -2983,198 +2944,6 @@ pub fn SettingsPanel(
                     }
                 }
 
-                // Personal blocklist — discovery/client-preferences.md
-                // Blocks are actor-private filters; they do not affect other actors' clients.
-                            div { class: "event", "data-testid": "personal-blocklist",
-                    div { class: "event-head",
-                        span { {crate::i18n::tr("settings.privacy.blocked_users.title")} }
-                        span { class: "badge", "{blocklist_snapshot.read().len()}" }
-                    }
-                    div { class: "settings-inline-form", "data-testid": "blocklist-add-form",
-                        {
-                            // F-BLOCKLIST-VALID-1: derive live validation
-                            // from the current input so the user sees the
-                            // red ring + hint as they type, and the Add
-                            // button is disabled until the value parses.
-                            let raw_did = blocklist_did_input();
-                            let did_trimmed = raw_did.trim();
-                            let did_empty = did_trimmed.is_empty();
-                            let did_valid = !did_empty && is_likely_valid_did(did_trimmed);
-                            let did_input_class = if did_empty {
-                                "blocklist-did"
-                            } else if did_valid {
-                                "blocklist-did blocklist-did-valid"
-                            } else {
-                                "blocklist-did blocklist-did-invalid"
-                            };
-                            rsx! {
-                                Input {
-                                    class: "{did_input_class}",
-                                    "data-testid": "blocklist-did-input",
-                                    placeholder: crate::i18n::tr("settings.privacy.blocked_users.did_placeholder"),
-                                    value: "{blocklist_did_input}",
-                                    "aria-invalid": if !did_empty && !did_valid { "true" } else { "false" },
-                                    oninput: move |event: FormEvent| blocklist_did_input.set(event.value()),
-                                }
-                                Input {
-                                    "data-testid": "blocklist-reason-input",
-                                    placeholder: crate::i18n::tr("settings.privacy.blocked_users.reason_placeholder"),
-                                    value: "{blocklist_reason_input}",
-                                    oninput: move |event: FormEvent| blocklist_reason_input.set(event.value()),
-                                }
-                                Button {
-                                    variant: ButtonVariant::Secondary,
-                                    "data-testid": "blocklist-add",
-                                    disabled: !did_valid,
-                                    onclick: {
-                                        let base = base_url;
-                                        move |_| {
-                                            let did = blocklist_did_input().trim().to_owned();
-                                            if did.is_empty() {
-                                                blocklist_status.set(crate::i18n::tr(
-                                                    "settings.privacy.blocked_users.did_required",
-                                                ));
-                                                return;
-                                            }
-                                            if !is_likely_valid_did(&did) {
-                                                blocklist_status.set(crate::i18n::tr(
-                                                    "settings.privacy.blocked_users.did_invalid",
-                                                ));
-                                                return;
-                                            }
-                                            let reason = blocklist_reason_input().trim().to_owned();
-                                    let reason = if reason.is_empty() {
-                                        None
-                                    } else {
-                                        Some(reason)
-                                    };
-                                    let changed = state_store.write().block_user(&did, reason);
-                                    let entries = state_store.read().client_blocklist();
-                                    blocklist_snapshot.set(entries.clone());
-                                    if changed {
-                                        let did_label =
-                                            actor_display_label(&state_store.read(), &did);
-                                        blocklist_did_input.set(String::new());
-                                        blocklist_reason_input.set(String::new());
-                                        blocklist_status.set(format!(
-                                            "{} {did_label}",
-                                            crate::i18n::tr(
-                                                "settings.privacy.blocked_users.added"
-                                            )
-                                        ));
-                                        push_blocklist_account_data(
-                                            base(),
-                                            token(),
-                                            principal_id(),
-                                            state_store,
-                                            entries,
-                                        );
-                                    } else {
-                                        let did_label =
-                                            actor_display_label(&state_store.read(), &did);
-                                        blocklist_status.set(format!(
-                                            "{} {did_label}",
-                                            crate::i18n::tr(
-                                                "settings.privacy.blocked_users.duplicate"
-                                            )
-                                        ));
-                                    }
-                                }
-                            },
-                            {crate::i18n::tr("settings.privacy.blocked_users.add")}
-                        }
-                            }
-                        }
-                        {
-                            // F-BLOCKLIST-VALID-1: live hint surfaces the
-                            // exact reason the Add button is disabled.
-                            // Empty input is a neutral state (no hint);
-                            // the warning only appears once the user has
-                            // started typing something the validator
-                            // rejects.
-                            let raw_did = blocklist_did_input();
-                            let trimmed = raw_did.trim();
-                            if !trimmed.is_empty() && !is_likely_valid_did(trimmed) {
-                                rsx! {
-                                    div {
-                                        class: "settings-inline-hint settings-inline-hint-invalid",
-                                        "data-testid": "blocklist-did-invalid",
-                                        {crate::i18n::tr("settings.privacy.blocked_users.did_invalid")}
-                                    }
-                                }
-                            } else {
-                                rsx! {}
-                            }
-                        }
-                    }
-                    if !blocklist_status().is_empty() {
-                        div { class: "muted", "data-testid": "blocklist-status", "{blocklist_status}" }
-                    }
-                    if blocklist_snapshot.read().is_empty() {
-                        div {
-                            class: "muted",
-                            "data-testid": "blocklist-empty",
-                            {crate::i18n::tr("settings.privacy.blocked_users.empty")}
-                        }
-                    } else {
-                        ul { class: "settings-list", "data-testid": "blocklist-entries",
-                            for entry in blocklist_snapshot.read().iter() {
-                                {
-                                    let entry_value = crate::account_data::blocklist_target_value(
-                                        &entry.target,
-                                    );
-                                    let did_label =
-                                        actor_display_label(&state_store.read(), entry_value);
-                                    rsx! {
-                                        li { class: "settings-list-row", "data-testid": "blocklist-entry",
-                                            div {
-                                                strong { title: "{entry_value}", "{did_label}" }
-                                                if let Some(reason) = &entry.reason_code {
-                                                    div { class: "muted", "{reason}" }
-                                                }
-                                                div { class: "muted", "{entry.created_at}" }
-                                            }
-                                            Button {
-                                                variant: ButtonVariant::Secondary,
-                                                "data-testid": "blocklist-unblock",
-                                                onclick: {
-                                                    let target = entry.target.clone();
-                                                    let did = crate::account_data::blocklist_target_value(&target).to_owned();
-                                                    let base = base_url;
-                                                    move |_| {
-                                                        let changed = state_store
-                                                            .write()
-                                                            .unblock_target(&target);
-                                                        let entries = state_store.read().client_blocklist();
-                                                        blocklist_snapshot.set(entries.clone());
-                                                        if changed {
-                                                            let did_label =
-                                                                actor_display_label(&state_store.read(), &did);
-                                                            blocklist_status.set(format!(
-                                                                "{} {did_label}",
-                                                                crate::i18n::tr(
-                                                                    "settings.privacy.blocked_users.removed"
-                                                                )
-                                                            ));
-                                                            push_blocklist_account_data(
-                                                                base(),
-                                                                token(),
-                                                                principal_id(),
-                                                                state_store,
-                                                                entries,
-                                                            );
-                                                        }
-                                                    }
-                                                },
-                                                {crate::i18n::tr("settings.privacy.unblock")}
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
 
                         }
                     }

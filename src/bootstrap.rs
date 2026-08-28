@@ -1128,17 +1128,30 @@ pub(crate) async fn bootstrap_mls_welcome_for_realm(
         );
     }
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-    if has_welcome {
+    let transition_checkpoint = if has_welcome {
         crate::mls::governance_proof::ensure_governance_checkpoint(&api, state_store, &realm_id)
             .await?;
-    }
-    let previews = crate::mls::runtime::preview_welcome_security_frontiers(
-        &state_store.read(),
-        secure_store.as_ref(),
-        &authority,
-        &device_id,
-        &messages_value,
-    )?;
+        Some(
+            crate::mls::governance_proof::verify_governance_checkpoint_candidate(
+                &api,
+                &state_store,
+                &realm_id,
+            )
+            .await?,
+        )
+    } else {
+        None
+    };
+    let previews = match transition_checkpoint.as_ref() {
+        Some(checkpoint) => crate::mls::runtime::preview_welcome_security_frontiers(
+            checkpoint,
+            secure_store.as_ref(),
+            &authority,
+            &device_id,
+            &messages_value,
+        )?,
+        None => Vec::new(),
+    };
     for preview in previews {
         // encryption-and-audit.md 2.5.4 T1 — the invitee's first-time path. The
         // Welcome deliberately carries no anchor: a carried one would be a second,

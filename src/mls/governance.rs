@@ -3,7 +3,8 @@
 //! Spec: `authz/event-auth-state-resolution.md` §9.3.1 plus the registered
 //! `ak.mls.commit` reducer contract. Every MLS commit MUST
 //! carry preconditions binding it to:
-//! 1. the previous MLS epoch (`mls_epoch_cell.head_eq(prev_epoch)`) — racing commits fail closed.
+//! 1. the previous complete MLS epoch winner tuple (`mls_epoch_cell.head_eq(previous_epoch_head)`)
+//!    — racing commits fail closed.
 //! 2. the previous key-schedule governance binding
 //!    (`key_schedule_cell.head_eq(previous_governance_binding)`) — both CAS registers advance from
 //!    an exact, accepted predecessor.
@@ -22,6 +23,19 @@ use arkret_sdk::mls_cells::{key_schedule_cell_id, mls_epoch_cell_id};
 use arkret_sdk::{Precondition, Predicate, PredicateOp};
 use serde_json::Value;
 
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct MlsEpochHead {
+    transition_ref: arkret_sdk::EventId,
+    transition_event_digest: arkret_sdk::Hash,
+    mls_transition_digest: arkret_sdk::Hash,
+    effective_scope: arkret_sdk::ScopeRef,
+    mls_group_id: String,
+    previous_epoch: Option<u64>,
+    next_epoch: u64,
+    content_scheme: arkret_sdk::ContentScheme,
+}
+
 /// The exact predecessor preconditions an `ak.mls.commit` Event MUST carry.
 ///
 /// Both are addressed by the registered composite `cell_subject`
@@ -31,18 +45,35 @@ pub fn mls_commit_preconditions(
     effective_scope: &arkret_sdk::ScopeRef,
     mls_group_id: &str,
     prev_epoch: u64,
+    base_group_state_ref: &arkret_sdk::EventId,
     previous_governance_binding: &arkret_sdk::MlsGovernanceBindingPayload,
+    previous_epoch_head: Value,
 ) -> anyhow::Result<Vec<Precondition>> {
     let epoch_cell = mls_epoch_cell_id(effective_scope, mls_group_id)
         .map_err(|error| anyhow::anyhow!("mls epoch cell id invalid: {error:?}"))?;
     let key_schedule_cell = key_schedule_cell_id(effective_scope, mls_group_id)
         .map_err(|error| anyhow::anyhow!("key schedule cell id invalid: {error:?}"))?;
+    let decoded_head: MlsEpochHead = serde_json::from_value(previous_epoch_head.clone())
+        .map_err(|error| anyhow::anyhow!("previous MLS epoch Cell head is invalid: {error}"))?;
+    if decoded_head.transition_ref != *base_group_state_ref
+        || decoded_head.effective_scope != *effective_scope
+        || decoded_head.mls_group_id != mls_group_id
+        || decoded_head.next_epoch != prev_epoch
+        || decoded_head.content_scheme != previous_governance_binding.content_scheme()
+    {
+        anyhow::bail!("previous MLS epoch Cell head does not match the Commit predecessor");
+    }
+    let _ = (
+        decoded_head.transition_event_digest,
+        decoded_head.mls_transition_digest,
+        decoded_head.previous_epoch,
+    );
     Ok(vec![
         Precondition {
             cell: epoch_cell,
             predicate: Predicate {
                 op: PredicateOp::HeadEq,
-                value: Some(Value::from(prev_epoch)),
+                value: Some(previous_epoch_head),
                 values: None,
                 predicate_id: None,
             },
@@ -103,13 +134,34 @@ mod tests {
             .unwrap(),
         };
         let group_id = scope.canonical_mls_group_id().unwrap();
-        let preconditions =
-            mls_commit_preconditions(&scope, &group_id, 7, &previous_binding).unwrap();
+        let transition_ref = arkret_sdk::EventId::new(
+            "ak:event:AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA".to_owned(),
+        )
+        .unwrap();
+        let previous_epoch_head = serde_json::json!({
+            "transition_ref": transition_ref,
+            "transition_event_digest": format!("sha256:{}", "1".repeat(64)),
+            "mls_transition_digest": format!("sha256:{}", "2".repeat(64)),
+            "effective_scope": scope,
+            "mls_group_id": group_id,
+            "previous_epoch": 6,
+            "next_epoch": 7,
+            "content_scheme": "mls_rfc9420"
+        });
+        let preconditions = mls_commit_preconditions(
+            &scope,
+            &group_id,
+            7,
+            &transition_ref,
+            &previous_binding,
+            previous_epoch_head.clone(),
+        )
+        .unwrap();
 
         assert_eq!(preconditions.len(), 2);
         assert!(preconditions[0].cell.as_str().contains("mls.epoch"));
         assert_eq!(preconditions[0].predicate.op, PredicateOp::HeadEq);
-        assert_eq!(preconditions[0].predicate.value, Some(Value::from(7u64)));
+        assert_eq!(preconditions[0].predicate.value, Some(previous_epoch_head));
         assert!(preconditions[1].cell.as_str().contains("key_schedule"));
         assert_eq!(preconditions[1].predicate.op, PredicateOp::HeadEq);
         assert_eq!(
@@ -128,5 +180,27 @@ mod tests {
         assert!(preconditions[0].cell.as_str().ends_with(&expected_subject));
         assert!(preconditions[1].cell.as_str().ends_with(&expected_subject));
         assert!(!preconditions[0].cell.as_str().ends_with(group_id.as_str()));
+    }
+
+    #[test]
+    fn commit_preconditions_reject_the_stale_scalar_epoch_shape() {
+        let previous_binding = governance_binding();
+        let scope = previous_binding.effective_scope().clone();
+        let group_id = previous_binding.mls_group_id().to_owned();
+        let transition_ref = arkret_sdk::EventId::new(
+            "ak:event:AQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA".to_owned(),
+        )
+        .unwrap();
+        assert!(
+            mls_commit_preconditions(
+                &scope,
+                &group_id,
+                7,
+                &transition_ref,
+                &previous_binding,
+                Value::from(7u64),
+            )
+            .is_err()
+        );
     }
 }

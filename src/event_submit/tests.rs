@@ -862,6 +862,68 @@ fn queued_mls_admission_round_trips_exact_welcome_material() {
             )
             .expect("the Proposal signs");
     }
+    let authored_proposal = proposal.event().clone();
+    let producer = authored_proposal
+        .proofs
+        .iter()
+        .find_map(arkret_sdk::EventProof::as_producer)
+        .cloned()
+        .expect("the authored Proposal has its producer proof");
+    let mut accepted_proposal = authored_proposal.clone();
+    accepted_proposal.proofs.push(
+        arkret_sdk::PrincipalServerAdmissionProof {
+            kind: arkret_sdk::PrincipalServerAdmissionProofKind::PrincipalServerAdmission,
+            verification_method: arkret_sdk::DidUrl::new(
+                "did:web:principal.example#admission-1",
+            )
+            .unwrap(),
+            event_digest: producer.event_digest.clone(),
+            producer_proof_digest:
+                arkret_sdk::PrincipalServerAdmissionProof::producer_proof_digest(&producer)
+                    .unwrap(),
+            producer_verification_method: producer.verification_method.clone(),
+            producer_signing_key: arkret_sdk::DidKey::new("did:key:z6MkhFixtureDeviceKey")
+                .unwrap(),
+            producer_signer_resolution_evidence_ref: producer
+                .signer_resolution_evidence_ref
+                .clone(),
+            producer_signer_resolution_evidence_digest: producer
+                .signer_resolution_evidence_digest
+                .clone(),
+            signer_resolution_evidence_ref: arkret_sdk::SignerEvidenceRef::new(format!(
+                "ak:signer_evidence:sha256:{}",
+                "11".repeat(32)
+            ))
+            .unwrap(),
+            signer_resolution_evidence_digest: arkret_sdk::Hash::new(format!(
+                "sha256:{}",
+                "11".repeat(32)
+            ))
+            .unwrap(),
+            accepted_at: authored_proposal.created_at,
+            jws: "header..admission".to_owned(),
+        }
+        .into(),
+    );
+    assert!(
+        accepted_event_preserves_authored_envelope(
+            &accepted_proposal,
+            &authored_proposal,
+            proposal.digest_suite(),
+        )
+        .unwrap()
+    );
+    accepted_proposal
+        .payload
+        .insert("tampered".to_owned(), serde_json::Value::Bool(true));
+    assert!(
+        !accepted_event_preserves_authored_envelope(
+            &accepted_proposal,
+            &authored_proposal,
+            proposal.digest_suite(),
+        )
+        .unwrap()
+    );
     let commit_intent = serde_json::from_value::<EventIntent>(json!({
         "kind": "ak.mls.commit",
         "scope_ref": {"kind": "realm", "realm_id": realm_id},
@@ -938,6 +1000,17 @@ fn queued_mls_admission_round_trips_exact_welcome_material() {
     .unwrap();
 
     let decoded = decode_queued_sdk_event(serde_json::to_value(&queued).unwrap()).unwrap();
+    let queued_record = QueuedRecord::SdkEvent(Box::new(decoded.clone()));
+    assert!(is_unfinished_mls_admission_record(
+        garth::SendQueueStatus::Failed,
+        &queued_record,
+        realm_id,
+    ));
+    assert!(!is_unfinished_mls_admission_record(
+        garth::SendQueueStatus::Sent,
+        &queued_record,
+        realm_id,
+    ));
     let Some(PostAcceptAction::MlsAdmission { welcomes, .. }) = decoded.post_accept else {
         panic!("queued admission action was not preserved");
     };

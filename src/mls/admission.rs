@@ -293,6 +293,8 @@ fn build_realm_mls_admission_events_from_verified_claim(
     )?;
     let member_key_package = crate::mls_api_helpers::keypackage_claim_record_to_mls_record(claim)
         .map_err(|err| format!("MLS KeyPackage claim decode failed: {err}"))?;
+    let member_authority_hint =
+        crate::mls::governance_proof::leaf_authority_hint_from_claim(claim)?;
     let (add, snapshot, previous_governance_binding) =
         crate::mls::runtime::build_add_member_commit_for_effective_scope(
             state_store,
@@ -302,6 +304,7 @@ fn build_realm_mls_admission_events_from_verified_claim(
             authority,
             device_id,
             &member_key_package,
+            &member_authority_hint,
         )
         .map_err(|err| err.user_message())?;
     let commit_basis = crate::mls::group_events::mls_commit_basis_from_store(
@@ -419,6 +422,10 @@ fn build_mls_admission_events_from_claims_for_effective_scope(
                 .map_err(|err| format!("MLS KeyPackage claim decode failed: {err}"))
         })
         .collect::<Result<Vec<_>, _>>()?;
+    let member_authority_hints = claims
+        .iter()
+        .map(|(claim, ..)| crate::mls::governance_proof::leaf_authority_hint_from_claim(claim))
+        .collect::<Result<Vec<_>, _>>()?;
     let (add, snapshot, previous_governance_binding) =
         crate::mls::runtime::build_add_members_commit_for_effective_scope_with_binding(
             state_store,
@@ -428,6 +435,7 @@ fn build_mls_admission_events_from_claims_for_effective_scope(
             authority,
             device_id,
             &member_key_packages,
+            &member_authority_hints,
             sidecar_binding.clone(),
         )
         .map_err(|err| err.user_message())?;
@@ -929,12 +937,23 @@ fn sign_welcome_claim_envelope(
         None => crate::event_signer::bootstrap_default_signer("inkson")
             .map_err(|err| format!("MLS Welcome device signer bootstrap: {err}"))?,
     };
-    // The Welcome transcript is requester-principal scoped. Its device
-    // signature therefore uses the same accepted principal/device method as
-    // the Event proof, while the underlying local key remains unchanged.
-    // Advertising the signer's local did:key method here prevents a remote
-    // Principal Server from matching the signature to requester_device_id.
-    let kid = arkret_sdk::NonEmptyString::new(format!("{actor_id}#{sender_device_id}"))
+    let signer_full_id = arkret_sdk::DidFullId::new(signer.signer_did().to_owned())
+        .map_err(|err| format!("MLS Welcome signer full DID: {err}"))?;
+    let signer_actor_id = arkret_sdk::project_full_id_to_core_id(&signer_full_id)
+        .map_err(|err| format!("MLS Welcome signer actor projection: {err}"))?;
+    if signer_actor_id.as_str() != actor_id {
+        return Err(
+            "MLS Welcome active signer full DID does not project to requester_actor_id".to_owned(),
+        );
+    }
+    let expected_kid = format!("{signer_full_id}#{sender_device_id}");
+    if signer.verification_method() != expected_kid {
+        return Err(
+            "MLS Welcome active signer verification method is not the exact requester device method"
+                .to_owned(),
+        );
+    }
+    let kid = arkret_sdk::NonEmptyString::new(expected_kid)
         .map_err(|err| format!("MLS Welcome device signing kid: {err}"))?;
     let signing_bytes = envelope
         .canonical_signing_bytes()
@@ -1180,14 +1199,19 @@ mod tests {
     #[cfg(not(target_arch = "wasm32"))]
     #[test]
     fn welcome_signature_uses_active_device_signer() {
-        let active_signer = std::sync::Arc::new(crate::event_signer::build_ed25519_signer(
-            [7u8; 32],
-            "did:key:zActiveSigner",
-        ));
+        let actor = "ak:did_core:web:alice.example";
+        let actor_full_id = "did:web:alice.example";
+        let device = "ak:device:01904100-0000-7000-8000-0000000000a1";
+        let verification_method = format!("{actor_full_id}#{device}");
+        let active_signer = std::sync::Arc::new(
+            crate::event_signer::build_ed25519_signer_with_verification_method(
+                [7u8; 32],
+                actor_full_id,
+                verification_method.clone(),
+            ),
+        );
         let _signer_guard =
             crate::event_signer::ActiveSignerTestGuard::replace(Some(active_signer));
-        let actor = "did:web:alice.example";
-        let device = "ak:device:01904100-0000-7000-8000-0000000000a1";
         let claim_receipt = welcome_authoring_receipt("bm9uY2U");
         let envelope = arkret_sdk::UnsignedMlsWelcomeClaimEnvelope::new(
             arkret_sdk::MlsWelcomeClaimEnvelopeSigningInput {
@@ -1233,7 +1257,7 @@ mod tests {
                 .map(arkret_sdk::DeviceId::as_str),
             Some(device)
         );
-        assert_eq!(envelope.signature.kid.as_str(), format!("{actor}#{device}"));
+        assert_eq!(envelope.signature.kid.as_str(), verification_method);
         assert!(!envelope.signature.sig.is_empty());
         assert!(!envelope.signature.sig.contains(['+', '/', '=']));
         assert!(

@@ -2108,7 +2108,7 @@ pub fn apply_response(
                 let projection = preserve_realm_security_projection(existing.as_ref(), &projection);
                 store.save_realm_tree_projection(id.to_owned(), projection.clone());
                 if let Err(error) =
-                    store.reconcile_mls_genesis_group_state_ref_from_projection(id, None)
+                    store.reconcile_mls_genesis_group_state_ref_from_checkpoint(id, None)
                 {
                     tracing::error!(
                         realm_id = %id,

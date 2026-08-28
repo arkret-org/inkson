@@ -475,6 +475,15 @@ pub(crate) async fn ensure_governance_checkpoint<S: GovernanceProofStateStore>(
     {
         return Ok(());
     }
+    let verified = verify_governance_checkpoint_candidate(api, &state_store, realm_id).await?;
+    state_store.with_write(|store| store.pin_mls_governance_checkpoint(realm_id, verified))
+}
+
+pub(crate) async fn verify_governance_checkpoint_candidate<S: GovernanceProofStateStore>(
+    api: &crate::transport::TransportClient,
+    state_store: &S,
+    realm_id: &str,
+) -> Result<arkret_sdk::MlsGovernanceVerificationCheckpoint, String> {
     let realm = arkret_sdk::RealmId::new(realm_id.to_owned()).map_err(|error| {
         format!("invalid Realm id for governance checkpoint bootstrap: {error}")
     })?;
@@ -501,7 +510,7 @@ pub(crate) async fn ensure_governance_checkpoint<S: GovernanceProofStateStore>(
         &target_basis,
     )
     .await?;
-    let verified = arkret_sdk::verify_mls_governance_closure(
+    let checkpoint = arkret_sdk::verify_mls_governance_closure(
         &realm,
         &resolved.target_basis,
         &resolved.seals,
@@ -509,7 +518,7 @@ pub(crate) async fn ensure_governance_checkpoint<S: GovernanceProofStateStore>(
         &resolved.dependencies,
         |event, digest_suite, evidence, dependencies| {
             verify_native_agent_history_key(
-                &state_store,
+                state_store,
                 event,
                 digest_suite,
                 evidence,
@@ -519,7 +528,7 @@ pub(crate) async fn ensure_governance_checkpoint<S: GovernanceProofStateStore>(
     )
     .map_err(|error| format!("verify initial MLS governance checkpoint: {error}"))?
     .checkpoint;
-    state_store.with_write(|store| store.pin_mls_governance_checkpoint(realm_id, verified))
+    Ok(checkpoint)
 }
 
 pub(crate) fn cached_verified_binding(
@@ -562,10 +571,176 @@ pub(crate) fn cached_verified_binding_for_transition(
     )
 }
 
+/// Materialize the exact accepted MLS epoch CAS head from the pinned,
+/// locally verified governance checkpoint. A producer must bind a Commit's
+/// `head_eq` predicate to this whole registered value; the scalar epoch is
+/// only one member of that value and is not a Cell head.
+pub(crate) fn cached_verified_mls_epoch_head(
+    state_store: &crate::state::LocalStateStore,
+    effective_scope: &arkret_sdk::ScopeRef,
+    mls_group_id: &str,
+) -> Result<serde_json::Value, String> {
+    let realm_id = effective_scope
+        .realm_id_opt()
+        .ok_or_else(|| "MLS epoch Cell requires a Realm-backed scope".to_owned())?;
+    let checkpoint = state_store
+        .trusted_mls_governance_checkpoint(realm_id.as_str())
+        .ok_or_else(|| "MLS governance checkpoint is not pinned".to_owned())?;
+    let registry = arkret_sdk::lattice_registry::try_build_sdk_cell_registry()
+        .map_err(|error| format!("MLS Cell registry construction failed: {error}"))?;
+    let cell = arkret_sdk::mls_cells::mls_epoch_cell_id(effective_scope, mls_group_id)
+        .map_err(|error| error.to_string())?;
+    let authority_audits =
+        arkret_schema::CapabilityAuthorityAuditIndex::from_events(&checkpoint.accepted_events);
+    arkret_state::mls_governance_proof::materialize_registered_cell_value_from_verified_checkpoint(
+        &checkpoint,
+        &cell,
+        &registry,
+        |event, digest_suite| {
+            arkret_schema::project_registered_cell_writes_with_authority_resolver(
+                event,
+                digest_suite,
+                &|grant_id| authority_audits.resolve(grant_id),
+            )
+            .map_err(|error| error.to_string())
+        },
+    )
+    .map_err(|error| error.to_string())
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct MlsLeafAuthorityHint {
+    pub(crate) endpoint: arkret_sdk::MlsEndpointIdentity,
+    pub(crate) device_authorize_event_id: Option<arkret_sdk::EventId>,
+}
+
+pub(crate) fn leaf_authority_hint_from_claim(
+    claim: &arkret_sdk::KeyPackageClaimRecord,
+) -> Result<MlsLeafAuthorityHint, String> {
+    claim
+        .validate_shape()
+        .map_err(|error| format!("invalid claimed MLS leaf authority: {error}"))?;
+    let endpoint = crate::mls_api_helpers::keypackage_claim_record_to_mls_record(claim)
+        .map_err(|error| format!("invalid claimed MLS endpoint: {error}"))?
+        .endpoint;
+    Ok(MlsLeafAuthorityHint {
+        endpoint,
+        device_authorize_event_id: claim.device_authorize_event_id.clone(),
+    })
+}
+
+pub(crate) fn leaf_authority_hints_from_welcome(
+    welcome: &arkret_sdk::MlsWelcomePayload,
+) -> Result<Vec<MlsLeafAuthorityHint>, String> {
+    let recipient = match (&welcome.recipient_principal_id, &welcome.recipient) {
+        (
+            Some(principal_id),
+            arkret_sdk::MlsWelcomeRecipient::Device {
+                recipient_device_id,
+            },
+        ) => {
+            let event_id = welcome
+                .claim_ref
+                .trust_binding
+                .device_authorize_event_id()
+                .ok_or_else(|| {
+                    "ordinary MLS Welcome recipient omits device authorization Event".to_owned()
+                })?;
+            MlsLeafAuthorityHint {
+                endpoint: arkret_sdk::MlsEndpointIdentity::human_device(
+                    principal_id.clone(),
+                    recipient_device_id.clone(),
+                ),
+                device_authorize_event_id: Some(
+                    arkret_sdk::EventId::new(event_id.to_owned())
+                        .map_err(|error| format!("invalid recipient authority Event: {error}"))?,
+                ),
+            }
+        }
+        (
+            Some(principal_id),
+            arkret_sdk::MlsWelcomeRecipient::NativeAgent {
+                recipient_agent_id,
+                recipient_agent_verification_method,
+                agent_key_authorize_event_id,
+            },
+        ) if principal_id == recipient_agent_id => MlsLeafAuthorityHint {
+            endpoint: arkret_sdk::MlsEndpointIdentity::native_agent_runtime(
+                recipient_agent_id.clone(),
+                recipient_agent_verification_method.clone(),
+                agent_key_authorize_event_id.clone(),
+            )
+            .map_err(|error| format!("invalid recipient Agent authority: {error}"))?,
+            device_authorize_event_id: None,
+        },
+        (
+            None,
+            arkret_sdk::MlsWelcomeRecipient::MinimalMetadataPairwise {
+                recipient_pairwise_actor_id,
+                recipient_pairwise_verification_method,
+            },
+        ) => MlsLeafAuthorityHint {
+            endpoint: arkret_sdk::MlsEndpointIdentity::minimal_metadata_pairwise(
+                recipient_pairwise_actor_id.clone(),
+                recipient_pairwise_verification_method.clone(),
+            )
+            .map_err(|error| format!("invalid recipient pairwise authority: {error}"))?,
+            device_authorize_event_id: None,
+        },
+        _ => return Err("MLS Welcome recipient authority shape is inconsistent".to_owned()),
+    };
+
+    let requester = match &welcome.claim_envelope.trust_binding {
+        arkret_sdk::MlsRequesterTrustBinding::RequesterDevice {
+            requester_device_id,
+            requester_device_authorize_event_id,
+        } => MlsLeafAuthorityHint {
+            endpoint: arkret_sdk::MlsEndpointIdentity::human_device(
+                welcome.claim_envelope.requester_actor_id.clone(),
+                requester_device_id.clone(),
+            ),
+            device_authorize_event_id: Some(requester_device_authorize_event_id.clone()),
+        },
+        arkret_sdk::MlsRequesterTrustBinding::RequesterNativeAgent {
+            requester_agent_id,
+            requester_agent_verification_method,
+            requester_agent_key_authorize_event_id,
+        } => MlsLeafAuthorityHint {
+            endpoint: arkret_sdk::MlsEndpointIdentity::native_agent_runtime(
+                requester_agent_id.clone(),
+                requester_agent_verification_method.clone(),
+                requester_agent_key_authorize_event_id.clone(),
+            )
+            .map_err(|error| format!("invalid requester Agent authority: {error}"))?,
+            device_authorize_event_id: None,
+        },
+        arkret_sdk::MlsRequesterTrustBinding::RequesterMinimalMetadataPairwise {
+            requester_pairwise_verification_method,
+        } => MlsLeafAuthorityHint {
+            endpoint: arkret_sdk::MlsEndpointIdentity::minimal_metadata_pairwise(
+                welcome.claim_envelope.requester_actor_id.clone(),
+                requester_pairwise_verification_method.clone(),
+            )
+            .map_err(|error| format!("invalid requester pairwise authority: {error}"))?,
+            device_authorize_event_id: None,
+        },
+    };
+    Ok(vec![recipient, requester])
+}
+
 pub(crate) fn install_cached_transition_leaf_bindings(
     state_store: &crate::state::LocalStateStore,
     group: &mut arkret_sdk::ArkretMlsGroup,
     binding: &arkret_sdk::MlsGovernanceBindingPayload,
+) -> Result<(), String> {
+    install_cached_transition_leaf_bindings_with_hints(state_store, group, binding, &[])
+}
+
+pub(crate) fn install_cached_transition_leaf_bindings_with_hints(
+    state_store: &crate::state::LocalStateStore,
+    group: &mut arkret_sdk::ArkretMlsGroup,
+    binding: &arkret_sdk::MlsGovernanceBindingPayload,
+    authority_hints: &[MlsLeafAuthorityHint],
 ) -> Result<(), String> {
     let state = state_store.load();
     let mut matches = state.mls_governance_proofs.values().filter(|entry| {
@@ -600,6 +775,12 @@ pub(crate) fn install_cached_transition_leaf_bindings(
     if author_leaves.len() != entry.request.local_mls_leaves.len() {
         return Err("verified T3 leaf set does not cover the post-transition MLS tree".to_owned());
     }
+    let retained_bindings = group
+        .retained_verified_leaf_bindings()
+        .map_err(|error| format!("read retained MLS leaf bindings: {error}"))?
+        .into_iter()
+        .map(|binding| (binding.leaf_index, binding))
+        .collect::<BTreeMap<_, _>>();
     let mut installed = Vec::with_capacity(author_leaves.len());
     for frontier_leaf in &entry.request.local_mls_leaves {
         let author_leaf = author_leaves
@@ -622,39 +803,68 @@ pub(crate) fn install_cached_transition_leaf_bindings(
                 .map_err(|error| format!("invalid accepted MLS leaf key: {error}"))?;
         let credential = frontier_leaf.credential_ref.as_str();
 
+        if let Some(retained) = retained_bindings.get(&frontier_leaf.leaf_index) {
+            if retained.principal_id != frontier_leaf.principal_id
+                || retained.credential_ref != frontier_leaf.credential_ref
+                || retained.signature_key != signature_key_b64
+            {
+                return Err("retained MLS authority differs from the verified T3 leaf".to_owned());
+            }
+            installed.push(retained.clone());
+            continue;
+        }
+
         let (endpoint, device_authorize_event_id) = if let Ok(device_id) =
             arkret_sdk::DeviceId::new(credential.to_owned())
         {
-            let expected_did_key = format!("did:key:{multibase}");
-            let mut authorities = checkpoint.accepted_events.iter().filter_map(|event| {
-                if event.kind != arkret_sdk::EventKind::DeviceAuthorize {
-                    return None;
-                }
-                let payload = serde_json::from_value::<arkret_sdk::DeviceAuthorizePayload>(
-                    serde_json::to_value(&event.payload).ok()?,
-                )
-                .ok()?;
-                (payload.principal_id == frontier_leaf.principal_id
-                    && payload.device_id == device_id
-                    && payload.device_public_key.as_str() == expected_did_key)
-                    .then(|| event.event_id.clone())
-            });
-            let authority = authorities.next().ok_or_else(|| {
-                "ordinary MLS leaf has no accepted matching device authority at T3".to_owned()
-            })?;
-            if authorities.next().is_some() {
-                return Err(
-                    "ordinary MLS leaf has multiple accepted matching device authorities at T3"
-                        .to_owned(),
-                );
+            let endpoint = arkret_sdk::MlsEndpointIdentity::human_device(
+                frontier_leaf.principal_id.clone(),
+                device_id.clone(),
+            );
+            let mut hints = authority_hints
+                .iter()
+                .filter(|hint| hint.endpoint == endpoint);
+            let hinted = hints.next();
+            if hints.next().is_some() {
+                return Err("ordinary MLS leaf has duplicate authority hints at T3".to_owned());
             }
-            (
-                arkret_sdk::MlsEndpointIdentity::human_device(
-                    frontier_leaf.principal_id.clone(),
-                    device_id,
-                ),
-                Some(authority),
-            )
+            let authority = if let Some(hint) = hinted {
+                hint.device_authorize_event_id.clone().ok_or_else(|| {
+                    "ordinary MLS leaf authority hint omits device authorization Event".to_owned()
+                })?
+            } else {
+                let cached_key = match crate::identity::device_directory::cached_device_signing_key(
+                    frontier_leaf.principal_id.as_str(),
+                    device_id.as_str(),
+                ) {
+                    crate::identity::device_directory::CacheLookup::Hit(key) => key,
+                    crate::identity::device_directory::CacheLookup::NegativeHit
+                    | crate::identity::device_directory::CacheLookup::Miss => {
+                        return Err(
+                            "ordinary MLS leaf has no verified PCR device authority at T3"
+                                .to_owned(),
+                        );
+                    }
+                };
+                if cached_key
+                    .ed25519_bytes()
+                    .map_err(|error| format!("invalid cached device authority key: {error}"))?
+                    != signature_key
+                {
+                    return Err(
+                        "ordinary MLS leaf key differs from its verified PCR device authority"
+                            .to_owned(),
+                    );
+                }
+                crate::identity::device_directory::cached_device_authorize_event_id(
+                    frontier_leaf.principal_id.as_str(),
+                    device_id.as_str(),
+                )
+                .ok_or_else(|| {
+                    "ordinary MLS leaf PCR authority omits device authorization Event".to_owned()
+                })?
+            };
+            (endpoint, Some(authority))
         } else if credential.starts_with("ak:did_core:key:") {
             let expected_actor = format!("ak:did_core:key:{multibase}");
             if credential != expected_actor || frontier_leaf.principal_id.as_str() != credential {
@@ -676,33 +886,20 @@ pub(crate) fn install_cached_transition_leaf_bindings(
             if frontier_leaf.principal_id.as_str() != credential {
                 return Err("Native Agent MLS credential differs from its principal".to_owned());
             }
-            let public_key_digest =
-                arkret_sdk::Hash::new(arkret_sdk::canonical::sha256_digest(&signature_key))
-                    .map_err(|error| format!("invalid Agent MLS key digest: {error}"))?;
-            let mut authorities = checkpoint.accepted_events.iter().filter_map(|event| {
-                let payload = arkret_sdk::AgentKeyAuthorizePayload::try_from(event).ok()?;
-                (payload.agent_id == frontier_leaf.principal_id
-                    && payload.public_key_digest == public_key_digest)
-                    .then(|| (event.event_id.clone(), payload.verification_method))
-            });
-            let (authority, method) = authorities.next().ok_or_else(|| {
-                "Native Agent MLS leaf has no accepted matching key authority at T3".to_owned()
-            })?;
-            if authorities.next().is_some() {
-                return Err(
-                    "Native Agent MLS leaf has multiple accepted matching key authorities at T3"
-                        .to_owned(),
-                );
-            }
-            (
-                arkret_sdk::MlsEndpointIdentity::native_agent_runtime(
-                    frontier_leaf.principal_id.clone(),
-                    method,
-                    authority,
+            let mut hints = authority_hints.iter().filter(|hint| {
+                matches!(
+                    &hint.endpoint,
+                    arkret_sdk::MlsEndpointIdentity::NativeAgentRuntime { agent_id, .. }
+                        if agent_id == &frontier_leaf.principal_id
                 )
-                .map_err(|error| format!("invalid Native Agent MLS endpoint: {error}"))?,
-                None,
-            )
+            });
+            let hint = hints.next().ok_or_else(|| {
+                "Native Agent MLS leaf has no verified authority hint at T3".to_owned()
+            })?;
+            if hints.next().is_some() {
+                return Err("Native Agent MLS leaf has duplicate authority hints at T3".to_owned());
+            }
+            (hint.endpoint.clone(), None)
         };
         installed.push(arkret_sdk::MlsVerifiedLeafBinding {
             leaf_index: frontier_leaf.leaf_index,
@@ -719,19 +916,17 @@ pub(crate) fn install_cached_transition_leaf_bindings(
 }
 
 pub(crate) fn reconstruct_transition_security_frontier(
-    state_store: &crate::state::LocalStateStore,
+    checkpoint: &arkret_sdk::MlsGovernanceVerificationCheckpoint,
     group: &arkret_sdk::ArkretMlsGroup,
     binding: &arkret_sdk::MlsGovernanceBindingPayload,
 ) -> Result<Vec<arkret_sdk::MlsSecurityFrontierLeaf>, String> {
-    let state = state_store.load();
     let realm_id = binding
         .effective_scope()
         .realm_id_opt()
         .ok_or_else(|| "MLS transition has no Realm scope".to_owned())?;
-    let checkpoint = state
-        .mls_governance_checkpoints
-        .get(realm_id.as_str())
-        .ok_or_else(|| "MLS transition replay has no verified checkpoint".to_owned())?;
+    if &checkpoint.realm_id != realm_id {
+        return Err("MLS transition checkpoint belongs to another Realm".to_owned());
+    }
 
     let mut genesis_matches = checkpoint.accepted_events.iter().filter(|event| {
         event.kind == arkret_sdk::EventKind::MlsGenesis

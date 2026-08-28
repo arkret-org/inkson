@@ -73,6 +73,10 @@ fn expiry_choice_to_rfc3339(choice: &str) -> Option<chrono::DateTime<chrono::Utc
     Some(chrono::Utc::now() + duration)
 }
 
+fn is_valid_did_core_id(input: &str) -> bool {
+    arkret_sdk::DidCoreId::new(input.trim().to_owned()).is_ok()
+}
+
 #[component]
 pub fn BlocklistSettingsCard(principal_id: Signal<String>, token: Signal<String>) -> Element {
     // A4 — base_url / state_store from session context instead of props.
@@ -83,7 +87,6 @@ pub fn BlocklistSettingsCard(principal_id: Signal<String>, token: Signal<String>
             .unwrap_or_default()
     });
     let mut state_store = crate::app::SessionContext::get().state_store;
-    let _ = token;
 
     let initial = state_store.read().client_blocklist();
     let mut entries = use_signal(|| initial);
@@ -107,12 +110,13 @@ pub fn BlocklistSettingsCard(principal_id: Signal<String>, token: Signal<String>
     let input_empty = input_trimmed.is_empty();
     let input_valid = !input_empty
         && if is_did_kind {
-            crate::views::settings::is_likely_valid_did(input_trimmed)
+            is_valid_did_core_id(input_trimmed)
         } else {
             crate::views::settings::is_likely_valid_domain(input_trimmed)
         };
     let applies_empty = applies_to.read().is_empty();
-    let can_block = input_valid && !applies_empty;
+    let has_session = !token().trim().is_empty();
+    let can_block = input_valid && !applies_empty && has_session;
     let input_class = if input_empty {
         "blocklist-did"
     } else if input_valid {
@@ -121,7 +125,7 @@ pub fn BlocklistSettingsCard(principal_id: Signal<String>, token: Signal<String>
         "blocklist-did blocklist-did-invalid"
     };
     let invalid_hint = if is_did_kind {
-        "Enter a valid DID (e.g. did:webvh:<scid>:alice.example)."
+        "Enter a valid did_core_id (e.g. ak:did_core:webvh:<scid>)."
     } else {
         "Enter a valid domain (e.g. example.com)."
     };
@@ -195,6 +199,7 @@ pub fn BlocklistSettingsCard(principal_id: Signal<String>, token: Signal<String>
                                             variant: ButtonVariant::Secondary,
                                             "data-testid": "unblock-button",
                                             "data-actor-did": "{entry_value}",
+                                            disabled: !has_session,
                                             onclick: {
                                                 let target = entry.target.clone();
                                                 let target_value = entry_value.to_owned();
@@ -429,6 +434,16 @@ pub fn BlocklistSettingsCard(principal_id: Signal<String>, token: Signal<String>
 
 #[cfg(test)]
 mod tests {
+    use super::is_valid_did_core_id;
+
+    #[test]
+    fn actor_block_target_requires_canonical_did_core_id() {
+        assert!(is_valid_did_core_id("ak:did_core:webvh:z6mkfixtureactor"));
+        assert!(!is_valid_did_core_id(
+            "did:webvh:z6mkfixtureactor:actor.example"
+        ));
+    }
+
     #[test]
     fn blocklist_uses_client_blocklist_state_store_methods() {
         let mut store = crate::state::isolated_store_for_tests("settings-blocklist");

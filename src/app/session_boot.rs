@@ -630,6 +630,10 @@ pub(super) async fn inject_test_session_grant(
             return None;
         }
     };
+    // The injected account becomes the live authenticated account in the same
+    // bootstrap transaction. Activate its typed secure scope before any
+    // account-data/event submitter can observe the installed grant.
+    user_store.activate();
     if let Err(error) =
         crate::mls::runtime::ensure_account_mls_secret_durable(secure_store, user_store.authority())
             .await

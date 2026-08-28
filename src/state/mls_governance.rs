@@ -131,6 +131,16 @@ impl LocalStateStore {
             bundle: bundle.clone(),
             verified_at: Utc::now(),
         };
+        // A transition has one exact post-transition leaf set. The claim-free
+        // preflight and the post-claim proof deliberately share the same epoch
+        // coordinates, so retaining both would make the later authoring lookup
+        // ambiguous even in a single, non-concurrent admission flow.
+        self.cached.mls_governance_proofs.retain(|_, cached| {
+            cached.request.effective_scope != entry.request.effective_scope
+                || cached.request.mls_group_id != entry.request.mls_group_id
+                || cached.request.previous_epoch != entry.request.previous_epoch
+                || cached.request.next_epoch != entry.request.next_epoch
+        });
         self.cached.mls_governance_proofs.insert(key, entry);
         // T3 pin-forward is part of the same local durable commit as the
         // verified cache entry. A later proof starts from this complete target

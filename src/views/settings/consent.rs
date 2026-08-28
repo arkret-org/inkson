@@ -13,9 +13,8 @@
 //! - direct grant form: `consent-new-grant-button` toggle, `consent-new-grant-scope-input`,
 //!   `consent-new-grant-grantee-input`, `consent-new-grant-ttl-input`,
 //!   `consent-new-grant-submit-button`
-//! - outbound request: `consent-request-button`, `consent-request-scope-input`,
-//!   `consent-request-holder-input`, `consent-request-submit-button`,
-//!   `consent-outgoing-request-row`
+//! - opaque outbound request: `consent-request-button`, `consent-request-scope-input`,
+//!   `consent-request-holder-input`, `consent-request-submit-button`
 //! - pending list: `consent-pending-row`, `consent-detail-button`, `consent-pending-detail`,
 //!   `consent-scope-select`, `consent-valid-until-input`, `grant-consent-button`
 //! - granted list: `consent-granted-row`, `revoke-consent-button`
@@ -206,16 +205,7 @@ pub fn ConsentSettingsPanel(principal_id: Signal<String>, token: Signal<String>)
         .filter(|row| row.holder == me && row.state == "active")
         .cloned()
         .collect();
-    let outgoing_rows: Vec<ConsentRow> = all_rows
-        .iter()
-        .filter(|row| row.holder != me && row.peer == me && row.state == "pending")
-        .cloned()
-        .collect();
-
-    let show_empty = !grant_form_open()
-        && pending_rows.is_empty()
-        && granted_rows.is_empty()
-        && outgoing_rows.is_empty();
+    let show_empty = !grant_form_open() && pending_rows.is_empty() && granted_rows.is_empty();
 
     let grant_submit_disabled = grant_grantee.read().trim().is_empty() || busy();
     let request_submit_disabled = request_holder.read().trim().is_empty() || busy();
@@ -425,10 +415,12 @@ pub fn ConsentSettingsPanel(principal_id: Signal<String>, token: Signal<String>)
                                                 .await
                                                 {
                                                     Ok(_) => {
-                                                        write_status.set("consent requested".to_owned());
                                                         request_form_open.set(false);
                                                         request_holder.set(String::new());
-                                                        reload.set(reload() + 1);
+                                                        write_status.set(
+                                                            "consent request accepted for processing"
+                                                                .to_owned(),
+                                                        );
                                                     }
                                                     Err(err) => {
                                                         write_status.set(format!("request failed: {}", err.display()));
@@ -439,28 +431,6 @@ pub fn ConsentSettingsPanel(principal_id: Signal<String>, token: Signal<String>)
                                         }
                                     },
                                     "Send request"
-                                }
-                            }
-                        }
-                    }
-
-                    // ── Outgoing requests ───────────────────────────────────
-                    if !outgoing_rows.is_empty() {
-                        div { class: "event",
-                            div { class: "event-head", span { "Outgoing requests" } }
-                            ul { class: "settings-list",
-                                for row in outgoing_rows.iter().cloned() {
-                                    li {
-                                        class: "event",
-                                        "data-testid": "consent-outgoing-request-row",
-                                        "data-peer": "{row.holder}",
-                                        "data-scope": "{row.scope}",
-                                        div { class: "event-head",
-                                            span { "{scope_label(&row.scope)}" }
-                                            span { class: "mono", title: "{row.holder}", "{row.holder}" }
-                                        }
-                                        div { class: "muted", "Waiting for them to grant consent." }
-                                    }
                                 }
                             }
                         }

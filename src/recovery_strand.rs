@@ -274,28 +274,18 @@ fn accepted_event_matches_genesis_basis(
     expected_digest: &arkret_sdk::Hash,
 ) -> bool {
     let digest_suite = arkret_sdk::DigestSuite::Sha256;
-    if accepted.event_id != authored.event_id
-        || accepted
-            .event_digest_with_digest_suite(digest_suite)
-            .ok()
-            .and_then(|digest| arkret_sdk::Hash::new(digest).ok())
-            .as_ref()
-            != Some(expected_digest)
-        || accepted
-            .validate_principal_server_admission_binding(digest_suite)
-            .is_err()
-    {
-        return false;
-    }
-    let mut accepted_authored_projection = accepted.clone();
-    accepted_authored_projection
-        .proofs
-        .retain(|proof| proof.as_principal_server_admission().is_none());
-    let mut expected_authored_projection = authored.clone();
-    expected_authored_projection
-        .proofs
-        .retain(|proof| proof.as_principal_server_admission().is_none());
-    accepted_authored_projection == expected_authored_projection
+    accepted
+        .event_digest_with_digest_suite(digest_suite)
+        .ok()
+        .and_then(|digest| arkret_sdk::Hash::new(digest).ok())
+        .as_ref()
+        == Some(expected_digest)
+        && crate::event_submit::accepted_event_preserves_authored_envelope(
+            accepted,
+            authored,
+            digest_suite,
+        )
+        .unwrap_or(false)
 }
 
 /// 6.1 — fetch + parse the active recovery policy.

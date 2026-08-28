@@ -231,10 +231,14 @@ impl HostArtifactApplicator {
                 }
                 let mut group = arkret_sdk::ArkretMlsGroup::join_from_welcome(identity, &welcome)
                     .map_err(protocol)?;
-                crate::mls::governance_proof::install_cached_transition_leaf_bindings(
+                let authority_hints =
+                    crate::mls::governance_proof::leaf_authority_hints_from_welcome(&payload)
+                        .map_err(protocol)?;
+                crate::mls::governance_proof::install_cached_transition_leaf_bindings_with_hints(
                     &self.state.read(),
                     &mut group,
                     &payload.governance_binding,
+                    &authority_hints,
                 )
                 .map_err(protocol)?;
                 super::message::verify_welcome_governance_binding(
@@ -460,6 +464,14 @@ pub(crate) async fn converge_accepted_mls_artifacts(
     let mut applied = 0;
     for frontier in frontiers {
         for event in &frontier.target_checkpoint.accepted_events {
+            if !garth::is_checkpoint_winning_accepted_mls_artifact(
+                &frontier.target_checkpoint,
+                &event.event_id,
+            )
+            .map_err(|error| error.to_string())?
+            {
+                continue;
+            }
             if !locally_executable(&consumer, &state.read(), event, authority, device_id)? {
                 continue;
             }

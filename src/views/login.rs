@@ -2161,7 +2161,6 @@ fn persist_pending_account_handoff(
 
 #[cfg(test)]
 mod tests {
-    use base64::Engine as _;
     use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 
     use super::*;
