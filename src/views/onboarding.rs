@@ -3756,6 +3756,7 @@ async fn finish_principal_setup(
                 &api,
                 secure_store.as_ref(),
                 &account.authority,
+                &principal_control_realm_id,
                 account.full_id().as_str(),
                 account.device_id.as_str(),
                 &recovery_key_value,

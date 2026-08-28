@@ -108,6 +108,19 @@ fn start_recovery_key_generation(
     let actor = account.full_id().to_string();
     let account_key = account.principal_id().clone();
     let device = account.device_id.to_string();
+    let Some(recovery_material_evidence) = state_store.read().recovery_material_evidence() else {
+        action_status.set("Frozen PCR authority evidence is required".to_owned());
+        return;
+    };
+    if recovery_material_evidence.principal_id != *account.full_id()
+        || recovery_material_evidence.device_id != account.device_id
+    {
+        action_status.set("Frozen PCR authority evidence does not match this account".to_owned());
+        return;
+    }
+    let principal_control_realm_id = recovery_material_evidence
+        .principal_control_realm_id
+        .clone();
     let sidecar_json = if state_store.read().private_plaintext_is_empty() {
         None
     } else {
@@ -124,12 +137,19 @@ fn start_recovery_key_generation(
         let device_for_sidecar = device.clone();
         let base_for_sidecar = base.clone();
         let session_for_sidecar = session.clone();
+        let principal_control_realm_id_for_sidecar = principal_control_realm_id.clone();
         let result = with_authed_api(&base, session, |api| async move {
+            crate::recovery_strand::verify_recovery_authority_evidence(
+                &api,
+                &recovery_material_evidence,
+            )
+            .await?;
             let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
             crate::mls::account_recovery::upload_mls_account_secret_backup_with_recovery_key(
                 &api,
                 secure_store.as_ref(),
                 &authority,
+                &principal_control_realm_id,
                 &actor,
                 &device,
                 &recovery_secret,
@@ -156,6 +176,7 @@ fn start_recovery_key_generation(
                                 &api,
                                 secure_store.as_ref(),
                                 &authority_for_sidecar,
+                                &principal_control_realm_id_for_sidecar,
                                 &actor,
                                 &device,
                                 &sidecar_json,

@@ -148,6 +148,7 @@ struct MlsPrivatePlaintextBackupPayload {
     base_url: String,
     token: String,
     authority: Option<arkret_sdk::PrincipalAuthorityKey>,
+    principal_control_realm_id: Option<arkret_sdk::RealmId>,
     actor_id: String,
     device_id: String,
     latest_sidecar_json: Vec<u8>,
@@ -194,14 +195,23 @@ pub(crate) fn schedule_mls_private_plaintext_backup_after_encrypted_write(
     {
         return;
     }
-    let sidecar_json = {
+    let (sidecar_json, principal_control_realm_id) = {
         let store = state_store.read();
         if !mls_recovery_backup_configured(&store, &authority.principal_id)
             || store.private_plaintext_is_empty()
         {
             return;
         }
-        store.private_plaintext_snapshot_json()
+        let Some(evidence) = store.recovery_material_evidence() else {
+            return;
+        };
+        if evidence.principal_id.as_str() != actor_id || evidence.device_id.as_str() != device_id {
+            return;
+        }
+        (
+            store.private_plaintext_snapshot_json(),
+            evidence.principal_control_realm_id,
+        )
     };
     let digest = crate::canonical::sha256_digest(&sidecar_json);
     let key = mls_backup_after_write_probe_key(&base_url, &actor_id);
@@ -209,6 +219,7 @@ pub(crate) fn schedule_mls_private_plaintext_backup_after_encrypted_write(
         payload.base_url = base_url;
         payload.token = token;
         payload.authority = Some(authority);
+        payload.principal_control_realm_id = Some(principal_control_realm_id);
         payload.actor_id = actor_id;
         payload.device_id = device_id;
         payload.latest_sidecar_json = sidecar_json;
@@ -285,6 +296,7 @@ async fn upload_mls_private_plaintext_backup_job_snapshot(
         base_url,
         token,
         authority,
+        principal_control_realm_id,
         actor_id,
         device_id,
         latest_sidecar_json,
@@ -292,6 +304,8 @@ async fn upload_mls_private_plaintext_backup_job_snapshot(
     } = job.payload;
     let authority =
         authority.ok_or_else(|| anyhow::anyhow!("MLS backup job omitted the active authority"))?;
+    let principal_control_realm_id = principal_control_realm_id
+        .ok_or_else(|| anyhow::anyhow!("MLS backup job omitted frozen PCR authority"))?;
     with_authed_api(&base_url, token, |api| async move {
         let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
         let previous_body = match cached_previous_body {
@@ -307,6 +321,7 @@ async fn upload_mls_private_plaintext_backup_job_snapshot(
             &api,
             secure_store.as_ref(),
             &authority,
+            &principal_control_realm_id,
             &actor_id,
             &device_id,
             &latest_sidecar_json,
@@ -444,6 +459,12 @@ async fn maybe_backup_or_flag_mls_backup_after_encrypted_write(
         let store = state_store.read();
         let recovery_public_key =
             crate::views::recovery::local_recovery_public_key(&store, &authority.principal_id)?;
+        let recovery_material_evidence = store.recovery_material_evidence()?;
+        if recovery_material_evidence.principal_id.as_str() != actor_id
+            || recovery_material_evidence.device_id.as_str() != device_id
+        {
+            return None;
+        }
         let sidecar_json = if store.private_plaintext_is_empty() {
             None
         } else {
@@ -452,6 +473,7 @@ async fn maybe_backup_or_flag_mls_backup_after_encrypted_write(
         Some((
             *state_store,
             device_id.clone(),
+            recovery_material_evidence,
             recovery_public_key,
             sidecar_json,
         ))
@@ -495,18 +517,33 @@ async fn maybe_backup_or_flag_mls_backup_after_encrypted_write(
         try_set_signal(needs_mls_backup, false);
         return;
     }
-    if let Some((mut state_store, device_id, recovery_public_key, sidecar_json)) =
-        auto_backup_inputs
+    if let Some((
+        mut state_store,
+        device_id,
+        recovery_material_evidence,
+        recovery_public_key,
+        sidecar_json,
+    )) = auto_backup_inputs
     {
         let actor_for_upload = actor_id.clone();
         let device_for_upload = device_id.clone();
         let authority_for_upload = authority.clone();
+        let principal_control_realm_id = recovery_material_evidence
+            .principal_control_realm_id
+            .clone();
+        let principal_control_realm_id_for_sidecar = principal_control_realm_id.clone();
         let upload_result = with_authed_api(&base_url, token.clone(), |api| async move {
+            crate::recovery_strand::verify_recovery_authority_evidence(
+                &api,
+                &recovery_material_evidence,
+            )
+            .await?;
             let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
             crate::mls::account_recovery::upload_mls_account_secret_backup_with_recovery_public_key(
                 &api,
                 secure_store.as_ref(),
                 &authority_for_upload,
+                &principal_control_realm_id,
                 &actor_for_upload,
                 &device_for_upload,
                 &recovery_public_key,
@@ -533,6 +570,7 @@ async fn maybe_backup_or_flag_mls_backup_after_encrypted_write(
                             &api,
                             secure_store.as_ref(),
                             &authority,
+                            &principal_control_realm_id_for_sidecar,
                             &actor,
                             &device,
                             &sidecar_json,
@@ -599,6 +637,22 @@ fn upload_mls_backup_with_recovery_key(
             .local_authoritative_history_secrets_for_backup(secure_store.as_ref(), &authority)
             .map_err(anyhow::Error::msg)
     };
+    let Some(recovery_material_evidence) = state_store.read().recovery_material_evidence() else {
+        try_set_status(status, "Frozen PCR authority evidence is required");
+        return;
+    };
+    if recovery_material_evidence.principal_id.as_str() != actor
+        || recovery_material_evidence.device_id.as_str() != device
+    {
+        try_set_status(
+            status,
+            "Frozen PCR authority evidence does not match this account",
+        );
+        return;
+    }
+    let principal_control_realm_id = recovery_material_evidence
+        .principal_control_realm_id
+        .clone();
     busy.set(true);
     backup_created.set(false);
     status.set(crate::i18n::tr("mls_backup.status.uploading"));
@@ -608,13 +662,20 @@ fn upload_mls_backup_with_recovery_key(
         let device_for_sidecar = device.clone();
         let base_for_sidecar = base.clone();
         let session_for_sidecar = session.clone();
+        let principal_control_realm_id_for_sidecar = principal_control_realm_id.clone();
         let result = with_authed_api(&base, session, |api| async move {
+            crate::recovery_strand::verify_recovery_authority_evidence(
+                &api,
+                &recovery_material_evidence,
+            )
+            .await?;
             let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
             let backup_id =
                 crate::mls::account_recovery::upload_mls_account_secret_backup_with_recovery_key(
                 &api,
                 secure_store.as_ref(),
                 &authority,
+                &principal_control_realm_id,
                 &actor,
                 &device,
                 &recovery_secret,
@@ -626,6 +687,7 @@ fn upload_mls_backup_with_recovery_key(
             crate::mls::account_recovery::upload_local_authoritative_mls_history_records_with_recovery_public_key(
                 &api,
                 history_records?,
+                &principal_control_realm_id,
                 &actor,
                 &device,
                 &recovery_public_key,
@@ -655,6 +717,7 @@ fn upload_mls_backup_with_recovery_key(
                                 &api,
                                 secure_store.as_ref(),
                                 &authority_for_sidecar,
+                                &principal_control_realm_id_for_sidecar,
                                 &actor,
                                 &device,
                                 &sidecar_json,

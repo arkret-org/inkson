@@ -93,7 +93,6 @@ pub(crate) fn upload_recovery_key_account_backup(
     // resolve every template here and move them across the boundary.
     let status_publishing = crate::i18n::tr("recovery.upload.publishing");
     let status_backed_up = crate::i18n::tr("recovery.upload.backed_up");
-    let status_policy_active = crate::i18n::tr("recovery.upload.policy_active");
     let status_device_unauthorized = crate::i18n::tr("recovery.upload.device_unauthorized");
     let status_unreachable_tpl = crate::i18n::tr("recovery.upload.unreachable");
     status.set(status_publishing);
@@ -134,45 +133,39 @@ pub(crate) fn upload_recovery_key_account_backup(
             crate::mls::runtime::load_account_mls_secret(secure.as_ref(), &authority)
                 .map_err(|err| anyhow::anyhow!("load account MLS secret before backup: {err}"))?
                 .ok_or_else(|| anyhow::anyhow!("account MLS secret recovery is required"))?;
-            let account_backup_id = Some(
+            let account_backup_id =
                 crate::mls::account_recovery::upload_mls_account_secret_backup_with_recovery_key(
                     &api,
                     secure.as_ref(),
                     &authority,
+                    &evidence.principal_control_realm_id,
                     &actor,
                     &device,
                     &recovery_secret,
                 )
-                .await?,
-            );
-            Ok::<_, anyhow::Error>(account_backup_id)
+                .await?;
+            Ok::<_, anyhow::Error>((account_backup_id, evidence.principal_control_realm_id))
         })
         .await;
         match result {
-            Ok(account_backup_id) => {
+            Ok((account_backup_id, principal_control_realm_id)) => {
                 // The caller already confirmed cold custody before invoking
                 // this function. Only public local metadata and the server fact
                 // that ciphertext exists are persisted after acceptance.
-                if let Ok(mut store) = state_store.try_write()
-                    && let Some(configured_backup_id) = account_backup_id.as_deref()
-                {
+                if let Ok(mut store) = state_store.try_write() {
                     crate::components::mark_mls_recovery_backup_configured(
                         &mut store,
                         &account_key_for_marker,
-                        configured_backup_id,
+                        &account_backup_id,
                     );
                 }
-                if account_backup_id.is_some()
-                    && let Some(mut needs_mls_backup) = needs_mls_backup_signal
-                {
+                if let Some(mut needs_mls_backup) = needs_mls_backup_signal {
                     needs_mls_backup.set(false);
                 }
                 // Best-effort: also back up the encrypted local-plaintext sidecar
                 // so a fresh device recovers the author's own content. A failure
                 // here must not block the (successful) account-secret backup.
-                if account_backup_id.is_some()
-                    && let Some(sidecar_json) = sidecar_json
-                {
+                if let Some(sidecar_json) = sidecar_json {
                     let actor = actor_for_sidecar;
                     let device = device_for_sidecar;
                     let _ =
@@ -183,6 +176,7 @@ pub(crate) fn upload_recovery_key_account_backup(
                                 &api,
                                 secure.as_ref(),
                                 &authority_for_sidecar,
+                                &principal_control_realm_id,
                                 &actor,
                                 &device,
                                 &sidecar_json,
@@ -192,11 +186,7 @@ pub(crate) fn upload_recovery_key_account_backup(
                         .await;
                 }
                 if let Ok(mut slot) = status.try_write() {
-                    *slot = if account_backup_id.is_some() {
-                        status_backed_up.clone()
-                    } else {
-                        status_policy_active.clone()
-                    };
+                    *slot = status_backed_up.clone();
                 }
                 if let Some(handler) = on_server_configured {
                     handler.call(());

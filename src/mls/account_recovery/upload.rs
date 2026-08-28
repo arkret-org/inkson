@@ -1,7 +1,7 @@
 //! Backup / rotation upload flow and superseded-backup cleanup.
 
 use anyhow::{Result, anyhow};
-use arkret_wire::{BackupRotationKind, DidFullId};
+use arkret_wire::BackupRotationKind;
 use serde_json::Value;
 
 use super::backup_body::{
@@ -25,13 +25,11 @@ fn passphrase_is_blank(passphrase: &[u8]) -> bool {
 
 async fn current_backup_frontier_ref(
     api: &crate::transport::TransportClient,
+    control_realm: &arkret_sdk::RealmId,
     actor_id: &str,
     device_id: &str,
 ) -> Result<arkret_sdk::KeyBackupFrontierRef> {
-    let principal = DidFullId::new(actor_id.to_owned())?;
     let http = api.sdk_http_client()?;
-    let control_realm =
-        crate::identity::principal_control::resolve_accepted(&http, &principal).await?;
     let trust_anchor = super::rotation_transaction::current_controller_backup_trust_anchor(
         &http, actor_id, device_id,
     )
@@ -125,6 +123,7 @@ fn active_recovery_backup_recipient(
 #[allow(clippy::expect_used)]
 async fn ensure_initial_active_series(
     api: &crate::transport::TransportClient,
+    control_realm: &arkret_sdk::RealmId,
     actor_id: &str,
     device_id: &str,
     backup_kind: BackupRotationKind,
@@ -141,10 +140,7 @@ async fn ensure_initial_active_series(
         ));
     }
 
-    let principal = DidFullId::new(actor_id.to_owned())?;
     let http = api.sdk_http_client()?;
-    let control_realm =
-        crate::identity::principal_control::resolve_accepted(&http, &principal).await?;
     let submitter = api.event_submitter()?;
     let frontier = submitter
         .seals_frontier_realm_head(control_realm.as_str())
@@ -230,6 +226,7 @@ async fn ensure_initial_active_series(
 
 async fn fetch_active_series_tail(
     api: &crate::transport::TransportClient,
+    control_realm: &arkret_sdk::RealmId,
     list_payload: &Value,
     actor_id: &str,
     device_id: &str,
@@ -257,7 +254,15 @@ async fn fetch_active_series_tail(
             let series_id = *series_ids
                 .first()
                 .ok_or_else(|| anyhow!("{wire_kind} series inventory changed unexpectedly"))?;
-            ensure_initial_active_series(api, actor_id, device_id, backup_kind, series_id).await?;
+            ensure_initial_active_series(
+                api,
+                control_realm,
+                actor_id,
+                device_id,
+                backup_kind,
+                series_id,
+            )
+            .await?;
             (*series_id).to_owned()
         }
     };
@@ -294,6 +299,7 @@ pub async fn upload_mls_account_secret_backup_with_passphrase(
     api: &crate::transport::TransportClient,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
     authority: &arkret_sdk::PrincipalAuthorityKey,
+    control_realm: &arkret_sdk::RealmId,
     actor_id: &str,
     device_id: &str,
     passphrase: &[u8],
@@ -311,6 +317,7 @@ pub async fn upload_mls_account_secret_backup_with_passphrase(
     let list_payload = fetch_mls_restore_payload(api, actor_id).await?;
     let previous_account_backup = fetch_active_series_tail(
         api,
+        control_realm,
         &list_payload,
         actor_id,
         device_id,
@@ -325,7 +332,7 @@ pub async fn upload_mls_account_secret_backup_with_passphrase(
         .ok_or_else(|| anyhow!("active device signer is required"))?;
     let account_body = if let Some(previous) = previous_account_backup.as_ref() {
         let predecessor = typed_backup_predecessor(previous)?;
-        let frontier = current_backup_frontier_ref(api, actor_id, device_id).await?;
+        let frontier = current_backup_frontier_ref(api, control_realm, actor_id, device_id).await?;
         build_mls_account_secret_backup_successor_body_with_kek_and_version(
             &account_backup_id,
             &predecessor,
@@ -352,6 +359,7 @@ pub async fn upload_mls_account_secret_backup_with_passphrase(
     if previous_account_backup.is_some() {
         ensure_initial_active_series(
             api,
+            control_realm,
             actor_id,
             device_id,
             BackupRotationKind::SecretStorage,
@@ -371,6 +379,7 @@ pub async fn upload_mls_account_secret_backup_with_recovery_key(
     api: &crate::transport::TransportClient,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
     authority: &arkret_sdk::PrincipalAuthorityKey,
+    control_realm: &arkret_sdk::RealmId,
     actor_id: &str,
     device_id: &str,
     recovery_key: &str,
@@ -382,6 +391,7 @@ pub async fn upload_mls_account_secret_backup_with_recovery_key(
         api,
         secure_store,
         authority,
+        control_realm,
         actor_id,
         device_id,
         &recovery_public_key,
@@ -397,6 +407,7 @@ pub async fn upload_mls_account_secret_backup_with_recovery_public_key(
     api: &crate::transport::TransportClient,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
     authority: &arkret_sdk::PrincipalAuthorityKey,
+    control_realm: &arkret_sdk::RealmId,
     actor_id: &str,
     device_id: &str,
     recovery_public_key: &[u8],
@@ -411,6 +422,7 @@ pub async fn upload_mls_account_secret_backup_with_recovery_public_key(
     let list_payload = fetch_mls_restore_payload(api, actor_id).await?;
     let previous_account_backup = fetch_active_series_tail(
         api,
+        control_realm,
         &list_payload,
         actor_id,
         device_id,
@@ -435,7 +447,7 @@ pub async fn upload_mls_account_secret_backup_with_recovery_public_key(
     let signer = crate::event_signer::active_signer()
         .ok_or_else(|| anyhow!("active device signer is required"))?;
     let frontier_ref = if previous_account_backup.is_some() {
-        Some(current_backup_frontier_ref(api, actor_id, device_id).await?)
+        Some(current_backup_frontier_ref(api, control_realm, actor_id, device_id).await?)
     } else {
         None
     };
@@ -458,6 +470,7 @@ pub async fn upload_mls_account_secret_backup_with_recovery_public_key(
     if previous_account_backup.is_some() {
         ensure_initial_active_series(
             api,
+            control_realm,
             actor_id,
             device_id,
             BackupRotationKind::SecretStorage,
@@ -480,6 +493,7 @@ pub async fn upload_local_authoritative_mls_history_backups_with_recovery_public
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
     state_store: &crate::state::LocalStateStore,
     authority: &arkret_sdk::PrincipalAuthorityKey,
+    control_realm: &arkret_sdk::RealmId,
     actor_id: &str,
     device_id: &str,
     recovery_public_key: &[u8],
@@ -490,6 +504,7 @@ pub async fn upload_local_authoritative_mls_history_backups_with_recovery_public
     upload_local_authoritative_mls_history_records_with_recovery_public_key(
         api,
         grouped,
+        control_realm,
         actor_id,
         device_id,
         recovery_public_key,
@@ -503,6 +518,7 @@ pub(crate) async fn upload_local_authoritative_mls_history_records_with_recovery
         arkret_sdk::HistoryEffectiveScope,
         Vec<arkret_sdk::LocalAuthoritativeHistorySecret>,
     )>,
+    control_realm: &arkret_sdk::RealmId,
     actor_id: &str,
     device_id: &str,
     recovery_public_key: &[u8],
@@ -520,6 +536,7 @@ pub(crate) async fn upload_local_authoritative_mls_history_records_with_recovery
     let list_payload = fetch_mls_restore_payload(api, actor_id).await?;
     let mut previous = fetch_active_series_tail(
         api,
+        control_realm,
         &list_payload,
         actor_id,
         device_id,
@@ -545,7 +562,7 @@ pub(crate) async fn upload_local_authoritative_mls_history_records_with_recovery
         )?;
         let backup_id = fresh_backup_id();
         let frontier_ref = if previous.is_some() {
-            Some(current_backup_frontier_ref(api, actor_id, device_id).await?)
+            Some(current_backup_frontier_ref(api, control_realm, actor_id, device_id).await?)
         } else {
             None
         };
@@ -573,6 +590,7 @@ pub(crate) async fn upload_local_authoritative_mls_history_records_with_recovery
     if let Some(series_id) = series_id {
         ensure_initial_active_series(
             api,
+            control_realm,
             actor_id,
             device_id,
             BackupRotationKind::MlsHistory,
@@ -597,6 +615,7 @@ pub async fn upload_mls_private_plaintext_backup(
     api: &crate::transport::TransportClient,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
     authority: &arkret_sdk::PrincipalAuthorityKey,
+    control_realm: &arkret_sdk::RealmId,
     actor_id: &str,
     device_id: &str,
     sidecar_json: &[u8],
@@ -606,6 +625,7 @@ pub async fn upload_mls_private_plaintext_backup(
         api,
         secure_store,
         authority,
+        control_realm,
         actor_id,
         device_id,
         sidecar_json,
@@ -654,6 +674,7 @@ pub async fn upload_mls_private_plaintext_backup_with_previous(
     api: &crate::transport::TransportClient,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
     authority: &arkret_sdk::PrincipalAuthorityKey,
+    control_realm: &arkret_sdk::RealmId,
     actor_id: &str,
     device_id: &str,
     sidecar_json: &[u8],
@@ -671,6 +692,7 @@ pub async fn upload_mls_private_plaintext_backup_with_previous(
     let list_payload = fetch_mls_restore_payload(api, actor_id).await?;
     let previous_backup = fetch_active_series_tail(
         api,
+        control_realm,
         &list_payload,
         actor_id,
         device_id,
@@ -681,7 +703,7 @@ pub async fn upload_mls_private_plaintext_backup_with_previous(
         .ok_or_else(|| anyhow!("active device signer is required"))?;
     let body = if let Some(previous) = previous_backup.as_ref() {
         let predecessor = typed_backup_predecessor(previous)?;
-        let frontier = current_backup_frontier_ref(api, actor_id, device_id).await?;
+        let frontier = current_backup_frontier_ref(api, control_realm, actor_id, device_id).await?;
         build_mls_private_plaintext_backup_successor_body_with_kek(
             &backup_id,
             &predecessor,
@@ -706,6 +728,7 @@ pub async fn upload_mls_private_plaintext_backup_with_previous(
     let series_id = sent_body.series_id.to_string();
     ensure_initial_active_series(
         api,
+        control_realm,
         actor_id,
         device_id,
         BackupRotationKind::SecretStorage,

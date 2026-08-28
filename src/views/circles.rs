@@ -456,7 +456,10 @@ pub fn CirclesPanel(
                                                 directory_visibility: arkret_sdk::CircleDirectoryVisibility::Members,
                                                 join_rule: arkret_sdk::CircleJoinRule::Public,
                                                 history_access: arkret_sdk::HistoryAccess::SinceJoin,
-                                                encryption_profile,
+                                                encryption_profile: encryption_profile.clone(),
+                                                content_scheme: (encryption_profile == arkret_sdk::EncryptionProfile::MlsRfc9420)
+                                                    .then_some(arkret_sdk::ContentScheme::MlsRfc9420),
+                                                durability_policy: None,
                                             },
                                         )
                                         .and_then(|builder| builder.build_sdk_event("inkson"))
