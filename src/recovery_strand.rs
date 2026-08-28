@@ -650,6 +650,16 @@ async fn submit_first_recovery_policy_seal(
         .event_submitter()?
         .seals_frontier_realm_head(policy_event.realm_id.as_str())
         .await?;
+    let expected_digest = arkret_sdk::Hash::new(
+        policy_event.event_digest_with_digest_suite(arkret_sdk::DigestSuite::Sha256)?,
+    )?;
+    let availability = http
+        .seal_availability_receipts_issue(&arkret_sdk::SealAvailabilityReceiptIssueRequest {
+            realm_id: policy_event.realm_id.clone(),
+            predecessor_refs: vec![predecessor.id.clone()],
+            event_digests: vec![expected_digest.clone()],
+        })
+        .await?;
     let signer = crate::event_signer::active_signer()
         .ok_or_else(|| anyhow::anyhow!("device signer is unavailable"))?;
     if signer.device_id() != Some(device_id.as_str()) {
@@ -666,13 +676,11 @@ async fn submit_first_recovery_policy_seal(
             authorize,
             policy_event,
             &predecessor,
+            &availability,
             hlc,
         )
         .map_err(|error| anyhow::anyhow!("sign recovery-policy successor Seal: {error}"))?;
     let expected_id = seal.id.clone();
-    let expected_digest = arkret_sdk::Hash::new(
-        policy_event.event_digest_with_digest_suite(arkret_sdk::DigestSuite::Sha256)?,
-    )?;
     let expected_state_root = seal.state_root.clone();
     let outcome = http.events_submit_seal(&seal).await?;
     if outcome.seal_id != expected_id

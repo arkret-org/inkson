@@ -354,6 +354,26 @@ pub async fn standard_initial_submission(
     Ok(submission)
 }
 
+/// Build an online publication for a human self-PCR Control Move from the
+/// caller's already-verified durable bootstrap evidence.
+///
+/// Human PCR history is deliberately not available through every ordinary
+/// Realm scan.  A caller that already verified the exact founding create and
+/// bootstrap Seal must therefore carry that create into authority resolution
+/// instead of trying to rediscover it through `events_read_all_pages`.
+pub fn standard_authority_authored_self_principal_submission(
+    event: &arkret_sdk::Event,
+    digest_suite: arkret_sdk::DigestSuite,
+    accepted_create: &arkret_sdk::Event,
+) -> anyhow::Result<arkret_wire::EventInitialSubmission> {
+    self_principal_pcr_authority_set_ref_from_events(event, std::slice::from_ref(accepted_create))?;
+    let submission = arkret_wire::EventInitialSubmission::online(event.clone());
+    submission
+        .validate_structural_in_context(arkret_wire::EventSubmitContext::Standard, digest_suite)
+        .map_err(anyhow::Error::from)?;
+    Ok(submission)
+}
+
 /// Build an explicitly delayed/offline submission from a held lease.
 ///
 /// Unlike [`standard_initial_submission`], this preserves the fixed lease
@@ -1017,6 +1037,113 @@ mod tests {
             classify_proposal_authority_route(&knock).unwrap(),
             ProposalAuthorityRouteKind::PreJoinPrincipalServerAdmission,
             "a knock applicant must not need membership-gated Realm history"
+        );
+    }
+
+    fn self_pcr_create_for_submission(provision: &arkret_sdk::Event) -> arkret_sdk::Event {
+        let full_id = arkret_sdk::DidFullId::new("did:web:alice.example").unwrap();
+        let notary = crate::event_builders::managed_agent_inception_notary(
+            &full_id,
+            &arkret_sdk::ed25519_pubkey_to_did_key_multibase(&[7_u8; 32]),
+        )
+        .unwrap();
+        let genesis = arkret_sdk::RealmGenesis::principal_control(
+            arkret_sdk::GenesisSalt::new("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA").unwrap(),
+            None,
+            arkret_sdk::ResolutionCommitment {
+                full_id,
+                method_history_head: format!("sha256:{}", "8".repeat(64)),
+                version_id: "1-fixture".to_owned(),
+            },
+            arkret_sdk::TrustDomainId::new("ak:trust_domain:example.net").unwrap(),
+            vec![
+                arkret_sdk::SchemaId::REALM_V1.to_owned(),
+                arkret_sdk::ProfileId::PRINCIPAL_CONTROL_REALM_V1.to_owned(),
+            ],
+            arkret_sdk::CORE_REDUCER_PROFILE,
+            arkret_sdk::DigestSuite::Sha256,
+            arkret_sdk::SecurityClass::HighAssurance,
+            arkret_sdk::EncryptionProfile::MlsRfc9420,
+            notary,
+        )
+        .unwrap();
+        arkret_wire::test_support::raw_event(
+            arkret_sdk::EventKind::RealmCreate.to_string(),
+            arkret_sdk::ScopeRef::Realm {
+                realm_id: provision.realm_id.clone(),
+            },
+            provision.actor_id.clone(),
+            provision.principal_server_id.clone(),
+            0,
+            arkret_sdk::Hlc::new("000000000000-0000-00000000").unwrap(),
+            serde_json::to_value(arkret_sdk::RealmCreatePayload::new(genesis)).unwrap(),
+        )
+        .unwrap()
+    }
+
+    /// Agent provisioning must remain authorable when the ordinary PCR scan
+    /// omits bootstrap history. The caller-provided accepted create is the
+    /// authority evidence; no network history lookup is part of this builder.
+    #[test]
+    fn authority_authored_online_submission_uses_durable_pcr_create() {
+        let mut provision = event();
+        provision.kind = arkret_sdk::EventKind::AgentProvision;
+        provision.seal_basis = Some(arkret_sdk::SealBasis {
+            leaves: vec![
+                arkret_sdk::SealId::new(format!("ak:seal:sha256:{}", "a".repeat(64))).unwrap(),
+            ],
+        });
+        provision
+            .refresh_content_bound_identity_with_digest_suite(arkret_sdk::DigestSuite::Sha256)
+            .unwrap();
+        let event_digest = arkret_sdk::Hash::new(
+            provision
+                .event_digest_with_digest_suite(arkret_sdk::DigestSuite::Sha256)
+                .unwrap(),
+        )
+        .unwrap();
+        provision.proofs.push(
+            arkret_sdk::ProducerEventProof {
+                kind: arkret_sdk::proof_kind::DETACHED_JWS.to_owned(),
+                verification_method: arkret_sdk::DidUrl::new(
+                    "did:web:alice.example#ak:device:01904100-0000-7000-8000-000000000001",
+                )
+                .unwrap(),
+                event_digest,
+                signer_resolution_evidence_ref: None,
+                signer_resolution_evidence_digest: None,
+                created_at: provision.created_at,
+                domain: None,
+                audience: None,
+                proof_purpose: None,
+                jws: "fixture..signature".to_owned(),
+            }
+            .into(),
+        );
+        let create = self_pcr_create_for_submission(&provision);
+
+        let submission = standard_authority_authored_self_principal_submission(
+            &provision,
+            arkret_sdk::DigestSuite::Sha256,
+            &create,
+        )
+        .unwrap();
+
+        assert_eq!(submission.event, provision);
+        assert!(submission.authorization_lease.is_none());
+        assert!(submission.control_proposal_ack.is_none());
+
+        let mut wrong_realm_create = create;
+        wrong_realm_create.realm_id =
+            arkret_sdk::RealmId::new("ak:realm:Abbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
+                .unwrap();
+        assert!(
+            standard_authority_authored_self_principal_submission(
+                &provision,
+                arkret_sdk::DigestSuite::Sha256,
+                &wrong_realm_create,
+            )
+            .is_err()
         );
     }
 

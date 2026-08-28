@@ -3295,6 +3295,22 @@ impl EventSubmitter {
         Ok(submissions)
     }
 
+    /// Prepare the single online submission used by an authority-authored
+    /// human self-PCR aggregate operation (for example Agent provisioning).
+    /// The accepted create comes from verified durable bootstrap evidence;
+    /// ordinary PCR history scans are not an authority-discovery surface.
+    pub(crate) fn prepare_authority_authored_self_principal_submission(
+        &self,
+        event: &arkret_sdk::AuthoredEvent,
+        accepted_create: &arkret_sdk::Event,
+    ) -> anyhow::Result<arkret_wire::EventInitialSubmission> {
+        crate::authorization_lease::standard_authority_authored_self_principal_submission(
+            event,
+            event.digest_suite(),
+            accepted_create,
+        )
+    }
+
     /// `POST /_arkret/self/signal` — `ak.self.signal.command.send.v1`.
     ///
     /// The Signal Extension rail is encrypted-only: the exact signal kind and

@@ -194,8 +194,16 @@ async fn ensure_initial_active_series(
         .ok_or_else(|| anyhow!("active device signer is required"))?;
     let hlc =
         crate::signing_stamp::issue_protocol_hlc(actor_id, device_id, control_realm.as_str())?;
+    let delta = crate::event_signer::pcr_successor_delta_digests(&accepted, &frontier)?;
+    let availability = crate::event_signer::issue_pcr_successor_availability(
+        &http,
+        control_realm,
+        &frontier,
+        delta,
+    )
+    .await?;
     let seal = signer
-        .sign_self_principal_linear_successor_seal(&accepted, &frontier, hlc)
+        .sign_self_principal_linear_successor_seal(&accepted, &frontier, &availability, hlc)
         .map_err(|error| anyhow!("sign {wire_kind} active-series successor Seal: {error}"))?;
     let active_series_digest = arkret_sdk::Hash::new(
         accepted

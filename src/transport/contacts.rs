@@ -79,8 +79,21 @@ pub(crate) async fn submit_principal_successor_seal(
         device_id,
         context.control_realm.as_str(),
     )?;
+    let delta = crate::event_signer::pcr_successor_delta_digests(&accepted, &context.predecessor)?;
+    let availability = crate::event_signer::issue_pcr_successor_availability(
+        http,
+        &context.control_realm,
+        &context.predecessor,
+        delta,
+    )
+    .await?;
     let seal = signer
-        .sign_self_principal_linear_successor_seal(&accepted, &context.predecessor, hlc)
+        .sign_self_principal_linear_successor_seal(
+            &accepted,
+            &context.predecessor,
+            &availability,
+            hlc,
+        )
         .map_err(|error| anyhow::anyhow!("sign principal successor Seal: {error}"))?;
     let principal_digest = arkret_sdk::Hash::new(
         principal_event.event_digest_with_digest_suite(arkret_sdk::DigestSuite::Sha256)?,

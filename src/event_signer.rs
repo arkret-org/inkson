@@ -48,6 +48,7 @@
 //! guard then routes through their backend instead of the in-process
 //! seed.
 
+use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex, OnceLock};
 
 use arkret_sdk::signatures::proof::EventSigner as SdkEventSigner;
@@ -59,6 +60,52 @@ use chrono::{DateTime, Utc};
 use ed25519_dalek::{Signer as _, SigningKey};
 
 use crate::operation::{Audience, AuthoredEvent, ProofMode, current_proof_mode};
+
+pub(crate) fn pcr_successor_delta_digests(
+    events: &[arkret_sdk::Event],
+    predecessor: &arkret_sdk::Seal,
+) -> anyhow::Result<Vec<arkret_sdk::Hash>> {
+    let predecessor_covered = predecessor
+        .covered_event_digests
+        .iter()
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    let target = events
+        .iter()
+        .map(|event| {
+            arkret_sdk::Hash::new(
+                event.event_digest_with_digest_suite(arkret_sdk::DigestSuite::Sha256)?,
+            )
+            .map_err(Into::into)
+        })
+        .collect::<anyhow::Result<BTreeSet<_>>>()?;
+    if !predecessor_covered.is_subset(&target) {
+        anyhow::bail!("PCR predecessor coverage is not a subset of accepted Event history");
+    }
+    let delta = target
+        .difference(&predecessor_covered)
+        .cloned()
+        .collect::<Vec<_>>();
+    if delta.is_empty() {
+        anyhow::bail!("PCR successor has no uncovered Event delta");
+    }
+    Ok(delta)
+}
+
+pub(crate) async fn issue_pcr_successor_availability(
+    http: &arkret_sdk::http_client::Client,
+    realm_id: &arkret_sdk::RealmId,
+    predecessor: &arkret_sdk::Seal,
+    event_digests: Vec<arkret_sdk::Hash>,
+) -> anyhow::Result<arkret_sdk::SealAvailabilityReceiptIssueOutcome> {
+    Ok(http
+        .seal_availability_receipts_issue(&arkret_sdk::SealAvailabilityReceiptIssueRequest {
+            realm_id: realm_id.clone(),
+            predecessor_refs: vec![predecessor.id.clone()],
+            event_digests,
+        })
+        .await?)
+}
 
 /// Errors produced by the active-write signing pipeline.
 #[derive(Debug, thiserror::Error)]
@@ -534,6 +581,7 @@ impl InksonEventSigner {
         authorize: &arkret_sdk::Event,
         successor: &arkret_sdk::Event,
         predecessor: &arkret_sdk::Seal,
+        availability: &arkret_sdk::SealAvailabilityReceiptIssueOutcome,
         hlc: arkret_sdk::Hlc,
     ) -> Result<arkret_sdk::Seal, EventSignerError> {
         let device_id = self.device_id.as_deref().ok_or_else(|| {
@@ -552,6 +600,7 @@ impl InksonEventSigner {
             authorize,
             successor,
             predecessor,
+            availability,
             hlc,
             &signer,
             &|event| crate::operation::cell_write_projector(event, arkret_sdk::DigestSuite::Sha256),
@@ -563,6 +612,7 @@ impl InksonEventSigner {
         &self,
         events: &[arkret_sdk::Event],
         predecessor: &arkret_sdk::Seal,
+        availability: &arkret_sdk::SealAvailabilityReceiptIssueOutcome,
         hlc: arkret_sdk::Hlc,
     ) -> Result<arkret_sdk::Seal, EventSignerError> {
         let principal = events.first().ok_or_else(|| {
@@ -584,6 +634,7 @@ impl InksonEventSigner {
         arkret_bootstrap::build_self_principal_linear_successor_seal(
             events,
             predecessor,
+            availability,
             hlc,
             &signer,
             &|event| crate::operation::cell_write_projector(event, arkret_sdk::DigestSuite::Sha256),
@@ -599,6 +650,7 @@ impl InksonEventSigner {
         controller_id: &arkret_sdk::DidFullId,
         events: &[arkret_sdk::Event],
         predecessor: Option<&arkret_sdk::Seal>,
+        availability: Option<&arkret_sdk::SealAvailabilityReceiptIssueOutcome>,
         hlc: arkret_sdk::Hlc,
     ) -> Result<arkret_sdk::Seal, EventSignerError> {
         let device_id = self.device_id.as_deref().ok_or_else(|| {
@@ -615,6 +667,7 @@ impl InksonEventSigner {
         arkret_bootstrap::build_managed_agent_pcr_event_seal(
             events,
             predecessor,
+            availability,
             hlc,
             &signer,
             &|event| crate::operation::cell_write_projector(event, arkret_sdk::DigestSuite::Sha256),

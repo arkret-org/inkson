@@ -62,8 +62,29 @@ async fn submit_managed_agent_pcr_seal(
 ) -> anyhow::Result<arkret_sdk::Seal> {
     let hlc =
         crate::signing_stamp::issue_protocol_hlc(controller_id.as_str(), device_id, realm_id)?;
+    let availability = match predecessor {
+        Some(predecessor) => {
+            let delta = crate::event_signer::pcr_successor_delta_digests(events, predecessor)?;
+            Some(
+                crate::event_signer::issue_pcr_successor_availability(
+                    http,
+                    &arkret_sdk::RealmId::new(realm_id.to_owned())?,
+                    predecessor,
+                    delta,
+                )
+                .await?,
+            )
+        }
+        None => None,
+    };
     let seal = signer
-        .sign_managed_agent_pcr_event_seal(controller_id, events, predecessor, hlc)
+        .sign_managed_agent_pcr_event_seal(
+            controller_id,
+            events,
+            predecessor,
+            availability.as_ref(),
+            hlc,
+        )
         .map_err(|error| anyhow::anyhow!(error.to_string()))?;
     // `accepted_event_digests` is a set in `Seal.delta`'s normalization
     // (byte-wise ascending, unique), which is what makes this comparison
@@ -239,8 +260,12 @@ pub(crate) async fn seal_self_principal_event_current(
         device_id,
         realm_id.as_str(),
     )?;
+    let delta = crate::event_signer::pcr_successor_delta_digests(&accepted, &predecessor)?;
+    let availability =
+        crate::event_signer::issue_pcr_successor_availability(&http, realm_id, &predecessor, delta)
+            .await?;
     let seal = signer
-        .sign_self_principal_linear_successor_seal(&accepted, &predecessor, hlc)
+        .sign_self_principal_linear_successor_seal(&accepted, &predecessor, &availability, hlc)
         .map_err(|error| anyhow::anyhow!("sign controller self-PCR successor Seal: {error}"))?;
     let expected_digests = seal.delta.clone();
     let outcome = http.events_submit_seal(&seal).await?;

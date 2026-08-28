@@ -1054,15 +1054,26 @@ fn spawn_provision_agent(
             return;
         }
         let controller_full_id = account.full_id().clone();
-        let controller_principal_server_id = match state_store
+        let (controller_recovery_evidence, controller_principal_server_id) = match state_store
             .read()
             .recovery_material_evidence()
-            .and_then(|evidence| evidence.controller_authority)
         {
-            Some(value) if value == account.authority => value.principal_server_id,
+            Some(evidence)
+                if evidence.controller_authority.as_ref() == Some(&account.authority)
+                    && evidence.principal_id == controller_full_id =>
+            {
+                let principal_server_id = evidence
+                    .controller_authority
+                    .as_ref()
+                    .map(|authority| authority.principal_server_id.clone());
+                match principal_server_id {
+                    Some(principal_server_id) => (evidence, principal_server_id),
+                    None => unreachable!("the guarded evidence has an authority pair"),
+                }
+            }
             Some(_) => {
                 last_op_status.set(
-                    "Create failed: the saved controller authority pair does not match the signed-in identity. Refresh identity recovery material before provisioning an Agent."
+                    "Create failed: the saved controller PCR evidence does not match the signed-in identity and authority pair. Refresh identity recovery material before provisioning an Agent."
                         .to_owned(),
                 );
                 return;
@@ -1280,8 +1291,25 @@ fn spawn_provision_agent(
             last_op_status.set("Create failed: server allocation scope digest mismatch".to_owned());
             return;
         }
+        if controller_recovery_evidence.principal_control_realm_id != controller_realm_id {
+            last_op_status.set(
+                "Create failed: the server allocation controller PCR does not match this device's verified bootstrap evidence."
+                    .to_owned(),
+            );
+            return;
+        }
+        let controller_pcr_create = controller_recovery_evidence
+            .pcr_genesis_unit
+            .create()
+            .clone();
         let controller_realm_for_checkpoint = controller_realm_id.clone();
+        let controller_evidence_for_checkpoint = controller_recovery_evidence.clone();
         if let Err(error) = with_authed_api(&base, api_token.clone(), move |api| async move {
+            crate::recovery_strand::verify_recovery_authority_evidence(
+                &api,
+                &controller_evidence_for_checkpoint,
+            )
+            .await?;
             crate::mls::creator_bootstrap::ensure_realm_governance_checkpoint(
                 &api,
                 state_store,
@@ -1382,12 +1410,13 @@ fn spawn_provision_agent(
                 let authored = submitter
                     .author_independent_events(vec![draft.into_intent()])
                     .await?;
-                submitter
-                    .prepare_initial_submissions(&authored)
-                    .await?
-                    .into_iter()
-                    .next()
-                    .ok_or_else(|| anyhow::anyhow!("prepared provision Event is missing"))
+                let authored = authored
+                    .first()
+                    .ok_or_else(|| anyhow::anyhow!("prepared provision Event is missing"))?;
+                submitter.prepare_authority_authored_self_principal_submission(
+                    authored,
+                    &controller_pcr_create,
+                )
             })
             .await
             {
