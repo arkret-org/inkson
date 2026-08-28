@@ -1,5 +1,57 @@
 use super::*;
 
+struct KanbanProjectionSnapshot {
+    containers: Option<Vec<crate::state::projection_views::SpaceContainerProjectionView>>,
+    strands: Option<Vec<crate::state::projection_views::StrandProjectionView>>,
+    events: Vec<arkret_sdk::Event>,
+}
+
+async fn fetch_kanban_projection_snapshot(
+    api: crate::transport::TransportClient,
+    realm_id: &str,
+) -> anyhow::Result<KanbanProjectionSnapshot> {
+    let http = api.sdk_http_client()?;
+    // Read the current-object baseline first. The following backfill is at the
+    // same or a newer server head, so visible/local Events can safely fold on
+    // top without regressing the materialized Space/Strand rows.
+    let spaces = match http.realm_spaces(realm_id).await {
+        Ok(spaces) => Some(
+            spaces
+                .spaces
+                .into_iter()
+                .map(Into::into)
+                .collect::<Vec<_>>(),
+        ),
+        Err(error) => {
+            tracing::warn!(%error, %realm_id, "kanban Space baseline unavailable");
+            None
+        }
+    };
+    let strands = match http.realm_strands(realm_id).await {
+        Ok(strands) => Some(
+            strands
+                .strands
+                .into_iter()
+                .map(Into::into)
+                .collect::<Vec<_>>(),
+        ),
+        Err(error) => {
+            tracing::warn!(%error, %realm_id, "kanban Strand baseline unavailable");
+            None
+        }
+    };
+    let events = api
+        .event_submitter()?
+        .backfill(realm_id)
+        .await?
+        .complete_events("kanban current projection")?;
+    Ok(KanbanProjectionSnapshot {
+        containers: spaces,
+        strands,
+        events,
+    })
+}
+
 #[component]
 pub(super) fn KanbanEffects(
     controller: KanbanController,
@@ -58,7 +110,7 @@ pub(super) fn KanbanEffects(
         mut card_synthesis_selected_revision_id,
         mut member_handle_fetching,
         mut command_queue,
-        mut board_status,
+        board_status,
         ..
     } = controller;
 
@@ -101,20 +153,17 @@ pub(super) fn KanbanEffects(
         let realm = local_realm_id.clone();
         use_effect(move || {
             let raw_operations = state_store.read().load().raw_operations;
-            let containers = space_container_views_from_ops(&raw_operations, &realm);
-            let strands = strand_views_from_ops(&raw_operations);
+            let containers = space_container_views_from_projection_and_ops(
+                &lifecycle_container_projection(),
+                &raw_operations,
+                &realm,
+            );
             // `board_space_options_from_projection` fails closed on non-SpaceId
             // rows, so a pending Board create never enters the confirmed option
             // set; it is rendered from `pending_board_creates_from_ops` until
             // the receipt reconciles it.
             let options = board_space_options_from_projection(&containers);
-            if *lifecycle_container_projection.peek() != containers {
-                lifecycle_container_projection.set(containers);
-            }
-            if *lifecycle_strand_projection.peek() != strands {
-                lifecycle_strand_projection.set(strands);
-            }
-            if !options.is_empty() && *board_space_options.peek() != options {
+            if *board_space_options.peek() != options {
                 board_space_options.set(options.clone());
             }
             // Seeding the first confirmed Board must yield while a create is
@@ -243,11 +292,13 @@ pub(super) fn KanbanEffects(
             let raw_operations = state_store.read().load().raw_operations;
             let aliases = event_derived_target_aliases(&raw_operations);
             let strand_id = resolve_event_derived_target_alias(&aliases, &strand_id);
-            let Some(strand_board) = strand_views_from_ops(&raw_operations)
-                .into_iter()
-                .find(|view| view.strand_id == strand_id)
-                .and_then(|view| view.board_space_id)
-            else {
+            let Some(strand_board) = strand_views_from_projection_and_ops(
+                &lifecycle_strand_projection(),
+                &raw_operations,
+            )
+            .into_iter()
+            .find(|view| view.strand_id == strand_id)
+            .and_then(|view| view.board_space_id) else {
                 return;
             };
             // The projection may still reference a holder-local handle; only a
@@ -261,8 +312,9 @@ pub(super) fn KanbanEffects(
         });
     }
 
-    // One-shot durable event backfill. Board rendering is event-sourced; there
-    // is no user-selected collection View or manual projection refresh path.
+    // One-shot current-object baseline plus durable Event backfill. The
+    // Space/Strand rows recover pre-join current state; Events retain the
+    // signed history and E2EE content projection.
     let mut bootstrapped = use_signal(|| false);
     let auto_base = base_url.clone();
     let auto_token = token;
@@ -279,17 +331,12 @@ pub(super) fn KanbanEffects(
             if api_token.trim().is_empty() {
                 return;
             }
-            // Backfill the realm's durable events into the op log. This is how the event-sourced
-            // Space-container / Strand projections (and therefore the board
-            // switcher) discover content created by OTHER members — including a
-            // board an invited member deep-links into before its create arrives on
-            // the live subscribe. It depends only on the realm, not on a View.
-            let events_res = if lifecycle_realm_id.trim().is_empty() {
+            let projection_res = if lifecycle_realm_id.trim().is_empty() {
                 None
             } else {
                 let realm_id = lifecycle_realm_id.clone();
-                match with_authed_api(&base, api_token.clone(), |api| async move {
-                    api.event_submitter()?.backfill(&realm_id).await
+                match with_authed_api(&base, api_token.clone(), move |api| async move {
+                    fetch_kanban_projection_snapshot(api, &realm_id).await
                 })
                 .await
                 {
@@ -298,26 +345,18 @@ pub(super) fn KanbanEffects(
                     Err(_) => None,
                 }
             };
-            // Ingest the backfilled events into `raw_operations` so the event-
-            // sourced board/list/card projection sees cross-member content.
-            // `ingest_kanban_events` handles the backfill event shape
-            // (`event_kind`/`kind`, `operation_id`/`event_id`) and dedups by id.
-            let complete_events = match events_res.as_ref() {
-                Some(response) => match response.complete_events("kanban event projection") {
-                    Ok(events) => events,
-                    Err(error) => {
-                        board_status.set(error.to_string());
-                        return;
-                    }
-                },
-                None => Vec::new(),
-            };
-            if !complete_events.is_empty() {
+            if let Some(snapshot) = projection_res {
+                if let Some(containers) = snapshot.containers {
+                    lifecycle_container_projection.set(containers);
+                }
+                if let Some(strands) = snapshot.strands {
+                    lifecycle_strand_projection.set(strands);
+                }
                 let mut guard = state_store.write();
                 crate::sync_engine::ingest_kanban_projection_events(
                     &mut guard,
                     &lifecycle_realm_id,
-                    &complete_events,
+                    &snapshot.events,
                 );
             }
         }
@@ -395,32 +434,35 @@ pub(super) fn KanbanEffects(
         };
         live_refresh_key_seen.set(refresh_key);
         spawn(async move {
-            // Event-sourced live reconcile. Pull the durable event log and fold
-            // it into `raw_operations`; the columns memo renders that log.
-            let events_res = {
+            // Refresh the current baseline and then fold the durable Event log
+            // over it. This keeps pre-join objects visible while preserving
+            // live/local updates and encrypted content handling.
+            let projection_res = {
                 let realm_id = lifecycle_realm_id.clone();
-                with_authed_api(&base, api_token, |api| async move {
-                    api.event_submitter()?.backfill(&realm_id).await
+                with_authed_api(&base, api_token, move |api| async move {
+                    fetch_kanban_projection_snapshot(api, &realm_id).await
                 })
                 .await
             };
-            if events_res
+            if projection_res
                 .as_ref()
                 .err()
                 .is_some_and(|err| err.is_auth_expired())
             {
                 return;
             }
-            if let Ok(backfill) = events_res {
-                let Ok(events) = backfill.complete_events("kanban live reconciliation") else {
-                    tracing::warn!("kanban backfill contains non-reducer event rows");
-                    return;
-                };
+            if let Ok(snapshot) = projection_res {
+                if let Some(containers) = snapshot.containers {
+                    lifecycle_container_projection.set(containers);
+                }
+                if let Some(strands) = snapshot.strands {
+                    lifecycle_strand_projection.set(strands);
+                }
                 let mut store = state_store.write();
                 crate::sync_engine::ingest_kanban_projection_events(
                     &mut store,
                     &lifecycle_local_realm_id,
-                    &events,
+                    &snapshot.events,
                 );
             }
         });
@@ -590,64 +632,6 @@ pub(super) fn KanbanEffects(
                     }
                 }
             });
-        });
-    }
-
-    // Hydrate Space-container / Strand lifecycle state from the soland
-    // `/_arkret/self/realms/{realm_id}/{spaces|strands}` endpoints so
-    // an Archive accepted on the server stays archived after a page
-    // refresh. The probe is fire-and-forget; a 404 / 401 just leaves
-    // columns/cards in their `Active` default and the user is no worse
-    // off than before this wiring.
-    let mut lifecycle_bootstrapped_for = use_signal(String::new);
-    let lifecycle_realm_id = local_realm_id.clone();
-    // When the kanban panel mounts on a card-detail URL
-    // (`/kanban/<realm>/task/<strand>`), the card's home board is resolved
-    // by the route → board reconciler effect above (from the event-folded
-    // strands); this cold-start spawn only needs to ingest the durable log.
-    if !lifecycle_realm_id.is_empty() && lifecycle_bootstrapped_for() != lifecycle_realm_id {
-        lifecycle_bootstrapped_for.set(lifecycle_realm_id.clone());
-        let base = base_url.clone();
-        let lifecycle_token = token;
-        let lifecycle_local_realm_id = local_realm_id.clone();
-        spawn(async move {
-            let realm_id = lifecycle_realm_id.clone();
-            let api_token = lifecycle_token();
-            if api_token.trim().is_empty() {
-                return;
-            }
-            let events_res = {
-                let realm_id = realm_id.clone();
-                with_authed_api(&base, api_token, |api| async move {
-                    api.event_submitter()?.backfill(&realm_id).await
-                })
-                .await
-            };
-            if events_res
-                .as_ref()
-                .err()
-                .is_some_and(|err| err.is_auth_expired())
-            {
-                return;
-            }
-            if let Ok(backfill) = events_res {
-                let Ok(events) = backfill.complete_events("kanban cold-start projection") else {
-                    tracing::warn!("kanban backfill contains non-reducer event rows");
-                    return;
-                };
-                // Event-sourced cold start:
-                // fold the durable event log into `raw_operations`. The `columns`
-                // memo + the container/selection sync effect re-project the board
-                // purely from events; this spawn ONLY ingests. The per-session
-                // server strand/space projection endpoints are dropped as content
-                // sources — they cannot carry another member's encrypted content.
-                let mut store = state_store.write();
-                crate::sync_engine::ingest_kanban_projection_events(
-                    &mut store,
-                    &lifecycle_local_realm_id,
-                    &events,
-                );
-            }
         });
     }
 

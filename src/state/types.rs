@@ -1209,6 +1209,16 @@ pub struct ClientLocalState {
     /// the hardened secure store and never enter this metadata snapshot.
     #[serde(default)]
     pub(crate) history_candidate_state: arkret_sdk::history_store::HistoryMaterialLedger,
+    /// Crash-safe history request/response-stream state. The revision is used
+    /// for compare-and-swap updates so concurrent recovery effects cannot roll
+    /// response dispositions or acknowledgement high-water marks backward.
+    #[serde(default)]
+    pub(crate) history_runtime_state: garth::VersionedHistoryRuntimeSnapshot,
+    /// Crash-safe source response attempts. Canonical signed records live as
+    /// content-addressed secure-store blobs; this snapshot is the atomic ready
+    /// marker and receipt/state-machine ledger.
+    #[serde(default)]
+    pub(crate) history_source_outbox_state: garth::VersionedHistorySourceOutboxSnapshot,
     /// Actor-private Realm remarks per
     /// `discovery/client-preferences.md` §3.7. Hydrated from the soland
     /// `/sync` `account_data[]` projection (entries with
@@ -1527,6 +1537,8 @@ impl Default for ClientLocalState {
             history_secrets: BTreeMap::new(),
             history_epoch_cipher_suites: BTreeMap::new(),
             history_candidate_state: arkret_sdk::history_store::HistoryMaterialLedger::default(),
+            history_runtime_state: garth::VersionedHistoryRuntimeSnapshot::default(),
+            history_source_outbox_state: garth::VersionedHistorySourceOutboxSnapshot::default(),
             realm_remarks: BTreeMap::new(),
             contact_remarks: BTreeMap::new(),
             accepted_human_contact_principals: BTreeSet::new(),

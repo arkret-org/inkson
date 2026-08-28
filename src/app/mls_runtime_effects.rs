@@ -69,6 +69,8 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
     let mls_coverage_repair_in_flight = use_signal(std::collections::BTreeSet::<String>::new);
     let accepted_artifact_basis_seen = use_signal(|| Option::<String>::None);
     let accepted_artifact_convergence_in_flight = use_signal(|| false);
+    let history_recovery_poll_tick = use_signal(|| 0_u64);
+    let history_recovery_in_flight = use_signal(|| false);
 
     {
         let ready = secure_store_bootstrap_ready;
@@ -148,6 +150,92 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
                     }
                 }
                 in_flight.set(false);
+            });
+        });
+    }
+
+    {
+        let ready = secure_store_bootstrap_ready;
+        let sync_ready = sync_bootstrap_complete;
+        let mut poll_tick = history_recovery_poll_tick;
+        let mut in_flight = history_recovery_in_flight;
+        let mut recovery_error = last_error;
+        let recovery_store = state_store;
+        use_effect(move || {
+            let Some(account) = active_account() else {
+                return;
+            };
+            let _ = poll_tick();
+            let base = account.server_url.to_string();
+            let credential = token();
+            let full_id = account.full_id().clone();
+            let device = account.device_id.clone();
+            let authority = account.authority.clone();
+            if !ready()
+                || !sync_ready()
+                || base.trim().is_empty()
+                || credential.trim().is_empty()
+                || *in_flight.peek()
+            {
+                return;
+            }
+            in_flight.set(true);
+            spawn(async move {
+                let result = crate::transport::auth::with_authed_api(
+                    &base,
+                    credential,
+                    move |api| async move {
+                        let secure_store =
+                            crate::secure_key_store::default_secure_key_store("inkson");
+                        let outcome = crate::history_recovery::converge_member_history_recovery(
+                            recovery_store,
+                            &api,
+                            secure_store.as_ref(),
+                            &authority,
+                            &full_id,
+                            &device,
+                            crate::clock::now_utc_canonical(),
+                        )
+                        .await?;
+                        let opened =
+                            crate::mls::runtime::converge_external_history_candidate_decryptions(
+                                recovery_store,
+                                &authority,
+                                full_id.as_str(),
+                                &device,
+                                crate::clock::now_utc_canonical(),
+                            )
+                            .map_err(anyhow::Error::msg)?;
+                        if outcome
+                            != crate::history_recovery::HistoryRecoveryConvergenceOutcome::default()
+                            || opened > 0
+                        {
+                            tracing::info!(
+                                requests = outcome.requests_created_or_resumed,
+                                source_attempts_staged = outcome.source_attempts_staged,
+                                source_attempts_completed = outcome.source_attempts_completed,
+                                response_records_installed = outcome.response_records_installed,
+                                pending_errors = outcome.pending_errors,
+                                opened,
+                                "private history-key recovery tick completed"
+                            );
+                        }
+                        Ok(())
+                    },
+                )
+                .await
+                .map_err(|error| anyhow::anyhow!(error.display()));
+                if let Err(error) = result {
+                    let detail = error.to_string();
+                    tracing::warn!(%error, "private history-key convergence remains pending");
+                    recovery_error.set(Some(crate::history_ui::status_message(
+                        crate::history_ui::classify_runtime_error(&detail),
+                        &detail,
+                    )));
+                }
+                crate::runtime_helpers::sleep_for(std::time::Duration::from_secs(10)).await;
+                in_flight.set(false);
+                poll_tick.set(poll_tick().wrapping_add(1));
             });
         });
     }

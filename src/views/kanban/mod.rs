@@ -910,7 +910,7 @@ pub fn KanbanPanel(
     let KanbanController {
         board_space_options,
         mut selected_board,
-        lifecycle_container_projection: _,
+        lifecycle_container_projection,
         lifecycle_strand_projection,
         mut new_board_title,
         mut new_column_title,
@@ -976,14 +976,11 @@ pub fn KanbanPanel(
             pending_board_creates_from_ops(&store.load().raw_operations, &pending_realm_id)
         }
     });
-    // `columns` is a PURE derivation of the realm op log: it folds
-    // `raw_operations` (remote backfill / subscribe events + local optimistic
-    // ops) for the selected board via the single event-sourced `project_board`,
-    // re-decrypting with the live MLS context. Because it is a `use_memo`, any
-    // change to `raw_operations` (an appended optimistic op, an ingested
-    // cross-member event, a restored account secret) re-projects the board with
-    // no manual `columns.set` — there is exactly one projection path. The seed
-    // fallback (demo data) only applies when the op log is empty.
+    // `columns` merges the server's current Space/Strand baseline with the
+    // visible Event log. The baseline recovers current objects whose create
+    // Event predates a `since_join` floor; Events provide signed updates,
+    // optimistic writes and E2EE content without turning the server projection
+    // into a second truth source.
     let columns = use_memo({
         let seed_realm_id = local_realm_id.clone();
         let decrypt_realm_id = selected_realm_id.clone();
@@ -995,6 +992,8 @@ pub fn KanbanPanel(
                 .unwrap_or_default();
             let decrypt_store = state_store.read();
             let raw_operations = decrypt_store.load().raw_operations;
+            let projected_containers = lifecycle_container_projection();
+            let projected_strands = lifecycle_strand_projection();
             let decrypt_ctx =
                 mls_decrypt_ctx_if_ready(&decrypt_store, &decrypt_realm_id, &decrypt_authority);
             if raw_operations.is_empty() && !seed_columns.is_empty() {
@@ -1008,8 +1007,10 @@ pub fn KanbanPanel(
                     overlay_local_card_update_records(cols, &raw_operations, decrypt_ctx.as_ref());
                 return overlay_local_card_assignment_records(cols, &raw_operations);
             }
-            let (cols, ..) = project_board(
+            let (cols, ..) = project_board_with_projection(
                 &raw_operations,
+                &projected_containers,
+                &projected_strands,
                 &board_id,
                 &seed_realm_id,
                 decrypt_ctx.as_ref(),
@@ -2238,7 +2239,7 @@ pub fn KanbanPanel(
                                                 .unwrap_or_else(|_| "U".to_owned());
                                                 // The create command appends an `ak.strand.create`
                                                 // appends the `ak.strand.create` op (write_state queued),
-                                                // which the `columns` memo folds via `strand_views_from_ops`.
+                                                // which the `columns` memo folds over the current baseline.
                                                 // No `strand_id` here: the card Strand is named by
                                                 // its own create Event, so the command boundary
                                                 // fills the subject in once the envelope exists.
@@ -2568,6 +2569,7 @@ pub fn KanbanPanel(
                                                 selected_board()
                                                     .map(|board_id| board_id.to_string())
                                                     .unwrap_or_default(),
+                                                columns(),
                                                 state_store,
                                                 board_status,
                                             );

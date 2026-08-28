@@ -886,6 +886,7 @@ pub(super) fn dispatch_board_archive_cascade(
     realm_id: String,
     actor_id: String,
     board_space_id: String,
+    projected_columns: Vec<KanbanColumn>,
     mut state_store: SyncSignal<LocalStateStore>,
     mut board_status: Signal<String>,
 ) {
@@ -894,26 +895,20 @@ pub(super) fn dispatch_board_archive_cascade(
         return;
     }
 
-    // Resolve the board's active children from the event-folded projection
-    // (the `columns` `use_memo` derives the same set), then build the cascade
-    // of archive events: child cards, child lists, board container last.
-    let raw_operations = state_store.read().load().raw_operations;
-    let active_card_ids: Vec<String> = strand_views_from_ops(&raw_operations)
-        .into_iter()
-        .filter(|view| {
-            view.board_space_id.as_deref() == Some(board_space_id.as_str())
-                && view.state == arkret_sdk::ProjectionObjectState::Active
-        })
-        .map(|view| view.strand_id)
+    // Resolve children from the same merged current-object/Event projection
+    // the user is looking at. A later joiner may not possess the historical
+    // create Events, so consulting the raw Event log alone would omit visible
+    // pre-join cards and lists from the cascade.
+    let active_card_ids: Vec<String> = projected_columns
+        .iter()
+        .flat_map(|column| column.cards.iter())
+        .filter(|card| card.lifecycle == StrandLifecycleState::Active)
+        .map(|card| card.primary_strand_id.clone())
         .collect();
-    let active_list_ids: Vec<String> = space_container_views_from_ops(&raw_operations, &realm_id)
-        .into_iter()
-        .filter(|view| {
-            view.kind == "list"
-                && view.parent_space_id.as_deref() == Some(board_space_id.as_str())
-                && view.state == arkret_sdk::ProjectionSpaceState::Active
-        })
-        .map(|view| view.space_id)
+    let active_list_ids: Vec<String> = projected_columns
+        .iter()
+        .filter(|column| column.state == SpaceContainerLifecycleState::Active)
+        .map(|column| column.id.clone())
         .collect();
 
     // Build every archive event up front so a build error aborts before any

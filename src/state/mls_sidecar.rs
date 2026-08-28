@@ -1419,6 +1419,34 @@ impl LocalStateStore {
             .cloned()
     }
 
+    /// Persist an exact replay-derived ciphersuite for externally received
+    /// candidate material. A conflicting value is a cryptographic transcript
+    /// contradiction and must not overwrite the first verified binding.
+    pub(crate) fn record_history_epoch_cipher_suite(
+        &mut self,
+        effective_scope: &arkret_sdk::ScopeRef,
+        group_id: &str,
+        epoch: u64,
+        cipher_suite: &str,
+    ) -> Result<(), String> {
+        let scope_group_key = mls_scope_snapshot_key_for_group(effective_scope, group_id)?;
+        let by_epoch = self
+            .cached
+            .history_epoch_cipher_suites
+            .entry(scope_group_key)
+            .or_default();
+        if let Some(existing) = by_epoch.get(&epoch) {
+            if existing != cipher_suite {
+                return Err(
+                    "verified history epoch ciphersuite conflicts with durable state".to_owned(),
+                );
+            }
+            return Ok(());
+        }
+        by_epoch.insert(epoch, cipher_suite.to_owned());
+        self.flush().map_err(|error| error.to_string())
+    }
+
     /// X5.3 — serialize the ENTIRE local-plaintext sidecar map
     /// (`realm -> strand -> field -> plaintext`) to JSON bytes for the encrypted
     /// cross-device backup. Returns the serialization of an empty map (`{}`)

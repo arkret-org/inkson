@@ -273,14 +273,28 @@ fn apply_reorder_to_view(
 pub(crate) fn strand_views_from_ops(
     ops: &[RawOperationRecord],
 ) -> Vec<crate::state::projection_views::StrandProjectionView> {
+    strand_views_from_projection_and_ops(&[], ops)
+}
+
+/// Merge the server's current-object Strand baseline with the visible Event
+/// stream. The baseline supplies current rows whose create Event predates a
+/// `since_join` membership floor; subsequent/local Events still fold on top.
+pub(crate) fn strand_views_from_projection_and_ops(
+    projected: &[crate::state::projection_views::StrandProjectionView],
+    ops: &[RawOperationRecord],
+) -> Vec<crate::state::projection_views::StrandProjectionView> {
     let aliases = event_derived_target_aliases(ops);
     // Preserve first-seen (create) order for stable output; placement/sort is
     // applied by `columns_from_lifecycle_projection`.
-    let mut order: Vec<String> = Vec::new();
-    let mut by_id: std::collections::BTreeMap<
-        String,
-        crate::state::projection_views::StrandProjectionView,
-    > = std::collections::BTreeMap::new();
+    let mut order = projected
+        .iter()
+        .map(|view| view.strand_id.clone())
+        .collect::<Vec<_>>();
+    let mut by_id = projected
+        .iter()
+        .cloned()
+        .map(|view| (view.strand_id.clone(), view))
+        .collect::<std::collections::BTreeMap<_, _>>();
 
     for record in ordered_operations(ops) {
         if !raw_operation_allows_overlay(&record.payload) {
@@ -301,7 +315,27 @@ pub(crate) fn strand_views_from_ops(
                         .list_space_id
                         .as_deref()
                         .map(|id| resolve_event_derived_target_alias(&aliases, id));
-                    if !by_id.contains_key(&view.strand_id) {
+                    if let Some(current) = by_id.get_mut(&view.strand_id) {
+                        // The endpoint row is the authoritative current
+                        // structural/metadata view. It intentionally omits
+                        // private content, tracks and open profile fields, so
+                        // enrich only those omitted slots from a visible create
+                        // Event without replacing the newer baseline title,
+                        // position or lifecycle.
+                        if current.content.is_none() {
+                            current.content = view.content;
+                        }
+                        if current.encrypted_content.is_none() {
+                            current.encrypted_content = view.encrypted_content;
+                        }
+                        if current.tracks.is_empty() {
+                            current.tracks = view.tracks;
+                        }
+                        if current.fields.is_empty() {
+                            current.fields = view.fields;
+                        }
+                        continue;
+                    } else {
                         order.push(view.strand_id.clone());
                     }
                     by_id.insert(view.strand_id.clone(), view);
@@ -368,16 +402,34 @@ pub(crate) fn strand_views_from_ops(
 /// Reduce the operation stream into the current set of space containers
 /// (boards + lists). Reuses [`local_space_create_from_raw_operation`] so the
 /// extraction matches the optimistic-overlay path exactly.
+#[cfg(test)]
 pub(crate) fn space_container_views_from_ops(
     ops: &[RawOperationRecord],
     realm_id: &str,
 ) -> Vec<crate::state::projection_views::SpaceContainerProjectionView> {
+    space_container_views_from_projection_and_ops(&[], ops, realm_id)
+}
+
+/// Merge the current Space projection baseline with visible/local Events.
+/// A current Board/List remains renderable even when its create Event is
+/// outside the caller's `since_join` history window.
+pub(crate) fn space_container_views_from_projection_and_ops(
+    projected: &[crate::state::projection_views::SpaceContainerProjectionView],
+    ops: &[RawOperationRecord],
+    realm_id: &str,
+) -> Vec<crate::state::projection_views::SpaceContainerProjectionView> {
     let aliases = event_derived_target_aliases(ops);
-    let mut order: Vec<String> = Vec::new();
-    let mut by_id: std::collections::BTreeMap<
-        String,
-        crate::state::projection_views::SpaceContainerProjectionView,
-    > = std::collections::BTreeMap::new();
+    let mut order = projected
+        .iter()
+        .filter(|view| trim_realm_id(&view.realm_id) == trim_realm_id(realm_id))
+        .map(|view| view.space_id.clone())
+        .collect::<Vec<_>>();
+    let mut by_id = projected
+        .iter()
+        .filter(|view| trim_realm_id(&view.realm_id) == trim_realm_id(realm_id))
+        .cloned()
+        .map(|view| (view.space_id.clone(), view))
+        .collect::<std::collections::BTreeMap<_, _>>();
     for record in ordered_operations(ops) {
         if !raw_operation_allows_overlay(&record.payload) {
             continue;
@@ -395,7 +447,13 @@ pub(crate) fn space_container_views_from_ops(
                 .parent_space_id
                 .as_deref()
                 .map(|id| resolve_event_derived_target_alias(&aliases, id));
-            if !by_id.contains_key(&local.id) {
+            if by_id.contains_key(&local.id) {
+                // The endpoint row is already the current materialized Space.
+                // Keep it and continue folding later update/lifecycle Events;
+                // replacing it with the historical create would regress title
+                // or state when a full-history member opens the Board.
+                continue;
+            } else {
                 order.push(local.id.clone());
             }
             by_id.insert(
@@ -453,16 +511,29 @@ pub(crate) fn space_container_views_from_ops(
 /// (remote backfill / subscribe events + local optimistic ops, already
 /// deduped by `upsert_raw_operation`) into columns, then layers content updates
 /// and assignments via the existing decryption-aware overlays.
+#[cfg(test)]
 pub(crate) fn project_board(
     ops: &[RawOperationRecord],
     preferred_board_id: &str,
     realm_id: &str,
     decrypt_ctx: Option<&MlsDecryptCtx<'_>>,
 ) -> (Vec<KanbanColumn>, Vec<BoardSpaceOption>, Option<String>) {
+    project_board_with_projection(ops, &[], &[], preferred_board_id, realm_id, decrypt_ctx)
+}
+
+pub(crate) fn project_board_with_projection(
+    ops: &[RawOperationRecord],
+    projected_containers: &[crate::state::projection_views::SpaceContainerProjectionView],
+    projected_strands: &[crate::state::projection_views::StrandProjectionView],
+    preferred_board_id: &str,
+    realm_id: &str,
+    decrypt_ctx: Option<&MlsDecryptCtx<'_>>,
+) -> (Vec<KanbanColumn>, Vec<BoardSpaceOption>, Option<String>) {
     let aliases = event_derived_target_aliases(ops);
     let preferred_board_id = resolve_event_derived_target_alias(&aliases, preferred_board_id);
-    let containers = space_container_views_from_ops(ops, realm_id);
-    let strands = strand_views_from_ops(ops);
+    let containers =
+        space_container_views_from_projection_and_ops(projected_containers, ops, realm_id);
+    let strands = strand_views_from_projection_and_ops(projected_strands, ops);
     let (columns, board_options, board_id) =
         columns_from_lifecycle_projection(&containers, &strands, &preferred_board_id, decrypt_ctx);
     let columns = overlay_local_card_update_records(columns, ops, decrypt_ctx);
@@ -478,6 +549,7 @@ mod tests {
     const BOARD: &str = "ak:space:AS3C70xWY61C92FHN-fwh70BB5DHc-kVXN2_nFVHXamA";
     const LIST_A: &str = "ak:space:AXDc1EwPcJZuThaCiR4FHq4V7rQ4I9QBR1YmEVB4xroH";
     const LIST_B: &str = "ak:space:AVcONsY9NXkyxnm3-GILG2GEKqeoyPiGmxPiVikKKl1t";
+    const STRAND: &str = "ak:strand:AhEY3TQwXzS3vBpmyeK7Ki84MdgP5oV7KbS2ZGWOzK6y";
 
     /// `ak.space.create` is `id_source: event_derived`: the payload carries no
     /// `object.id`, and the Space is `retype(event_id)`. The fixture therefore
@@ -668,6 +740,69 @@ mod tests {
         assert_eq!(projected_columns[0].cards.len(), 1);
         assert_eq!(projected_columns[0].cards[0].title, "golden card");
         assert_eq!(projected_columns[0].cards, direct_columns[0].cards);
+    }
+
+    #[test]
+    fn current_space_baseline_restores_prejoin_board_title_and_accepts_later_updates() {
+        let projected = vec![
+            crate::state::projection_views::SpaceContainerProjectionView {
+                space_id: BOARD.to_owned(),
+                realm_id: REALM.to_owned(),
+                kind: "board".to_owned(),
+                title: "Release board".to_owned(),
+                state: arkret_sdk::ProjectionSpaceState::Active,
+                rank: None,
+                parent_space_id: None,
+            },
+            crate::state::projection_views::SpaceContainerProjectionView {
+                space_id: LIST_A.to_owned(),
+                realm_id: REALM.to_owned(),
+                kind: "list".to_owned(),
+                title: "Todo".to_owned(),
+                state: arkret_sdk::ProjectionSpaceState::Active,
+                rank: Some("U".to_owned()),
+                parent_space_id: Some(BOARD.to_owned()),
+            },
+        ];
+        let ops = vec![local_op(
+            "op-board-rename-after-join",
+            "2026-06-28T04:00:00.000Z",
+            json!({
+                "kind": "ak.space.update",
+                "body": {
+                    "space_id": BOARD,
+                    "patch": {
+                        "title": {"$op": "set", "value": "Release board 2"}
+                    }
+                }
+            }),
+        )];
+
+        let containers = space_container_views_from_projection_and_ops(&projected, &ops, REALM);
+        let options = board_space_options_from_projection(&containers);
+        assert_eq!(options.len(), 1);
+        assert_eq!(options[0].id.as_str(), BOARD);
+        assert_eq!(options[0].title, "Release board 2");
+
+        let projected_strands = vec![
+            serde_json::from_value(json!({
+                "strand_id": STRAND,
+                "realm_id": REALM,
+                "title": "Pre-join current card",
+                "board_space_id": BOARD,
+                "list_space_id": LIST_A,
+                "rank": "U",
+                "state": "active"
+            }))
+            .unwrap(),
+        ];
+        let (columns, _, selected) =
+            project_board_with_projection(&ops, &projected, &projected_strands, BOARD, REALM, None);
+        assert_eq!(selected.as_deref(), Some(BOARD));
+        assert_eq!(columns.len(), 1);
+        assert_eq!(columns[0].title, "Todo");
+        assert_eq!(columns[0].cards.len(), 1);
+        assert_eq!(columns[0].cards[0].title, "Pre-join current card");
     }
 
     /// The decisive cross-member test: two different members each create a card

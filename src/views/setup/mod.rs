@@ -53,7 +53,7 @@ pub fn SetupPanel(
     let realm_alias = use_signal(String::new);
     let realm_discoverability = use_signal(|| "listed".to_owned());
     let realm_policy_join_rule = use_signal(|| "invite".to_owned());
-    let realm_policy_history_access = use_signal(|| "since_join".to_owned());
+    let realm_policy_history_access = use_signal(|| "all_history_for_current_members".to_owned());
     // Spec realm-and-space.md §2.3 — `encryption_profile` and `security_class`
     // are Realm create-locked fields; default to the safe `mls_rfc9420` +
     // `standard` case.
