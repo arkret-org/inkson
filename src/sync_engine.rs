@@ -2284,13 +2284,9 @@ async fn process_to_device_delivery(
 /// disappear from the server queue. The Welcome bootstrap owns that ACK after
 /// successful apply (or an explicitly verified stale replay).
 fn to_device_batch_safe_for_ingest_ack(messages: &[arkret_sdk::DeviceMessageEnvelope]) -> bool {
-    !messages.iter().any(|message| {
-        serde_json::to_value(message)
-            .ok()
-            .and_then(|value| value.get("kind").and_then(Value::as_str).map(str::to_owned))
-            .as_deref()
-            == Some(event_kind_str::MLS_WELCOME)
-    })
+    !messages
+        .iter()
+        .any(|message| message.kind.as_str() == event_kind_str::MLS_WELCOME)
 }
 
 fn to_device_batch_allows_cursor_advance(
@@ -3636,7 +3632,7 @@ mod tests {
 
         let event_payloads: Vec<arkret_sdk::Event> = frames
             .iter()
-            .filter(|frame| frame.kind == EventsSubscribeFrameKind::Event)
+            .filter(|frame| frame.kind() == EventsSubscribeFrameKind::Event)
             .filter_map(|frame| frame.payload.as_ref())
             .filter_map(|payload| {
                 serde_json::from_value(Value::Object(payload.clone().into_iter().collect())).ok()

@@ -745,7 +745,7 @@ mod tests {
             .expect("the first frame must not wait for response EOF")
             .unwrap()
             .unwrap();
-        assert_eq!(frame.kind, arkret_sdk::EventsSubscribeFrameKind::Frontier);
+        assert_eq!(frame.kind(), arkret_sdk::EventsSubscribeFrameKind::Frontier);
         assert_eq!(
             frame.cursor.as_ref().map(|cursor| cursor.as_str()),
             Some("ak:cursor:first")
@@ -969,23 +969,13 @@ mod tests {
         );
         let event_id = event.event_id.clone();
         let frames = vec![
-            arkret_sdk::EventsSubscribeFrame {
-                kind: arkret_sdk::EventsSubscribeFrameKind::Event,
-                realm_id: Some(realm_id.clone()),
-                cursor: Some(arkret_sdk::identifiers::Cursor::new("ak:cursor:projected").unwrap()),
-                payload: Some(
-                    serde_json::from_value(serde_json::to_value(event).unwrap()).unwrap(),
-                ),
-                reconnect_after_ms: None,
+            arkret_sdk::EventsSubscribeFrame::Event {
+                realm_id: realm_id.clone(),
+                cursor: arkret_sdk::identifiers::Cursor::new("ak:cursor:projected").unwrap(),
+                payload: Box::new(event),
             },
-            arkret_sdk::EventsSubscribeFrame {
-                kind: arkret_sdk::EventsSubscribeFrameKind::Unauthorized,
+            arkret_sdk::EventsSubscribeFrame::Unauthorized {
                 realm_id: Some(realm_id.clone()),
-                cursor: None,
-                payload: Some(
-                    serde_json::from_value(serde_json::json!({"reason": "stop fixture"})).unwrap(),
-                ),
-                reconnect_after_ms: None,
             },
         ];
         let driver = RealmEventsDriver::new(adapter.clone(), adapter.clone());

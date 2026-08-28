@@ -39,20 +39,15 @@ enum VerifyMethod {
 /// retrying without surfacing noise.
 fn extract_peer_verification_key(value: &serde_json::Value) -> Option<String> {
     fn key_from_entry(entry: &serde_json::Value) -> Option<String> {
-        if entry.get("kind").and_then(|t| t.as_str()) != Some("ak.key.verification.key") {
+        let envelope: arkret_sdk::DeviceMessageEnvelope =
+            serde_json::from_value(entry.clone()).ok()?;
+        if envelope.kind.as_str() != "ak.key.verification.key" {
             return None;
         }
-        let content = entry.get("content").and_then(|v| v.as_object())?;
-        let key = content.get("key").and_then(|v| v.as_str()).or_else(|| {
-            content
-                .get("device_envelope")
-                .and_then(|v| v.get("local_public_key"))
-                .and_then(|v| v.as_str())
-        })?;
-        if key.trim().is_empty() {
+        let arkret_sdk::DeviceMessageContent::KeyVerification(content) = envelope.content else {
             return None;
-        }
-        Some(key.trim().to_owned())
+        };
+        content.key.map(|key| key.as_str().to_owned())
     }
     if let Some(messages) = value.get("messages").and_then(|v| v.as_array()) {
         for entry in messages {
