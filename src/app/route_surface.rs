@@ -416,8 +416,6 @@ pub(super) fn RouteSurface(state: RouteSurfaceState) -> Element {
                                     secure_store_ready: secure_store_bootstrap_ready(),
                                     token,
                                     account_recovery_configured,
-                                    device_id,
-                                    config_store,
                                     realm_tree_nodes,
                                     selected_realm_id,
                                     new_space_context_node,

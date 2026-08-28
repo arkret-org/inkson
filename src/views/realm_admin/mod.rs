@@ -19,7 +19,6 @@ pub use admin_panel::RealmAdminPanel;
 pub use members_panel::RealmMembersPanel;
 pub(crate) use members_panel::{
     mls_admission_candidate_realms_for_actor, reconcile_mls_admissions_for_realm,
-    submit_mls_admission_for_invitees,
 };
 pub use organization::{RealmOrganizationPanel, ServerAdminSignal, is_server_admin};
 

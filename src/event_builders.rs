@@ -61,51 +61,6 @@ fn event_requirements_with_schema(schema_ref: &str) -> EventRequirements {
     }
 }
 
-/// R3.1: `handle` is the canonical `<localpart>:<domain>` wire form
-/// (renamed from `handle_uri` @ arkret-spec 7157ee8 — the `arkret://`
-/// URI handle form has been retired).
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct RealmBootstrapMember {
-    pub(crate) actor_id: String,
-}
-
-impl RealmBootstrapMember {
-    fn from_did(did: &str) -> Self {
-        Self {
-            actor_id: did.trim().to_owned(),
-        }
-    }
-}
-
-fn parse_realm_bootstrap_member(input: &str) -> anyhow::Result<RealmBootstrapMember> {
-    let trimmed = input.trim();
-    if trimmed.is_empty() {
-        return Err(anyhow::anyhow!("seed member is empty"));
-    }
-    if arkret_sdk::DidCoreId::new(trimmed.to_owned()).is_ok() {
-        return Ok(RealmBootstrapMember::from_did(trimmed));
-    }
-    Err(anyhow::anyhow!(
-        "seed member must be a did_core_id; handle bootstrap requires a Directory-resolved invite address"
-    ))
-}
-
-pub(crate) fn parse_realm_bootstrap_members(
-    inputs: &[String],
-) -> anyhow::Result<Vec<RealmBootstrapMember>> {
-    let mut members = Vec::new();
-    for input in inputs {
-        let member = parse_realm_bootstrap_member(input)?;
-        if !members
-            .iter()
-            .any(|existing: &RealmBootstrapMember| existing.actor_id == member.actor_id)
-        {
-            members.push(member);
-        }
-    }
-    Ok(members)
-}
-
 /// Build the ordered Realm genesis batch.
 ///
 /// The Realm id is **not** an input: spec realm-and-space.md section 2.5.0
@@ -137,7 +92,6 @@ pub fn build_realm_bootstrap_steps(
     federation_policy: &str,
     digest_algorithm: &str,
     trust_domain: &str,
-    invitees: &[String],
     plaintext_visible_services: &[String],
     alias: Option<&str>,
     content_scheme: Option<&str>,
@@ -159,7 +113,6 @@ pub fn build_realm_bootstrap_steps(
         federation_policy,
         digest_algorithm,
         trust_domain,
-        invitees,
         plaintext_visible_services,
         alias,
         content_scheme,
@@ -188,7 +141,6 @@ pub fn build_realm_bootstrap_steps_for_principal_server(
     federation_policy: &str,
     digest_algorithm: &str,
     trust_domain: &str,
-    invitees: &[String],
     plaintext_visible_services: &[String],
     alias: Option<&str>,
     content_scheme: Option<&str>,
@@ -198,11 +150,6 @@ pub fn build_realm_bootstrap_steps_for_principal_server(
         history_access,
         content_scheme,
     )?;
-    // Validate seed invitees here, but do not include their membership
-    // transitions in the atomic genesis unit. Realm invite state can only be
-    // entered through an ordinary `ak.invite.create` Control Move after the
-    // creator's bootstrap has been accepted.
-    let _invitees = parse_realm_bootstrap_members(invitees)?;
     let create_event = build_realm_create_event_for_principal_server(
         principal_server_id.clone(),
         genesis_salt,
@@ -1908,21 +1855,6 @@ mod notary_derivation_tests {
 
     use super::*;
 
-    #[test]
-    fn realm_bootstrap_members_require_stable_core_ids() {
-        let members = parse_realm_bootstrap_members(&[
-            " ak:did_core:web:alice.example ".to_owned(),
-            "ak:did_core:web:alice.example".to_owned(),
-        ])
-        .expect("canonical did_core_id seed members are accepted");
-        assert_eq!(members.len(), 1);
-        assert_eq!(members[0].actor_id, "ak:did_core:web:alice.example");
-
-        let error = parse_realm_bootstrap_members(&["did:web:alice.example".to_owned()])
-            .expect_err("full DID values are not stable Realm member identities");
-        assert!(error.to_string().contains("did_core_id"));
-    }
-
     fn agent_resolution() -> arkret_sdk::ResolutionCommitment {
         arkret_sdk::ResolutionCommitment {
             full_id: arkret_sdk::DidFullId::new("did:web:agent.example").unwrap(),
@@ -2017,7 +1949,6 @@ mod notary_derivation_tests {
                 "closed",
                 "sha256",
                 "ak:trust_domain:did.web.example",
-                &[],
                 &["did:web:media.example".to_owned()],
                 // A non-empty alias, so the closed-schema gate actually sees the
                 // create-time alias path. Passing `None` here is what let an
@@ -2098,7 +2029,6 @@ mod notary_derivation_tests {
                 "closed",
                 "sha256",
                 "ak:trust_domain:did.web.example",
-                &[],
                 &[],
                 None,
                 None,

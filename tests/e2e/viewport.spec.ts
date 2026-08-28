@@ -8,7 +8,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { mockArkretApi } from "./mockArkretApi";
 import { writeSessionGrantInjection } from "./strandsHarness";
 
-const DEMO_REALM = "ak:realm:AcbFC8Nil95DfV11kMMMvRtzRdEC3g-tFtBE8_VQQ74j";
+const DEMO_REALM = "ak:realm:AZQnaSleDidYaYIvfwYy3au5gnd_DSinxyUHEl7ewtxk";
 const DESKTOP_VIEWPORT = { width: 1440, height: 900 };
 const MOBILE_VIEWPORT = { width: 390, height: 844 }; // iPhone 13
 const TABLET_VIEWPORT = { width: 820, height: 1180 }; // iPad Air narrow layout

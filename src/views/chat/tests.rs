@@ -3469,7 +3469,7 @@ fn participation_visibility_uses_most_specific_effective_scope() {
         ParticipationScope,
     };
 
-    let realm = "ak:realm:AcbFC8Nil95DfV11kMMMvRtzRdEC3g-tFtBE8_VQQ74j";
+    let realm = "ak:realm:AZQnaSleDidYaYIvfwYy3au5gnd_DSinxyUHEl7ewtxk";
     let circle = "ak:circle:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-";
     let realm_entry = AgentParticipationEntry {
         scope: ParticipationScope::Realm {

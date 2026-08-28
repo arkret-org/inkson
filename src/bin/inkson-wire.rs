@@ -12,6 +12,16 @@ struct CanonicalInput {
 }
 
 #[derive(Debug, Deserialize)]
+struct DidKeyFromSeedInput {
+    seed_b64url: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct PrincipalLocatorInput {
+    subject_id: arkret_sdk::DidCoreId,
+}
+
+#[derive(Debug, Deserialize)]
 struct MlsGovernanceProofInput {
     request: arkret_sdk::MlsGovernanceProofRequestBody,
     target_checkpoint: arkret_sdk::MlsGovernanceVerificationCheckpoint,
@@ -48,6 +58,27 @@ struct RealmActorFrontierInput {
     digest_suite: arkret_sdk::DigestSuite,
 }
 
+#[derive(Debug, Deserialize)]
+struct ValidateMockResponseInput {
+    schema_ref: String,
+    value: Value,
+}
+
+#[derive(Debug, Deserialize)]
+struct RealmGenesisSealInput {
+    realm_id: arkret_sdk::RealmId,
+    events: Vec<arkret_sdk::Event>,
+    producer_signing_keys: BTreeMap<String, arkret_sdk::DidKey>,
+}
+
+struct MockServiceAuthority {
+    resolution: arkret_sdk::AuthenticatedServiceResolution,
+    signing_key: ed25519_dalek::SigningKey,
+    service_id: arkret_sdk::DidCoreId,
+    full_id: arkret_sdk::DidFullId,
+    verification_method: arkret_sdk::DidUrl,
+}
+
 fn main() -> Result<()> {
     let command = std::env::args().nth(1).context("missing command")?;
     let input = read_stdin_json()?;
@@ -60,11 +91,518 @@ fn main() -> Result<()> {
         "ingress-receipts" => ingress_receipts(input)?,
         "range-completeness" => range_completeness(input)?,
         "realm-actor-frontier" => realm_actor_frontier(input)?,
+        "service-resolution" => service_resolution()?,
+        "principal-locator" => principal_locator(input)?,
+        "did-key-from-seed" => did_key_from_seed(input)?,
+        "demo-realm-genesis" => demo_realm_genesis()?,
+        "realm-genesis-seal" => realm_genesis_seal(input)?,
+        "validate-mock-response" => validate_mock_response(input)?,
         _ => bail!("unknown inkson-wire command {command:?}"),
     };
 
     println!("{}", serde_json::to_string(&output)?);
     Ok(())
+}
+
+fn did_key_from_seed(input: Value) -> Result<Value> {
+    let input: DidKeyFromSeedInput =
+        serde_json::from_value(input).context("parse did:key fixture seed input")?;
+    let seed =
+        arkret_sdk::base64url_decode(&input.seed_b64url).context("decode did:key fixture seed")?;
+    let seed: [u8; 32] = seed
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("did:key fixture seed must contain 32 bytes"))?;
+    let signing_key = ed25519_dalek::SigningKey::from_bytes(&seed);
+    let multibase =
+        arkret_sdk::ed25519_pubkey_to_did_key_multibase(signing_key.verifying_key().as_bytes());
+    Ok(json!({ "did_key": format!("did:key:{multibase}") }))
+}
+
+fn demo_realm_genesis() -> Result<Value> {
+    use inkson::operation::AuthoredEventExt as _;
+
+    let authority = mock_service_authority()?;
+    let producer_signing_key = ed25519_dalek::SigningKey::from_bytes(&[1_u8; 32]);
+    let producer_key_material = arkret_sdk::ed25519_pubkey_to_did_key_multibase(
+        producer_signing_key.verifying_key().as_bytes(),
+    );
+    let producer_full_id = arkret_sdk::DidFullId::new(format!("did:key:{producer_key_material}"))?;
+    let producer_id = arkret_wire::project_full_id_to_core_id(&producer_full_id)?;
+    let notary_public_key = authority.signing_key.verifying_key().to_bytes();
+    let notary = arkret_sdk::NotaryValue::single_signer(arkret_sdk::NotarySignerDescriptor {
+        actor_id: authority.service_id.clone(),
+        verification_method: authority.verification_method.clone(),
+        key_kind: arkret_sdk::NotaryKeyKind::Ed25519Raw32,
+        jose_algorithm: arkret_sdk::NotaryJoseAlgorithm::Ed25519,
+        frozen_public_key_b64u: arkret_sdk::base64url_encode(notary_public_key),
+        frozen_public_key_digest: arkret_sdk::Hash::new(arkret_sdk::canonical::sha256_digest(
+            notary_public_key,
+        ))?,
+    });
+    inkson::operation::set_authoring_principal_server_id(Some(authority.service_id.clone()));
+    let operation = inkson::event_builders::build_realm_create_event(
+        arkret_sdk::GenesisSalt::new(arkret_sdk::base64url_encode([9_u8; 32]))?,
+        producer_id.as_str(),
+        notary,
+        "Arkret Demo Realm",
+        Some("SDK-authored E2E Realm fixture"),
+        "listed",
+        "invite",
+        "all_history_for_current_members",
+        "mls_rfc9420",
+        "standard",
+        "restricted",
+        "sha256",
+        "ak:trust_domain:local.host",
+        Some("mls_rfc9420"),
+    )?;
+    inkson::operation::set_authoring_principal_server_id(None);
+    let created_at = chrono::DateTime::parse_from_rfc3339("2026-04-28T12:00:00.000Z")?
+        .with_timezone(&chrono::Utc);
+    let mut event = operation
+        .into_intent()
+        .with_created_at(created_at)
+        .author_with_digest_suite(
+            0,
+            arkret_sdk::Hlc::new("019641370000-0000-e2e00001".to_owned())?,
+            arkret_sdk::DigestSuite::Sha256,
+        )?;
+    event.sign_ed25519(
+        producer_full_id.as_str(),
+        format!("{producer_full_id}#device"),
+        &producer_signing_key,
+    )?;
+    let realm_id = event.realm_id.clone();
+    let verification_method = event
+        .proofs
+        .first()
+        .and_then(arkret_sdk::EventProof::as_producer)
+        .context("demo Realm genesis lacks producer proof")?
+        .verification_method
+        .clone();
+    let facets = inkson::event_builders::RealmBootstrapFacets {
+        principal_server_id: authority.service_id.clone(),
+        actor_id: producer_id.to_string(),
+        notary_did: authority.full_id.to_string(),
+        notary_service_origin: "https://server.local".to_owned(),
+        title: "Arkret Demo Realm".to_owned(),
+        summary: Some("SDK-authored E2E Realm fixture".to_owned()),
+        discoverability: "listed".to_owned(),
+        join_rule: "invite".to_owned(),
+        history_access: "all_history_for_current_members".to_owned(),
+        encryption_profile: "mls_rfc9420".to_owned(),
+        federation_policy: "restricted".to_owned(),
+        alias: None,
+        content_scheme: Some("mls_exporter_aead_v1".to_owned()),
+        plaintext_visible_services: Vec::new(),
+    };
+    let followups = inkson::event_builders::build_realm_bootstrap_facet_intents(
+        &facets,
+        realm_id.as_str(),
+        arkret_sdk::DigestSuite::Sha256,
+    )?;
+    let mut events = vec![event.event().clone()];
+    for (index, intent) in followups.into_iter().enumerate() {
+        let actor_seq = index as u64 + 1;
+        let created_at = created_at + chrono::Duration::seconds(actor_seq as i64);
+        let prev_ref = events
+            .last()
+            .context("demo Realm genesis chain lost its previous Event")?
+            .event_id
+            .clone();
+        let mut followup = intent
+            .with_created_at(created_at)
+            .with_prev_refs(vec![prev_ref])
+            .author_with_digest_suite(
+                actor_seq,
+                arkret_sdk::Hlc::new(format!("019641370000-{actor_seq:04x}-e2e00001"))?,
+                arkret_sdk::DigestSuite::Sha256,
+            )?;
+        followup.sign_ed25519(
+            producer_full_id.as_str(),
+            format!("{producer_full_id}#device"),
+            &producer_signing_key,
+        )?;
+        events.push(followup.event().clone());
+    }
+    let mut fixture = realm_genesis_seal(json!({
+        "realm_id": realm_id,
+        "events": events,
+        "producer_signing_keys": {
+            verification_method.as_str(): format!("did:key:{producer_key_material}")
+        }
+    }))?;
+    fixture
+        .as_object_mut()
+        .context("demo Realm fixture is not an object")?
+        .insert("realm_id".to_owned(), json!(realm_id));
+    Ok(fixture)
+}
+
+fn realm_genesis_seal(input: Value) -> Result<Value> {
+    use std::collections::{BTreeMap, BTreeSet};
+
+    use arkret_sdk::{CellRegistry as _, PayloadSigner as _};
+
+    let mut input: RealmGenesisSealInput =
+        serde_json::from_value(input).context("parse Realm genesis Seal input")?;
+    anyhow::ensure!(
+        input
+            .events
+            .iter()
+            .all(|event| event.realm_id == input.realm_id),
+        "Realm genesis Seal Events belong to another Realm"
+    );
+
+    let digest_suite = arkret_sdk::DigestSuite::Sha256;
+    let authority = mock_service_authority()?;
+    let signer_evidence = arkret_sdk::AuthenticatedSignerResolutionEvidence::Service {
+        signer_id: authority.service_id.clone(),
+        verification_method: authority.verification_method.clone(),
+        authenticated_resolution: authority.resolution.clone(),
+    };
+    signer_evidence.validate_attester_binding()?;
+    let signer_evidence_digest = signer_evidence.canonical_sha256_digest()?;
+    let signer_evidence_ref = signer_evidence.evidence_ref()?;
+    let admission_signer = arkret_signatures::Ed25519PayloadSigner::new(
+        authority.signing_key.clone(),
+        authority.full_id.clone(),
+        authority.verification_method.clone(),
+    );
+    for event in &mut input.events {
+        anyhow::ensure!(
+            event.principal_server_id == authority.service_id,
+            "Realm genesis Event targets a different Principal Server"
+        );
+        let producer = match event.proofs.as_slice() {
+            [arkret_sdk::EventProof::Producer(producer)] => producer.clone(),
+            _ => bail!("Realm genesis input must contain caller-submission Events"),
+        };
+        let producer_signing_key = input
+            .producer_signing_keys
+            .get(producer.verification_method.as_str())
+            .with_context(|| {
+                format!(
+                    "missing producer signing key for {}",
+                    producer.verification_method
+                )
+            })?
+            .clone();
+        let accepted_at = chrono::Utc::now();
+        let mut admission = arkret_sdk::PrincipalServerAdmissionProof {
+            kind: arkret_sdk::PrincipalServerAdmissionProofKind::PrincipalServerAdmission,
+            verification_method: authority.verification_method.clone(),
+            event_digest: producer.event_digest.clone(),
+            producer_proof_digest:
+                arkret_sdk::PrincipalServerAdmissionProof::producer_proof_digest(&producer)?,
+            producer_verification_method: producer.verification_method.clone(),
+            producer_signing_key,
+            producer_signer_resolution_evidence_ref: None,
+            producer_signer_resolution_evidence_digest: None,
+            signer_resolution_evidence_ref: signer_evidence_ref.clone(),
+            signer_resolution_evidence_digest: signer_evidence_digest.clone(),
+            accepted_at,
+            jws: String::new(),
+        };
+        admission.jws = admission_signer
+            .sign_payload(&admission.canonical_binding_bytes()?)?
+            .jws;
+        admission.validate_binding(
+            &producer.event_digest,
+            &producer,
+            &event.principal_server_id,
+        )?;
+        event.proofs.push(admission.into());
+    }
+    let registry = arkret_sdk::lattice_registry::build_sdk_cell_registry();
+    let pre_state = BTreeMap::new();
+    let mut ops_by_cell =
+        BTreeMap::<arkret_sdk::CellRef, Vec<arkret_state::lattice::ordered_log::IssuedOp>>::new();
+    let mut event_digests = Vec::with_capacity(input.events.len());
+    for event in &input.events {
+        let digest = arkret_sdk::Hash::new(event.event_digest_with_digest_suite(digest_suite)?)?;
+        let writes = arkret_schema::project_registered_operation_writes(
+            &arkret_sdk::ProjectedEventInput::from(event),
+            digest_suite,
+        )?;
+        for write in writes {
+            for effect in arkret_state::resolve_projected_write(
+                &write,
+                &input.realm_id,
+                &pre_state,
+                &registry,
+            )
+            .map_err(|error| anyhow::anyhow!(error.to_string()))?
+            {
+                ops_by_cell.entry(effect.cell.clone()).or_default().push(
+                    arkret_state::lattice::ordered_log::IssuedOp {
+                        issuer: event.actor_id.clone(),
+                        op: arkret_state::SealedOp::from_projection(digest.clone(), &effect),
+                    },
+                );
+            }
+        }
+        event_digests.push((event.event_id.clone(), digest));
+    }
+
+    let mut post_state = BTreeMap::new();
+    for (cell, ops) in ops_by_cell {
+        let binding = registry
+            .resolve(&input.realm_id, &cell)
+            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        post_state.insert(
+            cell.clone(),
+            arkret_state::join_cell(binding.lattice.as_ref(), &cell, &ops),
+        );
+    }
+    let state_root = arkret_state::compute_state_root(&post_state, digest_suite)?;
+
+    let signer = arkret_signatures::Ed25519PayloadSigner::new(
+        authority.signing_key,
+        authority.full_id,
+        authority.verification_method,
+    );
+    let physical_ms = chrono::Utc::now().timestamp_millis().max(0) as u64;
+    let hlc = arkret_sdk::Hlc::new(format!("{physical_ms:012x}-0000-5ea10000"))?;
+    let mut delta = event_digests
+        .iter()
+        .map(|(_, digest)| digest.clone())
+        .collect::<Vec<_>>();
+    delta.sort_by(|left, right| left.as_str().cmp(right.as_str()));
+    delta.dedup();
+    let covered = delta.iter().cloned().collect::<BTreeSet<_>>();
+    let control_event_set_root = arkret_state::control_event_set_root(&covered, digest_suite)?;
+    let completeness_events = input
+        .events
+        .iter()
+        .cloned()
+        .map(|event| (event, digest_suite))
+        .collect::<Vec<_>>();
+    let completeness_root = arkret_state::control_event_completeness_root(
+        &completeness_events,
+        &covered,
+        digest_suite,
+    )?;
+    let seal = arkret_sdk::Seal::sign_single_kind_with_roots(
+        input.realm_id,
+        Vec::new(),
+        delta,
+        control_event_set_root,
+        completeness_root,
+        state_root,
+        hlc,
+        arkret_sdk::SealKind::Normal,
+        digest_suite,
+        &signer,
+    )?;
+    seal.validate_id(digest_suite)?;
+    seal.validate_structural()?;
+    let event_digests = event_digests
+        .into_iter()
+        .map(|(event_id, digest)| json!({ "event_id": event_id, "digest": digest }))
+        .collect::<Vec<_>>();
+    Ok(json!({
+        "seal": seal,
+        "event_digests": event_digests,
+        "accepted_events": input.events,
+        "governance_dependencies": [arkret_sdk::GovernanceDependency::AuthenticatedSignerResolutionEvidence {
+            selector: arkret_sdk::GovernanceDependencySelector::AuthenticatedSignerResolutionEvidence {
+                content_digest: signer_evidence_digest,
+            },
+            authenticated_signer_resolution_evidence: Box::new(signer_evidence),
+        }],
+        "signer": signer.signer_did(),
+    }))
+}
+
+fn mock_service_authority() -> Result<MockServiceAuthority> {
+    use arkret_identity::{DidKeyResolver, DidResolver};
+    use arkret_sdk::{
+        AuthenticatedServiceResolution, DidFullId, DidUrl, ResolutionCommitment,
+        ResolutionDidBindingEvidenceKind, ResolutionDidBindingEvidenceReceipt,
+        ResolutionMethodEvidenceBoundary, ResolutionMethodHistoryEvidence,
+        ServiceResolutionRecordCore, route_binding_describe_digest, sign_service_resolution_record,
+    };
+    use chrono::Duration;
+    use ed25519_dalek::SigningKey;
+
+    let signing_key = SigningKey::from_bytes(&[31_u8; 32]);
+    let key_material =
+        arkret_sdk::ed25519_pubkey_to_did_key_multibase(signing_key.verifying_key().as_bytes());
+    let full_id = DidFullId::new(format!("did:key:{key_material}"))?;
+    let service_id = arkret_wire::project_full_id_to_core_id(&full_id)?;
+    let verification_method =
+        DidUrl::new(format!("{full_id}#{key_material}")).map_err(|error| anyhow::anyhow!(error))?;
+    let document = DidKeyResolver::new().resolve_did(&full_id)?.document;
+    let document_digest =
+        arkret_sdk::Hash::new(arkret_sdk::canonical::canonical_sha256(&document)?)?;
+    let full_id_digest = arkret_sdk::canonical::sha256_digest(full_id.as_str().as_bytes());
+    let history_position = format!("synthetic-full-id-{full_id_digest}");
+    let commitment = ResolutionCommitment {
+        full_id: full_id.clone(),
+        method_history_head: history_position.clone(),
+        version_id: history_position.clone(),
+    };
+    let describe_digest = route_binding_describe_digest(
+        &service_id,
+        "principal_server",
+        &commitment,
+        "https://server.local/_arkret",
+    )?;
+    let issued_at = chrono::Utc::now() - Duration::seconds(1);
+    let record = sign_service_resolution_record(
+        ServiceResolutionRecordCore {
+            service_id: service_id.clone(),
+            service_kind: "principal_server".to_owned(),
+            full_id,
+            method_history_head: history_position.clone(),
+            version_id: history_position.clone(),
+            resolution_event_ref: format!("did-key-full-id-{full_id_digest}"),
+            record_sequence: 0,
+            previous_record_digest: None,
+            current_record_url: format!(
+                "https://server.local{}",
+                arkret_sdk::canonical_service_current_record_path(&service_id)
+            ),
+            base_url: "https://server.local/".to_owned(),
+            describe_digest,
+            issued_at,
+            refresh_after: issued_at + Duration::minutes(30),
+            expires_at: issued_at + Duration::hours(1),
+        },
+        verification_method.clone(),
+        &signing_key,
+    )?;
+    let evidence = ResolutionMethodHistoryEvidence::DidKeyExpansion {
+        adapter_version: "did:key:1".to_owned(),
+        boundary: ResolutionMethodEvidenceBoundary {
+            from_method_history_head: history_position.clone(),
+            from_version_id: history_position.clone(),
+            to_method_history_head: history_position.clone(),
+            to_version_id: history_position,
+        },
+        evidence: ResolutionDidBindingEvidenceReceipt {
+            kind: ResolutionDidBindingEvidenceKind::AkDidBindingEvidenceV1,
+            method: "key".to_owned(),
+            document_digest,
+            method_proofs: Vec::new(),
+        },
+    };
+    let resolution = AuthenticatedServiceResolution {
+        service_resolution_record: record,
+        method_history_evidence: evidence,
+        normalized_did_document: document,
+    };
+    arkret_identity::verify_authenticated_service_resolution_history(
+        &resolution,
+        &service_id,
+        chrono::Utc::now(),
+    )?;
+    Ok(MockServiceAuthority {
+        resolution,
+        signing_key,
+        service_id,
+        full_id: signer_did_from_method(&verification_method)?,
+        verification_method,
+    })
+}
+
+fn signer_did_from_method(method: &arkret_sdk::DidUrl) -> Result<arkret_sdk::DidFullId> {
+    let (controller, _) = method
+        .as_str()
+        .split_once('#')
+        .context("mock service verification method has no fragment")?;
+    arkret_sdk::DidFullId::new(controller.to_owned()).map_err(anyhow::Error::msg)
+}
+
+fn service_resolution() -> Result<Value> {
+    serde_json::to_value(mock_service_authority()?.resolution)
+        .context("serialize service-resolution fixture")
+}
+
+fn principal_locator(input: Value) -> Result<Value> {
+    let input: PrincipalLocatorInput =
+        serde_json::from_value(input).context("parse principal-locator fixture input")?;
+    let authority = mock_service_authority()?;
+    let issued_at = chrono::DateTime::parse_from_rfc3339("2026-06-07T00:00:00.000Z")?
+        .with_timezone(&chrono::Utc);
+    let expires_at = issued_at + chrono::Duration::minutes(15);
+    let locator_ref_digest = arkret_sdk::Hash::new(arkret_sdk::canonical::sha256_digest(
+        b"inkson-e2e-invite-locator",
+    ))?;
+    let service_resolution = arkret_sdk::ServiceResolutionCarrier::CurrentRecordUrl {
+        current_record_url: authority
+            .resolution
+            .service_resolution_record
+            .record
+            .current_record_url
+            .clone(),
+        pinned_record_digest: None,
+    };
+    let mut locator = arkret_sdk::PrincipalLocator {
+        schema: arkret_sdk::PrincipalLocator::SCHEMA.to_owned(),
+        subject_id: input.subject_id,
+        recipient_service_id: authority.service_id,
+        service_resolution,
+        route_assistance: None,
+        recipient_service_kind: None,
+        issued_at,
+        expires_at,
+        locator_ref_digest,
+        delivery_modes: Vec::new(),
+        display_hint: None,
+        proofs: Vec::new(),
+    };
+    let unsigned = serde_json::to_value(&locator)?;
+    let payload_digest =
+        arkret_sdk::Hash::new(arkret_sdk::canonical::canonical_sha256(&unsigned)?)?;
+    locator.proofs.push(arkret_sdk::PrincipalLocatorProof {
+        proof_purpose: arkret_sdk::PrincipalLocatorProofPurpose::RecipientServiceAcceptance,
+        proof: arkret_sdk::DetachedPayloadProof {
+            kind: arkret_sdk::proof_kind::DETACHED_JWS.to_owned(),
+            verification_method: authority.verification_method,
+            payload_digest,
+            created_at: issued_at,
+            domain: None,
+            audience: None,
+            jws: "e30..c2ln".to_owned(),
+        },
+    });
+    locator.validate_minimal()?;
+    serde_json::to_value(locator).context("serialize principal-locator fixture")
+}
+
+fn validate_mock_response(input: Value) -> Result<Value> {
+    const VALIDATION_ALIAS: &str = "inkson.mock.response";
+    let input: ValidateMockResponseInput =
+        serde_json::from_value(input).context("parse mock response validation input")?;
+    let (artifact_path, fragment) = input
+        .schema_ref
+        .split_once('#')
+        .map_or((input.schema_ref.as_str(), None), |(path, fragment)| {
+            (path, Some(format!("#{fragment}")))
+        });
+    let schema = arkret_schema::embedded_json_artifact(artifact_path)
+        .with_context(|| format!("load embedded response schema {artifact_path}"))?;
+    let mut registry = arkret_schema::schema_registry_from_embedded_spec_artifacts()
+        .context("load embedded protocol schema registry")?;
+    if let Some(fragment) = fragment {
+        registry
+            .register_fragment(VALIDATION_ALIAS, schema, fragment)
+            .with_context(|| format!("register response schema {}", input.schema_ref))?;
+    } else {
+        registry.register(VALIDATION_ALIAS, schema);
+    }
+    registry
+        .validate_value(VALIDATION_ALIAS, &input.value)
+        .with_context(|| {
+            format!(
+                "mock response violates {}: {}",
+                input.schema_ref,
+                serde_json::to_string(&input.value).unwrap_or_else(|_| "<unprintable>".to_owned())
+            )
+        })?;
+    Ok(input.value)
 }
 
 fn realm_actor_frontier(input: Value) -> Result<Value> {
@@ -449,7 +987,7 @@ fn ingress_receipts(input: Value) -> Result<Value> {
 
 #[cfg(test)]
 mod tests {
-    use super::realm_actor_frontier;
+    use super::{realm_actor_frontier, validate_mock_response};
 
     #[test]
     fn realm_actor_frontier_command_matches_the_spec_vector() {
@@ -469,5 +1007,32 @@ mod tests {
             output["frontier_digest"],
             "sha256:cb4775b3b4590faa096cafd34b0dfd9abc77ad02729a451c0fe5dfdee10d5dc1"
         );
+    }
+
+    #[test]
+    fn mock_response_validation_uses_embedded_schema_artifacts() {
+        let valid = serde_json::json!({
+            "schema_ref": "schemas/http-problem-details.schema.json",
+            "value": {
+                "type": "https://arkret.org/problems/not_found",
+                "title": "Not found",
+                "status": 404,
+                "detail": "The requested resource was not found."
+            }
+        });
+        validate_mock_response(valid).expect("valid embedded response schema");
+
+        let unknown_field = serde_json::json!({
+            "schema_ref": "schemas/service-describe.schema.json",
+            "value": { "obsolete_second_model": true }
+        });
+        assert!(validate_mock_response(unknown_field).is_err());
+
+        let fragment = serde_json::json!({
+            "schema_ref": "schemas/account-operations.schema.json#/$defs/account_view",
+            "value": {}
+        });
+        let error = validate_mock_response(fragment).expect_err("missing fields must fail");
+        assert!(!format!("{error:#}").contains("unknown schema"));
     }
 }

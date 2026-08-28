@@ -278,9 +278,9 @@ fn account_scope_owner_alone_is_not_bootstrap_refresh_material() {
 fn current_device_authorization_detects_verified_current_device() {
     let device = "ak:device:01964137-0000-7000-8000-000000000001";
     let viewer = serde_json::json!({
-        "current_device_id": device,
         "devices": [{
             "device_id": device,
+            "status": "active",
             "verification_state": "verified"
         }]
     });
@@ -292,13 +292,13 @@ fn current_device_authorization_detects_verified_current_device() {
 }
 
 #[test]
-fn current_device_authorization_detects_unverified_new_device() {
+fn current_device_authorization_detects_unresolved_new_device() {
     let device = "ak:device:01964137-0000-7000-8000-000000000002";
     let viewer = serde_json::json!({
-        "current_device_id": device,
         "devices": [{
             "device_id": device,
-            "verification_state": "unverified"
+            "status": "active",
+            "verification_state": "unresolved"
         }]
     });
 
@@ -314,7 +314,8 @@ fn current_device_authorization_treats_missing_current_device_as_unauthorized() 
     let viewer = serde_json::json!({
         "devices": [{
             "device_id": "ak:device:01964137-0000-7000-8000-000000000001",
-            "status": "active"
+            "status": "active",
+            "verification_state": "verified"
         }]
     });
 
@@ -358,18 +359,19 @@ fn current_device_authorization_accepts_verified_status_even_when_sdk_status_is_
 }
 
 #[test]
-fn current_device_authorization_accepts_explicit_authorized_status() {
+fn current_device_authorization_rejects_stale_verification() {
     let device = "ak:device:01964137-0000-7000-8000-000000000001";
     let viewer = serde_json::json!({
         "devices": [{
             "device_id": device,
-            "status": "authorized"
+            "status": "active",
+            "verification_state": "stale"
         }]
     });
 
     assert_eq!(
         current_device_authorization_from_account_viewer(&viewer, device),
-        Some(true)
+        Some(false)
     );
 }
 
@@ -394,15 +396,16 @@ fn account_has_other_active_devices_detects_prior_device() {
     let current = "ak:device:01964137-0000-7000-8000-000000000002";
     let prior = "ak:device:01964137-0000-7000-8000-000000000001";
     let viewer = serde_json::json!({
-        "current_device_id": current,
         "devices": [
             {
                 "device_id": prior,
+                "status": "active",
                 "verification_state": "verified"
             },
             {
                 "device_id": current,
-                "verification_state": "unverified"
+                "status": "active",
+                "verification_state": "unresolved"
             }
         ]
     });
@@ -417,15 +420,16 @@ fn account_has_other_active_devices_ignores_revoked_prior_device() {
     let current = "ak:device:01964137-0000-7000-8000-000000000002";
     let prior = "ak:device:01964137-0000-7000-8000-000000000001";
     let viewer = serde_json::json!({
-        "current_device_id": current,
         "devices": [
             {
                 "device_id": prior,
+                "status": "revoked",
                 "verification_state": "verified",
                 "revoked_at": "2026-06-14T00:00:00.000Z"
             },
             {
                 "device_id": current,
+                "status": "active",
                 "verification_state": "verified"
             }
         ]
@@ -437,7 +441,7 @@ fn account_has_other_active_devices_ignores_revoked_prior_device() {
 }
 
 #[test]
-fn current_device_authorization_accepts_authorized_at_without_status() {
+fn current_device_authorization_rejects_authorized_at_without_verification() {
     let device = "ak:device:01964137-0000-7000-8000-000000000001";
     let viewer = serde_json::json!({
         "devices": [{
@@ -448,7 +452,7 @@ fn current_device_authorization_accepts_authorized_at_without_status() {
 
     assert_eq!(
         current_device_authorization_from_account_viewer(&viewer, device),
-        Some(true)
+        Some(false)
     );
 }
 

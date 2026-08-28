@@ -156,38 +156,20 @@ pub(crate) fn current_device_authorization_from_account_viewer(
     configured_device_id: &str,
 ) -> Option<bool> {
     let configured_device = configured_device_id.trim();
-    let current_device = viewer
-        .get("current_device_id")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|device| !device.is_empty())
-        .unwrap_or(configured_device);
     let devices = viewer.get("devices").and_then(Value::as_array)?;
     if devices.is_empty() {
         return None;
     }
 
-    let current_row = devices
-        .iter()
-        .find(|device| {
+    let current_row = (!configured_device.is_empty()).then(|| {
+        devices.iter().find(|device| {
             device
-                .get("is_current_session_device")
-                .and_then(Value::as_bool)
-                .unwrap_or(false)
+                .get("device_id")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                == Some(configured_device)
         })
-        .or_else(|| {
-            if current_device.is_empty() {
-                None
-            } else {
-                devices.iter().find(|device| {
-                    device
-                        .get("device_id")
-                        .and_then(Value::as_str)
-                        .map(str::trim)
-                        == Some(current_device)
-                })
-            }
-        });
+    })?;
 
     match current_row {
         Some(device) => device_authorization_from_record(device),
@@ -199,13 +181,7 @@ pub(crate) fn account_has_other_active_devices_from_account_viewer(
     viewer: &Value,
     configured_device_id: &str,
 ) -> bool {
-    let configured_device = configured_device_id.trim();
-    let current_device = viewer
-        .get("current_device_id")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|device| !device.is_empty())
-        .unwrap_or(configured_device);
+    let current_device = configured_device_id.trim();
     viewer
         .get("devices")
         .and_then(Value::as_array)
@@ -225,34 +201,20 @@ fn device_authorization_from_record(device: &Value) -> Option<bool> {
     if device_revoked(device) {
         return Some(false);
     }
-
-    for key in ["verification_state", "verification", "trust_state"] {
-        if let Some(state) = device.get(key).and_then(Value::as_str)
-            && let Some(authorized) = device_status_authorization(state)
-        {
-            return Some(authorized);
-        }
-    }
-    if let Some(status) = device.get("status").and_then(Value::as_str)
-        && let Some(authorized) = device_status_field_authorization(status)
-    {
-        return Some(authorized);
-    }
-    if device
-        .get("authorized_at")
-        .and_then(Value::as_str)
-        .is_some_and(|value| !value.trim().is_empty())
-    {
-        return Some(true);
-    }
-    Some(false)
+    Some(
+        device
+            .get("verification_state")
+            .and_then(Value::as_str)
+            .is_some_and(|state| state == "verified"),
+    )
 }
 
 fn device_revoked(device: &Value) -> bool {
-    device
-        .get("revoked_at")
-        .and_then(Value::as_str)
-        .is_some_and(|value| !value.trim().is_empty())
+    device.get("status").and_then(Value::as_str) == Some("revoked")
+        || device
+            .get("revoked_at")
+            .and_then(Value::as_str)
+            .is_some_and(|value| !value.trim().is_empty())
         || device.get("revoked_at").is_some_and(|value| {
             !value.is_null() && !value.as_str().map(str::trim).unwrap_or_default().is_empty()
         })
@@ -266,32 +228,6 @@ pub(crate) fn device_authorization_required_from_account_viewer(
         current_device_authorization_from_account_viewer(viewer, configured_device_id),
         Some(true)
     )
-}
-
-fn device_status_authorization(status: &str) -> Option<bool> {
-    let normalized = status.trim().to_ascii_lowercase();
-    if normalized.is_empty() {
-        return None;
-    }
-    match normalized.as_str() {
-        "verified" | "authorized" | "active" | "trusted" => Some(true),
-        "unverified"
-        | "pending"
-        | "pending_authorization"
-        | "requires_authorization"
-        | "revoked"
-        | "disabled"
-        | "inactive" => Some(false),
-        _ => None,
-    }
-}
-
-fn device_status_field_authorization(status: &str) -> Option<bool> {
-    let normalized = status.trim().to_ascii_lowercase();
-    if normalized == "active" {
-        return None;
-    }
-    device_status_authorization(status)
 }
 
 fn recovery_public_key_secret_storage_backup_present(list_payload: &Value) -> bool {

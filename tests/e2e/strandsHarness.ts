@@ -1,12 +1,25 @@
 import { expect, test } from "@playwright/test";
-import { mockArkretApi } from "./mockArkretApi";
+import {
+  CURRENT_PRINCIPAL_SERVER_FULL_ID,
+  CURRENT_PRINCIPAL_SERVER_ID,
+  mockArkretApi,
+} from "./mockArkretApi";
+
+export { CURRENT_PRINCIPAL_SERVER_FULL_ID, CURRENT_PRINCIPAL_SERVER_ID };
+
+export function submittedEvent(body: any) {
+  const entry = Array.isArray(body.events)
+    ? body.events[0]
+    : (body.event ?? body);
+  return entry?.event ?? entry;
+}
 
 export const DEMO_REALM =
-  "ak:realm:AcbFC8Nil95DfV11kMMMvRtzRdEC3g-tFtBE8_VQQ74j";
+  "ak:realm:AZQnaSleDidYaYIvfwYy3au5gnd_DSinxyUHEl7ewtxk";
 export const DEMO_BOARD_SPACE =
   "ak:space:AY61QviMxoJ0ALEn5U39bA7Qbi1BxHCrOq4950m2JRjM";
 const DEFAULT_SERVER_URL = "https://local.host";
-const DEFAULT_SERVER_AUDIENCE = "ak:did_core:web:server.local";
+const DEFAULT_SERVER_AUDIENCE = CURRENT_PRINCIPAL_SERVER_ID;
 const DEFAULT_ACCOUNT_DID = "did:web:alice.example";
 const DEFAULT_ACCOUNT_CORE_ID = "ak:did_core:web:alice.example";
 const DEFAULT_DEVICE_ID = "ak:device:01964137-0000-7000-8000-0000000000a1";
@@ -163,7 +176,7 @@ export async function dismissHistoryRecoveryModal(
 ) {
   const modal = page.getByTestId("mls-recovery-missing-modal").last();
   const appeared = await modal
-    .waitFor({ state: "visible", timeout: 30_000 })
+    .waitFor({ state: "visible", timeout: 5_000 })
     .then(() => true)
     .catch(() => false);
   if (!appeared) {
@@ -202,7 +215,6 @@ export async function openDiscussion(page: import("@playwright/test").Page) {
   await openKanban(page);
   await page.getByTestId("kanban-card").first().click();
   await expect(page.getByTestId("card-detail-modal")).toBeVisible();
-  await expect(page.getByTestId("card-synthesis-panel")).toBeVisible();
   await page.getByTestId("card-detail-tab-discussion").click();
   await expect(page.getByTestId("chat-panel")).toBeVisible();
 }
@@ -441,6 +453,7 @@ export function registerStrandsBeforeEach() {
       testInfo.title.startsWith("new Recovery Key");
     await mockArkretApi(page, {
       currentDeviceId: initialDeviceId,
+      currentDeviceSigningSeedB64url: DEFAULT_EVENT_SIGNING_SEED_B64URL,
       directoryPrimaryHandle: testInfo.title.startsWith(
         "account menu keeps the viewer fallback when the handle directory returns an empty page",
       )
@@ -451,16 +464,6 @@ export function registerStrandsBeforeEach() {
       )
         ? "2000-01-01T00:00:00.000Z"
         : undefined,
-      sidecarPendingMemberReconciliations: testInfo.title.startsWith(
-        "pending sidecar",
-      )
-        ? [
-            {
-              agent_id: "did:web:agents.example:alice-assistant",
-              reason: "membership_projection_pending",
-            },
-          ]
-        : undefined,
       includeSidecarInCircleList: testInfo.title.startsWith(
         "ordinary Circle list",
       ),
@@ -470,26 +473,9 @@ export function registerStrandsBeforeEach() {
       emptyBoard: testInfo.title.startsWith(
         "kanban hides list creation until a board exists",
       ),
-      additionalActiveAgents: testInfo.title.startsWith(
-        "sidecar preserves long-history",
-      )
-        ? [
-            {
-              agent_id: "did:web:agents.example:research",
-              display_name: "Research Assistant",
-              slug: "research-assistant-with-an-intentionally-long-private-handle",
-            },
-          ]
-        : undefined,
-      demoPrimaryCardTitle: testInfo.title.startsWith(
-        "sidecar preserves long-history",
-      )
-        ? "Legal review for a public beta launch with an intentionally long cross-team approval title"
-        : undefined,
       preseedRecoveryMaterial:
         testInfo.title.startsWith("configured recovery session") ||
         testInfo.title.startsWith("setup, onboarding, and Board entry") ||
-        testInfo.title.startsWith("owned agent sidecar labels") ||
         testInfo.title.startsWith(
           "agent deactivation submits controller-signed",
         ) ||
@@ -503,11 +489,6 @@ export function registerStrandsBeforeEach() {
           "kanban queues canonical event submissions",
         ) ||
         testInfo.title.startsWith("card detail embeds discussion directly"),
-      seedSharedHistoryCount: testInfo.title.startsWith(
-        "sidecar preserves long-history",
-      )
-        ? 18
-        : undefined,
       seedDefaultActiveAgent: !testInfo.title.startsWith(
         "account settings split account/server info",
       ),

@@ -1724,8 +1724,8 @@ fn setup_strings(dict: &mut TranslationDict) {
     dict.set("setup.step.basics.subtitle", "名称与用途");
     dict.set("setup.step.boundary.label", "边界");
     dict.set("setup.step.boundary.subtitle", "三条策略轴");
-    dict.set("setup.step.seed.label", "初始成员");
-    dict.set("setup.step.seed.subtitle", "填写初始成员并创建");
+    dict.set("setup.step.create.label", "创建");
+    dict.set("setup.step.create.subtitle", "确认并创建");
     dict.set("setup.step.done.label", "完成");
     dict.set("setup.step.done.subtitle", "打开已创建的 Realm");
 
@@ -1804,19 +1804,6 @@ fn setup_strings(dict: &mut TranslationDict) {
         "高级（联邦策略 / 哈希配置）",
     );
 
-    // 初始成员。
-    dict.set("setup.field.seed_members", "初始成员");
-    dict.set(
-        "setup.field.seed_members_help",
-        "每行一个 DID，或用逗号分隔。使用 handle 邀请需要目录解析。",
-    );
-    dict.set("setup.seed.preview", "成员预览");
-    dict.set("setup.seed.preview_empty", "没有额外的初始成员。");
-    dict.set(
-        "setup.seed.preview_count",
-        "引导请求将包含 {count} 个主体。",
-    );
-
     // 创建阻塞与进度。
     dict.set(
         "setup.blocker.already_created",
@@ -1843,22 +1830,12 @@ fn setup_strings(dict: &mut TranslationDict) {
         "Realm {id} 已受理;正在完成加密设置",
     );
     dict.set("setup.progress.created", "已创建 {id}");
-    dict.set("setup.progress.seeded_owner_only", "仅添加了你本人");
-    dict.set("setup.progress.seeded_members", "已添加 {count} 位成员");
     dict.set(
         "setup.progress.canonical_policy",
         "规范策略 {discoverability} / {join_rule} / {history_access}",
     );
     dict.set("setup.progress.plaintext_services", "未加密服务:{count} 个");
     dict.set("setup.progress.mls_ready_local", "本设备加密已就绪");
-    dict.set(
-        "setup.progress.mls_admission_failed",
-        "无法启用加密:{error}",
-    );
-    dict.set(
-        "setup.progress.mls_welcome_queued",
-        "已为 {count} 位成员排队邀请",
-    );
     dict.set(
         "setup.progress.floor_required",
         "元数据与内容均为端到端加密",
@@ -1898,7 +1875,7 @@ fn setup_strings(dict: &mut TranslationDict) {
     // 操作。
     dict.set("setup.action.back", "上一步");
     dict.set("setup.action.next_boundary", "下一步：边界");
-    dict.set("setup.action.next_seed", "下一步：初始成员");
+    dict.set("setup.action.next_create", "下一步：创建");
     dict.set("setup.action.create_realm", "创建 Realm");
     dict.set("setup.action.finishing", "正在完成设置…");
     dict.set("setup.action.open_realm", "打开 Realm");

@@ -1144,22 +1144,16 @@ pub fn RealmAdminPanel(
                                             },
                                         );
                                         let patch = Value::Object(patch);
-                                        let Some(digest_suite) = state_store
-                                            .read()
-                                            .trusted_mls_governance_checkpoint(&home_realm_id)
-                                            .map(|checkpoint| checkpoint.live_digest_suite)
-                                        else {
-                                            status_msg.set(
-                                                "profile update failed: Realm has no verified governance checkpoint"
-                                                    .to_owned(),
-                                            );
-                                            return;
-                                        };
                                         spawn(async move {
                                             match crate::transport::auth::with_event_submitter(
                                                 &base,
                                                 api_token,
                                                 |sub| async move {
+                                                    let digest_suite = sub
+                                                        .ensure_realm_governance_checkpoint(
+                                                            &home_realm_id,
+                                                        )
+                                                        .await?;
                                                     let profile_result = match subject_kind {
                                                         RealmTreeNodeKind::Realm => {
                                                             crate::transport::realm_write::update_realm_metadata(&sub, &home_realm_id, &actor_id, digest_suite, patch).await
@@ -1365,22 +1359,14 @@ pub fn RealmAdminPanel(
                                     .realm_tree_projections
                                     .get(&realm)
                                     .is_some_and(projection_has_recommended_encryption_floor);
-                                let Some(digest_suite) = state_store
-                                    .read()
-                                    .trusted_mls_governance_checkpoint(&realm)
-                                    .map(|checkpoint| checkpoint.live_digest_suite)
-                                else {
-                                    status_msg.set(
-                                        "policy failed: Realm has no verified governance checkpoint"
-                                            .to_owned(),
-                                    );
-                                    return;
-                                };
                                 spawn(async move {
                                     match crate::transport::auth::with_event_submitter(
                                         &base,
                                         api_token,
                                         |sub| async move {
+                                            let digest_suite = sub
+                                                .ensure_realm_governance_checkpoint(&realm)
+                                                .await?;
                                             crate::transport::realm_write::set_realm_policy_events(
                                                 &sub,
                                                 &realm,

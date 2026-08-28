@@ -826,7 +826,7 @@ fn mention_policy_reads_realm_effective_bit() {
 
 #[test]
 fn mention_state_uses_realm_participation_entry() {
-    let realm = "ak:realm:AcbFC8Nil95DfV11kMMMvRtzRdEC3g-tFtBE8_VQQ74j";
+    let realm = "ak:realm:AZQnaSleDidYaYIvfwYy3au5gnd_DSinxyUHEl7ewtxk";
     let realm_id = arkret_sdk::RealmId::new(realm.to_owned()).unwrap();
     let entry = AgentParticipationEntry {
         scope: ParticipationScope::Realm { realm_id },

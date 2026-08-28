@@ -369,7 +369,7 @@ fn mls_commit_builder_matches_registered_payload_schema() {
 #[test]
 fn discussion_strand_create_emits_discussion_track() {
     let op = ak_ops::discussion_strand_create(
-        "ak:realm:AcbFC8Nil95DfV11kMMMvRtzRdEC3g-tFtBE8_VQQ74j",
+        "ak:realm:AZQnaSleDidYaYIvfwYy3au5gnd_DSinxyUHEl7ewtxk",
         "did:web:alice.example",
         "Ops",
         "general",

@@ -1,0 +1,199 @@
+#!/usr/bin/env python3
+"""Generate and check the Inkson E2E mock operation inventory.
+
+Operation identifiers and response schemas are resolved exclusively from the
+SDK's embedded OpenAPI and registry artifacts.  The mock source is only used
+to retain auditable route evidence; it never supplies protocol identifiers.
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+import re
+import sys
+from pathlib import Path
+from typing import Any
+
+import yaml
+
+
+REPO = Path(__file__).resolve().parents[1]
+SDK_SCHEMA = Path(
+    os.environ.get(
+        "ARKRET_SDK_SCHEMA_DIR",
+        REPO.parent / "arkret-rust-sdk" / "crates" / "schema" / "src",
+    )
+)
+OPENAPI_PATH = SDK_SCHEMA / "embedded_openapi.yaml"
+ARTIFACTS_PATH = SDK_SCHEMA / "embedded_artifacts.json"
+OUTPUT_PATH = REPO / "tests" / "e2e" / "mock-operation-inventory.json"
+MOCK_SOURCES = (REPO / "tests" / "e2e" / "mockArkretApi.ts",)
+HTTP_METHODS = {"get", "post", "put", "patch", "delete", "query", "head"}
+
+
+def load_json(path: Path) -> Any:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def json_pointer(document: Any, pointer: str) -> Any:
+    value = document
+    for raw_part in pointer.removeprefix("#/").split("/"):
+        part = raw_part.replace("~1", "/").replace("~0", "~")
+        value = value[int(part)] if isinstance(value, list) else value[part]
+    return value
+
+
+def resolve_local_ref(openapi: dict[str, Any], value: Any) -> Any:
+    seen: set[str] = set()
+    while isinstance(value, dict) and set(value) == {"$ref"}:
+        reference = value["$ref"]
+        if not reference.startswith("#/"):
+            return value
+        if reference in seen:
+            raise ValueError(f"cyclic OpenAPI reference {reference}")
+        seen.add(reference)
+        value = json_pointer(openapi, reference)
+    return value
+
+
+def external_schema_reference(openapi: dict[str, Any], schema: Any) -> str | None:
+    schema = resolve_local_ref(openapi, schema)
+    if not isinstance(schema, dict) or set(schema) != {"$ref"}:
+        return None
+    reference = schema["$ref"]
+    if reference.startswith("../schemas/"):
+        return reference.removeprefix("../")
+    return None
+
+
+def operation_selector(operation: dict[str, Any]) -> str:
+    selectors = {
+        parameter.get("schema", {}).get("const")
+        for parameter in operation.get("parameters", [])
+        if parameter.get("name") == "Arkret-Operation"
+        and parameter.get("in") == "header"
+    }
+    selectors.discard(None)
+    if len(selectors) != 1:
+        raise ValueError(
+            f"operation {operation.get('operationId')} has {len(selectors)} selectors"
+        )
+    return selectors.pop()
+
+
+def response_schema(
+    openapi: dict[str, Any],
+    response: Any,
+    schema_ids: dict[str, str],
+) -> tuple[str | None, str | None]:
+    response = resolve_local_ref(openapi, response)
+    content = response.get("content", {}) if isinstance(response, dict) else {}
+    media = content.get("application/json")
+    if not isinstance(media, dict) or "schema" not in media:
+        return None, None
+    reference = external_schema_reference(openapi, media["schema"])
+    if reference is None:
+        raise ValueError(f"JSON response schema is not one external $ref: {media['schema']}")
+    return reference, schema_ids.get(reference)
+
+
+def route_evidence() -> list[dict[str, Any]]:
+    evidence: list[dict[str, Any]] = []
+    seen: set[tuple[str, int, str]] = set()
+    for path in MOCK_SOURCES:
+        for line_number, original in enumerate(
+            path.read_text(encoding="utf-8").splitlines(), start=1
+        ):
+            normalized = original.replace(r"\/", "/")
+            if "/_arkret/" not in normalized:
+                continue
+            snippet = normalized.strip()
+            key = (path.name, line_number, snippet)
+            if key in seen:
+                continue
+            seen.add(key)
+            evidence.append(
+                {"file": path.relative_to(REPO).as_posix(), "line": line_number, "source": snippet}
+            )
+    return evidence
+
+
+def generate() -> dict[str, Any]:
+    openapi_bytes = OPENAPI_PATH.read_bytes()
+    artifact_bytes = ARTIFACTS_PATH.read_bytes()
+    openapi = yaml.safe_load(openapi_bytes)
+    artifacts = json.loads(artifact_bytes.decode("utf-8"))
+    operation_rows = artifacts["registry/operation-registry.json"]["operations"]
+    registered_operations = {row["operation_id"] for row in operation_rows}
+    schema_rows = artifacts["registry/schema-registry.json"]["schemas"]
+    schema_ids: dict[str, str] = {}
+    for row in schema_rows:
+        reference = row["file"] + row.get("fragment", "")
+        previous = schema_ids.setdefault(reference, row["schema_id"])
+        if previous != row["schema_id"]:
+            raise ValueError(f"ambiguous schema registry reference {reference}")
+
+    operations: list[dict[str, Any]] = []
+    for path_template, path_item in openapi["paths"].items():
+        for method, operation in path_item.items():
+            if method not in HTTP_METHODS or not isinstance(operation, dict):
+                continue
+            selector = operation_selector(operation)
+            if selector not in registered_operations:
+                raise ValueError(f"OpenAPI selector {selector} is absent from operation registry")
+            responses: dict[str, Any] = {}
+            for status, response in sorted(operation.get("responses", {}).items()):
+                reference, schema_id = response_schema(openapi, response, schema_ids)
+                responses[str(status)] = {
+                    "schema_ref": reference,
+                    "schema_id": schema_id,
+                }
+            operations.append(
+                {
+                    "method": method.upper(),
+                    "path_template": path_template,
+                    "operation_id": selector,
+                    "responses": responses,
+                }
+            )
+    operations.sort(key=lambda row: (row["path_template"], row["method"]))
+    return {
+        "format_version": 1,
+        "generated_from": {
+            "openapi_sha256": hashlib.sha256(openapi_bytes).hexdigest(),
+            "artifacts_sha256": hashlib.sha256(artifact_bytes).hexdigest(),
+        },
+        "operations": operations,
+        "mock_route_evidence": route_evidence(),
+    }
+
+
+def serialized(value: Any) -> str:
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":")) + "\n"
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--check", action="store_true")
+    args = parser.parse_args()
+    generated = serialized(generate())
+    if args.check:
+        current = OUTPUT_PATH.read_text(encoding="utf-8") if OUTPUT_PATH.exists() else ""
+        if current != generated:
+            print(
+                f"{OUTPUT_PATH.relative_to(REPO)} is stale; regenerate with {Path(__file__).name}",
+                file=sys.stderr,
+            )
+            return 1
+        print(f"checked {OUTPUT_PATH.relative_to(REPO)}")
+        return 0
+    OUTPUT_PATH.write_text(generated, encoding="utf-8", newline="\n")
+    print(f"generated {OUTPUT_PATH.relative_to(REPO)}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

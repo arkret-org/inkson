@@ -205,7 +205,7 @@ fn inkson_accepts_server_contract_payloads() {
         "kind": "delta",
         "cursor": "ak:cursor:contract-sync",
         "realms": {
-            "ak:realm:AcbFC8Nil95DfV11kMMMvRtzRdEC3g-tFtBE8_VQQ74j": {
+            "ak:realm:AZQnaSleDidYaYIvfwYy3au5gnd_DSinxyUHEl7ewtxk": {
                 "timeline": {"events": [], "limited": false}
             }
         }
@@ -218,7 +218,7 @@ fn inkson_accepts_server_contract_payloads() {
     .unwrap();
     assert!(
         sync.realm_projections
-            .contains_key("ak:realm:AcbFC8Nil95DfV11kMMMvRtzRdEC3g-tFtBE8_VQQ74j")
+            .contains_key("ak:realm:AZQnaSleDidYaYIvfwYy3au5gnd_DSinxyUHEl7ewtxk")
     );
 
     let directory: inkson::models::ServiceDescribe = serde_json::from_value(json!({
@@ -265,7 +265,7 @@ fn inkson_accepts_server_contract_payloads() {
 
     let resolved: inkson::models::DirectoryRealmResolutionOutcome = serde_json::from_value(json!({
         "realm_preview": {
-            "realm_id": "ak:realm:AcbFC8Nil95DfV11kMMMvRtzRdEC3g-tFtBE8_VQQ74j",
+            "realm_id": "ak:realm:AZQnaSleDidYaYIvfwYy3au5gnd_DSinxyUHEl7ewtxk",
             "title": "Arkret Demo Realm",
             "summary": "Shared demo Realm served by server",
             "tags": ["demo"],
@@ -278,7 +278,7 @@ fn inkson_accepts_server_contract_payloads() {
         "stripped_state": [],
         "join_rule": "public",
         "join_candidates": [{
-            "realm_id": "ak:realm:AcbFC8Nil95DfV11kMMMvRtzRdEC3g-tFtBE8_VQQ74j",
+            "realm_id": "ak:realm:AZQnaSleDidYaYIvfwYy3au5gnd_DSinxyUHEl7ewtxk",
             "service_id": "ak:did_core:web:server.local",
             "service_resolution": {
                 "current_record_url": "https://server.local/_arkret/open/services/ak%3Adid_core%3Aweb%3Aserver.local/resolution"

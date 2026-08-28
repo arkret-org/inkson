@@ -61,7 +61,7 @@ fn keypackage_claim_request_carries_required_capabilities() {
         arkret_sdk::EventId::new("ak:event:AR4gvLBB1qlq1zRAQHvDYQrKit2SLLNUPBG8C1idlQAc").unwrap();
     let body = mls_api_helpers::build_mls_keypackage_claim_request(
         "did:web:alice.example",
-        "ak:realm:AcbFC8Nil95DfV11kMMMvRtzRdEC3g-tFtBE8_VQQ74j",
+        "ak:realm:AZQnaSleDidYaYIvfwYy3au5gnd_DSinxyUHEl7ewtxk",
         "did:web:bob.example",
         requester_device_id,
         &requester_device_authorize_event_id,

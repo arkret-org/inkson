@@ -1,6 +1,6 @@
 use super::*;
 
-const PENDING_TEST_REALM: &str = "ak:realm:AcbFC8Nil95DfV11kMMMvRtzRdEC3g-tFtBE8_VQQ74j";
+const PENDING_TEST_REALM: &str = "ak:realm:AZQnaSleDidYaYIvfwYy3au5gnd_DSinxyUHEl7ewtxk";
 const PENDING_TEST_OPERATION: &str = "01a01bdd-804b-7ad0-bee8-194898437ad7";
 const PENDING_TEST_EVENT: &str = "ak:event:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
 const PENDING_TEST_SPACE: &str = "ak:space:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
@@ -211,7 +211,7 @@ fn board_space_options_pick_board_spaces_from_projection() {
     let options = board_space_options_from_projection(&[
         crate::state::projection_views::SpaceContainerProjectionView {
             space_id: "ak:space:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-".to_owned(),
-            realm_id: "ak:realm:AcbFC8Nil95DfV11kMMMvRtzRdEC3g-tFtBE8_VQQ74j".to_owned(),
+            realm_id: "ak:realm:AZQnaSleDidYaYIvfwYy3au5gnd_DSinxyUHEl7ewtxk".to_owned(),
             kind: "board".to_owned(),
             title: "Release".to_owned(),
             state: arkret_sdk::ProjectionSpaceState::Active,
@@ -220,7 +220,7 @@ fn board_space_options_pick_board_spaces_from_projection() {
         },
         crate::state::projection_views::SpaceContainerProjectionView {
             space_id: "ak:space:AQM8rE4gp8l4axkSbbb9_dkqwWE8ZPYHwFsC24o2mrIL".to_owned(),
-            realm_id: "ak:realm:AcbFC8Nil95DfV11kMMMvRtzRdEC3g-tFtBE8_VQQ74j".to_owned(),
+            realm_id: "ak:realm:AZQnaSleDidYaYIvfwYy3au5gnd_DSinxyUHEl7ewtxk".to_owned(),
             kind: "list".to_owned(),
             title: "Todo".to_owned(),
             state: arkret_sdk::ProjectionSpaceState::Active,
@@ -244,7 +244,7 @@ fn local_space_create_state_becomes_synced_once_projection_contains_target() {
     let board_id = "ak:space:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-";
     let raw_operations = vec![RawOperationRecord {
         operation_id: "sha256:local-board-create".to_owned(),
-        realm_id: Some("ak:realm:AcbFC8Nil95DfV11kMMMvRtzRdEC3g-tFtBE8_VQQ74j".to_owned()),
+        realm_id: Some("ak:realm:AZQnaSleDidYaYIvfwYy3au5gnd_DSinxyUHEl7ewtxk".to_owned()),
         received_at: chrono::Utc::now(),
         payload: json!({
             "kind": "ak.space.create",
@@ -287,7 +287,7 @@ fn lifecycle_projection_builds_persisted_board_columns_and_cards() {
     let containers = vec![
         crate::state::projection_views::SpaceContainerProjectionView {
             space_id: board_id.to_owned(),
-            realm_id: "ak:realm:AcbFC8Nil95DfV11kMMMvRtzRdEC3g-tFtBE8_VQQ74j".to_owned(),
+            realm_id: "ak:realm:AZQnaSleDidYaYIvfwYy3au5gnd_DSinxyUHEl7ewtxk".to_owned(),
             kind: "board".to_owned(),
             title: "Release".to_owned(),
             state: arkret_sdk::ProjectionSpaceState::Active,
@@ -296,7 +296,7 @@ fn lifecycle_projection_builds_persisted_board_columns_and_cards() {
         },
         crate::state::projection_views::SpaceContainerProjectionView {
             space_id: list_id.to_owned(),
-            realm_id: "ak:realm:AcbFC8Nil95DfV11kMMMvRtzRdEC3g-tFtBE8_VQQ74j".to_owned(),
+            realm_id: "ak:realm:AZQnaSleDidYaYIvfwYy3au5gnd_DSinxyUHEl7ewtxk".to_owned(),
             kind: "list".to_owned(),
             title: "Todo".to_owned(),
             state: arkret_sdk::ProjectionSpaceState::Active,
@@ -306,7 +306,7 @@ fn lifecycle_projection_builds_persisted_board_columns_and_cards() {
     ];
     let strands = vec![crate::state::projection_views::StrandProjectionView {
         strand_id: "ak:strand:AV624IkuHj3HmxAYE6uyYmBa4Est3gGGdnOsjn71z5L2".to_owned(),
-        realm_id: "ak:realm:AcbFC8Nil95DfV11kMMMvRtzRdEC3g-tFtBE8_VQQ74j".to_owned(),
+        realm_id: "ak:realm:AZQnaSleDidYaYIvfwYy3au5gnd_DSinxyUHEl7ewtxk".to_owned(),
         title: "Persisted card".to_owned(),
         summary: Some("Loaded from projection".to_owned()),
         content: Some(
@@ -379,7 +379,7 @@ fn lifecycle_projection_infers_board_from_list_parent() {
     let containers = vec![
         crate::state::projection_views::SpaceContainerProjectionView {
             space_id: list_id.to_owned(),
-            realm_id: "ak:realm:AcbFC8Nil95DfV11kMMMvRtzRdEC3g-tFtBE8_VQQ74j".to_owned(),
+            realm_id: "ak:realm:AZQnaSleDidYaYIvfwYy3au5gnd_DSinxyUHEl7ewtxk".to_owned(),
             kind: "list".to_owned(),
             title: "Todo".to_owned(),
             state: arkret_sdk::ProjectionSpaceState::Active,
@@ -406,7 +406,7 @@ fn local_strand_create_overlay_restores_card_until_projection_catches_up() {
     let strand_id = "ak:strand:AV624IkuHj3HmxAYE6uyYmBa4Est3gGGdnOsjn71z5L2";
     let raw_operations = vec![RawOperationRecord {
         operation_id: "sha256:local-create".to_owned(),
-        realm_id: Some("ak:realm:AcbFC8Nil95DfV11kMMMvRtzRdEC3g-tFtBE8_VQQ74j".to_owned()),
+        realm_id: Some("ak:realm:AZQnaSleDidYaYIvfwYy3au5gnd_DSinxyUHEl7ewtxk".to_owned()),
         received_at: chrono::Utc::now(),
         payload: json!({
             "kind": "ak.strand.create",
@@ -480,7 +480,7 @@ fn remote_strand_update_events_overlay_detail_fields_on_projection() {
         "event_kind": "ak.strand.update",
         "actor_id": "ak:did_core:web:alice.example",
         "created_at": "2026-05-22T10:00:00.000Z",
-        "realm_id": "ak:realm:AcbFC8Nil95DfV11kMMMvRtzRdEC3g-tFtBE8_VQQ74j",
+        "realm_id": "ak:realm:AZQnaSleDidYaYIvfwYy3au5gnd_DSinxyUHEl7ewtxk",
         "payload": {
             "target_ref": strand_id,
             "patch": {
@@ -547,7 +547,7 @@ fn remote_encrypted_strand_update_overlay_marks_private_fields_locked() {
         "event_kind": "ak.strand.update",
         "actor_id": "ak:did_core:web:alice.example",
         "created_at": "2026-05-22T10:00:00.000Z",
-        "realm_id": "ak:realm:AcbFC8Nil95DfV11kMMMvRtzRdEC3g-tFtBE8_VQQ74j",
+        "realm_id": "ak:realm:AZQnaSleDidYaYIvfwYy3au5gnd_DSinxyUHEl7ewtxk",
         "payload": {
             "target_ref": strand_id,
             "patch": {
@@ -606,7 +606,7 @@ fn non_spec_strand_patch_paths_are_ignored_by_the_local_overlay() {
         "event_kind": "ak.strand.update",
         "actor_id": "ak:did_core:web:alice.example",
         "created_at": "2026-05-22T10:00:00.000Z",
-        "realm_id": "ak:realm:AcbFC8Nil95DfV11kMMMvRtzRdEC3g-tFtBE8_VQQ74j",
+        "realm_id": "ak:realm:AZQnaSleDidYaYIvfwYy3au5gnd_DSinxyUHEl7ewtxk",
         "payload": {
             "target_ref": strand_id,
             "patch": {

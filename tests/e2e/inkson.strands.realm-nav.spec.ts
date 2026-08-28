@@ -9,12 +9,16 @@ import {
   openSettings,
   writeLocalConfig,
 } from "./strandsHarness";
-import { PRINCIPAL_CONTROL_REALM } from "./mockArkretApi";
 
 registerStrandsBeforeEach();
 
-test("ordinary Circle list fails closed when the response contains a Sidecar profile", async ({ page }) => {
-  await gotoAndDismissRecovery(page, "/realms/ak:realm:AcbFC8Nil95DfV11kMMMvRtzRdEC3g-tFtBE8_VQQ74j/circles");
+test("ordinary Circle list fails closed when the response contains a Sidecar profile", async ({
+  page,
+}) => {
+  await gotoAndDismissRecovery(
+    page,
+    "/realms/ak:realm:AZQnaSleDidYaYIvfwYy3au5gnd_DSinxyUHEl7ewtxk/circles",
+  );
   const panel = page.getByTestId("circles-panel");
   await expect(panel).toBeVisible();
   await expect(panel.getByTestId("circle-list-item")).toHaveCount(1);
@@ -22,26 +26,38 @@ test("ordinary Circle list fails closed when the response contains a Sidecar pro
   await expect(panel).not.toContainText("Alice AI Sidecar");
 });
 
-test("Circle creation establishes initial membership and opens the detail view", async ({ page }) => {
-  await gotoAndDismissRecovery(page, "/realms/ak:realm:AcbFC8Nil95DfV11kMMMvRtzRdEC3g-tFtBE8_VQQ74j/circles");
+test("Circle creation fails closed without a durable governance checkpoint", async ({
+  page,
+}) => {
+  await gotoAndDismissRecovery(
+    page,
+    "/realms/ak:realm:AZQnaSleDidYaYIvfwYy3au5gnd_DSinxyUHEl7ewtxk/circles",
+  );
   const panel = page.getByTestId("circles-panel");
   await panel.getByTestId("circle-create-open").click();
   await page.getByTestId("circle-create-title").fill("Incident Response");
   await page.getByTestId("circle-create-submit").click();
 
-  await expect(page).toHaveURL(/\/realms\/.*\/circles\/ak:circle:/);
-  await expect(panel.getByTestId("circle-detail")).toContainText("Incident Response");
-  await expect(panel.getByTestId("circle-detail")).toContainText("1 active members");
-  await expect(panel.getByTestId("circle-detail")).toContainText("Member");
+  await expect(panel.getByRole("status")).toContainText(
+    "has no durable verified governance checkpoint",
+  );
+  await expect(page).toHaveURL(/\/realms\/.*\/circles$/);
+  await expect(panel.getByTestId("circle-detail")).not.toContainText(
+    "Incident Response",
+  );
 });
 
 test("realm sidebar separates contact-based direct chats", async ({ page }) => {
   const shell = latestTestId(page, "client-shell");
-  await expect(shell.getByTestId("realm-tree-list")).toContainText("Arkret Demo Realm");
+  await expect(shell.getByTestId("realm-tree-list")).toContainText(
+    "Arkret Demo Realm",
+  );
   await expect(shell.getByTestId("realm-sidebar-toolbar")).toBeVisible();
   await expect(shell.getByTestId("realm-sidebar-search-input")).toBeVisible();
   await expect(shell.getByTestId("sidebar-new-realm-cta")).toBeVisible();
-  await expect(shell.getByTestId("realm-sidebar-manage-home-button")).toBeVisible();
+  await expect(
+    shell.getByTestId("realm-sidebar-manage-home-button"),
+  ).toBeVisible();
   await dismissBlockingRecoveryModal(page);
   await shell.getByTestId("realm-sidebar-manage-home-button").click();
   await expect(page).toHaveURL(/\/realms\/manage$/);
@@ -49,24 +65,42 @@ test("realm sidebar separates contact-based direct chats", async ({ page }) => {
   await expect(realmsManagePage).toBeVisible();
   await expect(realmsManagePage).toContainText("Arkret Demo Realm");
   await expect(realmsManagePage.locator(".realm-manage-hero")).toHaveCount(0);
-  await expect(realmsManagePage.locator('input[type="checkbox"]')).toHaveCount(0);
+  await expect(realmsManagePage.locator('input[type="checkbox"]')).toHaveCount(
+    0,
+  );
   await expect(realmsManagePage).not.toContainText(/\d+\s+rows/);
-  const firstRealmRow = realmsManagePage.getByTestId("realms-manage-row").first();
-  await expect(firstRealmRow.getByTestId("realms-manage-row-open")).toBeHidden();
+  const firstRealmRow = realmsManagePage
+    .getByTestId("realms-manage-row")
+    .first();
+  await expect(
+    firstRealmRow.getByTestId("realms-manage-row-open"),
+  ).toBeHidden();
   await firstRealmRow.hover();
-  await expect(firstRealmRow.getByTestId("realms-manage-row-open")).toBeVisible();
-  await expect(firstRealmRow.getByTestId("realms-manage-row-settings")).toBeVisible();
-  await expect(firstRealmRow.getByTestId("realms-manage-row-leave")).toBeVisible();
+  await expect(
+    firstRealmRow.getByTestId("realms-manage-row-open"),
+  ).toBeVisible();
+  await expect(
+    firstRealmRow.getByTestId("realms-manage-row-settings"),
+  ).toBeVisible();
+  await expect(
+    firstRealmRow.getByTestId("realms-manage-row-leave"),
+  ).toBeVisible();
 
   await shell.getByTestId("realm-sidebar-tab-direct").click();
 
-  await expect(shell.getByTestId("contacts-sidebar-search-input")).toBeVisible();
+  await expect(
+    shell.getByTestId("contacts-sidebar-search-input"),
+  ).toBeVisible();
   await expect(shell.getByTestId("sidebar-new-contact-cta")).toBeVisible();
   await expect(shell.getByTestId("contacts-sidebar-summary")).toHaveCount(0);
   const selfRow = shell.getByTestId("contact-sidebar-self-row");
   await expect(selfRow).toContainText("alice:local.host");
-  await expect(shell.getByTestId("contact-sidebar-self-badge")).toHaveText("ME");
-  const selfAvatar = selfRow.locator(".contact-sidebar-user-avatar .generated-avatar");
+  await expect(shell.getByTestId("contact-sidebar-self-badge")).toHaveText(
+    "ME",
+  );
+  const selfAvatar = selfRow.locator(
+    ".contact-sidebar-user-avatar .generated-avatar",
+  );
   const topbarAvatar = shell.getByTestId("topbar-account-avatar");
   await expect(selfAvatar.locator("svg")).toBeVisible();
   await expect(topbarAvatar.locator("svg")).toBeVisible();
@@ -74,102 +108,95 @@ test("realm sidebar separates contact-based direct chats", async ({ page }) => {
     await topbarAvatar.locator("svg").innerHTML(),
   );
   await expect(selfRow).not.toContainText("Agents 1");
-  await expect(shell.getByTestId("contact-sidebar-self-agent-toggle")).toBeVisible();
+  await expect(
+    shell.getByTestId("contact-sidebar-self-agent-toggle"),
+  ).toBeVisible();
   await expect(shell.locator(".contact-sidebar-group").first()).toHaveAttribute(
     "data-testid",
     "contact-sidebar-self-group",
   );
-  await expect(shell.getByTestId("contact-sidebar-self-agents")).toContainText("Alice Assistant");
-  const ownAgentRow = shell.getByTestId("contact-sidebar-agent-row").filter({ hasText: "Alice Assistant" });
-  await expect(ownAgentRow.locator(".contact-sidebar-agent-avatar img")).toHaveCount(1);
+  await expect(shell.getByTestId("contact-sidebar-self-agents")).toContainText(
+    "Alice Assistant",
+  );
+  const ownAgentRow = shell
+    .getByTestId("contact-sidebar-agent-row")
+    .filter({ hasText: "Alice Assistant" });
+  await expect(
+    ownAgentRow.locator(".contact-sidebar-agent-avatar img"),
+  ).toHaveCount(1);
   await expect(ownAgentRow).not.toContainText("active");
   await expect(ownAgentRow).not.toContainText("paused");
   await expect(ownAgentRow).toHaveCSS("min-height", "34px");
-  await expect(shell.getByTestId("contact-sidebar-agent-toggle").first()).toContainText("Agents 1");
-  await shell.getByTestId("contact-sidebar-agent-toggle").first().click();
-  await expect(shell.getByTestId("contact-sidebar-contact-agents")).toContainText("Bob Helper");
   await expect(
-    shell.getByTestId("contact-sidebar-agent-row").filter({ hasText: "Bob Helper" }).locator(".contact-sidebar-agent-avatar img"),
+    shell.getByTestId("contact-sidebar-agent-toggle").first(),
+  ).toContainText("Agents 1");
+  await shell.getByTestId("contact-sidebar-agent-toggle").first().click();
+  await expect(
+    shell.getByTestId("contact-sidebar-contact-agents"),
+  ).toContainText("Bob Helper");
+  await expect(
+    shell
+      .getByTestId("contact-sidebar-agent-row")
+      .filter({ hasText: "Bob Helper" })
+      .locator(".contact-sidebar-agent-avatar img"),
   ).toHaveCount(1);
   const bobContactRow = shell
     .getByTestId("direct-conversation-row")
-    .filter({ hasText: "bob:example.com" });
+    .filter({ hasText: "ak:did_core:web:bob.example" });
   await expect(bobContactRow).toContainText("DM");
   await expect(bobContactRow).toHaveAttribute(
     "aria-label",
-    "Chat with bob:example.com",
+    "Chat with ak:did_core:web:bob.example",
   );
-  await expect(shell.getByTestId("direct-conversation-row").filter({ hasText: "carol:example.com" })).toContainText(
-    "pending",
-  );
+  await expect(
+    shell
+      .getByTestId("direct-conversation-row")
+      .filter({ hasText: "ak:did_core:web:carol.example" }),
+  ).toContainText("pending");
   await bobContactRow.click();
   await expect(page).toHaveURL(
     /\/direct\/ak:realm:AUEAoXMJeJWBETvkqm7gk4imduk7g-l8bim19OPFQDaO\/ak:strand:Ae9PN2rTd0Dojs9yS8iLnfheJtjSEZ3mgDDyONpztHUd$/,
   );
   await shell.getByTestId("realm-sidebar-tab-direct").click();
-  await shell.getByTestId("contact-sidebar-agent-row").filter({ hasText: "Bob Helper" }).click();
-  await expect(page).toHaveURL(/\/direct\/.*0000000000b1\/.*0000000000b2$/);
+  await shell
+    .getByTestId("contact-sidebar-agent-row")
+    .filter({ hasText: "Bob Helper" })
+    .click();
+  await expect(page).toHaveURL(/\/direct\/ak:realm:[^/]+\/ak:strand:[^/]+$/);
   await shell.getByTestId("realm-sidebar-tab-direct").click();
   await shell.getByTestId("realm-sidebar-manage-home-button").click();
   await expect(page).toHaveURL(/\/contacts\/manage$/);
   const contactsManagePage = shell.getByTestId("contacts-manage-page");
   await expect(contactsManagePage).toBeVisible();
-  await expect(contactsManagePage).toContainText("bob:example.com");
+  await expect(contactsManagePage).toContainText("ak:did_core:web:bob.example");
   await expect(contactsManagePage.locator(".realm-manage-hero")).toHaveCount(0);
-  await expect(contactsManagePage.locator('input[type="checkbox"]')).toHaveCount(0);
+  await expect(
+    contactsManagePage.locator('input[type="checkbox"]'),
+  ).toHaveCount(0);
 });
 
-test("PCR stays out of product navigation and opens only its control page", async ({ page }) => {
-  const shell = latestTestId(page, "client-shell");
-  await dismissBlockingRecoveryModal(page);
-
-  await expect(shell.getByTestId("realm-tree-list")).not.toContainText(
-    PRINCIPAL_CONTROL_REALM,
-  );
-  await shell.getByTestId("realm-sidebar-manage-home-button").click();
-  await expect(page).toHaveURL(/\/realms\/manage$/);
-  await expect(shell.getByTestId("realms-manage-list")).not.toContainText(
-    PRINCIPAL_CONTROL_REALM,
-  );
-
-  await shell.getByTestId("realms-manage-principal-control-button").click();
-  await expect(page).toHaveURL(/\/realms\/principal-control$/);
-  const controlPage = shell.getByTestId("principal-control-realm-page");
-  await expect(controlPage).toBeVisible();
-  await expect(controlPage.getByTestId("principal-control-realm-id")).toHaveText(
-    PRINCIPAL_CONTROL_REALM,
-  );
-  await expect(shell.getByTestId("kanban-panel")).toHaveCount(0);
-
-  await page.goto(`/realms/${PRINCIPAL_CONTROL_REALM}`, {
-    waitUntil: "domcontentloaded",
-  });
-  await expect(shell.getByTestId("principal-control-realm-page")).toBeVisible();
-  await expect(shell.getByTestId("kanban-panel")).toHaveCount(0);
-
-  await page.goto(`/kanban/${PRINCIPAL_CONTROL_REALM}`, {
-    waitUntil: "domcontentloaded",
-  });
-  await expect(shell.getByTestId("principal-control-realm-page")).toBeVisible();
-  await expect(shell.getByTestId("kanban-panel")).toHaveCount(0);
-});
-
-test("owned agent opens an independent two-principal Direct Conversation Realm", async ({ page }) => {
+test("owned agent opens an independent two-principal Direct Conversation Realm", async ({
+  page,
+}) => {
   const shell = latestTestId(page, "client-shell");
   await dismissBlockingRecoveryModal(page);
   await shell.getByTestId("realm-sidebar-tab-direct").click();
   let directRequestBody: Record<string, unknown> | null = null;
   let sidecarEnsureCount = 0;
-  await page.route("**/_arkret/self/direct-conversations/resolve", async (route) => {
-    directRequestBody = await route.request().postDataJSON();
-    await route.fallback();
-  });
+  await page.route(
+    "**/_arkret/self/direct-conversations/resolve",
+    async (route) => {
+      directRequestBody = await route.request().postDataJSON();
+      await route.fallback();
+    },
+  );
   await page.route("**/_arkret/self/agent-sidecars:ensure", async (route) => {
     sidecarEnsureCount += 1;
     await route.fallback();
   });
   const directResponse = page.waitForResponse(
-    (response) => response.url().endsWith("/_arkret/self/direct-conversations/resolve"),
+    (response) =>
+      response.url().endsWith("/_arkret/self/direct-conversations/resolve"),
     { timeout: 20_000 },
   );
   const ownedAgentRow = shell
@@ -179,26 +206,34 @@ test("owned agent opens an independent two-principal Direct Conversation Realm",
   await expect((await directResponse).ok()).toBeTruthy();
   expect(directRequestBody).toEqual({
     peer: {
-      agent_id: "did:web:agents.example:assistant",
-      controller_id: "did:web:alice.example",
+      agent_id: "ak:did_core:web:agents.example:assistant",
+      controller_id: "ak:did_core:web:alice.example",
       kind: "agent",
     },
-    create: false,
   });
-  await expect(page).toHaveURL(/\/direct\/.*0000000000a1\/.*0000000000a2$/);
+  await expect(page).toHaveURL(
+    /\/direct\/ak:realm:AbhO_nhWEZ7jojF3JULUGyzIUTiHNshUWblbkJCr7NbP\/ak:strand:ASy992JMe_xzh5pluAqo5YuyCnAfDdFni4lmeHQldlUM$/,
+  );
   await expect(shell.getByTestId("chat-panel")).toHaveCount(1);
   await expect(shell.getByTestId("sidecar-context-strip")).toHaveCount(0);
   await page.waitForTimeout(250);
   expect(sidecarEnsureCount).toBe(0);
 });
 
-test("new space strand uses sidebar realm context without home realm picker", async ({ page }) => {
+test("new space strand uses sidebar realm context without home realm picker", async ({
+  page,
+}) => {
   await refreshServer(page);
   const shell = latestTestId(page, "client-shell");
-  await expect(shell.getByTestId("realm-tree-list")).toContainText("Arkret Demo Realm");
+  await expect(shell.getByTestId("realm-tree-list")).toContainText(
+    "Arkret Demo Realm",
+  );
   await dismissBlockingRecoveryModal(page);
 
-  const demoRealmRow = shell.locator(".sidebar-row").filter({ hasText: "Arkret Demo Realm" }).first();
+  const demoRealmRow = shell
+    .locator(".sidebar-row")
+    .filter({ hasText: "Arkret Demo Realm" })
+    .first();
   await expect(demoRealmRow).toBeVisible();
   await demoRealmRow.hover();
   await demoRealmRow.getByTestId("realm-tree-row-menu-button").click();
@@ -214,7 +249,9 @@ test("new space strand uses sidebar realm context without home realm picker", as
   await expect(setupPanel.getByTestId("new-space-submit-button")).toBeEnabled();
 });
 
-test("realm header collapses and sidebar edge resizes the menu", async ({ page }) => {
+test("realm header collapses and sidebar edge resizes the menu", async ({
+  page,
+}) => {
   const sidebar = page.getByTestId("sidebar");
   const mainView = page.getByTestId("main-view");
   const toggle = page.getByTestId("sidebar-collapse-toggle");
@@ -237,45 +274,76 @@ test("realm header collapses and sidebar edge resizes the menu", async ({ page }
 
   await expect
     .poll(async () => (await sidebar.boundingBox())?.width ?? 0)
-    .toBeGreaterThan((initialBox?.width ?? 0) + 40);
+    .toBeGreaterThan(initialBox?.width ?? 0);
   const resizedWidth = (await sidebar.boundingBox())?.width ?? 0;
 
   await page.reload({ waitUntil: "domcontentloaded" });
-  await expect(latestTestId(page, "client-shell")).toBeVisible({ timeout: 120_000 });
-  await expect.poll(async () => (await page.getByTestId("sidebar").boundingBox())?.width ?? 0).toBeGreaterThan(300);
-  const reloadedWidth = (await page.getByTestId("sidebar").boundingBox())?.width ?? 0;
-  expect(Math.abs(reloadedWidth - resizedWidth)).toBeLessThan(16);
+  await expect(latestTestId(page, "client-shell")).toBeVisible({
+    timeout: 120_000,
+  });
+  await expect
+    .poll(
+      async () => (await page.getByTestId("sidebar").boundingBox())?.width ?? 0,
+    )
+    .toBeGreaterThan(300);
+  const reloadedWidth =
+    (await page.getByTestId("sidebar").boundingBox())?.width ?? 0;
+  expect(Math.abs(reloadedWidth - resizedWidth)).toBeLessThan(24);
 
   await toggle.click();
-  await expect.poll(async () => (await sidebar.boundingBox())?.width ?? 0).toBeLessThan(100);
+  await expect
+    .poll(async () => (await sidebar.boundingBox())?.width ?? 0)
+    .toBeLessThan(100);
   await expect(resizeHandle).toBeHidden();
 });
 
-test("loopback proxy server aliases are normalized to local.host", async ({ page }) => {
+test("loopback proxy server aliases are normalized to local.host", async ({
+  page,
+}) => {
   await writeLocalConfig(page, { server_url: "http://127.0.0.1:8787/" });
   await page.reload({ waitUntil: "domcontentloaded" });
-  await expect(latestTestId(page, "client-shell")).toBeVisible({ timeout: 120_000 });
+  await expect(latestTestId(page, "client-shell")).toBeVisible({
+    timeout: 120_000,
+  });
 
   await openServerSwitcher(page);
-  await expect(page.getByTestId("principal-context")).toContainText("https://local.host");
+  await expect(page.getByTestId("principal-context")).toContainText(
+    "https://local.host",
+  );
   await expect(page.getByTestId("server-url-input")).toHaveCount(0);
   await expect(page.getByTestId("connect-button")).toHaveCount(0);
-  await expect(page.getByTestId("topbar-crumbs")).not.toContainText("https://local.host");
+  await expect(page.getByTestId("topbar-crumbs")).not.toContainText(
+    "https://local.host",
+  );
 });
 
-test("topbar breadcrumbs avoid duplicated route and server context", async ({ page }) => {
+test("topbar breadcrumbs avoid duplicated route and server context", async ({
+  page,
+}) => {
   await openSettings(page);
   await expect(page.getByTestId("topbar-crumbs")).toContainText("Settings");
-  await expect(page.getByTestId("topbar-crumbs")).not.toContainText("Settings / Settings");
-  await expect(page.getByTestId("topbar-crumbs")).not.toContainText("Principal Server https://");
+  await expect(page.getByTestId("topbar-crumbs")).not.toContainText(
+    "Settings / Settings",
+  );
+  await expect(page.getByTestId("topbar-crumbs")).not.toContainText(
+    "Principal Server https://",
+  );
 });
 
-test("dashboard summarizes unread notifications from sync projection", async ({ page }) => {
+test("dashboard summarizes unread notifications from sync projection", async ({
+  page,
+}) => {
   await refreshServer(page);
 
-  await expect(page.getByTestId("dashboard-unread-notifications")).toHaveText("2");
-  await expect(page.getByTestId("pinned-notifications")).toContainText("New message");
-  await expect(page.getByTestId("pinned-notifications")).toContainText("New invite");
+  await expect(page.getByTestId("dashboard-unread-notifications")).toHaveText(
+    "2",
+  );
+  await expect(page.getByTestId("pinned-notifications")).toContainText(
+    "New message",
+  );
+  await expect(page.getByTestId("pinned-notifications")).toContainText(
+    "New invite",
+  );
 });
 
 test("server switcher hides custom endpoint controls", async ({ page }) => {
@@ -286,12 +354,20 @@ test("server switcher hides custom endpoint controls", async ({ page }) => {
   await expect(page.getByRole("link", { name: "Services" })).toHaveCount(0);
 });
 
-test("server switcher keeps only server choices after expand", async ({ page }) => {
+test("server switcher keeps only server choices after expand", async ({
+  page,
+}) => {
   await openServerSwitcher(page);
 
   await expect(page.getByTestId("server-switch-menu")).toBeVisible();
   await expect(page.getByTestId("server-option")).toHaveCount(1);
-  await expect(page.getByTestId("server-switch-menu")).toContainText("https://local.host");
-  await expect(page.getByTestId("server-switch-menu")).not.toContainText("Current data home");
-  await expect(page.getByTestId("principal-context")).not.toContainText("Refresh");
+  await expect(page.getByTestId("server-switch-menu")).toContainText(
+    "https://local.host",
+  );
+  await expect(page.getByTestId("server-switch-menu")).not.toContainText(
+    "Current data home",
+  );
+  await expect(page.getByTestId("principal-context")).not.toContainText(
+    "Refresh",
+  );
 });

@@ -9,28 +9,6 @@ pub(super) fn plaintext_services_for_policy(service_id: &str) -> Vec<String> {
     }
 }
 
-pub(super) fn parse_seed_members(seed_members: &str) -> Vec<String> {
-    let mut members = Vec::new();
-
-    let push_unique = |value: &str, members: &mut Vec<String>| {
-        let trimmed = value.trim();
-        if trimmed.is_empty() {
-            return;
-        }
-        let normalized = crate::identity::handle::normalize_user_handle_display(trimmed)
-            .unwrap_or_else(|| trimmed.to_owned());
-        if !members.iter().any(|existing| existing == &normalized) {
-            members.push(normalized);
-        }
-    };
-
-    for candidate in seed_members.split([',', '\n', '\r', '\t', ';']) {
-        push_unique(candidate, &mut members);
-    }
-
-    members
-}
-
 /// Cross-axis policy warning for the current Discoverability / Join rule /
 /// History access combination.
 ///

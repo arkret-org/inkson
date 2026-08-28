@@ -49,7 +49,6 @@ fn space_bootstrap_events_use_canonical_create_and_facet_kinds() {
             "restricted",
             "sha256",
             "ak:trust_domain:server.example",
-            &["ak:did_core:web:bob.example".to_owned()],
             &["did:web:server.example".to_owned()],
             None,
             None,
@@ -283,7 +282,6 @@ fn realm_bootstrap_rejects_prejoin_history_with_strict_mls_scheme() {
         "sha256",
         "ak:trust_domain:server.example",
         &[],
-        &[],
         None,
         Some("mls_rfc9420"),
     )
@@ -314,7 +312,6 @@ fn realm_bootstrap_allows_joined_history_with_strict_mls_scheme() {
             "restricted",
             "sha256",
             "ak:trust_domain:server.example",
-            &[],
             &[],
             None,
             Some("mls_rfc9420"),
@@ -361,10 +358,6 @@ fn bootstrap_envelopes_have_no_sdk_digest_drift() {
             "restricted",
             "sha256",
             "ak:trust_domain:server.example",
-            // Seed invitees are validated as canonical Core DIDs here, but their
-            // directed `ak.invite.create` events are deliberately submitted only
-            // after this genesis unit is accepted.
-            &["ak:did_core:webvh:z2dmjBobScidVnosYTzHAMbzYDRZkVrD32ea9Sr2XNs8NkgMB5mn".to_owned()],
             &["did:web:server.example".to_owned()],
             None,
             None,
@@ -397,37 +390,6 @@ fn bootstrap_envelopes_have_no_sdk_digest_drift() {
             .unwrap_or_else(|err| panic!("{kind}: roundtrip event_digest: {err}"));
         assert_eq!(digest, roundtrip_digest, "{kind}: SDK digest drift");
     }
-}
-
-#[test]
-fn realm_bootstrap_rejects_handle_seed_without_directory_evidence() {
-    let err = build_realm_bootstrap_steps(
-        test_genesis_salt(),
-        "did:web:alice.example",
-        "did:web:server.example",
-        test_single_signer_notary("did:web:server.example").unwrap(),
-        "https://server.example",
-        "Engineering",
-        None,
-        "listed",
-        "invite",
-        "all_history_for_current_members",
-        "mls_rfc9420",
-        "standard",
-        "restricted",
-        "sha256",
-        "ak:trust_domain:server.example",
-        &["bob:example.com".to_owned()],
-        &[],
-        None,
-        None,
-    )
-    .err()
-    .expect("handle seed members require Directory-resolved evidence");
-    assert!(
-        err.to_string()
-            .contains("handle bootstrap requires a Directory-resolved invite address")
-    );
 }
 
 #[test]
@@ -570,7 +532,6 @@ fn realm_bootstrap_payloads_match_spec_schema() {
             "restricted",
             "sha256",
             "ak:trust_domain:server.example",
-            &["ak:did_core:web:bob.example".to_owned()],
             &["did:web:server.example".to_owned()],
             None,
             None,

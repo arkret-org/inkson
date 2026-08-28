@@ -864,7 +864,7 @@ mod tests {
     use super::*;
 
     fn realm() -> arkret_sdk::RealmId {
-        arkret_sdk::RealmId::new("ak:realm:AcbFC8Nil95DfV11kMMMvRtzRdEC3g-tFtBE8_VQQ74j").unwrap()
+        arkret_sdk::RealmId::new("ak:realm:AZQnaSleDidYaYIvfwYy3au5gnd_DSinxyUHEl7ewtxk").unwrap()
     }
 
     fn actor() -> arkret_sdk::DidCoreId {

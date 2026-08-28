@@ -17,7 +17,7 @@ fn test_realm_remark(realm_id: &str, local_name: &str) -> crate::account_data::R
 fn realm_remark_set_and_display_name_prefers_local_name() {
     let path = temp_state_path("realm-remark-set");
     let mut store = LocalStateStore::with_path(path);
-    let realm_id = "ak:realm:AcbFC8Nil95DfV11kMMMvRtzRdEC3g-tFtBE8_VQQ74j";
+    let realm_id = "ak:realm:AZQnaSleDidYaYIvfwYy3au5gnd_DSinxyUHEl7ewtxk";
     assert!(store.realm_remark(realm_id).is_none());
     assert_eq!(
         store.display_name_for_realm(realm_id, "Engineering"),
@@ -39,7 +39,7 @@ fn realm_remark_set_and_display_name_prefers_local_name() {
 fn realm_remark_empty_value_tombstones_entry() {
     let path = temp_state_path("realm-remark-tombstone");
     let mut store = LocalStateStore::with_path(path);
-    let realm_id = "ak:realm:AcbFC8Nil95DfV11kMMMvRtzRdEC3g-tFtBE8_VQQ74j";
+    let realm_id = "ak:realm:AZQnaSleDidYaYIvfwYy3au5gnd_DSinxyUHEl7ewtxk";
     store.set_realm_remark(realm_id, test_realm_remark(realm_id, "x"));
     assert!(store.realm_remark(realm_id).is_some());
 
@@ -73,7 +73,7 @@ fn realm_remark_remove_clears_only_target_realm() {
 #[test]
 fn realm_remark_persists_to_disk_between_instances() {
     let path = temp_state_path("realm-remark-persist");
-    let realm_id = "ak:realm:AcbFC8Nil95DfV11kMMMvRtzRdEC3g-tFtBE8_VQQ74j";
+    let realm_id = "ak:realm:AZQnaSleDidYaYIvfwYy3au5gnd_DSinxyUHEl7ewtxk";
     {
         let mut writer = LocalStateStore::with_path(path.clone());
         writer.set_realm_remark(realm_id, test_realm_remark(realm_id, "Acme · Eng"));

@@ -1211,7 +1211,6 @@ async fn realm_bootstrap_preparation_requires_a_described_principal_server() {
         "restricted",
         "sha256",
         "ak:trust_domain:server.example",
-        &[],
         &["did:web:server.example".to_owned()],
         None,
         None,

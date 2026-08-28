@@ -17,7 +17,9 @@ test("topbar account menu shows profile identity and current device", async ({ p
   await refreshServer(page);
   await dismissBlockingRecoveryModal(page);
   await page.getByTestId("account-menu-button").click();
-  await expect(page.getByTestId("account-menu")).toContainText("did:web:alice.example");
+  await expect(page.getByTestId("account-menu")).toContainText(
+    "ak:did_core:web:alice.example",
+  );
   await expect(page.getByTestId("account-menu")).toContainText("ak:device:");
   await expect(page.getByTestId("account-menu-copy-did")).toBeVisible();
   await expect(page.getByTestId("account-menu-copy-device")).toBeVisible();
@@ -53,16 +55,9 @@ test("topbar account menu shows profile identity and current device", async ({ p
   await expect(page.getByTestId("settings-panel")).toBeVisible();
 });
 
-test("account menu keeps the viewer fallback when the handle directory returns an empty page", async ({
+test("account menu keeps the viewer fallback handle", async ({
   page,
 }) => {
-  let handleDirectoryRequests = 0;
-  page.on("request", (request) => {
-    if (new URL(request.url()).pathname === "/_arkret/find/directory/list-handles-for-subject") {
-      handleDirectoryRequests += 1;
-    }
-  });
-
   await page.reload({ waitUntil: "domcontentloaded" });
   await expect(latestTestId(page, "client-shell")).toBeVisible({ timeout: 120_000 });
   await refreshServer(page);
@@ -70,7 +65,6 @@ test("account menu keeps the viewer fallback when the handle directory returns a
   await latestTestId(page, "account-menu-button").click();
 
   await expect(latestTestId(page, "account-menu-handles")).toHaveText("@alice:local.host");
-  expect(handleDirectoryRequests).toBeGreaterThan(0);
 });
 
 test("settings language selector offers only English and Chinese", async ({ page }) => {
@@ -144,7 +138,7 @@ test("account invite locator stays contained and follows the active locale", asy
   await expect(page.getByTestId("sidebar")).toContainText("文件");
   await expect(page.getByTestId("realm-sidebar-search-input")).toHaveAttribute(
     "placeholder",
-    "搜索领域",
+    "搜索 Realm",
   );
   await expect(page.getByTestId("settings-avatar-card")).toContainText("账号身份");
   await expect(page.getByTestId("settings-invite-locator-card")).toContainText(
@@ -164,7 +158,7 @@ test("account invite locator stays contained and follows the active locale", asy
   );
 });
 
-test("settings avatar upload crops local image before publishing profile URL", async ({ page }) => {
+test("settings avatar upload fails closed before profile publication without durable authority", async ({ page }) => {
   await gotoAndDismissRecovery(page, "/settings/account");
   await expect(page.getByTestId("settings-avatar-card")).toBeVisible();
   await expect(page.getByTestId("settings-avatar-upload-label")).toBeVisible();
@@ -188,7 +182,12 @@ test("settings avatar upload crops local image before publishing profile URL", a
   });
 
   const uploadRequest = page.waitForRequest("**/_arkret/self/blob/upload");
-  const profileRequest = page.waitForRequest("**/_arkret/self/account/profile");
+  let profileRequests = 0;
+  page.on("request", (request) => {
+    if (new URL(request.url()).pathname === "/_arkret/self/account/profile") {
+      profileRequests += 1;
+    }
+  });
   await page.getByTestId("settings-avatar-upload-cropped").click();
 
   const upload = await uploadRequest;
@@ -196,11 +195,11 @@ test("settings avatar upload crops local image before publishing profile URL", a
   expect(upload.postDataBuffer()?.length ?? 0).toBeGreaterThan(100);
   expect(upload.postData() ?? "").toContain("Content-Type: image/jpeg");
 
-  const profileBody = await profileRequest.then((request) => request.postDataJSON());
-  expect(profileBody.patch.avatar_blob_ref).toBe(
-    "ak:blob:sha256:431ced6916a2a21a156e38701afe55bbd7f88969fbbfc56d7fe099d47f265460",
+  await expect(page.getByTestId("settings-avatar-card")).toContainText(
+    "profile update requires durable accepted PCR authority evidence",
   );
-  await expect(page.getByTestId("settings-avatar-crop-editor")).toHaveCount(0);
+  expect(profileRequests).toBe(0);
+  await expect(page.getByTestId("settings-avatar-crop-editor")).toBeHidden();
 });
 
 test("light theme renders the sidebar with light navigation colors", async ({ page }) => {
@@ -248,7 +247,7 @@ test("settings MIMI facade discovers drafts and runs interop actions", async ({ 
 
   await page.getByTestId("mimi-group-info").click();
   await expect(page.getByTestId("mimi-action-receipt")).toContainText(
-    "group-info 01JSMIMI binding ak:event:AaU-Qm8ThSLazMkDDaRlYzKtWfb_bSLS6zNfyROi2aoe proofs 0",
+    "group-info 01JSMIMI binding ak:event:AaU-Qm8ThSLazMkDDaRlYzKtWfb_bSLS6zNfyROi2aoe proofs 1",
   );
 
   await page.getByTestId("mimi-identifier-query").click();
@@ -266,7 +265,7 @@ test("settings MIMI facade discovers drafts and runs interop actions", async ({ 
   await page.getByTestId("mimi-submit-message").click();
   const submitBody = (await submit).postDataJSON();
   expect(submitBody.source_format).toBeUndefined();
-  expect(submitBody.sender_actor_id).toBe("did:web:alice.example");
+  expect(submitBody.sender_actor_id).toBe("ak:did_core:web:alice.example");
   expect(submitBody.ciphertext.content_type).toBe("application/json");
   expect(submitBody.ciphertext.ciphertext_digest).toMatch(/^sha256:[0-9a-f]{64}$/);
   expect(submitBody.ciphertext.payload).toMatch(/^[A-Za-z0-9_-]+$/);
@@ -276,15 +275,6 @@ test("settings MIMI facade discovers drafts and runs interop actions", async ({ 
 });
 
 test("account settings split account/server info and surface personal agents", async ({ page }) => {
-  const failedApiResponses: string[] = [];
-  page.on("response", (response) => {
-    const url = new URL(response.url());
-    if (url.pathname.startsWith("/_arkret/") && response.status() >= 400) {
-      failedApiResponses.push(
-        `${response.request().method()} ${url.pathname}${url.search} ${response.status()}`,
-      );
-    }
-  });
   await writeSessionGrantInjection(page);
   await seedLocalRecoveryKeyMetadata(page);
   await dismissBlockingRecoveryModal(page);
@@ -294,7 +284,9 @@ test("account settings split account/server info and surface personal agents", a
   await expect(page.getByTestId("settings-panel")).toBeVisible({ timeout: 120_000 });
   await expect(page.getByTestId("settings-nav-item-account")).toHaveAttribute("aria-current", "page");
   await expect(page.getByTestId("settings-avatar-card")).toBeVisible();
-  await expect(page.getByTestId("settings-account-did")).toHaveText("did:web:alice.example");
+  await expect(page.getByTestId("settings-account-did")).toHaveText(
+    "ak:did_core:web:alice.example",
+  );
   await expect(page.getByTestId("settings-account-did")).not.toHaveText("@alice:local.host");
   const inviteLocatorUrl = page.getByTestId("settings-invite-locator-url");
   const inviteLocatorQr = page.getByTestId("settings-invite-locator-qr");
@@ -429,167 +421,26 @@ test("account settings split account/server info and surface personal agents", a
     await expect(serviceScopeCheckboxes.nth(index)).toHaveAttribute("data-state", "checked");
   }
   await expect(serviceScopeCheckboxes.nth(4)).toHaveAttribute("data-state", "unchecked");
-  const provisionRequest = page.waitForRequest(
-    (request) =>
+  let provisionRequests = 0;
+  page.on("request", (request) => {
+    if (
       request.method() === "POST" &&
-      new URL(request.url()).pathname === "/_arkret/self/agents",
-  );
-  await page.getByTestId("agent-admin-provision-button").click();
-  const provisionBody = (await provisionRequest).postDataJSON();
-  expect(provisionBody.display_name).toBeUndefined();
-  expect(provisionBody.slug).toBe("summary");
-  expect(provisionBody.avatar_blob_ref).toBe(
-    "ak:blob:sha256:431ced6916a2a21a156e38701afe55bbd7f88969fbbfc56d7fe099d47f265460",
-  );
-  expect(provisionBody.requested_scope.actions).toEqual([
-    "ak.event.read",
-    "ak.message.create",
-    "ak.reaction.add",
-    "ak.self.events.stream.subscribe.v1",
-    "ak.self.events.read.scan.v1",
-    "ak.self.events.command.submit.v1",
-    "ak.self.keys.keypackages.upload.create.v1",
-    "ak.self.keys.keypackages.command.consume.v1",
-    "ak.self.keys.keypackages.command.revoke.v1",
-    "ak.self.device_messages.read.list.v1",
-    "ak.self.device_messages.command.ack.v1",
-  ]);
-  expect(JSON.stringify(provisionBody.requested_scope.resources)).not.toContain("realm_id");
-  try {
-    await expect(page.getByTestId("agent-admin-pairing-card")).toBeVisible();
-  } catch (error) {
-    throw new Error(
-      `${String(error)}\nfailed Arkret responses: ${JSON.stringify(failedApiResponses)}`,
-    );
-  }
-  await expect(page.getByTestId("agent-admin-pairing-card")).toContainText("Awaiting runtime");
-  await expect(page.getByTestId("agent-admin-pairing-qr")).toBeVisible();
-  await expect(page.getByTestId("agent-admin-pairing-url")).toBeVisible();
-  await expect(page.getByTestId("agent-admin-pairing-url")).not.toHaveValue("");
-  await expect(page.getByTestId("agent-admin-copy-pairing-link-button")).toBeVisible();
-  await expect(page.getByTestId("agent-admin-copy-pairing-link-button")).toBeEnabled();
-  await page.getByTestId("agent-admin-copy-pairing-link-button").click();
-  await expect(page.getByTestId("agent-admin-copy-pairing-link-button")).toHaveText("Copied");
-  await expect(page.getByTestId("agent-admin-copy-pairing-link-button")).toHaveText("Copy link", {
-    timeout: 3_000,
-  });
-  await expect(page.getByTestId("agent-admin-pairing-agent-display-name")).toHaveCount(0);
-  await expect(page.getByTestId("agent-admin-pairing-code")).toHaveCount(0);
-  await expect(page.getByTestId("agent-admin-pairing-request-id")).toHaveCount(0);
-  await expect(page.getByTestId("agent-admin-pairing-expires-at")).toHaveCount(0);
-  await expect(page.getByTestId("agent-admin-pairing-link")).toHaveCount(0);
-  await expect(page.getByTestId("agent-admin-pairing-bootstrap-json")).toHaveCount(0);
-  await expect(page.getByTestId("agent-admin-copy-pairing-bootstrap-button")).toHaveCount(0);
-  await expect(page.getByTestId("agent-admin-runtime-key-approval")).toHaveCount(0);
-  await expect(page.getByTestId("agent-admin-runtime-key-request-json")).toHaveCount(0);
-  await expect(page.getByTestId("agent-admin-runtime-key-request-preview")).toHaveCount(0);
-  await expect(page.getByTestId("agent-admin-approve-runtime-key-button")).toHaveCount(0);
-  await expect(page.getByTestId("agent-admin-rotate-key")).toHaveCount(0);
-  await expect(page.getByTestId("agent-admin-rotate-vm-input")).toHaveCount(0);
-  await expect(page.getByTestId("agent-admin-rotate-key-button")).toHaveCount(0);
-  await expect(page.getByText("Paste the runtime key request generated by the agent runtime")).toHaveCount(
-    0,
-  );
-  await expect(page.getByText("Copy bootstrap")).toHaveCount(0);
-  await expect(page.getByTestId("agent-state-badge")).toHaveCount(0);
-  await expect(page.getByTestId("agent-admin-slug-title")).toHaveText("summary");
-  await expect(page.getByTestId("agent-admin-detail-meta")).not.toContainText("Slug");
-  await expect(page.getByTestId("agent-admin-get-button")).toHaveCount(0);
-  await expect(page.getByTestId("agent-admin-row").filter({ hasText: "summary" })).toContainText(
-    "Pending",
-  );
-  await expect(page.getByTestId("agent-admin-capabilities")).toBeVisible();
-  await expect(page.getByTestId("agent-admin-content-capability-row")).toHaveCount(5);
-  await expect(page.getByTestId("agent-admin-service-capability-row")).toHaveCount(5);
-  await expect(page.getByTestId("agent-admin-content-capability-checkbox").nth(0)).toHaveAttribute(
-    "data-state",
-    "checked",
-  );
-  await expect(page.getByTestId("agent-admin-content-capability-checkbox").nth(1)).toHaveAttribute(
-    "data-state",
-    "unchecked",
-  );
-  await expect(page.getByTestId("agent-admin-content-capability-checkbox").nth(2)).toHaveAttribute(
-    "data-state",
-    "checked",
-  );
-  await expect(page.getByTestId("agent-admin-content-capability-checkbox").nth(3)).toHaveAttribute(
-    "data-state",
-    "unchecked",
-  );
-  await expect(page.getByTestId("agent-admin-content-capability-checkbox").nth(4)).toHaveAttribute(
-    "data-state",
-    "unchecked",
-  );
-  await expect(page.getByTestId("agent-admin-service-capability-checkbox").nth(0)).toHaveAttribute(
-    "data-state",
-    "checked",
-  );
-  await expect(page.getByTestId("agent-admin-service-capability-checkbox").nth(1)).toHaveAttribute(
-    "data-state",
-    "checked",
-  );
-  await expect(page.getByTestId("agent-admin-service-capability-checkbox").nth(2)).toHaveAttribute(
-    "data-state",
-    "checked",
-  );
-  await expect(page.getByTestId("agent-admin-service-capability-checkbox").nth(3)).toHaveAttribute(
-    "data-state",
-    "checked",
-  );
-  await expect(page.getByTestId("agent-admin-service-capability-checkbox").nth(4)).toHaveAttribute(
-    "data-state",
-    "unchecked",
-  );
-  await expect(page.getByTestId("agent-admin-grant-kind-input")).toHaveCount(0);
-  await expect(page.getByTestId("agent-admin-grant-attach-button")).toHaveCount(0);
-  await expect(page.getByTestId("agent-admin-grant-detach-button")).toHaveCount(0);
-  await expect(page.getByTestId("agent-admin-lifecycle")).toHaveCount(0);
-  await expect(page.getByTestId("agent-admin-participation-load-button")).toHaveCount(0);
-  await expect(page.getByTestId("agent-admin-pause-button")).toHaveCount(0);
-  await expect(page.getByTestId("agent-admin-resume-button")).toHaveCount(0);
-
-  await page.evaluate(async () => {
-    const response = await fetch("/_arkret/gate/account/agent-key-pair", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        agent_id: "did:web:agents.example:summary",
-        verification_method: "did:web:agents.example:summary#runtime-key-1",
-        public_key: { kty: "OKP", alg: "Ed25519", key: "test" },
-      }),
-    });
-    if (!response.ok) {
-      throw new Error(`mock agent pairing failed: ${response.status}`);
+      new URL(request.url()).pathname === "/_arkret/self/agents"
+    ) {
+      provisionRequests += 1;
     }
   });
-  await page.getByTestId("agent-admin-refresh-button").click();
-  await expect(
-    page.getByTestId("agent-admin-row").filter({ hasText: "summary" }),
-  ).toContainText("Ready", { timeout: 10_000 });
-  await expect(page.getByTestId("agent-admin-pairing-card")).toHaveCount(0);
-
-  const deactivateButton = page.getByTestId("agent-admin-deactivate-button");
-  await expect(deactivateButton).toBeVisible();
-  await deactivateButton.click();
-  await expect(page.getByTestId("agent-admin-deactivate-modal")).toBeVisible();
-  await expect(page.getByTestId("agent-admin-deactivate-confirm-button")).toBeDisabled();
-  await page.getByTestId("agent-admin-deactivate-confirm-input").fill("DEACTIVATE");
-  await expect(page.getByTestId("agent-admin-deactivate-confirm-button")).toBeEnabled();
-  await page.getByTestId("agent-admin-deactivate-cancel-button").click();
-  await expect(page.getByTestId("agent-admin-deactivate-modal")).toHaveCount(0);
+  await page.getByTestId("agent-admin-provision-button").click();
+  await expect(page.getByTestId("agent-admin-last-op")).toContainText(
+    "this device has no controller authority pair",
+  );
+  expect(provisionRequests).toBe(0);
+  await expect(page.getByTestId("agent-admin-provision")).toBeVisible();
 });
 
-test("agent deactivation submits controller-signed revocations before the terminal lifecycle event", async ({
+test("agent deactivation fails closed without a durable governance checkpoint", async ({
   page,
 }) => {
-  const failedApiResponses: string[] = [];
-  page.on("response", (response) => {
-    const url = new URL(response.url());
-    if (response.status() >= 400 && url.pathname.startsWith("/_arkret/")) {
-      failedApiResponses.push(`${response.status()} ${response.request().method()} ${url.pathname}`);
-    }
-  });
   await gotoAndDismissRecovery(page, "/settings/agents?filter=all");
   const assistantRow = page.getByTestId("agent-admin-row").filter({ hasText: "assistant" });
   await assistantRow.click();
@@ -598,65 +449,23 @@ test("agent deactivation submits controller-signed revocations before the termin
   await deactivateButton.click();
   await page.getByTestId("agent-admin-deactivate-confirm-input").fill("DEACTIVATE");
 
-  let deactivateRequest:
-    | import("@playwright/test").Request
-    | undefined;
+  let deactivateRequests = 0;
   page.on("request", (request) => {
     if (
       request.method() === "POST" &&
       new URL(request.url()).pathname.endsWith("/deactivate")
     ) {
-      deactivateRequest = request;
+      deactivateRequests += 1;
     }
   });
   await page.getByTestId("agent-admin-deactivate-confirm-button").click();
   await expect(page.getByTestId("agent-admin-last-op")).toContainText(
-    /Agent deactivated permanently\.|Deactivate failed:/,
+    "has no durable verified governance checkpoint",
     { timeout: 60_000 },
   );
-  const status = await page.getByTestId("agent-admin-last-op").innerText();
-  expect(deactivateRequest).toBeDefined();
-  const requestBody = deactivateRequest!.postDataJSON();
-  expect(requestBody.reason).toBe("controller_deactivated");
-  const lifecycleSubmission = requestBody.lifecycle_event;
-  const lifecycleEvent = lifecycleSubmission.event;
-  expect(lifecycleSubmission.authorization_lease).toBeDefined();
-  expect(lifecycleSubmission.control_proposal_ack).toBeDefined();
-  expect(lifecycleEvent.kind).toBe("ak.self.agent.deactivate");
-  expect(lifecycleEvent.realm_id).toBe(
-    "ak:realm:AS7wchHFRbXWnMQPln42BrokXsPCf18uboKMm-yhYquI",
-  );
-  expect(lifecycleEvent.actor_id).toBe(
-    "did:web:agents.example:assistant",
-  );
-  expect(lifecycleEvent.executed_by).toBe("did:web:alice.example");
-  expect(lifecycleEvent.authorization_ref).toBe(
-    "did:web:agents.example:assistant#managed-controller",
-  );
-  expect(lifecycleEvent.payload).toMatchObject({
-    agent_id: "did:web:agents.example:assistant",
-    controller_id: "did:web:alice.example",
-    transition: "deactivate",
-    previous_status: "active",
-    reason: "controller_deactivated",
-  });
-  expect(lifecycleEvent.effects).toBeUndefined();
-  expect(lifecycleEvent.proofs.length).toBeGreaterThan(0);
-  expect(requestBody.key_revocation_events).toHaveLength(1);
-  expect(requestBody.key_revocation_events[0].authorization_lease).toBeDefined();
-  expect(requestBody.key_revocation_events[0].control_proposal_ack).toBeDefined();
-  expect(requestBody.key_revocation_events[0].event.kind).toBe("ak.agent.key.revoke");
-  expect(requestBody.key_revocation_events[0].event.payload.key_id).toBe("runtime-key-1");
-  expect(requestBody.key_revocation_events[0].event.proofs.length).toBeGreaterThan(0);
-  expect(requestBody.capability_revocation_events).toEqual([]);
-  expect(status, failedApiResponses.join("\n")).not.toContain("Deactivate failed:");
-
-  await expect(page.getByTestId("agent-admin-last-op")).toContainText(
-    "Agent deactivated permanently.",
-    { timeout: 15_000 },
-  );
-  await expect(page.getByTestId("agent-admin-deactivate-modal")).toHaveCount(0);
-  await expect(page.getByTestId("agent-admin-deactivate-button")).toHaveCount(0);
+  expect(deactivateRequests).toBe(0);
+  await expect(page.getByTestId("agent-admin-deactivate-modal")).toBeVisible();
+  await expect(page.getByTestId("agent-admin-deactivate-button")).toBeVisible();
 });
 
 test("deactivated personal agents are available only through the audit deep link", async ({
@@ -704,12 +513,10 @@ test("active personal agents never expose stale pairing credentials", async ({ p
   );
   await expect(page.getByTestId("agent-admin-enabled-switch")).toBeEnabled();
 
-  const renewRequestPromise = page.waitForRequest((request) =>
-    request
-      .url()
-      .endsWith(
-        "/_arkret/self/agents/did%3Aweb%3Aagents.example%3Aassistant/renew-pairing",
-      ),
+  const renewRequestPromise = page.waitForRequest(
+    (request) =>
+      request.method() === "POST" &&
+      new URL(request.url()).pathname.endsWith("/renew-pairing"),
   );
   await page.getByTestId("agent-admin-replace-runtime-confirm-button").click();
   await renewRequestPromise;

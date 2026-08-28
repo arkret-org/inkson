@@ -19,8 +19,7 @@ use crate::event_builders::{
     build_realm_authority_reset_control_intent, build_realm_bootstrap_steps_for_principal_server,
     build_realm_destroy_event, build_realm_owner_transfer_control_intent,
     build_realm_profile_replacement_event, build_realm_state_event, build_space_create_event,
-    build_space_lifecycle_event, parse_realm_bootstrap_members, parse_wire_enum,
-    recommended_realm_policy_bundle_value,
+    build_space_lifecycle_event, parse_wire_enum, recommended_realm_policy_bundle_value,
 };
 use crate::event_submit::EventSubmitter;
 use crate::models::{RealmCreateResult, RealmPolicyResult, SpaceCreateResult, SubmitEventResult};
@@ -35,9 +34,8 @@ use crate::realm_helpers::validate_join_rule_v1;
 /// genesis state. Profile and policy are signed facets, and creator membership
 /// is the final explicit slot; the complete ordered unit is admitted through
 /// the staged authority root before any normal member-based authorization.
-/// Seed invitees are submitted afterwards as ordinary directed
-/// `ak.invite.create` Control Moves because membership may only enter
-/// `invite` through that lifecycle.
+/// Additional members are invited afterwards through the ordinary directed
+/// `ak.invite.create` lifecycle, where each target carries verified resolution.
 ///
 /// Create-locked identity/security fields are sent in the closed genesis
 /// payload; mutable policy such as federation policy is carried by its
@@ -57,7 +55,6 @@ pub async fn create_realm(
     federation_policy: &str,
     digest_algorithm: &str,
     trust_domain: &str,
-    invitees: Vec<String>,
     plaintext_visible_services: Vec<String>,
     alias: Option<&str>,
     content_scheme: Option<&str>,
@@ -85,15 +82,6 @@ pub async fn create_realm(
     }
     let notary = submitter.current_service_notary().await?;
     let notary_service_origin = submitter.http().base_url().origin().ascii_serialization();
-    let resolved_invitees = parse_realm_bootstrap_members(&invitees)?;
-    if resolved_invitees
-        .iter()
-        .any(|invitee| invitee.actor_id != actor_id)
-    {
-        anyhow::bail!(
-            "Realm bootstrap invitees omit service_resolution; create the Realm first, then invite with a principal locator"
-        );
-    }
     // One CSPRNG salt belongs to this creation intent. The complete unsigned
     // unit is durably queued before prepare/sign; Garth then persists the
     // exact signed unit before the first HTTP write.
@@ -117,7 +105,6 @@ pub async fn create_realm(
         federation_policy,
         digest_algorithm,
         trust_domain,
-        &invitees,
         &plaintext_visible_services,
         alias,
         content_scheme,
@@ -132,19 +119,11 @@ pub async fn create_realm(
         .await?
         .to_string();
 
-    let mut members = Vec::new();
-    members.push(actor_id.to_owned());
-    for invitee in resolved_invitees {
-        if !members.iter().any(|member| member == &invitee.actor_id) {
-            members.push(invitee.actor_id);
-        }
-    }
-
     Ok(RealmCreateResult {
         ok: true,
         realm_id,
         owner: actor_id.to_owned(),
-        members,
+        members: vec![actor_id.to_owned()],
         state: "active".to_owned(),
     })
 }

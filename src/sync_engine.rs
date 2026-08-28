@@ -3521,7 +3521,7 @@ mod tests {
     }
 
     fn sdk_realm_id() -> arkret_sdk::RealmId {
-        arkret_sdk::RealmId::new("ak:realm:AcbFC8Nil95DfV11kMMMvRtzRdEC3g-tFtBE8_VQQ74j").unwrap()
+        arkret_sdk::RealmId::new("ak:realm:AZQnaSleDidYaYIvfwYy3au5gnd_DSinxyUHEl7ewtxk").unwrap()
     }
 
     fn sdk_actor_id() -> arkret_sdk::DidCoreId {
@@ -3669,7 +3669,7 @@ mod tests {
     fn realm_subscribe_frames_ingest_into_raw_operations_and_dedupe() {
         use arkret_sdk::EventsSubscribeFrameKind;
 
-        let realm_id = "ak:realm:AcbFC8Nil95DfV11kMMMvRtzRdEC3g-tFtBE8_VQQ74j";
+        let realm_id = "ak:realm:AZQnaSleDidYaYIvfwYy3au5gnd_DSinxyUHEl7ewtxk";
         let object = arkret_sdk::Space::create_object(
             arkret_sdk::RealmId::new(realm_id).unwrap(),
             "board",
@@ -3729,7 +3729,7 @@ mod tests {
 
     #[test]
     fn membership_events_ingest_into_raw_operations() {
-        let realm_id = "ak:realm:AcbFC8Nil95DfV11kMMMvRtzRdEC3g-tFtBE8_VQQ74j";
+        let realm_id = "ak:realm:AZQnaSleDidYaYIvfwYy3au5gnd_DSinxyUHEl7ewtxk";
         let mut store = temp_store("membership-events");
         let events = [
             sdk_event(

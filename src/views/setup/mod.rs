@@ -11,7 +11,6 @@
 
 use dioxus::prelude::*;
 
-use crate::config::LocalConfigStore;
 use crate::i18n::tr;
 use crate::models::RealmTreeNode;
 
@@ -33,8 +32,6 @@ pub fn SetupPanel(
     secure_store_ready: bool,
     token: Signal<String>,
     account_recovery_configured: Signal<Option<bool>>,
-    device_id: Signal<String>,
-    config_store: Signal<LocalConfigStore>,
     realm_tree_nodes: Signal<Vec<RealmTreeNode>>,
     selected_realm_id: Signal<String>,
     new_space_context_node: Signal<String>,
@@ -47,7 +44,6 @@ pub fn SetupPanel(
     // Wizard / form state lives on the parent so each section's in-progress
     // draft survives switching between conditionally-rendered sections.
     let create_step = use_signal(|| NewRealmStep::Basics);
-    let seed_members = use_signal(String::new);
     let realm_title = use_signal(String::new);
     let realm_summary = use_signal(String::new);
     let realm_alias = use_signal(String::new);
@@ -96,11 +92,8 @@ pub fn SetupPanel(
                     secure_store_ready,
                     token,
                     account_recovery_configured,
-                    device_id,
-                    config_store,
                     selected_realm_id,
                     create_step,
-                    seed_members,
                     realm_title,
                     realm_summary,
                     realm_alias,

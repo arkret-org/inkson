@@ -36,7 +36,11 @@ fn account_data_event(payload: serde_json::Value) -> arkret_sdk::Event {
         arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap(),
         1,
         arkret_sdk::Hlc::new("01970e589d21-0004-a13f9c2e").unwrap(),
-        payload,
+        json!({
+            "key": "ak.notifications.projection.v1",
+            "expected_revision": 0,
+            "body": payload,
+        }),
     )
     .unwrap()
 }

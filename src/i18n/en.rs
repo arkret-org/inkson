@@ -2094,8 +2094,8 @@ fn setup_strings(dict: &mut TranslationDict) {
     dict.set("setup.step.basics.subtitle", "name and intent");
     dict.set("setup.step.boundary.label", "Boundary");
     dict.set("setup.step.boundary.subtitle", "three policy axes");
-    dict.set("setup.step.seed.label", "Seed");
-    dict.set("setup.step.seed.subtitle", "initial members and create");
+    dict.set("setup.step.create.label", "Create");
+    dict.set("setup.step.create.subtitle", "review and create");
     dict.set("setup.step.done.label", "Done");
     dict.set("setup.step.done.subtitle", "open created Realm");
 
@@ -2195,19 +2195,6 @@ fn setup_strings(dict: &mut TranslationDict) {
         "Advanced (federation policy / hash profile)",
     );
 
-    // Seed step.
-    dict.set("setup.field.seed_members", "Initial members");
-    dict.set(
-        "setup.field.seed_members_help",
-        "One DID per line, or comma-separated. Handle invites require directory resolution.",
-    );
-    dict.set("setup.seed.preview", "Seed preview");
-    dict.set("setup.seed.preview_empty", "No extra seed members.");
-    dict.set(
-        "setup.seed.preview_count",
-        "{count} principal(s) will be included in the bootstrap request.",
-    );
-
     // Create blockers / progress.
     dict.set(
         "setup.blocker.already_created",
@@ -2236,11 +2223,6 @@ fn setup_strings(dict: &mut TranslationDict) {
     );
     dict.set("setup.progress.created", "Created {id}");
     dict.set(
-        "setup.progress.seeded_owner_only",
-        "Added you as the only member",
-    );
-    dict.set("setup.progress.seeded_members", "Added {count} member(s)");
-    dict.set(
         "setup.progress.canonical_policy",
         "canonical policy {discoverability} / {join_rule} / {history_access}",
     );
@@ -2251,14 +2233,6 @@ fn setup_strings(dict: &mut TranslationDict) {
     dict.set(
         "setup.progress.mls_ready_local",
         "Encryption ready on this device",
-    );
-    dict.set(
-        "setup.progress.mls_admission_failed",
-        "Could not enable encryption: {error}",
-    );
-    dict.set(
-        "setup.progress.mls_welcome_queued",
-        "Invitations queued for {count}",
     );
     dict.set(
         "setup.progress.floor_required",
@@ -2305,7 +2279,7 @@ fn setup_strings(dict: &mut TranslationDict) {
     // Actions.
     dict.set("setup.action.back", "Back");
     dict.set("setup.action.next_boundary", "Next: Boundary");
-    dict.set("setup.action.next_seed", "Next: Seed");
+    dict.set("setup.action.next_create", "Next: Create");
     dict.set("setup.action.create_realm", "Create Realm");
     dict.set("setup.action.finishing", "Finishing setup...");
     dict.set("setup.action.open_realm", "Open Realm");

@@ -469,18 +469,41 @@ pub(crate) async fn ensure_governance_checkpoint<S: GovernanceProofStateStore>(
     state_store: S,
     realm_id: &str,
 ) -> Result<(), String> {
+    let http = api
+        .sdk_http_client()
+        .map_err(|error| format!("build MLS governance checkpoint client: {error}"))?;
+    ensure_governance_checkpoint_with_http(&http, state_store, realm_id).await
+}
+
+pub(crate) async fn ensure_governance_checkpoint_with_http<S: GovernanceProofStateStore>(
+    http: &arkret_sdk::http_client::Client,
+    state_store: S,
+    realm_id: &str,
+) -> Result<(), String> {
     if state_store
         .with_read(|store| store.trusted_mls_governance_checkpoint(realm_id))
         .is_some()
     {
         return Ok(());
     }
-    let verified = verify_governance_checkpoint_candidate(api, &state_store, realm_id).await?;
+    let verified =
+        verify_governance_checkpoint_candidate_with_http(http, &state_store, realm_id).await?;
     state_store.with_write(|store| store.pin_mls_governance_checkpoint(realm_id, verified))
 }
 
 pub(crate) async fn verify_governance_checkpoint_candidate<S: GovernanceProofStateStore>(
     api: &crate::transport::TransportClient,
+    state_store: &S,
+    realm_id: &str,
+) -> Result<arkret_sdk::MlsGovernanceVerificationCheckpoint, String> {
+    let http = api
+        .sdk_http_client()
+        .map_err(|error| format!("build MLS governance checkpoint client: {error}"))?;
+    verify_governance_checkpoint_candidate_with_http(&http, state_store, realm_id).await
+}
+
+async fn verify_governance_checkpoint_candidate_with_http<S: GovernanceProofStateStore>(
+    http: &arkret_sdk::http_client::Client,
     state_store: &S,
     realm_id: &str,
 ) -> Result<arkret_sdk::MlsGovernanceVerificationCheckpoint, String> {
@@ -504,8 +527,8 @@ pub(crate) async fn verify_governance_checkpoint_candidate<S: GovernanceProofSta
         );
     }
     let target_basis = arkret_sdk::SealBasis { leaves };
-    let resolved = crate::mls::governance_acquisition::resolve_mls_governance_checkpoint(
-        api,
+    let resolved = crate::mls::governance_acquisition::resolve_mls_governance_checkpoint_with_http(
+        http,
         &realm,
         &target_basis,
     )

@@ -41,37 +41,7 @@ test("notifications are derived from index projections and respect per-realm mut
     DEMO_REALM,
   );
   await page.getByTestId("settings-realm-override-remove").click();
-  // Operation feedback now surfaces as a toast (unified feedback system
-  // Wave 1); the sr-only status-label is connection-status only.
-  await expect(
-    page.locator('[data-testid="toast-item"][data-i18n-key="feedback.override_removed"]'),
-  ).toBeVisible();
-
-  await page.getByTestId("topbar-notifications-button").click();
-  await expect(page.getByTestId("notifications-panel")).toContainText(
-    "You were invited to review Demo Realm",
-  );
-  const acceptInvite = page.waitForRequest(
-    (request) =>
-      request.url().endsWith("/_arkret/self/events") &&
-      request.method() === "POST",
-  );
-  await page
-    .getByTestId("notification-item")
-    .filter({ hasText: "You were invited to review Demo Realm" })
-    .getByTestId("notification-action")
-    .click();
-  const acceptBody = await acceptInvite.then((request) =>
-    request.postDataJSON(),
-  );
-  expect(acceptBody.kind).toBe("ak.member.state");
-  expect(acceptBody.payload.invite_ref).toBe(
-    "ak:invite:AUG1Kl2NbYdRAAzJBfSrn_CbrHrnLV9R_axxiJTGm8yG",
-  );
-  expect(acceptBody.payload).not.toHaveProperty("invite_id");
-  await expect(page.getByTestId("notifications-status")).toContainText(
-    "Joined Realm",
-  );
+  await expect(page.getByTestId("settings-muted-realm-row")).toHaveCount(0);
 });
 
 test("topbar notifications drawer keeps the active realm navigation visible", async ({
@@ -147,7 +117,7 @@ test("topbar notifications drawer keeps the active realm navigation visible", as
   expect(page.url()).toBe(realmUrl);
 });
 
-test("directory search resolve and space selection strand works", async ({
+test("directory search refuses unannounced Realms and still resolves organizations", async ({
   page,
 }) => {
   await page.getByTestId("topbar-search-button").click();
@@ -157,18 +127,7 @@ test("directory search resolve and space selection strand works", async ({
 
   await page.getByTestId("directory-search-input").fill("demo");
   await page.getByTestId("directory-search-button").click();
-  await expect(page.getByTestId("directory-result")).toContainText(
-    "Arkret Demo Realm",
-  );
-  await page.getByTestId("directory-select-button").click();
-  await page.getByTestId("resolve-selected-button").click();
-  // Resolve feedback is a toast now; the message carries the join rule.
-  await expect(
-    page.locator('[data-testid="toast-item"][data-i18n-key="feedback.realm_resolved"]'),
-  ).toContainText("public");
-  await expect(page.getByTestId("directory-result").first()).toContainText(
-    "Arkret Demo Realm",
-  );
+  await expect(page.getByTestId("directory-result")).toHaveCount(0);
 
   await page.getByTestId("tab-organizations").click();
   await page.getByTestId("directory-search-input").fill("arkret");
@@ -176,7 +135,10 @@ test("directory search resolve and space selection strand works", async ({
   await expect(page.getByTestId("org-result")).toContainText("Arkret Labs");
   await expect(page.getByTestId("org-result")).toContainText("arkret.example");
   await page.getByTestId("org-search-members").click();
-  await expect(page.getByTestId("tab-actors")).toHaveClass(/primary/);
+  await expect(page.getByTestId("tab-actors")).toHaveAttribute(
+    "data-style",
+    "primary",
+  );
   await expect(page.getByTestId("directory-search-input")).toHaveValue(
     "arkret.example",
   );
@@ -217,7 +179,9 @@ test("shortcut help opens from the topbar and the ? key", async ({ page }) => {
   await expect(page.getByTestId("shortcut-help-overlay")).toBeVisible();
 });
 
-test("global keyboard shortcuts trigger their target surfaces", async ({ page }) => {
+test("global keyboard shortcuts trigger their target surfaces", async ({
+  page,
+}) => {
   await dismissBlockingRecoveryModal(page);
 
   await page.keyboard.press("Control+K");

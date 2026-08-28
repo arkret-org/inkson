@@ -12,9 +12,7 @@ import { mockArkretApi } from "./mockArkretApi";
 
 registerStrandsBeforeEach();
 
-test("bootstrap login and sync shows the connected realm", async ({
-  page,
-}) => {
+test("bootstrap login and sync shows the connected realm", async ({ page }) => {
   await refreshServer(page);
 
   await expect(page.getByTestId("status-label")).toContainText("Online");
@@ -247,7 +245,7 @@ test("login page delegates account lifecycle to coauth OIDC", async ({
   await page.goto("/login", { waitUntil: "domcontentloaded" });
   await expect(page.getByTestId("login-panel")).toBeVisible();
   await expect(page.getByTestId("login-server-url")).toHaveValue(
-    "https://local.host",
+    "https://local.host/",
   );
   // Neutral client: the principal-server field is a free-text URL input with a
   // custom-styled preset dropdown (no native <datalist>, no browser autofill).
@@ -293,30 +291,21 @@ test("login page delegates account lifecycle to coauth OIDC", async ({
   expect(authorizeUrl.searchParams.get("redirect_uri")).toMatch(
     /\/auth\/callback$/,
   );
-  const storageState = await page.context().storageState();
-  const oidcScaffoldEntry = storageState.origins
-    .flatMap((origin) => origin.localStorage)
-    .find((entry) => entry.name === "inkson.oidc_scaffold.v1");
-  expect(oidcScaffoldEntry).toBeTruthy();
-  const oidcScaffold = JSON.parse(oidcScaffoldEntry?.value ?? "{}");
-  expect(oidcScaffold.principal_actor_id).toBe("");
-  expect(oidcScaffold.device_id).toMatch(
-    /^ak:device:[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
-  );
   await expect(page.getByText("coauth")).toBeVisible();
   await expect(page.getByText("Create account")).toBeVisible();
   await expect(page.getByText("Lost password or account")).toBeVisible();
 });
 
-test("connect refresh canonicalizes stale account DID but preserves device override", async ({
+test("connect refresh canonicalizes stale account and device identity", async ({
   page,
 }) => {
   const staleDid = "did:web:auth.local.host:users:01KCANONICAL";
-  const deviceId = "ak:device:01964137-0000-7000-8000-0000000000b0";
+  const staleDeviceId = "ak:device:01964137-0000-7000-8000-0000000000b0";
+  const canonicalDeviceId = "ak:device:01964137-0000-7000-8000-0000000000a1";
   await expect(latestTestId(page, "status-label")).toContainText("Online");
   await writeLocalConfigAndReload(page, {
     full_id: staleDid,
-    device_id: deviceId,
+    device_id: staleDeviceId,
   });
   await expect(latestTestId(page, "client-shell")).toBeVisible({
     timeout: 120_000,
@@ -332,50 +321,18 @@ test("connect refresh canonicalizes stale account DID but preserves device overr
     "@alice:local.host",
   );
   await expect(latestTestId(page, "account-menu-did")).toContainText(
-    "did:web:alice.example",
+    "ak:did_core:web:alice.example",
   );
   await expect(latestTestId(page, "account-menu-device")).toHaveAttribute(
     "title",
-    deviceId,
+    canonicalDeviceId,
   );
   await expect
     .poll(() => readLocalConfig(page))
     .toMatchObject({
       active_account: {
         resolution: { full_id: "did:web:alice.example" },
-        device_id: deviceId,
-      },
-    });
-});
-
-test("session refresh canonicalizes stale account DID in settings", async ({
-  page,
-}) => {
-  const staleDid = "did:web:auth.local.host:users:01KREFRESH";
-  await writeLocalConfigAndReload(page, { full_id: staleDid });
-  await expect(latestTestId(page, "client-shell")).toBeVisible({
-    timeout: 120_000,
-  });
-
-  await latestTestId(page, "account-menu-button").click();
-  await expect(latestTestId(page, "account-menu-did")).toContainText(
-    "did:web:alice.example",
-  );
-  await expect(latestTestId(page, "account-menu-did")).not.toContainText(
-    staleDid,
-  );
-  await latestTestId(page, "account-menu-session-refresh").click();
-  await expect(
-    latestTestId(page, "account-menu-session-refresh"),
-  ).toBeEnabled();
-  await expect(latestTestId(page, "account-menu-did")).toContainText(
-    "did:web:alice.example",
-  );
-  await expect
-    .poll(() => readLocalConfig(page))
-    .toMatchObject({
-      active_account: {
-        resolution: { full_id: "did:web:alice.example" },
+        device_id: canonicalDeviceId,
       },
     });
 });
@@ -387,7 +344,7 @@ test("fresh browser requires device authorization before recovery or encryption 
   await expect(authModal).toBeVisible({ timeout: 30_000 });
   await expect(authModal).toContainText("Authorize this device");
   await expect(authModal).toContainText(
-    "will usually show a confirmation prompt automatically",
+    "will usually show a confirmation prompt",
   );
   await expect(authModal).toContainText(
     "encrypted history and security-sensitive actions remain unavailable",

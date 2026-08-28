@@ -135,7 +135,7 @@ fn set_tracks_server_revision() {
 
 #[test]
 fn realm_remark_key_round_trip() {
-    let realm_id = "ak:realm:AcbFC8Nil95DfV11kMMMvRtzRdEC3g-tFtBE8_VQQ74j";
+    let realm_id = "ak:realm:AZQnaSleDidYaYIvfwYy3au5gnd_DSinxyUHEl7ewtxk";
     let key = realm_remark_account_data_key(realm_id);
     assert_eq!(key, format!("ak.contacts.realm.{realm_id}"));
     assert_eq!(realm_id_from_realm_remark_key(&key), Some(realm_id));
@@ -169,7 +169,7 @@ fn realm_remark_serialises_minimal_payload() {
     // Empty fields MUST NOT appear on the wire — keeps the payload
     // tombstone-friendly and avoids leaking placeholder data.
     let remark = test_realm_remark(
-        "ak:realm:AcbFC8Nil95DfV11kMMMvRtzRdEC3g-tFtBE8_VQQ74j",
+        "ak:realm:AZQnaSleDidYaYIvfwYy3au5gnd_DSinxyUHEl7ewtxk",
         "Acme · Eng",
     );
     let wire = serde_json::to_value(&remark).unwrap();
@@ -177,7 +177,7 @@ fn realm_remark_serialises_minimal_payload() {
         wire["subject"],
         serde_json::json!({
             "kind": "realm",
-            "id": "ak:realm:AcbFC8Nil95DfV11kMMMvRtzRdEC3g-tFtBE8_VQQ74j"
+            "id": "ak:realm:AZQnaSleDidYaYIvfwYy3au5gnd_DSinxyUHEl7ewtxk"
         })
     );
     assert_eq!(wire["local_name"], "Acme · Eng");
@@ -208,7 +208,7 @@ fn realm_remark_is_empty_treats_whitespace_as_tombstone() {
 
 #[test]
 fn realm_remark_pinned_builder_preserves_private_fields() {
-    let realm_id = "ak:realm:AcbFC8Nil95DfV11kMMMvRtzRdEC3g-tFtBE8_VQQ74j";
+    let realm_id = "ak:realm:AZQnaSleDidYaYIvfwYy3au5gnd_DSinxyUHEl7ewtxk";
     let existing = RealmRemark {
         version: 1,
         subject: RealmRemarkSubject {
@@ -252,7 +252,7 @@ fn realm_remark_pinned_builder_preserves_private_fields() {
 
 #[test]
 fn realm_remark_unpin_builder_can_tombstone_empty_remark() {
-    let realm_id = "ak:realm:AcbFC8Nil95DfV11kMMMvRtzRdEC3g-tFtBE8_VQQ74j";
+    let realm_id = "ak:realm:AZQnaSleDidYaYIvfwYy3au5gnd_DSinxyUHEl7ewtxk";
     let existing = RealmRemark::with_pinned_preserving_fields(
         test_realm_id(realm_id),
         None,

@@ -2423,11 +2423,10 @@ mod tests {
     #[test]
     fn authorized_device_requires_exact_directory_signer_match() {
         let viewer = serde_json::json!({
-            "current_device_id": "ak:device:current",
             "devices": [{
                 "device_id": "ak:device:current",
-                "verification_state": "verified",
-                "is_current_session_device": true
+                "status": "active",
+                "verification_state": "verified"
             }]
         });
 
@@ -2444,15 +2443,15 @@ mod tests {
     #[test]
     fn unauthorized_current_device_detects_existing_pairing_provider() {
         let viewer = serde_json::json!({
-            "current_device_id": "ak:device:new",
             "devices": [
                 {
                     "device_id": "ak:device:new",
-                    "verification_state": "pending",
-                    "is_current_session_device": true
+                    "status": "active",
+                    "verification_state": "unresolved"
                 },
                 {
                     "device_id": "ak:device:existing",
+                    "status": "active",
                     "verification_state": "verified"
                 }
             ]

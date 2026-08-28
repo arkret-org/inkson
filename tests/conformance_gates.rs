@@ -244,7 +244,6 @@ const TEST_SPACE_ID: &str = "ak:space:AQM8rE4gp8l4axkSbbb9_dkqwWE8ZPYHwFsC24o2mr
 const TEST_ACTOR_ID: &str = "did:web:alice.example";
 const TEST_SERVICE_ID: &str = "did:web:server.example";
 const TEST_INVITEE_DID: &str = "did:web:bob.example";
-const TEST_INVITEE_CORE_ID: &str = "ak:did_core:web:bob.example";
 const TEST_ANCHOR_REF: &str =
     "ak:seal:sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 
@@ -282,7 +281,6 @@ fn sign_authored(envelope: &mut arkret_sdk::AuthoredEvent) {
 
 /// The Realm genesis unit, authored the way the submit lane authors it.
 fn authored_realm_bootstrap(
-    invitees: &[String],
     plaintext_visible_services: &[String],
     alias: Option<&str>,
 ) -> Vec<arkret_sdk::AuthoredEvent> {
@@ -303,7 +301,6 @@ fn authored_realm_bootstrap(
             "restricted",
             "sha256",
             "ak:trust_domain:server.example",
-            invitees,
             plaintext_visible_services,
             alias,
             None,
@@ -625,22 +622,6 @@ fn build_realm_preview_policy_event_matches_event_schema() {
 }
 
 #[test]
-fn build_member_state_event_matches_event_schema() {
-    // `build_member_state_event` itself is private. It is a thin wrapper
-    // around `build_member_state_transition_event` with from=None and
-    // reason="space_create" — same canonical shape. We exercise the
-    // wrapper path indirectly via `build_realm_bootstrap_events` (which
-    // calls it for each invitee) and pick out the member-state envelope.
-    let events = authored_realm_bootstrap(&[TEST_INVITEE_CORE_ID.to_owned()], &[], None);
-    let mut envelope = events
-        .into_iter()
-        .find(|event| event.kind == EventKind::MemberState)
-        .expect("bootstrap chain emits one ak.member.state envelope for the invitee");
-    sign_authored(&mut envelope);
-    assert_envelope_matches_schema("build_member_state_event[invite]", &envelope);
-}
-
-#[test]
 fn build_member_state_transition_event_matches_event_schema() {
     select_authoring_principal_server();
     let envelope = event_builders::build_member_state_transition_event(
@@ -676,7 +657,7 @@ fn build_plaintext_visible_services_event_matches_event_schema() {
 /// `event-payload.schema.json#/$defs/realm_delivery_binding_policy_payload`.
 #[test]
 fn realm_bootstrap_delivery_binding_policy_matches_payload_schema() {
-    let events = authored_realm_bootstrap(&[], &[], None);
+    let events = authored_realm_bootstrap(&[], None);
 
     let mut policy = events
         .iter()
@@ -710,7 +691,7 @@ fn realm_bootstrap_delivery_binding_policy_matches_payload_schema() {
 #[test]
 fn blank_alias_is_absence_and_emits_no_alias_event() {
     for blank in ["  ", "#", " # "] {
-        let events = authored_realm_bootstrap(&[], &[], Some(blank));
+        let events = authored_realm_bootstrap(&[], Some(blank));
         assert!(
             !events
                 .iter()
@@ -731,7 +712,7 @@ fn blank_alias_is_absence_and_emits_no_alias_event() {
 /// object schema-valid AND must materialize exactly one dedicated facet Event.
 #[test]
 fn realm_bootstrap_keeps_plaintext_services_off_the_closed_realm_object() {
-    let events = authored_realm_bootstrap(&[], &["did:web:server.example".to_owned()], None);
+    let events = authored_realm_bootstrap(&["did:web:server.example".to_owned()], None);
 
     let mut create = events
         .iter()
@@ -772,7 +753,7 @@ fn realm_bootstrap_keeps_plaintext_services_off_the_closed_realm_object() {
 /// `alias: None`, so the field never reached a validated object.
 #[test]
 fn realm_bootstrap_carries_alias_as_a_facet_event_not_on_the_closed_realm_object() {
-    let events = authored_realm_bootstrap(&[], &[], Some("#General"));
+    let events = authored_realm_bootstrap(&[], Some("#General"));
 
     let mut create = events
         .iter()

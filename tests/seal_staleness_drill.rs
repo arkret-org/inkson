@@ -142,7 +142,6 @@ fn full_bootstrap_chain_carries_real_proofs_and_anchors() {
             "restricted",
             "sha256",
             "ak:trust_domain:server.example",
-            &["ak:did_core:web:bob.example".to_owned()],
             &["did:web:server.example".to_owned()],
             None,
             None,

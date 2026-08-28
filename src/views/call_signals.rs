@@ -522,7 +522,7 @@ mod tests {
 
     use super::*;
 
-    const TEST_REALM: &str = "ak:realm:AcbFC8Nil95DfV11kMMMvRtzRdEC3g-tFtBE8_VQQ74j";
+    const TEST_REALM: &str = "ak:realm:AZQnaSleDidYaYIvfwYy3au5gnd_DSinxyUHEl7ewtxk";
     const TEST_CALL: &str = "ak:call:ASejwMK0oLxZuMdthmzN01YReWWY3mzf6iJafILErPab";
     const PEER_ACTOR: &str = "did:web:bob.example";
     const PEER_DEVICE: &str = "ak:device:01904100-0000-7000-8000-b0b0b0000001";

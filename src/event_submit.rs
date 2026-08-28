@@ -2138,6 +2138,30 @@ impl EventSubmitter {
         Ok(digest_suite)
     }
 
+    pub(crate) async fn ensure_realm_governance_checkpoint(
+        &self,
+        realm_id: &str,
+    ) -> anyhow::Result<arkret_sdk::DigestSuite> {
+        let state_store = self.state_store.clone().ok_or_else(|| {
+            anyhow::anyhow!("Realm authoring requires a local governance checkpoint store")
+        })?;
+        crate::mls::governance_proof::ensure_governance_checkpoint_with_http(
+            &self.http,
+            state_store.clone(),
+            realm_id,
+        )
+        .await
+        .map_err(anyhow::Error::msg)?;
+        state_store
+            .read(|store| store.trusted_mls_governance_checkpoint(realm_id))
+            .map(|checkpoint| checkpoint.live_digest_suite)
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Realm {realm_id} governance checkpoint was not persisted after verification"
+                )
+            })
+    }
+
     async fn post_persisted_signed_sdk_event(
         &self,
         signed: &arkret_sdk::AuthoredEvent,
@@ -2272,6 +2296,32 @@ impl EventSubmitter {
                 }
                 Err(error) => return Err(error),
             };
+        if intent.kind() != &arkret_sdk::EventKind::RealmCreate
+            && explicit_prejoin_digest_suite.is_none()
+        {
+            let realm_id = intent.realm_id_opt().ok_or_else(|| {
+                anyhow::anyhow!(
+                    "{} needs a verified Realm checkpoint but carries no Realm scope",
+                    intent.kind().as_str()
+                )
+            })?;
+            let checkpoint_store = state_store
+                .clone()
+                .or_else(|| self.state_store.clone())
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "{} authoring requires a local governance checkpoint store",
+                        intent.kind().as_str()
+                    )
+                })?;
+            crate::mls::governance_proof::ensure_governance_checkpoint_with_http(
+                &self.http,
+                checkpoint_store,
+                realm_id.as_str(),
+            )
+            .await
+            .map_err(anyhow::Error::msg)?;
+        }
         let digest_suite = self.trusted_digest_suite_for_intent(
             &intent,
             explicit_prejoin_digest_suite,

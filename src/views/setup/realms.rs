@@ -10,12 +10,11 @@ use super::data::{
 };
 use super::helpers::{
     content_scheme_constraint_hint, history_access_admits_prejoin, normalize_content_scheme,
-    parse_seed_members, plaintext_services_for_policy, policy_combination_hint,
+    plaintext_services_for_policy, policy_combination_hint,
 };
 use super::model::{NEW_REALM_STEPS, NewRealmStep};
 use crate::api_error::is_auth_expired_error;
 use crate::components::HelpTip;
-use crate::config::LocalConfigStore;
 use crate::i18n::{tr, tr_args};
 use crate::routes::Route;
 use crate::transport::auth::authed_api_ready;
@@ -24,7 +23,7 @@ use crate::ui::input::Input;
 use crate::ui::label::Label;
 use crate::ui::select::{Select, SelectOption};
 use crate::ui::textarea::Textarea;
-use crate::views::helpers::{actor_display_label, short_protocol_id};
+use crate::views::helpers::short_protocol_id;
 
 /// Bootstrap-progress templates resolved *before* the create task is
 /// spawned.
@@ -40,13 +39,9 @@ use crate::views::helpers::{actor_display_label, short_protocol_id};
 struct BootstrapProgressStrings {
     accepted: String,
     created: String,
-    seeded_owner_only: String,
-    seeded_members: String,
     canonical_policy: String,
     plaintext_services: String,
     mls_ready_local: String,
-    mls_admission_failed: String,
-    mls_welcome_queued: String,
     floor_required: String,
     signer_not_ready: String,
     create_failed: String,
@@ -60,13 +55,9 @@ impl BootstrapProgressStrings {
         Self {
             accepted: tr("setup.progress.accepted"),
             created: tr("setup.progress.created"),
-            seeded_owner_only: tr("setup.progress.seeded_owner_only"),
-            seeded_members: tr("setup.progress.seeded_members"),
             canonical_policy: tr("setup.progress.canonical_policy"),
             plaintext_services: tr("setup.progress.plaintext_services"),
             mls_ready_local: tr("setup.progress.mls_ready_local"),
-            mls_admission_failed: tr("setup.progress.mls_admission_failed"),
-            mls_welcome_queued: tr("setup.progress.mls_welcome_queued"),
             floor_required: tr("setup.progress.floor_required"),
             signer_not_ready: tr("setup.error.signer_not_ready"),
             create_failed: tr("setup.error.create_failed"),
@@ -164,15 +155,12 @@ pub(super) fn RealmsSection(
     secure_store_ready: bool,
     token: Signal<String>,
     account_recovery_configured: Signal<Option<bool>>,
-    device_id: Signal<String>,
-    config_store: Signal<LocalConfigStore>,
     mut selected_realm_id: Signal<String>,
     // State signals are owned by the parent `SetupPanel` so the wizard's
     // in-progress draft survives switching between setup sections (the
     // sections are conditionally rendered, so locally-owned hooks would reset
     // on every section change).
     mut create_step: Signal<NewRealmStep>,
-    mut seed_members: Signal<String>,
     mut realm_title: Signal<String>,
     mut realm_summary: Signal<String>,
     mut realm_alias: Signal<String>,
@@ -309,12 +297,9 @@ pub(super) fn RealmsSection(
     ]
     .join(" ");
 
-    let seed_members_value = seed_members();
     let realm_state_value = realm_state();
     let realm_create_busy_value = realm_create_busy();
     let created_realm_id_value = created_realm_id();
-    let parsed_seed_members = parse_seed_members(&seed_members_value);
-    let seed_member_count = parsed_seed_members.len();
     let has_created_realm = !created_realm_id_value.trim().is_empty();
     let created_realm_id_label = short_protocol_id(&created_realm_id_value);
     let current_visibility_hint = policy_combination_hint(
@@ -341,7 +326,7 @@ pub(super) fn RealmsSection(
     let can_advance_step = match active_create_step {
         NewRealmStep::Basics => basics_ready,
         NewRealmStep::Boundary => boundary_ready,
-        NewRealmStep::Seed => basics_ready && boundary_ready,
+        NewRealmStep::Create => basics_ready && boundary_ready,
         NewRealmStep::Done => has_created_realm,
     };
     let can_create_realm = realm_create_available(
@@ -792,52 +777,14 @@ pub(super) fn RealmsSection(
                                 "data-testid": "new-realm-next-button",
                                 disabled: !can_advance_step,
                                 onclick: move |_| create_step.set(active_create_step.next()),
-                                {tr("setup.action.next_seed")}
+                                {tr("setup.action.next_create")}
                             }
                         }
                     }
                 }
 
-                if active_create_step == NewRealmStep::Seed {
+                if active_create_step == NewRealmStep::Create {
                     div { class: "setup-step-panel",
-                        div { class: "workflow-form setup-form-grid",
-                            div { class: "setup-field setup-field-span-2",
-                                Label { html_for: "seed-members-input-input", {tr("setup.field.seed_members")} }
-                                Textarea {
-                                    id: "seed-members-input-input",
-                                    "data-testid": "seed-members-input",
-                                    value: "{seed_members_value}",
-                                    rows: "4",
-                                    placeholder: "did:webvh:<scid>:alice.example\ndid:webvh:<scid>:bob.example",
-                                    oninput: move |event: FormEvent| seed_members.set(event.value())
-                                }
-                                div { class: "muted", {tr("setup.field.seed_members_help")} }
-                            }
-                            div { class: "setup-field setup-field-span-2",
-                                label { {tr("setup.seed.preview")} }
-                                if seed_member_count == 0 {
-                                    div { class: "muted", {tr("setup.seed.preview_empty")} }
-                                } else {
-                                    div { class: "setup-chip-wrap",
-                                        for member in parsed_seed_members.iter().take(8) {
-                                            {
-                                                let member_label =
-                                                    actor_display_label(&state_store.read(), member);
-                                                rsx! {
-                                                    span { class: "badge blue", title: "{member}", "{member_label}" }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                                div { class: "muted",
-                                    {tr_args(
-                                        "setup.seed.preview_count",
-                                        &[("count", seed_member_count.to_string())],
-                                    )}
-                                }
-                            }
-                        }
                         if let Some(blocker) = create_blocker {
                             div { class: "inline-warn", "data-testid": "realm-create-blocker",
                                 span { class: "body", "{blocker}" }
@@ -953,11 +900,9 @@ pub(super) fn RealmsSection(
                                         let security_class = realm_security_class();
                                         let federation_policy = realm_federation_policy();
                                         let digest_algorithm = realm_digest_algorithm();
-                                        let seed_text = seed_members();
                                         let actor = active_account()
                                             .map(|account| account.full_id().to_string())
                                             .unwrap_or_default();
-                                        let device = device_id();
                                         let configured_plaintext_service_id =
                                             plaintext_service_id.clone();
                                         spawn(async move {
@@ -980,7 +925,6 @@ pub(super) fn RealmsSection(
                                                     }
                                                 }
                                             }
-                                            let invitees = parse_seed_members(&seed_text);
                                             match authed_api_ready(&base, api_token.clone()).await {
                                                 Ok(api) => {
                                                     let mut plaintext_services = plaintext_services_for_policy(
@@ -1046,7 +990,6 @@ pub(super) fn RealmsSection(
                                                         &federation_policy,
                                                         &digest_algorithm,
                                                         &trust_domain,
-                                                        invitees.clone(),
                                                         plaintext_services.clone(),
                                                         (!alias.trim().is_empty()).then(|| alias.trim()),
                                                         Some(content_scheme.as_str()),
@@ -1069,11 +1012,6 @@ pub(super) fn RealmsSection(
                                                         let mut projection_members = Vec::new();
                                                         if !actor.trim().is_empty() {
                                                             projection_members.push(actor.clone());
-                                                        }
-                                                        for invitee in &invitees {
-                                                            if !projection_members.iter().any(|member| member == invitee) {
-                                                                projection_members.push(invitee.clone());
-                                                            }
                                                         }
                                                         let projection_admins = if actor.trim().is_empty() {
                                                             Vec::new()
@@ -1169,7 +1107,7 @@ pub(super) fn RealmsSection(
                                                         // wizard immediately; MLS initialization
                                                         // and backup below are post-create setup
                                                         // and must not leave a successfully created
-                                                        // Realm looking like a retryable Seed draft.
+                                                        // Realm looking like a retryable create draft.
                                                         realm_state.set(BootstrapProgressStrings::fill(
                                                             &strings.accepted,
                                                             &[("id", realm_id.clone())],
@@ -1215,39 +1153,11 @@ pub(super) fn RealmsSection(
                                                                 }
                                                         }
 
-                                                        let mut seeded_mls_ok = 0_usize;
-                                                        let mut seeded_mls_err = String::new();
-                                                        if crate::security_state::encryption_profile_is_encrypted(
-                                                            &encryption_profile,
-                                                        ) && !invitees.is_empty() {
-                                                            match crate::views::realm_admin::submit_mls_admission_for_invitees(
-                                                                &api,
-                                                                state_store,
-                                                                realm_id.clone(),
-                                                                actor.clone(),
-                                                                device.clone(),
-                                                                invitees.clone(),
-                                                            )
-                                                            .await
-                                                            {
-                                                                Ok(count) => seeded_mls_ok = count,
-                                                                Err(err) => seeded_mls_err = err.to_string(),
-                                                            }
-                                                        }
-
                                                         let fill = BootstrapProgressStrings::fill;
                                                         let mut steps = vec![fill(
                                                             &strings.created,
                                                             &[("id", realm_id.clone())],
                                                         )];
-                                                        if invitees.is_empty() {
-                                                            steps.push(strings.seeded_owner_only.clone());
-                                                        } else {
-                                                            steps.push(fill(
-                                                                &strings.seeded_members,
-                                                                &[("count", invitees.len().to_string())],
-                                                            ));
-                                                        }
                                                         steps.push(fill(
                                                             &strings.canonical_policy,
                                                             &[
@@ -1272,17 +1182,6 @@ pub(super) fn RealmsSection(
                                                             &encryption_profile,
                                                         ) {
                                                             steps.push(strings.mls_ready_local.clone());
-                                                        }
-                                                        if !seeded_mls_err.is_empty() {
-                                                            steps.push(fill(
-                                                                &strings.mls_admission_failed,
-                                                                &[("error", seeded_mls_err.clone())],
-                                                            ));
-                                                        } else if seeded_mls_ok > 0 {
-                                                            steps.push(fill(
-                                                                &strings.mls_welcome_queued,
-                                                                &[("count", seeded_mls_ok.to_string())],
-                                                            ));
                                                         }
                                                         if crate::event_builders::encryption_profile_uses_recommended_floor(
                                                             &encryption_profile,

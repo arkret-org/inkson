@@ -56,9 +56,8 @@ use crate::views::helpers::short_protocol_id;
 struct DeviceRow {
     device_id: String,
     display_name: String,
-    is_current: bool,
     verification_state: String,
-    created_at: String,
+    authorized_at: String,
 }
 
 #[derive(Clone, serde::Deserialize, serde::Serialize)]
@@ -107,12 +106,8 @@ struct PairingApprovalPayload {
     device_pairing_request_id: Option<arkret_sdk::DevicePairingRequestId>,
 }
 
-fn parse_devices(value: &Value) -> (Option<String>, Vec<DeviceRow>) {
-    let explicit_current = value
-        .get("current_device_id")
-        .and_then(Value::as_str)
-        .map(ToOwned::to_owned);
-    let rows: Vec<DeviceRow> = value
+fn parse_devices(value: &Value) -> Vec<DeviceRow> {
+    value
         .get("devices")
         .and_then(Value::as_array)
         .map(|arr| {
@@ -125,34 +120,26 @@ fn parse_devices(value: &Value) -> (Option<String>, Vec<DeviceRow>) {
                         .unwrap_or("")
                         .trim()
                         .to_owned();
-                    let is_current = item
-                        .get("is_current_session_device")
-                        .and_then(Value::as_bool)
-                        .unwrap_or(false);
                     let verification_state = item
                         .get("verification_state")
-                        .or_else(|| item.get("status"))
                         .and_then(Value::as_str)
-                        .unwrap_or("unverified")
+                        .unwrap_or("unresolved")
                         .to_owned();
-                    let created_at = item
-                        .get("created_at")
+                    let authorized_at = item
+                        .get("authorized_at")
                         .and_then(Value::as_str)
                         .unwrap_or("")
                         .to_owned();
                     Some(DeviceRow {
                         device_id,
                         display_name,
-                        is_current,
                         verification_state,
-                        created_at,
+                        authorized_at,
                     })
                 })
                 .collect()
         })
-        .unwrap_or_default();
-    let current = explicit_current.or_else(|| rows.first().map(|row| row.device_id.clone()));
-    (current, rows)
+        .unwrap_or_default()
 }
 
 /// Build the QR / paste payload that an already-authorized device approves.
@@ -378,7 +365,6 @@ pub fn SettingsDevicesPanel(
     let pair_mode = matches!(route, Route::SettingsDevicesPair);
 
     let mut devices = use_signal(Vec::<DeviceRow>::new);
-    let mut current_device = use_signal(String::new);
     let mut load_status = use_signal(String::new);
     let revoke_target = use_signal(|| Option::<String>::None);
     let revoke_status = use_signal(String::new);
@@ -425,10 +411,7 @@ pub fn SettingsDevicesPanel(
                 {
                     Ok(value) => {
                         let value = serde_json::to_value(&value).unwrap_or_default();
-                        let (cur, rows) = parse_devices(&value);
-                        if let Some(c) = cur {
-                            current_device.set(c);
-                        }
+                        let rows = parse_devices(&value);
                         let count = rows.len();
                         devices.set(rows);
                         load_status.set(format!("Loaded {count} device(s)"));
@@ -463,10 +446,7 @@ pub fn SettingsDevicesPanel(
                 {
                     Ok(value) => {
                         let value = serde_json::to_value(&value).unwrap_or_default();
-                        let (cur, rows) = parse_devices(&value);
-                        if let Some(c) = cur {
-                            current_device.set(c);
-                        }
+                        let rows = parse_devices(&value);
                         let count = rows.len();
                         devices.set(rows);
                         load_status.set(format!("Loaded {count} device(s)"));
@@ -562,7 +542,6 @@ pub fn SettingsDevicesPanel(
             } else {
                 {render_device_list(
                     devices,
-                    current_device,
                     local_device_id.clone(),
                     load_status,
                     revoke_target,
@@ -583,7 +562,6 @@ pub fn SettingsDevicesPanel(
 #[allow(clippy::too_many_arguments)]
 fn render_device_list(
     devices: Signal<Vec<DeviceRow>>,
-    current_device: Signal<String>,
     local_device_id: String,
     load_status: Signal<String>,
     revoke_target: Signal<Option<String>>,
@@ -597,7 +575,6 @@ fn render_device_list(
     revoke_passphrase: Signal<crate::fresh_device_recovery::RecoveryWordsInput>,
 ) -> Element {
     let rows = devices();
-    let cur = current_device();
     let has_rows = !rows.is_empty();
     let status_msg = load_status();
     let revoke_msg = revoke_status();
@@ -620,13 +597,12 @@ fn render_device_list(
                     div { class: "device-list-header", role: "row",
                         span { role: "columnheader", "Device" }
                         span { role: "columnheader", "Verification" }
-                        span { role: "columnheader", "Created" }
+                        span { role: "columnheader", "Authorized" }
                         span { role: "columnheader", "Actions" }
                     }
                     for row in rows.iter() {
                         {render_device_row(
                             row.clone(),
-                            cur.clone(),
                             local_device_id.clone(),
                             revoke_target,
                         )}
@@ -687,16 +663,10 @@ fn device_verification_badge(state: &str) -> Element {
 
 fn render_device_row(
     row: DeviceRow,
-    server_current: String,
     local_device_id: String,
     mut revoke_target: Signal<Option<String>>,
 ) -> Element {
-    // "current" is true when soland says so (server-authoritative
-    // current_device_id) OR when our local_state.device_id matches —
-    // both legitimately identify the device the user is sitting at.
-    let is_current = row.is_current
-        || (!server_current.is_empty() && server_current == row.device_id)
-        || (!local_device_id.is_empty() && local_device_id == row.device_id);
+    let is_current = !local_device_id.is_empty() && local_device_id == row.device_id;
     let row_class = if is_current {
         "device-row current"
     } else {
@@ -764,7 +734,7 @@ fn render_device_row(
             }
             div { class: "device-list-cell", role: "cell",
                 span { class: "device-list-cell-label", "Created" }
-                span { class: "device-created-at", if row.created_at.is_empty() { "—" } else { "{row.created_at}" } }
+                span { class: "device-authorized-at", if row.authorized_at.is_empty() { "—" } else { "{row.authorized_at}" } }
             }
             div { class: "device-list-cell device-list-cell-actions", role: "cell",
                 span { class: "device-list-cell-label", "Actions" }
@@ -916,7 +886,7 @@ fn render_revoke_modal(
                                             {
                                                 let value =
                                                     serde_json::to_value(&value).unwrap_or_default();
-                                                let (_cur, rows) = parse_devices(&value);
+                                                let rows = parse_devices(&value);
                                                 let count = rows.len();
                                                 devices.set(rows);
                                                 load_status.set(format!("Loaded {count} device(s)"));
@@ -1452,7 +1422,7 @@ fn render_pair_strand(
                                         &crate::transport::keys::list_devices(&api.sdk_http_client()?)
                                             .await?,
                                     )?;
-                                    let (_, rows) = parse_devices(&devices_value);
+                                    let rows = parse_devices(&devices_value);
                                     let expires_at = crate::clock::timestamp_in(10 * 60);
                                     let content = build_pairing_verification_content(
                                         &request_body,
@@ -1900,54 +1870,53 @@ mod tests {
     fn parses_device_list_response() {
         let payload = json!({
             "actor": "did:web:alice.example",
-            "current_device_id": "device-1",
             "devices": [
                 {
                     "device_id": "device-1",
                     "display_name": "Chrome · Windows",
-                    "is_current_session_device": true,
+                    "status": "active",
                     "verification_state": "verified",
-                    "created_at": "2026-05-01T00:00:00.000Z"
+                    "authorized_at": "2026-05-01T00:00:00.000Z"
                 },
                 {
                     "device_id": "device-2",
-                    "is_current_session_device": false,
-                    "verification_state": "unverified",
-                    "created_at": "2026-05-05T12:34:56.000Z"
+                    "status": "active",
+                    "verification_state": "unresolved",
+                    "authorized_at": "2026-05-05T12:34:56.000Z"
                 }
             ]
         });
-        let (cur, rows) = parse_devices(&payload);
-        assert_eq!(cur.as_deref(), Some("device-1"));
+        let rows = parse_devices(&payload);
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0].device_id, "device-1");
         assert_eq!(rows[0].display_name, "Chrome · Windows");
-        assert!(rows[0].is_current);
+        assert_eq!(rows[0].authorized_at, "2026-05-01T00:00:00.000Z");
         // Missing display_name parses to an empty string (UI falls back
         // to the short device id).
         assert_eq!(rows[1].display_name, "");
-        assert_eq!(rows[1].verification_state, "unverified");
+        assert_eq!(rows[1].verification_state, "unresolved");
     }
 
     #[test]
-    fn parse_devices_uses_first_device_when_current_missing() {
+    fn parse_devices_does_not_invent_current_device_state() {
         let payload = json!({
             "principal_id": "ak:did_core:web:alice.example",
             "devices": [
                 {
                     "device_id": "device-1",
                     "display_name": "Laptop",
-                    "status": "active"
+                    "status": "active",
+                    "verification_state": "verified"
                 },
                 {
                     "device_id": "device-2",
                     "display_name": "Phone",
-                    "status": "active"
+                    "status": "active",
+                    "verification_state": "verified"
                 }
             ]
         });
-        let (cur, rows) = parse_devices(&payload);
-        assert_eq!(cur.as_deref(), Some("device-1"));
+        let rows = parse_devices(&payload);
         assert_eq!(rows.len(), 2);
     }
 
@@ -2076,8 +2045,7 @@ mod tests {
 
     #[test]
     fn parse_devices_handles_missing_fields_gracefully() {
-        let (cur, rows) = parse_devices(&json!({}));
-        assert!(cur.is_none());
+        let rows = parse_devices(&json!({}));
         assert!(rows.is_empty());
     }
 }

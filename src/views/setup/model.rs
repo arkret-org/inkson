@@ -36,14 +36,14 @@ impl SetupSection {
 pub(super) enum NewRealmStep {
     Basics,
     Boundary,
-    Seed,
+    Create,
     Done,
 }
 
 pub(super) const NEW_REALM_STEPS: [NewRealmStep; 4] = [
     NewRealmStep::Basics,
     NewRealmStep::Boundary,
-    NewRealmStep::Seed,
+    NewRealmStep::Create,
     NewRealmStep::Done,
 ];
 
@@ -54,7 +54,7 @@ impl NewRealmStep {
         match self {
             Self::Basics => "setup.step.basics.label",
             Self::Boundary => "setup.step.boundary.label",
-            Self::Seed => "setup.step.seed.label",
+            Self::Create => "setup.step.create.label",
             Self::Done => "setup.step.done.label",
         }
     }
@@ -64,7 +64,7 @@ impl NewRealmStep {
         match self {
             Self::Basics => "setup.step.basics.subtitle",
             Self::Boundary => "setup.step.boundary.subtitle",
-            Self::Seed => "setup.step.seed.subtitle",
+            Self::Create => "setup.step.create.subtitle",
             Self::Done => "setup.step.done.subtitle",
         }
     }
@@ -73,7 +73,7 @@ impl NewRealmStep {
         match self {
             Self::Basics => "1",
             Self::Boundary => "2",
-            Self::Seed => "3",
+            Self::Create => "3",
             Self::Done => "4",
         }
     }
@@ -81,16 +81,16 @@ impl NewRealmStep {
     pub(super) fn next(self) -> Self {
         match self {
             Self::Basics => Self::Boundary,
-            Self::Boundary => Self::Seed,
-            Self::Seed | Self::Done => Self::Done,
+            Self::Boundary => Self::Create,
+            Self::Create | Self::Done => Self::Done,
         }
     }
 
     pub(super) fn previous(self) -> Self {
         match self {
             Self::Basics | Self::Boundary => Self::Basics,
-            Self::Seed => Self::Boundary,
-            Self::Done => Self::Seed,
+            Self::Create => Self::Boundary,
+            Self::Done => Self::Create,
         }
     }
 }
