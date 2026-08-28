@@ -2445,7 +2445,6 @@ fn PendingAccountIdentityCreation(
                 }
             } else if choice() == IdentityChoice::Choose {
                 div { class: "onboarding-heading",
-                    span { class: "eyebrow", "Step 1" }
                     if resumes_reserved_identity {
                         h2 { "An identity reservation is unfinished" }
                         p { class: "muted", "The server has an unfinished identity reservation. That does not mean Inkson knows you saved its Recovery Key. Enter the original key if you still have it, or explicitly abandon this reservation before creating another identity." }
@@ -2496,7 +2495,6 @@ fn PendingAccountIdentityCreation(
                 }
             } else {
                 div { class: "onboarding-heading",
-                    span { class: "eyebrow", "Step 2" }
                     if resumes_reserved_identity {
                         h2 { "Enter your existing Recovery Key" }
                         p { class: "muted", "Inkson cannot replace the key that controls this reserved identity. If it is lost, use the explicit abandonment action below." }
