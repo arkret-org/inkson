@@ -56,7 +56,7 @@ impl WebSocketTransportSelector {
             arkret_models_discovery::select_websocket_binding(describe, CLIENT_MAX_FRAME_BYTES)
                 .and_then(|binding| match binding {
                     arkret_models_discovery::TransportBinding::Websocket {
-                        base_uri: base_url,
+                        base_url: base_url,
                         max_frame_bytes,
                         max_channels,
                         ..
@@ -450,7 +450,7 @@ pub(crate) mod tests_support {
         super::tests::describe_with(
             "ak.operation_bundle.principal_server.http_core.v1",
             arkret_sdk::TransportBinding::HttpJson {
-                base_uri: "https://server.example/_arkret".to_owned(),
+                base_url: "https://server.example/_arkret".to_owned(),
                 extension_profile_required: (),
             },
         )
@@ -470,7 +470,7 @@ pub(crate) mod tests {
 
     pub(crate) fn websocket_transport(max_frame_bytes: u32) -> arkret_sdk::TransportBinding {
         arkret_sdk::TransportBinding::Websocket {
-            base_uri: "wss://server.example/_arkret/ws".to_owned(),
+            base_url: "wss://server.example/_arkret/ws".to_owned(),
             extension_profile_required:
                 arkret_models_discovery::WebSocketBindingProfile::BindingWebsocketV1,
             subprotocol: arkret_models_discovery::WebSocketBindingSubprotocol::ArkretV1,
@@ -495,7 +495,7 @@ pub(crate) mod tests {
             vec![
                 binding,
                 arkret_sdk::TransportBinding::HttpJson {
-                    base_uri: "https://server.example/_arkret".to_owned(),
+                    base_url: "https://server.example/_arkret".to_owned(),
                     extension_profile_required: (),
                 },
             ]
@@ -516,7 +516,7 @@ pub(crate) mod tests {
         let selector = WebSocketTransportSelector::from_describe(&describe_with(
             "ak.operation_bundle.principal_server.http_core.v1",
             arkret_sdk::TransportBinding::HttpJson {
-                base_uri: "https://server.example/_arkret".to_owned(),
+                base_url: "https://server.example/_arkret".to_owned(),
                 extension_profile_required: (),
             },
         ));

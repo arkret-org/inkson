@@ -72,7 +72,7 @@ pub(super) fn ChatEffects(
                     |http| async move {
                         let list = http.agent_list().await?;
                         Ok::<_, anyhow::Error>(crate::views::agents::mentionable_owned_agent_slugs(
-                            list.agents,
+                            list.agent_projections,
                         ))
                     },
                 )
@@ -404,7 +404,7 @@ pub(super) fn ChatEffects(
                                 visible.insert(
                                     agent_id,
                                     participation_allows_public_reply(
-                                        &outcome.entries,
+                                        &outcome.agent_participation_entries,
                                         &realm,
                                         circle.as_deref(),
                                         &strand,

@@ -491,7 +491,7 @@ mod tests {
                 "ak.operation_bundle.principal_server.http_core.v1".to_owned(),
             ],
             vec![arkret_sdk::TransportBinding::HttpJson {
-                base_uri: "https://service.example/_arkret".to_owned(),
+                base_url: "https://service.example/_arkret".to_owned(),
                 extension_profile_required: (),
             }],
         );
@@ -509,7 +509,7 @@ mod tests {
                 "ak.operation_bundle.principal_server.describe.v1".to_owned(),
             ],
             vec![arkret_sdk::TransportBinding::HttpJson {
-                base_uri: "https://service.example/_arkret".to_owned(),
+                base_url: "https://service.example/_arkret".to_owned(),
                 extension_profile_required: (),
             }],
         );
@@ -534,8 +534,8 @@ mod tests {
             "pending_delivery_count": 0,
             "accepted": ["ak:event:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-"],
             "duplicate": [],
-            "rejected": [],
-            "realm_actor_frontiers": [],
+            "events_submit_rejected_rows": [],
+            "realm_actor_frontier_views": [],
             "realm_frontiers": [],
             "cursor": "sx:cursor-1",
         });
@@ -551,7 +551,7 @@ mod tests {
     #[test]
     fn contact_list_sidebar_fixture_decodes_direct_chat_targets() {
         let value = serde_json::json!({
-            "contacts": [{
+            "contact_list_rows": [{
                 "peer": {"kind": "human", "principal_id": "ak:did_core:web:bob.example"},
                 "state": "accepted",
                 "next_prepare_input": {
@@ -569,7 +569,7 @@ mod tests {
                     "binding_event_ref": "ak:event:AQmnyvvBmKOWOEOSD2rAYsVBQn6vJ_wdbdUY8CKUGB5c",
                     "state": "found"
                 },
-                "agents": [{
+                "contact_agent_projections": [{
                     "agent_id": "ak:did_core:web:agents.example:bob-helper",
                     "controller_id": "ak:did_core:web:bob.example",
                     "display_name": "Bob Helper",
@@ -587,8 +587,11 @@ mod tests {
             "has_more": false
         });
         let decoded: arkret_sdk::ContactList = serde_json::from_value(value).unwrap();
-        assert_eq!(decoded.contacts.len(), 1);
-        assert_eq!(decoded.contacts[0].agents.len(), 1);
+        assert_eq!(decoded.contact_list_rows.len(), 1);
+        assert_eq!(
+            decoded.contact_list_rows[0].contact_agent_projections.len(),
+            1
+        );
     }
 
     #[test]
@@ -693,10 +696,10 @@ mod tests {
             granted_by_peer_scopes: vec![ContactScope::Invite],
             bidirectional_scopes: Vec::new(),
             effective_scopes: Some(Vec::new()),
-            peer_id: None,
+            peer_host_id: None,
             continuity_evidence: None,
             direct_conversation: None,
-            agents: Vec::new(),
+            contact_agent_projections: Vec::new(),
         };
         assert!(super::contact_grants_me_invite(&row));
     }

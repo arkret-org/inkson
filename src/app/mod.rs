@@ -971,7 +971,7 @@ fn AppBootstrap() -> Element {
                 .map(|scope| crate::models::contact_scope_wire(*scope))
                 .collect::<Vec<_>>()
                 .join(" ");
-            let agent_match = contact.agents.iter().any(|agent| {
+            let agent_match = contact.contact_agent_projections.iter().any(|agent| {
                 sidebar_text_matches_query(
                     &direct_sidebar_query_value,
                     &[
@@ -2400,11 +2400,11 @@ fn AppBootstrap() -> Element {
                                         let contact_menu_is_open =
                                             sidebar_row_menu_open().as_deref()
                                                 == Some(contact_menu_key.as_str());
-                                        let contact_agent_count = contact.agents.len();
+                                        let contact_agent_count = contact.contact_agent_projections.len();
                                         let contact_agents_expanded = expanded_contact_agents.read().contains(&peer);
                                         let show_contact_agents = contact_agents_expanded
                                             || (!direct_sidebar_query_value.is_empty()
-                                                && contact.agents.iter().any(|agent| {
+                                            && contact.contact_agent_projections.iter().any(|agent| {
                                                     sidebar_text_matches_query(
                                                         &direct_sidebar_query_value,
                                                         &[
@@ -2657,7 +2657,7 @@ fn AppBootstrap() -> Element {
                                               }
                                               if show_contact_agents {
                                                 div { class: "contact-agent-list", "data-testid": "contact-sidebar-contact-agents",
-                                                  for agent in contact.agents.iter() {
+                                        for agent in contact.contact_agent_projections.iter() {
                                                     {
                                                         let agent_id = agent.agent_id.to_string();
                                                         let agent_label = agent.display_name.clone()
@@ -3847,10 +3847,10 @@ fn AppBootstrap() -> Element {
                                                             // logout time from the
                                                             // principal server's
                                                             // describe.auth_metadata.
-                                                            gate_account_base: None,
+                                                            gate_account_base_url: None,
                                                             base_url: active.server_url.clone(),
                                                             session_credential: api_token.clone(),
-                                                            principal_id: crate::app::principal_id_owned(actor.clone()),
+                                                            principal_id: actor.clone().expect("active session principal_id"),
                                                             created_at: chrono::Utc::now(),
                                                         };
                                                     let logout_secure_store =

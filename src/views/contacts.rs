@@ -210,14 +210,6 @@ fn ContactRow(
 
     let peer = crate::models::contact_peer_id(&contact).to_string();
     let state = contact.state;
-    // Cross-PS source: if the backend exposed the requester's PS in the list
-    // row, pass `requester_service_id` through on respond for reverse
-    // delivery. Otherwise use None and follow same-PS behavior.
-    let peer_id = contact
-        .peer_id
-        .as_ref()
-        .map(ToString::to_string)
-        .filter(|service_id| !service_id.trim().is_empty());
     let peer_label = actor_display_label(&state_store.read(), &peer);
     let existing_remark = state_store.read().contact_remark(&peer);
     let mut petname_input = use_signal(|| {
@@ -354,12 +346,11 @@ fn ContactRow(
                             let peer = peer.clone();
                             let request_event_ref =
                                 contact.request_event_ref.as_ref().map(ToString::to_string);
-                            let service = peer_id.clone();
                             move |_| {
                                 run_contact_action(
                                     base.clone(),
                                     token(),
-                                    ContactRowAction::Respond { requester: peer.clone(), request_event_ref: request_event_ref.clone(), verb: "accept".to_owned(), requester_service_id: service.clone() },
+                                    ContactRowAction::Respond { requester: peer.clone(), request_event_ref: request_event_ref.clone(), verb: "accept".to_owned() },
                                     tr("contacts.action.accepting"),
                                     busy,
                                     row_status,
@@ -378,12 +369,11 @@ fn ContactRow(
                             let peer = peer.clone();
                             let request_event_ref =
                                 contact.request_event_ref.as_ref().map(ToString::to_string);
-                            let service = peer_id.clone();
                             move |_| {
                                 run_contact_action(
                                     base.clone(),
                                     token(),
-                                    ContactRowAction::Respond { requester: peer.clone(), request_event_ref: request_event_ref.clone(), verb: "reject".to_owned(), requester_service_id: service.clone() },
+                                    ContactRowAction::Respond { requester: peer.clone(), request_event_ref: request_event_ref.clone(), verb: "reject".to_owned() },
                                     tr("contacts.action.rejecting"),
                                     busy,
                                     row_status,
@@ -687,8 +677,6 @@ enum ContactRowAction {
         requester: String,
         request_event_ref: Option<String>,
         verb: String,
-        /// Cross-PS reverse-delivery target; `None` for same-PS contacts.
-        requester_service_id: Option<String>,
     },
     Tombstone {
         peer: String,
@@ -716,27 +704,19 @@ fn run_contact_action(
                 requester,
                 request_event_ref,
                 verb,
-                requester_service_id,
             } => with_authed_sdk_client(&base, api_token, |http| async move {
                 match request_event_ref {
                     Some(request_event_ref) => {
-                        crate::transport::account::respond_contact_with_request_id_and_service(
+                        crate::transport::account::respond_contact_with_request_id(
                             &http,
                             &requester,
                             &request_event_ref,
                             &verb,
-                            requester_service_id.as_deref(),
                         )
                         .await
                     }
                     None => {
-                        crate::transport::account::respond_contact_with_service(
-                            &http,
-                            &requester,
-                            &verb,
-                            requester_service_id.as_deref(),
-                        )
-                        .await
+                        crate::transport::account::respond_contact(&http, &requester, &verb).await
                     }
                 }
             })
@@ -796,11 +776,11 @@ pub fn ContactsPanel(token: Signal<String>) -> Element {
                 .await
                 {
                     Ok(response) => {
-                        let count = response.contacts.len();
+                        let count = response.contact_list_rows.len();
                         state_store
                             .write()
-                            .replace_accepted_human_contacts(&response.contacts);
-                        contacts.set(response.contacts);
+                            .replace_accepted_human_contacts(&response.contact_list_rows);
+                        contacts.set(response.contact_list_rows);
                         status.set(format!("contacts {count}"));
                     }
                     Err(err) => {

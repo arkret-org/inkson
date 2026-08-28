@@ -15,8 +15,8 @@ fn account_client(
     if handoff.holder_jkt != dpop.jkt() {
         anyhow::bail!("account handoff holder key changed before onboarding reconciliation");
     }
-    let account_base = crate::identity::session_refresh::sdk_base_url_from_gate_account_base(
-        &handoff.gate_account_base,
+    let account_base = crate::identity::session_refresh::sdk_base_url_from_gate_account_base_url(
+        &handoff.gate_account_base_url,
     )?;
     Ok(arkret_sdk::http_client::ClientBuilder::new(account_base)
         .allow_insecure_localhost()
@@ -54,7 +54,7 @@ pub async fn refresh_pending_onboarding(
                 .ok_or_else(|| anyhow::anyhow!("account handoff holder key is unavailable"))?;
             let authority = arkret_sdk::PrincipalAuthorityKey::new(
                 principal_id.clone(),
-                arkret_sdk::DidCoreId::new(handoff.audience.clone())?,
+                handoff.audience_id.clone(),
             );
             let user_store =
                 crate::secure_key_store::UserLocalStore::new(authority, pending_device_id.clone())?;
@@ -309,7 +309,7 @@ pub(crate) fn checkpoint_continues_bound_creation(
         == Some(bound)
         && checkpoint.device_id == handoff.device_id
         && checkpoint.principal_server_url == handoff.principal_server_url
-        && checkpoint.gate_account_base == handoff.gate_account_base
+        && checkpoint.gate_account_base_url == handoff.gate_account_base_url
         && checkpoint.trust_domain == handoff.trust_domain
         && checkpoint.account_subject.is_some()
         && checkpoint.account_subject == handoff.account_subject
@@ -379,7 +379,7 @@ mod tests {
     ) {
         let handoff = PendingAccountHandoff {
             principal_server_url: "https://principal.example".to_owned(),
-            gate_account_base: "https://auth.example/_arkret/gate/account".to_owned(),
+            gate_account_base_url: "https://auth.example/_arkret/gate/account".to_owned(),
             request_id: "ak:request:019f0000-0000-7000-8000-000000000010".to_owned(),
             oidc_state: None,
             account_handle: "alice:auth.example".to_owned(),
@@ -387,7 +387,10 @@ mod tests {
                 arkret_sdk::Hash::new(format!("sha256:{}", "a".repeat(64))).unwrap(),
             ),
             holder_jkt: "holder-jkt".to_owned(),
-            audience: "did:webvh:z6mkfixture:principal.example".to_owned(),
+            audience_id: arkret_sdk::DidCoreId::new(
+                "ak:did_core:webvh:z6mkfixture:principal.example",
+            )
+            .unwrap(),
             expires_at: chrono::Utc::now() + chrono::Duration::minutes(10),
             lease_id: Some("lease-1".to_owned()),
             lease_fence: Some(1),
@@ -607,7 +610,7 @@ mod tests {
         );
 
         let mut foreign_authority = handoff.clone();
-        foreign_authority.gate_account_base =
+        foreign_authority.gate_account_base_url =
             "https://other.example/_arkret/gate/account".to_owned();
         assert_eq!(
             registration_checkpoint_disposition(

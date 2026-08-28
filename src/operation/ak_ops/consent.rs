@@ -57,7 +57,7 @@ pub fn consent_revoke(
     }
     let payload = arkret_sdk::ConsentRevokePayload {
         consent_id: consent_id.clone(),
-        observed_dots: observed_dots
+        observed_dot_ids: observed_dots
             .iter()
             .cloned()
             .map(arkret_sdk::ConsentObservedDot::new)

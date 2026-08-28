@@ -256,7 +256,7 @@ pub(crate) struct AgentParticipantMetadata {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct SpaceParticipant {
-    pub(crate) principal_id: String,
+    pub(crate) principal_id: arkret_sdk::DidCoreId,
     pub(crate) display_name: Option<String>,
     pub(crate) handle_label: Option<String>,
     pub(crate) display_name_rank: u8,

@@ -8,7 +8,7 @@ pub(super) struct ChatComposerContext {
     pub selected_channel_info: Option<ChannelEntity>,
     pub authority: arkret_sdk::PrincipalAuthorityKey,
     pub did: arkret_sdk::Did,
-    pub principal_id: String,
+    pub principal_id: arkret_sdk::DidCoreId,
     pub account_display_label: String,
     pub participants: Vec<SpaceParticipant>,
     pub selected_realm_id: String,
@@ -103,6 +103,9 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
         sync_cursor,
         mut frontier_state,
     } = context;
+    // The component boundary retains the validated identifier type. The view
+    // helpers below only render or forward its canonical text.
+    let principal_id = principal_id.as_str().to_owned();
     let base_url = crate::app::SessionContext::base_url_string();
     let mut sidecar_session = use_context::<crate::sidecar::HostedSidecarStateContext>().0;
     let mut state_store = crate::app::SessionContext::get().state_store;
@@ -222,7 +225,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                 )
                 .or_else(|| {
                     let participant = request_participants.iter().find(|participant| {
-                        participant.principal_id.trim() == request.target_id.trim()
+                        participant.principal_id.as_str().trim() == request.target_id.trim()
                     })?;
                     mention_candidate_for_explicit_target(
                         participant,

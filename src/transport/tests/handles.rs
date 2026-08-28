@@ -59,7 +59,7 @@ fn resolve_handle_request_body_carries_lookup_context() {
 
     assert_eq!(body["handle"], "bob:local.host");
     assert_eq!(body["intent"], "lookup");
-    assert_eq!(body["requester"], "ak:did_core:web:alice.example");
+    assert_eq!(body["requester_id"], "ak:did_core:web:alice.example");
     assert_eq!(
         body["audience"],
         "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-"

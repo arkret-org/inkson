@@ -108,7 +108,7 @@ fn parse_valid_until(raw: &str) -> Option<chrono::DateTime<chrono::Utc>> {
 
 fn parse_consent_rows(value: &arkret_sdk::ConsentCellList) -> Vec<ConsentRow> {
     value
-        .cells
+        .consent_cell_views
         .iter()
         .map(|cell| ConsentRow {
             holder: cell.holder_principal_id.to_string(),

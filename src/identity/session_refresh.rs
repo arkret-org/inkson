@@ -151,7 +151,7 @@ impl AuthenticatedTransportFactory for InksonAuthenticatedTransportFactory {
             .map_err(|error| garth::Error::Protocol(error.to_string()))?;
         let request = arkret_sdk::auth::session_grant::human_session_grant_refresh_request(
             persisted.grant_jwt.clone(),
-            Some(state.audience.clone()),
+            Some(state.audience_id.clone()),
             state
                 .device_id
                 .clone()
@@ -415,7 +415,7 @@ pub(crate) fn load_account_session_grant_with_secure_store(
     if grant.device_id != account.device_id {
         anyhow::bail!("session grant does not match the accepted account device");
     }
-    if grant.audience != account.authority.principal_server_id.as_str() {
+    if grant.audience_id != account.authority.principal_server_id {
         anyhow::bail!("session grant does not match the accepted account audience");
     }
     Ok(grant)
@@ -545,12 +545,13 @@ async fn session_transport_provider(
         return Ok(provider);
     }
 
-    let gate_account_base = crate::identity::account_auth::resolve_principal_gate_account_base(
-        grant.principal_server_url.as_str(),
-    )
-    .await
-    .map_err(|error| anyhow::anyhow!("resolve Account Authority: {error}"))?;
-    let account_sdk_base_url = sdk_base_url_from_gate_account_base(&gate_account_base)?;
+    let gate_account_base_url =
+        crate::identity::account_auth::resolve_principal_gate_account_base_url(
+            grant.principal_server_url.as_str(),
+        )
+        .await
+        .map_err(|error| anyhow::anyhow!("resolve Account Authority: {error}"))?;
+    let account_sdk_base_url = sdk_base_url_from_gate_account_base_url(&gate_account_base_url)?;
     let principal_sdk_base_url = grant.principal_server_url.clone();
     let refresh_transport = ReplaceableSessionTransport::default();
     let factory = InksonAuthenticatedTransportFactory {
@@ -626,8 +627,9 @@ fn persisted_session_grant_from_state(
         grant_jwt: state.grant_jwt.clone(),
         session_private_key_pem: session_private_key_pem.to_string(),
         grant_id: state.grant_id.as_str().to_owned(),
-        audience: state.audience.to_string(),
+        audience_id: state.audience_id.clone(),
         principal_id: state.principal_id.clone(),
+        service_account_id: state.service_account_id.clone(),
         device_id: device_id.clone(),
         principal_server_url: principal_server_url.clone(),
         grant_expires_at: Some(state.expires_at),
@@ -645,12 +647,13 @@ fn session_grant_state_from_persisted(
         .unwrap_or_else(|| now + chrono::Duration::seconds(REFRESH_SKEW_SECS));
     Ok(SessionGrantState {
         principal_id: persisted_grant_principal_id(grant)?,
+        service_account_id: grant.service_account_id.clone(),
         device_id: Some(grant.device_id.clone()),
         grant_id: arkret_wire::SessionGrantId::new(grant.grant_id.trim().to_owned())
             .map_err(|error| anyhow::anyhow!("invalid refresh grant_id: {error}"))?,
         grant_jwt: grant.grant_jwt.clone(),
         expires_at,
-        audience: session_audience(&grant.audience)?,
+        audience_id: grant.audience_id.clone(),
         granted_scope: Vec::new(),
         // Reconstructed-from-persistence state: the client persistence layer does
         // not retain the session public key, and garth's refresh flow never reads
@@ -689,9 +692,11 @@ pub(crate) fn grant_matches_principal_id(
     persisted_grant_principal_id(grant).is_ok_and(|grant_core_id| grant_core_id == *principal_id)
 }
 
-pub(crate) fn sdk_base_url_from_gate_account_base(gate_account_base: &str) -> anyhow::Result<Url> {
-    let mut url = Url::parse(gate_account_base.trim())
-        .with_context(|| format!("invalid Account Authority URL: {gate_account_base}"))?;
+pub(crate) fn sdk_base_url_from_gate_account_base_url(
+    gate_account_base_url: &str,
+) -> anyhow::Result<Url> {
+    let mut url = Url::parse(gate_account_base_url.trim())
+        .with_context(|| format!("invalid Account Authority URL: {gate_account_base_url}"))?;
     url.set_query(None);
     url.set_fragment(None);
 
@@ -716,7 +721,7 @@ fn mint_session_grant_refresh_proof(
 ) -> anyhow::Result<arkret_sdk::AcceptedDeviceRefreshPossessionProof> {
     let principal_core = persisted_grant_principal_id(grant)?;
     let device_id = grant.device_id.clone();
-    let audience = session_audience(&grant.audience)?;
+    let audience = grant.audience_id.clone();
     let predecessor_session_grant_id = arkret_wire::SessionGrantId::new(
         required_trimmed(&grant.grant_id, "grant_id")?.to_owned(),
     )?;
@@ -767,12 +772,6 @@ fn required_trimmed<'a>(value: &'a str, field: &str) -> anyhow::Result<&'a str> 
     Ok(value)
 }
 
-fn session_audience(value: &str) -> anyhow::Result<arkret_sdk::DidCoreId> {
-    let value = required_trimmed(value, "audience")?;
-    arkret_sdk::DidCoreId::new(value.to_owned())
-        .map_err(|error| anyhow::anyhow!("invalid session audience service core_id: {error}"))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -792,6 +791,7 @@ mod tests {
                 "ak:did_core:webvh:z6mkfixture:alice.example".to_owned(),
             )
             .unwrap(),
+            service_account_id: arkret_sdk::ServiceAccountId::new("account-1").unwrap(),
             device_id: Some(
                 arkret_sdk::DeviceId::new(
                     "ak:device:01964137-0000-7000-8000-000000000001".to_owned(),
@@ -804,7 +804,7 @@ mod tests {
             .unwrap(),
             grant_jwt: "grant.jwt.signature".to_owned(),
             expires_at: Utc::now() + chrono::Duration::hours(1),
-            audience: arkret_sdk::DidCoreId::new(
+            audience_id: arkret_sdk::DidCoreId::new(
                 "ak:did_core:webvh:z6mkfixture:soland.example".to_owned(),
             )
             .unwrap(),
@@ -819,8 +819,10 @@ mod tests {
             grant_jwt: "grant.jwt.signature".to_owned(),
             session_private_key_pem: String::new(),
             grant_id: "ak:session_grant:AY6DJbBwavsGTQuBZZiqqw9MVcqPZ8QX8invQ3i2kpi7".to_owned(),
-            audience: "ak:did_core:webvh:z6mkfixture:soland.example".to_owned(),
+            audience_id: arkret_sdk::DidCoreId::new("ak:did_core:webvh:z6mkfixture:soland.example")
+                .unwrap(),
             principal_id: arkret_sdk::DidCoreId::new(principal_id.to_owned()).unwrap(),
+            service_account_id: arkret_sdk::ServiceAccountId::new("account-1").unwrap(),
             device_id: arkret_sdk::DeviceId::new(
                 "ak:device:01964137-0000-7000-8000-000000000001".to_owned(),
             )
@@ -956,7 +958,8 @@ mod tests {
         assert!(error.to_string().contains("account server"));
 
         let mut wrong_audience = grant;
-        wrong_audience.audience = "ak:did_core:webvh:z6mkfixture:other.example".to_owned();
+        wrong_audience.audience_id =
+            arkret_sdk::DidCoreId::new("ak:did_core:webvh:z6mkfixture:other.example").unwrap();
         user_store
             .save_secret(
                 &secure_store,

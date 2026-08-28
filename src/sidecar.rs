@@ -1117,7 +1117,7 @@ pub(crate) async fn sync_sidecar_exchange_background(
             .agent_sidecar_list(None, cursor.as_deref())
             .await
             .map_err(anyhow::Error::from)?;
-        sidecar_views.extend(page.items);
+        sidecar_views.extend(page.agent_sidecar_views);
         let Some(next_cursor) = page.next_cursor.map(|value| value.to_string()) else {
             break;
         };

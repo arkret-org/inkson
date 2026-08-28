@@ -181,7 +181,7 @@ mod tests {
         store.save_realm_tree_projection(
             realm_id.to_owned(),
             serde_json::json!({
-                "members": [
+                "member_roster_entries": [
                     {"actor_id": "ak:did_core:web:alice.example", "membership": "join"},
                     {"actor_id": "ak:did_core:web:agent.example", "membership": "join"}
                 ]

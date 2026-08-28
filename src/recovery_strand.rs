@@ -414,7 +414,7 @@ fn build_signed_genesis_recovery_policy_with_raw_signer(
         threshold: None,
         device_quorum: None,
         trusted_recovery_services: None,
-        recovery_keys: Some(vec![RecoveryKeyEntry {
+        recovery_key_entries: Some(vec![RecoveryKeyEntry {
             verification_method: recovery_proof_ref,
             public_key_multibase: NonEmptyString::new(
                 key_material.recovery_proof_public_key_multikey.clone(),
@@ -426,7 +426,7 @@ fn build_signed_genesis_recovery_policy_with_raw_signer(
             expires_at: key_expires_at,
             revoked_at: None,
         }]),
-        recovery_key_agreements: Some(vec![RecoveryKeyAgreementEntry {
+        recovery_key_agreement_entries: Some(vec![RecoveryKeyAgreementEntry {
             key_agreement_ref: backup_hpke_ref,
             key_agreement_algorithm: RecoveryKeyAgreementAlgorithm::X25519,
             public_key_multibase: NonEmptyString::new(
@@ -722,7 +722,7 @@ fn validate_active_policy_key_material(
     }
 
     let agreement_ref = policy
-        .recovery_key_agreements
+        .recovery_key_agreement_entries
         .as_deref()
         .unwrap_or_default()
         .iter()
@@ -736,7 +736,7 @@ fn validate_active_policy_key_material(
         );
     };
     let proof_key = policy
-        .recovery_keys
+        .recovery_key_entries
         .as_deref()
         .unwrap_or_default()
         .iter()

@@ -6,7 +6,7 @@ use super::*;
 pub(super) struct CardDetailContext {
     pub base_url: String,
     pub plaintext_service_id: String,
-    pub principal_id: String,
+    pub principal_id: arkret_sdk::DidCoreId,
     pub account_primary_handle: String,
     pub device_id: String,
     pub selected_realm_id: String,
@@ -173,6 +173,10 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
         selected_scope_security_encrypted_or_secure,
         projected_strand_ids,
     } = context;
+    // Keep validation at the component boundary; local view helpers consume
+    // only the canonical textual representation.
+    let principal_core_id = principal_id.clone();
+    let principal_id = principal_id.as_str().to_owned();
     let state_store = crate::app::SessionContext::get().state_store;
     let hosted_sidecar_state = use_context::<crate::sidecar::HostedSidecarStateContext>().0;
     let navigator = use_navigator();
@@ -191,7 +195,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                 with_authed_sdk_client(&base, api_token, |http| async move {
                     let list = http.agent_list().await?;
                     Ok::<_, anyhow::Error>(crate::views::agents::mentionable_owned_agent_slugs(
-                        list.agents,
+                        list.agent_projections,
                     ))
                 })
                 .await
@@ -1518,7 +1522,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                         "aria-hidden": "{active_detail_tab != CardDetailContentTab::Discussion}",
                                                         crate::views::chat::ChatPanel {
                                                             plaintext_service_id: plaintext_service_id.clone(),
-                                                            principal_id: principal_id.clone(),
+                                                            principal_id: principal_core_id.clone(),
                                                             account_primary_handle: account_primary_handle.clone(),
                                                             device_id: device_id.clone(),
                                                             token,

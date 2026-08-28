@@ -15,7 +15,7 @@
 //! This module is split by responsibility:
 //! - [`backup_body`] — build / decrypt / classify the on-wire backup envelopes.
 //! - [`selection`] — pure selection helpers over a `list_key_backups` payload.
-//! - [`series`] — `supersedes` chain construction and verification.
+//! - [`series`] — `supersedes_id` chain construction and verification.
 //! - [`restore`] — fetch + restore flow (account secret, history, sidecar).
 //! - [`upload`] — backup / rotation upload flow and superseded cleanup.
 

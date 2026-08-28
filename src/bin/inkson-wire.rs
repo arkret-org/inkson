@@ -296,7 +296,7 @@ fn realm_genesis_seal(input: Value) -> Result<Value> {
             producer_proof_digest:
                 arkret_sdk::PrincipalServerAdmissionProof::producer_proof_digest(&producer)?,
             producer_verification_method: producer.verification_method.clone(),
-            producer_signing_key,
+            producer_signing_key_did: producer_signing_key,
             producer_signer_resolution_evidence_ref: None,
             producer_signer_resolution_evidence_digest: None,
             signer_resolution_evidence_ref: signer_evidence_ref.clone(),
@@ -334,9 +334,9 @@ fn realm_genesis_seal(input: Value) -> Result<Value> {
             )
             .map_err(|error| anyhow::anyhow!(error.to_string()))?
             {
-                ops_by_cell.entry(effect.cell.clone()).or_default().push(
+                ops_by_cell.entry(effect.cell_id.clone()).or_default().push(
                     arkret_state::lattice::ordered_log::IssuedOp {
-                        issuer: event.actor_id.clone(),
+                        issuer_id: event.actor_id.clone(),
                         op: arkret_state::SealedOp::from_projection(digest.clone(), &effect),
                     },
                 );
@@ -678,7 +678,7 @@ fn range_completeness(input: Value) -> Result<Value> {
     let mut payload = arkret_sdk::RangeCompletenessAttestation {
         attestation_id: "ak:attestation:019fbeef-0000-7000-8000-000000000001".to_owned(),
         schema: SchemaId::RANGE_COMPLETENESS_ATTESTATION_V1.to_owned(),
-        issuer: issuer.clone(),
+        issuer_id: issuer.clone(),
         issuer_role: "events_api".to_owned(),
         realm_id: input.realm_id.clone(),
         event_range: arkret_sdk::RangeCompletenessAttestationEventRange {

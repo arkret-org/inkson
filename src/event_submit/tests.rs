@@ -21,7 +21,10 @@ fn test_authoring_generation() -> crate::identity::authoring_generation::Authori
     crate::identity::authoring_generation::AuthoringGeneration {
         authority_model:
             crate::identity::authoring_generation::AuthoringAuthorityModel::AcceptedDevice,
-        authority_principal_id: "ak:did_core:web:alice.example".to_owned(),
+        authority_principal_id: arkret_sdk::DidCoreId::new(
+            "ak:did_core:web:alice.example".to_owned(),
+        )
+        .unwrap(),
         generation_ref: "1-QmCurrent".to_owned(),
     }
 }

@@ -144,7 +144,7 @@ fn build_standard_authorize_url(
 /// handoff.
 pub fn build_persisted_oidc_scaffold(
     bundle: &OidcScaffoldBundle,
-    gate_account_base: &str,
+    gate_account_base_url: &str,
     principal_server_url: &str,
     device_id: &str,
     issuer: &str,
@@ -163,7 +163,7 @@ pub fn build_persisted_oidc_scaffold(
         callback_uri: bundle.callback_uri.clone(),
         authorize_url: bundle.authorize_url.clone(),
         issuer: issuer.to_owned(),
-        gate_account_base: gate_account_base.to_owned(),
+        gate_account_base_url: gate_account_base_url.to_owned(),
         principal_trust_domain: principal_trust_domain.to_string(),
         expected_principal_did: expected_principal_did.cloned(),
         expected_device_id: expected_device_id.cloned(),

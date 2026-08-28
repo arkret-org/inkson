@@ -1,4 +1,4 @@
-//! Key-backup `supersedes` chain construction and verification.
+//! Key-backup `supersedes_id` chain construction and verification.
 
 use anyhow::{Result, anyhow};
 use serde_json::Value;
@@ -20,12 +20,12 @@ pub(super) fn fresh_backup_id() -> String {
     format!("ak:backup:{}", crate::operation::uuid_v7())
 }
 
-/// Verify the `supersedes` chain of a key-backup series back to genesis.
+/// Verify the `supersedes_id` chain of a key-backup series back to genesis.
 ///
 /// `tail` is the highest-`series_seq` body selected for the series; `all` is the
 /// full set of candidate bodies (same backup class) returned by the server
 /// list. The chain is valid only when every `series_seq` from `0..=tail` is
-/// present exactly once, each successor's `supersedes` points at the immediate
+/// present exactly once, each successor's `supersedes_id` points at the immediate
 /// predecessor's `backup_id`, and each `supersedes_digest` matches the canonical
 /// digest of that predecessor envelope.
 ///
@@ -75,9 +75,9 @@ pub(super) fn verify_series_chain(tail: &Value, all: &[Value]) -> Result<()> {
             .get("backup_id")
             .and_then(Value::as_str)
             .unwrap_or_default();
-        if body.get("supersedes").and_then(Value::as_str) != Some(prev_backup_id) {
+        if body.get("supersedes_id").and_then(Value::as_str) != Some(prev_backup_id) {
             return Err(anyhow!(
-                "series_chain_broken: series_seq {seq} `supersedes` does not point at its predecessor"
+                "series_chain_broken: series_seq {seq} `supersedes_id` does not point at its predecessor"
             ));
         }
         let expected_digest = series_supersedes_digest(prev)?;

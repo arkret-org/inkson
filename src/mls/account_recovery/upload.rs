@@ -80,7 +80,7 @@ fn active_recovery_backup_recipient(
     let multikey = arkret_crypto::identity_root::x25519_public_multikey(raw);
     let now = crate::clock::now_utc();
     let matches = body
-        .recovery_key_agreements
+        .recovery_key_agreement_entries
         .as_deref()
         .unwrap_or_default()
         .iter()
@@ -100,7 +100,7 @@ fn active_recovery_backup_recipient(
         ));
     };
     if !body
-        .recovery_keys
+        .recovery_key_entries
         .as_deref()
         .unwrap_or_default()
         .iter()

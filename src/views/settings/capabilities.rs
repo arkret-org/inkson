@@ -489,7 +489,7 @@ mod tests {
             "id": "ak:grant:AfpU2UOijpNUdGOoAgQdaqV0xwreLXwLE3yXXHvB6n7X",
             "schema": "ak.schema.capability.v1",
             "realm_id": "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-",
-            "issuer": "ak:did_core:web:alice.example",
+            "issuer_id": "ak:did_core:web:alice.example",
             "issuer_principal_server_id": "ak:did_core:web:principal.example",
             "subject": subject,
             "actions": ["ak.message.create"],

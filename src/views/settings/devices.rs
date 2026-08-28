@@ -1855,7 +1855,7 @@ mod tests {
     fn target_attestation() -> arkret_sdk::DevicePairingTargetAttestation {
         serde_json::from_value(json!({
             "device_id": "ak:device:01964137-0000-7000-8000-0000000000c1",
-            "device_public_key": "did:key:z6MkogKw38hXxUkpMWitoBubBGHZzeGrQJ4oHF36iegUbmpA",
+            "device_public_key_did": "did:key:z6MkogKw38hXxUkpMWitoBubBGHZzeGrQJ4oHF36iegUbmpA",
             "hpke_key": "z6LSriWhVBzW9Vz2PvqbieSz7Aa2hPLzTKJuDwXTMKFeomeW",
             "algorithms": ["HPKE-X25519-HKDF-SHA256-CHACHA20POLY1305", "ak.mls.ciphersuite.v1"],
             "device_key_algorithm": "Ed25519",
@@ -2028,7 +2028,7 @@ mod tests {
         let content = serde_json::to_value(content).unwrap();
         assert_eq!(content["purpose"], "same_principal_device_authorization");
         assert_eq!(
-            content["from_device"],
+            content["from_device_id"],
             "ak:device:01964137-0000-7000-8000-0000000000c2"
         );
         assert_eq!(content["pairing_code"], "7H2K9M4Q");

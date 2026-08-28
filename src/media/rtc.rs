@@ -670,7 +670,7 @@ pub async fn join_call_media(
         call_id: ids.call_id.clone(),
         focus_id: request.focus_id.clone(),
         epoch_id: request.epoch_id,
-        participant_identity: verification.participant_identity.clone(),
+        participant_identity: verification.participant_id.clone(),
         device_id: ids.device_id.clone(),
     };
     let frame_key = derive_frame_key(mls_exporter, &frame_context)
@@ -679,10 +679,10 @@ pub async fn join_call_media(
     Ok(JoinedMediaSession {
         backend_kind: "livekit".to_owned(),
         focus_id: outcome.focus_id,
-        connect_url: outcome.connect_uri,
+        connect_url: outcome.connect_url,
         backend_token,
         participant_binding: outcome.participant_binding,
-        participant_identity: verification.participant_identity,
+        participant_identity: verification.participant_id,
         ice_config,
         frame_key,
         desired_media: request.desired_media,

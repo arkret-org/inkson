@@ -139,7 +139,7 @@ fn agent_signer_evidence_frontier(
 fn agent_signer_evidence_lineage(
     evidence: &arkret_sdk::AgentSignerEvidence,
 ) -> &[arkret_sdk::Seal] {
-    &agent_signer_evidence_snapshot(evidence).core.seal_lineage
+    &agent_signer_evidence_snapshot(evidence).core.seal_lineages
 }
 
 fn seal_lineage_covers(lineage: &[arkret_sdk::Seal], descendant: &str, ancestor: &str) -> bool {

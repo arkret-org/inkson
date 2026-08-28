@@ -1182,18 +1182,18 @@ fn can_resume_returning_handoff_for_callback(
     oidc_state: &str,
     pending_device_id: &str,
     holder_jkt: &str,
-    gate_account_base: &str,
+    gate_account_base_url: &str,
 ) -> bool {
     handoff.oidc_state.as_deref() == Some(oidc_state)
         && handoff.device_id == pending_device_id
         && handoff.holder_jkt == holder_jkt
-        && same_server_url(&handoff.gate_account_base, gate_account_base)
+        && same_server_url(&handoff.gate_account_base_url, gate_account_base_url)
         && handoff.bound_principal_id.is_some()
 }
 
 fn pending_handoff_from_authority(
     principal_server_url: &str,
-    gate_account_base: &str,
+    gate_account_base_url: &str,
     audience: &arkret_sdk::DidCoreId,
     device_id: &str,
     trust_domain: &str,
@@ -1248,13 +1248,13 @@ fn pending_handoff_from_authority(
     };
     crate::state::PendingAccountHandoff {
         principal_server_url: principal_server_url.to_owned(),
-        gate_account_base: gate_account_base.to_owned(),
+        gate_account_base_url: gate_account_base_url.to_owned(),
         request_id: outcome.request_id.to_string(),
         oidc_state: Some(oidc_state.to_owned()),
         account_handle: outcome.account_handle.canonical().to_owned(),
         account_subject: Some(outcome.account_subject.clone()),
         holder_jkt: holder_jkt.to_owned(),
-        audience: audience.to_string(),
+        audience_id: audience.clone(),
         expires_at: outcome.expires_at,
         lease_id,
         lease_fence,
@@ -1508,7 +1508,7 @@ pub(crate) async fn prepare_oidc_authorization(
 
     let scaffold = build_persisted_oidc_scaffold(
         &bundle,
-        &resolver.gate_account_base,
+        &resolver.gate_account_base_url,
         principal_server_url,
         device_id,
         &discovery.issuer,
@@ -1527,7 +1527,7 @@ pub(crate) async fn prepare_oidc_authorization(
 /// `openid_configuration` when present, else `{issuer}/.well-known/openid-configuration`.
 fn oidc_discovery_url(method: &arkret_sdk::AuthMethod) -> Option<String> {
     if let Some(config) = method
-        .openid_configuration_uri
+        .openid_configuration_url
         .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty())
@@ -1597,19 +1597,20 @@ async fn finish_oidc_callback(
     let authorization_code = extract_authorization_code_from_callback(&callback_url)
         .map_err(|error| format!("Callback did not include an authorization code: {error}"))?;
     // T1.Y4 — every gate/account call routes through the resolved
-    // `gate_account_base` persisted in the scaffold (service-surface §2.5.1).
-    let gate_account_base = scaffold.gate_account_base.clone();
-    if gate_account_base.trim().is_empty() {
+    // `gate_account_base_url` persisted in the scaffold (service-surface §2.5.1).
+    let gate_account_base_url = scaffold.gate_account_base_url.clone();
+    if gate_account_base_url.trim().is_empty() {
         return Err("Sign-in state is missing the Account Authority base.".to_owned());
     }
     let principal_server_url = if scaffold.principal_server_url.trim().is_empty() {
-        gate_account_base.clone()
+        gate_account_base_url.clone()
     } else {
         scaffold.principal_server_url.clone()
     };
-    let sdk_base_url =
-        crate::identity::session_refresh::sdk_base_url_from_gate_account_base(&gate_account_base)
-            .map_err(|error| format!("Invalid Account Authority base: {error}"))?;
+    let sdk_base_url = crate::identity::session_refresh::sdk_base_url_from_gate_account_base_url(
+        &gate_account_base_url,
+    )
+    .map_err(|error| format!("Invalid Account Authority base: {error}"))?;
     let device = if scaffold.device_id.trim().is_empty() {
         device_fallback.trim().to_owned()
     } else {
@@ -1652,7 +1653,7 @@ async fn finish_oidc_callback(
                 &returned_state,
                 &device,
                 dpop_handle.jkt(),
-                &gate_account_base,
+                &gate_account_base_url,
             )
         });
     if let (Some(pending_handoff), Some(expected_principal), Some(returning_device)) = (
@@ -1717,8 +1718,8 @@ async fn finish_oidc_callback(
     let handoff_request = garth::oidc_account_handoff_request(
         OidcAccountHandoffInput {
             request_id: arkret_sdk::RequestId::new_v7_at(crate::clock::now_unix_ms()),
-            audience: principal_audience.clone(),
-            issuer: scaffold.issuer.clone(),
+            audience_id: principal_audience.clone(),
+            issuer_uri: scaffold.issuer.clone(),
             client_id: scaffold.client_id.clone(),
             redirect_uri: scaffold.callback_uri.clone(),
             state: returned_state.clone(),
@@ -1746,7 +1747,7 @@ async fn finish_oidc_callback(
     );
     let pending_handoff = pending_handoff_from_authority(
         &principal_server_url,
-        &gate_account_base,
+        &gate_account_base_url,
         &principal_audience,
         &device,
         &scaffold.principal_trust_domain,
@@ -1836,7 +1837,7 @@ async fn exchange_bound_handoff_session(
 
     let mut correlation =
         crate::identity::account_auth::transition::LoginCorrelation::for_handoff(pending_handoff)
-            .with_principal_id(did.as_str())
+            .with_principal_id(principal_id.clone())
             .with_device_id(device_id.as_str());
     let outcome = issue_bound_handoff_session(
         principal_server_url,
@@ -1912,12 +1913,7 @@ pub(crate) async fn issue_bound_handoff_session(
     correlation: &mut crate::identity::account_auth::transition::LoginCorrelation,
 ) -> Result<CompletedLogin, ReturningSessionExchangeError> {
     let now = Utc::now();
-    let principal_server_id = arkret_sdk::DidCoreId::new(pending_handoff.audience.clone())
-        .map_err(|error| {
-            ReturningSessionExchangeError::Fatal(format!(
-                "Account handoff principal_server_id is invalid: {error}"
-            ))
-        })?;
+    let principal_server_id = pending_handoff.audience_id.clone();
     let authority =
         arkret_sdk::PrincipalAuthorityKey::new(principal_id.clone(), principal_server_id);
     let proof_expires_at = std::cmp::min(
@@ -1960,8 +1956,7 @@ pub(crate) async fn issue_bound_handoff_session(
                 .ok_or_else(|| "Returning-device signer is not active.".to_owned())?;
 
             let request_id = arkret_sdk::RequestId::new_v7_at(crate::clock::now_unix_ms());
-            let audience = arkret_sdk::DidCoreId::new(pending_handoff.audience.clone())
-                .map_err(|error| format!("invalid handoff audience: {error}"))?;
+            let audience = pending_handoff.audience_id.clone();
             let session_intent_digest = arkret_sdk::human_session_grant_intent_digest(
                 &request_id,
                 &principal_id,
@@ -2140,8 +2135,9 @@ fn persisted_session_grant_from_state(
         grant_jwt: grant.grant_jwt.clone(),
         session_private_key_pem: session_private_key_pem.to_owned(),
         grant_id: grant.grant_id.as_str().to_owned(),
-        audience: grant.audience.to_string(),
+        audience_id: grant.audience_id.clone(),
         principal_id: grant.principal_id.clone(),
+        service_account_id: grant.service_account_id.clone(),
         device_id,
         principal_server_url,
         grant_expires_at: Some(grant.expires_at),
@@ -2229,9 +2225,10 @@ mod tests {
             grant_jwt: "test.grant.jwt".to_owned(),
             session_private_key_pem: "PEM".to_owned(),
             grant_id: "grant-1".to_owned(),
-            audience: "did:web:principal.example".to_owned(),
+            audience_id: arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap(),
             principal_id: crate::mls_api_helpers::principal_core_id("did:web:alice.example")
                 .unwrap(),
+            service_account_id: arkret_sdk::ServiceAccountId::new("account-1").unwrap(),
             device_id: arkret_sdk::DeviceId::new(
                 "ak:device:01904100-0000-7000-8000-000000000001".to_owned(),
             )
@@ -2248,7 +2245,7 @@ mod tests {
     ) -> crate::state::PendingAccountHandoff {
         crate::state::PendingAccountHandoff {
             principal_server_url: "https://principal.example".to_owned(),
-            gate_account_base: "https://auth.example/_arkret/gate/account".to_owned(),
+            gate_account_base_url: "https://auth.example/_arkret/gate/account".to_owned(),
             request_id: request_id.to_owned(),
             oidc_state: None,
             account_handle: account_handle.to_owned(),
@@ -2256,7 +2253,10 @@ mod tests {
                 arkret_sdk::Hash::new(format!("sha256:{}", "a".repeat(64))).unwrap(),
             ),
             holder_jkt: "holder-jkt".to_owned(),
-            audience: "did:webvh:z6mkfixture:principal.example".to_owned(),
+            audience_id: arkret_sdk::DidCoreId::new(
+                "ak:did_core:webvh:z6mkfixture:principal.example",
+            )
+            .unwrap(),
             expires_at: chrono::Utc::now() + chrono::Duration::minutes(10),
             lease_id: Some("lease-1".to_owned()),
             lease_fence: Some(1),
@@ -2518,7 +2518,7 @@ mod tests {
             "state-a",
             &handoff.device_id,
             &handoff.holder_jkt,
-            &handoff.gate_account_base,
+            &handoff.gate_account_base_url,
         ));
         assert!(
             !can_resume_returning_handoff_for_callback(
@@ -2526,7 +2526,7 @@ mod tests {
                 "state-b",
                 &handoff.device_id,
                 &handoff.holder_jkt,
-                &handoff.gate_account_base,
+                &handoff.gate_account_base_url,
             ),
             "a new Coauth callback must observe its newly selected account"
         );

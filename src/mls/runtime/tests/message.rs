@@ -1369,8 +1369,8 @@ fn welcome_claim_receipt_context_must_match_exact_requester_realm_group_and_targ
 
     for (name, path, replacement) in [
         (
-            "requester",
-            vec!["claim_receipt", "request", "requester"],
+            "requester_id",
+            vec!["claim_receipt", "request", "requester_id"],
             json!("ak:did_core:webvh:z6mkfixturebobexample"),
         ),
         (

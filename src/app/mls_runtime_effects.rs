@@ -278,6 +278,13 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
             let session = token();
             let device = account.device_id.clone();
             let authority = account.authority.clone();
+            let Some(service_account_id) = state_store
+                .read()
+                .session_grant()
+                .map(|grant| grant.service_account_id)
+            else {
+                return;
+            };
             let description = server_description();
             let pairwise_realms = {
                 let store = state_store.read();
@@ -328,6 +335,7 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
                     base.clone(),
                     session.clone(),
                     authority.clone(),
+                    service_account_id,
                     device.clone(),
                 )
                 .await;

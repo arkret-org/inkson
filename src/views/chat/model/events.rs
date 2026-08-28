@@ -1632,8 +1632,7 @@ pub(crate) fn chat_message_from_event_with_sidecar(
         timestamp: short_message_time(first_string_in_candidates(&candidates, &["created_at"])),
         created_at: message_created_at_from_candidates(&candidates),
         strand_id,
-        reply_to: first_string_in_candidates(&candidates, &["reply_to", "thread_id"])
-            .map(ToOwned::to_owned),
+        reply_to: first_string_in_candidates(&candidates, &["reply_to_id"]).map(ToOwned::to_owned),
         reactions,
         redacted: is_redaction_tombstone,
         edited: false,

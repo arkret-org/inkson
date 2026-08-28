@@ -63,8 +63,8 @@ pub struct PersistedOidcScaffold {
     /// T1.Y1 — the OIDC issuer the authorization code was obtained from. The
     /// Account Authority redeems the code at this issuer's `token_endpoint`.
     pub issuer: String,
-    /// T1.Y4 — the resolved `gate_account_base` to POST `session-grants` to.
-    pub gate_account_base: String,
+    /// T1.Y4 — the resolved `gate_account_base_url` to POST `session-grants` to.
+    pub gate_account_base_url: String,
     /// Principal Server trust domain, distinct from the Account Authority's
     /// own challenge transcript trust domain.
     pub principal_trust_domain: String,

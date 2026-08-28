@@ -198,10 +198,10 @@ pub fn CirclesPanel(
 
                         section { class: "circle-members-section",
                             h3 { "Members" }
-                            if circle.members.is_empty() {
+                            if circle.member_ids.is_empty() {
                                 p { class: "muted", "Member identities are available only to active Circle members." }
                             } else {
-                                for member in circle.members.iter() {
+                                for member in circle.member_ids.iter() {
                                     div { class: "circle-member-row", key: "{member}",
                                         span { class: "mono", "{member}" }
                                         button {
@@ -273,8 +273,12 @@ pub fn CirclesPanel(
                                         let member_realm_id = circle.realm_id.to_string();
                                         let principal_id = principal_id.clone();
                                         move |_| {
-                                            let Ok(actor_id) = arkret_sdk::Did::new(member_actor().trim().to_owned()) else {
+                                            let Ok(member_did) = arkret_sdk::Did::new(member_actor().trim().to_owned()) else {
                                                 status.set("Enter a valid member DID".to_owned());
+                                                return;
+                                            };
+                                            let Ok(member_id) = arkret_sdk::project_did_to_core_id(&member_did) else {
+                                                status.set("Member DID cannot be projected to an Arkret actor id".to_owned());
                                                 return;
                                             };
                                             let membership = match member_state().as_str() {
@@ -293,7 +297,7 @@ pub fn CirclesPanel(
                                             spawn(async move {
                                                 let outcome = with_authed_api(&base, credential, |api| async move {
                                                     crate::transport::circle::add_circle_member(
-                                                        &api.event_submitter()?, &member_realm_id, &principal_id, &circle_id, actor_id.as_str(), membership,
+                                                        &api.event_submitter()?, &member_realm_id, &principal_id, &circle_id, member_id.as_str(), membership,
                                                     ).await
                                                 }).await;
                                                 match outcome {
@@ -431,8 +435,8 @@ pub fn CirclesPanel(
                                             status.set("Invalid Realm id".to_owned());
                                             return;
                                         };
-                                        let Ok(actor_id) = arkret_sdk::Did::new(principal_id.clone()) else {
-                                            status.set("Invalid account DID".to_owned());
+                                        let Ok(actor_id) = arkret_sdk::DidCoreId::new(principal_id.clone()) else {
+                                            status.set("Invalid account principal id".to_owned());
                                             return;
                                         };
                                         let encryption_profile = if create_encryption() == "none" {

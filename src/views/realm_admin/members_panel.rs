@@ -238,7 +238,7 @@ async fn fetch_owned_agent_rows(
 ) -> anyhow::Result<Vec<MemberAgentRow>> {
     let list = http.agent_list().await?;
     let mut rows = Vec::<MemberAgentRow>::new();
-    for value in list.agents {
+    for value in list.agent_projections {
         let Some(mut row) = member_agent_row_from_value(value, fallback_controller_id) else {
             continue;
         };
@@ -252,7 +252,8 @@ async fn fetch_owned_agent_rows(
         }
         match http.agent_participation_get(&row.agent_id).await {
             Ok(outcome) => {
-                let (policy, selection) = mention_state_from_entries(&outcome.entries, realm);
+                let (policy, selection) =
+                    mention_state_from_entries(&outcome.agent_participation_entries, realm);
                 row.mention_policy = policy;
                 row.selection = selection;
             }
@@ -302,7 +303,7 @@ fn spawn_set_agent_realm_behavior(
         {
             Ok(outcome) => {
                 let (mention_policy, selection) =
-                    mention_state_from_entries(&outcome.entries, &realm);
+                    mention_state_from_entries(&outcome.agent_participation_entries, &realm);
                 owned_agents.with_mut(|rows| {
                     if let Some(row) = rows.iter_mut().find(|row| row.agent_id == outcome.agent_id)
                     {
@@ -2546,7 +2547,7 @@ pub fn RealmMembersPanel(
                 {
                     Ok(response) => {
                         let accepted: Vec<crate::models::ContactListRow> = response
-                            .contacts
+                            .contact_list_rows
                             .into_iter()
                             .filter(|c| c.state == arkret_sdk::ContactState::Accepted)
                             .collect();
@@ -3107,7 +3108,9 @@ pub fn RealmMembersPanel(
                                                             .map(|c| {
                                                                 (
                                                                     crate::models::contact_peer_id(c).to_string(),
-                                                                    c.peer_id.as_ref().map(ToString::to_string),
+                                                        c.peer_host_id
+                                                            .as_ref()
+                                                            .map(ToString::to_string),
                                                                 )
                                                             })
                                                             .collect();

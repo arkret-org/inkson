@@ -37,7 +37,7 @@ pub fn clear_authority_resolver_cache() {
 ///
 /// We derive the link from the supplied base URL synchronously
 /// (origin + `/handles/me`). Callers that need the Account Authority origin
-/// should resolve `auth_metadata.account_authority.gate_account_base` first.
+/// should resolve `auth_metadata.account_authority.gate_account_base_url` first.
 /// Returns `None` for an unparseable base URL.
 pub fn issuer_handle_management_url(base_url: &str) -> Option<String> {
     let parsed = Url::parse(base_url.trim()).ok()?;
@@ -49,17 +49,17 @@ pub fn issuer_handle_management_url(base_url: &str) -> Option<String> {
     }
 }
 
-pub async fn resolve_principal_gate_account_base(
+pub async fn resolve_principal_gate_account_base_url(
     principal_server_url: &str,
 ) -> anyhow::Result<String> {
     Ok(AuthorityResolver::discover(principal_server_url)
         .await?
-        .gate_account_base)
+        .gate_account_base_url)
 }
 
 /// T1.Y4 — Account Authority resolver. The Principal Server's root
 /// `/_arkret/describe` (service-surface §2.5.1) publishes a strongly-typed
-/// `auth_metadata.account_authority.gate_account_base`; every Arkret
+/// `auth_metadata.account_authority.gate_account_base_url`; every Arkret
 /// `/_arkret/gate/account/*` request MUST be derived from that single base,
 /// and the available authentication methods come from
 /// `auth_metadata.methods[]`.
@@ -68,9 +68,9 @@ pub async fn resolve_principal_gate_account_base(
 /// `account_authority`, it errors instead of guessing a per-operation route.
 #[derive(Clone, Debug)]
 pub struct AuthorityResolver {
-    /// Absolute `gate_account_base` — the only origin client `gate/account`
+    /// Absolute `gate_account_base_url` — the only origin client `gate/account`
     /// calls are routed to (service-surface §2.5.1).
-    pub gate_account_base: String,
+    pub gate_account_base_url: String,
     /// Audience the issued session grant authenticates against.
     pub principal_audience: String,
     /// Principal Server trust domain used by the principal-control bootstrap.
@@ -111,7 +111,7 @@ impl AuthorityResolver {
         description: &arkret_sdk::ServiceDescribe,
     ) -> anyhow::Result<Self> {
         let metadata = &description.auth_metadata;
-        let gate_account_base = resolve_gate_account_base(principal_server_url, metadata)?;
+        let gate_account_base_url = resolve_gate_account_base_url(principal_server_url, metadata)?;
         let principal_audience = {
             let service_id = description.service_id.as_str().trim();
             if service_id.is_empty() {
@@ -121,7 +121,7 @@ impl AuthorityResolver {
             }
         };
         Ok(Self {
-            gate_account_base,
+            gate_account_base_url,
             principal_audience,
             principal_trust_domain: description.trust_domain.clone(),
             methods: metadata.methods.clone(),
@@ -141,35 +141,35 @@ impl AuthorityResolver {
     }
 }
 
-/// Derive the single client-visible `gate_account_base` from `auth_metadata`.
+/// Derive the single client-visible `gate_account_base_url` from `auth_metadata`.
 ///
-/// `account_authority.gate_account_base` is canonical. When the authority
+/// `account_authority.gate_account_base_url` is canonical. When the authority
 /// publishes only `origin`, derive `{origin}/_arkret/gate/account`.
-pub(crate) fn resolve_gate_account_base(
+pub(crate) fn resolve_gate_account_base_url(
     _principal_server_url: &str,
     metadata: &arkret_sdk::AuthMetadata,
 ) -> anyhow::Result<String> {
     if let Some(authority) = metadata.account_authority.as_ref() {
-        let base = authority.gate_account_base.trim();
+        let base = authority.gate_account_base_url.trim();
         if !base.is_empty() {
-            return Ok(normalize_gate_account_base(base));
+            return Ok(normalize_gate_account_base_url(base));
         }
-        let origin = authority.origin_uri.trim();
+        let origin = authority.origin.as_str();
         if !origin.is_empty() {
-            return gate_account_base_from_origin(origin);
+            return gate_account_base_url_from_origin(origin);
         }
     }
     anyhow::bail!("principal server describe is missing auth_metadata.account_authority")
 }
 
-fn gate_account_base_from_origin(origin: &str) -> anyhow::Result<String> {
+fn gate_account_base_url_from_origin(origin: &str) -> anyhow::Result<String> {
     let url = validate_server_url(origin)?;
     let base = url.join("_arkret/gate/account").map_err(|error| {
         anyhow::anyhow!("invalid gate account base from origin {origin}: {error}")
     })?;
-    Ok(normalize_gate_account_base(base.as_str()))
+    Ok(normalize_gate_account_base_url(base.as_str()))
 }
 
-fn normalize_gate_account_base(base: &str) -> String {
+fn normalize_gate_account_base_url(base: &str) -> String {
     base.trim_end_matches('/').to_owned()
 }

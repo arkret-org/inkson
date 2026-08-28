@@ -334,12 +334,27 @@ pub fn SettingsMlsRecoveryPanel(
         let session = token();
         let authority = account_for_refill.authority.clone();
         let device = account_for_refill.device_id.clone();
+        let service_account_id = state_store
+            .read()
+            .session_grant()
+            .map(|grant| grant.service_account_id);
         refill_busy.set(true);
         refill_status.set(crate::i18n::tr("settings.mls_keypackages.refill_busy"));
         spawn(async move {
-            match crate::app::manual_refill_local_mls_key_packages(base, session, authority, device)
-                .await
-            {
+            let result = match service_account_id {
+                Some(service_account_id) => {
+                    crate::app::manual_refill_local_mls_key_packages(
+                        base,
+                        session,
+                        authority,
+                        service_account_id,
+                        device,
+                    )
+                    .await
+                }
+                None => Err("active session omits service_account_id".to_owned()),
+            };
+            match result {
                 Ok(count) => refill_status.set(format!(
                     "{} {count}",
                     crate::i18n::tr("settings.mls_keypackages.refill_done")

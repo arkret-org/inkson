@@ -516,7 +516,7 @@ fn card_synthesis_author_prefers_cached_member_primary_handle() {
 
     let projection = json!({
         "realm_id": TEST_REALM_ID,
-        "members": [{
+        "member_roster_entries": [{
             "actor_id": actor,
             "membership": "join",
             "subject_id": subject,
@@ -562,7 +562,7 @@ fn late_join_synthesis_author_resolves_handle_from_roster_actor_id() {
 
     let projection = json!({
         "realm_id": TEST_REALM_ID,
-        "members": [{
+        "member_roster_entries": [{
             "actor_id": actor,
             "membership": "join"
         }]
@@ -602,7 +602,7 @@ fn synthesis_author_uses_the_same_persisted_self_handle_as_member_surfaces() {
 
     let projection = json!({
         "realm_id": TEST_REALM_ID,
-        "members": [{
+        "member_roster_entries": [{
             "actor_id": actor,
             "membership": "join"
         }]

@@ -66,7 +66,7 @@ fn direct_route_resolves_agent_peer_independently_of_reply_participation() {
             "granted_to_peer_scopes": ["direct_message"],
             "granted_by_peer_scopes": ["direct_message"],
             "bidirectional_scopes": ["direct_message"],
-            "agents": [{
+            "contact_agent_projections": [{
                 "agent_id": "ak:did_core:web:example.com:agents:aa",
                 "controller_id": "ak:did_core:web:example.com:users:alice",
                 "agent_slug": "aa",
@@ -236,8 +236,9 @@ fn session_grant(grant_expires_in: i64) -> PersistedSessionGrant {
         grant_jwt: "grant.jwt".to_owned(),
         session_private_key_pem: "PEM".to_owned(),
         grant_id: "grant-1".to_owned(),
-        audience: "did:web:local.host".to_owned(),
+        audience_id: arkret_sdk::DidCoreId::new("ak:did_core:web:local.host").unwrap(),
         principal_id: crate::mls_api_helpers::principal_core_id("did:web:alice.example").unwrap(),
+        service_account_id: arkret_sdk::ServiceAccountId::new("account-1").unwrap(),
         device_id: arkret_sdk::DeviceId::new(
             "ak:device:01964137-0000-7000-8000-000000000001".to_owned(),
         )
@@ -250,13 +251,13 @@ fn session_grant(grant_expires_in: i64) -> PersistedSessionGrant {
 
 fn session_grant_for_config(grant_expires_in: i64, config: &ClientConfig) -> PersistedSessionGrant {
     let mut grant = session_grant(grant_expires_in);
-    grant.audience = config
+    grant.audience_id = config
         .active_account
         .as_ref()
         .expect("test config has an active account")
         .authority
         .principal_server_id
-        .to_string();
+        .clone();
     grant
 }
 
@@ -693,7 +694,8 @@ fn boot_session_credential_requires_the_complete_active_account_binding() {
         arkret_sdk::DeviceId::new("ak:device:01964137-0000-7000-8000-000000000099".to_owned())
             .unwrap();
     let mut wrong_audience = valid_grant;
-    wrong_audience.audience = "did:web:other.local.host".to_owned();
+    wrong_audience.audience_id =
+        arkret_sdk::DidCoreId::new("ak:did_core:web:other.local.host").unwrap();
 
     for grant in [wrong_principal, wrong_device, wrong_audience] {
         let state = ClientLocalState {
@@ -717,7 +719,7 @@ fn bootstrap_can_start_with_session_grant_without_live_credential() {
         grant.principal_server_url.as_str(),
         grant.device_id.as_str(),
     );
-    grant.audience = account.authority.principal_server_id.to_string();
+    grant.audience_id = account.authority.principal_server_id.clone();
     store.set_session_grant(Some(grant));
 
     assert!(has_bootstrap_refresh_material(&store, Some(&account)));

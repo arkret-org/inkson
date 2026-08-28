@@ -1440,7 +1440,7 @@ where
     >,
 {
     let page = acquire_response_page(state_store, api, secure_store, request_id, limit).await?;
-    if page.ack_entries.is_empty() {
+    if page.entries.is_empty() {
         return Ok(HistoryResponsePageInstallOutcome::default());
     }
     let traversal = acquire_and_verify_traversal(state_store, api, request_id).await?;
@@ -1466,13 +1466,13 @@ where
             api,
             &realm_id,
             &request_receipt_digest,
-            page.ack_entries.iter().filter_map(|entry| match entry {
+            page.entries.iter().filter_map(|entry| match entry {
                 arkret_sdk::HistoryResponsePageEntry::Record { record } => {
                     Some(record.source_record.source_signer_evidence_digest.clone())
                 }
                 arkret_sdk::HistoryResponsePageEntry::Lost { .. } => None,
             }),
-            page.ack_entries.iter().map(|entry| match entry {
+            page.entries.iter().map(|entry| match entry {
                 arkret_sdk::HistoryResponsePageEntry::Record { record } => {
                     record.release_service_signer_evidence_digest.clone()
                 }
@@ -1485,18 +1485,18 @@ where
         .map_err(anyhow::Error::msg)?;
     let mut outcome = HistoryResponsePageInstallOutcome::default();
 
-    for entry in &page.ack_entries {
+    for entry in &page.entries {
         let arkret_sdk::HistoryResponsePageEntry::Record { record } = entry else {
             let arkret_sdk::HistoryResponsePageEntry::Lost { lost_record } = entry else {
                 unreachable!("history response stream page entry is a closed union")
             };
             let lost_dependencies = arkret_sdk::history_response_lost_signer_dependency_closure(
-                lost_record,
+                &lost_record,
                 &signer_dependencies,
             )?;
             arkret_sdk::verify_history_response_lost_record(
                 &accepted,
-                lost_record,
+                &lost_record,
                 &lost_dependencies,
             )?;
             runtime
@@ -1515,7 +1515,7 @@ where
         };
         let record_dependencies = (|| -> anyhow::Result<Vec<_>> {
             let partition = arkret_sdk::history_response_record_signer_dependency_closure(
-                record,
+                &record,
                 &signer_dependencies,
             )?;
             let mut record_dependencies = std::collections::BTreeMap::new();
@@ -1576,7 +1576,7 @@ where
         };
         let verified = match arkret_sdk::verify_history_response_record(
             &accepted,
-            record,
+            &record,
             &traversal.checkpoint,
             manifest.as_ref(),
             &record_dependencies,

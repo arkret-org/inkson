@@ -15,7 +15,7 @@ pub(super) fn session_grant_boot_usable(
             active_account.principal_id(),
         )
         || grant.device_id != active_account.device_id
-        || grant.audience != active_account.authority.principal_server_id.as_str()
+        || grant.audience_id != active_account.authority.principal_server_id
     {
         return false;
     }
@@ -607,8 +607,9 @@ pub(super) async fn inject_test_session_grant(
         // refreshes the injected grant.
         session_private_key_pem: String::new(),
         grant_id,
-        audience: audience.clone(),
+        audience_id: arkret_sdk::DidCoreId::new(audience.clone()).ok()?,
         principal_id: account_key.clone(),
+        service_account_id: arkret_sdk::ServiceAccountId::new("account-1").ok()?,
         device_id: arkret_sdk::DeviceId::new(device_id.to_owned()).ok()?,
         // MUST match the active server so the bootstrap does not discard the
         // grant as stale (see `grant_matches_principal_server`).

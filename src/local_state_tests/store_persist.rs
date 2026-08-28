@@ -666,7 +666,7 @@ fn local_state_store_persists_push_registration_state() {
     let mut store = LocalStateStore::with_path(path.clone());
     store.save_push_registration(PushRegistrationState {
         principal_id: None,
-        registration_id: Some("push:local".to_owned()),
+        registration_id: Some(arkret_wire::OpaqueLocalId::new("push:local").unwrap()),
         device_id: "dev_inkson".to_owned(),
         platform: Some("desktop".to_owned()),
         app_id: Some("inkson".to_owned()),
@@ -765,8 +765,9 @@ fn clear_account_scoped_preserves_device_level_and_session_grant_state() {
         grant_jwt: "alice.grant".to_owned(),
         session_private_key_pem: "pem".to_owned(),
         grant_id: "g-alice".to_owned(),
-        audience: "did:web:principal.example".to_owned(),
+        audience_id: arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap(),
         principal_id: crate::mls_api_helpers::principal_core_id("did:web:alice.example").unwrap(),
+        service_account_id: arkret_sdk::ServiceAccountId::new("account-1").unwrap(),
         device_id: arkret_sdk::DeviceId::new(
             "ak:device:01904100-0000-7000-8000-000000000001".to_owned(),
         )
@@ -812,9 +813,10 @@ fn production_persist_policy_strips_session_credentials_from_account_state() {
             grant_jwt: "secret.grant.jwt".to_owned(),
             session_private_key_pem: "secret-session-private-key".to_owned(),
             grant_id: "grant-id".to_owned(),
-            audience: "did:web:principal.example".to_owned(),
+            audience_id: arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap(),
             principal_id: crate::mls_api_helpers::principal_core_id("did:web:alice.example")
                 .unwrap(),
+            service_account_id: arkret_sdk::ServiceAccountId::new("account-1").unwrap(),
             device_id: arkret_sdk::DeviceId::new(
                 "ak:device:01904100-0000-7000-8000-000000000001".to_owned(),
             )
@@ -854,8 +856,9 @@ fn account_switch_isolates_authority_namespaces() {
         grant_jwt: "alice.grant".to_owned(),
         session_private_key_pem: "pem".to_owned(),
         grant_id: "g-alice".to_owned(),
-        audience: "did:web:principal.example".to_owned(),
+        audience_id: arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap(),
         principal_id: crate::mls_api_helpers::principal_core_id("did:web:alice.example").unwrap(),
+        service_account_id: arkret_sdk::ServiceAccountId::new("account-1").unwrap(),
         device_id: arkret_sdk::DeviceId::new(
             "ak:device:01904100-0000-7000-8000-000000000001".to_owned(),
         )
@@ -1111,13 +1114,14 @@ fn fresh_pending_login_never_moves_previous_account_onboarding_fields() {
     }));
     let handoff = PendingAccountHandoff {
         principal_server_url: "https://principal.example".to_owned(),
-        gate_account_base: "https://auth.example/_arkret/gate/account".to_owned(),
+        gate_account_base_url: "https://auth.example/_arkret/gate/account".to_owned(),
         request_id: "ak:request:019f0000-0000-7000-8000-000000000099".to_owned(),
         oidc_state: None,
         account_handle: "new:auth.example".to_owned(),
         account_subject: Some(arkret_sdk::Hash::new(format!("sha256:{}", "a".repeat(64))).unwrap()),
         holder_jkt: "holder-jkt".to_owned(),
-        audience: "did:webvh:z6mkfixture:principal.example".to_owned(),
+        audience_id: arkret_sdk::DidCoreId::new("ak:did_core:webvh:z6mkfixture:principal.example")
+            .unwrap(),
         expires_at: chrono::Utc::now() + chrono::Duration::minutes(10),
         lease_id: Some("lease-new".to_owned()),
         lease_fence: Some(1),
@@ -1214,13 +1218,14 @@ fn accepted_context_promotion_moves_the_unfinished_handoff_with_its_registration
     let typed_device = arkret_sdk::DeviceId::new(device.to_owned()).unwrap();
     let handoff = PendingAccountHandoff {
         principal_server_url: "https://principal.example".to_owned(),
-        gate_account_base: "https://auth.example/_arkret/gate/account".to_owned(),
+        gate_account_base_url: "https://auth.example/_arkret/gate/account".to_owned(),
         request_id: "ak:request:019f0000-0000-7000-8000-000000000000".to_owned(),
         oidc_state: None,
         account_handle: "alice:auth.example".to_owned(),
         account_subject: Some(arkret_sdk::Hash::new(format!("sha256:{}", "a".repeat(64))).unwrap()),
         holder_jkt: "holder-jkt".to_owned(),
-        audience: "did:webvh:z6mkfixture:principal.example".to_owned(),
+        audience_id: arkret_sdk::DidCoreId::new("ak:did_core:webvh:z6mkfixture:principal.example")
+            .unwrap(),
         expires_at: chrono::Utc::now() + chrono::Duration::minutes(10),
         lease_id: Some("lease-1".to_owned()),
         lease_fence: Some(1),
@@ -1301,7 +1306,7 @@ fn returning_login_clears_consumed_handoff_from_anonymous_namespace() {
     store
         .set_pending_account_handoff(Some(PendingAccountHandoff {
             principal_server_url: "https://principal.example".to_owned(),
-            gate_account_base: "https://auth.example/_arkret/gate/account".to_owned(),
+            gate_account_base_url: "https://auth.example/_arkret/gate/account".to_owned(),
             request_id: "ak:request:019f0000-0000-7000-8000-000000000123".to_owned(),
             oidc_state: Some("oidc-state".to_owned()),
             account_handle: "alice:auth.example".to_owned(),
@@ -1309,7 +1314,10 @@ fn returning_login_clears_consumed_handoff_from_anonymous_namespace() {
                 arkret_sdk::Hash::new(format!("sha256:{}", "a".repeat(64))).unwrap(),
             ),
             holder_jkt: "holder-jkt".to_owned(),
-            audience: "did:webvh:z6mkfixture:principal.example".to_owned(),
+            audience_id: arkret_sdk::DidCoreId::new(
+                "ak:did_core:webvh:z6mkfixture:principal.example",
+            )
+            .unwrap(),
             expires_at: chrono::Utc::now() + chrono::Duration::minutes(10),
             lease_id: None,
             lease_fence: None,

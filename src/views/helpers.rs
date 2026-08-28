@@ -200,7 +200,7 @@ pub fn render_actor_mention(
         subject_id: subject.as_str(),
         context,
         claim_set_snapshot,
-        handle_issuer_policy,
+        handle_issuer_policies: handle_issuer_policy,
         // TODO(R3.2.1): resolve `metadata.primary_handle` at as_of via a
         // DID Document snapshot resolver (NoHolderPreferenceResolver
         // until the resolver is wired).

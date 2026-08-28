@@ -57,7 +57,7 @@ pub struct SignalReceiveEngineContext {
     pub token: crate::runtime::input::ValueReader<String>,
     pub state_store: crate::runtime::input::StateStoreHandle,
     pub account: crate::config::ActiveAccountContext,
-    pub principal_id: String,
+    pub principal_id: arkret_sdk::DidCoreId,
     pub device_id: String,
     /// Active multi-profile snapshot — the engine exits when the active profile
     /// rotates, mirroring the other two engines.

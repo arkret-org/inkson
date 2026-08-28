@@ -462,10 +462,10 @@ mod petname_tests {
             granted_by_peer_scopes: Vec::new(),
             bidirectional_scopes: Vec::new(),
             effective_scopes: None,
-            peer_id: None,
+            peer_host_id: None,
             continuity_evidence: None,
             direct_conversation: None,
-            agents: Vec::new(),
+            contact_agent_projections: Vec::new(),
         }
     }
 

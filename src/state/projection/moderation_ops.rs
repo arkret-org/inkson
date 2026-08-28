@@ -265,7 +265,7 @@ mod tests {
             json!({
                 "target_ref": "ak:message:AXh0mpVGb536xVxbSPfM4Wc_1WuXAxTYgmtXEncKM9T0",
                 "decision": "quarantine",
-                "issuer": "ak:did_core:web:moderator.example",
+                "issuer_id": "ak:did_core:web:moderator.example",
                 "request_canonical_digest": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
             }),
         )

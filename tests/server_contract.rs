@@ -311,8 +311,8 @@ fn inkson_accepts_server_contract_payloads() {
         "pending_delivery_count": 0,
         "accepted": ["ak:event:AVH7487ydDzo_3WXy2IlHWvtBeElcucZHd5d5hYKcjZl"],
         "duplicate": [],
-        "rejected": [],
-        "realm_actor_frontiers": [],
+        "events_submit_rejected_rows": [],
+        "realm_actor_frontier_views": [],
         "realm_frontiers": [],
         "cursor": "sx:1760000000000"
     }))
@@ -368,7 +368,7 @@ fn inkson_accepts_server_contract_payloads() {
             "id": "ak:grant:AfpU2UOijpNUdGOoAgQdaqV0xwreLXwLE3yXXHvB6n7X",
             "schema": arkret_wire::SchemaId::CAPABILITY_V1,
             "realm_id": "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-",
-            "issuer": "ak:did_core:web:server.local",
+            "issuer_id": "ak:did_core:web:server.local",
             "issuer_principal_server_id": "ak:did_core:web:server.local",
             "subject": "ak:did_core:web:alice.example",
             "subject_principal_server_id": "ak:did_core:web:server.local",
@@ -488,16 +488,19 @@ fn inkson_accepts_server_contract_payloads() {
         format!("sha256:{}", "ab".repeat(32))
     );
 
-    // SDK spec shape: status is `submitted`, and routed_to carries principal cores.
+    // SDK spec shape: status is `submitted`, and routed_to_ids carries principal cores.
     let report: inkson::models::ModerationReportOutcome = serde_json::from_value(json!({
         "report_id": "ak:report:AV1bzsPGpTD74Cq12d9EOrCkieTddiSndS0kDtK1W2hM",
         "status": "submitted",
-        "routed_to": ["ak:did_core:web:server.local"]
+        "routed_to_ids": ["ak:did_core:web:server.local"]
     }))
     .unwrap();
     assert_eq!(report.status, arkret_sdk::ModerationReportStatus::Submitted);
-    assert_eq!(report.routed_to.len(), 1);
-    assert_eq!(report.routed_to[0].as_str(), "ak:did_core:web:server.local");
+    assert_eq!(report.routed_to_ids.len(), 1);
+    assert_eq!(
+        report.routed_to_ids[0].as_str(),
+        "ak:did_core:web:server.local"
+    );
 
     let error = decode_arkret_error(
         StatusCode::CONFLICT,
@@ -688,7 +691,7 @@ fn inkson_accepts_v1_sync_buckets_and_subscribe_ndjson_contract() {
                 "timeline": {"events": [], "limited": false}
             }
         },
-        "device_lists": {"changed": [], "left": []},
+        "device_lists": {"changed_ids": [], "left_ids": []},
         "notifications": {"items": []}
     }))
     .unwrap();

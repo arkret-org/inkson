@@ -62,8 +62,9 @@ fn logout_session_clear_shreds_memory_and_preserves_encrypted_e2ee_state() {
         grant_jwt: "alice.grant".to_owned(),
         session_private_key_pem: "pem".to_owned(),
         grant_id: "g-alice".to_owned(),
-        audience: "did:web:principal.example".to_owned(),
+        audience_id: arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap(),
         principal_id: crate::mls_api_helpers::principal_core_id(actor).unwrap(),
+        service_account_id: arkret_sdk::ServiceAccountId::new("account-1").unwrap(),
         device_id: arkret_sdk::DeviceId::new(
             "ak:device:01904100-0000-7000-8000-000000000001".to_owned(),
         )

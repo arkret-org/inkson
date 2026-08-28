@@ -731,7 +731,7 @@ fn sas_key_verification_content_carries_the_required_members() {
         Some("019041000000700080000000000c")
     );
     assert_eq!(
-        content["from_device"].as_str(),
+        content["from_device_id"].as_str(),
         Some("ak:device:01904100-0000-7000-8000-0000000000aa")
     );
     assert_eq!(content["key"].as_str(), Some("alice-x25519-public"));

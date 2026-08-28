@@ -290,26 +290,10 @@ pub async fn respond_contact(
     requester: &str,
     action: &str,
 ) -> anyhow::Result<()> {
-    respond_contact_with_service(http, requester, action, None).await
-}
-
-/// Respond to an incoming contact request, optionally carrying the
-/// requester's Principal Server service DID for cross-PS reverse delivery.
-///
-/// Protocol contract (soland finalized): the `contacts/respond` body
-/// accepts an optional `requester_service_id`. Same-PS responses leave it
-/// empty; cross-PS responses pass the originating PS so soland can route the
-/// accept/reject back. Empty / whitespace-only values are dropped.
-pub async fn respond_contact_with_service(
-    http: &arkret_sdk::http_client::Client,
-    requester: &str,
-    action: &str,
-    _requester_service_id: Option<&str>,
-) -> anyhow::Result<()> {
     let requester_core_id = crate::mls_api_helpers::principal_core_id(requester)?;
     let contacts = http.contacts_list().await?;
     let row = contacts
-        .contacts
+        .contact_list_rows
         .into_iter()
         .find(|row| {
             row.state == arkret_sdk::ContactState::PendingIncoming
@@ -326,17 +310,16 @@ pub async fn respond_contact_with_service(
     submit_contact_response(http, receipt, action).await
 }
 
-pub async fn respond_contact_with_request_id_and_service(
+pub async fn respond_contact_with_request_id(
     http: &arkret_sdk::http_client::Client,
     requester: &str,
     request_event_ref: &str,
     action: &str,
-    requester_service_id: Option<&str>,
 ) -> anyhow::Result<()> {
     let requester_core_id = crate::mls_api_helpers::principal_core_id(requester)?;
     let contacts = http.contacts_list().await?;
     let row = contacts
-        .contacts
+        .contact_list_rows
         .into_iter()
         .find(|row| {
             row.state == arkret_sdk::ContactState::PendingIncoming
@@ -353,7 +336,6 @@ pub async fn respond_contact_with_request_id_and_service(
     let receipt = row.request_receipt.ok_or_else(|| {
         anyhow::anyhow!("pending_incoming Contact row omitted its signed request_receipt")
     })?;
-    let _ = requester_service_id;
     submit_contact_response(http, receipt, action).await
 }
 
@@ -932,7 +914,7 @@ async fn ensure_owned_agent_direct_reply(
         return Ok(());
     }
     let mut selection = existing
-        .entries
+        .agent_participation_entries
         .iter()
         .find(|entry| entry.scope == scope)
         .map(|entry| entry.selection)
@@ -964,7 +946,7 @@ pub(crate) async fn replace_agent_participation(
 ) -> anyhow::Result<arkret_sdk::AgentParticipationOutcome> {
     let current = http.agent_participation_get(agent_id).await?;
     let expected_version = current
-        .entries
+        .agent_participation_entries
         .iter()
         .find(|entry| entry.scope == scope)
         .map(|entry| entry.version)
@@ -984,7 +966,7 @@ fn participation_reply_is_effective(
     scope: &arkret_sdk::ParticipationScope,
 ) -> bool {
     outcome
-        .entries
+        .agent_participation_entries
         .iter()
         .any(|entry| &entry.scope == scope && entry.selection.reply_message)
 }
@@ -1100,7 +1082,7 @@ pub async fn tombstone_contact(
 
     let contacts = http.contacts_list().await?;
     let row = contacts
-        .contacts
+        .contact_list_rows
         .into_iter()
         .find(|row| {
             row.state == arkret_sdk::ContactState::Accepted
@@ -1666,7 +1648,7 @@ mod tests {
                 "primary_handle_claim": {
                     "schema": "ak.schema.handle_claim.v1",
                     "handle": "alice:local.host",
-                    "subject": "ak:did_core:web:alice.example",
+                    "subject_id": "ak:did_core:web:alice.example",
                     "binding_state": "verified",
                     "created_at": "2026-06-12T08:00:00.000Z"
                 },
@@ -1707,7 +1689,7 @@ mod tests {
                     "primary_handle_claim": {
                         "schema": "ak.schema.handle_claim.v1",
                         "handle": "alice:auth.local.host",
-                        "subject": subject,
+                        "subject_id": subject,
                         "binding_state": binding_state,
                         "created_at": "2026-06-12T08:00:00.000Z"
                     }
@@ -1754,7 +1736,7 @@ mod tests {
         let outcome: arkret_sdk::AgentParticipationOutcome = serde_json::from_value(json!({
             "ok": true,
             "agent_id": "ak:did_core:web:agent.example",
-            "entries": [{
+            "agent_participation_entries": [{
                 "target_scope": scope,
                 "selection": {
                     "reply_message": true,

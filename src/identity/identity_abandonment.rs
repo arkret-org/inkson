@@ -60,8 +60,8 @@ fn account_client(
     if handoff.holder_jkt != dpop.jkt() {
         anyhow::bail!("account handoff holder key changed during identity abandonment");
     }
-    let account_base = crate::identity::session_refresh::sdk_base_url_from_gate_account_base(
-        &handoff.gate_account_base,
+    let account_base = crate::identity::session_refresh::sdk_base_url_from_gate_account_base_url(
+        &handoff.gate_account_base_url,
     )?;
     Ok(arkret_sdk::http_client::ClientBuilder::new(account_base)
         .allow_insecure_localhost()

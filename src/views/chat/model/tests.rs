@@ -375,7 +375,8 @@ mod act_on_behalf_tests {
 
     fn agent_participant(principal_id: &str) -> SpaceParticipant {
         SpaceParticipant {
-            principal_id: principal_id.to_owned(),
+            principal_id: normalize_participant_id(principal_id)
+                .expect("valid participant core id"),
             display_name: Some("Summary Assistant".to_owned()),
             handle_label: None,
             display_name_rank: 1,
@@ -393,8 +394,8 @@ mod act_on_behalf_tests {
 
     #[test]
     fn act_on_behalf_label_resolves_executor_agent() {
-        let agent = "did:web:agents.example:summary";
-        let controller = "did:web:example.com:users:alice";
+        let agent = "ak:did_core:web:agents.example:summary";
+        let controller = "ak:did_core:web:example.com:users:alice";
         let participants = vec![agent_participant(agent)];
         // Controller is actor_id (sender); agent is executed_by.
         let label = act_on_behalf_agent_label(controller, Some(agent), &participants);
@@ -403,7 +404,7 @@ mod act_on_behalf_tests {
 
     #[test]
     fn act_on_behalf_label_none_when_no_executed_by() {
-        let controller = "did:web:example.com:users:alice";
+        let controller = "ak:did_core:web:example.com:users:alice";
         assert_eq!(act_on_behalf_agent_label(controller, None, &[]), None);
         assert_eq!(act_on_behalf_agent_label(controller, Some(""), &[]), None);
     }
@@ -412,7 +413,7 @@ mod act_on_behalf_tests {
     fn act_on_behalf_label_none_when_executor_equals_sender() {
         // Reply-as-agent: the agent itself is the sender, so there is no
         // separate "via" attribution.
-        let agent = "did:web:agents.example:summary";
+        let agent = "ak:did_core:web:agents.example:summary";
         let participants = vec![agent_participant(agent)];
         assert_eq!(
             act_on_behalf_agent_label(agent, Some(agent), &participants),

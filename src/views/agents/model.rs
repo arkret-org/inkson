@@ -396,7 +396,7 @@ pub fn build_agent_pairing_bootstrap_json(
 ) -> serde_json::Result<String> {
     let base_url = base_url.trim_end_matches('/');
     let bootstrap = AgentPairingBootstrap {
-        arkret_base_uri: base_url.to_owned(),
+        arkret_base_url: base_url.to_owned(),
         service_id: arkret_sdk::DidCoreId::new(service_id.trim().to_owned())
             .map_err(json_invalid_input)?,
         agent_id: outcome.agent_id.clone(),

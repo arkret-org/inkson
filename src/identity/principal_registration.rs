@@ -58,7 +58,7 @@ pub fn prepare_registration_checkpoint(
     .to_string();
     Ok(PendingPrincipalRegistration {
         principal_server_url: handoff.principal_server_url.clone(),
-        gate_account_base: handoff.gate_account_base.clone(),
+        gate_account_base_url: handoff.gate_account_base_url.clone(),
         handoff_request_id: handoff.request_id.clone(),
         account_handle: handoff.account_handle.clone(),
         account_subject: handoff.account_subject.clone(),
@@ -144,7 +144,7 @@ pub fn recover_registration_checkpoint_from_reservation(
     .to_string();
     Ok(PendingPrincipalRegistration {
         principal_server_url: handoff.principal_server_url.clone(),
-        gate_account_base: handoff.gate_account_base.clone(),
+        gate_account_base_url: handoff.gate_account_base_url.clone(),
         handoff_request_id: handoff.request_id.clone(),
         account_handle: handoff.account_handle.clone(),
         account_subject: handoff.account_subject.clone(),
@@ -244,7 +244,7 @@ pub fn checkpoint_belongs_to_handoff(
     handoff: &PendingAccountHandoff,
 ) -> bool {
     let same_context = checkpoint.principal_server_url == handoff.principal_server_url
-        && checkpoint.gate_account_base == handoff.gate_account_base
+        && checkpoint.gate_account_base_url == handoff.gate_account_base_url
         && checkpoint.trust_domain == handoff.trust_domain
         && checkpoint.account_subject.is_some()
         && checkpoint.account_subject == handoff.account_subject;
@@ -397,8 +397,8 @@ pub async fn complete_account_handoff_binding(
         .initial_session
         .clone()
         .context("checkpoint omits initial session request")?;
-    let account_base = crate::identity::session_refresh::sdk_base_url_from_gate_account_base(
-        &handoff.gate_account_base,
+    let account_base = crate::identity::session_refresh::sdk_base_url_from_gate_account_base_url(
+        &handoff.gate_account_base_url,
     )?;
     let account_client = arkret_sdk::http_client::ClientBuilder::new(account_base)
         .allow_insecure_localhost()
@@ -887,7 +887,7 @@ mod tests {
     fn handoff(device_id: &str, fence: u64) -> PendingAccountHandoff {
         PendingAccountHandoff {
             principal_server_url: "https://principal.example".to_owned(),
-            gate_account_base: "https://account.example/_arkret/gate/account".to_owned(),
+            gate_account_base_url: "https://account.example/_arkret/gate/account".to_owned(),
             request_id: "ak:request:019f0000-0000-7000-8000-000000000001".to_owned(),
             oidc_state: None,
             account_handle: "alice:example.com".to_owned(),
@@ -895,7 +895,10 @@ mod tests {
                 arkret_sdk::Hash::new(format!("sha256:{}", "a".repeat(64))).unwrap(),
             ),
             holder_jkt: "holder-jkt".to_owned(),
-            audience: "did:webvh:z6mkfixture:principal.example".to_owned(),
+            audience_id: arkret_sdk::DidCoreId::new(
+                "ak:did_core:webvh:z6mkfixture:principal.example",
+            )
+            .unwrap(),
             expires_at: Utc::now() + chrono::Duration::minutes(15),
             lease_id: Some("lease-1".to_owned()),
             lease_fence: Some(fence),

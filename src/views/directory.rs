@@ -383,7 +383,7 @@ pub fn DirectoryPanel(
                                     {
                                         Ok(result) => {
                                             let summary = result
-                                                .contacts
+                                                .contact_list_rows
                                                 .iter()
                                                 .map(|contact| {
                                                     format!(
@@ -394,7 +394,11 @@ pub fn DirectoryPanel(
                                                 })
                                                 .collect::<Vec<_>>()
                                                 .join(", ");
-                                            contact_state.set(format!("contacts {} {}", result.contacts.len(), summary));
+                                            contact_state.set(format!(
+                                                "contacts {} {}",
+                                                result.contact_list_rows.len(),
+                                                summary
+                                            ));
                                         }
                                         Err(err) => contact_state.set(format!("list failed: {}", err.display())),
                                     }
@@ -1336,7 +1340,7 @@ mod tests {
             "request_event_ref": "ak:event:AffHQLS6LHEezp3Czebm6JrWc0UdDt4xsoYf_l2OnrHI",
             "source_checkpoint": "sha256:04597468570b5436fdcfe18337daf5bbf2515b148e37dc629cdeea1e63057e85",
             "accepted_at": "2026-08-14T00:00:00.000Z",
-            "issuer": "ak:did_core:web:service.example"
+            "issuer_id": "ak:did_core:web:service.example"
         }))
         .unwrap();
         let receipt: RequestAcceptanceReceipt = serde_json::from_value(json!({

@@ -590,7 +590,7 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
                                     {
                                         let sender_participant = participants_for_messages
                                             .iter()
-                                            .find(|p| p.principal_id == msg.sender);
+                                            .find(|p| p.principal_id.as_str() == msg.sender);
                                         let sender_is_agent = sender_participant
                                             .map(|participant| participant.is_agent)
                                             .unwrap_or(false);

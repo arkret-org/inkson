@@ -138,7 +138,7 @@ pub struct LoginCorrelation {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub session_intent_digest: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub principal_id: Option<String>,
+    pub principal_id: Option<arkret_sdk::DidCoreId>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub device_id: Option<String>,
 }
@@ -153,7 +153,7 @@ impl LoginCorrelation {
             None => correlation,
         };
         match handoff.bound_principal_id.as_ref() {
-            Some(principal_id) => correlation.with_principal_id(principal_id.as_str()),
+            Some(principal_id) => correlation.with_principal_id(principal_id.clone()),
             None => correlation,
         }
     }
@@ -168,8 +168,8 @@ impl LoginCorrelation {
         self
     }
 
-    pub fn with_principal_id(mut self, principal_id: &str) -> Self {
-        self.principal_id = Some(principal_id.to_owned());
+    pub fn with_principal_id(mut self, principal_id: arkret_sdk::DidCoreId) -> Self {
+        self.principal_id = Some(principal_id);
         self
     }
 
@@ -280,7 +280,10 @@ pub fn record_login_transition(
         session_grant_request_id = correlation.session_grant_request_id.as_deref(),
         session_grant_id = correlation.session_grant_id.as_deref(),
         session_intent_digest = correlation.session_intent_digest.as_deref(),
-        principal_id = correlation.principal_id.as_deref(),
+        principal_id = correlation
+            .principal_id
+            .as_ref()
+            .map(arkret_sdk::DidCoreId::as_str),
         device_id = correlation.device_id.as_deref(),
         "login transition"
     );
@@ -296,7 +299,10 @@ pub fn record_login_transition(
         session_grant_request_id = correlation.session_grant_request_id.as_deref(),
         session_grant_id = correlation.session_grant_id.as_deref(),
         session_intent_digest = correlation.session_intent_digest.as_deref(),
-        principal_id = correlation.principal_id.as_deref(),
+        principal_id = correlation
+            .principal_id
+            .as_ref()
+            .map(arkret_sdk::DidCoreId::as_str),
         device_id = correlation.device_id.as_deref(),
         "login transition"
     );
@@ -440,7 +446,7 @@ pub fn record_onboarding_completion_transition(
         outcome = record.outcome,
         reason = record.reason,
         handoff_request_id = correlation.handoff_request_id.as_deref(),
-        principal_id = correlation.principal_id.as_deref(),
+        principal_id = correlation.principal_id.as_ref().map(arkret_sdk::DidCoreId::as_str),
         device_id = correlation.device_id.as_deref(),
         inventory = ?record.inventory,
         "onboarding completion transition"

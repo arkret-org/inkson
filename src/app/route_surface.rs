@@ -18,7 +18,7 @@ pub(super) fn direct_conversation_peer_id(
         {
             return crate::models::contact_peer_id(contact).to_string();
         }
-        if let Some(agent) = contact.agents.iter().find(|agent| {
+        if let Some(agent) = contact.contact_agent_projections.iter().find(|agent| {
             agent
                 .direct_conversation
                 .as_ref()
@@ -177,7 +177,7 @@ pub(super) fn RouteSurface(state: RouteSurfaceState) -> Element {
                 .await;
                 let default_strand_id = match result {
                     Ok(strands) => strands
-                        .strands
+                        .projection_strand_rows
                         .iter()
                         .find(|strand| strand.is_default)
                         .map(|strand| strand.strand_id.to_string()),
@@ -242,9 +242,12 @@ pub(super) fn RouteSurface(state: RouteSurfaceState) -> Element {
         });
     }
 
-    let principal_id = SessionContext::get()
+    let principal_core_id = SessionContext::get()
         .active_account()
-        .map(|account| account.principal_id().to_string())
+        .map(|account| account.principal_id().clone());
+    let principal_id = principal_core_id
+        .as_ref()
+        .map(ToString::to_string)
         .unwrap_or_default();
 
     rsx! {
@@ -284,7 +287,9 @@ pub(super) fn RouteSurface(state: RouteSurfaceState) -> Element {
                                         crate::views::kanban::KanbanPanel {
                                             plaintext_service_id: active_service_id.clone(),
                                             token,
-                                            principal_id: principal_id.clone(),
+                                            principal_id: principal_core_id
+                                                .clone()
+                                                .expect("Kanban route requires an active principal"),
                                             account_primary_handle,
                                             device_id: device_id(),
                                             selected_realm_id: active_realm_id.clone(),
@@ -315,7 +320,9 @@ pub(super) fn RouteSurface(state: RouteSurfaceState) -> Element {
                             rsx! {
                                 crate::views::chat::ChatPanel {
                                     plaintext_service_id: active_service_id.clone(),
-                                    principal_id: principal_id.clone(),
+                                    principal_id: principal_core_id
+                                        .clone()
+                                        .expect("direct conversation requires an active principal"),
                                     account_primary_handle: account_primary_handle(),
                                     device_id: device_id(),
                                     token,
@@ -344,7 +351,9 @@ pub(super) fn RouteSurface(state: RouteSurfaceState) -> Element {
                             rsx! {
                                 crate::views::chat::ChatPanel {
                                     plaintext_service_id: active_service_id.clone(),
-                                    principal_id: principal_id.clone(),
+                                    principal_id: principal_core_id
+                                        .clone()
+                                        .expect("chat route requires an active principal"),
                                     account_primary_handle: account_primary_handle(),
                                     device_id: device_id(),
                                     token,
@@ -455,7 +464,9 @@ pub(super) fn RouteSurface(state: RouteSurfaceState) -> Element {
                                 crate::views::verify_device::VerifyDevicePanel {
                                     token,
                                     device_id: device_id(),
-                                    principal_id: principal_id.clone(),
+                                    principal_id: principal_core_id
+                                        .clone()
+                                        .expect("Kanban task route requires an active principal"),
                                     selected_realm_id: selected_realm_id(),
                                 }
                             }
@@ -472,7 +483,9 @@ pub(super) fn RouteSurface(state: RouteSurfaceState) -> Element {
                                 crate::views::circles::CirclesPanel {
                                     realm_id: realm_id.clone(),
                                     selected_circle_id: routed_circle_id.clone(),
-                                    principal_id: principal_id.clone(),
+                                    principal_id: principal_core_id
+                                        .clone()
+                                        .expect("Kanban task route requires an active principal"),
                                     token,
                                 }
                             }
@@ -539,7 +552,9 @@ pub(super) fn RouteSurface(state: RouteSurfaceState) -> Element {
                                 crate::views::kanban::KanbanPanel {
                                     plaintext_service_id: active_service_id.clone(),
                                     token,
-                                    principal_id: principal_id.clone(),
+                                    principal_id: principal_core_id
+                                        .clone()
+                                        .expect("Kanban task route requires an active principal"),
                                     account_primary_handle,
                                     device_id: device_id(),
                                     selected_realm_id: active_realm_id.clone(),

@@ -50,7 +50,7 @@ pub(crate) fn has_bootstrap_refresh_material(
             grant,
             account.principal_id(),
         ) && grant.device_id == account.device_id
-            && grant.audience == account.authority.principal_server_id.as_str()
+            && grant.audience_id == account.authority.principal_server_id
             && !crate::identity::session_refresh::grant_is_dead(grant)
     })
 }
@@ -388,34 +388,44 @@ pub(crate) async fn ensure_local_mls_key_package_inventory(
     base_url: String,
     session_credential: String,
     authority: arkret_sdk::PrincipalAuthorityKey,
+    service_account_id: arkret_sdk::ServiceAccountId,
     device_id: arkret_sdk::DeviceId,
 ) -> Result<Option<String>, String> {
     let base_scope = server_key(&base_url);
     if base_scope.is_empty() || session_credential.trim().is_empty() {
         return Ok(None);
     }
-    Ok(
-        maintain_local_mls_key_packages(&base_url, &session_credential, &authority, &device_id)
-            .await?
-            .latest_key_package_id,
+    Ok(maintain_local_mls_key_packages(
+        &base_url,
+        &session_credential,
+        &authority,
+        &service_account_id,
+        &device_id,
     )
+    .await?
+    .latest_key_package_id)
 }
 
 pub(crate) async fn manual_refill_local_mls_key_packages(
     base_url: String,
     session_credential: String,
     authority: arkret_sdk::PrincipalAuthorityKey,
+    service_account_id: arkret_sdk::ServiceAccountId,
     device_id: arkret_sdk::DeviceId,
 ) -> Result<usize, String> {
     let base_scope = server_key(&base_url);
     if base_scope.is_empty() || session_credential.trim().is_empty() {
         return Ok(0);
     }
-    Ok(
-        maintain_local_mls_key_packages(&base_url, &session_credential, &authority, &device_id)
-            .await?
-            .published_count,
+    Ok(maintain_local_mls_key_packages(
+        &base_url,
+        &session_credential,
+        &authority,
+        &service_account_id,
+        &device_id,
     )
+    .await?
+    .published_count)
 }
 
 struct LocalMlsKeyPackageMaintenanceOutcome {
@@ -427,6 +437,7 @@ async fn maintain_local_mls_key_packages(
     base_url: &str,
     session_credential: &str,
     authority: &arkret_sdk::PrincipalAuthorityKey,
+    service_account_id: &arkret_sdk::ServiceAccountId,
     device_id: &arkret_sdk::DeviceId,
 ) -> Result<LocalMlsKeyPackageMaintenanceOutcome, String> {
     let Some(lease) = crate::keypackage_maintenance::acquire(base_url, authority, device_id)
@@ -454,6 +465,7 @@ async fn maintain_local_mls_key_packages(
         base_url,
         session_credential,
         authority,
+        service_account_id,
         device_id,
     )
     .await;
@@ -472,6 +484,7 @@ async fn run_local_mls_key_package_maintenance_cycle(
     base_url: &str,
     session_credential: &str,
     authority: &arkret_sdk::PrincipalAuthorityKey,
+    service_account_id: &arkret_sdk::ServiceAccountId,
     device_id: &arkret_sdk::DeviceId,
 ) -> Result<LocalMlsKeyPackageMaintenanceOutcome, String> {
     const KEYPACKAGE_MIN_AVAILABLE: usize = 8;
@@ -518,7 +531,7 @@ async fn run_local_mls_key_package_maintenance_cycle(
     revoke_refs.dedup();
     if !revoke_refs.is_empty() {
         let revoke_device_id = device_id.clone();
-        let revoke_authority = authority.clone();
+        let revoke_account_id = service_account_id.clone();
         let outcome = crate::transport::auth::with_endpoint_clients(
             base_url,
             session_credential.to_owned(),
@@ -526,7 +539,7 @@ async fn run_local_mls_key_package_maintenance_cycle(
             |clients| async move {
                 clients
                     .mls()
-                    .revoke_key_packages(&revoke_authority, &revoke_device_id, revoke_refs)
+                    .revoke_key_packages(&revoke_account_id, &revoke_device_id, revoke_refs)
                     .await
             },
         )
@@ -722,7 +735,7 @@ async fn publish_fresh_local_mls_key_package_batch(
         }
         return Err(format!(
             "MLS KeyPackage upload rejected: {:?}",
-            outcome.rejected
+            outcome.rejections
         ));
     }
     Ok(local_entries)
@@ -874,7 +887,7 @@ pub(crate) async fn ensure_pairwise_mls_key_package_published(
         }
         return Err(format!(
             "pairwise MLS KeyPackage upload rejected: {:?}",
-            outcome.rejected
+            outcome.rejections
         ));
     }
     crate::mls::runtime::store_mls_pairwise_key_package_publish_marker(
@@ -1266,6 +1279,14 @@ pub(crate) async fn bootstrap_mls_welcome_for_realm(
             )
         });
         if consumed_device {
+            let service_account_id = state_store
+                .read()
+                .session_grant()
+                .map(|grant| grant.service_account_id)
+                .ok_or_else(|| {
+                    "cannot replenish claimed KeyPackages without exact service_account_id"
+                        .to_owned()
+                })?;
             let consumed = welcome_outcome
                 .consumable_claims
                 .iter()
@@ -1298,6 +1319,7 @@ pub(crate) async fn bootstrap_mls_welcome_for_realm(
                 base_url.clone(),
                 session_credential.clone(),
                 authority.clone(),
+                service_account_id,
                 device_id.clone(),
             )
             .await?;

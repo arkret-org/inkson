@@ -1197,7 +1197,7 @@ fn sidecar_agent_label(agent_ids: &[String], participants: &[SpaceParticipant]) 
         .map(|agent_id| {
             participants
                 .iter()
-                .find(|participant| participant.principal_id == *agent_id)
+                .find(|participant| participant.principal_id.as_str() == agent_id)
                 .and_then(|participant| {
                     participant
                         .agent_metadata
@@ -1336,7 +1336,7 @@ fn should_start_circle_scope_request(
 #[component]
 pub fn ChatPanel(
     plaintext_service_id: String,
-    principal_id: String,
+    principal_id: arkret_sdk::DidCoreId,
     account_primary_handle: String,
     device_id: String,
     token: Signal<String>,
@@ -1378,6 +1378,8 @@ pub fn ChatPanel(
     let authority = active_account.authority.clone();
     let did = active_account.did().clone();
     let account_device_id = active_account.device_id.clone();
+    let principal_core_id = principal_id.clone();
+    let principal_id = principal_id.as_str().to_owned();
     let mut sidecar_session_state = use_context::<crate::sidecar::HostedSidecarStateContext>().0;
     // Embedded Strand shells do not receive a route-owned Sidecar prop. Read
     // the same hosted session that renders the context bar so message
@@ -1964,7 +1966,7 @@ pub fn ChatPanel(
     };
     let projected_member_ids = participants
         .iter()
-        .map(|participant| participant.principal_id.clone())
+        .map(|participant| participant.principal_id.to_string())
         .collect::<std::collections::BTreeSet<_>>();
     let own_controller_handle = participants
         .iter()
@@ -1993,7 +1995,7 @@ pub fn ChatPanel(
     let mut known_agent_ids = participants_for_messages
         .iter()
         .filter(|participant| participant.is_agent)
-        .map(|participant| participant.principal_id.clone())
+        .map(|participant| participant.principal_id.to_string())
         .collect::<Vec<_>>();
     known_agent_ids.sort();
     known_agent_ids.dedup();
@@ -2067,7 +2069,7 @@ pub fn ChatPanel(
         );
     }
     participants.retain(|participant| {
-        !participant.is_agent || public_agent_ids.contains(&participant.principal_id)
+        !participant.is_agent || public_agent_ids.contains(participant.principal_id.as_str())
     });
     let sidecar_owned_agents = sidecar_owned_agent_participants(&participants, &principal_id);
     // Actor mentions in a Sidecar are intentionally narrower than the Realm
@@ -2088,14 +2090,14 @@ pub fn ChatPanel(
 
     let mut participant_ids_for_presence = presence_participants
         .iter()
-        .map(|participant| participant.principal_id.clone())
-        .filter(|did| !did.trim().is_empty())
+        .map(|participant| participant.principal_id.to_string())
+        .filter(|id| !id.trim().is_empty())
         .collect::<Vec<_>>();
     participant_ids_for_presence.sort();
     participant_ids_for_presence.dedup();
     let has_remote_presence = participant_ids_for_presence
         .iter()
-        .any(|did| did != &principal_id);
+        .any(|id| id != &principal_id);
     let presence_sync_key = format!(
         "{}|{}",
         selected_realm_id,
@@ -2980,7 +2982,7 @@ pub fn ChatPanel(
                             }
                             for agent in &sidecar_owned_agents {
                                 {
-                                    let agent_id = agent.principal_id.clone();
+                                    let agent_id = agent.principal_id.to_string();
                                     let slug = agent.agent_metadata.as_ref()
                                         .map(|metadata| metadata.agent_slug.trim().to_owned())
                                         .filter(|slug| !slug.is_empty())
@@ -3025,17 +3027,17 @@ pub fn ChatPanel(
                             "data-testid": "presence-list",
                             for participant in &presence_participants {
                                 {
-                                    let principal_id_attr = participant.principal_id.clone();
+                                    let principal_id_attr = participant.principal_id.to_string();
                                     let live_labels = presence_labels();
                                     let display = display_label_for_actor(
                                         &state_store.read(),
                                         &participants,
                                         &live_labels,
-                                        &participant.principal_id,
+                                        participant.principal_id.as_str(),
                                     );
                                     let state = presence_states
                                         .read()
-                                        .get(&participant.principal_id)
+                                        .get(participant.principal_id.as_str())
                                         .cloned()
                                         .unwrap_or_else(|| {
                                             if participant.is_self {
@@ -3047,7 +3049,7 @@ pub fn ChatPanel(
                                     let state_for_class = state.clone();
                                     let status_message = presence_status_messages
                                         .read()
-                                        .get(&participant.principal_id)
+                                        .get(participant.principal_id.as_str())
                                         .cloned();
                                     rsx! {
                                         div {
@@ -3615,7 +3617,7 @@ pub fn ChatPanel(
                     selected_channel_info: selected_channel_info.clone(),
                     authority: authority.clone(),
                     did: did.clone(),
-                    principal_id: principal_id.clone(),
+                    principal_id: principal_core_id.clone(),
                     account_display_label: account_display_label.clone(),
                     participants: composer_participants.clone(),
                     selected_realm_id: selected_realm_id.clone(),

@@ -146,7 +146,9 @@ pub fn DashboardPanel(
                 .await
                 {
                     Ok(response) => {
-                        contacts_summary.set(Some(dashboard_contacts_summary(&response.contacts)));
+                        contacts_summary.set(Some(dashboard_contacts_summary(
+                            &response.contact_list_rows,
+                        )));
                         contacts_status.set(String::new());
                     }
                     Err(_) => {
@@ -845,7 +847,7 @@ mod tests {
                 granted_by_peer_scopes: Vec::new(),
                 bidirectional_scopes: Vec::new(),
                 effective_scopes: Some(Vec::new()),
-                peer_id: None,
+                peer_host_id: None,
                 continuity_evidence: None,
                 direct_conversation: direct_ready.then(|| arkret_sdk::DirectConversationSummary {
                     realm_id: arkret_sdk::RealmId::new(
@@ -862,7 +864,7 @@ mod tests {
                     .unwrap(),
                     state: arkret_sdk::DirectConversationSummaryState::Found,
                 }),
-                agents: Vec::new(),
+                contact_agent_projections: Vec::new(),
             }
         }
 

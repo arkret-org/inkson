@@ -140,7 +140,7 @@ pub(super) async fn submit_call_state_participant(
             focus_id: binding.focus_id.clone(),
             actor_id: binding.actor_id.clone(),
             device_id: binding.device_id.as_str().to_owned(),
-            participant_identity: binding.participant_identity.clone(),
+            participant_id: binding.participant_id.clone(),
             issued_at: binding.issued_at,
             expires_at: binding.expires_at,
             issuer_kid: binding.issuer_kid.clone(),
@@ -152,7 +152,7 @@ pub(super) async fn submit_call_state_participant(
             device_id: device.to_owned(),
             joined_at: None,
             foci_preferred: Some(vec![session.focus_id.clone()]),
-            participant_identity: session.participant_identity.clone(),
+            participant_id: session.participant_identity.clone(),
             participant_binding,
             media: Some(arkret_sdk::CallParticipantMedia {
                 audio: Some(session.desired_media.audio),

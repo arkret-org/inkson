@@ -33,7 +33,7 @@ pub fn is_ordinary_circle_profile(profile_ref: Option<&str>) -> bool {
 }
 
 pub fn ordinary_circle_views(list: arkret_sdk::CircleList) -> Vec<arkret_sdk::CircleView> {
-    list.circles
+    list.circle_views
         .into_iter()
         .filter(|circle| {
             let ordinary = is_ordinary_circle_profile(circle.profile_ref.as_deref());

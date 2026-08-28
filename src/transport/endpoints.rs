@@ -183,7 +183,7 @@ impl MlsEndpoints<'_> {
             intended_realm_id: None,
             agent_verification_method: None,
             agent_key_authorize_event_id: None,
-            keypackages,
+            keypackage_upload_entries: keypackages,
             expires_at: None,
             strand_id: None,
             mls_group_id: None,
@@ -219,9 +219,9 @@ impl MlsEndpoints<'_> {
             ))?),
             agent_verification_method: None,
             agent_key_authorize_event_id: None,
-            keypackages: vec![crate::mls_api_helpers::mls_key_package_record_upload_entry(
-                record,
-            )?],
+            keypackage_upload_entries: vec![
+                crate::mls_api_helpers::mls_key_package_record_upload_entry(record)?,
+            ],
             expires_at: None,
             strand_id: None,
             mls_group_id: None,
@@ -239,7 +239,7 @@ impl MlsEndpoints<'_> {
 
     pub async fn revoke_key_packages(
         &self,
-        authority: &arkret_sdk::PrincipalAuthorityKey,
+        owner_account_id: &arkret_sdk::ServiceAccountId,
         device_id: &arkret_sdk::DeviceId,
         key_package_refs: Vec<String>,
     ) -> anyhow::Result<arkret_sdk::KeyPackagesRevokeOutcome> {
@@ -247,7 +247,7 @@ impl MlsEndpoints<'_> {
             anyhow::bail!("KeyPackage revoke batch is empty");
         }
         let unsigned = arkret_sdk::KeyPackagesRevokeUnsignedRequest {
-            owner_account_id: authority.principal_id.clone(),
+            owner_account_id: owner_account_id.clone(),
             key_package_refs,
             device_id: device_id.clone(),
             reason: None,

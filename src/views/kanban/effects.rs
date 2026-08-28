@@ -17,7 +17,7 @@ async fn fetch_kanban_projection_snapshot(
     let spaces = match http.realm_spaces(realm_id).await {
         Ok(spaces) => Some(
             spaces
-                .spaces
+                .projection_space_rows
                 .into_iter()
                 .map(Into::into)
                 .collect::<Vec<_>>(),
@@ -30,7 +30,7 @@ async fn fetch_kanban_projection_snapshot(
     let strands = match http.realm_strands(realm_id).await {
         Ok(strands) => Some(
             strands
-                .strands
+                .projection_strand_rows
                 .into_iter()
                 .map(Into::into)
                 .collect::<Vec<_>>(),

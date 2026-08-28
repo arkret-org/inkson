@@ -613,7 +613,7 @@ where
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct PendingAccountHandoff {
     pub principal_server_url: String,
-    pub gate_account_base: String,
+    pub gate_account_base_url: String,
     pub request_id: String,
     /// OIDC state whose authenticated callback created this handoff. This is
     /// used only to resume the exact same callback after response loss; a new
@@ -630,7 +630,7 @@ pub struct PendingAccountHandoff {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub account_subject: Option<arkret_sdk::Hash>,
     pub holder_jkt: String,
-    pub audience: String,
+    pub audience_id: arkret_sdk::DidCoreId,
     pub expires_at: DateTime<Utc>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lease_id: Option<String>,
@@ -671,7 +671,7 @@ pub struct PendingAccountHandoff {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct PendingPrincipalRegistration {
     pub principal_server_url: String,
-    pub gate_account_base: String,
+    pub gate_account_base_url: String,
     pub handoff_request_id: String,
     /// Account Authority handle copied only for UI display and artifact naming.
     /// It is an unsigned UX hint; continuity is proven by an exact request id
@@ -739,6 +739,8 @@ pub struct PendingIdentityAbandonment {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct RecoveryMaterialEvidence {
     pub principal_id: arkret_sdk::DidCoreId,
+    /// Exact service-local account identity bound into the signed grant.
+    pub service_account_id: arkret_sdk::ServiceAccountId,
     pub principal_did: arkret_sdk::Did,
     pub device_id: arkret_sdk::DeviceId,
     pub principal_control_realm_id: arkret_sdk::RealmId,
@@ -1461,12 +1463,16 @@ pub struct PersistedSessionGrant {
     pub session_private_key_pem: String,
     /// Grant id assigned by coauth. Embedded in introspection proof claims.
     pub grant_id: String,
-    /// Audience the grant is bound to (typically the principal-server URL).
-    pub audience: String,
+    /// Stable service identity the grant is bound to.
+    pub audience_id: arkret_sdk::DidCoreId,
     /// Stable core principal ID (`DidCoreId`) the grant authorizes. A record
     /// holding anything else is invalid and the session is unusable; it is
     /// never repaired by back-projecting a DID.
     pub principal_id: arkret_sdk::DidCoreId,
+    /// Exact service-local account identity bound into the signed grant.
+    /// This value is inherited byte-for-byte across refreshes and must never
+    /// be synthesized from `principal_id`.
+    pub service_account_id: arkret_sdk::ServiceAccountId,
     /// Device id bound to the grant.
     pub device_id: arkret_sdk::DeviceId,
     /// Principal-server base URL whose `/_arkret/self/*` surface accepts this grant.

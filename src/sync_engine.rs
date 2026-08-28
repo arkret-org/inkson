@@ -144,7 +144,7 @@ struct AccountClientEventReport {
     decoded_events: usize,
     to_device: usize,
     notifications: usize,
-    malformed_realms: Vec<String>,
+    malformed_realm_ids: Vec<String>,
 }
 
 #[cfg(test)]
@@ -164,7 +164,7 @@ impl AccountClientEventProjector {
         match event {
             ClientEvent::AccountUpdates(updates) => {
                 report.account_updates += 1;
-                report.malformed_realms.extend(updates.malformed_realms);
+                report.malformed_realm_ids.extend(updates.malformed_realms);
             }
             ClientEvent::RealmDelta { .. } => {
                 report.realm_deltas += 1;
@@ -384,14 +384,14 @@ struct InksonAccountPostCommit {
 
 fn account_updates_are_empty(updates: &arkret_sdk::SyncUpdates) -> bool {
     updates.realm_updates.is_empty()
-        && updates.malformed_realms.is_empty()
+        && updates.malformed_realm_ids.is_empty()
         && updates.to_device.is_empty()
         && updates.to_device_ack_token.is_none()
         && !updates.to_device_limited
         && updates.to_device_next_cursor.is_none()
         && !updates.to_device_lost
-        && updates.device_lists.changed.is_empty()
-        && updates.device_lists.left.is_empty()
+        && updates.device_lists.changed_ids.is_empty()
+        && updates.device_lists.left_ids.is_empty()
         && updates.account_data.is_empty()
         && updates.notifications.is_empty()
         && updates.agent_signer_evidence.is_empty()
@@ -413,9 +413,7 @@ fn realm_update_has_durable_projection(update: &arkret_sdk::RealmUpdate) -> bool
         || entry.state_after.is_some()
         || entry.account_data.is_some()
         || entry.summary.is_some()
-        || entry.member_roster_entries.is_some()
-        || entry.member_roster_entries_limited.is_some()
-        || entry.member_roster_entries_next_cursor.is_some()
+        || entry.member_roster.is_some()
         || entry.unread_notifications.is_some()
         || entry.event_states.is_some()
         || entry.bottoms.is_some()
@@ -1269,7 +1267,7 @@ async fn run_circle_scope_rotate_pass(
             String,
             Vec<(String, Vec<arkret_sdk::EventId>)>,
         > = circles
-            .circles
+            .circle_views
             .iter()
             .filter(|circle| {
                 circle.state == arkret_sdk::CircleState::Active
@@ -1278,7 +1276,7 @@ async fn run_circle_scope_rotate_pass(
             .filter_map(|circle| {
                 let circle_id = circle.circle_id.to_string();
                 let active_members: BTreeSet<String> = circle
-                    .members
+                    .member_ids
                     .iter()
                     .map(arkret_sdk::DidCoreId::to_string)
                     .collect();
@@ -1330,10 +1328,10 @@ async fn run_circle_scope_rotate_pass(
             if generation.get() != start_generation {
                 return;
             }
-            if !circles.circles.iter().any(|circle| {
+            if !circles.circle_views.iter().any(|circle| {
                 circle.circle_id.as_str() == circle_id.as_str()
                     && circle
-                        .members
+                        .member_ids
                         .iter()
                         .any(|member| member == &authority.principal_id)
             }) {
@@ -3206,15 +3204,15 @@ mod tests {
             realm_projections: Default::default(),
             updates: arkret_sdk::SyncUpdates {
                 realm_updates: Vec::new(),
-                malformed_realms: Vec::new(),
+                malformed_realm_ids: Vec::new(),
                 to_device: Vec::new(),
                 to_device_ack_token: None,
                 to_device_limited: false,
                 to_device_next_cursor: None,
                 to_device_lost: false,
                 device_lists: arkret_sdk::AccountSubscribeDeviceListChanges {
-                    changed: Vec::new(),
-                    left: Vec::new(),
+                    changed_ids: Vec::new(),
+                    left_ids: Vec::new(),
                 },
                 account_data: Vec::new(),
                 notifications: Vec::new(),
@@ -3576,7 +3574,7 @@ mod tests {
         assert_eq!(report.realm_deltas, 1);
         assert_eq!(report.decoded_messages, 1);
         assert_eq!(report.decoded_events, 1);
-        assert!(report.malformed_realms.is_empty());
+        assert!(report.malformed_realm_ids.is_empty());
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -4090,10 +4088,13 @@ mod tests {
             let mut response = empty_response("sx:invite-membership");
             let realm_id = arkret_sdk::RealmId::new(realm_id).unwrap();
             let entry = serde_json::from_value::<arkret_sdk::RealmSyncEntry>(json!({
-                "members": [{
-                    "actor_id": actor_id,
-                    "membership": membership
-                }]
+                "member_roster": {
+                    "entries": [{
+                        "actor_id": actor_id,
+                        "membership": membership
+                    }],
+                    "limited": false
+                }
             }))
             .unwrap();
             response

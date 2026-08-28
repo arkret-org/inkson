@@ -2207,7 +2207,7 @@ impl EventSubmitter {
             event_id = %signed.event_id,
             status = ?response.status,
             accepted = response.accepted.len(),
-            rejected = response.rejected.len(),
+            rejected = response.events_submit_rejected_rows.len(),
             quarantine = response.quarantine.len(),
             "events.submit response received"
         );
@@ -3397,8 +3397,8 @@ impl EventSubmitter {
         let authority =
             crate::identity::account_auth::AuthorityResolver::discover(principal_server_url)
                 .await?;
-        let gate_account_base = url::Url::parse(&authority.gate_account_base)?;
-        let authority_origin = gate_account_base.origin().ascii_serialization();
+        let gate_account_base_url = url::Url::parse(&authority.gate_account_base_url)?;
+        let authority_origin = gate_account_base_url.origin().ascii_serialization();
         let authority_http = account_authority_http_client(&authority_origin)?;
         authority_http
             .agent_key_pair(body)

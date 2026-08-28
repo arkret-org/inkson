@@ -201,7 +201,7 @@ fn test_oidc_method() -> arkret_sdk::AuthMethod {
         method: arkret_sdk::AuthMethodKind::Oidc,
         issuer_uri: Some("https://issuer.example".to_owned()),
         provider_uri: None,
-        openid_configuration_uri: Some(
+        openid_configuration_url: Some(
             "https://issuer.example/.well-known/openid-configuration".to_owned(),
         ),
         client_id: Some("inkson-test".to_owned()),
@@ -436,33 +436,33 @@ fn authorize_url_falls_back_to_native_client_id() {
     );
 }
 
-/// `gate_account_base` derivation uses the strong `account_authority`.
+/// `gate_account_base_url` derivation uses the strong `account_authority`.
 #[test]
-fn resolve_gate_account_base_prefers_account_authority() {
+fn resolve_gate_account_base_url_prefers_account_authority() {
     let mut metadata = arkret_sdk::AuthMetadata::minimal();
     metadata.account_authority = Some(arkret_sdk::AccountAuthority {
-        origin_uri: "https://aa.example".to_owned(),
-        gate_account_base: "https://aa.example/_arkret/gate/account".to_owned(),
+        origin: arkret_sdk::WebOrigin::new("https://aa.example").unwrap(),
+        gate_account_base_url: "https://aa.example/_arkret/gate/account".to_owned(),
     });
-    let base = resolve_gate_account_base("https://principal.example", &metadata).unwrap();
+    let base = resolve_gate_account_base_url("https://principal.example", &metadata).unwrap();
     assert_eq!(base, "https://aa.example/_arkret/gate/account");
 }
 
 #[test]
-fn resolve_gate_account_base_derives_from_account_authority_origin() {
+fn resolve_gate_account_base_url_derives_from_account_authority_origin() {
     let mut metadata = arkret_sdk::AuthMetadata::minimal();
     metadata.account_authority = Some(arkret_sdk::AccountAuthority {
-        origin_uri: "https://aa.example".to_owned(),
-        gate_account_base: String::new(),
+        origin: arkret_sdk::WebOrigin::new("https://aa.example").unwrap(),
+        gate_account_base_url: String::new(),
     });
-    let base = resolve_gate_account_base("https://principal.example", &metadata).unwrap();
+    let base = resolve_gate_account_base_url("https://principal.example", &metadata).unwrap();
     assert_eq!(base, "https://aa.example/_arkret/gate/account");
 }
 
 #[test]
-fn resolve_gate_account_base_fails_closed_without_account_authority() {
+fn resolve_gate_account_base_url_fails_closed_without_account_authority() {
     let metadata = arkret_sdk::AuthMetadata::minimal();
-    let error = resolve_gate_account_base("https://principal.example", &metadata).unwrap_err();
+    let error = resolve_gate_account_base_url("https://principal.example", &metadata).unwrap_err();
     assert!(
         error
             .to_string()
@@ -480,13 +480,13 @@ fn principal_description() -> arkret_sdk::ServiceDescribe {
             "ak.operation_bundle.principal_server.http_core.v1".to_owned(),
         ],
         vec![arkret_sdk::TransportBinding::HttpJson {
-            base_uri: "https://principal.example/_arkret".to_owned(),
+            base_url: "https://principal.example/_arkret".to_owned(),
             extension_profile_required: (),
         }],
     );
     description.auth_metadata.account_authority = Some(arkret_sdk::AccountAuthority {
-        origin_uri: "https://auth.example".to_owned(),
-        gate_account_base: "https://auth.example/_arkret/gate/account".to_owned(),
+        origin: arkret_sdk::WebOrigin::new("https://auth.example").unwrap(),
+        gate_account_base_url: "https://auth.example/_arkret/gate/account".to_owned(),
     });
     description
 }

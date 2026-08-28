@@ -334,7 +334,7 @@ pub fn build_mls_account_secret_recovery_public_key_backup(
 ///
 /// Series metadata is part of the HPKE `info`, so the successor link must be
 /// attached before sealing. Mutating `series_id`, `series_seq`, or
-/// `supersedes` afterwards makes the final envelope undecryptable.
+/// `supersedes_id` afterwards makes the final envelope undecryptable.
 #[allow(clippy::too_many_arguments)]
 pub fn build_mls_account_secret_recovery_public_key_backup_in_series(
     backup_id: &str,

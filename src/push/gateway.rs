@@ -155,7 +155,8 @@ pub fn push_status_label(state: Option<&PushRegistrationState>) -> String {
     match state {
         Some(state) => state
             .registration_id
-            .clone()
+            .as_ref()
+            .map(ToString::to_string)
             .unwrap_or_else(|| "registered".to_owned()),
         None => "Not registered".to_owned(),
     }

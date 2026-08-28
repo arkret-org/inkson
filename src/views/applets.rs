@@ -811,7 +811,7 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
                                         install_status.set("installing applet…".to_owned());
                                         spawn(async move {
                                             let applet_url = match url::Url::parse(
-                                                &snapshot.package.base_uri,
+                                                &snapshot.package.base_url,
                                             ) {
                                                 Ok(value) => value,
                                                 Err(error) => {
@@ -870,7 +870,7 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
                                                         }
                                                         Status::PartiallyInstalled => format!(
                                                             "⚠ partially installed: applet_id {aid} — {} scope(s) rejected",
-                                                            outcome.rejected.len(),
+                                                            outcome.rejections.len(),
                                                         ),
                                                     };
                                                     let installed = matches!(outcome.effective_status, Status::Installed);

@@ -345,8 +345,7 @@ mod personal_agent_tests {
         let value: serde_json::Value = serde_json::from_str(&raw).unwrap();
 
         // AKP-0008 §4.4: exactly the six pairing fields, no scope payload. The
-        // base-URL field is the SDK/spec wire name `arkret_base_url` (a wire key,
-        // deliberately not renamed by the arkret→arkret source rename).
+        // Base URI field is the SDK/spec wire name `arkret_base_url`.
         assert_eq!(value["arkret_base_url"], "https://arkret.example");
         assert_eq!(value["service_id"], "ak:did_core:web:arkret.example");
         assert_eq!(value["agent_id"], "ak:did_core:web:agents.example:summary");
@@ -440,7 +439,7 @@ mod personal_agent_tests {
                 "verification_method": verification_method,
                 "signature_algorithm": "Ed25519",
                 "challenge": "agent_pairing_request:01999999-0000-7000-8000-00000000feed",
-                "audience": "ak:did_core:web:arkret.example",
+                "audience_id": "ak:did_core:web:arkret.example",
                 "created_at": "2026-07-06T00:10:00.000Z",
                 "expires_at": "2026-07-06T00:15:00.000Z",
                 "runtime_key_binding_digest": format!("sha256:{}", "0".repeat(64)),
@@ -762,7 +761,7 @@ mod personal_agent_tests {
                 "verification_method": verification_method,
                 "signature_algorithm": "Ed25519",
                 "challenge": "agent_pairing_request:01999999-0000-7000-8000-00000000feed",
-                "audience": service_id,
+                "audience_id": service_id,
                 "created_at": "2026-07-06T00:10:00.000Z",
                 "expires_at": "2026-07-06T00:15:00.000Z",
                 "runtime_key_binding_digest": format!("sha256:{}", "0".repeat(64)),

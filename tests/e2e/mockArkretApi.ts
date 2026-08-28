@@ -366,7 +366,7 @@ function didCoreId(value: string): string {
     : `ak:did_core:${value.replace(/^did:/, "")}`;
 }
 
-function didFullId(value: string): string {
+function didFromCoreId(value: string): string {
   return value.replace(/^ak:did_core:/, "did:");
 }
 
@@ -643,7 +643,7 @@ export async function mockArkretApi(
   };
   // A consumed bootstrap handle is absent from the public key-state DTO.
   const activeAssistantId = "ak:did_core:web:agents.example:assistant";
-  const activeAssistantDid = didFullId(activeAssistantId);
+  const activeAssistantDid = didFromCoreId(activeAssistantId);
   const activeAssistantScope = {
     actions: ["ak.event.read"],
     resources: [
@@ -719,7 +719,7 @@ export async function mockArkretApi(
       agent_id: expiredAgentId,
       controller_id: accountPrincipalCoreId,
       principal_control_realm_id: expiredRealmId,
-      controller_authorization_ref: `${didFullId(expiredAgentId)}#managed-controller`,
+      controller_authorization_ref: `${didFromCoreId(expiredAgentId)}#managed-controller`,
       requested_scope: expiredScope,
     });
     personalAgentGrants.set(expiredAgentId, []);
@@ -921,7 +921,7 @@ export async function mockArkretApi(
       proofs: [
         {
           kind: "detached_jws",
-          verification_method: `${didFullId(accountPrincipalCoreId)}#${currentDeviceId}`,
+          verification_method: `${didFromCoreId(accountPrincipalCoreId)}#${currentDeviceId}`,
           event_digest: `sha256:${"0".repeat(64)}`,
           created_at: createdAt,
           jws: "e30..c2ln",
@@ -1021,7 +1021,7 @@ export async function mockArkretApi(
             mode: "development",
             account_authority: {
               origin: "https://auth.local.host",
-              gate_account_base: "https://auth.local.host/_arkret/gate/account",
+              gate_account_base_url: "https://auth.local.host/_arkret/gate/account",
             },
             methods: [
               {
@@ -3400,7 +3400,7 @@ export async function mockArkretApi(
           ? body.agent_id
           : `did:web:agents.example:${slug}`,
       );
-      const agentDid = didFullId(agentId);
+      const agentDid = didFromCoreId(agentId);
       const principalControlRealmId =
         "ak:realm:AQ4lJ43jR05ytJIf7AGNbPU_MuY1FqT_ny_e8MhCCnwc";
       const controllerRealmId = DEMO_REALM;
@@ -4289,7 +4289,7 @@ function principalServiceDescribe() {
       mode: "development",
       account_authority: {
         origin: "https://auth.local.host",
-        gate_account_base: "https://auth.local.host/_arkret/gate/account",
+        gate_account_base_url: "https://auth.local.host/_arkret/gate/account",
       },
       methods: [
         {

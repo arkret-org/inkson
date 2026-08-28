@@ -265,7 +265,11 @@ fn dto_from_hint(id: &str) -> OrgRelationshipDto {
 /// Flatten a projection response into the display rows: verified / revoked rows
 /// first, then declared hints.
 fn dtos_from_list(list: &RealmOrganizationRelationshipList) -> Vec<OrgRelationshipDto> {
-    let mut out: Vec<OrgRelationshipDto> = list.relationships.iter().map(dto_from_row).collect();
+    let mut out: Vec<OrgRelationshipDto> = list
+        .realm_organization_relationship_rows
+        .iter()
+        .map(dto_from_row)
+        .collect();
     out.extend(
         list.declared_organization_hint_ids
             .iter()

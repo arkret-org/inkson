@@ -690,7 +690,7 @@ fn chat_message_create_operation_emits_schema_canonical_content() {
     assert!(!op.payload().contains_key("mentions"));
     assert!(!op.payload().contains_key("audience_mentions"));
     assert!(!op.payload().contains_key("mention_relations"));
-    assert!(!op.payload().contains_key("reply_to"));
+    assert!(!op.payload().contains_key("reply_to_id"));
     assert!(!op.payload().contains_key("thread_id"));
     arkret_sdk::schema::event_payload_validator_catalog()
         .unwrap()
@@ -860,7 +860,7 @@ fn chat_message_create_operation_includes_reply_fields_only_when_present() {
     .expect("builds");
 
     assert_eq!(
-        op.payload()["reply_to"].as_str(),
+        op.payload()["reply_to_id"].as_str(),
         Some("ak:message:ARELvWOpF6BRrks3DlbQy-9XIE6aAQQumDQp7fA4ApeM")
     );
     assert!(!op.payload().contains_key("thread_id"));
@@ -1790,7 +1790,7 @@ fn chat_messages_keep_folded_timeline_revision_over_older_backfill_create() {
             "created_at": "2026-07-07T05:58:22.000Z",
             "payload": {
                 "content": {"kind": "ak.content.text", "body": "original body"},
-                "reply_to": reply_to,
+                "reply_to_id": reply_to,
                 "strand_id": "ak:strand:ARJxD7BSUwmnyinQVd_KxLCG7gwfyIFlTzeJk7F_phHE",
                 "track_name": "discussion"
             }
@@ -2369,7 +2369,7 @@ fn moderation_appeal_prompts_fold_decision_and_current_appellant_state() {
             "body": {
                 "target_ref": "ak:message:AXh0mpVGb536xVxbSPfM4Wc_1WuXAxTYgmtXEncKM9T0",
                 "decision": "quarantine",
-                "issuer": "ak:did_core:web:moderator.example",
+                "issuer_id": "ak:did_core:web:moderator.example",
                 "request_canonical_digest": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
             }
         }),
@@ -2380,7 +2380,7 @@ fn moderation_appeal_prompts_fold_decision_and_current_appellant_state() {
             "body": {
                 "decision_ref": "ak:event:AfqXI4jyBJWA5HRhSr3SdFP5Qb_2V210Q00mFqUjA7_z",
                 "target_ref": "ak:message:AXh0mpVGb536xVxbSPfM4Wc_1WuXAxTYgmtXEncKM9T0",
-                "appellant": appellant,
+                "appellant_id": appellant,
                 "realm_id": realm_id,
                 "reason_text_ref": "ak:text:appeal-reason",
                 "created_at": "2026-07-19T00:00:01.000Z"
@@ -2392,7 +2392,7 @@ fn moderation_appeal_prompts_fold_decision_and_current_appellant_state() {
             "body": {
                 "appeal_id": "ak:appeal:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
                 "realm_id": realm_id,
-                "reviewer": "ak:did_core:web:reviewer.example",
+                "reviewer_id": "ak:did_core:web:reviewer.example",
                 "decision": "uphold",
                 "reason_text_ref": "ak:text:decision-reason",
                 "decided_at": "2026-07-19T00:00:02.000Z"
@@ -2443,7 +2443,7 @@ fn moderation_appeal_prompts_read_control_plane_sync_state() {
         json!({
             "target_ref": "ak:message:AXh0mpVGb536xVxbSPfM4Wc_1WuXAxTYgmtXEncKM9T0",
             "decision": "quarantine",
-            "issuer": "ak:did_core:web:moderator.example",
+            "issuer_id": "ak:did_core:web:moderator.example",
             "request_canonical_digest": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
         }),
     )
@@ -2490,7 +2490,7 @@ fn moderation_appeal_prompts_survive_sdk_event_round_trip() {
         "payload": {
             "target_ref": "ak:message:AXh0mpVGb536xVxbSPfM4Wc_1WuXAxTYgmtXEncKM9T0",
             "decision": "quarantine",
-            "issuer": "ak:did_core:web:moderator.example",
+            "issuer_id": "ak:did_core:web:moderator.example",
             "reason_code": "abuse_review",
             "request_canonical_digest": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
         },
@@ -2971,7 +2971,7 @@ fn treats_canonical_principal_id_as_own_sender() {
 #[test]
 fn participant_display_name_prefers_local_remark() {
     let participants = vec![SpaceParticipant {
-        principal_id: "ak:did_core:web:bob.example".to_owned(),
+        principal_id: arkret_sdk::DidCoreId::new("ak:did_core:web:bob.example".to_owned()).unwrap(),
         display_name: Some("Bobby".to_owned()),
         handle_label: None,
         display_name_rank: 0,
@@ -3004,7 +3004,10 @@ fn participant_display_name_prefers_local_remark() {
 #[test]
 fn sender_display_label_does_not_invent_domain_for_localpart() {
     let participants = vec![SpaceParticipant {
-        principal_id: "ak:did_core:web:local.host:users:alice".to_owned(),
+        principal_id: arkret_sdk::DidCoreId::new(
+            "ak:did_core:web:local.host:users:alice".to_owned(),
+        )
+        .unwrap(),
         display_name: Some("alice".to_owned()),
         handle_label: None,
         display_name_rank: 2,
@@ -3028,7 +3031,10 @@ fn sender_display_label_does_not_invent_domain_for_localpart() {
 #[test]
 fn own_sender_label_prefers_account_handle_over_did_derived_materialized_id() {
     let participants = vec![SpaceParticipant {
-        principal_id: "ak:did_core:web:auth.local.host:users:01ktwstvaef1dby1xf5mnkxss8".to_owned(),
+        principal_id: arkret_sdk::DidCoreId::new(
+            "ak:did_core:web:auth.local.host:users:01ktwstvaef1dby1xf5mnkxss8".to_owned(),
+        )
+        .unwrap(),
         display_name: None,
         handle_label: None,
         display_name_rank: u8::MAX,
@@ -3052,7 +3058,10 @@ fn own_sender_label_prefers_account_handle_over_did_derived_materialized_id() {
 #[test]
 fn sender_display_label_prefers_projection_handle_label() {
     let participants = vec![SpaceParticipant {
-        principal_id: "ak:did_core:web:example.com:users:bob".to_owned(),
+        principal_id: arkret_sdk::DidCoreId::new(
+            "ak:did_core:web:example.com:users:bob".to_owned(),
+        )
+        .unwrap(),
         display_name: Some("bob".to_owned()),
         handle_label: Some("bob:example.com".to_owned()),
         display_name_rank: 2,
@@ -3086,7 +3095,7 @@ fn account_handle_requires_a_complete_verified_handle() {
 #[test]
 fn participant_roster_ignores_noncanonical_identity_fields() {
     let projection = json!({
-        "members": [
+        "member_roster_entries": [
             {
                 "did": "ak:did_core:web:bob.example",
                 "display_name": "Bob Example",
@@ -3109,7 +3118,7 @@ fn participant_roster_ignores_noncanonical_identity_fields() {
 #[test]
 fn participant_roster_rejects_naked_handle_field() {
     let projection = json!({
-        "members": [
+        "member_roster_entries": [
             {
                 "actor_id": "ak:did_core:web:example.com:users:bob",
                 "handle": "bob:example.com"
@@ -3127,7 +3136,9 @@ fn participant_roster_rejects_naked_handle_field() {
     );
     let bob = participants
         .iter()
-        .find(|participant| participant.principal_id == "ak:did_core:web:example.com:users:bob")
+        .find(|participant| {
+            participant.principal_id.as_str() == "ak:did_core:web:example.com:users:bob"
+        })
         .unwrap();
 
     assert!(mention_label_for_participant(bob).is_none());
@@ -3136,7 +3147,7 @@ fn participant_roster_rejects_naked_handle_field() {
 #[test]
 fn extracts_participant_handle_label_from_inline_handle_claims() {
     let projection = json!({
-        "members": [
+        "member_roster_entries": [
             {
                 "actor_id": "ak:did_core:web:bob.example",
                 "subject_id": "ak:did_core:web:bob.example",
@@ -3160,7 +3171,7 @@ fn extracts_participant_handle_label_from_inline_handle_claims() {
     );
     let bob = participants
         .iter()
-        .find(|participant| participant.principal_id == "ak:did_core:web:bob.example")
+        .find(|participant| participant.principal_id.as_str() == "ak:did_core:web:bob.example")
         .unwrap();
 
     assert_eq!(
@@ -3172,7 +3183,10 @@ fn extracts_participant_handle_label_from_inline_handle_claims() {
 #[test]
 fn mention_label_for_participant_never_derives_handle_from_did() {
     let participant = SpaceParticipant {
-        principal_id: "ak:did_core:web:example.com:users:bob".to_owned(),
+        principal_id: arkret_sdk::DidCoreId::new(
+            "ak:did_core:web:example.com:users:bob".to_owned(),
+        )
+        .unwrap(),
         display_name: None,
         handle_label: None,
         display_name_rank: u8::MAX,
@@ -3188,8 +3202,10 @@ fn mention_label_for_participant_never_derives_handle_from_did() {
 #[test]
 fn mention_label_for_participant_requires_handle() {
     let participant = SpaceParticipant {
-        principal_id: "ak:did_core:webvh:zQmed2r1bBnz5cpB6SoL1UxvqNQPQpimEnHy7Rc9VLLrifC"
-            .to_owned(),
+        principal_id: arkret_sdk::DidCoreId::new(
+            "ak:did_core:webvh:zQmed2r1bBnz5cpB6SoL1UxvqNQPQpimEnHy7Rc9VLLrifC".to_owned(),
+        )
+        .unwrap(),
         display_name: None,
         handle_label: None,
         display_name_rank: u8::MAX,
@@ -3578,7 +3594,10 @@ fn mention_only_participation_does_not_expose_agent_in_roster() {
 #[test]
 fn participant_roster_rows_groups_agents_under_visible_controller() {
     let controller = SpaceParticipant {
-        principal_id: "ak:did_core:web:example.com:users:alice".to_owned(),
+        principal_id: arkret_sdk::DidCoreId::new(
+            "ak:did_core:web:example.com:users:alice".to_owned(),
+        )
+        .unwrap(),
         display_name: Some("Alice".to_owned()),
         handle_label: Some("alice:example.com".to_owned()),
         display_name_rank: 0,
@@ -3588,7 +3607,10 @@ fn participant_roster_rows_groups_agents_under_visible_controller() {
         agent_metadata: None,
     };
     let agent = SpaceParticipant {
-        principal_id: "ak:did_core:web:agents.example:summary".to_owned(),
+        principal_id: arkret_sdk::DidCoreId::new(
+            "ak:did_core:web:agents.example:summary".to_owned(),
+        )
+        .unwrap(),
         display_name: Some("Summary Assistant".to_owned()),
         handle_label: None,
         display_name_rank: 1,
@@ -3596,13 +3618,13 @@ fn participant_roster_rows_groups_agents_under_visible_controller() {
         is_self: false,
         is_agent: true,
         agent_metadata: Some(AgentParticipantMetadata {
-            controller_id: controller.principal_id.clone(),
+            controller_id: controller.principal_id.to_string(),
             controller_handle: "alice:example.com".to_owned(),
             agent_slug: "summary".to_owned(),
             display_name: "Summary Assistant".to_owned(),
         }),
     };
-    let visible = std::collections::BTreeSet::from([agent.principal_id.clone()]);
+    let visible = std::collections::BTreeSet::from([agent.principal_id.to_string()]);
     assert_eq!(
         participant_roster_display_label(&crate::state::LocalStateStore::default(), &controller,),
         "alice:example.com"
@@ -3616,12 +3638,12 @@ fn participant_roster_rows_groups_agents_under_visible_controller() {
     match &rows[0] {
         ParticipantRosterRow::ControllerWithAgents { controller, agents } => {
             assert_eq!(
-                controller.principal_id,
+                controller.principal_id.as_str(),
                 "ak:did_core:web:example.com:users:alice"
             );
             assert_eq!(agents.len(), 1);
             assert_eq!(
-                agents[0].principal_id,
+                agents[0].principal_id.as_str(),
                 "ak:did_core:web:agents.example:summary"
             );
         }
@@ -3662,7 +3684,10 @@ fn direct_agent_peer_visibility_does_not_require_reply_participation() {
 #[test]
 fn mention_candidate_for_own_agent_uses_me_alias() {
     let controller = SpaceParticipant {
-        principal_id: "ak:did_core:web:example.com:users:alice".to_owned(),
+        principal_id: arkret_sdk::DidCoreId::new(
+            "ak:did_core:web:example.com:users:alice".to_owned(),
+        )
+        .unwrap(),
         display_name: Some("Alice".to_owned()),
         handle_label: Some("alice:example.com".to_owned()),
         display_name_rank: 0,
@@ -3672,7 +3697,10 @@ fn mention_candidate_for_own_agent_uses_me_alias() {
         agent_metadata: None,
     };
     let agent = SpaceParticipant {
-        principal_id: "ak:did_core:web:agents.example:summary".to_owned(),
+        principal_id: arkret_sdk::DidCoreId::new(
+            "ak:did_core:web:agents.example:summary".to_owned(),
+        )
+        .unwrap(),
         display_name: Some("Summary Assistant".to_owned()),
         handle_label: None,
         display_name_rank: 1,
@@ -3680,7 +3708,7 @@ fn mention_candidate_for_own_agent_uses_me_alias() {
         is_self: false,
         is_agent: true,
         agent_metadata: Some(AgentParticipantMetadata {
-            controller_id: controller.principal_id.clone(),
+            controller_id: controller.principal_id.to_string(),
             controller_handle: "alice:example.com".to_owned(),
             agent_slug: "summary".to_owned(),
             display_name: "Summary Assistant".to_owned(),
@@ -3688,7 +3716,7 @@ fn mention_candidate_for_own_agent_uses_me_alias() {
     };
     let participants = vec![controller.clone(), agent.clone()];
     let candidate =
-        mention_candidate_for_participant(&agent, &participants, &controller.principal_id)
+        mention_candidate_for_participant(&agent, &participants, controller.principal_id.as_str())
             .expect("agent mention candidate");
     assert_eq!(candidate.display_name, "Summary Assistant");
     assert_eq!(candidate.insert_label(), "me/summary");
@@ -3703,7 +3731,10 @@ fn mention_candidate_for_own_agent_uses_me_alias() {
 #[test]
 fn mention_candidate_for_current_user_uses_structured_me_alias() {
     let participant = SpaceParticipant {
-        principal_id: "ak:did_core:web:example.com:users:alice".to_owned(),
+        principal_id: arkret_sdk::DidCoreId::new(
+            "ak:did_core:web:example.com:users:alice".to_owned(),
+        )
+        .unwrap(),
         display_name: Some("Alice".to_owned()),
         handle_label: None,
         display_name_rank: 0,
@@ -3716,10 +3747,10 @@ fn mention_candidate_for_current_user_uses_structured_me_alias() {
     let candidate = mention_candidate_for_participant(
         &participant,
         std::slice::from_ref(&participant),
-        &participant.principal_id,
+        participant.principal_id.as_str(),
     )
     .expect("current-user mention candidate");
-    assert_eq!(candidate.subject_id, participant.principal_id);
+    assert_eq!(candidate.subject_id, participant.principal_id.as_str());
     assert_eq!(candidate.insert_label(), "me");
     assert_eq!(candidate.subtitle, "You");
 
@@ -3727,7 +3758,7 @@ fn mention_candidate_for_current_user_uses_structured_me_alias() {
         true,
         "ping @me",
         std::slice::from_ref(&candidate),
-        &participant.principal_id,
+        participant.principal_id.as_str(),
     );
     let mention = mentions[0].as_mention().expect("structured self mention");
     assert_eq!(
@@ -3736,7 +3767,8 @@ fn mention_candidate_for_current_user_uses_structured_me_alias() {
     );
     assert_eq!(mention.mention_text_original.as_deref(), Some("@me"));
 
-    let typed_mentions = composer_mention_nodes(true, "ping @me", &[], &participant.principal_id);
+    let typed_mentions =
+        composer_mention_nodes(true, "ping @me", &[], participant.principal_id.as_str());
     let typed_mention = typed_mentions[0]
         .as_mention()
         .expect("typed structured self mention");
@@ -3747,7 +3779,13 @@ fn mention_candidate_for_current_user_uses_structured_me_alias() {
     assert_eq!(typed_mention.mention_text_original.as_deref(), Some("@me"));
 
     assert!(
-        composer_mention_nodes(true, "ask @me/summary", &[], &participant.principal_id).is_empty()
+        composer_mention_nodes(
+            true,
+            "ask @me/summary",
+            &[],
+            participant.principal_id.as_str(),
+        )
+        .is_empty()
     );
 }
 
@@ -3817,7 +3855,10 @@ fn owned_agent_inventory_enriches_existing_realm_member_metadata() {
 fn explicit_member_click_builds_user_and_owned_agent_mentions() {
     let principal_id = "ak:did_core:web:example.com:users:alice";
     let member = SpaceParticipant {
-        principal_id: "ak:did_core:web:example.com:users:bob".to_owned(),
+        principal_id: arkret_sdk::DidCoreId::new(
+            "ak:did_core:web:example.com:users:bob".to_owned(),
+        )
+        .unwrap(),
         display_name: Some("Bob".to_owned()),
         handle_label: None,
         display_name_rank: 0,
@@ -3835,11 +3876,14 @@ fn explicit_member_click_builds_user_and_owned_agent_mentions() {
         Some("alice:example.com"),
     )
     .expect("explicit member mention");
-    assert_eq!(clicked_member.subject_id, member.principal_id);
+    assert_eq!(clicked_member.subject_id, member.principal_id.as_str());
     assert!(!clicked_member.is_agent);
 
     let unannotated_owned_agent = SpaceParticipant {
-        principal_id: "ak:did_core:web:agents.example:summary".to_owned(),
+        principal_id: arkret_sdk::DidCoreId::new(
+            "ak:did_core:web:agents.example:summary".to_owned(),
+        )
+        .unwrap(),
         display_name: None,
         handle_label: None,
         display_name_rank: u8::MAX,
@@ -3863,7 +3907,7 @@ fn explicit_member_click_builds_user_and_owned_agent_mentions() {
     assert_eq!(clicked_agent.agent_slug_at_time, "summary");
 
     let before_handle_load = owned_agent_mention_candidate(
-        &unannotated_owned_agent.principal_id,
+        unannotated_owned_agent.principal_id.as_str(),
         Some("summary"),
         principal_id,
         None,
@@ -3885,7 +3929,10 @@ fn explicit_member_click_builds_user_and_owned_agent_mentions() {
 #[test]
 fn mention_candidate_for_other_agent_keeps_canonical_controller_handle() {
     let controller = SpaceParticipant {
-        principal_id: "ak:did_core:web:example.com:users:bob".to_owned(),
+        principal_id: arkret_sdk::DidCoreId::new(
+            "ak:did_core:web:example.com:users:bob".to_owned(),
+        )
+        .unwrap(),
         display_name: Some("Bob".to_owned()),
         handle_label: Some("bob:example.com".to_owned()),
         display_name_rank: 0,
@@ -3895,7 +3942,10 @@ fn mention_candidate_for_other_agent_keeps_canonical_controller_handle() {
         agent_metadata: None,
     };
     let agent = SpaceParticipant {
-        principal_id: "ak:did_core:web:agents.example:summary".to_owned(),
+        principal_id: arkret_sdk::DidCoreId::new(
+            "ak:did_core:web:agents.example:summary".to_owned(),
+        )
+        .unwrap(),
         display_name: Some("Summary Assistant".to_owned()),
         handle_label: None,
         display_name_rank: 1,
@@ -3903,7 +3953,7 @@ fn mention_candidate_for_other_agent_keeps_canonical_controller_handle() {
         is_self: false,
         is_agent: true,
         agent_metadata: Some(AgentParticipantMetadata {
-            controller_id: controller.principal_id.clone(),
+            controller_id: controller.principal_id.to_string(),
             controller_handle: "bob:example.com".to_owned(),
             agent_slug: "summary".to_owned(),
             display_name: "Summary Assistant".to_owned(),
@@ -3924,7 +3974,10 @@ fn mention_candidate_for_other_agent_keeps_canonical_controller_handle() {
 #[test]
 fn agent_candidate_visibility_keeps_owned_agents_and_hides_private_remote_agents() {
     let own_controller = SpaceParticipant {
-        principal_id: "ak:did_core:web:example.com:users:alice".to_owned(),
+        principal_id: arkret_sdk::DidCoreId::new(
+            "ak:did_core:web:example.com:users:alice".to_owned(),
+        )
+        .unwrap(),
         display_name: Some("Alice".to_owned()),
         handle_label: Some("alice:example.com".to_owned()),
         display_name_rank: 0,
@@ -3934,7 +3987,10 @@ fn agent_candidate_visibility_keeps_owned_agents_and_hides_private_remote_agents
         agent_metadata: None,
     };
     let own_agent = SpaceParticipant {
-        principal_id: "ak:did_core:web:agents.example:alice-summary".to_owned(),
+        principal_id: arkret_sdk::DidCoreId::new(
+            "ak:did_core:web:agents.example:alice-summary".to_owned(),
+        )
+        .unwrap(),
         display_name: Some("Alice Summary".to_owned()),
         handle_label: None,
         display_name_rank: 1,
@@ -3942,14 +3998,17 @@ fn agent_candidate_visibility_keeps_owned_agents_and_hides_private_remote_agents
         is_self: false,
         is_agent: true,
         agent_metadata: Some(AgentParticipantMetadata {
-            controller_id: own_controller.principal_id.clone(),
+            controller_id: own_controller.principal_id.to_string(),
             controller_handle: "alice:example.com".to_owned(),
             agent_slug: "summary".to_owned(),
             display_name: "Alice Summary".to_owned(),
         }),
     };
     let remote_agent = SpaceParticipant {
-        principal_id: "ak:did_core:web:agents.example:bob-summary".to_owned(),
+        principal_id: arkret_sdk::DidCoreId::new(
+            "ak:did_core:web:agents.example:bob-summary".to_owned(),
+        )
+        .unwrap(),
         display_name: Some("Bob Summary".to_owned()),
         handle_label: None,
         display_name_rank: 1,
@@ -3978,7 +4037,7 @@ fn agent_candidate_visibility_keeps_owned_agents_and_hides_private_remote_agents
     ));
     assert!(agent_candidate_is_visible(
         &remote_agent,
-        &std::collections::BTreeSet::from([remote_agent.principal_id.clone()]),
+        &std::collections::BTreeSet::from([remote_agent.principal_id.to_string()]),
         principal_id
     ));
     let sidecar_mentions = sidecar_owned_agent_participants(
@@ -3992,14 +4051,17 @@ fn agent_candidate_visibility_keeps_owned_agents_and_hides_private_remote_agents
     assert_eq!(sidecar_mentions, vec![own_agent.clone()]);
     assert_eq!(
         readable_participation_agent_ids(&[own_agent.clone(), remote_agent], principal_id),
-        vec![own_agent.principal_id]
+        vec![own_agent.principal_id.to_string()]
     );
 }
 
 #[test]
 fn sidecar_presence_excludes_realm_humans_and_foreign_agents() {
     let controller = SpaceParticipant {
-        principal_id: "ak:did_core:web:example.com:users:alice".to_owned(),
+        principal_id: arkret_sdk::DidCoreId::new(
+            "ak:did_core:web:example.com:users:alice".to_owned(),
+        )
+        .unwrap(),
         display_name: Some("Alice".to_owned()),
         handle_label: Some("alice:example.com".to_owned()),
         display_name_rank: 0,
@@ -4009,7 +4071,10 @@ fn sidecar_presence_excludes_realm_humans_and_foreign_agents() {
         agent_metadata: None,
     };
     let realm_human = SpaceParticipant {
-        principal_id: "ak:did_core:web:example.com:users:bob".to_owned(),
+        principal_id: arkret_sdk::DidCoreId::new(
+            "ak:did_core:web:example.com:users:bob".to_owned(),
+        )
+        .unwrap(),
         display_name: Some("Bob".to_owned()),
         handle_label: Some("bob:example.com".to_owned()),
         display_name_rank: 1,
@@ -4019,7 +4084,10 @@ fn sidecar_presence_excludes_realm_humans_and_foreign_agents() {
         agent_metadata: None,
     };
     let owned_agent = SpaceParticipant {
-        principal_id: "ak:did_core:web:agents.example:alice-summary".to_owned(),
+        principal_id: arkret_sdk::DidCoreId::new(
+            "ak:did_core:web:agents.example:alice-summary".to_owned(),
+        )
+        .unwrap(),
         display_name: Some("Alice Summary".to_owned()),
         handle_label: None,
         display_name_rank: 1,
@@ -4027,14 +4095,17 @@ fn sidecar_presence_excludes_realm_humans_and_foreign_agents() {
         is_self: false,
         is_agent: true,
         agent_metadata: Some(AgentParticipantMetadata {
-            controller_id: controller.principal_id.clone(),
+            controller_id: controller.principal_id.to_string(),
             controller_handle: "alice:example.com".to_owned(),
             agent_slug: "summary".to_owned(),
             display_name: "Alice Summary".to_owned(),
         }),
     };
     let foreign_agent = SpaceParticipant {
-        principal_id: "ak:did_core:web:agents.example:bob-summary".to_owned(),
+        principal_id: arkret_sdk::DidCoreId::new(
+            "ak:did_core:web:agents.example:bob-summary".to_owned(),
+        )
+        .unwrap(),
         display_name: Some("Bob Summary".to_owned()),
         handle_label: None,
         display_name_rank: 1,
@@ -4042,7 +4113,7 @@ fn sidecar_presence_excludes_realm_humans_and_foreign_agents() {
         is_self: false,
         is_agent: true,
         agent_metadata: Some(AgentParticipantMetadata {
-            controller_id: realm_human.principal_id.clone(),
+            controller_id: realm_human.principal_id.to_string(),
             controller_handle: "bob:example.com".to_owned(),
             agent_slug: "summary".to_owned(),
             display_name: "Bob Summary".to_owned(),
@@ -4056,7 +4127,7 @@ fn sidecar_presence_excludes_realm_humans_and_foreign_agents() {
             owned_agent.clone(),
             foreign_agent,
         ],
-        &controller.principal_id,
+        controller.principal_id.as_str(),
     );
 
     assert_eq!(visible, vec![controller, owned_agent]);
@@ -4065,7 +4136,7 @@ fn sidecar_presence_excludes_realm_humans_and_foreign_agents() {
 #[test]
 fn mention_candidate_without_handle_is_not_displayed_as_did() {
     let participant = SpaceParticipant {
-        principal_id: "ak:did_core:web:bob.example".to_owned(),
+        principal_id: arkret_sdk::DidCoreId::new("ak:did_core:web:bob.example".to_owned()).unwrap(),
         display_name: Some("Bob Example".to_owned()),
         handle_label: None,
         display_name_rank: 0,
@@ -4098,7 +4169,7 @@ fn mention_candidate_uses_cached_member_handle() {
         None,
         None,
     );
-    let projection = json!({"members": [{
+    let projection = json!({"member_roster_entries": [{
         "actor_id": "ak:did_core:web:bob.example"
     }]});
     let participants = space_participants(
@@ -4109,7 +4180,7 @@ fn mention_candidate_uses_cached_member_handle() {
     );
     let bob = participants
         .iter()
-        .find(|participant| participant.principal_id == "ak:did_core:web:bob.example")
+        .find(|participant| participant.principal_id.as_str() == "ak:did_core:web:bob.example")
         .expect("bob participant");
     let candidate =
         mention_candidate_for_participant(bob, &participants, "ak:did_core:web:alice.example")
@@ -4135,7 +4206,7 @@ fn late_join_discussion_sender_resolves_cached_member_handle() {
         None,
         None,
     );
-    let projection = json!({"members": [{
+    let projection = json!({"member_roster_entries": [{
         "actor_id": sender,
         "membership": "join"
     }]});

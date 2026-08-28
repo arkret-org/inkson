@@ -116,14 +116,17 @@ pub(crate) fn upsert_agent_participants(
     principal_id: &str,
 ) {
     for (agent_id, metadata) in agent_metadata {
+        let Some(agent_principal_id) = normalize_participant_id(agent_id) else {
+            continue;
+        };
         if participants
             .iter()
-            .any(|participant| participant.principal_id == *agent_id)
+            .any(|participant| participant.principal_id == agent_principal_id)
         {
             continue;
         }
         participants.push(SpaceParticipant {
-            principal_id: agent_id.clone(),
+            principal_id: agent_principal_id,
             display_name: (!metadata.display_name.is_empty())
                 .then_some(metadata.display_name.clone()),
             handle_label: None,
@@ -145,7 +148,7 @@ pub(crate) fn annotate_agent_participants_with_metadata(
     agent_metadata: &std::collections::BTreeMap<String, AgentParticipantMetadata>,
 ) {
     for participant in participants.iter_mut() {
-        if let Some(metadata) = agent_metadata.get(&participant.principal_id) {
+        if let Some(metadata) = agent_metadata.get(participant.principal_id.as_str()) {
             participant.is_agent = true;
             participant.agent_metadata = Some(metadata.clone());
             if participant.display_name.is_none() && !metadata.display_name.is_empty() {

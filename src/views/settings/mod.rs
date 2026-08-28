@@ -340,10 +340,10 @@ pub(crate) fn push_blocklist_account_data(
 
 /// Client-side DNS-domain sanity check for the blocklist `domain` target
 /// (`client-preferences.md` §3.5 / `content-moderation.md` §4.3). Like
-/// the typed DID parser used by the blocklist card, this only powers *live*
+/// the typed stable-identity parser used by the blocklist card, this only powers *live*
 /// form feedback. The wire value is normalized by
 /// `account_data::normalize_blocklist_value` and the real DID/claim resolution
-/// happens client-side before the block applies.
+/// stable-identity/claim resolution happens client-side before the block applies.
 /// Accepts a bare multi-label domain (`example.com`, `sub.acme.example`);
 /// rejects schemes, ports, paths, whitespace, `@`, and single-label inputs.
 pub(crate) fn is_likely_valid_domain(input: &str) -> bool {
@@ -1810,7 +1810,7 @@ pub fn SettingsPanel(
                                                         .as_ref()
                                                         .map(ToString::to_string)
                                                         .unwrap_or_else(|| "no-event".to_owned()),
-                                                    response.rejected.len()
+                                                            response.rejections.len()
                                                 ));
                                             }
                                             Err(err) => {
@@ -2141,8 +2141,19 @@ pub fn SettingsPanel(
                                     let principal_id = principal_id();
                                     let persisted_grant = state_store.read().session_grant();
                                     spawn(async move {
-                                        let principal_id =
-                                            (!principal_id.trim().is_empty()).then_some(principal_id);
+                                        let principal_id = if principal_id.trim().is_empty() {
+                                            None
+                                        } else {
+                                            let Ok(principal_id) =
+                                                arkret_sdk::DidCoreId::new(principal_id)
+                                            else {
+                                                tracing::error!(
+                                                    "push registration rejected an invalid principal_id"
+                                                );
+                                                return;
+                                            };
+                                            Some(principal_id)
+                                        };
                                         let context = crate::push::registration::RegisterContext {
                                             principal_server_url: base,
                                             floria_gateway_url: crate::push::floria_gateway_url(),

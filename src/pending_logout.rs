@@ -6,7 +6,7 @@
 //! resumed.
 //!
 //! T1.Y3 — this is now a SINGLE client-visible call to the Account Authority
-//! `POST {gate_account_base}/logout` (service-surface §2.5.1) carrying
+//! `POST {gate_account_base_url}/logout` (service-surface §2.5.1) carrying
 //! `Authorization: DPoP <ak.session.grant>` + a grant-binding `DPoP` proof bound to
 //! that grant. The Account Authority internally terminates BOTH the Auth-side
 //! grant rotation chain + `browser_session` AND the Principal-side
@@ -71,23 +71,22 @@ pub struct PendingLogout {
     #[serde(default)]
     pub device_jkt: Option<String>,
     /// Principal-server URL the grant was issued against; used to re-resolve
-    /// the Account Authority `gate_account_base` if it was not journalled.
+    /// the Account Authority `gate_account_base_url` if it was not journalled.
     #[serde(default)]
     pub principal_server_url: Option<url::Url>,
-    /// T1.Y4 — resolved Account Authority `gate_account_base`; the single
+    /// T1.Y4 — resolved Account Authority `gate_account_base_url`; the single
     /// `/logout` origin. Preferred over re-resolving from
     /// `principal_server_url` at retry time.
     #[serde(default)]
-    pub gate_account_base: Option<url::Url>,
+    pub gate_account_base_url: Option<url::Url>,
     /// Principal-server base URL for diagnostics.
     pub base_url: url::Url,
     /// Last in-memory session credential captured for diagnostics. The single
     /// hard logout authenticates with the grant + DPoP, not this value.
     #[serde(default)]
     pub session_credential: String,
-    /// Account DID, for diagnostics only.
-    #[serde(default)]
-    pub principal_id: String,
+    /// Stable account identity, for diagnostics only.
+    pub principal_id: arkret_sdk::DidCoreId,
     /// When the record was journalled. Drives the [`RECORD_TTL_HOURS`] bound.
     pub created_at: DateTime<Utc>,
 }
@@ -125,11 +124,11 @@ impl PendingLogout {
 
     /// True when there is a server-side grant chain to terminate. Requires the
     /// grant JWT + grant-binding material + a routable Account Authority base (either
-    /// the journalled `gate_account_base` or a `principal_server_url` to
+    /// the journalled `gate_account_base_url` or a `principal_server_url` to
     /// re-resolve it from).
     pub fn has_coauth_revoke(&self) -> bool {
         let has_route =
-            self.gate_account_base.as_ref().is_some() || self.principal_server_url.is_some();
+            self.gate_account_base_url.as_ref().is_some() || self.principal_server_url.is_some();
         self.grant_jwt.is_some()
             && self.device_seed_b64.is_some()
             && self.device_jkt.is_some()
@@ -184,7 +183,7 @@ pub async fn execute_pending_logout(
     }
 }
 
-/// T1.Y3 — single hard logout to `{gate_account_base}/logout` with the grant
+/// T1.Y3 — single hard logout to `{gate_account_base_url}/logout` with the grant
 /// plus a grant-binding DPoP proof minted from the stashed device seed (the live
 /// key is already wiped). The DPoP `htu` MUST equal the `/logout` URL and `ath`
 /// MUST bind the grant.
@@ -206,15 +205,17 @@ async fn hard_logout_at_authority(
 
     let handle = crate::identity::account_auth::grant_dpop::device_handle_from_seed(seed, jkt)
         .map_err(|error| anyhow::anyhow!("rebuild device handle: {error}"))?;
-    // Prefer the journalled gate_account_base; re-resolve from the principal
+    // Prefer the journalled gate_account_base_url; re-resolve from the principal
     // server only if it was not captured.
-    let gate_account_base = match record.gate_account_base.as_ref() {
+    let gate_account_base_url = match record.gate_account_base_url.as_ref() {
         Some(base) => base.clone(),
         _ => {
             let principal_server_url = record.principal_server_url.as_ref().ok_or_else(|| {
-                anyhow::anyhow!("pending logout missing gate_account_base and principal_server_url")
+                anyhow::anyhow!(
+                    "pending logout missing gate_account_base_url and principal_server_url"
+                )
             })?;
-            let resolved = crate::identity::account_auth::resolve_principal_gate_account_base(
+            let resolved = crate::identity::account_auth::resolve_principal_gate_account_base_url(
                 principal_server_url.as_str(),
             )
             .await
@@ -222,8 +223,8 @@ async fn hard_logout_at_authority(
             url::Url::parse(&resolved)?
         }
     };
-    let sdk_base_url = crate::identity::session_refresh::sdk_base_url_from_gate_account_base(
-        gate_account_base.as_str(),
+    let sdk_base_url = crate::identity::session_refresh::sdk_base_url_from_gate_account_base_url(
+        gate_account_base_url.as_str(),
     )?;
     let client = ClientBuilder::new(sdk_base_url)
         .allow_insecure_localhost()
@@ -341,12 +342,15 @@ mod tests {
             device_seed_b64: Some("seed".to_owned()),
             device_jkt: Some("jkt".to_owned()),
             principal_server_url: Some(url::Url::parse("https://soland.example").unwrap()),
-            gate_account_base: Some(
+            gate_account_base_url: Some(
                 url::Url::parse("https://soland.example/_arkret/gate/account").unwrap(),
             ),
             base_url: url::Url::parse("https://soland.example").unwrap(),
             session_credential: "session-credential".to_owned(),
-            principal_id: "ak:did_core:web:soland.example:users:01".to_owned(),
+            principal_id: arkret_sdk::DidCoreId::new(
+                "ak:did_core:web:soland.example:users:01".to_owned(),
+            )
+            .unwrap(),
             created_at,
         }
     }
@@ -401,13 +405,13 @@ mod tests {
         no_jkt.device_jkt = None;
         assert!(!no_jkt.has_coauth_revoke());
 
-        // No route at all (neither gate_account_base nor principal_server_url).
+        // No route at all (neither gate_account_base_url nor principal_server_url).
         let mut no_route = base_record(now);
         no_route.principal_server_url = None;
-        no_route.gate_account_base = None;
+        no_route.gate_account_base_url = None;
         assert!(!no_route.has_coauth_revoke());
 
-        // gate_account_base alone is a sufficient route.
+        // gate_account_base_url alone is a sufficient route.
         let mut base_only = base_record(now);
         base_only.principal_server_url = None;
         assert!(base_only.has_coauth_revoke());

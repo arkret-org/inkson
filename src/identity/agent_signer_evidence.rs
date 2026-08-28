@@ -129,7 +129,7 @@ pub(crate) async fn prefetch_from_realm_projections(
             };
             match http.agent_signer_evidence_query(&request).await {
                 Ok(outcome) => {
-                    for root in outcome.evidence {
+                    for root in outcome.evidence_items {
                         let arkret_sdk::AuthenticatedSignerResolutionEvidence::NativeAgent {
                             agent_signer_evidence: evidence,
                             ..
@@ -484,7 +484,7 @@ pub(crate) async fn prefetch_for_signal(
             return false;
         }
     };
-    if outcome.evidence.is_empty() {
+    if outcome.evidence_items.is_empty() {
         tracing::warn!(
             target_realm_id = %envelope.realm_id,
             agent_id = %envelope.sender_actor_id,
@@ -497,7 +497,7 @@ pub(crate) async fn prefetch_for_signal(
         crate::identity::did_resolver::DeploymentProfile::PersonalNode,
         did_cache.get(),
     );
-    for root in outcome.evidence {
+    for root in outcome.evidence_items {
         let arkret_sdk::AuthenticatedSignerResolutionEvidence::NativeAgent {
             agent_signer_evidence: evidence,
             ..
@@ -596,7 +596,7 @@ pub(crate) async fn resolve_current_history_request_authorization(
         crate::identity::did_resolver::DeploymentProfile::PersonalNode,
         arkret_sdk::identity::DidResolutionCache::default(),
     );
-    for root in outcome.evidence {
+    for root in outcome.evidence_items {
         let arkret_sdk::AuthenticatedSignerResolutionEvidence::NativeAgent {
             signer_id,
             verification_method: resolved_method,
@@ -1161,7 +1161,7 @@ fn signing_key_binding(evidence: &AgentSignerEvidence) -> &arkret_sdk::AgentSign
 }
 
 fn seal_lineage(evidence: &AgentSignerEvidence) -> &[arkret_sdk::Seal] {
-    &authority_snapshot(evidence).core.seal_lineage
+    &authority_snapshot(evidence).core.seal_lineages
 }
 
 fn historical_receipt(

@@ -1,9 +1,7 @@
 use super::*;
 
-pub(crate) fn normalize_participant_id(value: &str) -> Option<String> {
-    arkret_sdk::DidCoreId::new(value.trim().to_owned())
-        .ok()
-        .map(|principal_id| principal_id.to_string())
+pub(crate) fn normalize_participant_id(value: &str) -> Option<arkret_sdk::DidCoreId> {
+    arkret_sdk::DidCoreId::new(value.trim().to_owned()).ok()
 }
 
 pub(crate) fn clean_participant_display_name(
@@ -46,11 +44,10 @@ pub(crate) fn upsert_participant(
     let Some(principal_id) = normalize_participant_id(participant_id) else {
         return;
     };
-    let is_self = same_principal_core(&principal_id, own_principal_id);
-    if let Some(existing) = participants
-        .iter_mut()
-        .find(|candidate| same_principal_core(&candidate.principal_id, &principal_id))
-    {
+    let is_self = same_principal_core(principal_id.as_str(), own_principal_id);
+    if let Some(existing) = participants.iter_mut().find(|candidate| {
+        same_principal_core(candidate.principal_id.as_str(), principal_id.as_str())
+    }) {
         existing.is_self |= is_self;
         if let Some((display_name, rank)) = display_name
             && (existing.display_name.is_none() || rank < existing.display_name_rank)
@@ -95,7 +92,7 @@ pub(crate) fn participant_roster_rows(
         participant.is_agent
             && visible_agent_ids
                 .iter()
-                .any(|visible| same_principal_core(visible, &participant.principal_id))
+                .any(|visible| same_principal_core(visible, participant.principal_id.as_str()))
     }) {
         let Some(metadata) = participant.agent_metadata.as_ref() else {
             continue;
@@ -131,14 +128,14 @@ pub(crate) fn participant_roster_rows(
         if participant.is_agent
             && !visible_agent_ids
                 .iter()
-                .any(|visible| same_principal_core(visible, &participant.principal_id))
+                .any(|visible| same_principal_core(visible, participant.principal_id.as_str()))
         {
             continue;
         }
         if grouped_agent_ids.contains(participant.principal_id.as_str()) {
             continue;
         }
-        if let Some(agents) = agents_by_controller.get(&participant.principal_id)
+        if let Some(agents) = agents_by_controller.get(participant.principal_id.as_str())
             && !agents.is_empty()
         {
             rows.push(ParticipantRosterRow::ControllerWithAgents {
@@ -199,7 +196,7 @@ pub(crate) fn space_participants(
         if is_self
             && let Some(participant) = participants
                 .iter_mut()
-                .find(|participant| participant.principal_id == row.actor_id)
+                .find(|participant| participant.principal_id.as_str() == row.actor_id)
         {
             participant.is_self = true;
         }
@@ -244,7 +241,7 @@ pub(crate) fn display_label_for_actor(
     }
     participants
         .iter()
-        .find(|participant| participant.principal_id == actor_id)
+        .find(|participant| participant.principal_id.as_str() == actor_id)
         .and_then(participant_sender_label)
         .unwrap_or_else(|| crate::views::helpers::actor_display_label(state_store, actor_id))
 }
@@ -288,7 +285,7 @@ pub(crate) fn agent_display_label(participant: &SpaceParticipant) -> String {
         })
         .or_else(|| participant.display_name.clone())
         .or_else(|| participant_handle_label(participant))
-        .unwrap_or_else(|| short_principal_label(&participant.principal_id))
+        .unwrap_or_else(|| short_principal_label(participant.principal_id.as_str()))
 }
 
 pub(crate) fn agent_member_label(participant: &SpaceParticipant) -> String {
@@ -325,7 +322,7 @@ pub(crate) fn sidecar_presence_participants(
     participants
         .iter()
         .filter(|participant| {
-            participant.principal_id.trim() == principal_id.trim()
+            participant.principal_id.as_str().trim() == principal_id.trim()
                 || (participant.is_agent
                     && participant.agent_metadata.as_ref().is_some_and(|metadata| {
                         metadata.controller_id.trim() == principal_id.trim()
@@ -354,7 +351,7 @@ pub(crate) fn participant_roster_display_label(
         return agent_member_label(participant);
     }
     participant_sender_label(participant).unwrap_or_else(|| {
-        crate::views::helpers::actor_display_label(state_store, &participant.principal_id)
+        crate::views::helpers::actor_display_label(state_store, participant.principal_id.as_str())
     })
 }
 
@@ -365,7 +362,7 @@ pub(crate) fn agent_controller_label(
     let metadata = participant.agent_metadata.as_ref()?;
     participants
         .iter()
-        .find(|candidate| candidate.principal_id == metadata.controller_id)
+        .find(|candidate| candidate.principal_id.as_str() == metadata.controller_id)
         .and_then(participant_sender_label)
         .or_else(|| {
             (!metadata.controller_handle.trim().is_empty())
@@ -408,11 +405,11 @@ pub(crate) fn mention_candidate_for_participant(
         });
         let controller_label = agent_controller_label(participant, participants);
         return Some(crate::messaging::mentions::MentionCandidate {
-            subject_id: participant.principal_id.clone(),
+            subject_id: participant.principal_id.to_string(),
             display_name,
             insert_label: selector.unwrap_or_else(|| {
                 mention_label_for_participant(participant)
-                    .unwrap_or_else(|| short_principal_label(&participant.principal_id))
+                    .unwrap_or_else(|| short_principal_label(participant.principal_id.as_str()))
             }),
             subtitle: controller_label
                 .map(|label| format!("agent of {label}"))
@@ -432,9 +429,9 @@ pub(crate) fn mention_candidate_for_participant(
 
     if participant.is_self {
         let display_name = participant_sender_label(participant)
-            .unwrap_or_else(|| short_principal_label(&participant.principal_id));
+            .unwrap_or_else(|| short_principal_label(participant.principal_id.as_str()));
         return Some(crate::messaging::mentions::MentionCandidate {
-            subject_id: participant.principal_id.clone(),
+            subject_id: participant.principal_id.to_string(),
             display_name,
             insert_label: "me".to_owned(),
             subtitle: "You".to_owned(),
@@ -448,7 +445,7 @@ pub(crate) fn mention_candidate_for_participant(
     let handle_label = mention_label_for_participant(participant)?;
     let display_name = handle_label.clone();
     Some(crate::messaging::mentions::MentionCandidate {
-        subject_id: participant.principal_id.clone(),
+        subject_id: participant.principal_id.to_string(),
         display_name,
         insert_label: handle_label,
         subtitle: String::new(),
@@ -469,7 +466,7 @@ pub(crate) fn mention_candidate_for_explicit_target(
 ) -> Option<crate::messaging::mentions::MentionCandidate> {
     if requested_agent_slug.is_some() {
         return owned_agent_mention_candidate(
-            &participant.principal_id,
+            participant.principal_id.as_str(),
             requested_agent_slug,
             principal_id,
             own_controller_handle,
@@ -480,9 +477,9 @@ pub(crate) fn mention_candidate_for_explicit_target(
     }
     mention_candidate_for_participant(participant, participants, principal_id).or_else(|| {
         let fallback_label = participant_sender_label(participant)
-            .unwrap_or_else(|| short_principal_label(&participant.principal_id));
+            .unwrap_or_else(|| short_principal_label(participant.principal_id.as_str()));
         Some(crate::messaging::mentions::MentionCandidate {
-            subject_id: participant.principal_id.clone(),
+            subject_id: participant.principal_id.to_string(),
             display_name: fallback_label.clone(),
             insert_label: fallback_label,
             subtitle: String::new(),
@@ -532,7 +529,7 @@ pub(crate) fn agent_candidate_is_visible(
     if !participant.is_agent {
         return true;
     }
-    public_agent_ids.contains(&participant.principal_id)
+    public_agent_ids.contains(participant.principal_id.as_str())
         || participant
             .agent_metadata
             .as_ref()
@@ -553,7 +550,7 @@ pub(crate) fn readable_participation_agent_ids(
                 .as_ref()
                 .is_some_and(|metadata| metadata.controller_id.trim() == principal_id)
         })
-        .map(|participant| participant.principal_id.clone())
+        .map(|participant| participant.principal_id.to_string())
         .collect::<Vec<_>>();
     agent_ids.sort();
     agent_ids.dedup();
@@ -589,7 +586,7 @@ pub(crate) fn sender_display_label(
     }
     participants
         .iter()
-        .find(|participant| participant.principal_id == sender.trim())
+        .find(|participant| participant.principal_id.as_str() == sender.trim())
         .and_then(participant_sender_label)
         .unwrap_or_else(|| crate::views::helpers::short_protocol_id(sender))
 }
@@ -613,7 +610,7 @@ pub(crate) fn act_on_behalf_agent_label(
     }
     let agent_participant = participants
         .iter()
-        .find(|participant| participant.principal_id == executed_by);
+        .find(|participant| participant.principal_id.as_str() == executed_by);
     match agent_participant {
         Some(participant) if participant.is_agent => Some(agent_display_label(participant)),
         // The executor is not a known agent participant — fall back to a

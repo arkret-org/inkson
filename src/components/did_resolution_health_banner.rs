@@ -202,7 +202,7 @@ mod tests {
             ServiceKind::IdentityRegistry,
             vec!["ak.operation_bundle.identity_registry.describe.v1".to_owned()],
             vec![TransportBinding::HttpJson {
-                base_uri: "https://identity.example/".to_owned(),
+                base_url: "https://identity.example/".to_owned(),
                 extension_profile_required: (),
             }],
         );

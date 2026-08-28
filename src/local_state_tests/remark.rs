@@ -106,10 +106,10 @@ fn contact_remark_set_tombstone_and_display_name() {
         granted_by_peer_scopes: Vec::new(),
         bidirectional_scopes: Vec::new(),
         effective_scopes: None,
-        peer_id: None,
+        peer_host_id: None,
         continuity_evidence: None,
         direct_conversation: None,
-        agents: Vec::new(),
+        contact_agent_projections: Vec::new(),
     };
     store.replace_accepted_human_contacts(std::slice::from_ref(&accepted));
 

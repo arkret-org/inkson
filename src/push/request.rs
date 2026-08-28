@@ -25,8 +25,9 @@ pub fn build_unregister_request(
     let app_id = existing
         .and_then(|state| state.app_id.as_deref())
         .unwrap_or(APP_ID);
+    let principal_id = existing.and_then(|state| state.principal_id.clone());
     let config = PushDeviceConfig {
-        principal_id: existing.and_then(|state| state.principal_id.as_deref()),
+        principal_id,
         device_id,
         push_key: None,
         platform: Some(platform),

@@ -65,7 +65,7 @@ fn list_handles_http_json_base(description: &arkret_sdk::ServiceDescribe) -> any
         .select_transport_binding(operation, &[arkret_sdk::BindingKind::HttpJson])
         .ok_or_else(|| anyhow::anyhow!("Directory has no usable HTTP/JSON transport"))?;
     let arkret_sdk::TransportBinding::HttpJson {
-        base_uri: base_url, ..
+        base_url: base_url, ..
     } = transport
     else {
         anyhow::bail!("Directory selected a non-HTTP/JSON transport");
@@ -170,7 +170,7 @@ pub async fn verified_directory_client(
                 ));
             }
         };
-        entry.route_base = resolved.route().base_uri.clone();
+        entry.route_base = resolved.route().base_url.clone();
         entry.valid_until = resolved.route().cache_expires_at;
         entry.last_used_at = now;
         let route_base = entry.route_base.clone();
@@ -203,7 +203,7 @@ mod route_tests {
             service_kind,
             bundles,
             vec![TransportBinding::HttpJson {
-                base_uri: "https://directory.example/".to_owned(),
+                base_url: "https://directory.example/".to_owned(),
                 extension_profile_required: (),
             }],
         )

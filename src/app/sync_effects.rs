@@ -103,11 +103,11 @@ pub(super) fn SyncEffects(
         };
         let base = account.server_url.to_string();
         let session = token();
-        let actor = account.principal_id().to_string();
+        let actor = account.principal_id().clone();
         let device = device_id();
         if base.trim().is_empty()
             || session.trim().is_empty()
-            || actor.trim().is_empty()
+            || actor.as_str().trim().is_empty()
             || device.trim().is_empty()
             || !sync_bootstrap_complete()
         {

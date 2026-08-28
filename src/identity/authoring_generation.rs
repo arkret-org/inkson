@@ -49,7 +49,8 @@ pub(crate) fn cache_verified_principal_generation_for_test(
         device_id,
         &AuthoringGeneration {
             authority_model: AuthoringAuthorityModel::AcceptedDevice,
-            authority_principal_id: principal_id.to_owned(),
+            authority_principal_id: arkret_sdk::DidCoreId::new(principal_id.to_owned())
+                .expect("test principal_id must be valid"),
             generation_ref: generation_ref.to_owned(),
         },
     );
@@ -272,7 +273,7 @@ fn resolve_principal_authoring_generation_from_keys(
             }
             Ok(PrincipalGenerationResolution::Active(AuthoringGeneration {
                 authority_model: AuthoringAuthorityModel::AcceptedDevice,
-                authority_principal_id: principal_id.to_owned(),
+                authority_principal_id: arkret_sdk::DidCoreId::new(principal_id.to_owned())?,
                 generation_ref: generation.current_device_generation_ref.to_string(),
             }))
         }
@@ -328,7 +329,10 @@ mod tests {
     fn managed_generation_binds_controller_generation_and_delegation() {
         let controller = AuthoringGeneration {
             authority_model: AuthoringAuthorityModel::AcceptedDevice,
-            authority_principal_id: "ak:did_core:webvh:example".to_owned(),
+            authority_principal_id: arkret_sdk::DidCoreId::new(
+                "ak:did_core:webvh:example".to_owned(),
+            )
+            .unwrap(),
             generation_ref: "2-QmCurrent".to_owned(),
         };
         let first = AuthoringGeneration::managed_agent(

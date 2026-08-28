@@ -28,7 +28,7 @@
 //!     principal_server_url: "https://principal.example".into(),
 //!     floria_gateway_url: "https://push.example/_arkret/edge/push/notify".into(),
 //!     device_id: "dev-inkson".into(),
-//!     principal_id: Some("ak:did_core:web:alice.example".into()),
+//!     principal_id: Some(arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example")?),
 //!     authorization_credential: Some(api_token),
 //!     session_grant: None,
 //!     active_circle_id: None,
@@ -107,9 +107,9 @@ pub struct RegisterContext {
     pub floria_gateway_url: String,
     /// Device id (e.g. `dev_inkson` or `did:web:alice#device-phone`).
     pub device_id: String,
-    /// Owning actor DID. `None` for the pre-login boot path; populated
+    /// Owning actor's stable Arkret identity. `None` for the pre-login boot path; populated
     /// once OIDC / coauth resolves.
-    pub principal_id: Option<String>,
+    pub principal_id: Option<arkret_sdk::DidCoreId>,
     /// API authorization credential (chime client posts it in the standard
     /// `Authorization: Bearer ...` HTTP scheme).
     pub authorization_credential: Option<String>,
@@ -274,7 +274,7 @@ fn resolve_chime_session_grant(
         });
     }
     if ctx.principal_id.is_none() {
-        ctx.principal_id = Some(grant.principal_id.to_string());
+        ctx.principal_id = Some(grant.principal_id.clone());
     }
 
     let signing_key = session_grant_signing_key_from_pem(&grant.session_private_key_pem)
@@ -282,7 +282,7 @@ fn resolve_chime_session_grant(
     let proof = build_session_grant_introspection_proof_bundle(
         &grant.grant_id,
         &grant.grant_jwt,
-        &grant.audience,
+        grant.audience_id.as_str(),
         &signing_key,
     )
     .map_err(PushRegistrationError::SessionGrantProof)?;
@@ -386,7 +386,7 @@ fn build_request(
     };
     let platform = current_platform_str();
     let config = PushDeviceConfig {
-        principal_id: ctx.principal_id.as_deref(),
+        principal_id: ctx.principal_id.clone(),
         device_id: ctx.device_id.as_str(),
         push_key: Some(push_key),
         platform: Some(platform),
@@ -461,7 +461,9 @@ mod tests {
             principal_server_url: "https://principal.example".to_owned(),
             floria_gateway_url: "https://push.example/_arkret/edge/push/notify".to_owned(),
             device_id: device.to_owned(),
-            principal_id: Some("ak:did_core:web:alice.example".to_owned()),
+            principal_id: Some(
+                arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example".to_owned()).unwrap(),
+            ),
             authorization_credential: Some("session-secret".to_owned()),
             session_grant: None,
             active_circle_id: None,
@@ -478,9 +480,10 @@ mod tests {
             grant_jwt: "header.payload.signature".to_owned(),
             session_private_key_pem: pem,
             grant_id: "ak:grant:push-local".to_owned(),
-            audience: "did:web:principal.example".to_owned(),
+            audience_id: arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap(),
             principal_id: crate::mls_api_helpers::principal_core_id("did:web:alice.example")
                 .unwrap(),
+            service_account_id: arkret_sdk::ServiceAccountId::new("account-1").unwrap(),
             device_id: arkret_sdk::DeviceId::new(device.to_owned()).unwrap(),
             principal_server_url: url::Url::parse("https://principal.example/").unwrap(),
             grant_expires_at: Some(Utc::now() + Duration::hours(1)),
@@ -533,7 +536,10 @@ mod tests {
         assert!(headers.challenge.as_deref().is_some_and(|v| !v.is_empty()));
         assert!(headers.proof_jwt.as_deref().is_some_and(|v| !v.is_empty()));
         assert_eq!(
-            context.principal_id.as_deref(),
+            context
+                .principal_id
+                .as_ref()
+                .map(arkret_sdk::DidCoreId::as_str),
             Some("ak:did_core:web:alice.example")
         );
     }

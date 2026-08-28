@@ -108,7 +108,7 @@ fn build_recovery_vault_backup_body_seals_per_spec() {
         arkret_sdk::BackupSeriesId::new(body["series_id"].as_str().unwrap().to_owned()).is_ok()
     );
     assert_eq!(body["series_seq"], 0);
-    assert!(body.get("supersedes").is_none());
+    assert!(body.get("supersedes_id").is_none());
     assert!(body.get("supersedes_digest").is_none());
     assert_eq!(body["encryption"]["recipient_method"], "passphrase_kdf");
     assert_eq!(body["encryption"]["kdf"]["name"], "argon2id");

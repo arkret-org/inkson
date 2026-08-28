@@ -511,8 +511,8 @@ impl InksonRealmEventsTransport {
         RealmEventsTraceContext,
     ) {
         let trace_context = RealmEventsTraceContext::from_after(after);
-        let mut options = arkret_sdk::http_client::EventsSubscribeOptions::new()
-            .realm(realm_id.as_str().to_owned());
+        let mut options =
+            arkret_sdk::http_client::EventsSubscribeOptions::new().realm(realm_id.clone());
         if let Some(after) = trace_context.after.as_deref() {
             options = options.after(after.to_owned()).catchup(true);
         }
@@ -656,7 +656,7 @@ mod tests {
                 .unwrap();
 
         let (initial, initial_context) = transport.subscribe_request(&realm_id, None);
-        assert_eq!(initial.realms, vec![realm_id.as_str().to_owned()]);
+        assert_eq!(initial.realm_ids, vec![realm_id.clone()]);
         assert_eq!(initial.after, None);
         assert_eq!(initial.catchup, None);
         assert_eq!(

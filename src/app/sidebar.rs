@@ -123,7 +123,7 @@ pub(super) fn load_own_agents_for_sidebar(
         })
         .await
         {
-            Ok(response) => own_agent_rows.set(active_agents_only(response.agents)),
+            Ok(response) => own_agent_rows.set(active_agents_only(response.agent_projections)),
             Err(err) => {
                 tracing::warn!(
                     "failed to reload personal agents for Contacts sidebar: {}",
@@ -167,8 +167,8 @@ pub(super) fn load_direct_contacts_and_agents_for_sidebar(
                     Ok(response) => {
                         state_store
                             .write()
-                            .replace_accepted_human_contacts(&response.contacts);
-                        direct_contact_rows.set(response.contacts);
+                            .replace_accepted_human_contacts(&response.contact_list_rows);
+                        direct_contact_rows.set(response.contact_list_rows);
                     }
                     Err(err) => {
                         direct_contacts_loaded.set(false);
@@ -180,7 +180,9 @@ pub(super) fn load_direct_contacts_and_agents_for_sidebar(
                     }
                 }
                 match agents {
-                    Ok(response) => own_agent_rows.set(active_agents_only(response.agents)),
+                    Ok(response) => {
+                        own_agent_rows.set(active_agents_only(response.agent_projections))
+                    }
                     Err(err) => {
                         own_agents_loaded.set(false);
                         tracing::warn!(error = %err, "failed to load personal agents for Contacts sidebar");
@@ -226,8 +228,8 @@ pub(super) fn load_direct_contacts_for_sidebar(
             Ok(response) => {
                 state_store
                     .write()
-                    .replace_accepted_human_contacts(&response.contacts);
-                direct_contact_rows.set(response.contacts);
+                    .replace_accepted_human_contacts(&response.contact_list_rows);
+                direct_contact_rows.set(response.contact_list_rows);
             }
             Err(err) => {
                 direct_contacts_loaded.set(false);

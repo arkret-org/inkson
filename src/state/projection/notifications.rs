@@ -98,8 +98,9 @@ pub(crate) fn actor_is_joined_member(entry: &RealmSyncEntry, actor_id: &str) -> 
     let Ok(actor_id) = arkret_sdk::DidCoreId::new(actor_id.trim().to_owned()) else {
         return false;
     };
-    entry.members.as_ref().is_some_and(|members| {
-        members
+    entry.member_roster.as_ref().is_some_and(|roster| {
+        roster
+            .entries
             .iter()
             .any(|member| member.actor_id == actor_id && member.membership == MembershipState::Join)
     })

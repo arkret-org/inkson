@@ -48,7 +48,7 @@ pub(crate) fn derive_pairwise_signing_material_from_account_secret(
     })?;
     if generation.authority_model
         != crate::identity::authoring_generation::AuthoringAuthorityModel::AcceptedDevice
-        || generation.authority_principal_id != authority.principal_id.as_str()
+        || generation.authority_principal_id != authority.principal_id
     {
         return Err(
             "pairwise identity requires this endpoint's accepted device generation".to_owned(),

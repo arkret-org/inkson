@@ -7,7 +7,7 @@ fn events_batch_response_rejects_partial_acceptance() {
     let accepted: arkret_sdk::EventsSubmitOutcome = serde_json::from_value(json!({
         "status": "accepted",
         "pending_delivery_count": 0,
-        "rejected": []
+        "events_submit_rejected_rows": []
     }))
     .unwrap();
     ensure_events_submit_accepted(&accepted).expect("fully accepted submit should pass");
@@ -18,7 +18,7 @@ fn events_batch_response_rejects_partial_acceptance() {
     let partial: arkret_sdk::EventsSubmitOutcome = serde_json::from_value(json!({
         "status": "partial",
         "pending_delivery_count": 0,
-        "rejected": [
+        "events_submit_rejected_rows": [
             {
                 "id": "ak:event:AXcPfjVv4gB4YXMmxykws6YCG5IZrhBAAzc4-yYUDIY4",
                 "reason_code": "permission_denied",
@@ -28,7 +28,7 @@ fn events_batch_response_rejects_partial_acceptance() {
     }))
     .unwrap();
     assert_eq!(
-        partial.rejected[0].reason_code,
+        partial.events_submit_rejected_rows[0].reason_code,
         arkret_sdk::ReasonCode::PermissionDenied
     );
     let err = ensure_events_submit_accepted(&partial).expect_err("partial submit must fail fast");

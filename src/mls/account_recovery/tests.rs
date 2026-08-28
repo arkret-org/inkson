@@ -385,7 +385,7 @@ fn verify_series_chain_rejects_missing_intermediate() {
     let mut forged_tail = genesis.clone();
     forged_tail["backup_id"] = serde_json::json!("ak:backup:01964137-0000-7000-8000-0000000000c2");
     forged_tail["series_seq"] = serde_json::json!(2);
-    forged_tail["supersedes"] = serde_json::json!("ak:backup:does-not-exist");
+    forged_tail["supersedes_id"] = serde_json::json!("ak:backup:does-not-exist");
     forged_tail["supersedes_digest"] = serde_json::json!("sha256:deadbeef");
 
     let err = verify_series_chain(&forged_tail, &[genesis, forged_tail.clone()])

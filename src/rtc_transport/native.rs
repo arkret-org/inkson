@@ -447,7 +447,7 @@ mod tests {
                     "ak:device:01904100-0000-7000-8000-000000000005",
                 )
                 .unwrap(),
-                participant_identity: "ak:rtc_participant:self".to_owned(),
+                participant_id: "ak:rtc_participant:self".to_owned(),
                 issued_at: chrono::DateTime::parse_from_rfc3339("2026-04-26T00:00:00.000Z")
                     .unwrap()
                     .with_timezone(&chrono::Utc),

@@ -827,7 +827,7 @@ fn WriteStateBadge(state: CardState, icon_only: Option<bool>) -> Element {
 pub fn KanbanPanel(
     plaintext_service_id: String,
     token: Signal<String>,
-    principal_id: String,
+    principal_id: arkret_sdk::DidCoreId,
     account_primary_handle: Signal<String>,
     device_id: String,
     selected_realm_id: String,
@@ -842,6 +842,8 @@ pub fn KanbanPanel(
     event_write_ready: bool,
 ) -> Element {
     // A4 — base_url / state_store from session context instead of props.
+    let principal_core_id = principal_id.clone();
+    let principal_id = principal_id.as_str().to_owned();
     let session_context = crate::app::SessionContext::get();
     let base_url = session_context.base_url.read().clone();
     let state_store = session_context.state_store;
@@ -2650,7 +2652,7 @@ pub fn KanbanPanel(
                 context: CardDetailContext {
                     base_url: base_url.clone(),
                     plaintext_service_id: plaintext_service_id.clone(),
-                    principal_id: principal_id.clone(),
+                    principal_id: principal_core_id.clone(),
                     account_primary_handle: account_primary_handle(),
                     device_id: device_id.clone(),
                     selected_realm_id: selected_realm_id.clone(),

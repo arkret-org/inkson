@@ -32,7 +32,7 @@ fn pending_identity_creation_recovery_key(
     digest.update(b"inkson.pending-identity-creation-recovery-key-scope-v1\0");
     digest.update(account_subject.as_str().as_bytes());
     digest.update(b"\0");
-    digest.update(handoff.audience.as_bytes());
+    digest.update(handoff.audience_id.as_str().as_bytes());
     digest.update(b"\0");
     digest.update(handoff.device_id.as_bytes());
     Ok(format!(
@@ -368,13 +368,13 @@ mod tests {
     ) -> crate::state::PendingAccountHandoff {
         crate::state::PendingAccountHandoff {
             principal_server_url: "https://principal.example".to_owned(),
-            gate_account_base: "https://account.example/_arkret/gate/account".to_owned(),
+            gate_account_base_url: "https://account.example/_arkret/gate/account".to_owned(),
             request_id: request_id.to_owned(),
             oidc_state: None,
             account_handle: "user@example".to_owned(),
             account_subject: Some(arkret_sdk::Hash::new(format!("sha256:{account}")).unwrap()),
             holder_jkt: holder_jkt.to_owned(),
-            audience: "did:web:principal.example".to_owned(),
+            audience_id: arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap(),
             expires_at: chrono::Utc::now(),
             lease_id: None,
             lease_fence: None,
@@ -462,7 +462,8 @@ mod tests {
         assert!(!baseline.starts_with("inkson."));
 
         let mut other_audience = reauthenticated.clone();
-        other_audience.audience = "did:web:other-principal.example".to_owned();
+        other_audience.audience_id =
+            arkret_sdk::DidCoreId::new("ak:did_core:web:other-principal.example").unwrap();
         assert_ne!(
             baseline,
             pending_identity_creation_recovery_key(&other_audience).unwrap()

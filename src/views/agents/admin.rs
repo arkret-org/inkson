@@ -669,9 +669,9 @@ fn spawn_refresh_agents(
                 if *refresh_epoch.peek() != request_epoch {
                     return;
                 }
-                let total = resp.agents.len();
+                let total = resp.agent_projections.len();
                 let rows: Vec<AgentView> = resp
-                    .agents
+                    .agent_projections
                     .into_iter()
                     .filter_map(agent_view_from_directory_row)
                     .collect();
