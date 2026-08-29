@@ -298,6 +298,21 @@ pub(super) const TEST_SESSION_INJECTION_KEY: &str = "inkson.test.session_injecti
 pub(super) const TEST_SESSION_CREDENTIAL_INJECTION_KEY: &str =
     "inkson.test.session_credential_injection.v1";
 
+#[cfg(any(
+    test,
+    all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test")
+))]
+fn parse_test_service_account_id(
+    fixture: &Value,
+) -> Result<arkret_sdk::ServiceAccountId, &'static str> {
+    let value = fixture
+        .get("service_account_id")
+        .ok_or("service_account_id is missing")?
+        .as_str()
+        .ok_or("service_account_id is not a string")?;
+    arkret_sdk::ServiceAccountId::new(value.to_owned()).map_err(|_| "service_account_id is invalid")
+}
+
 /// Dev-only bearer injection for cotest scenarios that intentionally exercise
 /// soland's development login rather than a DPoP-bound account grant. This is
 /// compiled only into the explicit localStorage-secrets test build.
@@ -374,6 +389,16 @@ pub(super) async fn inject_test_session_grant(
                 ?error,
                 fixture_len = raw.len(),
                 "test session injection skipped: invalid JSON fixture"
+            );
+            return None;
+        }
+    };
+    let service_account_id = match parse_test_service_account_id(&parsed) {
+        Ok(service_account_id) => service_account_id,
+        Err(error) => {
+            tracing::warn!(
+                error,
+                "test session injection skipped: invalid service_account_id fixture"
             );
             return None;
         }
@@ -609,7 +634,7 @@ pub(super) async fn inject_test_session_grant(
         grant_id,
         audience_id: arkret_sdk::DidCoreId::new(audience.clone()).ok()?,
         principal_id: account_key.clone(),
-        service_account_id: arkret_sdk::ServiceAccountId::new("account-1").ok()?,
+        service_account_id,
         device_id: arkret_sdk::DeviceId::new(device_id.to_owned()).ok()?,
         // MUST match the active server so the bootstrap does not discard the
         // grant as stale (see `grant_matches_principal_server`).
@@ -683,4 +708,32 @@ pub(super) async fn inject_test_session_grant(
         let _ = storage.remove_item(TEST_SESSION_INJECTION_KEY);
     }
     Some(grant_jwt)
+}
+
+#[cfg(test)]
+mod test_session_injection_tests {
+    use super::*;
+
+    #[test]
+    fn service_account_id_is_required_and_typed() {
+        let parsed = serde_json::json!({ "service_account_id": "alice-session-grant" });
+        let service_account_id =
+            parse_test_service_account_id(&parsed).expect("valid service account id");
+        assert_eq!(service_account_id.as_str(), "alice-session-grant");
+
+        assert_eq!(
+            parse_test_service_account_id(&serde_json::json!({})),
+            Err("service_account_id is missing")
+        );
+        assert_eq!(
+            parse_test_service_account_id(&serde_json::json!({ "service_account_id": 42 })),
+            Err("service_account_id is not a string")
+        );
+        assert_eq!(
+            parse_test_service_account_id(
+                &serde_json::json!({ "service_account_id": "ak:account:invalid" })
+            ),
+            Err("service_account_id is invalid")
+        );
+    }
 }
