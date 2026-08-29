@@ -30,6 +30,34 @@ fn local_projection_commands_wait_for_the_projector() {
 }
 
 #[test]
+fn submit_receipt_reconciles_before_local_projection_runs() {
+    let path = temp_state_path("local-projection-command-fast-receipt");
+    let mut store = LocalStateStore::with_path(path);
+    let operation_id = "0196419b-0000-7000-8000-000000000001";
+    let realm_id = "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-";
+    let event_id = "ak:event:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
+
+    store.enqueue_local_projection_command(
+        operation_id,
+        Some(realm_id.to_owned()),
+        json!({ "kind": "ak.strand.create", "write_state": "queued" }),
+    );
+
+    assert!(store.update_raw_operation_write_state(
+        operation_id,
+        "accepted",
+        Some(event_id.to_owned()),
+        None,
+    ));
+    store.project_pending_local_commands();
+
+    let state = store.load();
+    assert_eq!(state.raw_operations.len(), 1);
+    assert_eq!(state.raw_operations[0].payload["write_state"], "accepted");
+    assert_eq!(state.raw_operations[0].payload["event_id"], event_id);
+}
+
+#[test]
 fn mls_encrypted_projection_detects_epoch_pause_scope() {
     let path = temp_state_path("mls-encrypted-projection");
     let mut store = LocalStateStore::with_path(path);

@@ -397,6 +397,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                         || card_detail_discussion_mounted_for()
                             .as_deref()
                             .is_some_and(|strand_id| strand_id == card.primary_strand_id.as_str());
+                    let discussion_target_ready = card_discussion_target_ready(card);
                     let action_menu_class = if editing_card_detail() {
                         "card-detail-action-menu is-editing"
                     } else {
@@ -1520,20 +1521,30 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                         "data-testid": "card-discussion-panel",
                                                         role: "tabpanel",
                                                         "aria-hidden": "{active_detail_tab != CardDetailContentTab::Discussion}",
-                                                        crate::views::chat::ChatPanel {
-                                                            plaintext_service_id: plaintext_service_id.clone(),
-                                                            principal_id: principal_core_id.clone(),
-                                                            account_primary_handle: account_primary_handle.clone(),
-                                                            device_id: device_id.clone(),
-                                                            token,
-                                                            selected_realm_id: selected_realm_id.clone(),
-                                                            sync_cursor,
-                                                            realm_live_epoch,
-                                                            frontier_state,
-                                                            initial_strand_id: card.primary_strand_id.clone(),
-                                                            embedded: true,
-                                                            direct_mode: false,
-                                                            mention_insert_request: Some(member_mention_request),
+                                                        if discussion_target_ready {
+                                                            crate::views::chat::ChatPanel {
+                                                                plaintext_service_id: plaintext_service_id.clone(),
+                                                                principal_id: principal_core_id.clone(),
+                                                                account_primary_handle: account_primary_handle.clone(),
+                                                                device_id: device_id.clone(),
+                                                                token,
+                                                                selected_realm_id: selected_realm_id.clone(),
+                                                                sync_cursor,
+                                                                realm_live_epoch,
+                                                                frontier_state,
+                                                                initial_strand_id: card.primary_strand_id.clone(),
+                                                                embedded: true,
+                                                                direct_mode: false,
+                                                                mention_insert_request: Some(member_mention_request),
+                                                            }
+                                                        } else {
+                                                            div {
+                                                                class: "card-detail-empty discussion-pending-target",
+                                                                "data-testid": "card-discussion-pending-target",
+                                                                role: "status",
+                                                                "aria-live": "polite",
+                                                                "This card is still being created. Discussion will be available after the server assigns its Strand ID."
+                                                            }
                                                         }
                                                     }
                                                 }

@@ -14,7 +14,10 @@ fn discovery_retry_delay(
     status: StatusCode,
     retry_after: Option<&HeaderValue>,
 ) -> Option<Duration> {
-    if status != StatusCode::SERVICE_UNAVAILABLE {
+    if !matches!(
+        status,
+        StatusCode::BAD_GATEWAY | StatusCode::SERVICE_UNAVAILABLE | StatusCode::GATEWAY_TIMEOUT
+    ) {
         return None;
     }
     let seconds = retry_after
@@ -97,12 +100,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn service_unavailable_honors_retry_after_seconds() {
+    fn transient_gateway_errors_honor_retry_after_seconds() {
         let retry_after = HeaderValue::from_static("7");
-        assert_eq!(
-            discovery_retry_delay(StatusCode::SERVICE_UNAVAILABLE, Some(&retry_after)),
-            Some(Duration::from_secs(7))
-        );
+        for status in [
+            StatusCode::BAD_GATEWAY,
+            StatusCode::SERVICE_UNAVAILABLE,
+            StatusCode::GATEWAY_TIMEOUT,
+        ] {
+            assert_eq!(
+                discovery_retry_delay(status, Some(&retry_after)),
+                Some(Duration::from_secs(7))
+            );
+        }
     }
 
     #[test]

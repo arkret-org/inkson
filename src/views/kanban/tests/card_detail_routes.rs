@@ -1,6 +1,16 @@
 use super::*;
 
 #[test]
+fn discussion_waits_for_event_derived_strand_identity() {
+    let mut pending = test_card("0196419b-0000-7000-8000-000000000001", "U");
+    pending.primary_strand_id = "0196419b-0000-7000-8000-000000000001".to_owned();
+    assert!(!card_discussion_target_ready(&pending));
+
+    let canonical = test_card(DEMO_STRAND_REVIEW_DISCUSSION_ID, "U");
+    assert!(card_discussion_target_ready(&canonical));
+}
+
+#[test]
 fn card_detail_deep_link_targets_kanban_task_route() {
     assert_eq!(
         strand_detail_deep_link_path(

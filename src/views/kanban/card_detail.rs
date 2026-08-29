@@ -77,6 +77,10 @@ pub(super) fn card_matches_strand_id(card: &KanbanCard, strand_id: &str) -> bool
     !strand_id.is_empty() && (card.id == strand_id || card.primary_strand_id == strand_id)
 }
 
+pub(super) fn card_discussion_target_ready(card: &KanbanCard) -> bool {
+    arkret_sdk::StrandId::new(card.primary_strand_id.clone()).is_ok()
+}
+
 pub(super) fn find_card_by_strand_id(
     columns: &[KanbanColumn],
     strand_id: &str,

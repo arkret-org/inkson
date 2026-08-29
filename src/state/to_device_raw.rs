@@ -703,40 +703,74 @@ impl LocalStateStore {
         error: Option<String>,
     ) -> bool {
         self.ensure_cached_loaded();
-        let Some(record) = self
+        if let Some(record) = self
             .cached
             .raw_operations
             .iter_mut()
             .find(|record| record.operation_id == operation_id)
-        else {
-            return false;
-        };
-        let Some(payload) = record.payload.as_object_mut() else {
-            return false;
-        };
-        payload.insert(
-            "write_state".to_owned(),
-            Value::String(write_state.to_owned()),
-        );
-        match event_id {
-            Some(event_id) => {
-                payload.insert("event_id".to_owned(), Value::String(event_id));
-            }
-            None => {
-                payload.remove("event_id");
-            }
+            && update_operation_write_state_payload(
+                &mut record.payload,
+                write_state,
+                event_id.as_deref(),
+                error.as_deref(),
+            )
+        {
+            let _ = self.flush();
+            return true;
         }
-        match error {
-            Some(error) => {
-                payload.insert("error".to_owned(), Value::String(error));
-            }
-            None => {
-                payload.remove("error");
-            }
-        }
-        let _ = self.flush();
-        true
+
+        // A fast submit response can arrive before Dioxus runs the projector
+        // effect that drains `pending_projection_commands`. Reconcile the
+        // receipt into that queued record as well; otherwise the later
+        // projection writes the stale `queued` payload and the card spins
+        // forever even though the server already accepted it.
+        self.pending_projection_commands.iter_mut().any(|command| {
+            let super::LocalProjectionCommand::AppendRawOperation {
+                operation_id: queued_operation_id,
+                payload,
+                ..
+            } = command;
+            queued_operation_id == operation_id
+                && update_operation_write_state_payload(
+                    payload,
+                    write_state,
+                    event_id.as_deref(),
+                    error.as_deref(),
+                )
+        })
     }
+}
+
+fn update_operation_write_state_payload(
+    payload: &mut Value,
+    write_state: &str,
+    event_id: Option<&str>,
+    error: Option<&str>,
+) -> bool {
+    let Some(payload) = payload.as_object_mut() else {
+        return false;
+    };
+    payload.insert(
+        "write_state".to_owned(),
+        Value::String(write_state.to_owned()),
+    );
+    match event_id {
+        Some(event_id) => {
+            payload.insert("event_id".to_owned(), Value::String(event_id.to_owned()));
+        }
+        None => {
+            payload.remove("event_id");
+        }
+    }
+    match error {
+        Some(error) => {
+            payload.insert("error".to_owned(), Value::String(error.to_owned()));
+        }
+        None => {
+            payload.remove("error");
+        }
+    }
+    true
 }
 
 fn raw_payload_string(payload: &Value, key: &str) -> Option<String> {
