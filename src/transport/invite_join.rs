@@ -15,20 +15,41 @@ impl crate::transport::TransportClient {
         invite_id: &str,
         invite_token: Option<&str>,
     ) -> anyhow::Result<(SubmitEventResult, Option<String>)> {
-        let event = crate::operation::ak_ops::invite_accept(realm_id, actor_id, invite_id)?
-            .build_sdk_event("inkson")?;
-        let resolved = crate::transport::directory::resolve_realm_with_invite_token(
-            &self.sdk_http_client()?,
-            realm_id,
-            invite_token,
-        )
-        .await
-        .map_err(|error| invite_accept_resolve_error(error, invite_token.is_none()))?;
+        let http = self.sdk_http_client()?;
+        let mut retry = arkret_retry::RetrySchedule::arkret_default();
+        let resolved = loop {
+            match crate::transport::directory::resolve_realm_with_invite_token(
+                &http,
+                realm_id,
+                invite_token,
+            )
+            .await
+            {
+                Ok(resolved) => break resolved,
+                Err(error) => {
+                    let Some(delay) = invite_resolve_retry_delay(&error, &mut retry) else {
+                        return Err(invite_accept_resolve_error(error, invite_token.is_none()));
+                    };
+                    tracing::warn!(
+                        realm_id,
+                        retry = retry.retries(),
+                        retry_after_ms = delay.as_millis(),
+                        "invite lifecycle is not sealed yet; retrying Directory resolution"
+                    );
+                    crate::runtime_helpers::sleep_for(delay).await;
+                }
+            }
+        };
         let realm_title = resolved.realm_preview.title.clone();
         let candidate = select_join_candidate(
             &resolved,
             arkret_models_discovery::RealmJoinMethod::InviteAccept,
         )?;
+        // Only now construct the unsigned intent. A transient Directory
+        // barrier therefore cannot create, sign, or replay an InviteAccept
+        // Event against a predecessor basis that did not cover the Invite.
+        let event = crate::operation::ak_ops::invite_accept(realm_id, actor_id, invite_id)?
+            .build_sdk_event("inkson")?;
         let event = stamp_invite_join_seal_basis(event, candidate)?;
         let submit = self
             .submit_built_event_via_join_candidate(candidate, &event)
@@ -95,6 +116,16 @@ fn invite_accept_resolve_error(error: anyhow::Error, invite_token_missing: bool)
     error
 }
 
+fn invite_resolve_retry_delay(
+    error: &anyhow::Error,
+    retry: &mut arkret_retry::RetrySchedule,
+) -> Option<std::time::Duration> {
+    if !crate::api_error::is_invite_lifecycle_frontier_pending_error(error) || retry.exhausted() {
+        return None;
+    }
+    Some(retry.next_delay())
+}
+
 /// Stamp an invite-to-join Control Move's `seal_basis` from the resolve-realm
 /// join candidate.
 ///
@@ -128,6 +159,8 @@ fn stamp_invite_join_seal_basis(
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     #[test]
     fn bare_remote_candidate_fails_closed() {
         let error = super::reject_unauthenticated_remote_candidate().unwrap_err();
@@ -167,5 +200,42 @@ mod tests {
         let transport =
             super::invite_accept_resolve_error(anyhow::anyhow!("connection refused"), true);
         assert_eq!(transport.to_string(), "connection refused");
+    }
+
+    #[test]
+    fn invite_frontier_retry_uses_the_bounded_protocol_backoff() {
+        let error = resolve_api_error(
+            503,
+            arkret_sdk::error_codes::ErrorCode::FRONTIER_UNAVAILABLE,
+        );
+        let mut retry = arkret_retry::RetrySchedule::arkret_default();
+        for expected in [1, 2, 4, 8, 16].map(Duration::from_secs) {
+            assert_eq!(
+                super::invite_resolve_retry_delay(&error, &mut retry),
+                Some(expected)
+            );
+        }
+        assert!(retry.exhausted());
+        assert_eq!(super::invite_resolve_retry_delay(&error, &mut retry), None);
+    }
+
+    #[test]
+    fn invite_resolve_does_not_retry_other_errors() {
+        let mut retry = arkret_retry::RetrySchedule::arkret_default();
+        for error in [
+            resolve_api_error(
+                409,
+                arkret_sdk::error_codes::ErrorCode::FRONTIER_UNAVAILABLE,
+            ),
+            resolve_api_error(503, arkret_sdk::error_codes::ErrorCode::FAILED_PRECONDITION),
+            resolve_api_error(404, arkret_sdk::error_codes::ErrorCode::NOT_FOUND),
+        ] {
+            assert_eq!(super::invite_resolve_retry_delay(&error, &mut retry), None);
+        }
+        assert_eq!(
+            retry.retries(),
+            0,
+            "terminal errors must not spend retry budget"
+        );
     }
 }
