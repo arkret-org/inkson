@@ -208,8 +208,14 @@ impl EventOutboundSubmitter<'_> {
             payload.governance_binding(),
         )
         .await?;
-        crate::mls::runtime::converge_accepted_mls_artifacts(state_store, authority, device_id)
-            .await?;
+        crate::mls::runtime::converge_accepted_local_commit(
+            state_store,
+            authority,
+            device_id,
+            commit.event_id(),
+            staged_snapshot,
+        )
+        .await?;
 
         let accepted = state_store
             .read()
@@ -457,6 +463,12 @@ impl EventOutboundSubmitter<'_> {
                     )
                     .await
                 {
+                    tracing::warn!(
+                        realm = %realm_id,
+                        event_id = %commit.event_id,
+                        %error,
+                        "accepted MLS admission artifact convergence remains pending"
+                    );
                     return Ok(OutboundSubmitOutcome::RetryAfter {
                         delay: Duration::from_secs(1),
                         reason: format!("accepted MLS admission artifacts remain pending: {error}"),
