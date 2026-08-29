@@ -345,6 +345,26 @@ fn admission_cas_conflict_keeps_exact_saga_queued_for_repair() {
 }
 
 #[test]
+fn generic_mls_drainer_cannot_finalize_before_snapshot_convergence() {
+    let outcome = accepted_mls_state_store_for_finalization::<()>(None)
+        .expect_err("a drainer without an accepted-state store must keep the saga queued");
+
+    match outcome {
+        OutboundSubmitOutcome::RetryAfter { delay, reason } => {
+            assert_eq!(delay, Duration::from_secs(1));
+            assert!(reason.contains("snapshot convergence"));
+        }
+        other => panic!("missing accepted-state store must remain retryable, got {other:?}"),
+    }
+
+    assert_eq!(
+        accepted_mls_state_store_for_finalization(Some("accepted-state-store")),
+        Ok("accepted-state-store"),
+        "the accepted-store drainer may proceed to checkpoint-proven convergence"
+    );
+}
+
+#[test]
 fn pending_chat_projection_ignores_sent_items_and_other_conversations() {
     let realm = arkret_sdk::RealmId::new(
         "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19".to_owned(),

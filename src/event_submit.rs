@@ -439,26 +439,28 @@ impl EventOutboundSubmitter<'_> {
                         });
                     }
                 }
-                if let Some(state_store) = self.accepted_mls_state_store {
-                    let device_id = arkret_sdk::DeviceId::new(device_id)
-                        .map_err(|error| garth::Error::Protocol(error.to_string()))?;
-                    if let Err(error) = self
-                        .converge_finalized_mls_admission(
-                            state_store,
-                            &realm_id,
-                            &device_id,
-                            &commit,
-                            &staged_snapshot,
-                        )
-                        .await
-                    {
-                        return Ok(OutboundSubmitOutcome::RetryAfter {
-                            delay: Duration::from_secs(1),
-                            reason: format!(
-                                "accepted MLS admission artifacts remain pending: {error}"
-                            ),
-                        });
-                    }
+                let state_store = match accepted_mls_state_store_for_finalization(
+                    self.accepted_mls_state_store,
+                ) {
+                    Ok(state_store) => state_store,
+                    Err(outcome) => return Ok(outcome),
+                };
+                let device_id = arkret_sdk::DeviceId::new(device_id)
+                    .map_err(|error| garth::Error::Protocol(error.to_string()))?;
+                if let Err(error) = self
+                    .converge_finalized_mls_admission(
+                        state_store,
+                        &realm_id,
+                        &device_id,
+                        &commit,
+                        &staged_snapshot,
+                    )
+                    .await
+                {
+                    return Ok(OutboundSubmitOutcome::RetryAfter {
+                        delay: Duration::from_secs(1),
+                        reason: format!("accepted MLS admission artifacts remain pending: {error}"),
+                    });
                 }
                 let result = SubmitEventResult {
                     event_id: commit.event_id.to_string(),
@@ -957,6 +959,16 @@ fn outbound_retry_delay(error: &anyhow::Error) -> Option<Duration> {
 
 fn mls_admission_welcome_retry_delay(error: &anyhow::Error) -> Duration {
     outbound_retry_delay(error).unwrap_or_else(|| Duration::from_secs(60))
+}
+
+fn accepted_mls_state_store_for_finalization<T>(
+    state_store: Option<T>,
+) -> Result<T, OutboundSubmitOutcome> {
+    state_store.ok_or_else(|| OutboundSubmitOutcome::RetryAfter {
+        delay: Duration::from_secs(1),
+        reason: "accepted MLS admission snapshot convergence requires an accepted-state store"
+            .to_owned(),
+    })
 }
 
 fn mls_admission_repair_retry_outcome(reason: &str) -> OutboundSubmitOutcome {
