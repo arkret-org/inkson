@@ -245,11 +245,6 @@ test("settings MIMI facade discovers drafts and runs interop actions", async ({ 
   await expect(page.getByTestId("mimi-directory-result")).toContainText("identifier_query");
   await expect(page.getByTestId("mimi-directory-result")).toContainText("proxy_download");
 
-  await page.getByTestId("mimi-group-info").click();
-  await expect(page.getByTestId("mimi-action-receipt")).toContainText(
-    "group-info 01JSMIMI binding ak:event:AaU-Qm8ThSLazMkDDaRlYzKtWfb_bSLS6zNfyROi2aoe proofs 1",
-  );
-
   await page.getByTestId("mimi-identifier-query").click();
   await expect(page.getByTestId("mimi-action-receipt")).toContainText("identifier results 1");
   await expect(page.getByTestId("mimi-action-receipt")).toContainText(

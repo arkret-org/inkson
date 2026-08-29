@@ -1656,54 +1656,6 @@ pub fn SettingsPanel(
                         }
                         Button {
                             variant: ButtonVariant::Secondary,
-                            "data-testid": "mimi-group-info",
-                            onclick: {
-                                move |_| {
-                                    let base = base_url();
-                                    let api_token = token();
-                                    spawn(async move {
-                                        match with_authed_sdk_client(&base, api_token, |http| async move {
-                                            http.get::<arkret_sdk::MimiGroupInfoOutcome>(
-                                                "/_arkret/open/mimi/strands/01JSMIMI/group-info",
-                                            )
-                                            .await
-                                            .map_err(anyhow::Error::from)
-                                        })
-                                        .await
-                                        {
-                                            Ok(response) => {
-                                                // R20: `room_id` is the MIMI-draft wire term
-                                                // (interop-exempt from Room → Realm). On the
-                                                // Arkret app side it identifies a Strand, so we
-                                                // bind it to a `strand_id`-named local to keep
-                                                // the "Room" term confined to the interop layer.
-                                                mimi_receipt.set(format!(
-                                                    "group-info 01JSMIMI binding {} proofs {}",
-                                                    response
-                                                        .room_binding_ref
-                                                        .as_ref()
-                                                        .map(ToString::to_string)
-                                                        .unwrap_or_else(|| "none".to_owned()),
-                                                    response.proofs.len()
-                                                ));
-                                            }
-                                            Err(err) => {
-                                                let message = format!("MIMI groupInfo failed: {}", err.display());
-                                                mimi_receipt.set(message.clone());
-                                                crate::components::feedback::toast_error(
-                                                    "feedback.mimi_failed",
-                                                    vec![],
-                                                    Some(message),
-                                                );
-                                            }
-                                        }
-                                    });
-                                }
-                            },
-                            "Group Info"
-                        }
-                        Button {
-                            variant: ButtonVariant::Secondary,
                             "data-testid": "mimi-identifier-query",
                             onclick: {
                                 move |_| {

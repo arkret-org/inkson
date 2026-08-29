@@ -1863,32 +1863,6 @@ export async function mockArkretApi(
     }
 
     if (
-      url.pathname.match(
-        /^\/_arkret\/open\/mimi\/strands\/[^/]+\/group-info$/,
-      ) &&
-      route.request().method() === "GET"
-    ) {
-      return json(route, {
-        group_info: {
-          epoch: 7,
-          mls_group_id: "mls-group-01",
-          group_info: "ZTItdGVzdC1ncm91cC1pbmZv",
-        },
-        room_binding_ref:
-          "ak:event:AaU-Qm8ThSLazMkDDaRlYzKtWfb_bSLS6zNfyROi2aoe",
-        proofs: [
-          {
-            kind: "detached_jws",
-            verification_method: `${CURRENT_PRINCIPAL_SERVER_DID}#mimi-group-info`,
-            payload_digest: `sha256:${"0".repeat(64)}`,
-            created_at: "2026-04-28T12:00:00.000Z",
-            jws: "e30..c2ln",
-          },
-        ],
-      });
-    }
-
-    if (
       url.pathname === "/_arkret/open/mimi/consent/request" &&
       route.request().method() === "POST"
     ) {
