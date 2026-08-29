@@ -61,7 +61,7 @@ pub fn is_server_admin() -> bool {
 pub struct CreatedOrganization {
     pub organization_id: DidCoreId,
     /// Exact DID whose controller method is retained for statement proof.
-    pub did: Did,
+    pub organization_did: Did,
     /// Organization control verification method id (`<did>#did-key-1`).
     pub did_key_id: String,
     /// Operator-facing label captured at creation time.
@@ -541,7 +541,7 @@ fn OrganizationCreatePanel(token: Signal<String>, principal_id: String) -> Eleme
                                                     organization_id: organization
                                                         .organization_id
                                                         .clone(),
-                                                    did: organization.did.clone(),
+                                                    organization_did: organization.organization_did.clone(),
                                                     did_key_id: organization.did_key_id.clone(),
                                                     display_name: name.clone(),
                                                 },
@@ -632,7 +632,7 @@ fn OrganizationBindPanel(token: Signal<String>, realm_id: String, principal_id: 
                         for org in created() {
                             option {
                                 value: "{org.organization_id}",
-                                "{org.display_name} ({short_protocol_id(org.did.as_str())})"
+                                "{org.display_name} ({short_protocol_id(org.organization_did.as_str())})"
                             }
                         }
                     }
@@ -790,7 +790,7 @@ fn OrganizationBindPanel(token: Signal<String>, realm_id: String, principal_id: 
                                     statement_id: statement_id.clone(),
                                     realm_id: realm_id.clone(),
                                     organization_id: organization.organization_id.clone(),
-                                    did: organization.did.clone(),
+                                    organization_did: organization.organization_did.clone(),
                                     verification_method: did_key_id.clone(),
                                     relationship: relationship_value,
                                     status: status_value,

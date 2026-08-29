@@ -122,7 +122,7 @@ pub struct PreparedOrganization {
     /// Stable identity of the organization principal.
     pub organization_id: DidCoreId,
     /// The minted organization `did:webvh`.
-    pub did: Did,
+    pub organization_did: Did,
     /// 32-byte Ed25519 control seed — caller MUST persist this (it is the
     /// organization's signing authority for relationship statements).
     pub control_seed: [u8; 32],
@@ -196,7 +196,7 @@ pub fn prepare_organization_inception(
 
     let organization = PreparedOrganization {
         organization_id,
-        did,
+        organization_did: did,
         control_seed: prepared.did_key_seed,
         did_key_id: prepared.did_key_id.clone(),
     };
@@ -209,7 +209,7 @@ pub struct OrganizationStatementInput {
     pub realm_id: String,
     pub organization_id: DidCoreId,
     /// Exact resolvable DID whose control method signs this statement.
-    pub did: Did,
+    pub organization_did: Did,
     /// Organization control verification method id (`<did>#did-key-1`).
     pub verification_method: String,
     pub relationship: RealmOrganizationRelationship,
@@ -237,12 +237,17 @@ pub fn sign_organization_statement(
 ) -> anyhow::Result<RealmOrganizationPayload> {
     let realm_id = arkret_sdk::RealmId::new(input.realm_id.trim().to_owned())
         .map_err(|err| anyhow::anyhow!("invalid realm id `{}`: {err}", input.realm_id))?;
-    let projected_organization_id = project_did_to_core_id(&input.did)
-        .map_err(|err| anyhow::anyhow!("invalid organization DID `{}`: {err}", input.did))?;
+    let projected_organization_id =
+        project_did_to_core_id(&input.organization_did).map_err(|err| {
+            anyhow::anyhow!(
+                "invalid organization DID `{}`: {err}",
+                input.organization_did
+            )
+        })?;
     if projected_organization_id != input.organization_id {
         anyhow::bail!(
             "organization DID `{}` does not project to organization_id `{}`",
-            input.did,
+            input.organization_did,
             input.organization_id
         );
     }
@@ -348,7 +353,7 @@ mod tests {
             realm_id: "ak:realm:AVFSR4O2uTcP6zGsyewp0OdaGeDZBXQAUZ9VIEKLSXYo".to_owned(),
             organization_id,
             verification_method: format!("{did}#did-key-1"),
-            did,
+            organization_did: did,
             relationship: RealmOrganizationRelationship::Owner,
             status: RealmOrganizationStatus::Active,
             control_scopes: vec![RealmOrganizationControlScope::OfficialBadge],
@@ -385,7 +390,7 @@ mod tests {
             realm_id: "ak:realm:AVFSR4O2uTcP6zGsyewp0OdaGeDZBXQAUZ9VIEKLSXYo".to_owned(),
             organization_id,
             verification_method: format!("{did}#did-key-1"),
-            did,
+            organization_did: did,
             relationship: RealmOrganizationRelationship::Owner,
             status: RealmOrganizationStatus::Revoked,
             control_scopes: vec![RealmOrganizationControlScope::OfficialBadge],
@@ -405,7 +410,7 @@ mod tests {
             realm_id: "ak:realm:AVFSR4O2uTcP6zGsyewp0OdaGeDZBXQAUZ9VIEKLSXYo".to_owned(),
             organization_id,
             verification_method: format!("{did}#did-key-1"),
-            did,
+            organization_did: did,
             relationship: RealmOrganizationRelationship::Owner,
             status: RealmOrganizationStatus::Active,
             control_scopes: vec![RealmOrganizationControlScope::OfficialBadge],
