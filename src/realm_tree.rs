@@ -323,26 +323,27 @@ pub(crate) fn realm_projection_is_principal_control(body: &Value) -> bool {
     realm_projection_control_purpose(body).is_some()
 }
 
-/// Resolve the Realm's effective content scheme from the reducer-derived
-/// policy-components facet. `state_after` represents the timeline-end state
-/// and therefore precedes the current `state` container. Materialized fields
-/// are projection snapshots; the create event is only an initial-state
-/// fallback when no current policy-components facet is available.
+/// Resolve the Realm's immutable content scheme from the accepted MLS Genesis.
+/// `state_after` represents the timeline-end state and therefore precedes the
+/// current `state` container. Materialized fields and the create event are only
+/// pre-Genesis authoring fallbacks; mutable policy state never selects the MLS
+/// content wire scheme.
 pub(crate) fn realm_projection_content_scheme(body: &Value) -> Option<String> {
-    let facet_value = projected_state_event_values(body)
+    let genesis_scheme = projected_state_event_values(body)
         .filter(|event| {
             event
                 .get("kind")
                 .or_else(|| event.get("type"))
                 .and_then(Value::as_str)
-                == Some(event_kind_str::REALM_POLICY_BUNDLE)
+                == Some(event_kind_str::MLS_GENESIS)
         })
         .find_map(|event| {
-            non_empty_string(event.pointer("/payload/value/content_scheme"))
-                .or_else(|| non_empty_string(event.pointer("/content/value/content_scheme")))
+            non_empty_string(event.pointer("/payload/governance_binding/content_scheme")).or_else(
+                || non_empty_string(event.pointer("/content/governance_binding/content_scheme")),
+            )
         });
-    if facet_value.is_some() {
-        return facet_value;
+    if genesis_scheme.is_some() {
+        return genesis_scheme;
     }
 
     let null = Value::Null;
@@ -1136,7 +1137,7 @@ mod tests {
     }
 
     #[test]
-    fn content_scheme_prefers_current_policy_bundle_over_create_snapshot() {
+    fn content_scheme_prefers_immutable_mls_genesis_over_projection_hints() {
         let projection = json!({
             "object": {"content_scheme": "mls_rfc9420"},
             "state_after": {"events": [
@@ -1146,7 +1147,13 @@ mod tests {
                 },
                 {
                     "kind": "ak.realm.policy_bundle",
-                    "payload": {"value": {"content_scheme": "mls_exporter_aead_v1"}}
+                    "payload": {"value": {"content_scheme": "mls_rfc9420"}}
+                },
+                {
+                    "kind": "ak.mls.genesis",
+                    "payload": {"governance_binding": {
+                        "content_scheme": "mls_exporter_aead_v1"
+                    }}
                 }
             ]}
         });

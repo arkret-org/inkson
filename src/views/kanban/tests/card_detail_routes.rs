@@ -6,7 +6,11 @@ fn discussion_waits_for_event_derived_strand_identity() {
     pending.primary_strand_id = "0196419b-0000-7000-8000-000000000001".to_owned();
     assert!(!card_discussion_target_ready(&pending));
 
-    let canonical = test_card(DEMO_STRAND_REVIEW_DISCUSSION_ID, "U");
+    let event_id =
+        arkret_sdk::EventId::from_digest(arkret_sdk::canonical::DigestSuite::Blake3, [0x23; 32]);
+    let canonical_strand_id = arkret_sdk::StrandId::from_event_id(&event_id);
+    let mut canonical = test_card(canonical_strand_id.as_str(), "U");
+    canonical.primary_strand_id = canonical_strand_id.to_string();
     assert!(card_discussion_target_ready(&canonical));
 }
 
