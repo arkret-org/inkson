@@ -232,7 +232,8 @@ impl AccountSyncStep {
             .iter()
             .map(|update| {
                 serde_json::to_value(&update.entry)
-                    .map(|mut value| {
+                    .and_then(|mut value| {
+                        project_member_roster_from_sdk_entry(&mut value, &update.entry)?;
                         project_default_strand_from_sdk_events(
                             &mut value,
                             update
@@ -241,7 +242,7 @@ impl AccountSyncStep {
                                 .iter()
                                 .flat_map(|state| state.events.iter()),
                         );
-                        (update.realm_id.as_str().to_owned(), value)
+                        Ok((update.realm_id.as_str().to_owned(), value))
                     })
                     .map_err(|error| arkret_sdk::Error::Protocol(error.to_string()))
             })
@@ -268,6 +269,40 @@ impl AccountSyncStep {
             .find(|(id, _)| id.as_str() == realm_id)
             .is_some_and(|(_, entry)| entry.state_at_window_start.is_some())
     }
+}
+
+/// Convert the SDK-owned account-sync roster container into Inkson's single
+/// local Realm projection shape. Local projection consumers deliberately read
+/// only these root fields; retaining the wire `member_roster` container here
+/// would create two competing roster representations in durable client state.
+fn project_member_roster_from_sdk_entry(
+    projection: &mut Value,
+    entry: &arkret_sdk::RealmSyncEntry,
+) -> serde_json::Result<()> {
+    let Some(roster) = entry.member_roster.as_ref() else {
+        return Ok(());
+    };
+    let Some(object) = projection.as_object_mut() else {
+        return Ok(());
+    };
+    object.remove("member_roster");
+    object.insert(
+        "member_roster_entries".to_owned(),
+        serde_json::to_value(&roster.entries)?,
+    );
+    object.insert(
+        "member_roster_entries_limited".to_owned(),
+        Value::Bool(roster.limited),
+    );
+    if let Some(next_cursor) = roster.next_cursor.as_ref() {
+        object.insert(
+            "member_roster_entries_next_cursor".to_owned(),
+            Value::String(next_cursor.clone()),
+        );
+    } else {
+        object.remove("member_roster_entries_next_cursor");
+    }
+    Ok(())
 }
 
 pub(crate) fn project_default_strand_from_sdk_events<'a>(
@@ -478,7 +513,70 @@ mod tests {
     use arkret_sdk::contact_operations::ContactScope;
     use arkret_wire::SchemaId;
 
-    use super::{projection_realm_id_for_known_node, service_supports_operation};
+    use super::{AccountSyncStep, projection_realm_id_for_known_node, service_supports_operation};
+
+    #[test]
+    fn since_join_member_roster_uses_authoritative_typed_projection_without_state_event() {
+        let realm_id =
+            arkret_sdk::RealmId::new("ak:realm:AYlS_mnxn8_f65A0YrWEeLzd0F1vnM347xZzMSQEcrlz")
+                .unwrap();
+        let alice = "ak:did_core:webvh:QmTwPiXhFdKLBT4AvS2cg4hjiCEdwbmgSTRfhGaEKUVR7P";
+        let bob = "ak:did_core:webvh:QmQa9ZRrF8geZSqUMGGzE9M7uLRvuQyJ7wWRSXN9qsEiLU";
+        let entry = serde_json::from_value::<arkret_sdk::RealmSyncEntry>(serde_json::json!({
+            // A since-join reader may not receive the invite.accept Event that
+            // established its own membership. The current typed roster is the
+            // authoritative projection input in that case.
+            "member_roster": {
+                "entries": [
+                    {"actor_id": alice, "membership": "join"},
+                    {"actor_id": bob, "membership": "join"}
+                ],
+                "limited": false,
+                "next_cursor": "ak:cursor:roster-next"
+            }
+        }))
+        .unwrap();
+        let step = AccountSyncStep::from_updates(
+            "ak:cursor:account".to_owned(),
+            arkret_sdk::SyncUpdates {
+                realm_updates: vec![arkret_sdk::RealmUpdate {
+                    realm_id: realm_id.clone(),
+                    entry,
+                }],
+                malformed_realm_ids: Vec::new(),
+                to_device: Vec::new(),
+                to_device_ack_token: None,
+                to_device_limited: false,
+                to_device_next_cursor: None,
+                to_device_lost: false,
+                device_lists: arkret_sdk::AccountSubscribeDeviceListChanges {
+                    changed_ids: Vec::new(),
+                    left_ids: Vec::new(),
+                },
+                account_data: Vec::new(),
+                notifications: Vec::new(),
+                agent_signer_evidence: Vec::new(),
+                partial: false,
+            },
+        )
+        .unwrap();
+
+        let projection = &step.realm_projections[realm_id.as_str()];
+        assert!(
+            projection.get("member_roster").is_none(),
+            "durable local projection must not retain a competing wire roster shape"
+        );
+        assert_eq!(projection["member_roster_entries_limited"], false);
+        assert_eq!(
+            projection["member_roster_entries_next_cursor"],
+            "ak:cursor:roster-next"
+        );
+        let rows = crate::views::member_display::realm_member_roster(Some(projection));
+        assert_eq!(
+            rows.into_iter().map(|row| row.actor_id).collect::<Vec<_>>(),
+            vec![bob.to_owned(), alice.to_owned()]
+        );
+    }
 
     #[test]
     fn operation_support_comes_only_from_registered_bundle_membership() {
