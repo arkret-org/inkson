@@ -5,7 +5,7 @@ use arkret_models_collaboration::events_payloads::{
     RealmOrganizationRelationship, RealmOrganizationStatus,
 };
 
-use super::{TypedOperationBuilder, did_id, realm_id_value, space_id_value};
+use super::{TypedOperationBuilder, realm_id_value, space_id_value};
 
 /// Build a `ak.space.archive` operation against a container Space. The
 /// Space transitions from `Active` to `Archived`; reversible via
@@ -97,7 +97,7 @@ pub fn realm_organization_statement(
     realm_id: &str,
     actor: &str,
     statement_id: &str,
-    organization_did: &str,
+    organization_id: &arkret_sdk::DidCoreId,
     relationship: RealmOrganizationRelationship,
     status: RealmOrganizationStatus,
     control_scopes: Vec<RealmOrganizationControlScope>,
@@ -146,7 +146,7 @@ pub fn realm_organization_statement(
     let payload = RealmOrganizationPayload {
         statement_id: statement_id.to_owned(),
         realm_id: realm_id_value(realm_id)?,
-        organization_id: did_id(organization_did)?,
+        organization_id: organization_id.clone(),
         relationship,
         status,
         control_scopes,
@@ -164,6 +164,6 @@ pub fn realm_organization_statement(
         TypedOperationBuilder::new::<arkret_sdk::event_spec::RealmOrganization>(
             realm_id, actor, payload,
         )
-        .target_ref(organization_did),
+        .target_ref(organization_id.as_str()),
     )
 }

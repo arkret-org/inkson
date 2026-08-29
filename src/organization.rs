@@ -13,6 +13,7 @@
 //! this module only orchestrates RNG sourcing, secure-key persistence, and the
 //! payload assembly the SDK signs.
 
+use arkret_identifiers::{Did, DidCoreId, project_did_to_core_id};
 use arkret_models_collaboration::events_payloads::{
     RealmOrganizationAuthorization, RealmOrganizationControlScope, RealmOrganizationIssuerRole,
     RealmOrganizationPayload, RealmOrganizationRelationship, RealmOrganizationStatus,
@@ -69,11 +70,11 @@ impl RngCore for GetrandomRng {
 
 impl CryptoRng for GetrandomRng {}
 
-/// Secure-key-store key for the control seed of organization `org_did`.
-fn organization_control_seed_key(org_did: &str) -> String {
+/// Secure-key-store key for the control seed of `organization_id`.
+fn organization_control_seed_key(organization_id: &DidCoreId) -> String {
     format!(
         "{ORGANIZATION_CONTROL_SEED_KEY}.{}",
-        URL_SAFE_NO_PAD.encode(org_did.as_bytes())
+        URL_SAFE_NO_PAD.encode(organization_id.as_str().as_bytes())
     )
 }
 
@@ -83,22 +84,22 @@ fn organization_control_seed_key(org_did: &str) -> String {
 /// device signing seed is persisted.
 pub fn store_organization_control_seed(
     store: &dyn SecureKeyStore,
-    org_did: &str,
+    organization_id: &DidCoreId,
     seed: &[u8; 32],
 ) -> Result<(), SecureKeyStoreError> {
     store.store_secret(
-        &organization_control_seed_key(org_did),
+        &organization_control_seed_key(organization_id),
         &crate::canonical::hex_encode(seed),
     )
 }
 
 /// Reload a previously persisted organization control signing key. Returns
-/// `Ok(None)` when no seed is stored for `org_did` on this device.
+/// `Ok(None)` when no seed is stored for `organization_id` on this device.
 pub fn load_organization_control_key(
     store: &dyn SecureKeyStore,
-    org_did: &str,
+    organization_id: &DidCoreId,
 ) -> Result<Option<SigningKey>, SecureKeyStoreError> {
-    let Some(value) = store.get_secret(&organization_control_seed_key(org_did))? else {
+    let Some(value) = store.get_secret(&organization_control_seed_key(organization_id))? else {
         return Ok(None);
     };
     let bytes = crate::canonical::hex_decode(&value).ok_or_else(|| {
@@ -118,8 +119,10 @@ pub fn load_organization_control_key(
 /// Result of a successful organization mint (D2): the artefacts the caller
 /// persists + displays. The `submit_body` is POSTed to soland to mint the DID.
 pub struct PreparedOrganization {
+    /// Stable identity of the organization principal.
+    pub organization_id: DidCoreId,
     /// The minted organization `did:webvh`.
-    pub did: String,
+    pub did: Did,
     /// 32-byte Ed25519 control seed — caller MUST persist this (it is the
     /// organization's signing authority for relationship statements).
     pub control_seed: [u8; 32],
@@ -137,6 +140,8 @@ pub enum OrganizationError {
     EmptyLocalId,
     #[error("webvh inception failed: {0}")]
     Inception(#[from] arkret_sdk::webvh::WebvhInceptionError),
+    #[error("prepared organization DID is invalid: {0}")]
+    Identifier(#[from] arkret_identifiers::IdentifierError),
 }
 
 /// Build a `did:webvh` inception for a new organization (D2, client side).
@@ -186,9 +191,12 @@ pub fn prepare_organization_inception(
     };
     let mut rng = GetrandomRng;
     let prepared = prepare_service_inception(&mut rng, &input)?;
+    let did = Did::new(prepared.did.clone())?;
+    let organization_id = project_did_to_core_id(&did)?;
 
     let organization = PreparedOrganization {
-        did: prepared.did.clone(),
+        organization_id,
+        did,
         control_seed: prepared.did_key_seed,
         did_key_id: prepared.did_key_id.clone(),
     };
@@ -199,8 +207,10 @@ pub fn prepare_organization_inception(
 pub struct OrganizationStatementInput {
     pub statement_id: String,
     pub realm_id: String,
-    pub organization_did: String,
-    /// Organization control verification method id (`<org_did>#did-key-1`).
+    pub organization_id: DidCoreId,
+    /// Exact resolvable DID whose control method signs this statement.
+    pub did: Did,
+    /// Organization control verification method id (`<did>#did-key-1`).
     pub verification_method: String,
     pub relationship: RealmOrganizationRelationship,
     pub status: RealmOrganizationStatus,
@@ -227,13 +237,15 @@ pub fn sign_organization_statement(
 ) -> anyhow::Result<RealmOrganizationPayload> {
     let realm_id = arkret_sdk::RealmId::new(input.realm_id.trim().to_owned())
         .map_err(|err| anyhow::anyhow!("invalid realm id `{}`: {err}", input.realm_id))?;
-    let organization_id = crate::mls_api_helpers::principal_core_id(&input.organization_did)
-        .map_err(|err| {
-            anyhow::anyhow!(
-                "invalid organization DID `{}`: {err}",
-                input.organization_did
-            )
-        })?;
+    let projected_organization_id = project_did_to_core_id(&input.did)
+        .map_err(|err| anyhow::anyhow!("invalid organization DID `{}`: {err}", input.did))?;
+    if projected_organization_id != input.organization_id {
+        anyhow::bail!(
+            "organization DID `{}` does not project to organization_id `{}`",
+            input.did,
+            input.organization_id
+        );
+    }
 
     if input.control_scopes.is_empty() {
         anyhow::bail!("ak.realm.organization control_scopes must not be empty");
@@ -253,7 +265,7 @@ pub fn sign_organization_statement(
     let payload = RealmOrganizationPayload {
         statement_id: input.statement_id.clone(),
         realm_id,
-        organization_id: organization_id.clone(),
+        organization_id: input.organization_id.clone(),
         relationship: input.relationship,
         status: input.status,
         control_scopes: input.control_scopes.clone(),
@@ -265,7 +277,7 @@ pub fn sign_organization_statement(
         realm_frontier_digest: None,
         organization_policy_ref: None,
         authorization: RealmOrganizationAuthorization {
-            issuer_id: organization_id,
+            issuer_id: input.organization_id.clone(),
             issuer_role: RealmOrganizationIssuerRole::OrganizationPrincipalId,
             verification_method: arkret_sdk::DidUrl::new(input.verification_method.clone())
                 .map_err(anyhow::Error::msg)?,
@@ -288,13 +300,19 @@ mod tests {
     use super::*;
     use crate::secure_key_store::MemorySecureKeyStore;
 
+    fn organization_identity(value: &str) -> (DidCoreId, Did) {
+        let did = Did::new(value.to_owned()).expect("did");
+        let organization_id = project_did_to_core_id(&did).expect("organization id");
+        (organization_id, did)
+    }
+
     #[test]
     fn control_seed_round_trips_through_secure_store() {
         let store = MemorySecureKeyStore::new();
         let seed = [7u8; 32];
-        let org_did = "did:webvh:example.test:webvh:org1";
-        store_organization_control_seed(&store, org_did, &seed).expect("store");
-        let key = load_organization_control_key(&store, org_did)
+        let (organization_id, _) = organization_identity("did:webvh:zOrg1:example.test");
+        store_organization_control_seed(&store, &organization_id, &seed).expect("store");
+        let key = load_organization_control_key(&store, &organization_id)
             .expect("load")
             .expect("present");
         assert_eq!(key.to_bytes(), seed);
@@ -302,8 +320,10 @@ mod tests {
 
     #[test]
     fn control_seed_key_is_org_scoped() {
-        let a = organization_control_seed_key("did:webvh:example.test:webvh:orgA");
-        let b = organization_control_seed_key("did:webvh:example.test:webvh:orgB");
+        let (a_id, _) = organization_identity("did:webvh:zOrgA:example.test");
+        let (b_id, _) = organization_identity("did:webvh:zOrgB:example.test");
+        let a = organization_control_seed_key(&a_id);
+        let b = organization_control_seed_key(&b_id);
         assert_ne!(a, b);
         assert!(a.starts_with(ORGANIZATION_CONTROL_SEED_KEY));
     }
@@ -311,8 +331,9 @@ mod tests {
     #[test]
     fn missing_seed_loads_as_none() {
         let store = MemorySecureKeyStore::new();
+        let (organization_id, _) = organization_identity("did:webvh:zNone:example.test");
         assert!(
-            load_organization_control_key(&store, "did:webvh:example.test:webvh:none")
+            load_organization_control_key(&store, &organization_id)
                 .expect("load")
                 .is_none()
         );
@@ -321,12 +342,13 @@ mod tests {
     #[test]
     fn signed_statement_verifies_with_control_key() {
         let control_key = SigningKey::from_bytes(&[3u8; 32]);
-        let org_did = "did:webvh:example.test:webvh:org1";
+        let (organization_id, did) = organization_identity("did:webvh:zOrg1:example.test");
         let input = OrganizationStatementInput {
             statement_id: "org-stmt-1".to_owned(),
             realm_id: "ak:realm:AVFSR4O2uTcP6zGsyewp0OdaGeDZBXQAUZ9VIEKLSXYo".to_owned(),
-            organization_did: org_did.to_owned(),
-            verification_method: format!("{org_did}#did-key-1"),
+            organization_id,
+            verification_method: format!("{did}#did-key-1"),
+            did,
             relationship: RealmOrganizationRelationship::Owner,
             status: RealmOrganizationStatus::Active,
             control_scopes: vec![RealmOrganizationControlScope::OfficialBadge],
@@ -357,14 +379,35 @@ mod tests {
     #[test]
     fn revoked_without_revokes_id_is_rejected() {
         let control_key = SigningKey::from_bytes(&[9u8; 32]);
-        let org_did = "did:webvh:example.test:webvh:org1";
+        let (organization_id, did) = organization_identity("did:webvh:zOrg1:example.test");
         let input = OrganizationStatementInput {
             statement_id: "org-stmt-2".to_owned(),
             realm_id: "ak:realm:AVFSR4O2uTcP6zGsyewp0OdaGeDZBXQAUZ9VIEKLSXYo".to_owned(),
-            organization_did: org_did.to_owned(),
-            verification_method: format!("{org_did}#did-key-1"),
+            organization_id,
+            verification_method: format!("{did}#did-key-1"),
+            did,
             relationship: RealmOrganizationRelationship::Owner,
             status: RealmOrganizationStatus::Revoked,
+            control_scopes: vec![RealmOrganizationControlScope::OfficialBadge],
+            issued_at: crate::clock::now_utc(),
+            revokes_statement_id: None,
+        };
+        assert!(sign_organization_statement(&input, &control_key).is_err());
+    }
+
+    #[test]
+    fn statement_rejects_mismatched_organization_id_and_did() {
+        let control_key = SigningKey::from_bytes(&[11u8; 32]);
+        let (organization_id, _) = organization_identity("did:webvh:zOrg1:example.test");
+        let (_, did) = organization_identity("did:webvh:zOrg2:example.test");
+        let input = OrganizationStatementInput {
+            statement_id: "org-stmt-3".to_owned(),
+            realm_id: "ak:realm:AVFSR4O2uTcP6zGsyewp0OdaGeDZBXQAUZ9VIEKLSXYo".to_owned(),
+            organization_id,
+            verification_method: format!("{did}#did-key-1"),
+            did,
+            relationship: RealmOrganizationRelationship::Owner,
+            status: RealmOrganizationStatus::Active,
             control_scopes: vec![RealmOrganizationControlScope::OfficialBadge],
             issued_at: crate::clock::now_utc(),
             revokes_statement_id: None,

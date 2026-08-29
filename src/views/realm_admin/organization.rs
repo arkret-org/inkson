@@ -18,6 +18,7 @@
 //! organization-side signatures and does NOT call coauth admin endpoints; this
 //! panel only reads and links operators to where the binding flow lives.
 
+use arkret_identifiers::{Did, DidCoreId};
 use arkret_models_collaboration::events_payloads::{
     RealmOrganizationControlScope, RealmOrganizationRelationship, RealmOrganizationStatus,
 };
@@ -54,10 +55,13 @@ pub fn is_server_admin() -> bool {
 /// SecureKeyStore-adjacent local index of organizations this administrator has
 /// minted on this device. Stored as JSON in the per-account private-data store
 /// so the bind UI can offer a dropdown of already-created organizations. The
-/// control private keys themselves live in the secure key store, keyed by DID.
-#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+/// control private keys themselves live in the secure key store, keyed by the
+/// stable organization id.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct CreatedOrganization {
-    pub did: String,
+    pub organization_id: DidCoreId,
+    /// Exact DID whose controller method is retained for statement proof.
+    pub did: Did,
     /// Organization control verification method id (`<did>#did-key-1`).
     pub did_key_id: String,
     /// Operator-facing label captured at creation time.
@@ -79,14 +83,17 @@ fn load_created_organizations(
         .unwrap_or_default()
 }
 
-/// Append (or replace by DID) a created organization into the per-account index.
+/// Append (or replace by stable id) a created organization into the per-account index.
 fn upsert_created_organization(
     store: &mut crate::state::LocalStateStore,
     principal_id: &str,
     entry: CreatedOrganization,
 ) {
     let mut list = load_created_organizations(store, principal_id);
-    if let Some(existing) = list.iter_mut().find(|item| item.did == entry.did) {
+    if let Some(existing) = list
+        .iter_mut()
+        .find(|item| item.organization_id == entry.organization_id)
+    {
         *existing = entry;
     } else {
         list.push(entry);
@@ -265,11 +272,7 @@ fn dto_from_hint(id: &str) -> OrgRelationshipDto {
 /// Flatten a projection response into the display rows: verified / revoked rows
 /// first, then declared hints.
 fn dtos_from_list(list: &RealmOrganizationRelationshipList) -> Vec<OrgRelationshipDto> {
-    let mut out: Vec<OrgRelationshipDto> = list
-        .realm_organization_relationship_rows
-        .iter()
-        .map(dto_from_row)
-        .collect();
+    let mut out: Vec<OrgRelationshipDto> = list.relationships.iter().map(dto_from_row).collect();
     out.extend(
         list.declared_organization_hint_ids
             .iter()
@@ -504,7 +507,7 @@ fn OrganizationCreatePanel(token: Signal<String>, principal_id: String) -> Eleme
                                     crate::secure_key_store::default_secure_key_store("inkson");
                                 if let Err(err) = store_organization_control_seed(
                                     secure_store.as_ref(),
-                                    &organization.did,
+                                    &organization.organization_id,
                                     &organization.control_seed,
                                 ) {
                                     busy.set(false);
@@ -535,6 +538,9 @@ fn OrganizationCreatePanel(token: Signal<String>, principal_id: String) -> Eleme
                                                 &mut store,
                                                 &principal_id,
                                                 CreatedOrganization {
+                                                    organization_id: organization
+                                                        .organization_id
+                                                        .clone(),
                                                     did: organization.did.clone(),
                                                     did_key_id: organization.did_key_id.clone(),
                                                     display_name: name.clone(),
@@ -625,8 +631,8 @@ fn OrganizationBindPanel(token: Signal<String>, realm_id: String, principal_id: 
                         option { value: "", "Select an organization…" }
                         for org in created() {
                             option {
-                                value: "{org.did}",
-                                "{org.display_name} ({short_protocol_id(&org.did)})"
+                                value: "{org.organization_id}",
+                                "{org.display_name} ({short_protocol_id(org.did.as_str())})"
                             }
                         }
                     }
@@ -712,11 +718,22 @@ fn OrganizationBindPanel(token: Signal<String>, realm_id: String, principal_id: 
                                 let realm_id = realm_id.clone();
                                 let actor = principal_id.clone();
                                 let api_token = token();
-                                let org_did = selected_org().trim().to_owned();
-                                if org_did.is_empty() {
+                                let selected_organization_id = selected_org().trim().to_owned();
+                                if selected_organization_id.is_empty() {
                                     status_msg.set("select an organization first".to_owned());
                                     return;
                                 }
+                                let Some(organization) = created()
+                                    .iter()
+                                    .find(|organization| {
+                                        organization.organization_id.as_str()
+                                            == selected_organization_id
+                                    })
+                                    .cloned()
+                                else {
+                                    status_msg.set("selected organization is unavailable".to_owned());
+                                    return;
+                                };
                                 let Some(relationship_value) = relationship_from_slug(&relationship())
                                 else {
                                     status_msg.set("invalid relationship".to_owned());
@@ -739,16 +756,12 @@ fn OrganizationBindPanel(token: Signal<String>, realm_id: String, principal_id: 
                                 }
                                 // Resolve the organization control verification
                                 // method id + signing key from local storage.
-                                let did_key_id = created()
-                                    .iter()
-                                    .find(|org| org.did == org_did)
-                                    .map(|org| org.did_key_id.clone())
-                                    .unwrap_or_else(|| format!("{org_did}#did-key-1"));
+                                let did_key_id = organization.did_key_id.clone();
                                 let secure_store =
                                     crate::secure_key_store::default_secure_key_store("inkson");
                                 let control_key = match load_organization_control_key(
                                     secure_store.as_ref(),
-                                    &org_did,
+                                    &organization.organization_id,
                                 ) {
                                     Ok(Some(key)) => key,
                                     Ok(None) => {
@@ -776,7 +789,8 @@ fn OrganizationBindPanel(token: Signal<String>, realm_id: String, principal_id: 
                                 let statement_input = OrganizationStatementInput {
                                     statement_id: statement_id.clone(),
                                     realm_id: realm_id.clone(),
-                                    organization_did: org_did.clone(),
+                                    organization_id: organization.organization_id.clone(),
+                                    did: organization.did.clone(),
                                     verification_method: did_key_id.clone(),
                                     relationship: relationship_value,
                                     status: status_value,
@@ -811,7 +825,7 @@ fn OrganizationBindPanel(token: Signal<String>, realm_id: String, principal_id: 
                                         &realm_id,
                                         &actor,
                                         &statement_id,
-                                        &org_did,
+                                        &organization.organization_id,
                                         relationship_value,
                                         status_value,
                                         scopes,

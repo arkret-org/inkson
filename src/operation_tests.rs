@@ -1124,17 +1124,21 @@ mod realm_organization_builder_tests {
 
     const REALM_ID: &str = "ak:realm:AVFSR4O2uTcP6zGsyewp0OdaGeDZBXQAUZ9VIEKLSXYo";
     const ACTOR: &str = "did:web:alice.example";
-    const ORG_DID: &str = "did:webvh:example.test:orgs:org1";
+    const ORGANIZATION_ID: &str = "ak:did_core:webvh:example.test";
     const ORG_VM: &str = "did:webvh:example.test:orgs:org1#k1";
 
     fn signed_at() -> chrono::DateTime<chrono::Utc> {
         chrono::Utc.with_ymd_and_hms(2026, 6, 25, 12, 0, 0).unwrap()
     }
 
+    fn organization_id() -> arkret_sdk::DidCoreId {
+        arkret_sdk::DidCoreId::new(ORGANIZATION_ID.to_owned()).unwrap()
+    }
+
     fn direct_org_auth() -> RealmOrganizationAuthorization {
         // OrganizationPrincipalId is a non-delegated role: no delegation_ref.
         RealmOrganizationAuthorization {
-            issuer_id: crate::mls_api_helpers::principal_core_id(ORG_DID).unwrap(),
+            issuer_id: organization_id(),
             issuer_role: RealmOrganizationIssuerRole::OrganizationPrincipalId,
             verification_method: arkret_sdk::DidUrl::new(ORG_VM).unwrap(),
             delegation_ref: None,
@@ -1170,7 +1174,7 @@ mod realm_organization_builder_tests {
             REALM_ID,
             ACTOR,
             "org-stmt-1",
-            ORG_DID,
+            &organization_id(),
             RealmOrganizationRelationship::Owner,
             RealmOrganizationStatus::Active,
             vec![
@@ -1185,8 +1189,8 @@ mod realm_organization_builder_tests {
         .build("node");
 
         assert_eq!(event.kind().as_str(), "ak.realm.organization");
-        // The statement binds the organization DID, not a Space/Strand id.
-        assert_eq!(event.local_target_ref(), Some(ORG_DID));
+        // The statement and event target bind the stable organization id.
+        assert_eq!(event.local_target_ref(), Some(ORGANIZATION_ID));
         assert_eq!(
             event.payload()["organization_id"],
             "ak:did_core:webvh:example.test"
@@ -1211,7 +1215,7 @@ mod realm_organization_builder_tests {
             REALM_ID,
             ACTOR,
             "org-stmt-gov",
-            ORG_DID,
+            &organization_id(),
             RealmOrganizationRelationship::Governance,
             RealmOrganizationStatus::Active,
             vec![RealmOrganizationControlScope::ModerationPolicy],
@@ -1240,7 +1244,7 @@ mod realm_organization_builder_tests {
             REALM_ID,
             ACTOR,
             "org-stmt-2",
-            ORG_DID,
+            &organization_id(),
             RealmOrganizationRelationship::Owner,
             RealmOrganizationStatus::Revoked,
             vec![RealmOrganizationControlScope::OfficialBadge],
@@ -1262,7 +1266,7 @@ mod realm_organization_builder_tests {
             REALM_ID,
             ACTOR,
             "org-stmt-3",
-            ORG_DID,
+            &organization_id(),
             RealmOrganizationRelationship::Owner,
             RealmOrganizationStatus::Revoked,
             vec![RealmOrganizationControlScope::OfficialBadge],
@@ -1283,7 +1287,7 @@ mod realm_organization_builder_tests {
             REALM_ID,
             ACTOR,
             "org-stmt-4",
-            ORG_DID,
+            &organization_id(),
             RealmOrganizationRelationship::Owner,
             RealmOrganizationStatus::Active,
             vec![RealmOrganizationControlScope::OfficialBadge],
@@ -1306,7 +1310,7 @@ mod realm_organization_builder_tests {
             REALM_ID,
             ACTOR,
             "org-stmt-5",
-            ORG_DID,
+            &organization_id(),
             RealmOrganizationRelationship::Governance,
             RealmOrganizationStatus::Active,
             vec![RealmOrganizationControlScope::ModerationPolicy],
@@ -1327,7 +1331,7 @@ mod realm_organization_builder_tests {
             REALM_ID,
             ACTOR,
             "org-stmt-6",
-            ORG_DID,
+            &organization_id(),
             RealmOrganizationRelationship::Owner,
             RealmOrganizationStatus::Active,
             vec![RealmOrganizationControlScope::OfficialBadge],
@@ -1353,7 +1357,7 @@ mod realm_organization_builder_tests {
             REALM_ID,
             ACTOR,
             "org-stmt-8",
-            ORG_DID,
+            &organization_id(),
             RealmOrganizationRelationship::Owner,
             RealmOrganizationStatus::Active,
             Vec::new(),
