@@ -84,75 +84,42 @@ pub async fn remove_circle_member(
         .map_err(anyhow::Error::from)
 }
 
-/// Archive a Circle by submitting the caller-signed `ak.circle.archive`.
+/// Archive a Circle through the canonical Event submission surface.
 pub async fn archive_circle(
     submitter: &EventSubmitter,
     realm_id: &str,
     actor: &str,
     circle_id: &str,
     reason: Option<&str>,
-) -> anyhow::Result<arkret_sdk::CircleView> {
-    let body = arkret_sdk::CircleArchiveRequestBody {
-        lifecycle_event: circle_lifecycle_submission(
-            submitter,
-            realm_id,
-            actor,
-            circle_id,
-            arkret_sdk::EventKind::CircleArchive,
-            reason,
-        )
-        .await?,
-    };
-    submitter
-        .http()
-        .circle_archive(circle_id, &body)
-        .await
-        .map_err(anyhow::Error::from)
+) -> anyhow::Result<crate::models::SubmitEventResult> {
+    let event = crate::operation::ak_ops::circle_lifecycle(
+        realm_id,
+        actor,
+        circle_id,
+        arkret_sdk::EventKind::CircleArchive,
+        reason,
+    )?
+    .build_sdk_event("inkson")?;
+    submitter.submit_sdk_event(&event).await
 }
 
-/// Restore an archived Circle by submitting the caller-signed `ak.circle.restore`.
+/// Restore an archived Circle through the canonical Event submission surface.
 pub async fn restore_circle(
     submitter: &EventSubmitter,
     realm_id: &str,
     actor: &str,
     circle_id: &str,
     reason: Option<&str>,
-) -> anyhow::Result<arkret_sdk::CircleView> {
-    let body = arkret_sdk::CircleRestoreRequestBody {
-        lifecycle_event: circle_lifecycle_submission(
-            submitter,
-            realm_id,
-            actor,
-            circle_id,
-            arkret_sdk::EventKind::CircleRestore,
-            reason,
-        )
-        .await?,
-    };
-    submitter
-        .http()
-        .circle_restore(circle_id, &body)
-        .await
-        .map_err(anyhow::Error::from)
-}
-
-async fn circle_lifecycle_submission(
-    submitter: &EventSubmitter,
-    realm_id: &str,
-    actor: &str,
-    circle_id: &str,
-    kind: arkret_sdk::EventKind,
-    reason: Option<&str>,
-) -> anyhow::Result<arkret_wire::EventInitialSubmission> {
-    let event =
-        crate::operation::ak_ops::circle_lifecycle(realm_id, actor, circle_id, kind, reason)?
-            .build_sdk_event("inkson")?;
-    Ok(arkret_wire::EventInitialSubmission::online(
-        submitter
-            .author_for_direct_submission(&event)
-            .await?
-            .into_event(),
-    ))
+) -> anyhow::Result<crate::models::SubmitEventResult> {
+    let event = crate::operation::ak_ops::circle_lifecycle(
+        realm_id,
+        actor,
+        circle_id,
+        arkret_sdk::EventKind::CircleRestore,
+        reason,
+    )?
+    .build_sdk_event("inkson")?;
+    submitter.submit_sdk_event(&event).await
 }
 
 pub async fn submit_circle_scope_rotate_unit(

@@ -1091,6 +1091,5 @@ pub use arkret_models_collaboration::objects::media::{
 // fields, non-spec `todos`, wrong outcome shapes) and were removed. The
 // agent surface now uses the SDK's authoritative types
 // (`arkret_sdk::AgentProvisionOutcome` / `AgentList` / `AgentView` /
-// `AgentGrantAttachOutcome` /
 // Sidecar SDK DTOs directly in `views::agents`
 // (via `with_authed_sdk_client`).

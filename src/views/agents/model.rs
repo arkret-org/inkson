@@ -873,8 +873,8 @@ pub fn finish_agent_key_authorization_for_pairing(
     })
 }
 
-/// Expand one preset into a canonical `ak.capability.grant` object for
-/// `ak.self.agent.grant.command.attach.v1`. The agent principal id is the
+/// Expand one preset into a canonical `ak.capability.grant` Event payload.
+/// The agent principal id is the
 /// grant `subject`; `realm_id` scopes it; `expires_at` (RFC3339 Z)
 /// bounds the TTL. This is a separate Realm-scoped grant and is never
 /// materialized by provisioning.

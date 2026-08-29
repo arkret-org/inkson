@@ -1159,34 +1159,6 @@ export async function mockArkretApi(
       });
     }
 
-    const circleLifecycle = url.pathname.match(
-      /^\/_arkret\/self\/circles\/([^/]+)\/(archive|restore|tombstone)$/,
-    );
-    if (circleLifecycle && route.request().method() === "POST") {
-      const [, circleId, action] = circleLifecycle;
-      const state = circleStates.get(circleId);
-      if (!state) {
-        return json(route, { error: { code: "not_found" } }, 404);
-      }
-      if (action === "archive" && state !== "active") {
-        return json(route, { error: { code: "circle_not_active" } }, 412);
-      }
-      if (action === "restore" && state !== "archived") {
-        return json(route, { error: { code: "circle_not_archived" } }, 412);
-      }
-      if (action === "tombstone" && state === "tombstoned") {
-        return json(route, { error: { code: "circle_already_terminal" } }, 412);
-      }
-      const next =
-        action === "archive"
-          ? "archived"
-          : action === "restore"
-            ? "active"
-            : "tombstoned";
-      circleStates.set(circleId, next);
-      return json(route, circleView(circleId));
-    }
-
     if (
       url.pathname === "/_arkret/self/events/frontier" &&
       route.request().method() === "QUERY"
@@ -1593,6 +1565,40 @@ export async function mockArkretApi(
             })
           : [];
       for (const event of submittedEvents) {
+        if (
+          event.kind === "ak.circle.archive" ||
+          event.kind === "ak.circle.restore" ||
+          event.kind === "ak.circle.tombstone"
+        ) {
+          const circleId = event.payload?.target_ref;
+          const state =
+            typeof circleId === "string" ? circleStates.get(circleId) : undefined;
+          if (!state) {
+            return json(route, { error: { code: "not_found" } }, 404);
+          }
+          if (event.kind === "ak.circle.archive" && state !== "active") {
+            return json(route, { error: { code: "circle_not_active" } }, 412);
+          }
+          if (event.kind === "ak.circle.restore" && state !== "archived") {
+            return json(route, { error: { code: "circle_not_archived" } }, 412);
+          }
+          if (event.kind === "ak.circle.tombstone" && state === "tombstoned") {
+            return json(
+              route,
+              { error: { code: "circle_already_terminal" } },
+              412,
+            );
+          }
+          circleStates.set(
+            circleId,
+            event.kind === "ak.circle.archive"
+              ? "archived"
+              : event.kind === "ak.circle.restore"
+                ? "active"
+                : "tombstoned",
+          );
+          continue;
+        }
         if (event.kind === "ak.device.authorize") {
           const payload = event.payload ?? event.content ?? {};
           if (
@@ -3706,30 +3712,6 @@ export async function mockArkretApi(
         pairing_request_id: keyState.pairing_request_id,
         pairing_code: keyState.pairing_code,
         expires_at: keyState.pairing_expires_at,
-      });
-    }
-
-    const agentGrantsMatch = url.pathname.match(
-      /^\/_arkret\/self\/agents\/([^/]+)\/grants$/,
-    );
-    if (agentGrantsMatch && route.request().method() === "POST") {
-      const agentId = decodeURIComponent(agentGrantsMatch[1]);
-      const body = ((await contractRequestBody(route)) ?? {}) as Record<
-        string,
-        unknown
-      >;
-      const grants = personalAgentGrants.get(agentId) ?? [];
-      const grant = {
-        grant_id: `ak:grant:01964137-0000-7000-8000-${String(grants.length + 1).padStart(12, "0")}`,
-        ...(typeof body.grant === "object" && body.grant !== null
-          ? (body.grant as Record<string, unknown>)
-          : {}),
-      };
-      grants.push(grant);
-      personalAgentGrants.set(agentId, grants);
-      return json(route, {
-        ok: true,
-        grant_id: grant.grant_id,
       });
     }
 
