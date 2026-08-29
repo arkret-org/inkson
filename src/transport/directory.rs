@@ -64,10 +64,7 @@ fn list_handles_http_json_base(description: &arkret_sdk::ServiceDescribe) -> any
     let transport = description
         .select_transport_binding(operation, &[arkret_sdk::BindingKind::HttpJson])
         .ok_or_else(|| anyhow::anyhow!("Directory has no usable HTTP/JSON transport"))?;
-    let arkret_sdk::TransportBinding::HttpJson {
-        base_url: base_url, ..
-    } = transport
-    else {
+    let arkret_sdk::TransportBinding::HttpJson { base_url, .. } = transport else {
         anyhow::bail!("Directory selected a non-HTTP/JSON transport");
     };
     Ok(base_url)

@@ -530,7 +530,7 @@ mod tests {
             intended_realm_id: Some(realm_id),
             agent_verification_method: None,
             agent_key_authorize_event_id: None,
-            keypackage_upload_entries: vec![entry.clone()],
+            keypackages: vec![entry.clone()],
             expires_at: None,
             strand_id: None,
             mls_group_id: None,

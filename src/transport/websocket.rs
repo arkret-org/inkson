@@ -56,7 +56,7 @@ impl WebSocketTransportSelector {
             arkret_models_discovery::select_websocket_binding(describe, CLIENT_MAX_FRAME_BYTES)
                 .and_then(|binding| match binding {
                     arkret_models_discovery::TransportBinding::Websocket {
-                        base_url: base_url,
+                        base_url,
                         max_frame_bytes,
                         max_channels,
                         ..

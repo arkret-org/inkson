@@ -183,7 +183,7 @@ impl MlsEndpoints<'_> {
             intended_realm_id: None,
             agent_verification_method: None,
             agent_key_authorize_event_id: None,
-            keypackage_upload_entries: keypackages,
+            keypackages,
             expires_at: None,
             strand_id: None,
             mls_group_id: None,
@@ -219,9 +219,9 @@ impl MlsEndpoints<'_> {
             ))?),
             agent_verification_method: None,
             agent_key_authorize_event_id: None,
-            keypackage_upload_entries: vec![
-                crate::mls_api_helpers::mls_key_package_record_upload_entry(record)?,
-            ],
+            keypackages: vec![crate::mls_api_helpers::mls_key_package_record_upload_entry(
+                record,
+            )?],
             expires_at: None,
             strand_id: None,
             mls_group_id: None,

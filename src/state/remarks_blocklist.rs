@@ -425,7 +425,7 @@ mod tests {
                     "11".repeat(32)
                 ))
                 .unwrap(),
-                frontier_branch_projections: Vec::new(),
+                branches: Vec::new(),
             },
             proof_material: arkret_sdk::MlsGovernanceTypedProofMaterial {
                 seal_descriptors: vec![arkret_sdk::MlsGovernanceSealDescriptor {

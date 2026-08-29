@@ -1178,10 +1178,10 @@ pub(crate) fn seed_test_governance_proof(
                 arkret_sdk::MLS_SECURITY_FRONTIER_REGISTRY_DIGEST,
             )
             .unwrap(),
-            frontier_branch_projections: vec![arkret_sdk::MlsGovernanceFrontierBranchProjection {
+            branches: vec![arkret_sdk::MlsGovernanceFrontierBranchProjection {
                 target_seal_ref: anchor.clone(),
                 state_root: root.clone(),
-                frontier_cell_entries: Vec::new(),
+                cells: Vec::new(),
                 range_witnesses: Vec::new(),
             }],
         },

@@ -21,7 +21,7 @@ fn keypackage_upload_endpoint_signature_is_raw_signature_tuple() {
         intended_realm_id: None,
         agent_verification_method: None,
         agent_key_authorize_event_id: None,
-        keypackage_upload_entries: vec![arkret_sdk::KeyPackageUploadEntry {
+        keypackages: vec![arkret_sdk::KeyPackageUploadEntry {
             keypackage_id: "ak:mls:kp:0196419b-0000-7000-8000-000000000001".to_owned(),
             keypackage_ref:
                 "sha256:1111111111111111111111111111111111111111111111111111111111111111".to_owned(),
