@@ -1011,7 +1011,7 @@ fn queued_mls_admission_round_trips_exact_welcome_material() {
             actor_id: "ak:did_core:web:alice.example".to_owned(),
             device_id: "ak:device:01904100-0000-7000-8000-000000000001".to_owned(),
             proposal_events: vec![proposal],
-            stage: MlsAdmissionStage::WelcomesAuthored,
+            stage: MlsAdmissionStage::WelcomesAcceptedWaitingSeal,
             commit_ingress_receipts: Vec::new(),
             commit_was_duplicate: false,
             welcomes: garth::QueuedMlsWelcomes {
@@ -1034,6 +1034,32 @@ fn queued_mls_admission_round_trips_exact_welcome_material() {
         &queued_record,
         realm_id,
     ));
+    assert!(is_mls_admission_snapshot_finalization_record(
+        garth::SendQueueStatus::Failed,
+        &queued_record,
+    ));
+    assert!(!is_mls_admission_snapshot_finalization_record(
+        garth::SendQueueStatus::Sent,
+        &queued_record,
+    ));
+    let mut finalization_queue = garth::SendQueue::new();
+    finalization_queue
+        .enqueue(
+            Some("mls-finalization".to_owned()),
+            arkret_sdk::RealmId::new(realm_id.to_owned()).unwrap(),
+            queued_record.clone(),
+            Vec::new(),
+        )
+        .unwrap();
+    let snapshot = finalization_queue.snapshot();
+    let unchanged = snapshot.clone();
+    for _ in 0..64 {
+        assert!(mls_outbound_requires_accepted_state_store(&snapshot));
+    }
+    assert_eq!(
+        snapshot, unchanged,
+        "repeated generic-drainer preflights must not claim or reschedule finalization"
+    );
     let Some(PostAcceptAction::MlsAdmission { welcomes, .. }) = decoded.post_accept else {
         panic!("queued admission action was not preserved");
     };

@@ -1126,6 +1126,35 @@ fn is_unfinished_mls_admission_record(
     )
 }
 
+fn is_mls_admission_snapshot_finalization_record(
+    status: garth::SendQueueStatus,
+    record: &QueuedRecord,
+) -> bool {
+    use garth::SendQueueStatus;
+
+    matches!(
+        status,
+        SendQueueStatus::Queued | SendQueueStatus::Sending | SendQueueStatus::Failed
+    ) && matches!(
+        record,
+        QueuedRecord::SdkEvent(queued)
+            if matches!(
+                queued.post_accept.as_ref(),
+                Some(PostAcceptAction::MlsAdmission {
+                    stage: MlsAdmissionStage::WelcomesAcceptedWaitingSeal,
+                    ..
+                })
+            )
+    )
+}
+
+fn mls_outbound_requires_accepted_state_store(snapshot: &garth::SendQueueSnapshot) -> bool {
+    snapshot
+        .items
+        .iter()
+        .any(|item| is_mls_admission_snapshot_finalization_record(item.status, &item.record))
+}
+
 /// Project the holder-local ids of pending chat sends directly from the one
 /// durable Garth queue.
 ///
@@ -1656,6 +1685,7 @@ impl EventSubmitter {
             self.authority()?,
             crate::outbound_store::OutboundLane::MlsDurablePostAccept,
         )?);
+        let has_accepted_state_store = accepted_mls_state_store.is_some();
         let results = OutboundAttemptResults::default();
         let submitter = EventOutboundSubmitter {
             owner: self,
@@ -1666,6 +1696,17 @@ impl EventSubmitter {
         let hook = InksonPostAcceptHook;
         let mut completed = 0usize;
         loop {
+            // The account-sync drainer may advance immutable Commit/Welcome
+            // transport and finality, but it cannot publish the accepted local
+            // snapshot. Yield before the outbound engine claims a finalization
+            // record: claiming it only to return RetryAfter moves retry_at and
+            // can indefinitely stay one step ahead of the UI/store-aware
+            // drainer that is capable of completing the durable transition.
+            if !has_accepted_state_store
+                && mls_outbound_requires_accepted_state_store(&outbound.snapshot().await?)
+            {
+                return Ok(completed);
+            }
             let fence = self.resolve_queue_generation_fence(&outbound).await?;
             match outbound
                 .submit_next_with_fence_and_hook(&submitter, &fence, &hook, chrono::Utc::now())
