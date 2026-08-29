@@ -9,9 +9,7 @@
 //! `ak.account_data.update` actor-private device update. This module is the
 //! single ingestion and lookup point for both paths.
 
-use arkret_models_collaboration::governance::invite_addressing::{
-    InviteDelivery, InviteDeliveryEntry,
-};
+use arkret_models_collaboration::governance::invite_addressing::InviteDelivery;
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 
@@ -26,24 +24,23 @@ pub(crate) const MAX_INVITE_CREDENTIALS: usize = 200;
 /// [`InviteDelivery::SCHEMA`]) into the SDK's strong
 /// [`InviteDeliveryEntry`] type.
 ///
-/// The cell-level schema discriminator must match; entries that fail to
-/// parse or validate carry no credential anyone could rely on, so they are
-/// skipped rather than partially trusted.
+/// The complete cell must decode and validate as the canonical SDK wire type.
+/// Malformed or legacy-shaped cells carry no credential anyone could rely on,
+/// so they fail closed instead of being partially trusted.
 pub(crate) fn invite_delivery_entries_from_cell(
     content: &Value,
 ) -> Vec<(String, StoredInviteCredential)> {
-    if content.get("schema").and_then(Value::as_str) != Some(InviteDelivery::SCHEMA) {
-        return Vec::new();
-    }
-    let Some(entries) = content.get("entries").and_then(Value::as_array) else {
+    let Ok(delivery) = serde_json::from_value::<InviteDelivery>(content.clone()) else {
         return Vec::new();
     };
-    entries
-        .iter()
-        .filter_map(|entry| {
-            let entry = serde_json::from_value::<InviteDeliveryEntry>(entry.clone()).ok()?;
-            entry.validate().ok()?;
-            Some((
+    if delivery.validate().is_err() {
+        return Vec::new();
+    }
+    delivery
+        .delivery_entries
+        .into_iter()
+        .map(|entry| {
+            (
                 entry.invite_id.as_str().to_owned(),
                 StoredInviteCredential {
                     realm_id: entry.realm_id,
@@ -51,7 +48,7 @@ pub(crate) fn invite_delivery_entries_from_cell(
                     expires_at: Some(entry.expires_at),
                     received_at: entry.received_at,
                 },
-            ))
+            )
         })
         .collect()
 }
@@ -155,8 +152,8 @@ mod tests {
     fn cell(entries: Value) -> Value {
         json!({
             "schema": InviteDelivery::SCHEMA,
-            "entries": entries,
-            "updated_at": "2026-08-18T00:00:00.000Z"
+            "updated_at": "2026-08-18T00:00:00.000Z",
+            "delivery_entries": entries
         })
     }
 
@@ -172,23 +169,72 @@ mod tests {
     }
 
     #[test]
-    fn cell_entries_parse_and_skip_malformed_members() {
-        let entries = invite_delivery_entries_from_cell(&cell(json!([
-            entry(
-                INVITE_ID,
-                "ak:invite-token:abc",
-                "2026-08-18T00:00:00.000Z",
-                "2099-08-25T00:00:00.000Z"
-            ),
-            {"invite_id": "", "invite_token": "ak:invite-token:abc"},
-            {"invite_id": INVITE_ID},
-            "not-an-object"
-        ])));
+    fn canonical_account_data_snapshot_decodes_delivery_entries() {
+        let entries = invite_delivery_entries_from_cell(&cell(json!([entry(
+            INVITE_ID,
+            "ak:invite-token:abc",
+            "2026-08-18T00:00:00.000Z",
+            "2099-08-25T00:00:00.000Z"
+        )])));
         assert_eq!(entries.len(), 1);
         let (invite_id, credential) = &entries[0];
         assert_eq!(invite_id, INVITE_ID);
         assert_eq!(credential.invite_token, "ak:invite-token:abc");
         assert_eq!(credential.realm_id.as_str(), REALM_ID);
+    }
+
+    #[test]
+    fn legacy_entries_field_is_not_accepted() {
+        let content = json!({
+            "schema": InviteDelivery::SCHEMA,
+            "updated_at": "2026-08-18T00:00:00.000Z",
+            "entries": [entry(
+                INVITE_ID,
+                "ak:invite-token:legacy",
+                "2026-08-18T00:00:00.000Z",
+                "2099-08-25T00:00:00.000Z"
+            )]
+        });
+
+        assert!(invite_delivery_entries_from_cell(&content).is_empty());
+    }
+
+    #[test]
+    fn live_account_data_update_ingests_canonical_delivery_entries() {
+        let path = std::env::temp_dir().join(format!(
+            "inkson-invite-delivery-{}.json",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let mut store = LocalStateStore::with_path(&path);
+        let message = json!({
+            "kind": arkret_wire::ActorPrivateUpdateKind::ACCOUNT_DATA_UPDATE,
+            "content": {
+                "operation": "put",
+                "account_data_key": arkret_wire::AccountDataKey::ACCOUNT_INVITE_DELIVERY,
+                "revision": 1,
+                "content": cell(json!([entry(
+                    INVITE_ID,
+                    "ak:invite-token:live",
+                    "2026-08-18T00:00:00.000Z",
+                    "2099-08-25T00:00:00.000Z"
+                )])),
+                "updated_at": "2026-08-18T00:00:00.000Z"
+            },
+            "created_at": "2026-08-18T00:00:00.000Z"
+        });
+
+        assert!(store.ingest_invite_delivery_update_message(&message));
+        assert_eq!(
+            store
+                .load()
+                .invite_credential_for(INVITE_ID)
+                .map(|credential| credential.invite_token.as_str()),
+            Some("ak:invite-token:live")
+        );
+        let _ = std::fs::remove_file(path);
     }
 
     #[test]
