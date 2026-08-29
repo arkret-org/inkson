@@ -202,10 +202,14 @@ pub(crate) fn build_mls_keypackage_claim_request(
     target_device_id: Option<&str>,
     mls_group_id: &str,
 ) -> anyhow::Result<arkret_sdk::KeyPackagesClaimRequestBody> {
-    let requester_did = arkret_sdk::Did::new(requester.trim().to_owned())?;
-    let requester_core_id = arkret_sdk::project_did_to_core_id(&requester_did)?;
+    let requester_core_id = principal_core_id(requester)?;
     let signer = crate::event_signer::active_signer()
         .ok_or_else(|| anyhow::anyhow!("KeyPackage claim requires an active device signer"))?;
+    let requester_did = arkret_sdk::Did::new(signer.signer_did().to_owned())?;
+    anyhow::ensure!(
+        arkret_sdk::project_did_to_core_id(&requester_did)? == requester_core_id,
+        "active device signer DID does not project to the KeyPackage claim requester"
+    );
     let verification_method = signer.verification_method_for_principal(&requester_did)?;
     build_mls_keypackage_claim_request_with_requester(
         target_principal_id,

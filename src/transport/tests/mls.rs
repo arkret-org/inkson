@@ -62,7 +62,7 @@ fn keypackage_claim_request_carries_required_capabilities() {
     let body = mls_api_helpers::build_mls_keypackage_claim_request(
         "did:web:alice.example",
         "ak:realm:AZQnaSleDidYaYIvfwYy3au5gnd_DSinxyUHEl7ewtxk",
-        "did:web:bob.example",
+        "ak:did_core:web:bob.example",
         requester_device_id,
         &requester_device_authorize_event_id,
         "ak:did_core:web:source.example",
@@ -75,6 +75,7 @@ fn keypackage_claim_request_carries_required_capabilities() {
 
     let expected = mls_api_helpers::mls_keypackage_claim_required_capabilities().unwrap();
     assert_eq!(body.required_capabilities, expected);
+    assert_eq!(body.requester_id.as_str(), "ak:did_core:web:bob.example");
     assert_eq!(
         body.service_binding.destination_id.as_str(),
         "ak:did_core:web:destination.example"
@@ -106,4 +107,39 @@ fn keypackage_claim_request_carries_required_capabilities() {
     );
     assert_eq!(wire["claim_request_id"], json!("AAAAAAAAAAAAAAAAAAAAAA"));
     assert!(wire.get("claim_nonce").is_none());
+}
+
+#[test]
+fn keypackage_claim_request_rejects_cross_principal_signer() {
+    let signer = std::sync::Arc::new(
+        crate::event_signer::build_ed25519_signer_with_verification_method(
+            [45u8; 32],
+            "did:web:bob.example",
+            "did:web:bob.example#device",
+        ),
+    );
+    let _guard = crate::event_signer::ActiveSignerTestGuard::replace(Some(signer));
+    let requester_device_authorize_event_id =
+        arkret_sdk::EventId::new("ak:event:AR4gvLBB1qlq1zRAQHvDYQrKit2SLLNUPBG8C1idlQAc").unwrap();
+
+    let error = mls_api_helpers::build_mls_keypackage_claim_request(
+        "ak:did_core:web:alice.example",
+        "ak:realm:AZQnaSleDidYaYIvfwYy3au5gnd_DSinxyUHEl7ewtxk",
+        "ak:did_core:web:mallory.example",
+        "ak:device:0196419b-0000-7000-8000-000000000002",
+        &requester_device_authorize_event_id,
+        "ak:did_core:web:source.example",
+        "ak:did_core:web:destination.example",
+        "AAAAAAAAAAAAAAAAAAAAAA",
+        Some("ak:device:0196419b-0000-7000-8000-000000000001"),
+        "mls-group-1",
+    )
+    .expect_err("a signer for another principal must be rejected");
+
+    assert!(
+        error
+            .to_string()
+            .contains("does not project to the KeyPackage claim requester"),
+        "unexpected error: {error}"
+    );
 }
