@@ -261,7 +261,7 @@ pub(crate) fn user_facing_error_key(error: &anyhow::Error) -> Option<&'static st
 /// envelope carries a policy-shaped code, dispatch a
 /// a policy-denial toast so the global feedback host picks
 /// it up without each call site needing to wire its own UI. The
-/// obligations array (per `authz/policy-server.md` §3) is pulled from
+/// obligations array is pulled from
 /// the envelope's `details["obligations"]` slot if present.
 pub fn decode_arkret_error(status: StatusCode, bytes: &[u8]) -> ErrorEnvelope {
     let envelope = if let Ok(plain) = serde_json::from_slice::<ErrorEnvelope>(bytes) {

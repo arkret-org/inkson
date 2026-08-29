@@ -71,9 +71,8 @@ pub fn moderation_report(
 }
 
 /// Derive the `request_canonical_digest` the `moderation_decision_payload`
-/// schema mandates (JCS SHA-256, `sha256:<64hex>`). inkson's reviewer
-/// workbench seals decisions directly — there is no upstream Policy Server
-/// request to hash — so the binding is a deterministic canonical digest
+/// schema mandates (JCS SHA-256, `sha256:<64hex>`). The reviewer workbench
+/// seals decisions directly, so the binding is a deterministic canonical digest
 /// over the moderated target preview. It is stable and reproducible for
 /// the exact `target_ref` being sealed.
 fn decision_request_digest(target_ref: &str) -> anyhow::Result<arkret_sdk::Hash> {

@@ -414,7 +414,7 @@ fn InvitePolicySettingsCardBody(
 
             // ── denied_subject_ids ─────────────────────────────────────────
             if let Some(server_constraints) = constraints.read().as_ref() {
-                div { class: "settings-subsection", "data-testid": "invite-policy-server-caps",
+                div { class: "settings-subsection", "data-testid": "invite-policy-caps",
                     strong { class: "settings-subsection-title", {tr("invite_policy.server_caps_title")} }
                     {
                         let lines = constraints_lines(server_constraints);
