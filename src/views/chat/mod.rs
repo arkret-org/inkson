@@ -40,6 +40,15 @@ mod timeline;
 mod timeline_surface;
 
 const PRESENCE_HEARTBEAT_SECS: u64 = 25;
+const PRESENCE_STARTUP_RETRY_SECS: u64 = 2;
+
+fn presence_heartbeat_delay_secs(heartbeat_tick: u64) -> u64 {
+    if heartbeat_tick == 0 {
+        PRESENCE_STARTUP_RETRY_SECS
+    } else {
+        PRESENCE_HEARTBEAT_SECS
+    }
+}
 
 #[derive(serde::Serialize)]
 struct AcceptedChatMessageOperation<'a> {

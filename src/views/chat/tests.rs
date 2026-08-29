@@ -4490,6 +4490,13 @@ fn presence_projection_refresh_key_changes_without_a_cursor_advance() {
 }
 
 #[test]
+fn presence_retries_once_after_mount_then_uses_the_normal_refresh_cadence() {
+    assert_eq!(presence_heartbeat_delay_secs(0), 2);
+    assert_eq!(presence_heartbeat_delay_secs(1), 25);
+    assert_eq!(presence_heartbeat_delay_secs(u64::MAX), 25);
+}
+
+#[test]
 fn presence_maps_from_sync_events_aggregates_live_device_envelopes() {
     let now = chrono::Utc::now();
     let participants = vec![

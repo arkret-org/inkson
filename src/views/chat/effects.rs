@@ -352,8 +352,13 @@ pub(super) fn ChatEffects(
                     },
                 )
                 .await;
+                // The Signal rail is intentionally cursorless and has no
+                // catch-up. Repeat the first presence announcement quickly so
+                // a subscriber reconnect racing this page mount does not stay
+                // offline until the normal 25-second refresh; subsequent
+                // announcements keep the normative 20-25 second cadence.
                 crate::runtime_helpers::sleep_for(std::time::Duration::from_secs(
-                    PRESENCE_HEARTBEAT_SECS,
+                    presence_heartbeat_delay_secs(heartbeat_tick),
                 ))
                 .await;
                 let next_tick = (*presence_heartbeat_tick.peek()).wrapping_add(1);
