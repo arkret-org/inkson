@@ -273,7 +273,7 @@ fn resolve_principal_authoring_generation_from_keys(
             }
             Ok(PrincipalGenerationResolution::Active(AuthoringGeneration {
                 authority_model: AuthoringAuthorityModel::AcceptedDevice,
-                authority_principal_id: arkret_sdk::DidCoreId::new(principal_id.to_owned())?,
+                authority_principal_id: principal,
                 generation_ref: generation.current_device_generation_ref.to_string(),
             }))
         }
@@ -324,6 +324,66 @@ impl OutboundGenerationFence for ResolvedQueueGenerationFence {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn active_generation_projects_a_resolvable_principal_did_to_its_core_id() {
+        let principal_did = "did:webvh:QmR4AHvRgux4GsojV8fkDVxjHWsJkFqDnV6SFCwDRGCE8u:soland.local.host%3A23452:webvh:01a04bf8-ad5b-7165-9691-45793fe99362";
+        let principal = crate::mls_api_helpers::principal_core_id(principal_did).unwrap();
+        let device =
+            arkret_sdk::DeviceId::new("ak:device:0196419b-0000-7000-8000-000000000001".to_owned())
+                .unwrap();
+        let record: arkret_models_crypto::QueryDeviceRecord = serde_json::from_value(
+            serde_json::json!({
+                "algorithms": {},
+                "trust_algorithms": [],
+                "device_projection_attestation": {
+                    "attestation": {
+                        "principal_id": principal.as_str(),
+                        "principal_server_id": principal.as_str(),
+                        "device_id": device.as_str(),
+                        "device_signing_key_did": "did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuVkhY7g94pVQyG98x",
+                        "hpke_key": "hpke-1",
+                        "device_authorize_event_id": "ak:event:AfAnsJqSlM9bHVI7P1QBMOEW3p5P1PNQu7BBMpiSnD_e",
+                        "authorized_generation_ref": 7,
+                        "device_status": "active",
+                        "attested_at": "2026-08-15T00:00:00.000Z",
+                        "expires_at": "2026-08-15T00:10:00.000Z"
+                    },
+                    "proof": {
+                        "verification_method": "did:webvh:fixture:ps.example#signing-1",
+                        "created_at": "2026-08-15T00:00:00.000Z",
+                        "jws": "c2ln"
+                    }
+                }
+            }),
+        )
+        .unwrap();
+        let outcome = arkret_models_crypto::KeysQueryOutcome {
+            device_keys: BTreeMap::from([(
+                principal.clone(),
+                BTreeMap::from([(device.clone(), record)]),
+            )]),
+            failures: Vec::new(),
+            device_generations: BTreeMap::from([(
+                principal.clone(),
+                arkret_models_crypto::DeviceGenerationState {
+                    current_device_generation_ref: 7,
+                    device_generation_status: arkret_models_crypto::DeviceGenerationStatus::Active,
+                },
+            )]),
+        };
+
+        let resolution = resolve_principal_authoring_generation_from_keys(
+            &outcome,
+            principal_did,
+            device.as_str(),
+        )
+        .unwrap();
+        let PrincipalGenerationResolution::Active(generation) = resolution else {
+            panic!("active projection must resolve an authoring generation");
+        };
+        assert_eq!(generation.authority_principal_id, principal);
+    }
 
     #[test]
     fn managed_generation_binds_controller_generation_and_delegation() {
