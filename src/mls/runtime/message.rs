@@ -1030,7 +1030,7 @@ fn welcome_consume_candidate(
 /// the durable barrier. The KeyPackage identity state supplies the exact Leaf
 /// signing key; transport session identity is deliberately not used as the
 /// pairwise actor authority.
-pub(crate) fn sign_welcome_consume_request(
+fn build_welcome_consume_request(
     secure_store: &dyn SecureKeyStore,
     authority: &PrincipalAuthorityKey,
     device_id: &DeviceId,
@@ -1153,6 +1153,117 @@ pub(crate) fn sign_welcome_consume_request(
             receipt,
         )
         .map_err(|error| format!("sign KeyPackage consume request: {error}"))
+}
+
+fn validate_cached_welcome_consume_request(
+    request: &arkret_sdk::KeyPackagesConsumeRequestBody,
+    candidate: &WelcomeConsumeCandidate,
+) -> Result<(), String> {
+    request
+        .validate_shape()
+        .map_err(|error| format!("invalid cached KeyPackage consume request: {error}"))?;
+    let receipt = &request.recipient_durable_receipt;
+    let expected_realm =
+        arkret_sdk::RealmId::new(candidate.realm_id.clone()).map_err(|error| error.to_string())?;
+    let expected_welcome = arkret_sdk::EventId::new(candidate.welcome_event_id.clone())
+        .map_err(|error| error.to_string())?;
+    let same_binding = request.claim_id.as_str() == candidate.claim_id
+        && receipt.claim_request_id == candidate.claim_request_id
+        && receipt.key_package_ref.as_str() == candidate.key_package_id
+        && receipt.recipient_principal_id == candidate.recipient_principal_id
+        && receipt.recipient_id == candidate.recipient_id
+        && receipt.realm_id == expected_realm
+        && receipt.mls_group_id.as_str() == candidate.mls_group_id
+        && receipt.mls_epoch == candidate.epoch
+        && receipt.welcome_ref == expected_welcome
+        && receipt.welcome_digest == candidate.welcome_digest;
+    let same_recipient = match (&candidate.recipient, &receipt.recipient) {
+        (
+            arkret_sdk::MlsWelcomeRecipient::Device {
+                recipient_device_id: expected,
+            },
+            arkret_sdk::RecipientMlsDurableSigner::Device {
+                recipient_device_id: actual,
+                device_verification_method,
+            },
+        ) => {
+            expected == actual
+                && device_verification_method
+                    .as_str()
+                    .rsplit_once('#')
+                    .is_some_and(|(_, fragment)| fragment == expected.as_str())
+        }
+        (
+            arkret_sdk::MlsWelcomeRecipient::MinimalMetadataPairwise {
+                recipient_pairwise_actor_id: expected_actor,
+                recipient_pairwise_verification_method: expected_method,
+            },
+            arkret_sdk::RecipientMlsDurableSigner::MinimalMetadataPairwise {
+                recipient_pairwise_verification_method: actual_method,
+            },
+        ) => {
+            expected_actor == &candidate.recipient_principal_id && expected_method == actual_method
+        }
+        (arkret_sdk::MlsWelcomeRecipient::NativeAgent { .. }, _) => false,
+        _ => false,
+    };
+    if !same_binding || !same_recipient {
+        return Err(format!(
+            "cached KeyPackage consume request conflicts with Welcome claim_id={}",
+            candidate.claim_id
+        ));
+    }
+    Ok(())
+}
+
+/// Return the first durably persisted signed consume body for this claim.
+///
+/// `durable_at` is intentionally minted only once. Welcome redelivery (or an
+/// uncertain first POST outcome followed by restart) must reuse the exact body,
+/// signatures included, because the service rejects changed-content replay for
+/// the same `claim_id`.
+pub(crate) async fn sign_welcome_consume_request(
+    secure_store: &dyn SecureKeyStore,
+    authority: &PrincipalAuthorityKey,
+    device_id: &DeviceId,
+    candidate: &WelcomeConsumeCandidate,
+) -> Result<arkret_sdk::KeyPackagesConsumeRequestBody, String> {
+    static CONSUME_REQUEST_CREATE_LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> =
+        std::sync::OnceLock::new();
+    let _guard = CONSUME_REQUEST_CREATE_LOCK
+        .get_or_init(|| tokio::sync::Mutex::new(()))
+        .lock()
+        .await;
+    let cache_key =
+        super::mls_key_package_consume_request_key(authority, device_id, &candidate.claim_id)
+            .map_err(|error| format!("derive KeyPackage consume request cache key: {error}"))?;
+    if let Some(cached) = secure_store
+        .get_secret_bytes(&cache_key)
+        .map_err(|error| format!("load cached KeyPackage consume request: {error}"))?
+    {
+        let request =
+            serde_json::from_slice::<arkret_sdk::KeyPackagesConsumeRequestBody>(cached.as_slice())
+                .map_err(|error| format!("decode cached KeyPackage consume request: {error}"))?;
+        validate_cached_welcome_consume_request(&request, candidate)?;
+        return Ok(request);
+    }
+
+    let request = build_welcome_consume_request(secure_store, authority, device_id, candidate)?;
+    let canonical = arkret_sdk::canonical::canonical_json_bytes(&request)
+        .map_err(|error| format!("encode KeyPackage consume request for replay: {error}"))?;
+    secure_store
+        .store_secret_bytes_durable(&cache_key, &canonical)
+        .await
+        .map_err(|error| format!("persist KeyPackage consume request for replay: {error}"))?;
+    let landed = secure_store
+        .get_secret_bytes(&cache_key)
+        .map_err(|error| format!("reload persisted KeyPackage consume request: {error}"))?
+        .ok_or_else(|| "persisted KeyPackage consume request could not be reloaded".to_owned())?;
+    let landed =
+        serde_json::from_slice::<arkret_sdk::KeyPackagesConsumeRequestBody>(landed.as_slice())
+            .map_err(|error| format!("decode persisted KeyPackage consume request: {error}"))?;
+    validate_cached_welcome_consume_request(&landed, candidate)?;
+    Ok(landed)
 }
 
 pub(crate) fn accepted_welcome_consume_candidates(

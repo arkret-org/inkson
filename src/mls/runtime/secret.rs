@@ -19,6 +19,7 @@ const ACCOUNT_MLS_SECRET_VERIFIED_MARKER: &str = "verified";
 pub const ACCOUNT_MLS_SECRET_CURRENT_VERSION: u32 = 1;
 const ACCOUNT_MLS_SECRET_MAX_SCAN_VERSION: u32 = 32;
 const MLS_KEY_PACKAGE_IDENTITY_STATE_PREFIX: &str = "inkson.mls_key_package.identity_state.v1";
+const MLS_KEY_PACKAGE_CONSUME_REQUEST_PREFIX: &str = "inkson.mls_key_package.consume_request.v1";
 const MLS_KEY_PACKAGE_INVENTORY_PREFIX: &str = "inkson.mls_key_package.inventory.v1";
 const MLS_PAIRWISE_KEY_PACKAGE_PUBLISH_MARKER_PREFIX: &str =
     "inkson.mls_key_package.pairwise_publish_marker.v1";
@@ -295,6 +296,24 @@ pub fn mls_key_package_identity_state_key(
     let key_package = secure_key_component(key_package, "key_package_id")?;
     Ok(format!(
         "{MLS_KEY_PACKAGE_IDENTITY_STATE_PREFIX}.{scope}.{key_package}"
+    ))
+}
+
+/// Durable exact-replay slot for one KeyPackage claim's signed consume body.
+///
+/// The service's idempotency key is `claim_id`: once a consume body has been
+/// accepted, changing even `durable_at` makes a later delivery a conflicting
+/// request. Keep the first signed body scoped to the exact account and device
+/// so Welcome redelivery can resend identical canonical bytes after restart.
+pub(crate) fn mls_key_package_consume_request_key(
+    authority: &PrincipalAuthorityKey,
+    device_id: &DeviceId,
+    claim_id: &str,
+) -> Result<String, SecureKeyStoreError> {
+    let scope = account_device_storage_suffix(authority, device_id)?;
+    let claim = secure_key_component(claim_id, "claim_id")?;
+    Ok(format!(
+        "{MLS_KEY_PACKAGE_CONSUME_REQUEST_PREFIX}.{scope}.{claim}"
     ))
 }
 

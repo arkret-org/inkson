@@ -224,6 +224,7 @@ pub(crate) fn is_wasm_indexeddb_required_secret_key(key: &str) -> bool {
         || key.starts_with("inkson.mls_snapshot.account_secret.")
         || key.starts_with("inkson_mls_account_secret")
         || key.starts_with("inkson.mls_key_package.identity_state.")
+        || key.starts_with("inkson.mls_key_package.consume_request.")
         || key.starts_with("coauth.session_credential.")
         || key == "auth.dpop.device_key.v1"
         || key.ends_with(".auth.dpop.device_key.v1")

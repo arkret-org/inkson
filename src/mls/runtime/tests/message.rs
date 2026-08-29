@@ -1175,6 +1175,82 @@ fn malformed_welcome_is_counted_not_swallowed() {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
+#[tokio::test(flavor = "current_thread")]
+async fn welcome_consume_redelivery_reuses_exact_signed_body_and_rejects_drift() {
+    let store = MemorySecureKeyStore::new();
+    let actor_did = "did:web:alice.example";
+    let authority = test_authority(actor_did);
+    let device = test_device("ak:device:01904100-0000-7000-8000-000000000001");
+    let identity = arkret_sdk::ArkretMlsIdentity::new_test_human_device(
+        authority.principal_id.clone(),
+        device.clone(),
+    )
+    .unwrap();
+    let key_package = identity.key_package_record().unwrap();
+    store_mls_key_package_identity_state(
+        &store,
+        &authority,
+        &device,
+        &key_package.keypackage_id,
+        &identity.export_private_state().unwrap(),
+    )
+    .unwrap();
+    let verification_method = format!("{actor_did}#{}", device.as_str());
+    let signer = std::sync::Arc::new(
+        crate::event_signer::build_ed25519_signer_with_verification_method(
+            [19u8; 32],
+            actor_did,
+            verification_method,
+        ),
+    );
+    let _signer_guard = crate::event_signer::ActiveSignerTestGuard::replace(Some(signer));
+    let candidate = WelcomeConsumeCandidate {
+        key_package_id: key_package.keypackage_id,
+        claim_id: "claim-exact-replay".to_owned(),
+        claim_request_id: arkret_sdk::Base64UrlString::new("Y2xhaW0tcmVxdWVzdA").unwrap(),
+        recipient_principal_id: authority.principal_id.clone(),
+        recipient: arkret_sdk::MlsWelcomeRecipient::Device {
+            recipient_device_id: device.clone(),
+        },
+        recipient_id: authority.principal_id.clone(),
+        welcome_event_id: "ak:event:ARELvWOpF6BRrks3DlbQy-9XIE6aAQQumDQp7fA4ApeM".to_owned(),
+        realm_id: "ak:realm:AYlS_mnxn8_f65A0YrWEeLzd0F1vnM347xZzMSQEcrlz".to_owned(),
+        strand_id: None,
+        mls_group_id: "mls-group-exact-replay".to_owned(),
+        epoch: 1,
+        welcome_digest: arkret_sdk::Hash::new(
+            "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+        )
+        .unwrap(),
+    };
+
+    let first = sign_welcome_consume_request(&store, &authority, &device, &candidate)
+        .await
+        .unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+    let replay = sign_welcome_consume_request(&store, &authority, &device, &candidate)
+        .await
+        .unwrap();
+    assert_eq!(
+        arkret_sdk::canonical::canonical_json_bytes(&first).unwrap(),
+        arkret_sdk::canonical::canonical_json_bytes(&replay).unwrap(),
+        "Welcome redelivery must reuse durable_at and both exact signatures"
+    );
+    assert_eq!(
+        first.recipient_durable_receipt.signature.sig,
+        replay.recipient_durable_receipt.signature.sig
+    );
+    assert_eq!(first.signature.sig, replay.signature.sig);
+
+    let mut drifted = candidate;
+    drifted.epoch += 1;
+    let error = sign_welcome_consume_request(&store, &authority, &device, &drifted)
+        .await
+        .unwrap_err();
+    assert!(error.contains("conflicts with Welcome claim_id=claim-exact-replay"));
+}
+
+#[cfg(not(target_arch = "wasm32"))]
 #[test]
 fn retired_direct_welcome_envelope_does_not_persist_snapshot_or_consume_keypackage_state() {
     let mut state = temp_state_store("welcome-keypackage-state");

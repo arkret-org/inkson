@@ -1220,7 +1220,8 @@ pub(crate) async fn bootstrap_mls_welcome_for_realm(
             &authority,
             &device_id,
             &candidate,
-        )?;
+        )
+        .await?;
         let key_package_id = candidate.key_package_id.clone();
         let consume = crate::transport::auth::with_endpoint_clients(
             &base_url,
