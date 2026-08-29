@@ -674,6 +674,17 @@ pub(super) fn wire_backup_kind(kind: BackupRotationKind) -> &'static str {
     }
 }
 
+fn signer_did_for_principal(signer_did: &str, principal: &arkret_sdk::DidCoreId) -> Result<Did> {
+    let signer_did = Did::new(signer_did.to_owned())?;
+    let signer_principal = arkret_sdk::project_did_to_core_id(&signer_did)?;
+    if &signer_principal != principal {
+        return Err(anyhow!(
+            "active device signer DID does not project to the key-backup actor"
+        ));
+    }
+    Ok(signer_did)
+}
+
 pub(super) fn build_active_series_event(
     principal_control_realm_id: &arkret_sdk::RealmId,
     actor_id: &str,
@@ -686,8 +697,8 @@ pub(super) fn build_active_series_event(
 ) -> Result<crate::operation::LocalOperation> {
     let signer = crate::event_signer::active_signer()
         .ok_or_else(|| anyhow!("active device signer is required"))?;
-    let principal_did = Did::new(actor_id.to_owned())?;
     let principal = crate::mls_api_helpers::principal_core_id(actor_id)?;
+    let principal_did = signer_did_for_principal(signer.signer_did(), &principal)?;
     let verification_method = signer.verification_method_for_principal(&principal_did)?;
     let backup_kind = match kind {
         BackupRotationKind::SecretStorage => BackupKind::SecretStorage,
@@ -794,6 +805,35 @@ fn backup_ref(body: &Value) -> Result<BackupObjectRef> {
 #[cfg(test)]
 mod rotation_resume_tests {
     use super::*;
+
+    #[test]
+    fn active_series_actor_core_uses_the_bound_full_signer_did() {
+        let principal_did =
+            Did::new("did:webvh:z6mkfixture:principal.example:webvh:1".to_owned()).unwrap();
+        let principal = arkret_sdk::project_did_to_core_id(&principal_did).unwrap();
+
+        let resolved = signer_did_for_principal(principal_did.as_str(), &principal).unwrap();
+
+        assert_eq!(resolved, principal_did);
+    }
+
+    #[test]
+    fn active_series_actor_rejects_a_signer_for_another_principal() {
+        let principal = arkret_sdk::project_did_to_core_id(
+            &Did::new("did:webvh:z6mkfixture:principal.example:webvh:1".to_owned()).unwrap(),
+        )
+        .unwrap();
+
+        let error =
+            signer_did_for_principal("did:webvh:z6mkother:principal.example:webvh:2", &principal)
+                .unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("does not project to the key-backup actor")
+        );
+    }
 
     #[tokio::test]
     async fn pending_rotation_index_round_trips_and_clears() {
