@@ -465,6 +465,7 @@ mod petname_tests {
             peer_host_id: None,
             continuity_evidence: None,
             direct_conversation: None,
+            peer_host_resolution: None,
             contact_agent_projections: Vec::new(),
         }
     }

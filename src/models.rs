@@ -667,7 +667,7 @@ mod tests {
                     "binding_event_ref": "ak:event:AQmnyvvBmKOWOEOSD2rAYsVBQn6vJ_wdbdUY8CKUGB5c",
                     "state": "found"
                 },
-                "contact_agent_projections": [{
+                "contact_agents": [{
                     "agent_id": "ak:did_core:web:agents.example:bob-helper",
                     "controller_id": "ak:did_core:web:bob.example",
                     "display_name": "Bob Helper",
@@ -797,6 +797,7 @@ mod tests {
             peer_host_id: None,
             continuity_evidence: None,
             direct_conversation: None,
+            peer_host_resolution: None,
             contact_agent_projections: Vec::new(),
         };
         assert!(super::contact_grants_me_invite(&row));

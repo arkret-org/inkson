@@ -1736,7 +1736,7 @@ mod tests {
         let outcome: arkret_sdk::AgentParticipationOutcome = serde_json::from_value(json!({
             "ok": true,
             "agent_id": "ak:did_core:web:agent.example",
-            "agent_participation_entries": [{
+            "participation_entries": [{
                 "target_scope": scope,
                 "selection": {
                     "reply_message": true,

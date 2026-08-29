@@ -864,6 +864,7 @@ mod tests {
                     .unwrap(),
                     state: arkret_sdk::DirectConversationSummaryState::Found,
                 }),
+                peer_host_resolution: None,
                 contact_agent_projections: Vec::new(),
             }
         }

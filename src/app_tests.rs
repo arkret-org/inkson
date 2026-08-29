@@ -66,7 +66,7 @@ fn direct_route_resolves_agent_peer_independently_of_reply_participation() {
             "granted_to_peer_scopes": ["direct_message"],
             "granted_by_peer_scopes": ["direct_message"],
             "bidirectional_scopes": ["direct_message"],
-            "contact_agent_projections": [{
+            "contact_agents": [{
                 "agent_id": "ak:did_core:web:example.com:agents:aa",
                 "controller_id": "ak:did_core:web:example.com:users:alice",
                 "agent_slug": "aa",
