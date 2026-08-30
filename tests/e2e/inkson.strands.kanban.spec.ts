@@ -251,6 +251,70 @@ test("kanban submits canonical card-create events", async ({ page }) => {
   );
 });
 
+test("card create receipt survives opening the optimistic card", async ({
+  page,
+}) => {
+  await openKanban(page);
+
+  let releaseCardCreate: (() => void) | undefined;
+  const cardCreateGate = new Promise<void>((resolve) => {
+    releaseCardCreate = resolve;
+  });
+  let submittedCard: Record<string, any> | undefined;
+  let observeCardCreate: (() => void) | undefined;
+  const cardCreateObserved = new Promise<void>((resolve) => {
+    observeCardCreate = resolve;
+  });
+  await page.route("**/_arkret/self/events", async (route) => {
+    const request = route.request();
+    if (request.method() !== "POST") {
+      await route.fallback();
+      return;
+    }
+    const event = submittedEvent(request.postDataJSON());
+    if (
+      event?.kind === "ak.strand.create" &&
+      event?.payload?.object?.metadata?.title === "Route-safe card"
+    ) {
+      submittedCard = event;
+      observeCardCreate?.();
+      await cardCreateGate;
+    }
+    await route.fallback();
+  });
+
+  await page.getByTestId("add-card-button").first().click();
+  await page.getByTestId("new-card-title-input").fill("Route-safe card");
+  await page.getByTestId("save-card-button").click();
+  await cardCreateObserved;
+
+  const optimisticCard = page
+    .getByTestId("kanban-card")
+    .filter({ hasText: "Route-safe card" });
+  await expect(optimisticCard).toHaveAttribute("data-card-draft", "true");
+  await optimisticCard.click();
+  const detail = page.getByTestId("card-detail-modal");
+  await expect(detail).toBeVisible();
+  await expect(detail.getByTestId("card-discussion-pending-target")).toHaveCount(
+    1,
+  );
+
+  const eventId = submittedCard?.event_id;
+  expect(eventId).toMatch(/^ak:event:/);
+  const strandId = eventId.replace(/^ak:event:/, "ak:strand:");
+  releaseCardCreate?.();
+
+  await expect(detail.getByTestId("card-fields").locator("dd").first()).toHaveAttribute(
+    "title",
+    strandId,
+  );
+  await detail.getByTestId("card-detail-tab-discussion").click();
+  await expect(detail.getByTestId("card-discussion-pending-target")).toHaveCount(
+    0,
+  );
+  await expect(detail.getByTestId("chat-panel")).toBeVisible();
+});
+
 test("kanban board selector swaps projected board columns", async ({
   page,
 }) => {

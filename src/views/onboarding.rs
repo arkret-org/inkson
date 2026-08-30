@@ -939,10 +939,10 @@ fn DeviceSetupRequired(
         div { class: "event onboarding-card", "data-testid": "device-setup-required",
             h2 { "Authorize this device" }
             p { class: "muted",
-                "This account is already linked, but this browser has no currently accepted device key. Create an approval request and scan it from an authorized device."
+                "This account is already linked, but this browser has no currently accepted device key. Generate a pairing QR code or link, then scan or open it on an already-authorized device."
             }
             p { class: "muted",
-                "The account login alone cannot authorize a new device. No session was issued."
+                "This server-mediated flow does not send a notification or open a prompt on your other devices. Login alone cannot authorize a new device, and no session was issued."
             }
             if handoff.as_ref().is_some_and(|handoff| handoff.bound_principal_id.is_some()) {
                 Button {
@@ -955,24 +955,23 @@ fn DeviceSetupRequired(
                             return;
                         };
                         pairing_busy.set(true);
-                        pairing_status.set("Creating a device approval request…".to_owned());
+                        pairing_status.set("Generating a device pairing QR code…".to_owned());
                         spawn(async move {
                             match stage_device_setup_pairing(&handoff).await {
                                 Ok(request) => {
                                     pairing_request.set(Some(request));
                                     pairing_status.set(
-                                        "Approval request created. Compare the code on your authorized device before approving."
+                                        "Pairing QR code created. Nothing was sent automatically: scan or open it on an authorized device, then compare the code before approving."
                                             .to_owned(),
                                     );
                                 }
-                                Err(error) => pairing_status.set(format!(
-                                    "Could not create the device approval request: {error}"
-                                )),
+                                Err(error) => pairing_status
+                                    .set(format!("Could not generate the device pairing QR: {error}")),
                             }
                             pairing_busy.set(false);
                         });
                     },
-                    if pairing_busy() { "Preparing…" } else { "Request device approval" }
+                    if pairing_busy() { "Preparing…" } else { "Generate pairing QR" }
                 }
             } else {
                 p { class: "error", "The bound-account handoff is incomplete. No device flow was started." }
@@ -989,8 +988,8 @@ fn DeviceSetupRequired(
                 QrSharePanel {
                     qr_svg,
                     url: request.deep_link.clone(),
-                    qr_aria_label: "Device approval QR code".to_owned(),
-                    url_aria_label: "Device approval link".to_owned(),
+                    qr_aria_label: "Device pairing QR code".to_owned(),
+                    url_aria_label: "Device pairing link".to_owned(),
                     qr_test_id: "device-setup-pairing-qr".to_owned(),
                     url_test_id: "device-setup-pairing-link".to_owned(),
                     copy_test_id: "device-setup-pairing-copy".to_owned(),
@@ -1006,11 +1005,11 @@ fn DeviceSetupRequired(
                             return;
                         };
                         let Some(request) = pairing_request.read().clone() else {
-                            pairing_status.set("Create an approval request first.".to_owned());
+                            pairing_status.set("Generate a pairing QR first.".to_owned());
                             return;
                         };
                         pairing_busy.set(true);
-                        pairing_status.set("Checking device approval…".to_owned());
+                        pairing_status.set("Checking device authorization…".to_owned());
                         spawn(async move {
                             match check_device_setup_pairing(&handoff, &request).await {
                                 Ok(arkret_sdk::DevicePairingState::Authorized) => {
@@ -1024,25 +1023,25 @@ fn DeviceSetupRequired(
                                 }
                                 Ok(arkret_sdk::DevicePairingState::PendingAuthorization) => {
                                     pairing_status.set(
-                                        "Still waiting for explicit approval on an authorized device."
+                                        "Still waiting. Scan or open the pairing QR/link on an authorized device; this flow does not send an automatic prompt."
                                             .to_owned(),
                                     );
                                 }
                                 Ok(arkret_sdk::DevicePairingState::Expired) => {
                                     pairing_request.set(None);
                                     pairing_status.set(
-                                        "This approval request expired. Create a new request."
+                                        "This pairing request expired. Generate a new pairing QR."
                                             .to_owned(),
                                     );
                                 }
                                 Err(error) => pairing_status.set(format!(
-                                    "Device approval could not be verified: {error}"
+                                    "Device authorization could not be verified: {error}"
                                 )),
                             }
                             pairing_busy.set(false);
                         });
                     },
-                    if pairing_busy() { "Checking…" } else { "Check approval status" }
+                    if pairing_busy() { "Checking…" } else { "Check authorization status" }
                 }
             }
             if !pairing_status().is_empty() {

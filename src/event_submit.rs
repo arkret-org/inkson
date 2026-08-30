@@ -1204,6 +1204,33 @@ fn completed_outbound_result(item: &garth::SendQueueItem) -> SubmitEventResult {
     }
 }
 
+/// Join a durable outbound receipt back to the optimistic operation that
+/// authored it.
+///
+/// The queue may reach `Sent` after the HTTP request was accepted but before
+/// the component-owned future that initiated it gets to process the response.
+/// `local_operation_id` is the stable holder-local identity across retries and
+/// CAS re-authoring, while `remote_event_id` is the content-bound identity the
+/// server assigned. Replaying this join from the durable queue makes receipt
+/// reconciliation restart-safe and independent of the originating UI scope.
+fn reconcile_sent_outbound_item(
+    state_store: &mut crate::state::LocalStateStore,
+    item: &garth::SendQueueItem,
+) -> bool {
+    if item.status != garth::SendQueueStatus::Sent {
+        return false;
+    }
+    let Some(event_id) = item.remote_event_id.as_ref() else {
+        return false;
+    };
+    state_store.update_raw_operation_write_state(
+        &item.local_operation_id,
+        "accepted",
+        Some(event_id.to_string()),
+        None,
+    )
+}
+
 fn outbound_store_lane(
     intent: &EventIntent,
     durable_post_accept: bool,
@@ -1625,6 +1652,19 @@ impl EventSubmitter {
             self.authority()?,
             crate::outbound_store::OutboundLane::Standard,
         )?);
+        // A previous UI task can be dropped after Garth durably records the
+        // ingress receipt but before the caller updates its optimistic row.
+        // Sent items are terminal and will not be submitted again, so replay
+        // their stable local-operation -> Event-id join before draining active
+        // work. This also repairs rows left queued across a browser restart.
+        if let Some(state_store) = self.state_store.as_ref() {
+            let snapshot = outbound.snapshot().await?;
+            state_store.write(|store| {
+                for item in &snapshot.items {
+                    reconcile_sent_outbound_item(store, item);
+                }
+            });
+        }
         let results = OutboundAttemptResults::default();
         let submitter = EventOutboundSubmitter {
             owner: self,
@@ -1639,7 +1679,12 @@ impl EventSubmitter {
                 .submit_next_with_fence(&submitter, &fence, chrono::Utc::now())
                 .await?
             {
-                OutboundEngineOutcome::Accepted(_) | OutboundEngineOutcome::Duplicate(_) => {
+                OutboundEngineOutcome::Accepted(item) | OutboundEngineOutcome::Duplicate(item) => {
+                    if let Some(state_store) = self.state_store.as_ref() {
+                        state_store.write(|store| {
+                            reconcile_sent_outbound_item(store, &item);
+                        });
+                    }
                     completed = completed.saturating_add(1);
                 }
                 OutboundEngineOutcome::Superseded { .. } => continue,

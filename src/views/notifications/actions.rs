@@ -8,33 +8,14 @@ use std::collections::BTreeMap;
 use dioxus::prelude::*;
 
 use super::model::{
-    JoinedRealmIds, UiNotification, UiNotificationAction, append_invite_notifications,
-    apply_sync_projection_to_store, drop_joined_invite_notifications,
-    hydrate_notifications_with_privacy_gate, merge_invite_notifications,
-    notification_id_for_dedupe, raw_notifications_from_sources, read_cursor_targets,
+    JoinedRealmIds, UiNotification, UiNotificationAction, apply_notification_snapshot_to_store,
+    apply_sync_projection_to_store, hydrate_notifications_with_privacy_gate,
+    notification_id_for_dedupe, read_cursor_targets,
 };
-use crate::api_error::is_auth_expired_error;
 use crate::notification_rules::{dnd_settings_from_account_data, push_rules_from_account_data};
 use crate::state::LocalStateStore;
-use crate::transport::TransportClient;
 use crate::transport::auth::{with_authed_api, with_event_submitter};
 use crate::views::helpers::short_protocol_id;
-
-pub(crate) async fn optional_invite_notifications(
-    api: &TransportClient,
-) -> anyhow::Result<Vec<arkret_models_collaboration::governance::operation_wire::Invite>> {
-    match async { crate::transport::account::invites(&api.sdk_http_client()?).await }.await {
-        Ok(response) => Ok(response.invites),
-        Err(error) if is_auth_expired_error(&error) => Err(error),
-        Err(error) => {
-            tracing::debug!(
-                ?error,
-                "notification refresh could not load invite notifications"
-            );
-            Ok(Vec::new())
-        }
-    }
-}
 
 pub(crate) fn refresh_notifications(
     base_url: String,
@@ -48,29 +29,18 @@ pub(crate) fn refresh_notifications(
         let session_credential = session_credential();
         match with_authed_api(&base_url, session_credential, |api| async move {
             let http = api.sdk_http_client()?;
-            let response = crate::client_core::account_subscribe_snapshot(&http, None).await?;
-            let invite_notifications = optional_invite_notifications(&api).await?;
-            Ok::<_, anyhow::Error>((response, invite_notifications))
+            crate::client_core::account_subscribe_snapshot(&http, None).await
         })
         .await
         {
-            Ok((response, invite_notifications)) => {
+            Ok(response) => {
                 let principal_id = state_store.read().active_principal_id().unwrap_or_default();
                 let push_rules =
                     push_rules_from_account_data(&authority, &response.updates.account_data);
                 let account_dnd =
                     dnd_settings_from_account_data(&authority, &response.updates.account_data);
-                let mut raw_notifications = raw_notifications_from_sources(
-                    Some(&response.updates.notifications),
-                    &response.updates.account_data,
-                );
                 let joined_realms =
                     JoinedRealmIds::from_realm_entries(&response.realm_entries, &principal_id);
-                merge_invite_notifications(
-                    &mut raw_notifications,
-                    invite_notifications,
-                    &joined_realms,
-                );
                 let inbox_states =
                     crate::account_data::notification_inbox_states_from_account_data_events(
                         &authority,
@@ -78,8 +48,8 @@ pub(crate) fn refresh_notifications(
                     );
                 let hydrated = {
                     let mut store = state_store.write();
-                    store.ingest_to_device_messages(&response.updates.to_device);
-                    store.save_notification_projection(raw_notifications.clone());
+                    let raw_notifications =
+                        apply_notification_snapshot_to_store(&mut store, &response, &joined_realms);
                     apply_notification_inbox_states(&mut store, &inbox_states);
                     let local_state = store.load();
                     let effective_dnd = local_state
@@ -520,24 +490,11 @@ fn accept_invite_notification(
                 Ok(http) => crate::client_core::account_subscribe_snapshot(&http, None).await,
                 Err(error) => Err(error),
             };
-            let invite_notifications = optional_invite_notifications(&read_api).await?;
-            Ok::<_, anyhow::Error>((
-                sync,
-                invite_notifications,
-                accepted_title,
-                delivery_cell,
-                checkpoint_error,
-            ))
+            Ok::<_, anyhow::Error>((sync, accepted_title, delivery_cell, checkpoint_error))
         })
         .await
         {
-            Ok((
-                Ok(sync),
-                invite_notifications,
-                accepted_title,
-                delivery_cell,
-                checkpoint_error,
-            )) => {
+            Ok((Ok(sync), accepted_title, delivery_cell, checkpoint_error)) => {
                 let principal_id = state_store.read().active_principal_id().unwrap_or_default();
                 let push_rules =
                     push_rules_from_account_data(&authority, &sync.updates.account_data);
@@ -558,23 +515,6 @@ fn accept_invite_notification(
                     realm_title_hints.insert(accepted_realm.clone(), title.to_owned());
                 }
 
-                let mut raw_notifications = raw_notifications_from_sources(
-                    Some(&sync.updates.notifications),
-                    &sync.updates.account_data,
-                );
-                drop_joined_invite_notifications(&mut raw_notifications, &hidden_realms);
-                append_invite_notifications(
-                    &mut raw_notifications,
-                    invite_notifications,
-                    &hidden_realms,
-                );
-                if raw_notifications.iter().all(|notification| {
-                    notification_id_for_dedupe(notification).as_deref() != Some(&notification_id)
-                }) {
-                    state_store
-                        .write()
-                        .set_notification_archived(notification_id.clone(), true);
-                }
                 let hydrated = {
                     let mut store = state_store.write();
                     if let Some(content) = &delivery_cell {
@@ -583,7 +523,14 @@ fn accept_invite_notification(
                         store.save_invite_delivery_cell(content);
                     }
                     apply_sync_projection_to_store(&mut store, &sync, &realm_title_hints);
-                    store.save_notification_projection(raw_notifications.clone());
+                    let raw_notifications =
+                        apply_notification_snapshot_to_store(&mut store, &sync, &hidden_realms);
+                    if raw_notifications.iter().all(|notification| {
+                        notification_id_for_dedupe(notification).as_deref()
+                            != Some(&notification_id)
+                    }) {
+                        store.set_notification_archived(notification_id.clone(), true);
+                    }
                     let local_state = store.load();
                     let effective_dnd = local_state
                         .notification_dnd_settings

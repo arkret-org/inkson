@@ -2011,9 +2011,9 @@ pub(crate) fn mls_admission_candidate_realms_for_actor(
     store: &LocalStateStore,
     actor_id: &str,
 ) -> Vec<(String, String)> {
-    let Some(actor_id) = principal_core_key(actor_id) else {
+    if principal_core_key(actor_id).is_none() {
         return Vec::new();
-    };
+    }
     let state = store.load();
     let mut realm_ids = BTreeSet::<String>::new();
     for realm_id in state.realm_tree_projections.keys() {
@@ -2038,14 +2038,9 @@ pub(crate) fn mls_admission_candidate_realms_for_actor(
                 // Event IDs before the canonical binding is submitted.
                 && !realm_projection_is_direct_conversation(store, realm_id)
         })
-        .filter_map(|realm_id| {
+        .map(|realm_id| {
             let joined_sig = admission_joined_member_signature_for_realm(store, &realm_id);
-            let other_joined = joined_sig
-                .split(',')
-                .map(str::trim)
-                .filter(|did| !did.is_empty())
-                .any(|did| did != actor_id);
-            other_joined.then_some((realm_id, joined_sig))
+            (realm_id, joined_sig)
         })
         .collect()
 }
@@ -2070,6 +2065,47 @@ pub(crate) struct MlsAdmissionReconcileOutcome {
     pub deferred: usize,
 }
 
+fn cache_exact_accepted_realm_mls_genesis(
+    store: &mut LocalStateStore,
+    realm_id: &str,
+    accepted_events: &[arkret_sdk::Event],
+) -> anyhow::Result<()> {
+    let snapshot = store
+        .mls_snapshot_for(realm_id)
+        .ok_or_else(|| anyhow::anyhow!("MLS admission requires a local Realm group snapshot"))?;
+    let matching = accepted_events
+        .iter()
+        .filter(|event| {
+            event.realm_id.as_str() == realm_id
+                && event.kind.as_str() == event_kind_str::MLS_GENESIS
+                && matches!(
+                    &event.scope_ref,
+                    arkret_sdk::ScopeRef::Realm { realm_id: scope_realm }
+                        if scope_realm.as_str() == realm_id
+                )
+                && event.payload.get("epoch").and_then(Value::as_u64) == Some(0)
+                && event.payload.get("mls_group_id").and_then(Value::as_str)
+                    == Some(snapshot.group_id.as_str())
+        })
+        .collect::<Vec<_>>();
+    anyhow::ensure!(
+        matching.len() == 1,
+        "MLS admission requires exactly one accepted Realm Genesis for the local group; found {}",
+        matching.len()
+    );
+    let accepted_genesis = serde_json::to_value(matching[0])?;
+    let mut projection = store
+        .load()
+        .realm_tree_projections
+        .get(realm_id)
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("MLS admission requires the accepted Realm projection"))?;
+    if crate::realm_tree::replace_realm_projection_mls_genesis(&mut projection, accepted_genesis) {
+        store.save_realm_tree_projection(realm_id.to_owned(), projection);
+    }
+    Ok(())
+}
+
 pub(crate) async fn reconcile_mls_admissions_for_realm(
     api: &crate::transport::TransportClient,
     mut state_store: SyncSignal<LocalStateStore>,
@@ -2084,6 +2120,26 @@ pub(crate) async fn reconcile_mls_admissions_for_realm(
         account.principal_id().as_str() == actor_id && account.device_id.as_str() == device_id,
         "MLS admission reconcile identity does not match the active account"
     );
+    // The account projection is intentionally bounded and may expose the new
+    // member count before it carries the exact `ak.invite.accept` Event. It is
+    // therefore only a wake-up hint, never negative membership evidence. Read
+    // the complete accepted Realm history before deciding that there is no
+    // admission work; otherwise a temporarily absent projection row creates a
+    // permanent pre-filter deadlock and no later Welcome can ever be authored.
+    let accepted_events = api
+        .event_submitter()?
+        .backfill(&realm_id)
+        .await?
+        .complete_events("MLS admission membership reconciliation")?;
+    {
+        let mut store = state_store.write();
+        crate::sync_engine::ingest_membership_projection_events(
+            &mut store,
+            &realm_id,
+            &accepted_events,
+        );
+        cache_exact_accepted_realm_mls_genesis(&mut store, &realm_id, &accepted_events)?;
+    }
     // Only Realms this device can admit into: holding MLS state ⇒ able to build
     // the commit + Welcome. Without a snapshot we are not an admit-capable
     // member and have nothing to reconcile.

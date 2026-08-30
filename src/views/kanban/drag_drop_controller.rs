@@ -505,11 +505,15 @@ pub(super) fn submit_kanban_card_create(
             return;
         }
     };
-    state_store.write().enqueue_local_projection_command(
-        op_id.clone(),
-        Some(realm_id.clone()),
-        record,
-    );
+    // Persist the optimistic create before starting the request. The user can
+    // open this card immediately, which changes the route and may unmount the
+    // Kanban component before a component-scoped projector effect gets a turn.
+    // A durable row is also the reconciliation target for the detached submit
+    // task below, so neither projection nor receipt handling depends on the
+    // lifetime of this event-handler scope.
+    state_store
+        .write()
+        .upsert_raw_operation(op_id.clone(), Some(realm_id.clone()), record);
     board_status.set(format!(
         "submitting {wire_kind} event {}",
         short_protocol_id(&op_id)
@@ -520,12 +524,24 @@ pub(super) fn submit_kanban_card_create(
     let kind_for_record = kind.to_owned();
     let op_for_track = op_id.clone();
     let submit_event = event;
-    spawn(async move {
-        match with_authed_api(&base_url, api_token, |api| async move {
-            api.event_submitter()?.submit_sdk_event(&submit_event).await
+    // Opening the optimistic card changes `/board/<id>` to
+    // `/board/<id>/task/<local-id>`. A normal `spawn` is owned by the current
+    // Kanban scope and is cancelled when that route transition unmounts it. In
+    // the failure window the POST can already be accepted while the response
+    // is never reconciled, leaving the local UUID permanently queued. Keep the
+    // request at the root and capture only the app-owned state store across the
+    // await; component-owned Signals such as `board_status` must not cross this
+    // lifetime boundary.
+    let submit_state_store = crate::app::runtime_adapter::state_store_handle(state_store);
+    dioxus::core::spawn_forever(async move {
+        let result = with_authed_api(&base_url, api_token, |api| async move {
+            api.event_submitter()?
+                .with_state_store(submit_state_store)
+                .submit_sdk_event(&submit_event)
+                .await
         })
-        .await
-        {
+        .await;
+        match result {
             Ok(resp) => {
                 state_store.write().update_raw_operation_write_state(
                     &op_for_track,
@@ -543,26 +559,27 @@ pub(super) fn submit_kanban_card_create(
                     None,
                     Some(seal_for_record),
                 );
-                board_status.set(format!(
-                    "{kind_for_record} event {} accepted by server; pending seal (event_id={})",
-                    short_protocol_id(&op_for_track),
-                    short_protocol_id(&resp.event_id)
-                ));
+                tracing::debug!(
+                    operation_id = %short_protocol_id(&op_for_track),
+                    event_id = %short_protocol_id(&resp.event_id),
+                    kind = %kind_for_record,
+                    "detached kanban card create accepted"
+                );
             }
             Err(err) => {
+                let error = err.display().to_string();
                 tracing::warn!(
                     operation_id = %short_protocol_id(&op_for_track),
                     kind = %kind_for_record,
-                    error = %err.display(),
+                    error,
                     "kanban submit failed; card quarantined",
                 );
                 state_store.write().update_raw_operation_write_state(
                     &op_for_track,
                     "quarantined",
                     None,
-                    Some(err.display().to_string()),
+                    Some(error),
                 );
-                board_status.set(format!("quarantined event: {}", err.display()));
             }
         }
     });

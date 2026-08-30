@@ -18,15 +18,15 @@ use crate::notification_rules::{
 };
 #[cfg(test)]
 pub(crate) use crate::state::projection::notifications::actor_is_joined_member;
+#[cfg(test)]
+pub(crate) use crate::state::projection::notifications::raw_notifications_from_sources;
 // Notification wire-payload projection primitives now live in the sync
 // projection layer (`projection::notifications`, YGN-ARCH-01 step 3). They
 // are re-exported here so the notification view's other call sites and the
 // crate-level `views::notifications::*` re-export keep resolving unchanged.
 pub(crate) use crate::state::projection::notifications::{
-    JoinedRealmIds, append_invite_notifications, default_notification_title,
-    drop_joined_invite_notifications, invite_notification_target_for_dedupe,
-    merge_invite_notifications, notification_id_for_dedupe, notification_kind_wire,
-    raw_notifications_from_sources,
+    JoinedRealmIds, default_notification_title, invite_notification_target_for_dedupe,
+    notification_id_for_dedupe, notification_kind_wire,
 };
 use crate::state::{ClientLocalState, LocalStateStore, StoredNotification};
 
@@ -137,6 +137,27 @@ pub(crate) fn apply_sync_projection_to_store(
         store.merge_realm_seal_view_from_sync_body(id, body);
         store.ingest_move_event_states(id, body);
     }
+}
+
+/// Fold an account snapshot into the same durable notification projection the
+/// live sync engine uses. In particular, to-device invite delivery is ingested
+/// before typed Realm membership performs the final stale-invite pruning.
+pub(crate) fn apply_notification_snapshot_to_store(
+    store: &mut LocalStateStore,
+    response: &AccountSyncStep,
+    joined_realms: &JoinedRealmIds,
+) -> Vec<StoredNotification> {
+    store.ingest_to_device_messages(&response.updates.to_device);
+    let mut notifications = store.notification_projection();
+    crate::state::projection::notifications::apply_notification_projection(
+        &mut notifications,
+        &response.updates.notifications,
+        &response.updates.account_data,
+        true,
+        joined_realms,
+    );
+    store.save_notification_projection(notifications.clone());
+    notifications
 }
 
 #[cfg(test)]

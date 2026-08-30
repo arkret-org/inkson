@@ -111,6 +111,64 @@ fn queued_event_rejects_pre_generation_shape() {
 }
 
 #[test]
+fn durable_sent_item_repairs_optimistic_operation_by_local_id() {
+    let local_operation_id = "0196419b-0000-7000-8000-000000000001";
+    let remote_event_id = fixture_event_id("ak:event:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19");
+    let realm_id = arkret_sdk::RealmId::new(
+        "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19".to_owned(),
+    )
+    .unwrap();
+    let intent = EventIntent::from_authored(&sdk_event_without_proof("did:web:alice.example"));
+    let queued = QueuedSdkEvent::unauthored(
+        fixture_queued_intent(intent),
+        local_operation_id.to_owned(),
+        "immutable-attempt-id".to_owned(),
+        None,
+        test_authoring_generation(),
+        None,
+    )
+    .unwrap();
+    let mut queue = garth::SendQueue::new();
+    let mut sent = queue
+        .enqueue(
+            Some("immutable-attempt-id".to_owned()),
+            realm_id,
+            QueuedRecord::SdkEvent(Box::new(queued)),
+            Vec::new(),
+        )
+        .unwrap();
+    // A CAS re-author can change the queue transaction id, but the holder-local
+    // operation id remains the join key for the optimistic row.
+    sent.local_operation_id = local_operation_id.to_owned();
+    sent.status = garth::SendQueueStatus::Sent;
+    sent.remote_event_id = Some(remote_event_id.clone());
+
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let path = std::env::temp_dir().join(format!(
+        "inkson-event-submit-receipt-reconcile-{stamp}.json"
+    ));
+    let mut store = crate::state::LocalStateStore::with_path(path);
+    store.upsert_raw_operation(
+        local_operation_id,
+        None,
+        json!({"kind": "ak.strand.create", "write_state": "queued"}),
+    );
+
+    assert!(reconcile_sent_outbound_item(&mut store, &sent));
+    let state = store.load();
+    let operation = state
+        .raw_operations
+        .iter()
+        .find(|operation| operation.operation_id == local_operation_id)
+        .expect("optimistic operation remains addressable by its local id");
+    assert_eq!(operation.payload["write_state"], "accepted");
+    assert_eq!(operation.payload["event_id"], remote_event_id.as_str());
+}
+
+#[test]
 fn scheduled_dispatch_crash_retry_preserves_exact_signed_event_bytes() {
     let event: arkret_sdk::Event = serde_json::from_value(json!({
         "event_id": "ak:event:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",

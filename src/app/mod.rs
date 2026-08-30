@@ -217,10 +217,15 @@ const DXC_BUTTON_STYLE: &str = yoface::ui::button::BUTTON_CSS;
 pub fn App() -> Element {
     ensure_default_push_token_provider();
     use_hook(crate::notification_sound::initialize_notification_audio);
-    // Runtime adapters can be invoked by long-lived tasks while Dioxus has the
-    // root app scope on its stack. Own the shared store at that common ancestor
-    // so those reads/writes cannot outlive an `AppBootstrap` route scope.
-    let state_store = use_signal_sync(LocalStateStore::default);
+    // Detached submission tasks run in Dioxus' runtime root (`ScopeId::ROOT`),
+    // which is the parent of this component's hook scope. A normal
+    // `use_signal_sync` would therefore be owned by a child scope while those
+    // longer-lived tasks read and write it, triggering CopyValue lifetime
+    // warnings and making hot-reload/remount writes unsafe. Keep hook-stable
+    // construction, but assign the Signal itself to the runtime root so every
+    // component and detached task is its descendant.
+    let state_store =
+        use_hook(|| SyncSignal::new_maybe_sync_in_scope(LocalStateStore::default(), ScopeId::ROOT));
     use_context_provider(|| AppStateStore(state_store));
     rsx! {
         web_leader::WebLeaderGate {}
@@ -1480,7 +1485,6 @@ fn AppBootstrap() -> Element {
                         mls_admission_reconcile_pending,
                         last_error,
                         mls_admission_diag_last,
-                        realm_events_route_enabled,
                         selected_realm_id,
                         device_queue,
                         mls_welcome_bootstrap_key_seen,

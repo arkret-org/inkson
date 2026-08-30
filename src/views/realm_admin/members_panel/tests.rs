@@ -362,8 +362,8 @@ fn joined_member_signature_lists_only_joined_members_sorted() {
     );
 
     // Only `join` members, deduped and sorted — `bob` (invite) is excluded
-    // so an outstanding invite never triggers an admission attempt, and the
-    // signature is stable regardless of projection ordering.
+    // because local intent never grants membership. Admission scheduling is
+    // deliberately independent and still reads canonical accepted history.
     assert_eq!(
         joined_member_signature_for_realm(&store, realm_id),
         "ak:did_core:web:alice.example,ak:did_core:web:carol.example"
@@ -618,10 +618,10 @@ fn projected_member_profiles_promote_invite_accept_to_join_from_raw_operations()
 }
 
 #[test]
-fn queued_invite_accept_does_not_promote_join_or_trigger_admission() {
+fn queued_invite_accept_does_not_promote_join_but_realm_remains_reconcilable() {
     let realm_id = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
     let invite_id = "ak:invite:AbrgMKK4KXMpRsGsFrsEQEsjo207metUd4zt8yjzB-UH";
-    let mut store = temp_store("queued-invite-accept-no-admission");
+    let mut store = temp_store("queued-invite-accept-reconcilable");
     store.save_realm_tree_projection(
         realm_id.to_owned(),
         serde_json::json!({
@@ -670,7 +670,13 @@ fn queued_invite_accept_does_not_promote_join_or_trigger_admission() {
         profile.actor_id == "ak:did_core:web:bob.example"
             && profile.membership.as_deref() == Some("invite")
     }));
-    assert!(mls_admission_candidate_realms_for_actor(&store, "did:web:alice.example").is_empty());
+    let candidates = mls_admission_candidate_realms_for_actor(&store, "did:web:alice.example");
+    assert_eq!(candidates.len(), 1);
+    assert_eq!(candidates[0].0, realm_id);
+    assert_eq!(
+        candidates[0].1, "ak:did_core:web:alice.example",
+        "queued local intent is not accepted membership, while the Realm is still inspected so canonical history can close the gap"
+    );
 }
 
 #[test]

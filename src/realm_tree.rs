@@ -323,27 +323,113 @@ pub(crate) fn realm_projection_is_principal_control(body: &Value) -> bool {
     realm_projection_control_purpose(body).is_some()
 }
 
-/// Resolve the Realm's immutable content scheme from the accepted MLS Genesis.
-/// `state_after` represents the timeline-end state and therefore precedes the
-/// current `state` container. Materialized fields and the create event are only
-/// pre-Genesis authoring fallbacks; mutable policy state never selects the MLS
-/// content wire scheme.
-pub(crate) fn realm_projection_content_scheme(body: &Value) -> Option<String> {
-    let genesis_scheme = projected_state_event_values(body)
-        .filter(|event| {
+/// Resolve the exact immutable group binding from one accepted MLS Genesis.
+/// Both fields are read from the same signed Event so a partial projection can
+/// never splice an optimistic `content_scheme` together with an unrelated
+/// materialized `durability_policy`.
+pub(crate) fn realm_projection_group_genesis_binding(
+    body: &Value,
+) -> Option<arkret_sdk::MlsGroupGenesisBinding> {
+    let mut resolved = None;
+    for event in projected_state_event_values(body).filter(|event| {
+        event
+            .get("kind")
+            .or_else(|| event.get("type"))
+            .and_then(Value::as_str)
+            == Some(event_kind_str::MLS_GENESIS)
+    }) {
+        let binding = event
+            .pointer("/payload/governance_binding")
+            .or_else(|| event.pointer("/content/governance_binding"))?;
+        let content_scheme = serde_json::from_value::<arkret_wire::ContentScheme>(
+            binding.get("content_scheme")?.clone(),
+        )
+        .ok()?;
+        let durability_policy = match binding
+            .get("durability_policy")
+            .filter(|value| !value.is_null())
+        {
+            Some(value) => {
+                Some(serde_json::from_value::<arkret_wire::DurabilityPolicy>(value.clone()).ok()?)
+            }
+            None => None,
+        };
+        let candidate = arkret_sdk::MlsGroupGenesisBinding {
+            content_scheme,
+            durability_policy,
+        };
+        candidate.validate().ok()?;
+        match resolved.as_ref() {
+            Some(current) if current != &candidate => return None,
+            Some(_) => {}
+            None => resolved = Some(candidate),
+        }
+    }
+    resolved
+}
+
+/// Replace only the cached MLS Genesis carrier with the exact canonical Event
+/// obtained from a complete accepted-history read. Genesis is immutable, so a
+/// stale or optimistic copy is not compatibility state and must not survive.
+pub(crate) fn replace_realm_projection_mls_genesis(
+    body: &mut Value,
+    accepted_genesis: Value,
+) -> bool {
+    let before = body.clone();
+    let Some(object) = body.as_object_mut() else {
+        return false;
+    };
+    for container_name in ["state_after", "state"] {
+        let Some(events) = object
+            .get_mut(container_name)
+            .and_then(|container| container.get_mut("events"))
+            .and_then(Value::as_array_mut)
+        else {
+            continue;
+        };
+        events.retain(|event| {
             event
                 .get("kind")
                 .or_else(|| event.get("type"))
                 .and_then(Value::as_str)
-                == Some(event_kind_str::MLS_GENESIS)
-        })
-        .find_map(|event| {
-            non_empty_string(event.pointer("/payload/governance_binding/content_scheme")).or_else(
-                || non_empty_string(event.pointer("/content/governance_binding/content_scheme")),
-            )
+                != Some(event_kind_str::MLS_GENESIS)
         });
-    if genesis_scheme.is_some() {
-        return genesis_scheme;
+    }
+    let state = object
+        .entry("state")
+        .or_insert_with(|| serde_json::json!({"events": []}));
+    if !state.is_object() {
+        *state = serde_json::json!({"events": []});
+    }
+    let state_object = state
+        .as_object_mut()
+        .expect("state was replaced with a JSON object");
+    let events = state_object
+        .entry("events")
+        .or_insert_with(|| Value::Array(Vec::new()));
+    if !events.is_array() {
+        *events = Value::Array(Vec::new());
+    }
+    let events = events
+        .as_array_mut()
+        .expect("events was replaced with a JSON array");
+    events.push(accepted_genesis);
+    *body != before
+}
+
+/// Resolve the Realm's immutable content scheme from the accepted MLS Genesis.
+/// An explicit top-level value remains available only for pre-Genesis local
+/// authoring. A canonical create Event cannot carry this field and is never a
+/// defaulting source.
+pub(crate) fn realm_projection_content_scheme(body: &Value) -> Option<String> {
+    if let Some(binding) = realm_projection_group_genesis_binding(body) {
+        return Some(
+            match binding.content_scheme {
+                arkret_wire::ContentScheme::MlsRfc9420 => "mls_rfc9420",
+                arkret_wire::ContentScheme::MlsExporterAeadV1 => "mls_exporter_aead_v1",
+            }
+            .to_owned(),
+        );
     }
 
     let null = Value::Null;
@@ -359,36 +445,7 @@ pub(crate) fn realm_projection_content_scheme(body: &Value) -> Option<String> {
         }
     }
 
-    let create_scheme = projected_state_event_values(body)
-        .filter(|event| {
-            event
-                .get("kind")
-                .or_else(|| event.get("type"))
-                .and_then(Value::as_str)
-                == Some(arkret_sdk::EventKind::RealmCreate.as_str())
-        })
-        .find_map(|event| {
-            non_empty_string(event.pointer("/payload/object/content_scheme"))
-                .or_else(|| non_empty_string(event.pointer("/content/object/content_scheme")))
-        });
-    if create_scheme.is_some() {
-        return create_scheme;
-    }
-
-    // The spec default is only safe once an authoritative create event is
-    // actually present. A transient account-sync projection can contain a
-    // roster/summary before either the create snapshot or policy-components
-    // cell arrives; callers must distinguish that unknown state (`None`) from
-    // an accepted create that deliberately omitted content_scheme (RFC9420).
-    projected_state_event_values(body)
-        .any(|event| {
-            event
-                .get("kind")
-                .or_else(|| event.get("type"))
-                .and_then(Value::as_str)
-                == Some(arkret_sdk::EventKind::RealmCreate.as_str())
-        })
-        .then(|| "mls_rfc9420".to_owned())
+    None
 }
 
 /// Resolve one Circle's create-locked content scheme from its accepted
@@ -1152,7 +1209,8 @@ mod tests {
                 {
                     "kind": "ak.mls.genesis",
                     "payload": {"governance_binding": {
-                        "content_scheme": "mls_exporter_aead_v1"
+                        "content_scheme": "mls_exporter_aead_v1",
+                        "durability_policy": "none"
                     }}
                 }
             ]}
@@ -1165,7 +1223,7 @@ mod tests {
     }
 
     #[test]
-    fn content_scheme_falls_back_to_canonical_create_state() {
+    fn content_scheme_never_uses_forbidden_create_payload_fallback() {
         let projection = json!({
             "state": {"events": [{
                 "kind": "ak.realm.create",
@@ -1173,14 +1231,11 @@ mod tests {
             }]}
         });
 
-        assert_eq!(
-            realm_projection_content_scheme(&projection).as_deref(),
-            Some("mls_exporter_aead_v1")
-        );
+        assert_eq!(realm_projection_content_scheme(&projection), None);
     }
 
     #[test]
-    fn content_scheme_defaults_only_after_canonical_create_is_visible() {
+    fn content_scheme_remains_pending_until_accepted_genesis_is_visible() {
         let accepted_default = json!({
             "state": {"events": [{
                 "kind": "ak.realm.create",
@@ -1192,14 +1247,63 @@ mod tests {
             "member_roster_entries": []
         });
 
-        assert_eq!(
-            realm_projection_content_scheme(&accepted_default).as_deref(),
-            Some("mls_rfc9420")
-        );
+        assert_eq!(realm_projection_content_scheme(&accepted_default), None);
         assert_eq!(
             realm_projection_content_scheme(&transient_projection),
             None,
-            "a roster-only sync frame must not silently select a content wire scheme"
+            "neither create nor a roster-only frame may guess a content wire scheme"
+        );
+    }
+
+    #[test]
+    fn group_genesis_binding_never_splices_materialized_fields() {
+        let projection = json!({
+            "content_scheme": "mls_exporter_aead_v1",
+            "durability_policy": "none",
+            "state": {"events": [{
+                "kind": "ak.realm.create",
+                "payload": {"object": {"encryption_profile": "mls_rfc9420"}}
+            }]}
+        });
+
+        assert_eq!(realm_projection_group_genesis_binding(&projection), None);
+    }
+
+    #[test]
+    fn canonical_genesis_replaces_stale_projection_copy() {
+        let mut projection = json!({
+            "state_after": {"events": [{
+                "event_id": "ak:event:stale",
+                "kind": "ak.mls.genesis",
+                "payload": {"governance_binding": {"content_scheme": "mls_rfc9420"}}
+            }]},
+            "state": {"events": [{"kind": "ak.realm.create", "payload": {"object": {}}}]}
+        });
+        let accepted = json!({
+            "event_id": "ak:event:accepted",
+            "kind": "ak.mls.genesis",
+            "payload": {"governance_binding": {
+                "content_scheme": "mls_exporter_aead_v1",
+                "durability_policy": "none"
+            }}
+        });
+
+        assert!(replace_realm_projection_mls_genesis(
+            &mut projection,
+            accepted
+        ));
+        assert!(
+            projection["state_after"]["events"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
+        assert_eq!(
+            realm_projection_group_genesis_binding(&projection),
+            Some(arkret_sdk::MlsGroupGenesisBinding {
+                content_scheme: arkret_wire::ContentScheme::MlsExporterAeadV1,
+                durability_policy: Some(arkret_wire::DurabilityPolicy::None),
+            })
         );
     }
 

@@ -1,17 +1,95 @@
 use serde_json::json;
 
 use super::model::{
-    JoinedRealmIds, UiNotificationAction, actor_is_joined_member, append_invite_notifications,
-    drop_joined_invite_notifications, hydrate_notifications, hydrate_notifications_for_actor,
+    JoinedRealmIds, UiNotificationAction, actor_is_joined_member,
+    apply_notification_snapshot_to_store, hydrate_notifications, hydrate_notifications_for_actor,
     notification_eval_context, notification_overrides_realm_mute, raw_notifications_from_sources,
     read_cursor_targets, realm_is_muted,
 };
+use crate::models::AccountSyncStep;
 use crate::notification_rules::WatchLevel;
 use crate::state::projection::notifications::{test_event_notification, test_invite};
 use crate::state::{
-    ClientLocalState, NotificationClientState, ReadCursorPosition, ReadMarkerBody,
-    ReadMarkerRecord, read_scope_for_cursor,
+    ClientLocalState, LocalStateStore, NotificationClientState, ReadCursorPosition, ReadMarkerBody,
+    ReadMarkerRecord, StoredInviteNotification, StoredNotification, read_scope_for_cursor,
 };
+
+fn push_test_invite_projection(
+    notifications: &mut Vec<StoredNotification>,
+    invites: Vec<arkret_models_collaboration::governance::operation_wire::Invite>,
+    hidden_realms: &JoinedRealmIds,
+) {
+    for invite in invites {
+        if hidden_realms.contains(invite.realm_id.as_str()) {
+            continue;
+        }
+        notifications.retain(|candidate| {
+            candidate.invite().is_none_or(|existing| {
+                existing.invite_id != invite.id && existing.realm_id != invite.realm_id
+            })
+        });
+        notifications.push(StoredNotification::Invite {
+            invite: StoredInviteNotification {
+                invite_id: invite.id,
+                realm_id: invite.realm_id,
+                created_at: invite.created_at,
+            },
+        });
+    }
+}
+
+#[test]
+fn snapshot_refresh_preserves_an_existing_live_invite_projection() {
+    let path = std::env::temp_dir().join(format!(
+        "inkson-notification-snapshot-{}.json",
+        crate::operation::uuid_v7()
+    ));
+    let mut store = LocalStateStore::with_path(path.clone());
+    let invite = test_invite(
+        0x10,
+        "ak:realm:AeWYNl1hiGDuy4WCQ03g5lgs2NZzf_SFYgjsfhG-t9cg",
+    );
+    let invite_id = invite.id.clone();
+    let mut live_projection = Vec::new();
+    push_test_invite_projection(
+        &mut live_projection,
+        vec![invite],
+        &JoinedRealmIds::default(),
+    );
+    store.save_notification_projection(live_projection);
+
+    let response = AccountSyncStep {
+        cursor: "ak:cursor:notification-snapshot".to_owned(),
+        realm_entries: Default::default(),
+        realm_projections: Default::default(),
+        updates: arkret_sdk::SyncUpdates {
+            realm_updates: Vec::new(),
+            malformed_realm_ids: Vec::new(),
+            to_device: Vec::new(),
+            to_device_ack_token: None,
+            to_device_limited: false,
+            to_device_next_cursor: None,
+            to_device_lost: false,
+            device_lists: arkret_sdk::AccountSubscribeDeviceListChanges {
+                changed_ids: Vec::new(),
+                left_ids: Vec::new(),
+            },
+            account_data: Vec::new(),
+            notifications: Vec::new(),
+            agent_signer_evidence: Vec::new(),
+            partial: false,
+        },
+    };
+
+    let folded =
+        apply_notification_snapshot_to_store(&mut store, &response, &JoinedRealmIds::default());
+    assert!(folded.iter().any(|notification| {
+        notification
+            .invite()
+            .is_some_and(|invite| invite.invite_id == invite_id)
+    }));
+    let _ = std::fs::remove_file(path);
+}
 
 fn event(
     ordinal: u64,
@@ -77,8 +155,8 @@ fn pending_invites_are_hydrated_as_notifications() {
     let invite = test_invite(1, "ak:realm:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1");
     let duplicate_invite = test_invite(99, "ak:realm:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1");
     let mut raw = Vec::new();
-    append_invite_notifications(&mut raw, vec![invite.clone()], &JoinedRealmIds::default());
-    append_invite_notifications(&mut raw, vec![duplicate_invite], &JoinedRealmIds::default());
+    push_test_invite_projection(&mut raw, vec![invite.clone()], &JoinedRealmIds::default());
+    push_test_invite_projection(&mut raw, vec![duplicate_invite], &JoinedRealmIds::default());
     assert_eq!(raw.len(), 1, "same Realm invite should not duplicate");
 
     let notifications =
@@ -115,8 +193,7 @@ fn pending_invites_are_hydrated_as_notifications() {
 
     let joined_realms = JoinedRealmIds::default()
         .joined_now("ak:realm:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1".to_owned());
-    append_invite_notifications(&mut raw, vec![invite], &joined_realms);
-    drop_joined_invite_notifications(&mut raw, &joined_realms);
+    push_test_invite_projection(&mut raw, vec![invite], &joined_realms);
     assert!(raw.is_empty(), "joined Realm invites should be hidden");
 }
 
@@ -164,7 +241,7 @@ fn hydrate_pending_invite_uses_typed_local_membership() {
         .realm_tree_projections
         .insert(realm_id.to_owned(), projection("invite"));
     let mut invited_raw = Vec::new();
-    append_invite_notifications(&mut invited_raw, vec![invite()], &JoinedRealmIds::default());
+    push_test_invite_projection(&mut invited_raw, vec![invite()], &JoinedRealmIds::default());
     assert_eq!(
         hydrate_notifications_for_actor(invited_raw, &invited_state, actor_id).len(),
         1,
@@ -176,7 +253,7 @@ fn hydrate_pending_invite_uses_typed_local_membership() {
         .realm_tree_projections
         .insert(realm_id.to_owned(), projection("join"));
     let mut joined_raw = Vec::new();
-    append_invite_notifications(&mut joined_raw, vec![invite()], &JoinedRealmIds::default());
+    push_test_invite_projection(&mut joined_raw, vec![invite()], &JoinedRealmIds::default());
     assert!(
         hydrate_notifications_for_actor(joined_raw, &joined_state, actor_id).is_empty(),
         "an authoritative joined membership must suppress stale invites"
@@ -328,7 +405,7 @@ fn fresh_invite_to_same_realm_survives_stale_archive_and_realm_mute() {
     let invite = test_invite(0xbb, realm_id);
     let expected_notification_id = format!("invite:{}", invite.id);
     let mut raw = Vec::new();
-    append_invite_notifications(&mut raw, vec![invite], &JoinedRealmIds::default());
+    push_test_invite_projection(&mut raw, vec![invite], &JoinedRealmIds::default());
 
     let hydrated = hydrate_notifications(raw, &local_state, None, None);
     assert_eq!(hydrated.len(), 1, "fresh invite must hydrate");
@@ -421,7 +498,7 @@ fn invite_notification_carries_no_unregistered_invite_members() {
     let realm_id = "ak:realm:AT3p9polsnQ_WOix32QZimMdE2zPe62HptJu2PaO3V1h";
     let invite = test_invite(0x11, realm_id);
     let mut raw = Vec::new();
-    append_invite_notifications(&mut raw, vec![invite], &JoinedRealmIds::default());
+    push_test_invite_projection(&mut raw, vec![invite], &JoinedRealmIds::default());
 
     let notifications = hydrate_notifications(raw, &ClientLocalState::default(), None, None);
 
@@ -445,7 +522,7 @@ fn invite_notification_token_comes_only_from_private_credential_state() {
     let invite = test_invite(0x11, realm_id);
     let invite_id = invite.id.as_str().to_owned();
     let mut raw = Vec::new();
-    append_invite_notifications(&mut raw, vec![invite], &JoinedRealmIds::default());
+    push_test_invite_projection(&mut raw, vec![invite], &JoinedRealmIds::default());
 
     let mut local_state = ClientLocalState::default();
     local_state.invite_credentials.insert(

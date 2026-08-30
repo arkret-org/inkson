@@ -7,6 +7,8 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use arkret_models_collaboration::governance::invite_addressing::InviteDeliveryEntry;
+#[cfg(test)]
 use arkret_models_collaboration::governance::operation_wire::Invite;
 use arkret_sdk::{
     MemberRosterEntry, MembershipState, Notification, NotificationData, NotificationDelta,
@@ -135,22 +137,32 @@ fn account_event_notification(event: &arkret_sdk::Event) -> Option<StoredNotific
     Some(StoredNotification::Event { notification })
 }
 
-/// Project one Invite object into a notification.
+/// Project a newly received holder-private invite delivery into the local
+/// notification inbox.
 ///
-/// The Invite object carries neither a Realm title nor the private invite
-/// delivery token: `invite.schema.json` registers neither, and
-/// `governance-objects.md` §5.3 forbids materializing transport material on it.
-/// The Realm display name comes from the directory realm preview the accept flow
-/// already resolves, and the token — when a directed invite has one — arrives on
-/// the private delivery channel, not through this read model.
-fn invite_notification(invite: Invite) -> StoredNotification {
-    StoredNotification::Invite {
+/// The delivery cell is the normative live notify carrier. It deliberately
+/// does not contain the complete Invite object, but it does contain the stable
+/// invite/Realm identities and the receipt timestamp needed by the inbox. A
+/// drawer renders this durable local projection directly; it does not issue a
+/// second authz Invite read to manufacture notification state.
+pub(crate) fn upsert_invite_delivery_notification(
+    current: &mut Vec<StoredNotification>,
+    entry: &InviteDeliveryEntry,
+) {
+    current.retain(|candidate| {
+        candidate.invite().is_none_or(|invite| {
+            invite.invite_id != entry.invite_id && invite.realm_id != entry.realm_id
+        })
+    });
+    current.push(StoredNotification::Invite {
         invite: StoredInviteNotification {
-            invite_id: invite.id,
-            realm_id: invite.realm_id,
-            created_at: invite.created_at,
+            invite_id: entry.invite_id.clone(),
+            realm_id: entry.realm_id.clone(),
+            // This is the time the notify carrier reached the holder's
+            // account, which is the relevant ordering point for the inbox.
+            created_at: entry.received_at,
         },
-    }
+    });
 }
 
 /// Fold all notification sources into one current projection.
@@ -164,7 +176,6 @@ pub(crate) fn apply_notification_projection(
     deltas: &[NotificationDelta],
     account_data: &[arkret_sdk::Event],
     is_full_sync: bool,
-    invites: Option<Vec<Invite>>,
     joined_realms: &JoinedRealmIds,
 ) {
     let event_notifications = account_data
@@ -209,27 +220,13 @@ pub(crate) fn apply_notification_projection(
             }
         }
     }
-    if let Some(invites) = invites {
-        current.retain(|item| {
-            item.invite()
-                .is_none_or(|invite| !joined_realms.contains(invite.realm_id.as_str()))
-        });
-        let mut existing_realms = current
-            .iter()
-            .filter_map(StoredNotification::invite)
-            .map(|invite| invite.realm_id.as_str().to_owned())
-            .collect::<BTreeSet<_>>();
-        for invite in invites {
-            if joined_realms.contains(invite.realm_id.as_str())
-                || !existing_realms.insert(invite.realm_id.as_str().to_owned())
-            {
-                continue;
-            }
-            current.push(invite_notification(invite));
-        }
-    }
+    current.retain(|item| {
+        item.invite()
+            .is_none_or(|invite| !joined_realms.contains(invite.realm_id.as_str()))
+    });
 }
 
+#[cfg(test)]
 pub(crate) fn raw_notifications_from_sources(
     notification_response: Option<&[NotificationDelta]>,
     account_data: &[arkret_sdk::Event],
@@ -240,37 +237,9 @@ pub(crate) fn raw_notifications_from_sources(
         notification_response.unwrap_or_default(),
         account_data,
         true,
-        None,
         &JoinedRealmIds::default(),
     );
     projection
-}
-
-pub(crate) fn append_invite_notifications(
-    notifications: &mut Vec<StoredNotification>,
-    invites: Vec<Invite>,
-    hidden_realms: &JoinedRealmIds,
-) {
-    apply_notification_projection(notifications, &[], &[], false, Some(invites), hidden_realms);
-}
-
-pub(crate) fn merge_invite_notifications(
-    notifications: &mut Vec<StoredNotification>,
-    invites: Vec<Invite>,
-    hidden_realms: &JoinedRealmIds,
-) {
-    append_invite_notifications(notifications, invites, hidden_realms);
-}
-
-pub(crate) fn drop_joined_invite_notifications(
-    notifications: &mut Vec<StoredNotification>,
-    joined_realms: &JoinedRealmIds,
-) {
-    notifications.retain(|notification| {
-        notification
-            .invite()
-            .is_none_or(|invite| !joined_realms.contains(invite.realm_id.as_str()))
-    });
 }
 
 pub(crate) fn notification_id_for_dedupe(value: &StoredNotification) -> Option<String> {

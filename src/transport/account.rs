@@ -1018,15 +1018,6 @@ pub async fn sync_describe(
     http.account_describe().await.map_err(anyhow::Error::from)
 }
 
-pub async fn invites(
-    http: &arkret_sdk::http_client::Client,
-) -> anyhow::Result<arkret_sdk::AuthzInviteList> {
-    let subject = account_me(http).await?.principal_id;
-    http.authz_invites(subject.as_str(), None, None)
-        .await
-        .map_err(anyhow::Error::from)
-}
-
 fn current_account_from_viewer(
     viewer: arkret_models_collaboration::account_lifecycle::AccountView,
 ) -> CurrentAccount {

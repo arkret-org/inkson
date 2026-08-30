@@ -1545,81 +1545,6 @@ pub(super) fn connect(
                             &mut session_credential,
                             &mut authed,
                         );
-                        let Some(invite_notifications_result) = session_scoped_bootstrap_request(
-                            "invite notifications",
-                            &session,
-                            bootstrap_session_generation,
-                            async {
-                                crate::transport::account::invites(&authed.sdk_http_client()?).await
-                            },
-                        )
-                        .await
-                        else {
-                            return;
-                        };
-                        let invite_notifications = match invite_notifications_result {
-                                Ok(response) => Some(response.invites),
-                                Err(error) if is_auth_expired_error(&error) => {
-                                    match bootstrap_session_refresh(&session).await {
-                                        crate::runtime::session::CurrentSessionRefresh::Credential(
-                                            refreshed,
-                                        ) => {
-                                            session_credential = refreshed;
-                                            let Ok(rebound) = current_authed_api(
-                                                &base,
-                                                &session_credential,
-                                                state_store,
-                                            ) else {
-                                                defer_bootstrap_retry(
-                                                    session.clone(),
-                                                    "refreshed session transport is not initialized yet"
-                                                        .to_owned(),
-                                                    status,
-                                                    network_state,
-                                                    last_error,
-                                                    sync_bootstrap_complete,
-                                                    bootstrap_pending,
-                                                );
-                                                return;
-                                            };
-                                            authed = rebound;
-                                            let Some(invite_retry_result) =
-                                                session_scoped_bootstrap_request(
-                                                    "invite notifications retry",
-                                                    &session,
-                                                    bootstrap_session_generation,
-                                                    async {
-                                                        crate::transport::account::invites(
-                                                            &authed.sdk_http_client()?,
-                                                        )
-                                                        .await
-                                                    },
-                                                )
-                                                .await
-                                            else {
-                                                return;
-                                            };
-                                            invite_retry_result.ok().map(|response| response.invites)
-                                        }
-                                        crate::runtime::session::CurrentSessionRefresh::SignInRequired {
-                                            ..
-                                        }
-                                        | crate::runtime::session::CurrentSessionRefresh::LoginRequired {
-                                            ..
-                                        }
-                                        | crate::runtime::session::CurrentSessionRefresh::RetryLater {
-                                            ..
-                                        } => None,
-                                    }
-                                }
-                                Err(error) => {
-                                    tracing::debug!(
-                                        ?error,
-                                        "background sync could not refresh invite notifications"
-                                    );
-                                    None
-                                }
-                            };
                         {
                             let mut store = state_store.write();
                             if !store.active_account_matches(accepted_account.principal_id()) {
@@ -1682,9 +1607,10 @@ pub(super) fn connect(
                                 store.merge_realm_seal_view_from_sync_body(id, body);
                                 store.ingest_move_event_states(id, body);
                             }
-                            // Keep notification projection current even when
-                            // invites live on `authz/invites` rather than the
-                            // normal account subscribe notification stream.
+                            // The account stream owns live notification input.
+                            // Ingest its holder-private delivery messages before
+                            // typed Realm membership performs the final prune.
+                            store.ingest_to_device_messages(&sync.updates.to_device);
                             let mut notification_projection = store.notification_projection();
                             // `server_set` is every Realm the server projected,
                             // which includes discoverable previews and Realms
@@ -1701,11 +1627,9 @@ pub(super) fn connect(
                                 &sync.updates.notifications,
                                 &sync.updates.account_data,
                                 true,
-                                invite_notifications,
                                 &joined_realms,
                             );
                             store.save_notification_projection(notification_projection);
-                            store.ingest_to_device_messages(&sync.updates.to_device);
                             // `/account/subscribe` carries the actor's complete
                             // account_data projection on every successful frame.
                             // Track blocklist presence so a server-side tombstone

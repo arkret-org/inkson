@@ -9,7 +9,9 @@
 //! `ak.account_data.update` actor-private device update. This module is the
 //! single ingestion and lookup point for both paths.
 
-use arkret_models_collaboration::governance::invite_addressing::InviteDelivery;
+use arkret_models_collaboration::governance::invite_addressing::{
+    InviteDelivery, InviteDeliveryEntry,
+};
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 
@@ -18,6 +20,21 @@ use super::{ClientLocalState, LocalStateStore, StoredInviteCredential};
 /// Upper bound on locally retained invite credentials; writes evict expired
 /// entries first, then the oldest by `received_at`.
 pub(crate) const MAX_INVITE_CREDENTIALS: usize = 200;
+
+fn validated_invite_delivery(content: &Value) -> Option<InviteDelivery> {
+    let delivery = serde_json::from_value::<InviteDelivery>(content.clone()).ok()?;
+    delivery.validate().ok()?;
+    Some(delivery)
+}
+
+fn stored_invite_credential(entry: &InviteDeliveryEntry) -> StoredInviteCredential {
+    StoredInviteCredential {
+        realm_id: entry.realm_id.clone(),
+        invite_token: entry.invite_token.clone(),
+        expires_at: Some(entry.expires_at),
+        received_at: entry.received_at,
+    }
+}
 
 /// Parse the entries of an `ak.account.invite_delivery` cell payload
 /// (`arkret_wire::AccountDataKey::ACCOUNT_INVITE_DELIVERY`, wire schema
@@ -30,24 +47,16 @@ pub(crate) const MAX_INVITE_CREDENTIALS: usize = 200;
 pub(crate) fn invite_delivery_entries_from_cell(
     content: &Value,
 ) -> Vec<(String, StoredInviteCredential)> {
-    let Ok(delivery) = serde_json::from_value::<InviteDelivery>(content.clone()) else {
+    let Some(delivery) = validated_invite_delivery(content) else {
         return Vec::new();
     };
-    if delivery.validate().is_err() {
-        return Vec::new();
-    }
     delivery
         .delivery_entries
         .into_iter()
         .map(|entry| {
             (
                 entry.invite_id.as_str().to_owned(),
-                StoredInviteCredential {
-                    realm_id: entry.realm_id,
-                    invite_token: entry.invite_token,
-                    expires_at: Some(entry.expires_at),
-                    received_at: entry.received_at,
-                },
+                stored_invite_credential(&entry),
             )
         })
         .collect()
@@ -74,16 +83,17 @@ impl LocalStateStore {
     /// private state. Per-entry latest `received_at` wins so a stale catch-up
     /// read cannot clobber a newer live fanout.
     pub fn save_invite_delivery_cell(&mut self, content: &Value) -> usize {
-        let entries = invite_delivery_entries_from_cell(content);
-        if entries.is_empty() {
+        let Some(delivery) = validated_invite_delivery(content) else {
             return 0;
-        }
+        };
         self.ensure_cached_loaded();
         let mut merged = std::mem::take(&mut self.cached.invite_credentials);
         let now = Utc::now();
         merged.retain(|_, credential| !credential_expired(credential, now));
         let mut applied = 0;
-        for (invite_id, credential) in entries {
+        for entry in delivery.delivery_entries {
+            let invite_id = entry.invite_id.as_str().to_owned();
+            let credential = stored_invite_credential(&entry);
             if credential_expired(&credential, now) {
                 continue;
             }
@@ -91,6 +101,10 @@ impl LocalStateStore {
                 Some(existing) if existing.received_at >= credential.received_at => {}
                 _ => {
                     merged.insert(invite_id, credential);
+                    crate::state::projection::notifications::upsert_invite_delivery_notification(
+                        &mut self.cached.notification_projection,
+                        &entry,
+                    );
                     applied += 1;
                 }
             }
@@ -234,6 +248,14 @@ mod tests {
                 .map(|credential| credential.invite_token.as_str()),
             Some("ak:invite-token:live")
         );
+        let projection = store.notification_projection();
+        assert!(matches!(
+            projection.as_slice(),
+            [crate::state::StoredNotification::Invite { invite }]
+                if invite.invite_id.as_str() == INVITE_ID
+                    && invite.realm_id.as_str() == REALM_ID
+                    && invite.created_at.to_rfc3339() == "2026-08-18T00:00:00+00:00"
+        ));
         let _ = std::fs::remove_file(path);
     }
 

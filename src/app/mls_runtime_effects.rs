@@ -21,7 +21,6 @@ pub(super) struct MlsRuntimeEffectState {
     pub mls_admission_reconcile_pending: Signal<bool>,
     pub last_error: Signal<Option<String>>,
     pub mls_admission_diag_last: Signal<String>,
-    pub realm_events_route_enabled: Signal<bool>,
     pub selected_realm_id: Signal<String>,
     pub device_queue: Signal<usize>,
     pub mls_welcome_bootstrap_key_seen: Signal<Option<String>>,
@@ -49,7 +48,6 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
         mls_admission_reconcile_pending,
         last_error,
         mls_admission_diag_last,
-        realm_events_route_enabled,
         selected_realm_id,
         device_queue,
         mls_welcome_bootstrap_key_seen,
@@ -492,12 +490,8 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
         let mut admit_last_error = last_error;
         let mut admit_diag_last = mls_admission_diag_last;
         let secure_store_ready_for_admit = secure_store_bootstrap_ready;
-        let admit_route_enabled = realm_events_route_enabled;
         use_effect(move || {
             if !secure_store_ready_for_admit() {
-                return;
-            }
-            if !admit_route_enabled() {
                 return;
             }
             let Some(account) = active_account() else {
@@ -528,11 +522,9 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
                 crate::views::realm_admin::mls_admission_candidate_realms_for_actor(&store, &actor)
             };
             if candidate_realms.is_empty() {
-                // Make a stuck admin observable: an encrypted Realm with an
-                // invitee waiting for a Welcome but the admin never admitting is
-                // exactly this branch. wasm tracing is capped at WARN, so INFO/
-                // DEBUG here would be invisible — emit a throttled WARN naming
-                // the blocking cause. (mls-admission-debug)
+                // Make a stuck admin observable. wasm tracing is capped at
+                // WARN, so INFO/DEBUG here would be invisible — emit a
+                // throttled WARN naming the blocking cause.
                 let Some(diag) = ({
                     let store = admit_state_store.peek();
                     let encrypted_local_realms = store
@@ -567,7 +559,7 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
                     tracing::warn!(
                         target: "mls_admission",
                         %diag,
-                        "admission pre-filter blocked: no joined non-self member is visible in any local encrypted Realm"
+                        "admission pre-filter blocked: no local encrypted Realm has an admission-capable MLS snapshot"
                     );
                 }
                 return;
@@ -638,10 +630,10 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
                         Ok::<_, anyhow::Error>((admitted_total, deferred_total, failures))
                     })
                     .await;
-                let deferred = outcome
+                let retry_needed = outcome
                     .as_ref()
-                    .map(|(_, deferred, _)| *deferred)
-                    .unwrap_or_default();
+                    .map(|(_, deferred, failures)| *deferred > 0 || !failures.is_empty())
+                    .unwrap_or(true);
                 match &outcome {
                     Ok((admitted, _, failures)) if *admitted > 0 => {
                         tracing::warn!(
@@ -683,11 +675,12 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
                     }
                 }
 
-                if deferred > 0 {
-                    // KeyPackage publication is not a Realm event, so waiting
-                    // for an unrelated account cursor change is neither
-                    // reliable nor bounded. Hold the single-flight guard
-                    // across an explicit exponential delay, then release one
+                if retry_needed {
+                    // KeyPackage publication and a transient canonical-history
+                    // read failure need not produce another Realm event, so an
+                    // unrelated account cursor is neither a reliable nor a
+                    // bounded retry clock. Hold the single-flight guard across
+                    // an explicit exponential delay, then release one
                     // coalesced retry: 2, 4, 8, 16, 32, 60 seconds.
                     let attempt = *admit_retry_attempt.peek();
                     let retry_after_secs = (2_u64 << attempt.min(5)).min(60);

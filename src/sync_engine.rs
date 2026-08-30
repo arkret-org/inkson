@@ -362,7 +362,7 @@ impl AccountStepCommitter for InksonAccountCommitter {
         }
         let response = AccountSyncStep::from_updates(cursor, step.updates.clone())
             .map_err(|error| garth::Error::Protocol(error.to_string()))?;
-        apply_response(&response, step.initial, &self.ctx, None);
+        apply_response(&response, step.initial, &self.ctx);
         if let Some(error) = self.ctx.state_store.read(LocalStateStore::persist_error) {
             return Err(garth::Error::Protocol(format!(
                 "persist account stream step: {error}"
@@ -398,10 +398,10 @@ fn account_updates_are_empty(updates: &arkret_sdk::SyncUpdates) -> bool {
         && !updates.partial
 }
 
-fn should_bootstrap_invites(initial: bool) -> bool {
-    // Invites are part of the initial account projection. Live changes arrive
-    // through the account/events subscribe planes; a steady-state GET loop
-    // would create a third, protocol-divergent source of truth.
+fn should_recover_invite_delivery(initial: bool) -> bool {
+    // Live delivery is owned by the account stream's to-device queue. Initial
+    // startup additionally reads the same server-written account-data cell
+    // once, which is the spec recovery path for an offline or lost fanout.
     initial
 }
 
@@ -618,7 +618,7 @@ impl InksonAccountPostCommit {
 }
 
 /// The hook runs against whichever transport carried the step, but its own work
-/// — invite refresh, MLS, calls, to-device acknowledgement — is not a covered
+/// — invite-delivery recovery, MLS, calls, to-device acknowledgement — is not a covered
 /// operation (§1), so it always uses the canonical HTTPS client the rail keeps.
 impl
     AccountPostCommitHook<
@@ -664,30 +664,37 @@ impl
             tracing::debug!(?error, "account post-commit deferred MLS outbound drain");
         }
 
-        // `/authz/invites` is an initial/bootstrap projection only. Live
-        // membership and invite changes arrive on the account/events
-        // subscribe planes; maintaining a third periodic poll loop here
-        // violates the sync protocol and amplifies every account delta.
-        if should_bootstrap_invites(step.initial) {
-            match crate::transport::account::invites(http).await {
-                Ok(invites) => {
-                    let invite_notifications = invites.invites;
+        if should_recover_invite_delivery(step.initial) {
+            match crate::transport::account::account_data_snapshot(
+                http,
+                arkret_wire::AccountDataKey::ACCOUNT_INVITE_DELIVERY,
+            )
+            .await
+            {
+                Ok(snapshot) => {
+                    let delivery_cell = snapshot.entry.map(|entry| entry.content);
                     self.ctx.state_store.write(|store| {
                         if !store.active_account_matches(&self.ctx.principal_id) {
                             tracing::warn!(
                                 response_principal = %self.ctx.principal_id,
                                 active_principal = ?store.active_principal_id(),
-                                "discarded invite projection after the active principal changed"
+                                "discarded invite-delivery recovery after the active principal changed"
                             );
                             return;
                         }
                         store.batch(|store| {
+                            if let Some(content) = &delivery_cell {
+                                store.save_invite_delivery_cell(content);
+                            }
+                            // The recovery cell is a full register and may
+                            // still contain an entry whose Realm joined in the
+                            // initial frame. Typed membership remains the final
+                            // notification adjudicator.
                             apply_notification_projection(
                                 store,
                                 &response,
                                 self.ctx.principal_id.as_str(),
-                                step.initial,
-                                Some(invite_notifications),
+                                false,
                             );
                         });
                     });
@@ -697,7 +704,7 @@ impl
                         reason: Some(error.to_string()),
                     });
                 }
-                Err(error) => tracing::debug!(?error, "invite refresh deferred"),
+                Err(error) => tracing::debug!(?error, "invite-delivery recovery deferred"),
             }
         }
 
@@ -1957,14 +1964,7 @@ fn rotate_live_device_id_after_revocation(
 /// the loop. `connect()` in `app.rs` shares the same code path — once
 /// the engine fully owns sync, `connect()` is just a "force one
 /// iteration now" entry that calls this.
-pub fn apply_response(
-    response: &AccountSyncStep,
-    is_full_sync: bool,
-    ctx: &SyncEngineContext,
-    invite_notifications: Option<
-        Vec<arkret_models_collaboration::governance::operation_wire::Invite>,
-    >,
-) {
+pub fn apply_response(response: &AccountSyncStep, is_full_sync: bool, ctx: &SyncEngineContext) {
     // Clone runtime adapter handles before applying this response.
     let state_store = ctx.state_store.clone();
     let principal_id = ctx.principal_id.clone();
@@ -2108,14 +2108,18 @@ pub fn apply_response(
                 &ctx.account.authority,
                 principal_id.as_str(),
             );
+            // Fold holder-private delivery cells before Realm membership
+            // adjudicates the inbox. If a frame carries both an older full
+            // invite-delivery cell and membership=`join`, the joined roster
+            // is authoritative for the final notification projection and
+            // must not let the stale delivery re-add the invite afterward.
+            store.ingest_to_device_messages(&response.updates.to_device);
             apply_notification_projection(
                 store,
                 response,
                 principal_id.as_str(),
                 is_full_sync,
-                invite_notifications,
             );
-            store.ingest_to_device_messages(&response.updates.to_device);
             if cursor_can_advance {
                 store.save_sync_cursor(response.cursor.clone());
             }
@@ -2848,14 +2852,14 @@ fn apply_notification_projection(
     response: &AccountSyncStep,
     principal_id: &str,
     is_full_sync: bool,
-    invite_notifications: Option<
-        Vec<arkret_models_collaboration::governance::operation_wire::Invite>,
-    >,
 ) {
     let should_save_notification_projection = !response.updates.notifications.is_empty()
         || is_full_sync
         || !response.updates.account_data.is_empty()
-        || invite_notifications.is_some();
+        // Realm membership is itself a notification transition: a live
+        // `join` delta must retire the pending invite even when this frame
+        // carries neither wire notifications nor notification account-data.
+        || !response.realm_entries.is_empty();
     let mut notification_projection = store.notification_projection();
     let joined_realms = crate::state::projection::notifications::JoinedRealmIds::from_realm_entries(
         &response.realm_entries,
@@ -2866,7 +2870,6 @@ fn apply_notification_projection(
         &response.updates.notifications,
         &response.updates.account_data,
         is_full_sync,
-        invite_notifications,
         &joined_realms,
     );
     if should_save_notification_projection {
@@ -3229,8 +3232,8 @@ mod tests {
 
     #[test]
     fn steady_state_sync_does_not_poll_invites() {
-        assert!(should_bootstrap_invites(true));
-        assert!(!should_bootstrap_invites(false));
+        assert!(should_recover_invite_delivery(true));
+        assert!(!should_recover_invite_delivery(false));
     }
 
     /// Restates `circle_scan_ignores_ephemeral_only_realm_updates`.
@@ -4038,48 +4041,18 @@ mod tests {
     }
 
     #[test]
-    fn notification_projection_merges_pending_invites_from_authz() {
-        let mut store = temp_store("invite-notifications");
-        let existing = crate::state::projection::notifications::test_event_notification(
-            1,
-            arkret_sdk::NotificationKind::Message,
-            "ak:realm:AZiQUXWgexBvj0pdmSuNERtMTAFCjqds5-eP8K9OsgEo",
-            None,
-            json!({}),
-        );
-        let existing_id = existing.notification_id();
-        store.save_notification_projection(vec![existing]);
-        let response = empty_response("sx:invite");
-
-        let invite = crate::state::projection::notifications::test_invite(
-            0x10,
-            "ak:realm:AeWYNl1hiGDuy4WCQ03g5lgs2NZzf_SFYgjsfhG-t9cg",
-        );
-        let expected_invite_notification_id = format!("invite:{}", invite.id);
-        apply_notification_projection(&mut store, &response, "", false, Some(vec![invite]));
-
-        let projection = store.notification_projection();
-        assert!(
-            projection
-                .iter()
-                .any(|entry| entry.notification_id() == existing_id)
-        );
-        // The invite notification is keyed on the unique invite id, not the
-        // realm id, so a re-invite to the same realm cannot inherit stale
-        // archive/read client-state from an earlier invite.
-        assert!(
-            projection
-                .iter()
-                .any(|entry| { entry.notification_id() == expected_invite_notification_id })
-        );
-    }
-
-    #[test]
     fn notification_projection_filters_invites_by_typed_membership() {
         let mut store = temp_store("invite-membership-projection");
         let actor_id = "ak:did_core:web:bob.example";
         let realm_id = "ak:realm:AeWYNl1hiGDuy4WCQ03g5lgs2NZzf_SFYgjsfhG-t9cg";
-        let invite = || crate::state::projection::notifications::test_invite(0x10, realm_id);
+        let invite = crate::state::projection::notifications::test_invite(0x10, realm_id);
+        store.save_notification_projection(vec![crate::state::StoredNotification::Invite {
+            invite: crate::state::StoredInviteNotification {
+                invite_id: invite.id,
+                realm_id: invite.realm_id,
+                created_at: invite.created_at,
+            },
+        }]);
         let response = |membership: &str| {
             let mut response = empty_response("sx:invite-membership");
             let realm_id = arkret_sdk::RealmId::new(realm_id).unwrap();
@@ -4103,13 +4076,7 @@ mod tests {
             response
         };
 
-        apply_notification_projection(
-            &mut store,
-            &response("invite"),
-            actor_id,
-            false,
-            Some(vec![invite()]),
-        );
+        apply_notification_projection(&mut store, &response("invite"), actor_id, false);
         assert!(
             store
                 .notification_projection()
@@ -4118,19 +4085,13 @@ mod tests {
             "an invite membership projection must preserve the pending invite"
         );
 
-        apply_notification_projection(
-            &mut store,
-            &response("join"),
-            actor_id,
-            false,
-            Some(vec![invite()]),
-        );
+        apply_notification_projection(&mut store, &response("join"), actor_id, false);
         assert!(
             store
                 .notification_projection()
                 .iter()
                 .all(|entry| entry.invite().is_none()),
-            "a joined membership projection must drop the stale invite"
+            "a live joined membership delta must drop the stale invite without polling authz invites"
         );
     }
 

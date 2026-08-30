@@ -1,11 +1,10 @@
 import { expect, test } from "@playwright/test";
 import {
-  CURRENT_PRINCIPAL_SERVER_FULL_ID,
   CURRENT_PRINCIPAL_SERVER_ID,
   mockArkretApi,
 } from "./mockArkretApi";
 
-export { CURRENT_PRINCIPAL_SERVER_FULL_ID, CURRENT_PRINCIPAL_SERVER_ID };
+export { CURRENT_PRINCIPAL_SERVER_ID };
 
 export function submittedEvent(body: any) {
   const entry = Array.isArray(body.events)
