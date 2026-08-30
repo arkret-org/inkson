@@ -173,7 +173,11 @@ pub fn decode_call_signal(
         realm_id: envelope.realm_id.as_str().to_owned(),
         call_id: body.call_id.as_str().to_owned(),
         seq: body.seq,
-        sender_actor: envelope.sender_actor_id.as_str().to_owned(),
+        sender_actor: envelope
+            .sender_actor_id
+            .signing_principal_id()
+            .as_str()
+            .to_owned(),
         sender_device: envelope.sender_device_id.as_str().to_owned(),
         signal: body.signal,
         envelope: Some(Box::new(envelope.clone())),
@@ -219,7 +223,7 @@ pub async fn route_decrypted_call_signals(
             continue;
         }
         match crate::identity::device_directory::cached_device_signing_key(
-            &decoded.sender_actor,
+            &envelope.sender_actor_id.to_string(),
             &decoded.sender_device,
         ) {
             crate::identity::device_directory::CacheLookup::Hit(key) => {
@@ -242,7 +246,7 @@ pub async fn route_decrypted_call_signals(
                     crate::identity::device_directory::resolve_device_signing_key(
                         api,
                         did_anchor,
-                        &decoded.sender_actor,
+                        &envelope.sender_actor_id.to_string(),
                         &decoded.sender_device,
                     )
                     .await

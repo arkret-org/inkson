@@ -2903,7 +2903,6 @@ pub fn SettingsPanel(
                         div { class: "settings-content-stack",
                             crate::views::settings::invite_policy::InvitePolicySettingsCard {
                                 token,
-                                principal_id,
                             }
                         }
                     }

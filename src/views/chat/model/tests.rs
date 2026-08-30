@@ -19,7 +19,7 @@ mod device_identity_proof_tests {
     fn authority(actor: &str) -> arkret_sdk::AccountId {
         let principal_id = crate::mls_api_helpers::principal_core_id(actor).unwrap();
         arkret_sdk::AccountId {
-            station_id: principal_id.clone(),
+            station_id: crate::operation::authoring_station_id().unwrap(),
             principal_id,
         }
     }
@@ -228,6 +228,18 @@ mod device_identity_proof_tests {
         )
         .expect("self-authored message must verify with its active device key");
         assert_eq!(message.crypto_state, MessageCryptoState::Plaintext);
+        let mut different_account = authority.clone();
+        different_account.station_id =
+            arkret_sdk::DidCoreId::new("ak:did_core:web:other-station.example").unwrap();
+        assert_eq!(
+            verify_chat_envelope_proof_for_realm(
+                "ak:realm:AtlzwcCCnyKBD2b_hQX9YJKlbvZu2jVHq9qsQsIaBWHI",
+                &envelope,
+                None,
+                Some((&different_account, &actor_core, &device_id)),
+            ),
+            ChatProofVerdict::Unresolved,
+        );
     }
 
     #[test]

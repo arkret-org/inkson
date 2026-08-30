@@ -376,7 +376,13 @@ async fn fetch_authoritative_active_series(
     let keys = api
         .http()
         .keys_query(&arkret_models_crypto::KeysQueryRequestBody {
-            device_keys: BTreeMap::from([(actor.clone(), device_ids)]),
+            device_keys: vec![arkret_models_crypto::QueryAccountDeviceSelector {
+                account_id: account_actor
+                    .as_account_id()
+                    .cloned()
+                    .ok_or_else(|| anyhow!("backup actor must be an exact account"))?,
+                device_ids,
+            }],
             timeout_ms: None,
         })
         .await
@@ -660,17 +666,24 @@ fn verify_active_series_record_signature(
             .map_err(|error| anyhow!("decode active-series signature: {error}"))?,
     )
     .map_err(|error| anyhow!("parse active-series signature: {error}"))?;
+    let account_id = record
+        .actor_id
+        .as_account_id()
+        .ok_or_else(|| anyhow!("active-series record must name an exact account"))?;
     let devices = keys
-        .device_keys
-        .get(record.actor_id.signing_principal_id())
+        .devices_for(account_id)
         .ok_or_else(|| anyhow!("active-series key query omitted its actor"))?;
-    let generation = keys
-        .device_generations
-        .get(record.actor_id.signing_principal_id());
+    let generation = keys.generation_for(account_id);
     let Some(generation) = generation else {
         return Err(anyhow!("active-series device generation is absent"));
     };
     for (device_id, device) in devices {
+        if device
+            .validate_attestation_binding(account_id, device_id)
+            .is_err()
+        {
+            continue;
+        }
         if !device.is_usable_in_generation(Some(generation)) {
             continue;
         }

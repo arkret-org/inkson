@@ -119,7 +119,7 @@ mod tests {
             realm_id.to_owned(),
             serde_json::json!({
                 "state_at_window_start": {
-                    "actor_profiles": {},
+                    "actor_profiles": [],
                     "realm_metadata": {
                         "title": "AMAZON",
                         "summary": "Current Realm summary"

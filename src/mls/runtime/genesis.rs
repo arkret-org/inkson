@@ -235,11 +235,11 @@ fn create_creator_mls_snapshot_for_effective_scope_with_binding(
         .map_err(|err| MlsRuntimeError::Genesis(format!("create group: {err}")))?;
     let device_authorize_event_id = match &group.identity().endpoint {
         arkret_sdk::MlsEndpointIdentity::HumanDevice {
-            principal_id,
+            principal_id: _,
             device_id,
         } => Some(
             crate::identity::device_directory::cached_device_authorize_event_id(
-                principal_id.as_str(),
+                &authority.to_string(),
                 device_id.as_str(),
             )
             .ok_or_else(|| {

@@ -8,22 +8,15 @@ use crate::models::ResolveHandleView;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct InviteeResolution {
-    pub account_id: arkret_sdk::AccountId,
+    pub invite_address: arkret_sdk::InviteAddress,
     pub handle: Option<String>,
-    pub invite_delivery_target: arkret_sdk::InviteDeliveryTarget,
     pub introduction_evidence: arkret_sdk::IntroductionEvidence,
     pub introduction_evidence_digest: String,
 }
 
 impl InviteeResolution {
-    fn invite_address(&self) -> arkret_sdk::InviteAddress {
-        arkret_sdk::InviteAddress {
-            subject_id: self.account_id.principal_id.clone(),
-            recipient_id: self.invite_delivery_target.recipient_id.clone(),
-            service_resolution: self.invite_delivery_target.service_resolution.clone(),
-            route_assistance: None,
-            recipient_kind: self.invite_delivery_target.recipient_kind.clone(),
-        }
+    pub fn account_id(&self) -> &arkret_sdk::AccountId {
+        &self.invite_address.account_id
     }
 }
 
@@ -40,22 +33,12 @@ fn invitee_resolution(
     invite_address
         .validate()
         .map_err(|err| anyhow::anyhow!("invalid invite_address: {err}"))?;
-    let account_id = arkret_sdk::AccountId::new(
-        invite_address.subject_id.clone(),
-        invite_address.recipient_id.clone(),
-    );
-    let invite_delivery_target =
-        arkret_sdk::InviteDeliveryTarget::from_invite_address(&invite_address);
-    invite_delivery_target
-        .validate()
-        .map_err(|err| anyhow::anyhow!("invalid invite_delivery_target: {err}"))?;
     let introduction_evidence_value = serde_json::to_value(&introduction_evidence)?;
     let introduction_evidence_digest =
         crate::canonical::canonical_sha256(&introduction_evidence_value)?;
     Ok(InviteeResolution {
-        account_id,
+        invite_address,
         handle,
-        invite_delivery_target,
         introduction_evidence,
         introduction_evidence_digest,
     })
@@ -124,7 +107,7 @@ fn invitee_from_target_json(target: &str) -> anyhow::Result<Option<InviteeResolu
         let locator: arkret_sdk::PrincipalLocator = serde_json::from_value(value)?;
         return invitee_from_principal_locator(locator).map(Some);
     }
-    if value.get("subject_id").is_some() && value.get("recipient_id").is_some() {
+    if value.get("account_id").is_some() {
         let address: arkret_sdk::InviteAddress = serde_json::from_value(value)?;
         return explicit_invitee_resolution(address, None).map(Some);
     }
@@ -238,9 +221,9 @@ fn resolved_handle_claim(
     Ok(Some(claim))
 }
 
-fn resolved_account_delivery_target(
+fn resolved_account_invite_address(
     account_id: &arkret_sdk::AccountId,
-) -> anyhow::Result<arkret_sdk::InviteDeliveryTarget> {
+) -> anyhow::Result<arkret_sdk::InviteAddress> {
     let host = account_id
         .station_id
         .as_str()
@@ -256,13 +239,14 @@ fn resolved_account_delivery_target(
         "https://{host}{}",
         arkret_sdk::canonical_service_current_record_path(&account_id.station_id)
     );
-    let target = arkret_sdk::InviteDeliveryTarget::station(
-        account_id.station_id.clone(),
-        arkret_sdk::ServiceResolutionCarrier::CurrentRecordUrl {
+    let target = arkret_sdk::InviteAddress {
+        account_id: account_id.clone(),
+        service_resolution: arkret_sdk::ServiceResolutionCarrier::CurrentRecordUrl {
             current_record_url,
             pinned_record_digest: None,
         },
-    );
+        route_assistance: None,
+    };
     target.validate()?;
     Ok(target)
 }
@@ -283,7 +267,7 @@ impl crate::transport::TransportClient {
         let delivery = arkret_sdk::SelfInviteDispatchRequestBody {
             schema: arkret_sdk::SchemaId::INVITE_DELIVERY_REQUEST_V1.to_owned(),
             invite_event_id: event_id,
-            invite_address: invitee.invite_address(),
+            invite_address: invitee.invite_address.clone(),
             introduction_evidence: invitee.introduction_evidence.clone(),
             idempotency_key: accepted_event_id.to_owned(),
         };
@@ -366,14 +350,7 @@ impl crate::transport::TransportClient {
                 },
             )
             .await?;
-        let target = resolved_account_delivery_target(&resolved.account_id)?;
-        let address = arkret_sdk::InviteAddress {
-            subject_id: resolved.account_id.principal_id.clone(),
-            recipient_id: resolved.account_id.station_id.clone(),
-            service_resolution: target.service_resolution,
-            route_assistance: None,
-            recipient_kind: target.recipient_kind,
-        };
+        let address = resolved_account_invite_address(&resolved.account_id)?;
         let handle = arkret_models_identity::Handle::parse(&resolved.handle)
             .map_err(|err| anyhow::anyhow!("directory returned invalid handle: {err}"))?;
         let evidence = match resolved_handle_claim(&resolved)? {
@@ -539,8 +516,7 @@ mod invite_addressing_tests {
     fn principal_locator_builds_locator_ref_evidence() {
         let locator = json!({
             "schema": arkret_sdk::SchemaId::PRINCIPAL_LOCATOR_V1,
-            "subject_id": "ak:did_core:web:bob.example",
-            "recipient_id": "ak:did_core:web:ps.bob.example",
+            "account_id": {"principal_id": "ak:did_core:web:bob.example", "station_id": "ak:did_core:web:ps.bob.example"},
             "service_resolution": {
                 "current_record_url": "https://ps.bob.example/_arkret/open/services/ak%3Adid_core%3Aweb%3Aps.bob.example/resolution"
             },
@@ -561,11 +537,11 @@ mod invite_addressing_tests {
         let locator = serde_json::from_value(locator).expect("typed principal locator");
         let invitee = invitee_from_principal_locator(locator).expect("principal locator");
         assert_eq!(
-            invitee.account_id.principal_id.as_str(),
+            invitee.account_id().principal_id.as_str(),
             "ak:did_core:web:bob.example"
         );
         assert_eq!(
-            invitee.invite_delivery_target.recipient_id.as_str(),
+            invitee.account_id().station_id.as_str(),
             "ak:did_core:web:ps.bob.example"
         );
         assert_eq!(invitee.introduction_evidence.kind(), "locator_ref");
@@ -574,8 +550,7 @@ mod invite_addressing_tests {
     #[test]
     fn invite_target_json_accepts_invite_address_as_explicit() {
         let raw_invite_address = json!({
-            "subject_id": "ak:did_core:web:bob.example",
-            "recipient_id": "ak:did_core:web:ps.bob.example",
+            "account_id": {"principal_id": "ak:did_core:web:bob.example", "station_id": "ak:did_core:web:ps.bob.example"},
             "service_resolution": {
                 "current_record_url": "https://ps.bob.example/_arkret/open/services/ak%3Adid_core%3Aweb%3Aps.bob.example/resolution"
             },
@@ -585,7 +560,7 @@ mod invite_addressing_tests {
             .expect("json target parsed")
             .expect("invite address target");
         assert_eq!(
-            invitee.account_id.principal_id.as_str(),
+            invitee.account_id().principal_id.as_str(),
             "ak:did_core:web:bob.example"
         );
         assert_eq!(invitee.introduction_evidence.kind(), "explicit_address");

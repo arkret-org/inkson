@@ -28,7 +28,7 @@
 //!     station_url: "https://station.example".into(),
 //!     floria_gateway_url: "https://push.example/_arkret/edge/push/notify".into(),
 //!     device_id: "dev-inkson".into(),
-//!     account_id: Some(arkret_sdk::AccountId::new(arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example")?, arkret_sdk::DidCoreId::new("ak:did_core:web:station.example")?)),
+//!     account_id: Some(active_account.authority.clone()),
 //!     authorization_credential: Some(api_token),
 //!     session_grant: None,
 //!     active_circle_id: None,

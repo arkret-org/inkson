@@ -129,6 +129,8 @@ type InksonWireCommand =
   | "range-completeness"
   | "realm-actor-frontier"
   | "service-resolution"
+  | "principal-locator"
+  | "device-projection-attestation"
   | "realm-genesis-seal"
   | "validate-mock-response";
 type InksonWireCanonicalJson = { canonical: string };
@@ -2248,7 +2250,7 @@ export async function mockArkretApi(
               realm.id,
               {
                 state_at_window_start: {
-                  actor_profiles: {},
+                  actor_profiles: [],
                   realm_metadata: {
                     title: realm.title,
                     summary: realm.summary,
@@ -2277,7 +2279,7 @@ export async function mockArkretApi(
             ? {
                 [PRINCIPAL_CONTROL_REALM]: {
                   state_at_window_start: {
-                    actor_profiles: {},
+                    actor_profiles: [],
                     realm_metadata: {},
                     e2ee_epoch: {
                       epoch: 0,
@@ -2298,7 +2300,7 @@ export async function mockArkretApi(
             ? {
                 [DEMO_REALM]: {
                   state_at_window_start: {
-                    actor_profiles: {},
+                    actor_profiles: [],
                     realm_metadata: {
                       title: "Arkret Demo Realm",
                       summary: "Shared demo Realm served by mocked server",
@@ -2322,7 +2324,7 @@ export async function mockArkretApi(
                 },
                 [CHILD_REALM]: {
                   state_at_window_start: {
-                    actor_profiles: {},
+                    actor_profiles: [],
                     realm_metadata: {
                       title: "Launch Realm",
                       summary: "Board and discussion scope",
@@ -2339,7 +2341,7 @@ export async function mockArkretApi(
                 },
                 [GRANDCHILD_REALM]: {
                   state_at_window_start: {
-                    actor_profiles: {},
+                    actor_profiles: [],
                     realm_metadata: {
                       title: "Launch Deep Realm",
                       summary: "Related scope fixture",
@@ -2360,7 +2362,7 @@ export async function mockArkretApi(
             ? {
                 [LOW_FLOOR_REALM]: {
                   state_at_window_start: {
-                    actor_profiles: {},
+                    actor_profiles: [],
                     realm_metadata: {
                       title: "Low floor fixture Realm",
                       summary:
@@ -2960,7 +2962,7 @@ export async function mockArkretApi(
 
     // U4 — invite_receive_policy ("who may invite me"). Spec invite-addressing.md
     // §5: GET/SET carry the bare `arkret_sdk::InviteReceivePolicy` (required
-    // `schema` + `subject_id`, typed enums, trust lists) — no `ok` wrapper.
+    // `schema` + `account_id`, typed enums, trust lists) — no `ok` wrapper.
     if (
       url.pathname === "/_arkret/self/invite-receive-policy" &&
       route.request().method() === "PUT"
@@ -2976,7 +2978,7 @@ export async function mockArkretApi(
     ) {
       return json(route, {
         schema: "ak.schema.invite_receive_policy.v1",
-        subject_id: "ak:did_core:web:alice.example",
+        account_id: { principal_id: accountPrincipalCoreId, station_id: CURRENT_STATION_ID },
         holder_allowed_introduction_kinds: [
           "consent_grant",
           "locator_ref",
@@ -3064,32 +3066,23 @@ export async function mockArkretApi(
         string,
         unknown
       >;
-      const requestedDeviceKeys =
-        typeof body.device_keys === "object" && body.device_keys !== null
-          ? (body.device_keys as Record<string, unknown>)
-          : {};
-      const requestedPrincipalId =
-        Object.keys(requestedDeviceKeys)[0] ?? accountPrincipalId;
-      const requestedDevices = requestedDeviceKeys[requestedPrincipalId];
-      const requestedDeviceId =
-        Array.isArray(requestedDevices) &&
-        typeof requestedDevices[0] === "string"
-          ? requestedDevices[0]
-          : currentDeviceId;
+      expect(Array.isArray(body.device_keys)).toBe(true);
+      const requestedDeviceKeys = body.device_keys as Array<{
+        account_id: { principal_id: string; station_id: string };
+        device_ids: string[];
+      }>;
       const generationRef = 1;
-      const attestedAt = "2026-08-24T00:00:00.000Z";
+      const attestedAt = new Date(Date.now() - 1000).toISOString();
       return json(route, {
-        device_keys: {
-          [requestedPrincipalId]: {
-            [requestedDeviceId]: {
+        device_keys: requestedDeviceKeys.map(({ account_id, device_ids }) => ({
+          account_id,
+          device_keys: Object.fromEntries(device_ids.map((device_id) => [device_id, {
               algorithms: {},
               trust_algorithms: [],
-              device_projection_attestation: {
-                attestation: {
-                  principal_id: requestedPrincipalId,
-                  station_id: CURRENT_STATION_ID,
-                  device_id: requestedDeviceId,
-                  device_signing_key:
+              device_projection_attestation: inksonWire("device-projection-attestation", {
+                  account_id,
+                  device_id,
+                  device_signing_key_did:
                     "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
                   hpke_key: "fixture-hpke-key",
                   device_authorize_event_id:
@@ -3097,24 +3090,18 @@ export async function mockArkretApi(
                   authorized_generation_ref: generationRef,
                   device_status: "active",
                   attested_at: attestedAt,
-                  expires_at: "2036-08-24T00:00:00.000Z",
-                },
-                proof: {
-                  verification_method: `${CURRENT_STATION_DID}#notary-key`,
-                  created_at: attestedAt,
-                  jws: "fixture",
-                },
-              },
-            },
-          },
-        },
+                  expires_at: new Date(Date.now() + 600000).toISOString(),
+              }),
+          }])),
+        })),
         failures: [],
-        device_generations: {
-          [requestedPrincipalId]: {
+        device_generations: requestedDeviceKeys.map(({ account_id }) => ({
+          account_id,
+          generation_state: {
             current_device_generation_ref: generationRef,
             device_generation_status: "active",
           },
-        },
+        })),
       });
     }
 
@@ -3122,7 +3109,7 @@ export async function mockArkretApi(
       url.pathname === "/_arkret/self/keys/claim" &&
       route.request().method() === "POST"
     ) {
-      return json(route, { one_time_keys: {}, failures: {} });
+      return json(route, { one_time_keys: [], failures: [] });
     }
 
     if (

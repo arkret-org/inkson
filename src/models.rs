@@ -96,10 +96,10 @@ pub fn contact_grants_me_invite(contact: &ContactListRow) -> bool {
 /// enum fields and **no** `schema`/`subject_id` — which made the SET body
 /// fail closed against the real soland handler (it deserialises
 /// `arkret_sdk::InviteReceivePolicy`, `deny_unknown_fields`, with both
-/// fields required and `subject_id == session.actor` enforced) and dropped
+/// fields required and account authority equality enforced) and dropped
 /// the server-stored `trusted_*` / `denied_principal_ids` lists on
 /// every round-trip. We now use the SDK authoritative type, which carries
-/// the required `schema`/`subject_id`, typed enums, and the trust lists, so
+/// the required `schema`/`account_id`, typed enums, and the trust lists, so
 /// a GET→edit→SET cycle preserves fields the U4 form does not touch.
 pub use arkret_models_collaboration::governance::invite_addressing::{
     DisclosureLevel, DisclosurePolicy, InviteReceivePolicy,
@@ -740,13 +740,13 @@ mod tests {
 
     #[test]
     fn invite_receive_policy_round_trips_sdk_wire_with_trust_lists() {
-        // YOU-01-006 — the bare SDK wire body (schema + subject_id required,
+        // YOU-01-006 — the bare SDK wire body (schema + account_id required,
         // typed enums, trust lists) must decode and re-encode without losing
         // the `trusted_*` / `denied_principal_ids` lists the U4 form
         // never touches.
         let value = serde_json::json!({
             "schema": SchemaId::INVITE_RECEIVE_POLICY_V1,
-            "subject_id": "ak:did_core:web:me.example",
+            "account_id": {"principal_id": "ak:did_core:web:me.example", "station_id": "ak:did_core:web:ps.example"},
             "holder_allowed_introduction_kinds": ["consent_grant", "locator_ref"],
             "explicit_address_behavior": "drop",
             "unknown_invites": "quarantine",
@@ -771,11 +771,17 @@ mod tests {
     }
 
     #[test]
-    fn default_invite_receive_policy_carries_schema_and_subject() {
+    fn default_invite_receive_policy_carries_schema_and_account() {
         let subject_id = crate::mls_api_helpers::principal_core_id("did:web:me.example").unwrap();
-        let policy = super::InviteReceivePolicy::spec_default(subject_id);
+        let policy = super::InviteReceivePolicy::spec_default(arkret_sdk::AccountId::new(
+            subject_id,
+            arkret_sdk::DidCoreId::new("ak:did_core:web:ps.example").unwrap(),
+        ));
         assert_eq!(policy.schema, SchemaId::INVITE_RECEIVE_POLICY_V1);
-        assert_eq!(policy.subject_id.as_str(), "ak:did_core:web:me.example");
+        assert_eq!(
+            policy.account_id.principal_id.as_str(),
+            "ak:did_core:web:me.example"
+        );
         assert_eq!(
             policy.explicit_address_behavior,
             super::InviteReceiveAction::Quarantine

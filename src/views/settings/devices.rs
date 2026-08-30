@@ -1451,7 +1451,7 @@ fn render_pair_strand(
                                             >(
                                                 &http,
                                                 &txn_id,
-                                                &actor,
+                                                &crate::mls_api_helpers::local_account_actor_id(&actor)?,
                                                 &row.device_id,
                                                 &expires_at,
                                                 content.clone(),

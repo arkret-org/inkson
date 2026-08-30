@@ -17,12 +17,12 @@ fn verified_generation_cache() -> &'static Mutex<BTreeMap<String, AuthoringGener
     CACHE.get_or_init(|| Mutex::new(BTreeMap::new()))
 }
 
-fn principal_generation_cache_key(principal_id: &str, device_id: &str) -> String {
-    format!("{principal_id}\u{1f}{device_id}")
+fn principal_generation_cache_key(account_id: &arkret_sdk::AccountId, device_id: &str) -> String {
+    format!("{account_id}\u{1f}{device_id}")
 }
 
 fn cache_verified_principal_generation(
-    principal_id: &str,
+    account_id: &arkret_sdk::AccountId,
     device_id: &str,
     generation: &AuthoringGeneration,
 ) {
@@ -30,7 +30,7 @@ fn cache_verified_principal_generation(
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
         .insert(
-            principal_generation_cache_key(principal_id, device_id),
+            principal_generation_cache_key(account_id, device_id),
             generation.clone(),
         );
     if previous.as_ref().is_some_and(|value| value != generation) {
@@ -45,7 +45,10 @@ pub(crate) fn cache_verified_principal_generation_for_test(
     generation_ref: &str,
 ) {
     cache_verified_principal_generation(
-        principal_id,
+        &arkret_sdk::AccountId::new(
+            arkret_sdk::DidCoreId::new(principal_id.to_owned()).unwrap(),
+            crate::operation::authoring_station_id().unwrap(),
+        ),
         device_id,
         &AuthoringGeneration {
             authority_model: AuthoringAuthorityModel::AcceptedDevice,
@@ -68,13 +71,13 @@ pub(crate) fn reset_verified_authoring_generations() {
 /// using only the stable DeviceId would silently reuse an actor after a
 /// reinstall or generation replacement.
 pub(crate) fn cached_principal_authoring_generation(
-    principal_id: &str,
+    account_id: &arkret_sdk::AccountId,
     device_id: &str,
 ) -> Option<AuthoringGeneration> {
     verified_generation_cache()
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
-        .get(&principal_generation_cache_key(principal_id, device_id))
+        .get(&principal_generation_cache_key(account_id, device_id))
         .cloned()
 }
 
@@ -92,6 +95,14 @@ pub(crate) struct EventAuthorityFacts<'a> {
 }
 
 impl<'a> EventAuthorityFacts<'a> {
+    fn authority_account(&self) -> anyhow::Result<&arkret_sdk::AccountId> {
+        self.executed_by
+            .unwrap_or(self.actor_id)
+            .as_account_id()
+            .ok_or_else(|| {
+                anyhow::anyhow!("device authoring generation requires an exact account actor")
+            })
+    }
     pub(crate) fn from_intent(intent: &'a crate::operation::EventIntent) -> Self {
         Self {
             actor_id: intent.actor_id(),
@@ -125,6 +136,7 @@ pub(crate) fn cached_event_authoring_generation(
     facts: &EventAuthorityFacts<'_>,
 ) -> anyhow::Result<Option<AuthoringGeneration>> {
     let authority_principal = facts.authority_principal();
+    let account_id = facts.authority_account()?;
     let signer = crate::event_signer::active_signer().ok_or_else(|| {
         anyhow::anyhow!("no active signer configured for generation-fenced write")
     })?;
@@ -134,10 +146,7 @@ pub(crate) fn cached_event_authoring_generation(
     let Some(controller_generation) = verified_generation_cache()
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
-        .get(&principal_generation_cache_key(
-            authority_principal,
-            device_id,
-        ))
+        .get(&principal_generation_cache_key(account_id, device_id))
         .cloned()
     else {
         return Ok(None);
@@ -175,6 +184,7 @@ pub(crate) async fn resolve_current_event_authoring_generation(
     facts: &EventAuthorityFacts<'_>,
 ) -> anyhow::Result<CurrentEventAuthoringGeneration> {
     let authority_principal = facts.authority_principal();
+    let account_id = facts.authority_account()?;
     let signer = crate::event_signer::active_signer().ok_or_else(|| {
         anyhow::anyhow!("no active signer configured for generation-fenced write")
     })?;
@@ -182,13 +192,13 @@ pub(crate) async fn resolve_current_event_authoring_generation(
         anyhow::anyhow!("active signer has no device_id for generation-fenced write")
     })?;
     let controller_generation =
-        match resolve_principal_authoring_generation(http, authority_principal, device_id).await? {
+        match resolve_principal_authoring_generation(http, account_id, device_id).await? {
             PrincipalGenerationResolution::Active(generation) => generation,
             PrincipalGenerationResolution::Quarantine(reason) => {
                 return Ok(CurrentEventAuthoringGeneration::Quarantine(reason));
             }
         };
-    cache_verified_principal_generation(authority_principal, device_id, &controller_generation);
+    cache_verified_principal_generation(account_id, device_id, &controller_generation);
 
     if facts.is_delegated() {
         return AuthoringGeneration::managed_agent(
@@ -211,11 +221,11 @@ enum PrincipalGenerationResolution {
 
 async fn resolve_principal_authoring_generation(
     http: &arkret_sdk::http_client::Client,
-    principal_id: &str,
+    account_id: &arkret_sdk::AccountId,
     device_id: &str,
 ) -> anyhow::Result<PrincipalGenerationResolution> {
-    let outcome = crate::transport::keys::query_keys(http, principal_id, device_id).await?;
-    resolve_principal_authoring_generation_from_keys(&outcome, principal_id, device_id)
+    let outcome = crate::transport::keys::query_keys(http, account_id, device_id).await?;
+    resolve_principal_authoring_generation_from_keys(&outcome, account_id, device_id)
 }
 
 /// Cache the current authoring generation from a keys projection that the
@@ -225,12 +235,12 @@ async fn resolve_principal_authoring_generation(
 /// generation after a full-page WASM reload.
 pub(crate) fn cache_principal_authoring_generation_from_keys(
     outcome: &arkret_models_crypto::KeysQueryOutcome,
-    principal_id: &str,
+    account_id: &arkret_sdk::AccountId,
     device_id: &str,
 ) -> anyhow::Result<bool> {
-    match resolve_principal_authoring_generation_from_keys(outcome, principal_id, device_id)? {
+    match resolve_principal_authoring_generation_from_keys(outcome, account_id, device_id)? {
         PrincipalGenerationResolution::Active(generation) => {
-            cache_verified_principal_generation(principal_id, device_id, &generation);
+            cache_verified_principal_generation(account_id, device_id, &generation);
             Ok(true)
         }
         PrincipalGenerationResolution::Quarantine(_) => Ok(false),
@@ -239,17 +249,16 @@ pub(crate) fn cache_principal_authoring_generation_from_keys(
 
 fn resolve_principal_authoring_generation_from_keys(
     outcome: &arkret_models_crypto::KeysQueryOutcome,
-    principal_id: &str,
+    account_id: &arkret_sdk::AccountId,
     device_id: &str,
 ) -> anyhow::Result<PrincipalGenerationResolution> {
-    let principal = crate::mls_api_helpers::principal_core_id(principal_id)?;
+    account_id.validate()?;
     let device = arkret_sdk::DeviceId::new(device_id.to_owned())?;
     let record = outcome
-        .device_keys
-        .get(&principal)
+        .devices_for(account_id)
         .and_then(|devices| devices.get(&device));
 
-    match outcome.device_generations.get(&principal) {
+    match outcome.generation_for(account_id) {
         Some(generation) => {
             if generation.device_generation_status
                 != arkret_models_crypto::DeviceGenerationStatus::Active
@@ -264,6 +273,14 @@ fn resolve_principal_authoring_generation_from_keys(
                 ));
             };
             let attested = &record.device_projection_attestation.attestation;
+            if record
+                .validate_attestation_binding(account_id, &device)
+                .is_err()
+            {
+                return Ok(PrincipalGenerationResolution::Quarantine(
+                    "authoring_device_account_binding_mismatch".to_owned(),
+                ));
+            }
             if attested.device_status != arkret_models_crypto::DeviceStatus::Active {
                 return Ok(PrincipalGenerationResolution::Quarantine(
                     "authoring_device_not_active".to_owned(),
@@ -276,7 +293,7 @@ fn resolve_principal_authoring_generation_from_keys(
             }
             Ok(PrincipalGenerationResolution::Active(AuthoringGeneration {
                 authority_model: AuthoringAuthorityModel::AcceptedDevice,
-                authority_principal_id: principal,
+                authority_principal_id: account_id.principal_id.clone(),
                 generation_ref: generation.current_device_generation_ref.to_string(),
             }))
         }
@@ -329,9 +346,35 @@ mod tests {
     use super::*;
 
     #[test]
+    fn generation_cache_does_not_cross_station_accounts() {
+        let principal =
+            arkret_sdk::DidCoreId::new("ak:did_core:web:cache-account.example").unwrap();
+        let first = arkret_sdk::AccountId::new(
+            principal.clone(),
+            arkret_sdk::DidCoreId::new("ak:did_core:web:first.example").unwrap(),
+        );
+        let second = arkret_sdk::AccountId::new(
+            principal.clone(),
+            arkret_sdk::DidCoreId::new("ak:did_core:web:second.example").unwrap(),
+        );
+        let generation = AuthoringGeneration {
+            authority_model: AuthoringAuthorityModel::AcceptedDevice,
+            authority_principal_id: principal,
+            generation_ref: "7".to_owned(),
+        };
+        cache_verified_principal_generation(&first, "device-cache-test", &generation);
+        assert_eq!(
+            cached_principal_authoring_generation(&first, "device-cache-test"),
+            Some(generation)
+        );
+        assert!(cached_principal_authoring_generation(&second, "device-cache-test").is_none());
+    }
+
+    #[test]
     fn active_generation_projects_a_resolvable_principal_did_to_its_core_id() {
         let principal_did = "did:webvh:QmR4AHvRgux4GsojV8fkDVxjHWsJkFqDnV6SFCwDRGCE8u:soland.local.host%3A23452:webvh:01a04bf8-ad5b-7165-9691-45793fe99362";
         let principal = crate::mls_api_helpers::principal_core_id(principal_did).unwrap();
+        let account_id = arkret_sdk::AccountId::new(principal.clone(), principal.clone());
         let device =
             arkret_sdk::DeviceId::new("ak:device:0196419b-0000-7000-8000-000000000001".to_owned())
                 .unwrap();
@@ -341,8 +384,7 @@ mod tests {
                 "trust_algorithms": [],
                 "device_projection_attestation": {
                     "attestation": {
-                        "principal_id": principal.as_str(),
-                        "station_id": principal.as_str(),
+                        "account_id": account_id,
                         "device_id": device.as_str(),
                         "device_signing_key_did": "did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuVkhY7g94pVQyG98x",
                         "hpke_key": "hpke-1",
@@ -362,23 +404,23 @@ mod tests {
         )
         .unwrap();
         let outcome = arkret_models_crypto::KeysQueryOutcome {
-            device_keys: BTreeMap::from([(
-                principal.clone(),
-                BTreeMap::from([(device.clone(), record)]),
-            )]),
+            device_keys: vec![arkret_models_crypto::QueryAccountDeviceEntry {
+                account_id: account_id.clone(),
+                device_keys: BTreeMap::from([(device.clone(), record)]),
+            }],
             failures: Vec::new(),
-            device_generations: BTreeMap::from([(
-                principal.clone(),
-                arkret_models_crypto::DeviceGenerationState {
+            device_generations: vec![arkret_models_crypto::AccountDeviceGenerationEntry {
+                account_id: account_id.clone(),
+                generation_state: arkret_models_crypto::DeviceGenerationState {
                     current_device_generation_ref: 7,
                     device_generation_status: arkret_models_crypto::DeviceGenerationStatus::Active,
                 },
-            )]),
+            }],
         };
 
         let resolution = resolve_principal_authoring_generation_from_keys(
             &outcome,
-            principal_did,
+            &account_id,
             device.as_str(),
         )
         .unwrap();

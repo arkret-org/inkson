@@ -40,7 +40,7 @@ pub(crate) fn derive_pairwise_signing_material_from_account_secret(
     realm_id: &arkret_sdk::RealmId,
 ) -> Result<PairwiseSigningMaterial, String> {
     let generation = crate::identity::authoring_generation::cached_principal_authoring_generation(
-        authority.principal_id.as_str(),
+        authority,
         device_id.as_str(),
     )
     .ok_or_else(|| {

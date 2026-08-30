@@ -160,7 +160,8 @@ impl SignalProductSink for AppSignalProductSink {
         envelope: &'a arkret_wire::SignalEnvelope,
     ) -> LocalBoxFuture<'a> {
         Box::pin(async move {
-            let actor = envelope.sender_actor_id.as_str();
+            let actor_selector = envelope.sender_actor_id.to_string();
+            let actor = actor_selector.as_str();
             let device = envelope.sender_device_id.as_str();
             let directory_lookup =
                 crate::identity::device_directory::cached_device_signing_key(actor, device);

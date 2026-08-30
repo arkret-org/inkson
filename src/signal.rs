@@ -323,7 +323,7 @@ impl SignalPayload {
     /// emitting a body its own receiver cannot parse.
     pub fn to_plaintext(
         &self,
-        actor_id: &arkret_sdk::DidCoreId,
+        actor_id: &arkret_sdk::ActorId,
         sequence: SignalSequence,
     ) -> anyhow::Result<Vec<u8>> {
         let plaintext = |result: Result<Vec<u8>, arkret_wire::WireError>, what: &str| {
@@ -381,7 +381,7 @@ impl SignalPayload {
                     })?;
                 let mut payload = arkret_sdk::PresencePlaintext::new(
                     sequence.get(),
-                    crate::mls_api_helpers::local_account_actor_id(actor_id.as_str())?,
+                    actor_id.clone(),
                     state,
                     self.ttl_ms()?,
                 )
@@ -414,7 +414,7 @@ impl SignalPayload {
                 // schema rejects the field outright.
                 let receipt = arkret_sdk::ReadReceipt::new(
                     sequence.get(),
-                    crate::mls_api_helpers::local_account_actor_id(actor_id.as_str())?,
+                    actor_id.clone(),
                     event_id.clone(),
                     arkret_sdk::ReadReceiptScope::strand(
                         strand_id.as_str().to_owned(),
@@ -463,7 +463,7 @@ fn bucket_presence_timestamp(ts: chrono::DateTime<chrono::Utc>) -> String {
 #[derive(Clone, Debug)]
 pub struct SignalHeader {
     pub scope_ref: arkret_sdk::ScopeRef,
-    pub sender_actor_id: arkret_sdk::DidCoreId,
+    pub sender_actor_id: arkret_sdk::ActorId,
     pub sender_device_id: arkret_sdk::DeviceId,
     pub seal_ref: arkret_sdk::SealId,
     pub signal_class: arkret_wire::SignalClass,
@@ -475,7 +475,7 @@ impl SignalHeader {
     /// Header at `sent_at` with the maximum TTL its class allows.
     pub fn new(
         scope_ref: arkret_sdk::ScopeRef,
-        sender_actor_id: arkret_sdk::DidCoreId,
+        sender_actor_id: arkret_sdk::ActorId,
         sender_device_id: arkret_sdk::DeviceId,
         seal_ref: arkret_sdk::SealId,
         signal_class: arkret_wire::SignalClass,
@@ -728,7 +728,9 @@ fn seal_signal_envelope_with_signer(
             .ok_or_else(|| anyhow::anyhow!("signal signer method has no controller"))?
             .to_owned(),
     )?;
-    if arkret_sdk::project_did_to_core_id(&signer_did)? != header.sender_actor_id {
+    if &arkret_sdk::project_did_to_core_id(&signer_did)?
+        != header.sender_actor_id.signing_principal_id()
+    {
         anyhow::bail!("signal signer does not control sender_actor_id");
     }
     let mut envelope = arkret_wire::SignalEnvelope {
@@ -840,6 +842,7 @@ pub(crate) mod test_support {
         sequence: SignalSequence,
     ) -> anyhow::Result<(arkret_wire::SignalEnvelope, Value)> {
         let sent_at = crate::clock::now_utc();
+        let actor_id = crate::mls_api_helpers::local_account_actor_id(actor_id.as_str())?;
         let header = SignalHeader::new(
             arkret_sdk::ScopeRef::Realm {
                 realm_id: realm_id.clone(),
@@ -850,7 +853,7 @@ pub(crate) mod test_support {
             payload.signal_class(),
             sent_at,
         );
-        let plaintext = payload.to_plaintext(actor_id, sequence)?;
+        let plaintext = payload.to_plaintext(&actor_id, sequence)?;
         let verification_method = arkret_sdk::DidUrl::new(signer.verification_method().to_owned())
             .map_err(anyhow::Error::msg)?;
         let encrypted = opaque_encrypted_payload(&header, &verification_method);
@@ -867,8 +870,8 @@ mod tests {
         arkret_sdk::RealmId::new("ak:realm:AZQnaSleDidYaYIvfwYy3au5gnd_DSinxyUHEl7ewtxk").unwrap()
     }
 
-    fn actor() -> arkret_sdk::DidCoreId {
-        crate::mls_api_helpers::principal_core_id("did:web:alice.example").unwrap()
+    fn actor() -> arkret_sdk::ActorId {
+        crate::mls_api_helpers::local_account_actor_id("did:web:alice.example").unwrap()
     }
 
     /// The deleted plaintext rail put `typing` / `strand_id` / `track_name` on

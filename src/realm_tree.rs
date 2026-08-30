@@ -1158,7 +1158,7 @@ mod tests {
             json!({
                 "summary": {"joined_member_count": 1},
                 "state_at_window_start": {
-                    "actor_profiles": {},
+                    "actor_profiles": [],
                     "realm_metadata": {
                         "title": "Architecture",
                         "summary": "System design"

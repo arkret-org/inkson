@@ -563,7 +563,7 @@ pub fn VerifyDevicePanel(
                                                         >(
                                                             &http,
                                                             "inkson-sas-key",
-                                                            &principal_id,
+                                                            &crate::mls_api_helpers::local_account_actor_id(&principal_id)?,
                                                             &target,
                                                             &crate::clock::timestamp_in(10),
                                                             signed_content,

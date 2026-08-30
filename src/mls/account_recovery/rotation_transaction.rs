@@ -646,9 +646,10 @@ pub(super) async fn current_controller_backup_trust_anchor(
     device_id: &str,
 ) -> Result<ControllerBackupTrustAnchor> {
     let actor = crate::mls_api_helpers::principal_core_id(actor_id)?;
+    let account_id = arkret_sdk::AccountId::new(actor, crate::operation::authoring_station_id()?);
     let device = arkret_sdk::DeviceId::new(device_id.to_owned())?;
-    let outcome = crate::transport::keys::query_keys(http, actor_id, device_id).await?;
-    resolve_controller_backup_trust_anchor(&outcome, &actor, &device)
+    let outcome = crate::transport::keys::query_keys(http, &account_id, device_id).await?;
+    resolve_controller_backup_trust_anchor(&outcome, &account_id, &device)
         .map_err(|error| anyhow!("controller backup trust anchor unavailable: {error}"))
 }
 

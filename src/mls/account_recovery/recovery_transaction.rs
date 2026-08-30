@@ -306,8 +306,7 @@ fn exact_device_reanchor_payload(
     replacement_authorize_payload_digest: Hash,
 ) -> anyhow::Result<DeviceReanchorPayload> {
     let payload = DeviceReanchorPayload {
-        principal_id: session.account_id.principal_id.clone(),
-        station_id: session.account_id.station_id.clone(),
+        account_id: session.account_id.clone(),
         recovery_authority_kind: RecoveryAuthorityKind::PcrPolicy,
         recovery_policy_id: session.policy_id.clone(),
         recovery_policy_version: session.policy_version,

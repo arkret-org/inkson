@@ -15,23 +15,21 @@
 //! methods. Plain one-shot device-message sends remain transport writes; the
 //! caller prepares any signed content before dispatch.
 
-use std::collections::BTreeMap;
-
 use crate::models::{DeviceMessagesSendOutcome, KeysQueryOutcome};
 
 pub async fn query_keys(
     http: &arkret_sdk::http_client::Client,
-    actor: &str,
+    account_id: &arkret_sdk::AccountId,
     device_id: &str,
 ) -> anyhow::Result<KeysQueryOutcome> {
-    let actor = crate::mls_api_helpers::principal_core_id(actor)
-        .map_err(|err| anyhow::anyhow!("invalid actor DID `{actor}`: {err}"))?;
+    account_id.validate()?;
     let device_id = arkret_sdk::DeviceId::new(device_id.to_owned())
         .map_err(|err| anyhow::anyhow!("invalid device_id `{device_id}`: {err}"))?;
-    let mut device_keys = BTreeMap::new();
-    device_keys.insert(actor, vec![device_id]);
     let body = arkret_models_crypto::KeysQueryRequestBody {
-        device_keys,
+        device_keys: vec![arkret_models_crypto::QueryAccountDeviceSelector {
+            account_id: account_id.clone(),
+            device_ids: vec![device_id],
+        }],
         timeout_ms: None,
     };
     http.keys_query(&body).await.map_err(anyhow::Error::from)
@@ -57,7 +55,7 @@ pub async fn list_devices(
 pub async fn send_device_message<K: arkret_sdk::DeviceMessageSpec>(
     http: &arkret_sdk::http_client::Client,
     txn_id: &str,
-    target_actor: &str,
+    target_actor: &arkret_sdk::ActorId,
     target_device_id: &str,
     expires_at: &str,
     content: K::Content,
@@ -87,18 +85,23 @@ pub async fn send_device_message_with_id<K: arkret_sdk::DeviceMessageSpec>(
     http: &arkret_sdk::http_client::Client,
     txn_id: &str,
     message_id: arkret_sdk::DeviceMessageId,
-    target_actor: &str,
+    target_actor: &arkret_sdk::ActorId,
     target_device_id: &str,
     expires_at: &str,
     content: K::Content,
 ) -> anyhow::Result<DeviceMessagesSendOutcome> {
-    // Out-of-band device queues are principal/device coordinates within the
-    // addressed Station; this is not a Realm ActorId map.
-    let target_actor = crate::mls_api_helpers::principal_core_id(target_actor)?;
+    target_actor.validate()?;
+    let account_id = target_actor
+        .as_account_id()
+        .ok_or_else(|| anyhow::anyhow!("device messages require an account target"))?;
+    let destination = http.describe().await?.service_id;
+    if destination != account_id.station_id {
+        anyhow::bail!("device message target Station differs from the authenticated destination");
+    }
     let target_device_id = arkret_sdk::DeviceId::new(target_device_id.to_owned())?;
     let expires_at = chrono::DateTime::parse_from_rfc3339(expires_at)?.with_timezone(&chrono::Utc);
     let payload = arkret_sdk::TypedDeviceMessageTarget::<K>::new(message_id, expires_at, content)?
-        .single_recipient(target_actor, target_device_id)?;
+        .single_recipient(account_id.principal_id.clone(), target_device_id)?;
     http.send_device_messages(txn_id, &payload)
         .await
         .map_err(anyhow::Error::from)

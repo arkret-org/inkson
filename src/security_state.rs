@@ -498,7 +498,7 @@ mod tests {
 
         let real_encrypted_sync_shape = json!({
             "state_at_window_start": {
-                "actor_profiles": {},
+                "actor_profiles": [],
                 "realm_metadata": {"title": "Encrypted Realm"},
                 "e2ee_epoch": null
             },

@@ -604,10 +604,14 @@ pub async fn contacts(http: &arkret_sdk::http_client::Client) -> anyhow::Result<
 /// hard error; the settings surface keeps the SDK fail-closed default.
 pub async fn get_invite_receive_policy(
     http: &arkret_sdk::http_client::Client,
+    account_id: &arkret_sdk::AccountId,
 ) -> anyhow::Result<crate::models::InviteReceivePolicy> {
-    http.get("/_arkret/self/invite-receive-policy")
-        .await
-        .map_err(anyhow::Error::from)
+    let policy: crate::models::InviteReceivePolicy =
+        http.get("/_arkret/self/invite-receive-policy").await?;
+    if &policy.account_id != account_id {
+        anyhow::bail!("invite receive policy belongs to a different account");
+    }
+    Ok(policy)
 }
 
 /// Persist the actor's `invite_receive_policy` (U4).
@@ -615,16 +619,20 @@ pub async fn get_invite_receive_policy(
 /// Spec `ak.self.invite_receive_policy.resource.replace.v1`:
 /// `PUT /_arkret/self/invite-receive-policy` with the bare
 /// `arkret_sdk::InviteReceivePolicy` as the body. The handler enforces
-/// `subject_id == session actor` and requires the `schema` constant, so the
+/// `account_id == session account` and requires the `schema` constant, so the
 /// caller MUST stamp both before calling (see the U4 view); the server
 /// echoes the stored policy back.
 pub async fn set_invite_receive_policy(
     http: &arkret_sdk::http_client::Client,
     policy: &crate::models::InviteReceivePolicy,
 ) -> anyhow::Result<crate::models::InviteReceivePolicy> {
-    http.put("/_arkret/self/invite-receive-policy", policy)
-        .await
-        .map_err(anyhow::Error::from)
+    let stored: crate::models::InviteReceivePolicy = http
+        .put("/_arkret/self/invite-receive-policy", policy)
+        .await?;
+    if stored.account_id != policy.account_id {
+        anyhow::bail!("saved invite receive policy belongs to a different account");
+    }
+    Ok(stored)
 }
 
 /// Resolve the pair's stable Direct Conversation coordinates.

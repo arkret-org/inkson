@@ -3373,11 +3373,11 @@ pub fn RealmMembersPanel(
                                                         let invitee_label = invitee
                                                             .handle
                                                             .clone()
-                                                            .unwrap_or_else(|| invitee.account_id.principal_id.to_string());
+                                                            .unwrap_or_else(|| invitee.account_id().principal_id.to_string());
                                                         let op = match ak_ops::invite_create_structured(
                                                             &realm,
                                                             &actor,
-                                                            invitee.account_id.clone(),
+                                                            invitee.account_id().clone(),
                                                             None,
                                                             &invitee.introduction_evidence_digest,
                                                         ) {
@@ -3442,18 +3442,17 @@ pub fn RealmMembersPanel(
                                                                         json!({
                                                                     "kind": event_kind_str::INVITE_CREATE,
                                                                     "invite_id": invite_id.clone(),
-                                                                    "invitee_account_id": invitee.account_id.clone(),
+                                                                    "invitee_account_id": invitee.account_id().clone(),
                                                                             "invitee_label": invitee_label.clone(),
                                                                             "state": "pending",
                                                                             "event_id": submitted.event_id,
-                                                                            "recipient_id": invitee.invite_delivery_target.recipient_id,
                                                                         }),
                                                                     );
                                                                 }
                                                                 let mut next_members = members.read().clone();
                                                                 upsert_pending_invite_profile(
                                                                     &mut next_members,
-                                                                    &arkret_sdk::ActorId::account(invitee.account_id.clone()).to_string(),
+                                                                    &arkret_sdk::ActorId::account(invitee.account_id().clone()).to_string(),
                                                                     Some(&invitee_label),
                                                                     Some(&invite_id),
                                                                 );
