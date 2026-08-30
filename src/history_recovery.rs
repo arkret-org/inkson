@@ -1080,7 +1080,7 @@ pub async fn list_requests(
 
 /// Discover the scope-private request projection exposed to a current member
 /// endpoint (including byte-identical peer replicas). Re-running this after a
-/// join or delivery rebind is intentional: the service projection is the
+/// join or same-Station route recovery is intentional: the service projection is the
 /// authoritative discovery surface and request ids make repeated pages safe.
 pub async fn discover_member_request_replicas(
     state_store: SyncSignal<LocalStateStore>,
