@@ -9,23 +9,23 @@ repository = "https://github.com/DioxusLabs/dioxus/"
 keywords = ["generational", "box", "memory", "allocator"]
 rust-version = "1.83.0"
 
-[dependencies]
-parking_lot = "0.12.4"
-tracing = "0.1.41"
+[package.metadata.docs.rs]
+cargo-args = ["-Zunstable-options", "-Zrustdoc-scrape-examples"]
 
-[dev-dependencies]
-rand = "0.9"
-criterion = "0.6"
+[workspace]
 
 [features]
 debug_borrows = []
 debug_ownership = []
 
+[dependencies]
+parking_lot = "0.12.4"
+tracing = "0.1.41"
+
+[dev-dependencies]
+criterion = "0.6"
+rand = "0.9"
+
 [[bench]]
 name = "lock"
 harness = false
-
-[package.metadata.docs.rs]
-cargo-args = ["-Zunstable-options", "-Zrustdoc-scrape-examples"]
-
-[workspace]

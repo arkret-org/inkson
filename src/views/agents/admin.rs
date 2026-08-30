@@ -786,6 +786,13 @@ fn spawn_set_agent_enabled(
                 status_changed_at,
             )
         } else {
+            let pause_reason = match arkret_sdk::AuditReasonText::new("controller_paused") {
+                Ok(reason) => reason,
+                Err(error) => {
+                    last_op_status.set(format!("Agent pause reason is invalid: {error}"));
+                    return;
+                }
+            };
             arkret_event_draft::build_agent_pause_intent(
                 agent_actor_id.clone(),
                 controller_actor_id,
@@ -793,7 +800,7 @@ fn spawn_set_agent_enabled(
                     realm_id: key_state.principal_control_realm_id.clone(),
                 },
                 key_state.controller_authorization_ref.clone(),
-                Some(arkret_sdk::AuditReasonText::new("controller_paused").unwrap()),
+                Some(pause_reason),
                 status_changed_at,
             )
         };
@@ -904,10 +911,6 @@ fn spawn_set_agent_enabled(
     });
 }
 
-// Invariant assertions: each `expect` message names the check that
-// establishes it a few lines earlier. Rewriting them as `?` would add
-// error paths no caller can reach.
-#[allow(clippy::expect_used)]
 #[allow(clippy::too_many_arguments)]
 fn spawn_deactivate_agent(
     base: String,
@@ -944,7 +947,13 @@ fn spawn_deactivate_agent(
             return;
         }
 
-        let reason = arkret_sdk::AuditReasonText::new("controller_deactivated").unwrap();
+        let reason = match arkret_sdk::AuditReasonText::new("controller_deactivated") {
+            Ok(reason) => reason,
+            Err(error) => {
+                last_op_status.set(format!("Agent deactivation reason is invalid: {error}"));
+                return;
+            }
+        };
         let changed_at = crate::clock::now_utc_millis();
         let agent_actor_id = key_state.agent_id.clone();
         let controller_actor_id = key_state.controller_id.clone();

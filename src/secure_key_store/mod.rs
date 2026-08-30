@@ -454,13 +454,13 @@ pub fn default_secure_key_store(service_name: &str) -> Arc<dyn SecureKeyStore + 
         // Both stores share the same `SecureKeyStore` interface. Ed25519
         // seed callers still require the IndexedDB tier explicitly.
         match LocalStorageSecureKeyStore::new(service_name) {
-            Ok(store) => return Arc::new(store),
+            Ok(store) => Arc::new(store),
             Err(err) => {
                 tracing::warn!(
                     ?err,
                     "LocalStorageSecureKeyStore init failed; falling back to in-memory store"
                 );
-                return Arc::new(MemorySecureKeyStore::new());
+                Arc::new(MemorySecureKeyStore::new())
             }
         }
     }

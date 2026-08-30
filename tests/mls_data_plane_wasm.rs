@@ -131,12 +131,23 @@ impl LocalMlsDevice {
             .group
             .as_mut()
             .ok_or_else(|| anyhow::anyhow!("MLS group is not available"))?;
-        let encrypted = MessageCrypto::encrypt(
-            group,
-            message_id,
+        let header = arkret_sdk::EventContentPreEncryptionHeader::reconstruct(
+            "1.0",
             "application/vnd.arkret.message+json",
-            plaintext,
+            arkret_sdk::EncryptedPayloadScheme::MlsRfc9420,
+            arkret_sdk::ScopeRef::Realm {
+                realm_id: arkret_sdk::RealmId::new(std::str::from_utf8(GROUP_ID)?.to_owned())?,
+            },
+            arkret_wire::event_kind_str::MESSAGE_CREATE,
+            group.epoch(),
+            arkret_sdk::EventId::new(
+                "ak:event:ARKEyrg59dN-i97Pleo3vwwRkZomIcqPiuK9PtjzGLdh".to_owned(),
+            )?,
+            group.local_content_sender_domain()?,
+            None,
+            arkret_sdk::EventContentRoutingContext::None,
         )?;
+        let encrypted = MessageCrypto::encrypt(group, message_id, header, plaintext)?;
         Ok(ClientEncryptedMessage {
             message_id: encrypted.message_id,
             payload: encrypted.payload,

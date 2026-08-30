@@ -1104,23 +1104,29 @@ impl ChatController {
             .await
             {
                 Ok(submitted) => {
-                    state_store.write().append_raw_operation(
-                        operation.local_operation_id().to_string(),
-                        Some(message.realm_id.clone()),
-                        serde_json::to_value(AcceptedChatMessageOperation {
-                            event_id: &submitted.event_id,
-                            kind: event_kind_str::MESSAGE_CREATE,
-                            actor_id: actor.as_str(),
-                            body: &message.body,
-                            content: &operation.payload()["content"],
-                            strand_id: &message.strand_id,
-                            message_id: &retry_message_id,
-                            mentions: &mention_values,
-                            reply_to: message.reply_to.as_deref(),
-                            status: &submitted.status,
-                        })
-                        .expect("accepted chat message operation is serializable"),
-                    );
+                    match serde_json::to_value(AcceptedChatMessageOperation {
+                        event_id: &submitted.event_id,
+                        kind: event_kind_str::MESSAGE_CREATE,
+                        actor_id: actor.as_str(),
+                        body: &message.body,
+                        content: &operation.payload()["content"],
+                        strand_id: &message.strand_id,
+                        message_id: &retry_message_id,
+                        mentions: &mention_values,
+                        reply_to: message.reply_to.as_deref(),
+                        status: &submitted.status,
+                    }) {
+                        Ok(raw_operation) => state_store.write().append_raw_operation(
+                            operation.local_operation_id().to_string(),
+                            Some(message.realm_id.clone()),
+                            raw_operation,
+                        ),
+                        Err(error) => tracing::error!(
+                            %error,
+                            event_id = %submitted.event_id,
+                            "accepted retried chat operation could not be cached"
+                        ),
+                    }
                     if let Some(found) = messages
                         .write()
                         .iter_mut()

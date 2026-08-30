@@ -185,6 +185,7 @@ fn mutate_native_state<T>(
     let mut file = std::fs::OpenOptions::new()
         .create(true)
         .read(true)
+        .truncate(false)
         .write(true)
         .open(path)?;
     file.lock_exclusive()?;

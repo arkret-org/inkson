@@ -186,7 +186,7 @@ fn space_bootstrap_events_use_canonical_create_and_facet_kinds() {
     );
     assert_eq!(events[2].payload["policy_revision"], 1);
     assert!(
-        events[2].payload.get("content_scheme").is_none(),
+        !events[2].payload.contains_key("content_scheme"),
         "the Realm policy bundle must not duplicate the MLS Genesis content scheme"
     );
     assert_eq!(events[3].payload["value"], "invite");
@@ -326,7 +326,7 @@ fn realm_bootstrap_allows_joined_history_with_strict_mls_scheme() {
     assert!(
         events
             .iter()
-            .all(|event| event.payload.get("content_scheme").is_none())
+            .all(|event| !event.payload.contains_key("content_scheme"))
     );
 }
 
@@ -702,7 +702,7 @@ fn device_verification_transcript_canonical_bytes_are_unchanged() {
 }
 
 /// A6 — `ak.key.verification.key` content must carry every member
-/// `device-message.schema.json` requires (`transaction_id`, `from_device`,
+/// `device-message.schema.json` requires (`transaction_id`, `from_device_id`,
 /// `key`), not just the proof block. The schema gate lives in
 /// `tests/conformance_gates.rs`; this pins the builder's own contract.
 #[test]

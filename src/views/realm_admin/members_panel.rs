@@ -2447,10 +2447,7 @@ async fn ensure_mls_governance_proof_for_next_commit(
         let effective_scope = arkret_sdk::ScopeRef::Realm { realm_id };
         let key_packages = added_claims
             .iter()
-            .map(|claim| {
-                crate::mls_api_helpers::keypackage_claim_record_to_mls_record(claim)
-                    .map_err(anyhow::Error::from)
-            })
+            .map(|claim| crate::mls_api_helpers::keypackage_claim_record_to_mls_record(claim))
             .collect::<Result<Vec<_>, _>>()?;
         crate::mls::governance_proof::preview_security_frontier_with_added_keypackages(
             &state_store.read(),

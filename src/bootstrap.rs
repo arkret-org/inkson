@@ -680,15 +680,16 @@ async fn publish_fresh_local_mls_key_package_batch(
             .await
             .map_err(|error| format!("store MLS KeyPackage identity ref state: {error}"))?;
         }
+        let expires_at = record
+            .expires_at
+            .ok_or_else(|| "fresh KeyPackage is missing its finite expiry".to_owned())?;
         local_entries.push(arkret_sdk::LocalMlsKeyPackageInventoryEntry {
             keypackage_id: key_package_id,
             keypackage_ref: record.keypackage_ref.clone(),
             state: arkret_sdk::MlsKeyPackageState::Published,
             has_private_state: true,
             created_at: record.created_at,
-            expires_at: record
-                .expires_at
-                .expect("fresh KeyPackage has finite expiry"),
+            expires_at,
             last_resort: false,
         });
         records.push(record);

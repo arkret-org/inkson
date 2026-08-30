@@ -1491,12 +1491,12 @@ where
                 unreachable!("history response stream page entry is a closed union")
             };
             let lost_dependencies = arkret_sdk::history_response_lost_signer_dependency_closure(
-                &lost_record,
+                lost_record,
                 &signer_dependencies,
             )?;
             arkret_sdk::verify_history_response_lost_record(
                 &accepted,
-                &lost_record,
+                lost_record,
                 &lost_dependencies,
             )?;
             runtime
@@ -1515,7 +1515,7 @@ where
         };
         let record_dependencies = (|| -> anyhow::Result<Vec<_>> {
             let partition = arkret_sdk::history_response_record_signer_dependency_closure(
-                &record,
+                record,
                 &signer_dependencies,
             )?;
             let mut record_dependencies = std::collections::BTreeMap::new();
@@ -1576,7 +1576,7 @@ where
         };
         let verified = match arkret_sdk::verify_history_response_record(
             &accepted,
-            &record,
+            record,
             &traversal.checkpoint,
             manifest.as_ref(),
             &record_dependencies,

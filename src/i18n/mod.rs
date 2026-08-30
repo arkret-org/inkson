@@ -56,7 +56,7 @@ pub fn resolve_locale(account: Option<&str>, device_cache: Option<&str>) -> UiLo
 fn platform_language() -> Option<String> {
     #[cfg(target_arch = "wasm32")]
     {
-        return web_sys::window().and_then(|window| window.navigator().language());
+        web_sys::window().and_then(|window| window.navigator().language())
     }
 
     #[cfg(not(target_arch = "wasm32"))]

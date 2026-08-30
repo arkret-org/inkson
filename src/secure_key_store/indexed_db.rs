@@ -295,13 +295,15 @@ impl IndexedDbSecureKeyStore {
 
     async fn open_db(db_name: &str) -> Result<web_sys::IdbDatabase, SecureKeyStoreError> {
         use wasm_bindgen::JsCast;
-        let window = web_sys::window().ok_or_else(|| {
+        let window = web_sys::window().ok_or({
             SecureKeyStoreError::Unsupported("web_sys::window unavailable (non-browser host)")
         })?;
         let factory = window
             .indexed_db()
             .map_err(|err| SecureKeyStoreError::Backend(format!("indexedDB: {err:?}")))?
-            .ok_or_else(|| SecureKeyStoreError::Unsupported("window.indexedDB unavailable"))?;
+            .ok_or(SecureKeyStoreError::Unsupported(
+                "window.indexedDB unavailable",
+            ))?;
         let open_req = factory
             .open_with_u32(db_name, Self::DB_VERSION)
             .map_err(|err| SecureKeyStoreError::Backend(format!("indexedDB.open: {err:?}")))?;
@@ -545,8 +547,9 @@ impl IndexedDbSecureKeyStore {
     ) -> Result<wasm_bindgen::JsValue, SecureKeyStoreError> {
         use js_sys::{Array, Object, Reflect, Uint8Array};
         use wasm_bindgen::{JsCast, JsValue};
-        let window = web_sys::window()
-            .ok_or_else(|| SecureKeyStoreError::Unsupported("web_sys::window unavailable"))?;
+        let window = web_sys::window().ok_or(SecureKeyStoreError::Unsupported(
+            "web_sys::window unavailable",
+        ))?;
         let subtle = window
             .crypto()
             .map_err(|err| SecureKeyStoreError::Backend(format!("crypto: {err:?}")))?
@@ -877,8 +880,9 @@ impl IndexedDbSecureKeyStore {
     ) -> Result<(Vec<u8>, Vec<u8>), SecureKeyStoreError> {
         use js_sys::{Object, Reflect, Uint8Array};
         use wasm_bindgen::{JsCast, JsValue};
-        let window = web_sys::window()
-            .ok_or_else(|| SecureKeyStoreError::Unsupported("web_sys::window unavailable"))?;
+        let window = web_sys::window().ok_or(SecureKeyStoreError::Unsupported(
+            "web_sys::window unavailable",
+        ))?;
         let subtle = window
             .crypto()
             .map_err(|err| SecureKeyStoreError::Backend(format!("crypto: {err:?}")))?
@@ -928,8 +932,9 @@ impl IndexedDbSecureKeyStore {
             ));
         }
         let (iv, ct) = packed.split_at(12);
-        let window = web_sys::window()
-            .ok_or_else(|| SecureKeyStoreError::Unsupported("web_sys::window unavailable"))?;
+        let window = web_sys::window().ok_or(SecureKeyStoreError::Unsupported(
+            "web_sys::window unavailable",
+        ))?;
         let subtle = window
             .crypto()
             .map_err(|err| SecureKeyStoreError::Backend(format!("crypto: {err:?}")))?
@@ -1150,6 +1155,7 @@ impl SecureKeyStore for IndexedDbSecureKeyStore {
 ///          secrets; signer bootstrap remains fail-closed.
 ///        * `Err(...)` — backend failure during init. Caller should log and keep the LocalStorage
 ///          store only for non-signing secrets.
+///
 /// Returning `Option<Arc<...>>` rather than panicking on
 /// "browser doesn't support this" mirrors the rest of the secure
 /// key store contract (sync `default_secure_key_store` also falls

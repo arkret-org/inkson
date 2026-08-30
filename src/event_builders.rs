@@ -549,9 +549,6 @@ fn build_realm_genesis_object(
 /// `object.created_at` is the single source for the envelope timestamp:
 /// `realm_create_payload` semantic validation requires
 /// `payload.object.created_at == Event.created_at`.
-// The `expect` below fires only if the fixed canonical placeholder literal
-// fails validation — an invariant, not a reachable error path.
-#[allow(clippy::expect_used)]
 fn build_realm_create_event_from_object(
     actor_id: &str,
     object: arkret_sdk::RealmGenesis,
@@ -565,8 +562,7 @@ fn build_realm_create_event_from_object(
     // The builder emits the closed `realm_genesis` scope for this kind, so the
     // realm id passed here is a placeholder the envelope never carries.
     TypedOperationBuilder::new::<arkret_sdk::event_spec::RealmCreate>(
-        arkret_sdk::RealmId::new("ak:realm:ASyOHakrqmsRPkLKvhTD20V-YWCl-X7zYrlca5tdQLaR")
-            .expect("placeholder realm id is canonical")
+        arkret_sdk::RealmId::new("ak:realm:ASyOHakrqmsRPkLKvhTD20V-YWCl-X7zYrlca5tdQLaR")?
             .into_string(),
         actor_id,
         realm_body,
@@ -587,8 +583,7 @@ fn build_realm_create_event_from_object_for_principal_server(
     let preconditions = vec![head_eq_precondition(&cell, Value::Null)?];
     let realm_body = arkret_sdk::RealmCreatePayload::new(object);
     TypedOperationBuilder::new_for_principal_server::<arkret_sdk::event_spec::RealmCreate>(
-        arkret_sdk::RealmId::new("ak:realm:ASyOHakrqmsRPkLKvhTD20V-YWCl-X7zYrlca5tdQLaR")
-            .expect("placeholder realm id is canonical")
+        arkret_sdk::RealmId::new("ak:realm:ASyOHakrqmsRPkLKvhTD20V-YWCl-X7zYrlca5tdQLaR")?
             .into_string(),
         actor_id,
         principal_server_id,
@@ -1799,7 +1794,7 @@ pub fn build_signed_device_verification_proof(
 /// `ak.key.verification.key` device-message content carrying the sender's
 /// public key and the signed verification transcript.
 ///
-/// `device-message.schema.json` requires `transaction_id` + `from_device` on
+/// `device-message.schema.json` requires `transaction_id` + `from_device_id` on
 /// every `ak.key.verification.*` content and additionally `key` on
 /// `ak.key.verification.key`. Inkson used to send only
 /// `{device_envelope, signature}`, so the message satisfied none of the three

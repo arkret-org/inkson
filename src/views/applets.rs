@@ -362,23 +362,24 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
     let raw_ops = state_store.read().load().raw_operations;
     let registrations: Vec<_> = raw_ops
         .iter()
-        .filter(|r| {
+        .filter_map(|r| {
             let is_registration = r
                 .payload
                 .get("kind")
                 .and_then(Value::as_str)
                 .map(|k| k == event_kind_str::APPLET_REGISTRATION)
                 .unwrap_or(false);
-            let has_stable_service_id = r
+            if !is_registration {
+                return None;
+            }
+            let service_id = r
                 .payload
                 .get("body")
                 .and_then(|body| body.get("service_id"))
                 .and_then(Value::as_str)
-                .and_then(|value| DidCoreId::new(value.to_owned()).ok())
-                .is_some();
-            is_registration && has_stable_service_id
+                .and_then(|value| DidCoreId::new(value.to_owned()).ok())?;
+            Some((r.clone(), service_id.into_string()))
         })
-        .cloned()
         .collect();
     let bridge_errors: Vec<_> = raw_ops
         .iter()
@@ -396,14 +397,7 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
     // operation, augmented with manifest_hash + installed_at).
     let applet_rows: Vec<_> = registrations
         .iter()
-        .map(|r| {
-            let service_id = r
-                .payload
-                .get("body")
-                .and_then(|b| b.get("service_id"))
-                .and_then(Value::as_str)
-                .expect("registration rows were filtered by stable service_id")
-                .to_owned();
+        .map(|(r, service_id)| {
             let namespace = registration_namespace_label(r.payload.get("body"));
             let applet_id = format!("{service_id}@{namespace}");
             let manifest_repr = format!("{}:{}", service_id, namespace);
@@ -411,7 +405,7 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
             let installed_at = r.operation_id.clone();
             (
                 applet_id,
-                service_id,
+                service_id.clone(),
                 namespace,
                 manifest_hash,
                 installed_at,
@@ -466,13 +460,8 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
                         "No applets registered yet. Use the signed Applet Package install flow below; registration is derived during commit."
                     }
                 } else {
-                    for r in registrations {
+                    for (r, service_id) in registrations {
                         {
-                            let service_id = r.payload.get("body")
-                                .and_then(|b| b.get("service_id"))
-                                .and_then(Value::as_str)
-                                .expect("registration rows were filtered by stable service_id")
-                                .to_owned();
                             let namespace = registration_namespace_label(r.payload.get("body"));
                             let op_id = r.operation_id.clone();
                             let service_id_label = short_protocol_id(&service_id);
@@ -647,7 +636,7 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
                                             };
                                             let approval_request = approval_request(
                                                 approve_actions.clone(),
-                                                ghost_actor_mode.clone(),
+                                                ghost_actor_mode,
                                             );
                                             let actor_policy = AppletActorPolicy {
                                                 ghost_actor_mode: Some(ghost_actor_mode),
@@ -849,12 +838,12 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
                                                 author_outcome
                                                     .managed_actor_bundle
                                                     .validate_bindings(&authoring_request)?;
-                                                let body = AppletInstallRequestBody::Create(AppletInstallCreateRequestBody {
+                                                let body = AppletInstallRequestBody::Create(Box::new(AppletInstallCreateRequestBody {
                                                     applet_package: snapshot.package,
                                                     authoring_request,
                                                     managed_actor_bundle:
                                                         author_outcome.managed_actor_bundle,
-                                                });
+                                                }));
                                                 http.applet_install(&idem, &body)
                                                     .await
                                                     .map_err(anyhow::Error::from)

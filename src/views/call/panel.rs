@@ -799,7 +799,7 @@ pub fn CallPanel(
                                                 focus_id: focus_id.clone(),
                                                 epoch_id: 0,
                                                 desired_media: if want_video { DesiredMedia::audio_video() } else { DesiredMedia::audio_only() },
-                                                media_service_ids: media_service_ids,
+                                                media_service_ids,
                                                 verified_media_routes,
                                                 governance_evidence,
                                             };

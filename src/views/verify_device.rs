@@ -47,7 +47,10 @@ fn extract_peer_verification_key(value: &serde_json::Value) -> Option<String> {
         let arkret_sdk::DeviceMessageContent::KeyVerification(content) = envelope.content else {
             return None;
         };
-        content.key.map(|key| key.as_str().to_owned())
+        content
+            .key
+            .filter(|key| !key.as_str().trim().is_empty())
+            .map(|key| key.as_str().to_owned())
     }
     if let Some(messages) = value.get("messages").and_then(|v| v.as_array()) {
         for entry in messages {
@@ -61,19 +64,41 @@ fn extract_peer_verification_key(value: &serde_json::Value) -> Option<String> {
 
 #[cfg(test)]
 mod verification_key_poll_tests {
-    use serde_json::json;
+    use serde_json::{Value, json};
 
     use super::extract_peer_verification_key;
+
+    fn envelope(kind: &str, content: Value) -> Value {
+        json!({
+            "device_message_id": "ak:device_message:0196419b-0000-7000-8000-000000000003",
+            "kind": kind,
+            "sender_principal_id": "ak:did_core:webvh:z6mkfixture:alice.example",
+            "sender_device_id": "ak:device:0196419b-0000-7000-8000-000000000001",
+            "recipient_principal_id": "ak:did_core:webvh:z6mkfixture:bob.example",
+            "recipient_device_id": "ak:device:0196419b-0000-7000-8000-000000000002",
+            "sent_at": "2026-07-15T00:00:00.000Z",
+            "expires_at": "2026-07-15T00:10:00.000Z",
+            "content": content
+        })
+    }
+
+    fn key_content(key: &str) -> Value {
+        json!({
+            "transaction_id": "txn-key-poll",
+            "from_device_id": "ak:device:0196419b-0000-7000-8000-000000000001",
+            "key": key
+        })
+    }
 
     #[test]
     fn picks_key_out_of_flat_events_list() {
         let resp = json!({
             "messages": [
-                {"kind": "ak.mls.welcome", "content": {"unrelated": true}},
-                {
-                    "kind": "ak.key.verification.key",
-                    "content": {"key": "bob-pub-b64==", "from_device": "ak:device:abc"},
-                },
+                envelope("ak.mls.welcome", json!({"unrelated": true})),
+                envelope(
+                    "ak.key.verification.key",
+                    key_content("bob-pub-b64=="),
+                ),
             ]
         });
         assert_eq!(
@@ -86,7 +111,7 @@ mod verification_key_poll_tests {
     fn returns_none_when_no_verification_key_present() {
         let resp = json!({
             "messages": [
-                {"kind": "ak.mls.welcome", "content": {"welcome_blob": "..."}},
+                envelope("ak.mls.welcome", json!({"welcome_blob": "..."})),
             ]
         });
         assert!(extract_peer_verification_key(&resp).is_none());
@@ -96,31 +121,10 @@ mod verification_key_poll_tests {
     fn ignores_envelope_with_blank_key() {
         let resp = json!({
             "messages": [
-                {"kind": "ak.key.verification.key", "content": {"key": "   "}}
+                envelope("ak.key.verification.key", key_content("   "))
             ]
         });
         assert!(extract_peer_verification_key(&resp).is_none());
-    }
-
-    #[test]
-    fn picks_key_out_of_signed_device_envelope() {
-        let resp = json!({
-            "messages": [
-                {
-                    "kind": "ak.key.verification.key",
-                    "content": {
-                        "device_envelope": {
-                            "local_public_key": "signed-pub-b64=="
-                        },
-                        "signature": {"jws": "a.b.c"}
-                    }
-                }
-            ]
-        });
-        assert_eq!(
-            extract_peer_verification_key(&resp).as_deref(),
-            Some("signed-pub-b64==")
-        );
     }
 }
 

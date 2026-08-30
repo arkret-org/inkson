@@ -819,7 +819,7 @@ fn managed_agent_pcr_prepare_builds_an_exact_ref_free_create() {
 
 /// A6 — the SAS public-key exchange sends `ak.key.verification.key`, whose
 /// content `device-message.schema.json` constrains: every
-/// `ak.key.verification.*` content MUST carry `transaction_id` + `from_device`,
+/// `ak.key.verification.*` content MUST carry `transaction_id` + `from_device_id`,
 /// and this kind additionally `key`. Inkson sent only the signed proof block,
 /// so the message was invalid against the schema on every send — invisible
 /// because nothing validated a device message against it. The signed transcript

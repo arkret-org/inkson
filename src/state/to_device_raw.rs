@@ -527,7 +527,7 @@ impl LocalStateStore {
     /// Drop a handled same-principal pairing request from the to-device inbox so
     /// the approval prompt does not nag again after the user approves or rejects
     /// it. Matches the `ak.key.verification.request` whose
-    /// `content.from_device` and `content.pairing_code` identify the request.
+    /// `content.from_device_id` and `content.pairing_code` identify the request.
     /// Returns the number of messages removed.
     pub fn dismiss_pairing_to_device_message(
         &mut self,
@@ -543,7 +543,7 @@ impl LocalStateStore {
             let Some(content) = message.get("content") else {
                 return true;
             };
-            let from_device = content.get("from_device").and_then(Value::as_str);
+            let from_device = content.get("from_device_id").and_then(Value::as_str);
             let code = content.get("pairing_code").and_then(Value::as_str);
             !(from_device == Some(requesting_device_id) && code == Some(pairing_code))
         });

@@ -1525,29 +1525,32 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                         &op,
                                     ).await {
                                         Ok(resp) => {
-                                            {
-                                                let mut store = state_store.write();
-                                                store.append_raw_operation(
+                                            match serde_json::to_value(
+                                                AcceptedChatMessageOperation {
+                                                    event_id: &resp.event_id,
+                                                    kind: event_kind_str::MESSAGE_CREATE,
+                                                    actor_id: &actor_for_store,
+                                                    body: &body_for_store,
+                                                    content: &op.payload()["content"],
+                                                    strand_id: &strand_id_for_store,
+                                                    message_id: &message_id_for_store,
+                                                    mentions: &mention_values_for_store,
+                                                    reply_to: reply_to_for_store.as_deref(),
+                                                    status: &resp.status,
+                                                },
+                                            ) {
+                                                Ok(raw_operation) => state_store
+                                                    .write()
+                                                    .append_raw_operation(
                                                     op.local_operation_id().to_string(),
                                                     Some(realm_for_record),
-                                                    serde_json::to_value(
-                                                        AcceptedChatMessageOperation {
-                                                            event_id: &resp.event_id,
-                                                            kind: event_kind_str::MESSAGE_CREATE,
-                                                            actor_id: &actor_for_store,
-                                                            body: &body_for_store,
-                                                            content: &op.payload()["content"],
-                                                            strand_id: &strand_id_for_store,
-                                                            message_id: &message_id_for_store,
-                                                            mentions: &mention_values_for_store,
-                                                            reply_to: reply_to_for_store.as_deref(),
-                                                            status: &resp.status,
-                                                        },
-                                                    )
-                                                    .expect(
-                                                        "accepted chat message operation is serializable",
-                                                    ),
-                                                );
+                                                    raw_operation,
+                                                ),
+                                                Err(error) => tracing::error!(
+                                                    %error,
+                                                    event_id = %resp.event_id,
+                                                    "accepted chat operation could not be cached"
+                                                ),
                                             }
                                             if let Some(found) = messages
                                                 .write()

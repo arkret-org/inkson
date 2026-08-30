@@ -3800,7 +3800,13 @@ fn AppBootstrap() -> Element {
                                                 disabled: !has_session,
                                                 onclick: move |_| {
                                                     let base = base_url();
-                                                    let actor = principal_id();
+                                                    let Some(actor) = principal_id() else {
+                                                        last_error.set(Some(
+                                                            "active session principal is unavailable"
+                                                                .to_owned(),
+                                                        ));
+                                                        return;
+                                                    };
                                                     let device = device_id();
                                                     let api_token = token();
                                                     let Some(active) = active_account.peek().clone() else {
@@ -3854,7 +3860,7 @@ fn AppBootstrap() -> Element {
                                                             gate_account_base_url: None,
                                                             base_url: active.server_url.clone(),
                                                             session_credential: api_token.clone(),
-                                                            principal_id: actor.clone().expect("active session principal_id"),
+                                                            principal_id: actor.clone(),
                                                             created_at: chrono::Utc::now(),
                                                         };
                                                     let logout_secure_store =
@@ -3923,7 +3929,7 @@ fn AppBootstrap() -> Element {
                                                     persist_config(
                                                         config_store,
                                                         base.clone(),
-                                                        actor.clone(),
+                                                        Some(actor.clone()),
                                                         device.clone(),
                                                         String::new(),
                                                     );

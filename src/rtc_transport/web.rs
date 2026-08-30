@@ -47,6 +47,8 @@ use crate::media::rtc::{
 
 type SignalQueue = Rc<RefCell<Vec<LocalSignal>>>;
 
+type ParticipantCallback = Rc<RefCell<Option<Closure<dyn FnMut(JsValue)>>>>;
+
 /// Shared opaque LiveKit room handle string set once `room.connect` resolves.
 type RoomHandle = Rc<RefCell<Option<String>>>;
 
@@ -91,7 +93,7 @@ pub struct WebRtcTransport {
     /// Retained LiveKit `ParticipantConnected` callback closure; dropping it
     /// would detach the SDK event listener. Shared so the async connect task
     /// can install it while the transport keeps it alive.
-    participant_cb: Rc<RefCell<Option<Closure<dyn FnMut(JsValue)>>>>,
+    participant_cb: ParticipantCallback,
 }
 
 impl WebRtcTransport {

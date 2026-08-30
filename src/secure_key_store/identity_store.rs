@@ -35,12 +35,16 @@ fn pending_storage_scope(device_id: &DeviceId) -> &str {
 #[cfg(target_arch = "wasm32")]
 fn browser_storage() -> Result<web_sys::Storage, SecureKeyStoreError> {
     web_sys::window()
-        .ok_or_else(|| SecureKeyStoreError::Unsupported("web_sys::window unavailable"))?
+        .ok_or(SecureKeyStoreError::Unsupported(
+            "web_sys::window unavailable",
+        ))?
         .local_storage()
         .map_err(|error| {
             SecureKeyStoreError::Backend(format!("localStorage access failed: {error:?}"))
         })?
-        .ok_or_else(|| SecureKeyStoreError::Unsupported("window.localStorage unavailable"))
+        .ok_or(SecureKeyStoreError::Unsupported(
+            "window.localStorage unavailable",
+        ))
 }
 
 fn load_device_id(

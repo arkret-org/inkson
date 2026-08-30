@@ -202,9 +202,9 @@ pub(crate) async fn ensure_creator_realm_mls_genesis(
     let genesis_emitted = state_store.read().mls_genesis_emitted_for(realm_id);
     match creator_genesis_resume_action(accepted_event_id.as_ref(), genesis_emitted)? {
         CreatorGenesisResumeAction::ConvergeAccepted => {
-            let accepted_event_id = accepted_event_id
-                .as_ref()
-                .expect("ConvergeAccepted requires an accepted Event id");
+            let accepted_event_id = accepted_event_id.as_ref().ok_or_else(|| {
+                "creator MLS convergence is missing its accepted Event id".to_owned()
+            })?;
             if state_store.read().mls_snapshot_for(realm_id).is_none() {
                 return Err(format!(
                     "accepted MLS genesis exists for {realm_id}, but the local snapshot is missing; restore this device before retrying creator bootstrap"

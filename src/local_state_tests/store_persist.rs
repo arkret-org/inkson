@@ -536,7 +536,11 @@ fn local_state_store_durably_deduplicates_device_message_envelopes() {
     "sent_at": "2026-07-17T00:00:00.000Z",
     "expires_at": "2099-07-17T00:10:00.000Z",
     "content": {
-        "from_device": "ak:device:0196419b-0000-7000-8000-000000000001",
+        "transaction_id": "txn-device-message-dedup",
+        "from_device_id": "ak:device:0196419b-0000-7000-8000-000000000001",
+        "methods": ["ak.key.verification.sas_v1"],
+        "timestamp": "2026-07-17T00:00:00.000Z",
+        "expires_at": "2099-07-17T00:10:00.000Z",
         "pairing_code": "7H2K9M4Q"
     }
     }))
@@ -576,7 +580,11 @@ fn local_state_store_durably_deduplicates_device_message_envelopes() {
         "sent_at": "2026-07-17T00:00:00.000Z",
         "expires_at": "2099-07-17T00:10:00.000Z",
         "content": {
-            "from_device": "ak:device:0196419b-0000-7000-8000-000000000001",
+            "transaction_id": "txn-device-message-conflict",
+            "from_device_id": "ak:device:0196419b-0000-7000-8000-000000000001",
+            "methods": ["ak.key.verification.sas_v1"],
+            "timestamp": "2026-07-17T00:00:00.000Z",
+            "expires_at": "2099-07-17T00:10:00.000Z",
             "pairing_code": "8J3L5N7P"
         }
         }))

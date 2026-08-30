@@ -652,12 +652,12 @@ fn approval_fallback_delay(failed: bool) -> Duration {
 fn fallback_poll_environment_ready() -> bool {
     #[cfg(target_arch = "wasm32")]
     {
-        return web_sys::window()
+        web_sys::window()
             .map(|window| {
                 window.navigator().on_line()
                     && window.document().is_none_or(|document| !document.hidden())
             })
-            .unwrap_or(true);
+            .unwrap_or(true)
     }
     #[cfg(not(target_arch = "wasm32"))]
     {

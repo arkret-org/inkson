@@ -56,7 +56,7 @@ fn list_handles_http_json_base(description: &arkret_sdk::ServiceDescribe) -> any
     let operation = arkret_sdk::ServiceOperationId::from_wire(
         arkret_sdk::ServiceOperationId::FIND_DIRECTORY_READ_LIST_HANDLES_FOR_SUBJECT_V1,
     )
-    .expect("list_handles_for_subject is a generated registered operation");
+    .ok_or_else(|| anyhow::anyhow!("registered list_handles_for_subject operation is missing"))?;
     anyhow::ensure!(
         description.supports_operation_binding(operation, arkret_sdk::BindingKind::HttpJson),
         "Directory does not advertise the exact list_handles_for_subject HTTP/JSON binding"
@@ -172,69 +172,19 @@ pub async fn verified_directory_client(
         entry.last_used_at = now;
         let route_base = entry.route_base.clone();
         cache.push(entry);
-        if cache.len() > DIRECTORY_ROUTE_CACHE_CAPACITY {
-            let oldest = cache
+        if cache.len() > DIRECTORY_ROUTE_CACHE_CAPACITY
+            && let Some(oldest) = cache
                 .iter()
                 .enumerate()
                 .min_by_key(|(_, entry)| entry.last_used_at)
                 .map(|(index, _)| index)
-                .expect("over-capacity Directory cache is non-empty");
+        {
             cache.remove(oldest);
         }
         route_base
     };
 
     public_directory_client(&route_base)
-}
-
-#[cfg(test)]
-mod route_tests {
-    use arkret_sdk::{Did, ServiceKind, TransportBinding, TrustDomainId};
-
-    use super::list_handles_http_json_base;
-
-    fn description(service_kind: ServiceKind, bundles: Vec<String>) -> arkret_sdk::ServiceDescribe {
-        arkret_sdk::ServiceDescribe::development(
-            Did::new("did:web:directory.example").unwrap(),
-            TrustDomainId::new("ak:trust_domain:directory.example").unwrap(),
-            service_kind,
-            bundles,
-            vec![TransportBinding::HttpJson {
-                base_url: "https://directory.example/".to_owned(),
-                extension_profile_required: (),
-            }],
-        )
-    }
-
-    #[test]
-    fn exact_directory_bundle_selects_http_json_route() {
-        let description = description(
-            ServiceKind::DirectoryService,
-            vec!["ak.operation_bundle.directory_service.http_core.v1".to_owned()],
-        );
-        assert_eq!(
-            list_handles_http_json_base(&description).unwrap(),
-            "https://directory.example/"
-        );
-    }
-
-    #[test]
-    fn principal_description_is_never_a_directory_fallback() {
-        let description = description(
-            ServiceKind::PrincipalServer,
-            vec!["ak.operation_bundle.directory_service.http_core.v1".to_owned()],
-        );
-        assert!(list_handles_http_json_base(&description).is_err());
-    }
-
-    #[test]
-    fn missing_directory_bundle_fails_closed() {
-        let description = description(
-            ServiceKind::DirectoryService,
-            vec!["ak.operation_bundle.directory_service.describe.v1".to_owned()],
-        );
-        assert!(list_handles_http_json_base(&description).is_err());
-    }
 }
 
 pub async fn search_realms(
@@ -452,4 +402,54 @@ pub async fn list_handles_for_subject(
     res.validate()
         .map_err(|err| anyhow::anyhow!("list_handles_for_subject validation failed: {err}"))?;
     Ok(res)
+}
+
+#[cfg(test)]
+mod route_tests {
+    use arkret_sdk::{Did, ServiceKind, TransportBinding, TrustDomainId};
+
+    use super::list_handles_http_json_base;
+
+    fn description(service_kind: ServiceKind, bundles: Vec<String>) -> arkret_sdk::ServiceDescribe {
+        arkret_sdk::ServiceDescribe::development(
+            Did::new("did:web:directory.example").unwrap(),
+            TrustDomainId::new("ak:trust_domain:directory.example").unwrap(),
+            service_kind,
+            bundles,
+            vec![TransportBinding::HttpJson {
+                base_url: "https://directory.example/".to_owned(),
+                extension_profile_required: (),
+            }],
+        )
+    }
+
+    #[test]
+    fn exact_directory_bundle_selects_http_json_route() {
+        let description = description(
+            ServiceKind::DirectoryService,
+            vec!["ak.operation_bundle.directory_service.http_core.v1".to_owned()],
+        );
+        assert_eq!(
+            list_handles_http_json_base(&description).unwrap(),
+            "https://directory.example/"
+        );
+    }
+
+    #[test]
+    fn principal_description_is_never_a_directory_fallback() {
+        let description = description(
+            ServiceKind::PrincipalServer,
+            vec!["ak.operation_bundle.directory_service.http_core.v1".to_owned()],
+        );
+        assert!(list_handles_http_json_base(&description).is_err());
+    }
+
+    #[test]
+    fn missing_directory_bundle_fails_closed() {
+        let description = description(
+            ServiceKind::DirectoryService,
+            vec!["ak.operation_bundle.directory_service.describe.v1".to_owned()],
+        );
+        assert!(list_handles_http_json_base(&description).is_err());
+    }
 }

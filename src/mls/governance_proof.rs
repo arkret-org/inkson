@@ -831,7 +831,7 @@ pub(crate) fn install_cached_transition_leaf_bindings_with_hints(
             .map_err(|_| "accepted MLS leaf signature key is not Ed25519".to_owned())?;
         let multibase = arkret_sdk::ed25519_pubkey_to_did_key_multibase(&signature_key);
         let signature_key_b64 =
-            arkret_sdk::Base64UrlString::new(arkret_sdk::base64url_encode(&signature_key))
+            arkret_sdk::Base64UrlString::new(arkret_sdk::base64url_encode(signature_key))
                 .map_err(|error| format!("invalid accepted MLS leaf key: {error}"))?;
         let credential = frontier_leaf.credential_ref.as_str();
 

@@ -447,9 +447,7 @@ mod wasm_bootstrap {
     use std::sync::atomic::Ordering;
 
     use super::super::LocalStateStore;
-    use super::{
-        ClientLocalState, merge_persisted_into_live, merge_secure_session_grant_into_live,
-    };
+    use super::{merge_persisted_into_live, merge_secure_session_grant_into_live};
 
     impl LocalStateStore {
         /// Hydrate the active account's main state from the IndexedDB entry
@@ -477,7 +475,7 @@ mod wasm_bootstrap {
                 let _ = self.flush();
                 return;
             };
-            let live = std::mem::replace(&mut self.cached, ClientLocalState::default());
+            let live = std::mem::take(&mut self.cached);
             self.cached = merge_persisted_into_live(live, stored);
             merge_secure_session_grant_into_live(&mut self.cached, secure_grant);
             self.loaded.store(true, Ordering::Relaxed);

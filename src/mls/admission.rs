@@ -604,7 +604,7 @@ fn build_mls_welcome_payload_with_requester(
     } else {
         let sender_device_id = sender_device_id
             .as_ref()
-            .expect("device requester always carries its device id");
+            .ok_or_else(|| "device Welcome requester is missing its sender device id".to_owned())?;
         let requester_actor_id = envelope.signing_input().requester_actor_id.clone();
         sign_welcome_claim_envelope(
             requester_actor_id.as_str(),

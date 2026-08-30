@@ -150,7 +150,7 @@ async fn ensure_initial_active_series(
     )
     .await?;
     let event = super::rotation_transaction::build_active_series_event(
-        &control_realm,
+        control_realm,
         actor_id,
         backup_kind,
         series_id,

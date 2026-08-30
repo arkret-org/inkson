@@ -3612,7 +3612,7 @@ mod tests {
             "{}\n{}\n{}\n",
             json!({
                 "kind": "event",
-                "seq": 1,
+                "realm_id": realm_id,
                 "cursor": "ak:cursor:realmframe1",
                 "payload": space_create
             }),
@@ -3774,6 +3774,17 @@ mod tests {
     }
 
     fn to_device_message(kind: &str) -> arkret_sdk::DeviceMessageEnvelope {
+        let content = if kind == "ak.key.verification.request" {
+            json!({
+                "transaction_id": "txn-1",
+                "from_device_id": "ak:device:0196419b-0000-7000-8000-000000000001",
+                "methods": ["ak.key.verification.sas_v1"],
+                "timestamp": "2026-07-15T00:00:00.000Z",
+                "expires_at": "2026-07-15T00:10:00.000Z"
+            })
+        } else {
+            json!({"request_id": "request-1"})
+        };
         serde_json::from_value(json!({
             "device_message_id": "ak:device_message:0196419b-0000-7000-8000-000000000003",
             "kind": kind,
@@ -3783,10 +3794,7 @@ mod tests {
             "recipient_device_id": "ak:device:0196419b-0000-7000-8000-000000000002",
             "sent_at": "2026-07-15T00:00:00.000Z",
             "expires_at": "2026-07-16T00:00:00.000Z",
-            "content": {
-                "transaction_id": "txn-1",
-                "request_id": "request-1"
-            }
+            "content": content
         }))
         .unwrap()
     }

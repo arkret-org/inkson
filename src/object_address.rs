@@ -123,7 +123,7 @@ mod tests {
         match opened.route_for(TargetKind::Realm) {
             Route::Realm { realm_id } => assert_eq!(
                 realm_id,
-                format!("ak:realm:ASJxhbdgpkgbgjZdFxJI9alVkyjdkTIoiU4EsA9SC_TU")
+                "ak:realm:ASJxhbdgpkgbgjZdFxJI9alVkyjdkTIoiU4EsA9SC_TU".to_owned()
             ),
             other => panic!("expected Realm route, got {other:?}"),
         }

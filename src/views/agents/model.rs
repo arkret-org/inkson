@@ -318,8 +318,13 @@ pub fn service_actions_for_presets(presets: &[AgentServiceScopePreset]) -> Vec<S
         capabilities.push(arkret_schema::agent_runtime_scope::AgentRuntimeCapability::E2ee);
     }
     let mut actions =
-        arkret_schema::agent_runtime_scope::required_agent_runtime_operations(capabilities)
-            .expect("embedded Agent runtime scope registry must pass artifact validation");
+        match arkret_schema::agent_runtime_scope::required_agent_runtime_operations(capabilities) {
+            Ok(actions) => actions,
+            Err(error) => {
+                tracing::error!(%error, "embedded Agent runtime scope registry is invalid");
+                Vec::new()
+            }
+        };
     for preset in presets {
         for action in preset.actions() {
             push_unique_action(&mut actions, action);

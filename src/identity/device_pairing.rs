@@ -71,7 +71,7 @@ pub struct PendingPairingRequest {
     /// Stable key for dedup / dismissal — the request `transaction_id` when
     /// present, otherwise `{requesting_device_id}:{pairing_code}`.
     pub request_key: String,
-    /// The new device asking to be authorized (`content.from_device`).
+    /// The new device asking to be authorized (`content.from_device_id`).
     pub requesting_device_id: String,
     /// Short code the user compares on both devices before approving.
     pub pairing_code: String,
@@ -95,7 +95,7 @@ pub struct PendingPairingRequest {
 ///
 /// Filters to `ak.key.verification.request` messages carrying
 /// `purpose == "same_principal_device_authorization"` and the full pairing
-/// material (`from_device`, `pairing_code`, `new_device_pubkey`,
+/// material (`from_device_id`, `pairing_code`, `new_device_pubkey`,
 /// `target_attestation`, `challenge_proof`).
 /// Incomplete requests are skipped.
 pub fn parse_pending_pairing_requests(inbox: &[Value]) -> Vec<PendingPairingRequest> {
@@ -111,7 +111,7 @@ pub fn parse_pending_pairing_requests(inbox: &[Value]) -> Vec<PendingPairingRequ
             {
                 return None;
             }
-            let requesting_device_id = content.get("from_device").and_then(Value::as_str)?;
+            let requesting_device_id = content.get("from_device_id").and_then(Value::as_str)?;
             let pairing_code = content.get("pairing_code").and_then(Value::as_str)?;
             let new_device_pubkey = content.get("new_device_pubkey")?.clone();
             let target_attestation = content.get("target_attestation")?.clone();
@@ -514,7 +514,7 @@ mod tests {
             "expires_at": "2026-06-17T12:00:00.000Z",
             "content": {
                 "transaction_id": "txn-1",
-                "from_device": "ak:device:01904100-0000-7000-8000-000000000001",
+                "from_device_id": "ak:device:01904100-0000-7000-8000-000000000001",
                 "purpose": "same_principal_device_authorization",
                 "pairing_code": "7H2K9M4Q",
                 "new_device_pubkey": {
