@@ -14,9 +14,10 @@
 //! `format!("did:web:{domain}:users:{localpart}")` materialisation has been
 //! removed: it both bypassed the directory-attested reduction and hard-coded
 //! the `did:web` method even though v1 core defaults principal/service to
-//! `did:webvh`. The authoritative `subject_id` / `recipient_id` must
-//! be taken from the Directory `resolve_handle` response (verified claim
-//! subject + member delivery binding) and never from this parser.
+//! `did:webvh`. The authoritative `AccountId` must be taken from the verified
+//! claim in the Directory `resolve_handle` response: its `principal_id`
+//! identifies the account and its `station_id` is the routing coordinate.
+//! Neither value may be invented by this parser.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ParsedUserHandle {
     pub localpart: String,

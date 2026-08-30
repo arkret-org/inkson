@@ -473,7 +473,7 @@ impl crate::transport::TransportClient {
             contact_explicit_address_evidence_digest()?,
         );
         anyhow::bail!(
-            "contact delivery binding omits service_resolution; refresh the contact through a principal locator before inviting"
+            "the contact AccountId identifies its Station but carries no authenticated service_resolution; refresh the contact through a principal locator before inviting"
         )
     }
 

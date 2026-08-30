@@ -68,11 +68,11 @@ fn event_requirements_with_schema(schema_ref: &str) -> EventRequirements {
 /// The ordinary Realm genesis unit, as an ordered chain.
 ///
 /// The create Event names the Realm — the id is `retype(create.event_id)` — so
-/// every follow-up can only be built once the create is authored, and the
-/// creator's delivery binding can only be built once the delivery-binding policy
-/// Event exists. Returning stages is what makes that ordering structural: there
-/// is no intermediate state where a member is scoped to a Realm, or points at a
-/// policy Event, that does not exist yet.
+/// every follow-up can only be built once the create is authored. The creator
+/// joins as an Account actor whose `AccountId` already carries its Station
+/// routing coordinate; no separate routing facet is authored. Returning stages
+/// makes the Realm-before-membership ordering structural, so there is no
+/// intermediate state where a member is scoped to a Realm that does not exist.
 #[allow(clippy::too_many_arguments)]
 pub fn build_realm_bootstrap_steps(
     genesis_salt: arkret_sdk::GenesisSalt,

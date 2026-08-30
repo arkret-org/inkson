@@ -134,7 +134,6 @@ const CONTROL_SCOPE_CHOICES: &[(&str, &str)] = &[
     ("official_badge", "Official badge"),
     ("realm_admin", "Realm admin"),
     ("notary_control", "Notary control"),
-    ("delivery_binding_policy", "Delivery binding policy"),
     ("durability_policy", "Durability policy"),
     ("moderation_policy", "Moderation policy"),
     ("retention_policy", "Retention policy"),

@@ -286,7 +286,7 @@ impl MlsEndpoints<'_> {
             .filter(|value| !value.is_empty())
             .ok_or_else(|| {
                 anyhow::anyhow!(
-                    "KeyPackage claim requires the destination service DID from the accepted invite delivery binding"
+                    "KeyPackage claim requires the destination Station from the accepted invitee AccountId"
                 )
             })?;
         let source_id = self.transport.describe_cached().await?.service_id.clone();
@@ -365,7 +365,7 @@ impl MlsEndpoints<'_> {
             .filter(|value| !value.is_empty())
             .ok_or_else(|| {
                 anyhow::anyhow!(
-                    "KeyPackage claim requires the destination service DID from the accepted invite delivery binding"
+                    "KeyPackage claim requires the destination Station from the accepted invitee AccountId"
                 )
             })?;
         let source_id = self.transport.describe_cached().await?.service_id.clone();

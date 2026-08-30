@@ -16,11 +16,10 @@
 //!
 //! Why this fixes cross-member sync: a realm's `events/subscribe` history +
 //! live frames are served from the projection layer + per-realm broadcast
-//! fan-out, NOT from the per-member delivery routing that
-//! `account.subscribe` push is gated by. A member whose delivery binding is
-//! still `unroutable` is dropped from account-push routing (so the account
-//! cursor never advances for the other member's events), but their durable
-//! events are fully visible through this realm stream.
+//! fan-out. The account-aggregate stream need not contain every Realm Event
+//! visible to the account, while the Realm stream follows the durable Realm
+//! history independently of which member Account actor authored an Event or
+//! which Station its `AccountId` routes through.
 //!
 //! Transport reality (wasm): the shared SDK http-client opens the canonical
 //! `events/subscribe` stream, and inkson wraps it as a client-core typed frame

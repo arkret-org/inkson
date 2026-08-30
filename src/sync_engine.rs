@@ -2431,9 +2431,9 @@ fn ingest_discussion_state_events_from_projection(
 
 /// Fold a batch of discussion message events into `raw_operations`. Shared by
 /// the account-aggregate sync path (above) and the per-realm `events/subscribe`
-/// engine ([`crate::realm_events_engine`]) — a cross-member message that the
-/// account stream never routed (unroutable delivery binding) still lands
-/// locally through the realm stream — both deduping via the message event id.
+/// engine ([`crate::realm_events_engine`]). A cross-member message omitted from
+/// the account aggregate still lands locally through the Realm's durable event
+/// stream; both paths dedupe by message Event id.
 pub(crate) fn ingest_message_projection_events(
     store: &mut LocalStateStore,
     realm_id: &str,
