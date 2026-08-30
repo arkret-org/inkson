@@ -7,29 +7,29 @@ pub(crate) fn ordinary_mls_identity(
     principal_id: arkret_sdk::DidCoreId,
     device_id: arkret_sdk::DeviceId,
 ) -> Result<arkret_sdk::ArkretMlsIdentity, String> {
-    let Some(signer) = crate::event_signer::active_signer() else {
-        #[cfg(test)]
-        {
-            return arkret_sdk::ArkretMlsIdentity::new_test_human_device(principal_id, device_id)
-                .map_err(|error| error.to_string());
-        }
-        #[cfg(not(test))]
-        {
-            return Err("active accepted-device signer is unavailable".to_owned());
-        }
-    };
-    if signer.device_id() != Some(device_id.as_str()) {
-        return Err("active signer device differs from MLS endpoint".to_owned());
+    #[cfg(test)]
+    {
+        return arkret_sdk::ArkretMlsIdentity::new_test_human_device(principal_id, device_id)
+            .map_err(|error| error.to_string());
     }
-    let signing_key = signer
-        .clone_raw_signing_key()
-        .map_err(|error| error.to_string())?;
-    arkret_sdk::ArkretMlsIdentity::new_human_device(
-        principal_id,
-        device_id,
-        arkret_sdk::ArkretMlsSigner::from_ed25519_signing_key(signing_key),
-    )
-    .map_err(|error| error.to_string())
+    #[cfg(not(test))]
+    {
+        let Some(signer) = crate::event_signer::active_signer() else {
+            return Err("active accepted-device signer is unavailable".to_owned());
+        };
+        if signer.device_id() != Some(device_id.as_str()) {
+            return Err("active signer device differs from MLS endpoint".to_owned());
+        }
+        let signing_key = signer
+            .clone_raw_signing_key()
+            .map_err(|error| error.to_string())?;
+        arkret_sdk::ArkretMlsIdentity::new_human_device(
+            principal_id,
+            device_id,
+            arkret_sdk::ArkretMlsSigner::from_ed25519_signing_key(signing_key),
+        )
+        .map_err(|error| error.to_string())
+    }
 }
 
 pub(crate) fn principal_core_id(principal_id: &str) -> anyhow::Result<arkret_sdk::DidCoreId> {

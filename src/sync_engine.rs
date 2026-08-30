@@ -3868,8 +3868,10 @@ mod tests {
         assert_eq!(changed, 1);
         let state = store.load();
         assert_eq!(state.raw_operations.len(), 1);
+        let actor_id: arkret_sdk::ActorId =
+            serde_json::from_value(state.raw_operations[0].payload["actor_id"].clone()).unwrap();
         assert_eq!(
-            state.raw_operations[0].payload["actor_id"],
+            actor_id.signing_principal_id().as_str(),
             "ak:did_core:web:bob.example"
         );
         assert_eq!(state.raw_operations[0].payload["write_state"], "synced");
