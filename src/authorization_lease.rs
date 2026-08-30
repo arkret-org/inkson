@@ -790,7 +790,7 @@ pub(crate) mod test_support {
             basis_ref: arkret_wire::LeaseBasisRef::Seal(
                 arkret_sdk::SealId::new(format!("ak:seal:sha256:{}", "a".repeat(64))).unwrap(),
             ),
-            actor_id: crate::mls_api_helpers::principal_core_id(actor_id).unwrap(),
+            actor_id: crate::mls_api_helpers::local_account_actor_id(actor_id).unwrap(),
             device_id: arkret_sdk::DeviceId::new("ak:device:01904100-0000-7000-8000-bbbbbbbbbbbb")
                 .unwrap(),
             scope_ref,
@@ -947,9 +947,18 @@ mod tests {
     #[test]
     fn managed_agent_pcr_control_uses_the_delegated_local_authority() {
         let mut managed = event();
-        managed.actor_id = arkret_sdk::DidCoreId::new("ak:did_core:web:agent.example").unwrap();
+        managed.actor_id = arkret_sdk::ActorId::service(
+            arkret_sdk::DidCoreId::new("ak:did_core:web:agent.example").unwrap(),
+        );
         let controller = arkret_sdk::Did::new("did:web:alice.example").unwrap();
-        managed.executed_by = Some(arkret_sdk::project_did_to_core_id(&controller).unwrap());
+        managed.executed_by = Some(
+            crate::mls_api_helpers::local_account_actor_id(
+                arkret_sdk::project_did_to_core_id(&controller)
+                    .unwrap()
+                    .as_str(),
+            )
+            .unwrap(),
+        );
         managed.authorization_ref = Some(
             arkret_sdk::AuthorizationRef::new("did:web:agent.example#managed-controller").unwrap(),
         );
@@ -987,9 +996,13 @@ mod tests {
         );
 
         let mut managed = event();
-        managed.actor_id = arkret_sdk::DidCoreId::new("ak:did_core:web:agent.example").unwrap();
-        managed.executed_by =
-            Some(arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example").unwrap());
+        managed.actor_id = arkret_sdk::ActorId::service(
+            arkret_sdk::DidCoreId::new("ak:did_core:web:agent.example").unwrap(),
+        );
+        managed.executed_by = Some(
+            crate::mls_api_helpers::local_account_actor_id("ak:did_core:web:alice.example")
+                .unwrap(),
+        );
         managed.authorization_ref = Some(
             arkret_sdk::AuthorizationRef::new("did:web:agent.example#managed-controller").unwrap(),
         );
@@ -1072,8 +1085,8 @@ mod tests {
             arkret_sdk::ScopeRef::Realm {
                 realm_id: provision.realm_id.clone(),
             },
-            provision.actor_id.clone(),
-            provision.station_id.clone(),
+            provision.actor_id.signing_principal_id().clone(),
+            provision.actor_id.route_service_id().clone(),
             0,
             arkret_sdk::Hlc::new("000000000000-0000-00000000").unwrap(),
             serde_json::to_value(arkret_sdk::RealmCreatePayload::new(genesis)).unwrap(),

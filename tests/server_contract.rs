@@ -91,7 +91,7 @@ fn snapshot_contract_manifest_payload() -> serde_json::Value {
         chunks: built.into_iter().map(|chunk| chunk.descriptor).collect(),
         security_class: arkret_sdk::SnapshotSecurityClass::Standard,
         verification_hints: None,
-        created_by: service_id.clone(),
+        created_by: arkret_sdk::ActorId::service(service_id.clone()),
         created_at,
         authority_binding: arkret_sdk::AuthorityBinding {
             authority_kind: arkret_sdk::SnapshotAuthorityKind::RealmPolicySnapshotIssuer,
@@ -327,7 +327,7 @@ fn inkson_accepts_server_contract_payloads() {
         arkret_sdk::CORE_REDUCER_PROFILE
     );
     assert_eq!(
-        snapshot_head.created_by.as_str(),
+        snapshot_head.created_by.signing_principal_id().as_str(),
         "ak:did_core:web:server.local"
     );
     assert!(

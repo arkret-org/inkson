@@ -71,7 +71,12 @@ mod device_identity_proof_tests {
             jws: String::new(),
         };
         let binding_bytes = proof
-            .canonical_binding_bytes(&arkret_sdk::project_did_to_core_id(&did).unwrap())
+            .canonical_binding_bytes(
+                &crate::mls_api_helpers::local_account_actor_id(
+                    arkret_sdk::project_did_to_core_id(&did).unwrap().as_str(),
+                )
+                .unwrap(),
+            )
             .unwrap();
         proof.jws = signer.detached_jws_over(&binding_bytes).unwrap();
         envelope.as_object_mut().unwrap().insert(

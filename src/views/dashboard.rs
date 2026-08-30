@@ -821,7 +821,10 @@ mod tests {
         ) -> ContactListRow {
             ContactListRow {
                 peer: arkret_sdk::contact_operations::ContactPeer::Human {
-                    principal_id: crate::mls_api_helpers::principal_core_id(peer).unwrap(),
+                    account_id: arkret_sdk::AccountId::new(
+                        crate::mls_api_helpers::principal_core_id(peer).unwrap(),
+                        arkret_sdk::DidCoreId::new("ak:did_core:web:station.example").unwrap(),
+                    ),
                 },
                 state,
                 request_event_ref: None,

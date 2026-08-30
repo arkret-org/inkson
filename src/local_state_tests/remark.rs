@@ -94,7 +94,10 @@ fn contact_remark_set_tombstone_and_display_name() {
 
     let accepted = crate::models::ContactListRow {
         peer: arkret_sdk::contact_operations::ContactPeer::Human {
-            principal_id: arkret_sdk::DidCoreId::new(did).unwrap(),
+            account_id: arkret_sdk::AccountId::new(
+                arkret_sdk::DidCoreId::new(did).unwrap(),
+                arkret_sdk::DidCoreId::new("ak:did_core:web:station.example").unwrap(),
+            ),
         },
         state: arkret_sdk::ContactState::Accepted,
         request_event_ref: None,

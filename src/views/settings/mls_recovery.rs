@@ -341,10 +341,7 @@ pub fn SettingsMlsRecoveryPanel(
             let result = match has_session {
                 true => {
                     crate::app::manual_refill_local_mls_key_packages(
-                        base,
-                        session,
-                        authority,
-                        device,
+                        base, session, authority, device,
                     )
                     .await
                 }

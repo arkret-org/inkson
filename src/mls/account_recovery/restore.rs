@@ -633,7 +633,9 @@ fn verify_active_series_record_signature(
         .device_keys
         .get(record.actor_id.signing_principal_id())
         .ok_or_else(|| anyhow!("active-series key query omitted its actor"))?;
-    let generation = keys.device_generations.get(record.actor_id.signing_principal_id());
+    let generation = keys
+        .device_generations
+        .get(record.actor_id.signing_principal_id());
     let Some(generation) = generation else {
         return Err(anyhow!("active-series device generation is absent"));
     };

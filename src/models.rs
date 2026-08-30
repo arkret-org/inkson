@@ -62,7 +62,11 @@ pub fn direct_conversation_binding_state_wire(
 }
 
 pub fn contact_peer_id(contact: &ContactListRow) -> arkret_sdk::DidCoreId {
-    contact.peer.contact_actor_id().signing_principal_id().clone()
+    contact
+        .peer
+        .contact_actor_id()
+        .signing_principal_id()
+        .clone()
 }
 
 pub fn contact_scope_wire(scope: ContactScope) -> &'static str {
@@ -760,8 +764,10 @@ mod tests {
     fn contact_row_invite_gate_uses_directional_contact_scopes() {
         let row = super::ContactListRow {
             peer: arkret_sdk::contact_operations::ContactPeer::Human {
-                principal_id: crate::mls_api_helpers::principal_core_id("did:web:bob.example")
-                    .unwrap(),
+                account_id: arkret_sdk::AccountId::new(
+                    crate::mls_api_helpers::principal_core_id("did:web:bob.example").unwrap(),
+                    arkret_sdk::DidCoreId::new("ak:did_core:web:station.example").unwrap(),
+                ),
             },
             state: arkret_sdk::ContactState::Accepted,
             request_event_ref: None,

@@ -104,5 +104,8 @@ fn handle_resolution_exposes_exact_station_bound_account() {
         resolved.subject_id().as_str(),
         "ak:did_core:web:bob.example"
     );
-    assert_eq!(resolved.account_id.station_id.as_str(), "ak:did_core:web:local.host");
+    assert_eq!(
+        resolved.account_id.station_id.as_str(),
+        "ak:did_core:web:local.host"
+    );
 }

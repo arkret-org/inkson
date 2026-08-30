@@ -270,7 +270,7 @@ mod tests {
             .unwrap()
             .insert(
                 "issuer_station_id".to_owned(),
-                Value::String(operation.intent().station_id().to_string()),
+                Value::String(operation.intent().actor_id().route_service_id().to_string()),
             );
         let projected_grant = projected_payload
             .get_mut("grant")

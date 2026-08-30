@@ -101,13 +101,10 @@ pub(crate) fn actor_is_joined_member(entry: &RealmSyncEntry, actor_id: &str) -> 
         return false;
     };
     entry.member_roster.as_ref().is_some_and(|roster| {
-        roster
-            .entries
-            .iter()
-            .any(|member| {
-                member.actor_id.signing_principal_id() == &actor_id
-                    && member.membership == MembershipState::Join
-            })
+        roster.entries.iter().any(|member| {
+            member.actor_id.signing_principal_id() == &actor_id
+                && member.membership == MembershipState::Join
+        })
     })
 }
 
@@ -299,7 +296,7 @@ pub(crate) fn test_event_notification(
             ))
             .expect("valid test notification id"),
             schema: arkret_sdk::NotificationSchema::V1,
-            actor_id: crate::mls_api_helpers::principal_core_id("did:web:alice.example")
+            actor_id: crate::mls_api_helpers::local_account_actor_id("did:web:alice.example")
                 .expect("valid test actor"),
             source: arkret_sdk::NotificationSource::Event(arkret_sdk::NotificationEventSource {
                 source_event_id: arkret_sdk::EventId::new(source_event_id)
@@ -356,10 +353,12 @@ pub(crate) fn test_invite(ordinal: u64, realm_id: &str) -> Invite {
         id: arkret_sdk::InviteId::from_event_id(&invite_event_id),
         schema: "ak.schema.invite.v1".to_owned(),
         realm_id: arkret_sdk::RealmId::new(realm_id.to_owned()).expect("valid test Realm id"),
-        inviter_id: crate::mls_api_helpers::principal_core_id("did:web:alice.example")
-            .expect("valid test inviter"),
-        invitee_id: None,
-        invite_delivery_target: None,
+        inviter_account_id: arkret_sdk::AccountId::new(
+            crate::mls_api_helpers::principal_core_id("did:web:alice.example")
+                .expect("valid test inviter"),
+            arkret_sdk::DidCoreId::new("ak:did_core:web:station.example").unwrap(),
+        ),
+        invitee_account_id: None,
         introduction_evidence_digest: None,
         third_party_invite: None,
         capability_grant_refs: Vec::new(),

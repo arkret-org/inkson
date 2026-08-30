@@ -1048,7 +1048,9 @@ fn actor_chain_basis_from_frontier(
     actor_id: &str,
     frontier: arkret_sdk::RealmActorFrontierView,
 ) -> anyhow::Result<(u64, Vec<arkret_sdk::EventId>)> {
-    if frontier.actor_id.signing_principal_id().as_str() != actor_id || &frontier.realm_id != realm_id {
+    if frontier.actor_id.signing_principal_id().as_str() != actor_id
+        || &frontier.realm_id != realm_id
+    {
         anyhow::bail!(
             "realm actor frontier mismatch: intent scope ({realm_id}, {actor_id}) but frontier scope ({}, {})",
             frontier.realm_id,

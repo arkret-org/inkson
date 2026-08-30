@@ -343,7 +343,7 @@ mod tests {
             .unwrap_or(EVENT_ID);
         arkret_sdk::ReadReceipt::new(
             3,
-            crate::mls_api_helpers::principal_core_id("did:web:a").unwrap(),
+            crate::mls_api_helpers::local_account_actor_id("did:web:a").unwrap(),
             arkret_sdk::EventId::new(event_id).unwrap(),
             read_scope,
         )
@@ -362,7 +362,7 @@ mod tests {
                 typed_receipt(&body),
             ),
             kind: "ak.receipt.read".to_owned(),
-            actor_id: crate::mls_api_helpers::principal_core_id("did:web:a").unwrap(),
+            actor_id: crate::mls_api_helpers::local_account_actor_id("did:web:a").unwrap(),
             payload_sequence: 3,
             ttl_ms: None,
             sent_at: at,

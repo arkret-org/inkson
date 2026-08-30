@@ -1028,7 +1028,7 @@ fn event_actor_id(event: &arkret_sdk::Event) -> Option<arkret_sdk::DidCoreId> {
         let did = arkret_sdk::Did::new(controller.to_owned()).ok()?;
         (arkret_sdk::project_did_to_core_id(&did).ok().as_ref()
             == Some(event.actor_id.signing_principal_id()))
-            .then(|| event.actor_id.signing_principal_id().clone())
+        .then(|| event.actor_id.signing_principal_id().clone())
     })
 }
 

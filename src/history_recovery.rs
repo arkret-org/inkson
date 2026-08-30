@@ -400,8 +400,7 @@ pub async fn author_and_create_ordinary_human_request(
         if durable.request.effective_scope != plan.effective_scope
             || durable.request.requested_ranges != plan.requested_ranges
             || durable.request.expires_at != plan.expires_at
-            || durable.request.requester_actor_id
-                != arkret_sdk::ActorId::account(authority.clone())
+            || durable.request.requester_actor_id != arkret_sdk::ActorId::account(authority.clone())
             || durable.request.requester_authorization_incarnation
                 != plan.requester_authorization_incarnation
         {
@@ -1575,16 +1574,18 @@ where
             arkret_sdk::HistoryKeyResponseContent::Chunk(chunk) => runtime
                 .verified_manifest(request_id, &chunk.manifest_digest)
                 .map_err(|error| anyhow::anyhow!(error.to_string()))?
-                .map(|manifest| -> anyhow::Result<_> { Ok(arkret_sdk::VerifiedHistoryManifest {
-                    response_id: manifest.response_id,
-                    source_actor_id: crate::mls_api_helpers::local_account_actor_id(
-                        manifest.source_actor_id.as_str(),
-                    )?,
-                    source_sender_domain: manifest.source_sender_domain,
-                    manifest_digest: manifest.manifest_digest,
-                    manifest_admission_digest: manifest.manifest_admission_digest,
-                    chunks: manifest.chunks,
-                }) })
+                .map(|manifest| -> anyhow::Result<_> {
+                    Ok(arkret_sdk::VerifiedHistoryManifest {
+                        response_id: manifest.response_id,
+                        source_actor_id: crate::mls_api_helpers::local_account_actor_id(
+                            manifest.source_actor_id.as_str(),
+                        )?,
+                        source_sender_domain: manifest.source_sender_domain,
+                        manifest_digest: manifest.manifest_digest,
+                        manifest_admission_digest: manifest.manifest_admission_digest,
+                        chunks: manifest.chunks,
+                    })
+                })
                 .transpose()?,
             arkret_sdk::HistoryKeyResponseContent::Manifest(_) => None,
         };

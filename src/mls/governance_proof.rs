@@ -981,10 +981,7 @@ pub(crate) fn reconstruct_transition_security_frontier(
     if genesis_matches.next().is_some() {
         return Err("MLS transition replay has multiple accepted Genesis Events".to_owned());
     }
-    let mut principals = BTreeMap::from([(
-        0_u32,
-        genesis.actor_id.signing_principal_id().clone(),
-    )]);
+    let mut principals = BTreeMap::from([(0_u32, genesis.actor_id.signing_principal_id().clone())]);
 
     let mut commits = checkpoint
         .accepted_events

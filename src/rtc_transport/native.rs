@@ -441,7 +441,7 @@ mod tests {
                 )
                 .unwrap(),
                 focus_id: "fra-1".to_owned(),
-                actor_id: crate::mls_api_helpers::principal_core_id("did:web:alice.example")
+                actor_id: crate::mls_api_helpers::local_account_actor_id("did:web:alice.example")
                     .unwrap(),
                 device_id: arkret_sdk::DeviceId::new(
                     "ak:device:01904100-0000-7000-8000-000000000005",
@@ -472,7 +472,8 @@ mod tests {
             )
             .unwrap(),
             call_id: "ak:call:AYf05kF8z4cSo8r6qmqXgu4KPuv2YtKBlsE00FOmblaz".to_owned(),
-            actor_id: crate::mls_api_helpers::principal_core_id("did:web:alice.example").unwrap(),
+            actor_id: crate::mls_api_helpers::local_account_actor_id("did:web:alice.example")
+                .unwrap(),
             ice_servers: Vec::new(),
             ttl_seconds: 300,
             refresh_lead_seconds: 60,

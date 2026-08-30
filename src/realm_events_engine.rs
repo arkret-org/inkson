@@ -663,7 +663,10 @@ mod tests {
         let (final_event, device_id) =
             accepted_direct_message_final(&event, arkret_sdk::DigestSuite::Sha256)
                 .expect("direct final is bindable");
-        assert_eq!(final_event.actor_id.as_str(), ACTOR_ID);
+        assert_eq!(
+            final_event.actor_id.signing_principal_id().as_str(),
+            ACTOR_ID
+        );
         assert_eq!(device_id.as_str(), DEVICE_ID);
     }
 
@@ -673,8 +676,9 @@ mod tests {
         let ClientEvent::Message(message) = &mut delegated else {
             unreachable!();
         };
-        message.event.executed_by =
-            Some(arkret_sdk::DidCoreId::new("ak:did_core:web:agent.example").unwrap());
+        message.event.executed_by = Some(arkret_sdk::ActorId::service(
+            arkret_sdk::DidCoreId::new("ak:did_core:web:agent.example").unwrap(),
+        ));
         assert!(
             accepted_direct_message_final(&delegated, arkret_sdk::DigestSuite::Sha256).is_none()
         );

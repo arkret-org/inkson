@@ -52,7 +52,7 @@ struct RangeCompletenessInput {
 #[derive(Debug, Deserialize)]
 struct RealmActorFrontierInput {
     realm_id: arkret_sdk::RealmId,
-    actor_id: arkret_sdk::DidCoreId,
+    actor_id: arkret_sdk::ActorId,
     next_actor_seq: u64,
     frontier_event_ids: Vec<arkret_sdk::EventId>,
     digest_suite: arkret_sdk::DigestSuite,
@@ -130,7 +130,7 @@ fn demo_realm_genesis() -> Result<Value> {
     let producer_id = arkret_wire::project_did_to_core_id(&producer_did)?;
     let notary_public_key = authority.signing_key.verifying_key().to_bytes();
     let notary = arkret_sdk::NotaryValue::single_signer(arkret_sdk::NotarySignerDescriptor {
-        actor_id: authority.station_id.clone(),
+        actor_id: authority.service_id.clone(),
         verification_method: authority.verification_method.clone(),
         key_kind: arkret_sdk::NotaryKeyKind::Ed25519Raw32,
         jose_algorithm: arkret_sdk::NotaryJoseAlgorithm::Ed25519,
@@ -139,7 +139,7 @@ fn demo_realm_genesis() -> Result<Value> {
             notary_public_key,
         ))?,
     });
-    inkson::operation::set_authoring_station_id(Some(authority.station_id.clone()));
+    inkson::operation::set_authoring_station_id(Some(authority.service_id.clone()));
     let operation = inkson::event_builders::build_realm_create_event(
         arkret_sdk::GenesisSalt::new(arkret_sdk::base64url_encode([9_u8; 32]))?,
         producer_id.as_str(),
@@ -181,7 +181,7 @@ fn demo_realm_genesis() -> Result<Value> {
         .verification_method
         .clone();
     let facets = inkson::event_builders::RealmBootstrapFacets {
-        station_id: authority.station_id.clone(),
+        station_id: authority.service_id.clone(),
         actor_id: producer_id.to_string(),
         notary_did: authority.did.to_string(),
         notary_service_origin: "https://server.local".to_owned(),
@@ -257,7 +257,7 @@ fn realm_genesis_seal(input: Value) -> Result<Value> {
     let digest_suite = arkret_sdk::DigestSuite::Sha256;
     let authority = mock_service_authority()?;
     let signer_evidence = arkret_sdk::AuthenticatedSignerResolutionEvidence::Service {
-        signer_id: authority.station_id.clone(),
+        signer_id: authority.service_id.clone(),
         verification_method: authority.verification_method.clone(),
         authenticated_resolution: authority.resolution.clone(),
     };
@@ -271,7 +271,7 @@ fn realm_genesis_seal(input: Value) -> Result<Value> {
     );
     for event in &mut input.events {
         anyhow::ensure!(
-            event.station_id == authority.station_id,
+            event.actor_id.route_service_id() == &authority.service_id,
             "Realm genesis Event targets a different Station"
         );
         let producer = match event.proofs.as_slice() {
@@ -308,7 +308,11 @@ fn realm_genesis_seal(input: Value) -> Result<Value> {
         admission.jws = admission_signer
             .sign_payload(&admission.canonical_binding_bytes()?)?
             .jws;
-        admission.validate_binding(&producer.event_digest, &producer, &event.station_id)?;
+        admission.validate_binding(
+            &producer.event_digest,
+            &producer,
+            event.actor_id.route_service_id(),
+        )?;
         event.proofs.push(admission.into());
     }
     let registry = arkret_sdk::lattice_registry::build_sdk_cell_registry();
@@ -539,7 +543,7 @@ fn principal_locator(input: Value) -> Result<Value> {
     let mut locator = arkret_sdk::PrincipalLocator {
         schema: arkret_sdk::PrincipalLocator::SCHEMA.to_owned(),
         subject_id: input.subject_id,
-        recipient_id: authority.station_id,
+        recipient_id: authority.service_id,
         service_resolution,
         route_assistance: None,
         recipient_kind: None,
@@ -732,8 +736,7 @@ fn range_completeness(input: Value) -> Result<Value> {
         scope_ref: ScopeRef::Realm {
             realm_id: input.realm_id,
         },
-        actor_id: issuer.clone(),
-        station_id: issuer.clone(),
+        actor_id: arkret_sdk::ActorId::service(issuer.clone()),
         executed_by: None,
         authorization_ref: None,
         applet_id: None,
@@ -842,7 +845,7 @@ fn control_proposal_ack(input: Value) -> Result<Value> {
     let controller = event.executed_by.as_ref().unwrap_or(&event.actor_id);
     let signer = inkson::event_signer::build_ed25519_device_signer(
         [1_u8; 32],
-        controller.as_str(),
+        controller.signing_principal_id().as_str(),
         input.device_id,
     );
     let policy = arkret_wire::ControlProposalDecisionPolicy::default();

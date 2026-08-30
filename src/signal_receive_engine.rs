@@ -469,7 +469,13 @@ fn live_body_value(plaintext: &garth::SignalPlaintext) -> garth::Result<Value> {
     };
     body.insert(
         "actor_id".to_owned(),
-        Value::String(plaintext.actor_id.signing_principal_id().as_str().to_owned()),
+        Value::String(
+            plaintext
+                .actor_id
+                .signing_principal_id()
+                .as_str()
+                .to_owned(),
+        ),
     );
     body.insert(
         "device_id".to_owned(),
@@ -636,7 +642,8 @@ mod tests {
         garth::SignalPlaintext {
             payload,
             kind: kind.to_owned(),
-            actor_id: crate::mls_api_helpers::principal_core_id("did:web:alice.example").unwrap(),
+            actor_id: crate::mls_api_helpers::local_account_actor_id("did:web:alice.example")
+                .unwrap(),
             payload_sequence: 7,
             ttl_ms: Some(30_000),
             sent_at: at(0),

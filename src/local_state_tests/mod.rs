@@ -170,7 +170,7 @@ pub(super) fn snapshot_manifest_for_items(
         chunks,
         security_class: arkret_sdk::SnapshotSecurityClass::Standard,
         verification_hints: None,
-        created_by: service_id.clone(),
+        created_by: arkret_sdk::ActorId::service(service_id.clone()),
         created_at,
         authority_binding: arkret_sdk::AuthorityBinding {
             authority_kind: arkret_sdk::SnapshotAuthorityKind::RealmPolicySnapshotIssuer,

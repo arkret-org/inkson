@@ -344,12 +344,12 @@ mod tests {
     /// proof is a real Ed25519 signature over the canonical payload bytes,
     /// signed by `signer`. `verification_method` selects `actor#device`.
     fn signed_payload(actor_did: &str, device_id: &str, name: &str, signer: &SigningKey) -> Value {
-        let actor_id = crate::mls_api_helpers::principal_core_id(actor_did).unwrap();
+        let actor_id = crate::mls_api_helpers::local_account_actor_id(actor_did).unwrap();
         let mut identity = MemberIdentity {
             schema: arkret_sdk::SchemaId::MEMBER_IDENTITY_V1.to_owned(),
             realm_id: RealmId::new(TEST_REALM).unwrap(),
             actor_id: actor_id.clone(),
-            subject_id: actor_id.clone(),
+            subject_actor_id: actor_id.clone(),
             display_profile: DisplayProfile {
                 display_name: name.to_owned(),
                 avatar_blob_ref: None,
@@ -421,10 +421,15 @@ mod tests {
         let identity = store
             .current_identity(TEST_REALM, actor_id.as_str())
             .expect("resolved");
-        assert_eq!(identity.subject_id, actor_id);
+        assert_eq!(identity.subject_actor_id.signing_principal_id(), &actor_id);
         assert_eq!(identity.display_profile.display_name, "Alice v1");
-        assert!(!store.is_decryption_pending(TEST_REALM, identity.actor_id.as_str()));
-        crate::identity::device_directory::invalidate_actor(identity.actor_id.as_str());
+        assert!(!store.is_decryption_pending(
+            TEST_REALM,
+            identity.actor_id.signing_principal_id().as_str()
+        ));
+        crate::identity::device_directory::invalidate_actor(
+            identity.actor_id.signing_principal_id().as_str(),
+        );
     }
 
     #[test]
@@ -523,8 +528,12 @@ mod tests {
             schema: arkret_sdk::SchemaId::MEMBER_IDENTITY_V1.to_owned(),
             realm_id: RealmId::new("ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19")
                 .unwrap(),
-            actor_id: crate::mls_api_helpers::principal_core_id("did:web:alice.example").unwrap(),
-            subject_id: crate::mls_api_helpers::principal_core_id("did:web:alice.example").unwrap(),
+            actor_id: crate::mls_api_helpers::local_account_actor_id("did:web:alice.example")
+                .unwrap(),
+            subject_actor_id: crate::mls_api_helpers::local_account_actor_id(
+                "did:web:alice.example",
+            )
+            .unwrap(),
             display_profile: DisplayProfile {
                 display_name: "Alice".to_owned(),
                 avatar_blob_ref: None,

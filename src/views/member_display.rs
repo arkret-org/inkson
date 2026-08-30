@@ -288,10 +288,7 @@ pub(crate) fn resolve_member_display(
             )
             .and_then(|entry| entry.primary_handle)
     });
-    let primary_handle = [
-        subject_id.as_deref(),
-        Some(row.actor_id.as_str()),
-    ]
+    let primary_handle = [subject_id.as_deref(), Some(row.actor_id.as_str())]
         .into_iter()
         .flatten()
         .find_map(|principal_id| store.primary_handle_for_principal_id(principal_id))
@@ -455,7 +452,10 @@ mod petname_tests {
     fn accepted_human(principal_id: &str) -> crate::models::ContactListRow {
         crate::models::ContactListRow {
             peer: arkret_sdk::contact_operations::ContactPeer::Human {
-                principal_id: arkret_sdk::DidCoreId::new(principal_id).unwrap(),
+                account_id: arkret_sdk::AccountId::new(
+                    arkret_sdk::DidCoreId::new(principal_id).unwrap(),
+                    arkret_sdk::DidCoreId::new("ak:did_core:web:station.example").unwrap(),
+                ),
             },
             state: arkret_sdk::ContactState::Accepted,
             request_event_ref: None,

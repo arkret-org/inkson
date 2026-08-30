@@ -585,13 +585,16 @@ fn build_mls_welcome_payload_with_requester(
         arkret_sdk::Hash::new(arkret_sdk::canonical::sha256_digest(&capabilities_bytes))
             .map_err(|err| format!("invalid claimed KeyPackage capabilities digest: {err}"))?;
     let requester_actor_id = match &trust_binding {
-        arkret_sdk::MlsRequesterTrustBinding::RequesterDevice { .. } =>
+        arkret_sdk::MlsRequesterTrustBinding::RequesterDevice { .. } => {
             crate::mls_api_helpers::local_account_actor_id(requester_did.as_str())
-                .map_err(|error| format!("invalid requester AccountId: {error}"))?,
-        arkret_sdk::MlsRequesterTrustBinding::RequesterMinimalMetadataPairwise { .. } =>
-            arkret_sdk::ActorId::service(requester_did.clone()),
-        arkret_sdk::MlsRequesterTrustBinding::RequesterNativeAgent { .. } =>
-            arkret_sdk::ActorId::service(requester_did.clone()),
+                .map_err(|error| format!("invalid requester AccountId: {error}"))?
+        }
+        arkret_sdk::MlsRequesterTrustBinding::RequesterMinimalMetadataPairwise { .. } => {
+            arkret_sdk::ActorId::service(requester_did.clone())
+        }
+        arkret_sdk::MlsRequesterTrustBinding::RequesterNativeAgent { .. } => {
+            arkret_sdk::ActorId::service(requester_did.clone())
+        }
     };
     let envelope = arkret_sdk::UnsignedMlsWelcomeClaimEnvelope::new(
         arkret_sdk::MlsWelcomeClaimEnvelopeSigningInput {
@@ -1064,8 +1067,8 @@ mod tests {
                 )
                 .unwrap(),
                 claim_id: arkret_sdk::NonEmptyString::new("ak:mls:kp:test:nonce").unwrap(),
-                requester_actor_id: arkret_sdk::DidCoreId::new(
-                    "ak:did_core:web:alice.example".to_owned(),
+                requester_actor_id: crate::mls_api_helpers::local_account_actor_id(
+                    "ak:did_core:web:alice.example",
                 )
                 .unwrap(),
                 trust_binding: arkret_sdk::MlsRequesterTrustBinding::RequesterDevice {
@@ -1125,7 +1128,7 @@ mod tests {
                 .unwrap(),
                 intended_realm_id: realm,
                 claim_id: arkret_sdk::NonEmptyString::new("ak:mls:kp:test:pairwise").unwrap(),
-                requester_actor_id: material.actor_id.clone(),
+                requester_actor_id: arkret_sdk::ActorId::service(material.actor_id.clone()),
                 trust_binding:
                     arkret_sdk::MlsRequesterTrustBinding::RequesterMinimalMetadataPairwise {
                         requester_pairwise_verification_method: method.clone(),
@@ -1143,7 +1146,10 @@ mod tests {
         let signed =
             sign_pairwise_welcome_claim_envelope(material.signer.as_ref(), envelope).unwrap();
         assert_eq!(signed.signature.kid.as_str(), method.as_str());
-        assert_eq!(signed.requester_actor_id, material.actor_id);
+        assert_eq!(
+            signed.requester_actor_id.signing_principal_id(),
+            &material.actor_id
+        );
         assert!(matches!(
             signed.trust_binding,
             arkret_sdk::MlsRequesterTrustBinding::RequesterMinimalMetadataPairwise { .. }

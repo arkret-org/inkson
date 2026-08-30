@@ -455,10 +455,8 @@ impl TypedOperationBuilder {
         };
         let principal_id = crate::mls_api_helpers::principal_core_id(&actor.into())
             .map_err(|err| anyhow::anyhow!("invalid actor_id core_id: {err}"))?;
-        let actor_id = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
-            principal_id,
-            station_id,
-        ));
+        let actor_id =
+            arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(principal_id, station_id));
         arkret_sdk::TypedEventDraft::<K>::new(scope_ref, actor_id, payload)
             .map_err(|err| anyhow::anyhow!("typed Event draft construction failed: {err}"))?
             .into_intent(crate::clock::now_utc_millis())

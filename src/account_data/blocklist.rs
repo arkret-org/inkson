@@ -107,8 +107,10 @@ fn target_from_ui(
             Ok(AccountBlocklistTarget::Did(AccountBlocklistDidTarget {
                 kind,
                 actor_id: match kind {
-                    AccountBlocklistDidTargetKind::Actor => crate::mls_api_helpers::local_account_actor_id(&value)
-                        .map_err(|error| error.to_string())?,
+                    AccountBlocklistDidTargetKind::Actor => {
+                        crate::mls_api_helpers::local_account_actor_id(&value)
+                            .map_err(|error| error.to_string())?
+                    }
                     AccountBlocklistDidTargetKind::Service
                     | AccountBlocklistDidTargetKind::Organization => arkret_sdk::ActorId::service(
                         arkret_sdk::DidCoreId::new(value).map_err(|error| error.to_string())?,

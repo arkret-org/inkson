@@ -201,7 +201,7 @@ pub fn build_realm_bootstrap_steps_for_station(
             .first()
             .ok_or_else(|| anyhow::anyhow!("creator membership needs the create Event"))?;
         build_realm_bootstrap_membership_intent(&membership_facets, create.realm_id.as_str())
-        .map(|intent| vec![intent])
+            .map(|intent| vec![intent])
     });
     Ok(vec![create_step, facets_step, membership_step])
 }
@@ -687,10 +687,8 @@ pub fn build_direct_conversation_founding_steps(
         arkret_sdk::project_did_to_core_id(founder_did)?,
         station_id.clone(),
     );
-    let peer_actor = arkret_sdk::AccountId::new(
-        arkret_sdk::project_did_to_core_id(peer_did)?,
-        station_id,
-    );
+    let peer_actor =
+        arkret_sdk::AccountId::new(arkret_sdk::project_did_to_core_id(peer_did)?, station_id);
     let create_payload = arkret_sdk::direct_conversation_realm_create_payload(
         arkret_sdk::GenesisSalt::generate()?,
         trust_domain,
@@ -913,12 +911,8 @@ pub fn build_space_create_event(
         space_created_by,
         crate::operation::authoring_station_id()?,
     ));
-    let mut space_object = arkret_sdk::Space::create_object(
-        space_realm_id,
-        kind,
-        title,
-        space_created_by,
-    );
+    let mut space_object =
+        arkret_sdk::Space::create_object(space_realm_id, kind, title, space_created_by);
     space_object.state = Some(arkret_sdk::SpaceState::Active);
     if let Some(summary) = summary
         && !summary.trim().is_empty()
@@ -1915,7 +1909,7 @@ mod notary_derivation_tests {
         assert!(
             events
                 .iter()
-                .all(|event| { event.station_id == station_id })
+                .all(|event| event.actor_id.route_service_id() == &station_id)
         );
     }
 

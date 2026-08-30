@@ -218,10 +218,9 @@ pub fn realm_authority_root_value_from_events(
         };
         if kind == arkret_sdk::EventKind::RealmCreate.as_str() {
             root = (|| {
-                let controller_id = serde_json::from_value::<arkret_sdk::ActorId>(
-                    event.get("actor_id")?.clone(),
-                )
-                .ok()?;
+                let controller_id =
+                    serde_json::from_value::<arkret_sdk::ActorId>(event.get("actor_id")?.clone())
+                        .ok()?;
                 Some(RealmAuthorityRootValue::genesis(controller_id))
             })();
             continue;
@@ -419,7 +418,7 @@ mod tests {
         let events = events.as_array().unwrap();
         let root = realm_authority_root_value_from_events(events).unwrap();
         assert_eq!(
-            root.controller_id.as_str(),
+            root.controller_id.signing_principal_id().as_str(),
             "ak:did_core:web:successor.example"
         );
         assert_eq!(root.controller_epoch, 1);
@@ -451,7 +450,7 @@ mod tests {
         let events = events.as_array().unwrap();
         let root = realm_authority_root_value_from_events(events).unwrap();
         assert_eq!(
-            root.controller_id.as_str(),
+            root.controller_id.signing_principal_id().as_str(),
             "ak:did_core:web:successor.example"
         );
         assert_eq!(root.controller_epoch, 1);

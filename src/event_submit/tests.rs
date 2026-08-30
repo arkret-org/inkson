@@ -69,8 +69,9 @@ fn managed_agent_pcr_genesis_does_not_bypass_control_proposal_ack_authoring() {
         "ak:event:Af2HCFbsrVezIXsZGcgB3mjkpqGK-C4DmteWaG3H0Xbh",
         "did:web:agent.example",
     );
-    managed.executed_by =
-        Some(arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example").unwrap());
+    managed.executed_by = Some(
+        crate::mls_api_helpers::local_account_actor_id("ak:did_core:web:alice.example").unwrap(),
+    );
     managed.authorization_ref = Some(
         arkret_sdk::AuthorizationRef::new("did:web:agent.example#managed-controller").unwrap(),
     );
@@ -717,9 +718,9 @@ fn realm_authority_root_claim_defers_to_producer_chosen_authorization() {
 
     let executed_by_service =
         sdk_intent_with_kind(AUTHORITY_REALM, "ak.strand.create", AUTHORITY_CONTROLLER)
-            .with_executed_by(
+            .with_executed_by(arkret_sdk::ActorId::service(
                 arkret_sdk::DidCoreId::new("ak:did_core:web:service.example").unwrap(),
-            );
+            ));
     assert_eq!(
         realm_authority_root_claim(&executed_by_service, Some(&root)),
         None
@@ -1146,7 +1147,7 @@ fn the_accepted_frontier_positions_the_authored_envelope() {
         arkret_sdk::EventId::new("ak:event:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1").unwrap();
     let frontier = arkret_sdk::RealmActorFrontierView::new(
         intent.realm_id_opt().unwrap().clone(),
-        arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example").unwrap(),
+        intent.actor_id().clone(),
         8,
         vec![frontier_event_id.clone()],
         arkret_sdk::canonical::DigestSuite::Sha256,
@@ -1250,7 +1251,10 @@ fn a_frontier_for_another_actor_is_not_a_chain_basis() {
     let realm_id = intent.realm_id_opt().unwrap().clone();
     let mismatched = arkret_sdk::RealmActorFrontierView::new(
         realm_id.clone(),
-        arkret_sdk::DidCoreId::new("ak:did_core:web:bob.example").unwrap(),
+        arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+            arkret_sdk::DidCoreId::new("ak:did_core:web:bob.example").unwrap(),
+            intent.actor_id().route_service_id().clone(),
+        )),
         8,
         vec![
             arkret_sdk::EventId::new("ak:event:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1")
@@ -1260,9 +1264,13 @@ fn a_frontier_for_another_actor_is_not_a_chain_basis() {
     )
     .unwrap();
 
-    let error = actor_chain_basis_from_frontier(&realm_id, intent.actor_id().as_str(), mismatched)
-        .unwrap_err()
-        .to_string();
+    let error = actor_chain_basis_from_frontier(
+        &realm_id,
+        intent.actor_id().signing_principal_id().as_str(),
+        mismatched,
+    )
+    .unwrap_err()
+    .to_string();
 
     assert!(error.contains("realm actor frontier mismatch"), "{error}");
 }
@@ -1272,7 +1280,7 @@ fn an_empty_frontier_authors_the_first_chain_position() {
     let intent = EventIntent::from_authored(&sdk_event_without_proof("did:web:alice.example"));
     let frontier = arkret_sdk::RealmActorFrontierView::new(
         intent.realm_id_opt().unwrap().clone(),
-        arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example").unwrap(),
+        intent.actor_id().clone(),
         0,
         vec![],
         arkret_sdk::canonical::DigestSuite::Sha256,
@@ -1366,7 +1374,7 @@ async fn ordinary_event_preparation_requires_describe_before_remote_frontier() {
 fn actor_seq_cas_conflict_classifier_is_narrow() {
     let current_frontier = arkret_sdk::RealmActorFrontierView::new(
         arkret_sdk::RealmId::new("ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19").unwrap(),
-        arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example").unwrap(),
+        crate::mls_api_helpers::local_account_actor_id("ak:did_core:web:alice.example").unwrap(),
         0,
         vec![],
         arkret_sdk::canonical::DigestSuite::Sha256,

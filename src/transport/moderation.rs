@@ -30,10 +30,7 @@ pub async fn report(
     .await?;
     let body = arkret_sdk::ModerationReportRequestBody { report_event };
     body.validate_authoring_context(
-        &arkret_sdk::AccountId::new(
-            principal_id,
-            crate::operation::authoring_station_id()?,
-        ),
+        &arkret_sdk::AccountId::new(principal_id, crate::operation::authoring_station_id()?),
         &arkret_sdk::ModerationReportAcceptedTargetBasis {
             target_ref: target_ref.to_owned(),
             effective_scope,

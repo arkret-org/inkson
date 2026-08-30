@@ -89,7 +89,11 @@ pub struct MessageStreamCard {
 impl From<&garth::MessageStreamPreview> for MessageStreamCard {
     fn from(preview: &garth::MessageStreamPreview) -> Self {
         Self {
-            sender_actor_id: preview.sender_actor_id.signing_principal_id().as_str().to_owned(),
+            sender_actor_id: preview
+                .sender_actor_id
+                .signing_principal_id()
+                .as_str()
+                .to_owned(),
             message_id: preview.message_id.as_str().to_owned(),
             text: preview.text.clone(),
             truncated: preview.truncated,

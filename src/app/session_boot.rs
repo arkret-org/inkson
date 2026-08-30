@@ -302,9 +302,7 @@ pub(super) const TEST_SESSION_CREDENTIAL_INJECTION_KEY: &str =
     test,
     all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test")
 ))]
-fn parse_test_account_id(
-    fixture: &Value,
-) -> Result<arkret_sdk::AccountId, &'static str> {
+fn parse_test_account_id(fixture: &Value) -> Result<arkret_sdk::AccountId, &'static str> {
     let value = fixture
         .get("account_id")
         .ok_or("account_id is missing")?
@@ -727,7 +725,10 @@ mod test_session_injection_tests {
             }
         });
         let account_id = parse_test_account_id(&parsed).expect("valid account id");
-        assert_eq!(account_id.principal_id.as_str(), "ak:did_core:web:alice.example");
+        assert_eq!(
+            account_id.principal_id.as_str(),
+            "ak:did_core:web:alice.example"
+        );
 
         assert_eq!(
             parse_test_account_id(&serde_json::json!({})),

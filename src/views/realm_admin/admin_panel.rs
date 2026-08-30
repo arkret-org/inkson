@@ -2450,8 +2450,10 @@ mod governance_tests {
 
     fn root() -> arkret_policy::realm_bootstrap::RealmAuthorityRootValue {
         arkret_policy::realm_bootstrap::RealmAuthorityRootValue {
-            controller_id: arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example".to_owned())
-                .unwrap(),
+            controller_id: crate::mls_api_helpers::local_account_actor_id(
+                "ak:did_core:web:alice.example",
+            )
+            .unwrap(),
             controller_epoch: 3,
             authority_generation: 1,
         }
@@ -2465,7 +2467,7 @@ mod governance_tests {
             build_owner_transfer_payload(REALM, &root(), "did:web:bob.example", "detached-proof")
                 .unwrap();
         assert_eq!(
-            payload.patch.controller_id.as_str(),
+            payload.patch.controller_id.signing_principal_id().as_str(),
             "ak:did_core:web:bob.example"
         );
         assert_eq!(

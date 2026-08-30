@@ -375,10 +375,8 @@ pub async fn list_handles_for_subject(
 
     let subject_id = crate::mls_api_helpers::principal_core_id(subject)
         .map_err(|err| anyhow::anyhow!("invalid subject DID `{subject}`: {err}"))?;
-    let account_id = arkret_sdk::AccountId::new(
-        subject_id,
-        crate::operation::authoring_station_id()?,
-    );
+    let account_id =
+        arkret_sdk::AccountId::new(subject_id, crate::operation::authoring_station_id()?);
     let realm = match realm_id.map(str::trim).filter(|s| !s.is_empty()) {
         Some(r) => Some(
             arkret_sdk::RealmId::new(r)

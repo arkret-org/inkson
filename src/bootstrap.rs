@@ -393,14 +393,11 @@ pub(crate) async fn ensure_local_mls_key_package_inventory(
     if base_scope.is_empty() || session_credential.trim().is_empty() {
         return Ok(None);
     }
-    Ok(maintain_local_mls_key_packages(
-        &base_url,
-        &session_credential,
-        &authority,
-        &device_id,
+    Ok(
+        maintain_local_mls_key_packages(&base_url, &session_credential, &authority, &device_id)
+            .await?
+            .latest_key_package_id,
     )
-    .await?
-    .latest_key_package_id)
 }
 
 pub(crate) async fn manual_refill_local_mls_key_packages(
@@ -413,14 +410,11 @@ pub(crate) async fn manual_refill_local_mls_key_packages(
     if base_scope.is_empty() || session_credential.trim().is_empty() {
         return Ok(0);
     }
-    Ok(maintain_local_mls_key_packages(
-        &base_url,
-        &session_credential,
-        &authority,
-        &device_id,
+    Ok(
+        maintain_local_mls_key_packages(&base_url, &session_credential, &authority, &device_id)
+            .await?
+            .published_count,
     )
-    .await?
-    .published_count)
 }
 
 struct LocalMlsKeyPackageMaintenanceOutcome {

@@ -361,7 +361,7 @@ fn local_state_store_persists_canonical_read_cursor_outcome() {
     let outcome = arkret_sdk::ReadMarkerOutcome {
         realm_id: arkret_sdk::RealmId::new("ak:realm:AV56KkeEaMSR4caEiVYFp1MtJk3sQ_Zn0VETrzEWQlU3")
             .unwrap(),
-        actor_id: crate::mls_api_helpers::principal_core_id("did:web:alice.example").unwrap(),
+        actor_id: crate::mls_api_helpers::local_account_actor_id("did:web:alice.example").unwrap(),
         device_id: arkret_sdk::DeviceId::new("ak:device:01964137-0000-7000-8000-000000000001")
             .unwrap(),
         read_scope: read_scope_for_cursor(

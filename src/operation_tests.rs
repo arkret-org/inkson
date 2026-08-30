@@ -103,7 +103,10 @@ fn operation_builder_generates_valid_envelope() {
         op.realm_id_opt().expect("realm-scoped write").as_str(),
         "ak:realm:AXKJvMpMFIFTD9GYNEzOeImU-2ytvLCtsCq3Mrq9-Ci8"
     );
-    assert_eq!(op.actor_id().as_str(), "ak:did_core:web:alice");
+    assert_eq!(
+        op.actor_id().signing_principal_id().as_str(),
+        "ak:did_core:web:alice"
+    );
     assert_eq!(op.kind().as_str(), "ak.message.create");
 
     // The authoring position and the signing stamp arrive at the finalize
@@ -166,7 +169,10 @@ fn operation_builder_can_emit_signed_authorization_binding() {
     .build("node");
 
     assert_eq!(
-        op.intent().executed_by().as_ref().map(|did| did.as_str()),
+        op.intent()
+            .executed_by()
+            .as_ref()
+            .map(|actor| actor.signing_principal_id().as_str()),
         Some("ak:did_core:web:agent.example")
     );
     assert_eq!(
@@ -233,7 +239,10 @@ fn event_envelope_accepts_current_optional_top_level_fields() {
         }
     );
     assert_eq!(
-        parsed.executed_by.as_ref().map(|did| did.as_str()),
+        parsed
+            .executed_by
+            .as_ref()
+            .map(|actor| actor.signing_principal_id().as_str()),
         Some("ak:did_core:web:agent.example")
     );
     assert_eq!(
@@ -854,22 +863,16 @@ fn require_proof_fails_when_unsigned() {
 #[test]
 fn invite_helpers_emit_canonical_kinds() {
     let invite_id = "ak:invite:AY6DJbBwavsGTQuBZZiqqw9MVcqPZ8QX8invQ3i2kpi7";
-    let invite_delivery_target = arkret_sdk::InviteDeliveryTarget {
-        recipient_id: arkret_sdk::DidCoreId::new("ak:did_core:web:server.example").unwrap(),
-        service_resolution: arkret_sdk::ServiceResolutionCarrier::CurrentRecordUrl {
-            current_record_url: "https://server.example/_arkret/open/services/ak%3Adid_core%3Aweb%3Aserver.example/resolution".to_owned(),
-            pinned_record_digest: None,
-        },
-        recipient_kind: Some("station".to_owned()),
-    };
     let introduction_evidence_digest =
         crate::canonical::canonical_sha256(&json!({"kind": "explicit_address"})).unwrap();
     let create = ak_ops::invite_create_structured(
         "ak:realm:AT3p9polsnQ_WOix32QZimMdE2zPe62HptJu2PaO3V1h",
         "did:web:alice.example",
-        "ak:did_core:web:bob.example",
+        arkret_sdk::AccountId::new(
+            arkret_sdk::DidCoreId::new("ak:did_core:web:bob.example").unwrap(),
+            arkret_sdk::DidCoreId::new("ak:did_core:web:server.example").unwrap(),
+        ),
         Some("member"),
-        invite_delivery_target.clone(),
         &introduction_evidence_digest,
     )
     .expect("builds")
@@ -881,10 +884,6 @@ fn invite_helpers_emit_canonical_kinds() {
     assert_eq!(
         create.payload()["invitee_id"],
         "ak:did_core:web:bob.example"
-    );
-    assert_eq!(
-        create.payload()["invite_delivery_target"],
-        serde_json::to_value(invite_delivery_target).unwrap()
     );
     assert_eq!(
         create.payload()["introduction_evidence_digest"],

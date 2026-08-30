@@ -323,7 +323,12 @@ fn sign_chat_fixture(value: &mut Value) {
                 proof_purpose: None,
                 jws: String::new(),
             };
-            let binding = proof.canonical_binding_bytes(&actor_core_id).unwrap();
+            let binding = proof
+                .canonical_binding_bytes(
+                    &crate::mls_api_helpers::local_account_actor_id(actor_core_id.as_str())
+                        .unwrap(),
+                )
+                .unwrap();
             proof.jws = signer.detached_jws_over(&binding).unwrap();
             value
                 .as_object_mut()

@@ -561,8 +561,15 @@ mod tests {
         title: &str,
         parent: Option<&str>,
     ) -> arkret_sdk::Event {
-        let mut object =
-            arkret_sdk::Space::create_object(sdk_realm_id(), kind, title, sdk_actor_id());
+        let mut object = arkret_sdk::Space::create_object(
+            sdk_realm_id(),
+            kind,
+            title,
+            arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+                sdk_actor_id(),
+                arkret_sdk::DidCoreId::new("ak:did_core:web:station.example").unwrap(),
+            )),
+        );
         if let Some(parent) = parent {
             object.parent_space_id = Some(arkret_sdk::SpaceId::new(parent).unwrap());
         }
@@ -598,7 +605,7 @@ mod tests {
     ) -> arkret_sdk::Event {
         let mut object = arkret_sdk::StrandCreateObject::new(
             sdk_realm_id(),
-            crate::mls_api_helpers::principal_core_id(actor).unwrap(),
+            crate::mls_api_helpers::local_account_actor_id(actor).unwrap(),
         )
         .with_metadata_title(title)
         .with_metadata_field("rank", json!(rank))

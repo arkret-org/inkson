@@ -1282,11 +1282,8 @@ async fn run_circle_scope_rotate_pass(
             })
             .filter_map(|circle| {
                 let circle_id = circle.circle_id.to_string();
-                let active_members: BTreeSet<String> = circle
-                    .member_ids
-                    .iter()
-                    .map(ToString::to_string)
-                    .collect();
+                let active_members: BTreeSet<String> =
+                    circle.member_ids.iter().map(ToString::to_string).collect();
                 let removals = ctx.state_store.read(|store| {
                     circle_mls_removal_candidates(
                         store,
@@ -3600,7 +3597,10 @@ mod tests {
             arkret_sdk::RealmId::new(realm_id).unwrap(),
             "board",
             "Cross-member board",
-            sdk_actor_id(),
+            arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+                sdk_actor_id(),
+                arkret_sdk::DidCoreId::new("ak:did_core:web:station.example").unwrap(),
+            )),
         );
         let space_create = sdk_event(
             arkret_sdk::EventKind::SpaceCreate.as_str(),
@@ -3703,7 +3703,9 @@ mod tests {
                 "delivery_status": "unroutable"
             }),
         );
-        event.actor_id = arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example").unwrap();
+        event.actor_id =
+            crate::mls_api_helpers::local_account_actor_id("ak:did_core:web:alice.example")
+                .unwrap();
         let event_digest = arkret_sdk::Hash::new(
             event
                 .event_digest_with_digest_suite(arkret_sdk::DigestSuite::Sha256)
@@ -3849,7 +3851,8 @@ mod tests {
                 }
             }),
         );
-        event.actor_id = arkret_sdk::DidCoreId::new("ak:did_core:web:bob.example").unwrap();
+        event.actor_id =
+            crate::mls_api_helpers::local_account_actor_id("ak:did_core:web:bob.example").unwrap();
 
         let changed =
             ingest_kanban_projection_events(&mut store, sdk_realm_id().as_str(), &[event]);

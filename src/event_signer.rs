@@ -1548,7 +1548,10 @@ mod tests {
             proof.verification_method,
             format!("did:web:alice.example#{TEST_DEVICE_ID}")
         );
-        assert_eq!(event.actor_id.as_str(), "ak:did_core:web:alice.example");
+        assert_eq!(
+            event.actor_id.signing_principal_id().as_str(),
+            "ak:did_core:web:alice.example"
+        );
     }
 
     #[test]
@@ -1581,9 +1584,17 @@ mod tests {
             producer_proof(&event).verification_method,
             format!("did:web:controller.example#{TEST_DEVICE_ID}")
         );
-        assert_eq!(event.actor_id.as_str(), "ak:did_core:web:agent.example");
         assert_eq!(
-            event.executed_by.as_ref().unwrap().as_str(),
+            event.actor_id.signing_principal_id().as_str(),
+            "ak:did_core:web:agent.example"
+        );
+        assert_eq!(
+            event
+                .executed_by
+                .as_ref()
+                .unwrap()
+                .signing_principal_id()
+                .as_str(),
             "ak:did_core:web:controller.example"
         );
     }

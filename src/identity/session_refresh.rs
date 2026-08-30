@@ -768,14 +768,12 @@ mod tests {
     }
 
     fn test_grant_state() -> SessionGrantState {
-        let principal_id = arkret_sdk::DidCoreId::new(
-            "ak:did_core:webvh:z6mkfixture:alice.example".to_owned(),
-        )
-        .unwrap();
-        let station_id = arkret_sdk::DidCoreId::new(
-            "ak:did_core:webvh:z6mkfixture:soland.example".to_owned(),
-        )
-        .unwrap();
+        let principal_id =
+            arkret_sdk::DidCoreId::new("ak:did_core:webvh:z6mkfixture:alice.example".to_owned())
+                .unwrap();
+        let station_id =
+            arkret_sdk::DidCoreId::new("ak:did_core:webvh:z6mkfixture:soland.example".to_owned())
+                .unwrap();
         SessionGrantState {
             account_id: arkret_sdk::AccountId::new(principal_id, station_id),
             device_id: Some(

@@ -828,7 +828,10 @@ fn sas_key_verification_device_message_matches_device_message_schema() {
     )
     .expect("typed key-verification target")
     .single_recipient(
-        arkret_sdk::DidCoreId::new("ak:did_core:web:bob.example").expect("fixture recipient"),
+        arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+            arkret_sdk::DidCoreId::new("ak:did_core:web:bob.example").expect("fixture recipient"),
+            arkret_sdk::DidCoreId::new("ak:did_core:web:server.example").unwrap(),
+        )),
         arkret_sdk::DeviceId::new(target_device).expect("fixture target device"),
     )
     .expect("build typed device-message request");

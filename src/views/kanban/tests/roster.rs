@@ -139,11 +139,11 @@ fn member_display_label_uses_identity_name_when_no_verified_handle_exists() {
         schema: arkret_sdk::SchemaId::MEMBER_IDENTITY_V1.to_owned(),
         realm_id: arkret_sdk::RealmId::new("ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19")
             .unwrap(),
-        actor_id: crate::mls_api_helpers::principal_core_id(
+        actor_id: crate::mls_api_helpers::local_account_actor_id(
             "ak:did_core:web:acme.example:users:alice",
         )
         .unwrap(),
-        subject_id: crate::mls_api_helpers::principal_core_id(
+        subject_actor_id: crate::mls_api_helpers::local_account_actor_id(
             "ak:did_core:web:acme.example:users:alice",
         )
         .unwrap(),

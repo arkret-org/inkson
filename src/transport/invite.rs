@@ -224,7 +224,12 @@ fn parse_explicit_invite_target(target: &str) -> anyhow::Result<Option<InviteeRe
 fn resolved_handle_claim(
     resolved: &ResolveHandleView,
 ) -> anyhow::Result<Option<arkret_models_identity::HandleClaim>> {
-    let Some(claim) = resolved.claims.as_ref().and_then(|claims| claims.first()).cloned() else {
+    let Some(claim) = resolved
+        .claims
+        .as_ref()
+        .and_then(|claims| claims.first())
+        .cloned()
+    else {
         return Ok(None);
     };
     claim
@@ -571,7 +576,10 @@ mod invite_addressing_tests {
         });
         let locator = serde_json::from_value(locator).expect("typed principal locator");
         let invitee = invitee_from_principal_locator(locator).expect("principal locator");
-        assert_eq!(invitee.principal_id.as_str(), "ak:did_core:web:bob.example");
+        assert_eq!(
+            invitee.account_id.principal_id.as_str(),
+            "ak:did_core:web:bob.example"
+        );
         assert_eq!(
             invitee.invite_delivery_target.recipient_id.as_str(),
             "ak:did_core:web:ps.bob.example"
@@ -592,7 +600,10 @@ mod invite_addressing_tests {
         let invitee = invitee_from_target_json(&raw_invite_address)
             .expect("json target parsed")
             .expect("invite address target");
-        assert_eq!(invitee.principal_id.as_str(), "ak:did_core:web:bob.example");
+        assert_eq!(
+            invitee.account_id.principal_id.as_str(),
+            "ak:did_core:web:bob.example"
+        );
         assert_eq!(invitee.introduction_evidence.kind(), "explicit_address");
     }
 

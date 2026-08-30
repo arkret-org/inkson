@@ -96,7 +96,7 @@ fn unchanged_session_refresh_is_a_noop_for_reactive_and_persisted_state() {
     let grant = session_grant(3600);
     let config = test_client_config(
         "https://example.test",
-        grant.principal_id.clone(),
+        grant.account_id.principal_id.clone(),
         grant.device_id.clone(),
         grant.grant_jwt.clone(),
     );
@@ -689,7 +689,7 @@ fn boot_session_credential_requires_the_complete_active_account_binding() {
 
     let valid_grant = session_grant_for_config(3600, &config);
     let mut wrong_principal = valid_grant.clone();
-    wrong_principal.principal_id =
+    wrong_principal.account_id.principal_id =
         crate::mls_api_helpers::principal_core_id("did:web:bob.example").unwrap();
     let mut wrong_device = valid_grant.clone();
     wrong_device.device_id =
@@ -717,7 +717,7 @@ fn bootstrap_can_start_with_session_grant_without_live_credential() {
     let mut store = isolated_store("bootstrap-grant");
     let mut grant = session_grant(3600);
     let account = test_active_account(
-        grant.principal_id.as_str(),
+        grant.account_id.principal_id.as_str(),
         grant.station_url.as_str(),
         grant.device_id.as_str(),
     );
