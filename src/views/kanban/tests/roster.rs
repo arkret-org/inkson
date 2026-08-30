@@ -9,7 +9,7 @@ fn realm_member_roster_reads_r32_wire_shape() {
     let projection = json!({
         "member_roster_entries": [
             {
-                "actor_id": "ak:did_core:web:acme.example:users:alice",
+                "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:acme.example:users:alice","station_id":"ak:did_core:web:principal.example"}},
                 "membership": "join",
                 "subject_id": "ak:did_core:web:acme.example:principals:alice",
                 "identity_event_ids": ["ak:event:ATOz4l-vKJUCGZDmS_knGS9TjZ64pkOzx-HNGAgY5RGJ"],
@@ -22,7 +22,7 @@ fn realm_member_roster_reads_r32_wire_shape() {
                 "handle_claims_limited": false
             },
             {
-                "actor_id": "ak:did_core:webvh:zQmPr8",
+                "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:webvh:zQmPr8","station_id":"ak:did_core:web:principal.example"}},
                 "membership": "invite"
             }
         ]
@@ -63,7 +63,7 @@ fn realm_member_roster_reads_r32_digest_only() {
     // key is read.
     let projection = json!({
         "member_roster_entries": [{
-            "actor_id": "ak:did_core:web:acme.example:users:v2",
+            "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:acme.example:users:v2","station_id":"ak:did_core:web:principal.example"}},
             "membership": "join",
             "member_display_state_digest": "sha256:cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
         }]
@@ -78,7 +78,7 @@ fn realm_member_roster_ignores_removed_digest_key() {
     // The pre-R3.2 `identity_state_digest` key is NOT honoured.
     let projection = json!({
         "member_roster_entries": [{
-            "actor_id": "ak:did_core:web:acme.example:users:removed",
+            "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:acme.example:users:removed","station_id":"ak:did_core:web:principal.example"}},
             "membership": "join",
             "identity_state_digest": "sha256:cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
         }]
@@ -101,11 +101,11 @@ fn realm_member_roster_ignores_bare_did_strings() {
 fn realm_member_roster_reads_only_root_members() {
     let projection = json!({
         "summary": {
-            "members": [{ "actor_id": "ak:did_core:web:summary-member.example" }],
-            "participants": [{ "actor_id": "ak:did_core:web:participant.example" }]
+            "members": [{ "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:summary-member.example","station_id":"ak:did_core:web:principal.example"}} }],
+            "participants": [{ "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:participant.example","station_id":"ak:did_core:web:principal.example"}} }]
         },
-        "owners": [{ "actor_id": "ak:did_core:web:owner.example" }],
-        "member_roster_entries": [{ "actor_id": "ak:did_core:web:canonical.example" }]
+        "owners": [{ "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:owner.example","station_id":"ak:did_core:web:principal.example"}} }],
+        "member_roster_entries": [{ "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:canonical.example","station_id":"ak:did_core:web:principal.example"}} }]
     });
 
     let rows = realm_member_roster(Some(&projection));
@@ -117,8 +117,8 @@ fn realm_member_roster_reads_only_root_members() {
 fn realm_member_roster_keeps_first_duplicate_actor_entry() {
     let projection = json!({
         "member_roster_entries": [
-            { "actor_id": "ak:did_core:web:alice.example", "membership": "join" },
-            { "actor_id": "ak:did_core:web:alice.example", "membership": "invite" }
+            { "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:alice.example","station_id":"ak:did_core:web:principal.example"}}, "membership": "join" },
+            { "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:alice.example","station_id":"ak:did_core:web:principal.example"}}, "membership": "invite" }
         ]
     });
 

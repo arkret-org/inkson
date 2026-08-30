@@ -39,12 +39,14 @@ fn fixture_event_id(event_id: &str) -> arkret_sdk::EventId {
 /// an intent has nowhere to put them: they belong to authoring, which has
 /// not happened yet.
 fn sdk_intent_with_kind(realm_id: &str, kind: &str, actor_id: &str) -> EventIntent {
-    let actor_id = crate::mls_api_helpers::principal_core_id(actor_id).unwrap();
+    let actor_id = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+        crate::mls_api_helpers::principal_core_id(actor_id).unwrap(),
+        arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap(),
+    ));
     serde_json::from_value(json!({
         "kind": kind,
         "scope_ref": {"kind": "realm", "realm_id": realm_id},
         "actor_id": actor_id,
-        "station_id": "ak:did_core:web:principal.example",
         "created_at": "2026-05-19T00:00:00.000Z",
         "payload": {}
     }))
@@ -179,8 +181,11 @@ fn scheduled_dispatch_crash_retry_preserves_exact_signed_event_bytes() {
             "kind": "realm",
             "realm_id": "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19"
         },
-        "actor_id": "ak:did_core:web:alice.example",
-        "station_id": "ak:did_core:web:principal.example",
+        "actor_id": {
+            "kind": "hosted_principal",
+            "principal_id": "ak:did_core:web:alice.example",
+            "station_id": "ak:did_core:web:principal.example"
+        },
         "actor_seq": 7,
         "created_at": "2026-08-07T00:00:00.000Z",
         "hlc": "01986f440000-0001-a13f9c2e",
@@ -555,14 +560,16 @@ fn pending_chat_projection_ignores_sent_items_and_other_conversations() {
 }
 
 fn sdk_event_without_proof(actor_id: &str) -> arkret_sdk::Event {
-    let actor_id = crate::mls_api_helpers::principal_core_id(actor_id).unwrap();
+    let actor_id = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+        crate::mls_api_helpers::principal_core_id(actor_id).unwrap(),
+        arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap(),
+    ));
     serde_json::from_value(json!({
         "event_id": "ak:event:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
         "kind": "ak.presence",
         "realm_id": "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
         "scope_ref": {"kind": "realm", "realm_id": "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19"},
         "actor_id": actor_id,
-        "station_id": "ak:did_core:web:principal.example",
         "actor_seq": 1,
         "created_at": "2026-05-19T00:00:00.000Z",
         "hlc": "01970e589d21-0001-a13f9c2e",
@@ -582,14 +589,16 @@ fn sdk_event_with_kind(
     kind: &str,
     actor_id: &str,
 ) -> arkret_sdk::Event {
-    let actor_id = crate::mls_api_helpers::principal_core_id(actor_id).unwrap();
+    let actor_id = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+        crate::mls_api_helpers::principal_core_id(actor_id).unwrap(),
+        arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap(),
+    ));
     serde_json::from_value(json!({
         "event_id": event_id,
         "kind": kind,
         "realm_id": realm_id,
         "scope_ref": {"kind": "realm", "realm_id": realm_id},
         "actor_id": actor_id,
-        "station_id": "ak:did_core:web:principal.example",
         "actor_seq": 1,
         "created_at": "2026-05-19T00:00:00.000Z",
         "hlc": "01970e589d21-0001-a13f9c2e",
@@ -604,13 +613,15 @@ fn sdk_event_with_kind(
 /// `payload.object.id`: both are derived from `event_id`, so the caller
 /// picks the Event id and reads the Realm id back off the envelope.
 fn realm_create_sdk_event(event_id: &str, created_by: &str) -> arkret_sdk::Event {
-    let created_by = crate::mls_api_helpers::principal_core_id(created_by).unwrap();
+    let created_by = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+        crate::mls_api_helpers::principal_core_id(created_by).unwrap(),
+        arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap(),
+    ));
     let mut event: arkret_sdk::Event = serde_json::from_value(json!({
         "event_id": event_id,
         "kind": "ak.realm.create",
         "scope_ref": {"kind": "realm_genesis"},
         "actor_id": created_by,
-        "station_id": "ak:did_core:web:principal.example",
         "actor_seq": 1,
         "created_at": "2026-05-19T00:00:00.000Z",
         "hlc": "01970e589d21-0001-a13f9c2e",
@@ -1008,8 +1019,11 @@ fn queued_mls_admission_round_trips_exact_welcome_material() {
     let commit_intent = serde_json::from_value::<EventIntent>(json!({
         "kind": "ak.mls.commit",
         "scope_ref": {"kind": "realm", "realm_id": realm_id},
-        "actor_id": "ak:did_core:web:alice.example",
-        "station_id": "ak:did_core:web:principal.example",
+        "actor_id": {
+            "kind": "hosted_principal",
+            "principal_id": "ak:did_core:web:alice.example",
+            "station_id": "ak:did_core:web:principal.example"
+        },
         "created_at": "2026-05-19T00:00:00.000Z",
         "payload": {"proposal_refs": [proposal.event_id()]}
     }))
@@ -1019,8 +1033,11 @@ fn queued_mls_admission_round_trips_exact_welcome_material() {
         serde_json::from_value::<EventIntent>(json!({
             "kind": "ak.mls.welcome",
             "scope_ref": {"kind": "realm", "realm_id": realm_id},
-            "actor_id": "ak:did_core:web:alice.example",
-            "station_id": "ak:did_core:web:principal.example",
+            "actor_id": {
+                "kind": "hosted_principal",
+                "principal_id": "ak:did_core:web:alice.example",
+                "station_id": "ak:did_core:web:principal.example"
+            },
             "created_at": "2026-05-19T00:00:00.000Z",
             "payload": {
                 "commit_ref": commit.event_id(),

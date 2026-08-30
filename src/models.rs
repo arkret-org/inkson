@@ -530,8 +530,14 @@ mod tests {
             // authoritative projection input in that case.
             "member_roster": {
                 "entries": [
-                    {"actor_id": alice, "membership": "join"},
-                    {"actor_id": bob, "membership": "join"}
+                    {"actor_id": {"kind": "account", "account_id": {
+                        "principal_id": alice,
+                        "station_id": "ak:did_core:web:station.example"
+                    }}, "membership": "join"},
+                    {"actor_id": {"kind": "account", "account_id": {
+                        "principal_id": bob,
+                        "station_id": "ak:did_core:web:station.example"
+                    }}, "membership": "join"}
                 ],
                 "limited": false,
                 "next_cursor": "ak:cursor:roster-next"
@@ -651,7 +657,10 @@ mod tests {
     fn contact_list_sidebar_fixture_decodes_direct_chat_targets() {
         let value = serde_json::json!({
             "contacts": [{
-                "peer": {"kind": "human", "principal_id": "ak:did_core:web:bob.example"},
+                "peer": {"kind": "human", "account_id": {
+                    "principal_id": "ak:did_core:web:bob.example",
+                    "station_id": "ak:did_core:web:station.example"
+                }},
                 "state": "accepted",
                 "next_prepare_input": {
                     "contact_round_id": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",

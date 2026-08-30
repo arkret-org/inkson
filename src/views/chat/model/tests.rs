@@ -29,7 +29,7 @@ mod device_identity_proof_tests {
         actor_did: &str,
         device_id: Option<&str>,
     ) -> Value {
-        let actor_id = crate::mls_api_helpers::principal_core_id(actor_did).unwrap();
+        let actor_id = arkret_sdk::ActorId::account(authority(actor_did));
         let mut envelope = json!({
             "kind": "ak.message.create",
             "realm_id": "ak:realm:AtlzwcCCnyKBD2b_hQX9YJKlbvZu2jVHq9qsQsIaBWHI",
@@ -57,7 +57,6 @@ mod device_identity_proof_tests {
         let proof_created_at = chrono::DateTime::parse_from_rfc3339("2026-06-16T00:00:00.000Z")
             .unwrap()
             .with_timezone(&chrono::Utc);
-        let did = arkret_sdk::Did::new(actor_did.to_owned()).unwrap();
         let mut proof = arkret_sdk::ProducerEventProof {
             kind: "detached_jws".to_owned(),
             verification_method: verification_method.clone(),
@@ -70,14 +69,7 @@ mod device_identity_proof_tests {
             proof_purpose: None,
             jws: String::new(),
         };
-        let binding_bytes = proof
-            .canonical_binding_bytes(
-                &crate::mls_api_helpers::local_account_actor_id(
-                    arkret_sdk::project_did_to_core_id(&did).unwrap().as_str(),
-                )
-                .unwrap(),
-            )
-            .unwrap();
+        let binding_bytes = proof.canonical_binding_bytes(&actor_id).unwrap();
         proof.jws = signer.detached_jws_over(&binding_bytes).unwrap();
         envelope.as_object_mut().unwrap().insert(
             "proofs".to_owned(),
@@ -315,7 +307,7 @@ mod device_identity_proof_tests {
     fn proofless_attributed_projection_is_rejected() {
         let envelope = json!({
             "kind": "ak.message.create",
-            "actor_id": "ak:did_core:web:alice.example",
+            "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:alice.example","station_id":"ak:did_core:web:principal.example"}},
             "device_id": "ak:device:alice",
             "message_id": "ak:msg:proofless",
             "strand_id": "ak:strand:ALH536fxXVv9EDZIoWa7sN1gzbTVJQ02x6AugHURwkvE",
@@ -339,12 +331,13 @@ mod device_identity_proof_tests {
         let actor_full = "did:web:ghost.example:external-user";
         let executor_full = "did:web:applet.example";
         let actor = core_id(actor_full);
-        let executor = core_id(executor_full);
         let mut envelope = json!({
             "kind": "ak.message.create",
             "realm_id": "ak:realm:AtlzwcCCnyKBD2b_hQX9YJKlbvZu2jVHq9qsQsIaBWHI",
-            "actor_id": actor,
-            "executed_by": executor,
+            "actor_id": arkret_sdk::ActorId::account(authority(actor_full)),
+            "executed_by": arkret_sdk::ActorId::service(
+                crate::mls_api_helpers::principal_core_id(executor_full).unwrap()
+            ),
             "created_at": "2026-06-16T00:00:00.000Z",
             "message_id": "ak:msg:applet",
             "strand_id": "ak:strand:ALH536fxXVv9EDZIoWa7sN1gzbTVJQ02x6AugHURwkvE",

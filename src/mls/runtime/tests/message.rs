@@ -294,7 +294,7 @@ fn encrypted_write_blocks_complete_roster_ahead_of_local_group() {
                     "actor_id": crate::mls_api_helpers::principal_core_id(actor).unwrap(),
                     "membership": "join"
                 },
-                { "actor_id": "ak:did_core:web:bob.example", "membership": "join" }
+                { "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:bob.example","station_id":"ak:did_core:web:principal.example"}}, "membership": "join" }
             ]
         }),
     );

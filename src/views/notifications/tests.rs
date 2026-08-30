@@ -19,6 +19,11 @@ fn push_test_invite_projection(
     invites: Vec<arkret_models_collaboration::governance::operation_wire::Invite>,
     hidden_realms: &JoinedRealmIds,
 ) {
+    notifications.retain(|candidate| {
+        candidate
+            .invite()
+            .is_none_or(|invite| !hidden_realms.contains(invite.realm_id.as_str()))
+    });
     for invite in invites {
         if hidden_realms.contains(invite.realm_id.as_str()) {
             continue;
@@ -204,7 +209,10 @@ fn visible_realm_preview_does_not_masquerade_as_joined_membership() {
         serde_json::from_value::<arkret_sdk::RealmSyncEntry>(json!({
             "member_roster": {
                 "entries": [{
-                    "actor_id": actor_id,
+                    "actor_id": {"kind": "account", "account_id": {
+                        "principal_id": actor_id,
+                        "station_id": "ak:did_core:web:principal.example"
+                    }},
                     "membership": membership
                 }],
                 "limited": false
@@ -229,7 +237,10 @@ fn hydrate_pending_invite_uses_typed_local_membership() {
     let projection = |membership: &str| {
         json!({
             "member_roster_entries": [{
-                "actor_id": actor_id,
+                "actor_id": {"kind": "account", "account_id": {
+                    "principal_id": actor_id,
+                    "station_id": "ak:did_core:web:principal.example"
+                }},
                 "membership": membership
             }]
         })

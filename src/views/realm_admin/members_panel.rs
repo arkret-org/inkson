@@ -750,9 +750,8 @@ fn local_pending_invite_profile_from_raw_operation(
     if !matches!(state.as_str(), "pending" | "pending_invite" | "invite") {
         return None;
     }
-    let direct_invitee = trimmed_string(payload.get("invitee_id"))
-        .and_then(|invitee| arkret_sdk::DidCoreId::new(invitee).ok())
-        .map(|invitee| invitee.as_str().to_owned());
+    let direct_invitee =
+        raw_invite_create_account_id(payload).map(|account_id| account_id.principal_id.to_string());
     let invite_id = trimmed_string(payload.get("invite_id").or_else(|| payload.get("id")));
     let actor_id = direct_invitee
         .clone()
@@ -851,7 +850,7 @@ fn accepted_invite_claim_route(
             let payload = &record.payload;
             if raw_operation_payload_kind(payload).as_deref() != Some(event_kind_str::INVITE_ACCEPT)
                 || !raw_operation_is_accepted_fact(payload)
-                || raw_operation_path_string(payload, &["actor_id"]).as_deref() != Some(invitee_id)
+                || raw_member_actor_id(payload).as_deref() != Some(invitee_id)
             {
                 return None;
             }
@@ -874,10 +873,8 @@ fn accepted_invite_claim_route(
             {
                 return None;
             }
-            let service_id = raw_operation_path_string(payload, &["recipient_id"])?;
-            arkret_sdk::DidCoreId::new(service_id.clone())
-                .ok()
-                .map(|_| service_id)
+            raw_invite_create_account_id(payload)
+                .map(|account_id| account_id.station_id.to_string())
         })?;
     let target_device_id = accepted
         .1
@@ -906,16 +903,17 @@ fn claim_target_device_id(
 }
 
 fn raw_member_actor_id(payload: &Value) -> Option<String> {
-    raw_operation_path_string(payload, &["body", "actor_id"])
-        .or_else(|| raw_operation_path_string(payload, &["body", "member"]))
-        .or_else(|| raw_operation_path_string(payload, &["body", "invitee_id"]))
-        .or_else(|| raw_operation_path_string(payload, &["payload", "actor_id"]))
-        .or_else(|| raw_operation_path_string(payload, &["payload", "member"]))
-        .or_else(|| raw_operation_path_string(payload, &["payload", "invitee_id"]))
-        .or_else(|| trimmed_string(payload.get("member").or_else(|| payload.get("invitee_id"))))
-        .or_else(|| trimmed_string(payload.get("actor_id")))
-        .and_then(|actor_id| arkret_sdk::DidCoreId::new(actor_id).ok())
-        .map(|actor_id| actor_id.as_str().to_owned())
+    [
+        payload.pointer("/payload/member_id"),
+        payload.get("actor_id"),
+    ]
+    .into_iter()
+    .flatten()
+    .find_map(|value| {
+        serde_json::from_value::<arkret_sdk::ActorId>(value.clone())
+            .ok()
+            .map(|actor| actor.signing_principal_id().as_str().to_owned())
+    })
 }
 
 fn raw_member_membership(payload: &Value) -> Option<String> {
@@ -932,10 +930,18 @@ fn raw_member_membership(payload: &Value) -> Option<String> {
 }
 
 fn raw_invite_create_invitee(payload: &Value) -> Option<String> {
-    raw_operation_path_string(payload, &["body", "invitee_id"])
-        .or_else(|| raw_operation_path_string(payload, &["payload", "invitee_id"]))
-        .or_else(|| trimmed_string(payload.get("invitee_id")))
-        .or_else(|| raw_member_actor_id(payload))
+    raw_invite_create_account_id(payload).map(|account_id| account_id.principal_id.to_string())
+}
+
+fn raw_invite_create_account_id(payload: &Value) -> Option<arkret_sdk::AccountId> {
+    [
+        payload.pointer("/body/invitee_account_id"),
+        payload.pointer("/payload/invitee_account_id"),
+        payload.get("invitee_account_id"),
+    ]
+    .into_iter()
+    .flatten()
+    .find_map(|value| serde_json::from_value(value.clone()).ok())
 }
 
 fn local_invitee_by_invite_id_for_realm(

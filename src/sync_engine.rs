@@ -3141,14 +3141,14 @@ mod tests {
         let projection = json!({
             "member_roster_entries_limited": false,
             "member_roster_entries": [{
-                "actor_id": "ak:did_core:webvh:z6mkfixture:alice.example",
+                "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:webvh:z6mkfixture:alice.example","station_id":"ak:did_core:web:principal.example"}},
                 "membership": "join"
             }],
             "state": {"events": [{
                 "event_id": removal_event,
                 "kind": "ak.member.state",
                 "payload": {
-                    "actor_id": "ak:did_core:webvh:z6mkfixture:bob.example",
+                    "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:webvh:z6mkfixture:bob.example","station_id":"ak:did_core:web:principal.example"}},
                     "membership": "ban"
                 }
             }]}
@@ -3476,14 +3476,14 @@ mod tests {
         // does. This is the receiver-side "principal_directory_queries = 0"
         // guarantee — no pair, no query.
         let pairwise_envelope = json!({
-            "actor_id": "ak:did_core:key:z6MkpairwiseAlice",
+            "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:key:z6MkpairwiseAlice","station_id":"ak:did_core:web:principal.example"}},
             "device_id": "ak:device:0196419b-0000-7000-8000-0000000000aa",
             "proofs": [{
                 "verification_method": "did:key:z6MkpairwiseAlice#z6MkpairwiseAuthorKey"
             }],
         });
         let directory_envelope = json!({
-            "actor_id": "ak:did_core:web:bob.example",
+            "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:bob.example","station_id":"ak:did_core:web:principal.example"}},
             "device_id": "ak:device:0196419b-0000-7000-8000-0000000000bb",
             "proofs": [{
                 "verification_method": "did:web:bob.example#key-1"
@@ -3663,7 +3663,7 @@ mod tests {
             sdk_event(
                 arkret_sdk::EventKind::MemberState.as_str(),
                 json!({
-                    "actor_id": "ak:did_core:web:bob.example",
+                    "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:bob.example","station_id":"ak:did_core:web:principal.example"}},
                     "membership": "join"
                 }),
             ),
@@ -3880,7 +3880,7 @@ mod tests {
             "state": { "events": [{
                     "event_id": "ak:event:AZaaHAEvC1DejakImwHCcJHb0F1pgE-Jd-3_9BGirbuW",
                     "event_kind": "ak.pin.add",
-                    "actor_id": "ak:did_core:web:mei.example",
+                    "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:mei.example","station_id":"ak:did_core:web:principal.example"}},
                     "created_at": "2026-06-24T10:00:00.000Z",
                     "realm_id": realm_id,
                     "payload": {
@@ -3917,7 +3917,7 @@ mod tests {
                     {
                         "event_id": "ak:event:AQSS_m6w3ODdIeq8Yzac2ghmcQVOGLXWA5PXFcSnVcgN",
                         "event_kind": "ak.message.revise",
-                        "actor_id": "ak:did_core:web:bob.example",
+                        "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:bob.example","station_id":"ak:did_core:web:principal.example"}},
                         "created_at": "2026-06-24T10:00:00.000Z",
                         "realm_id": realm_id,
                         "payload": {
@@ -3933,7 +3933,7 @@ mod tests {
                     {
                         "event_id": "ak:event:Adpb76fsaup_4Y_cV39of-L1_k6Nv1kSoCzXa9TM4szu",
                         "event_kind": "ak.message.redact",
-                        "actor_id": "ak:did_core:web:bob.example",
+                        "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:bob.example","station_id":"ak:did_core:web:principal.example"}},
                         "created_at": "2026-06-24T10:01:00.000Z",
                         "realm_id": realm_id,
                         "payload": {
@@ -3945,7 +3945,7 @@ mod tests {
                     {
                         "event_id": "ak:event:AR9d8WoyQJCOjt6n46diPUzg9zsrG9OZ9TAgE1rz6tJa",
                         "event_kind": "ak.reaction.add",
-                        "actor_id": "ak:did_core:web:carol.example",
+                        "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:carol.example","station_id":"ak:did_core:web:principal.example"}},
                         "created_at": "2026-06-24T10:02:00.000Z",
                         "realm_id": realm_id,
                         "payload": {
@@ -3985,22 +3985,22 @@ mod tests {
                     "events": [
                         {
                             "event": {
-                                "actor_id": "ak:did_core:web:alice.example",
+                                "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:alice.example","station_id":"ak:did_core:web:principal.example"}},
                                 "device_id": "ak:device:01904100-0000-7000-8000-000000000001",
                                 "proofs": [{"verification_method": "did:web:alice.example#ak:device:01904100-0000-7000-8000-000000000001"}]
                             }
                         },
                         {
-                            "actor_id": "ak:did_core:web:alice.example",
+                            "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:alice.example","station_id":"ak:did_core:web:principal.example"}},
                             "device_id": "ak:device:01904100-0000-7000-8000-000000000001",
                             "proofs": [{"verification_method": "did:web:alice.example#ak:device:01904100-0000-7000-8000-000000000001"}]
                         },
                         {
-                            "actor_id": "ak:did_core:web:bob.example",
+                            "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:bob.example","station_id":"ak:did_core:web:principal.example"}},
                             "proofs": [{"verification_method": "did:web:bob.example#device"}]
                         },
                         {
-                            "actor_id": "ak:did_core:web:carol.example",
+                            "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:carol.example","station_id":"ak:did_core:web:principal.example"}},
                             "proofs": [{"verification_method": "did:web:carol.example#ak:device:01904100-0000-7000-8000-000000000002"}]
                         }
                     ]
@@ -4165,11 +4165,11 @@ mod tests {
                 {
                     "event_id": "e1",
                     "kind": "ak.device.revoke",
-                    "actor_id": "ak:did_core:web:author.example",
+                    "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:author.example","station_id":"ak:did_core:web:principal.example"}},
                     "payload": { "principal_id": "ak:did_core:web:subject.example" }
                 },
-                { "event_id": "e2", "kind": "ak.device.list_update", "actor_id": "ak:did_core:web:bob.example" },
-                { "event_id": "e3", "kind": "ak.message.create", "actor_id": "ak:did_core:web:carol.example" }
+                { "event_id": "e2", "kind": "ak.device.list_update", "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:bob.example","station_id":"ak:did_core:web:principal.example"}} },
+                { "event_id": "e3", "kind": "ak.message.create", "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:carol.example","station_id":"ak:did_core:web:principal.example"}} }
             ] }
         });
 

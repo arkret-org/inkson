@@ -1644,7 +1644,11 @@ mod tests {
                 "primary_handle_claim": {
                     "schema": "ak.schema.handle_claim.v1",
                     "handle": "alice:local.host",
-                    "subject_id": "ak:did_core:web:alice.example",
+                    "subject_account_id": {
+                        "principal_id": "ak:did_core:web:alice.example",
+                        "station_id": "ak:did_core:web:principal.example"
+                    },
+                    "issuer_id": "ak:did_core:web:principal.example",
                     "binding_state": "verified",
                     "created_at": "2026-06-12T08:00:00.000Z"
                 },
@@ -1685,7 +1689,11 @@ mod tests {
                     "primary_handle_claim": {
                         "schema": "ak.schema.handle_claim.v1",
                         "handle": "alice:auth.local.host",
-                        "subject_id": subject,
+                        "subject_account_id": {
+                            "principal_id": subject,
+                            "station_id": "ak:did_core:web:principal.example"
+                        },
+                        "issuer_id": "ak:did_core:web:principal.example",
                         "binding_state": binding_state,
                         "created_at": "2026-06-12T08:00:00.000Z"
                     }
@@ -1820,8 +1828,14 @@ mod tests {
             serde_json::to_value(peer).expect("serialize peer"),
             json!({
                 "kind": "agent",
-                "agent_id": "ak:did_core:web:agents.example:assistant",
-                "controller_id": "ak:did_core:web:alice.example"
+                "actor_id": {
+                    "kind": "service",
+                    "service_id": "ak:did_core:web:agents.example:assistant"
+                },
+                "controller_account_id": {
+                    "principal_id": "ak:did_core:web:alice.example",
+                    "station_id": "ak:did_core:web:principal.example"
+                }
             })
         );
     }

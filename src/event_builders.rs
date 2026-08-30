@@ -732,17 +732,16 @@ pub fn build_direct_conversation_founding_steps(
                 [founder_actor.clone(), peer_actor.clone()],
             )?;
             let peer_actor_id = arkret_sdk::ActorId::account(peer_actor.clone());
-            let member_cell = format!(
-                "ak:cell:ak.component.member.state.v1:{}",
-                peer_actor_id.canonical_key()?
-            );
+            let peer_actor_key = peer_actor_id.canonical_key()?;
+            let member_cell_subject = arkret_sdk::composite_subject(&[peer_actor_key.as_str()])?;
+            let member_cell = format!("ak:cell:ak.component.member.state.v1:{member_cell_subject}");
             Ok(vec![
                 TypedOperationBuilder::new::<arkret_sdk::event_spec::MemberState>(
                     create.realm_id.to_string(),
                     founder.as_str(),
                     membership,
                 )
-                .target_ref(peer_actor_id.canonical_key()?)
+                .target_ref(member_cell_subject)
                 .preconditions(vec![head_eq_precondition(&member_cell, Value::Null)?])
                 .created_at(created_at)
                 .build_sdk_event("inkson")?
@@ -784,17 +783,18 @@ pub fn build_direct_conversation_founding_steps(
                 founder_actor.clone(),
             );
             let founder_actor_id = arkret_sdk::ActorId::account(founder_actor.clone());
-            let founder_member_cell = format!(
-                "ak:cell:ak.component.member.state.v1:{}",
-                founder_actor_id.canonical_key()?
-            );
+            let founder_actor_key = founder_actor_id.canonical_key()?;
+            let founder_member_cell_subject =
+                arkret_sdk::composite_subject(&[founder_actor_key.as_str()])?;
+            let founder_member_cell =
+                format!("ak:cell:ak.component.member.state.v1:{founder_member_cell_subject}");
             Ok(vec![
                 TypedOperationBuilder::new::<arkret_sdk::event_spec::MemberState>(
                     create.realm_id.to_string(),
                     founder.as_str(),
                     founder_membership,
                 )
-                .target_ref(founder_actor_id.canonical_key()?)
+                .target_ref(founder_member_cell_subject)
                 .preconditions(vec![head_eq_precondition(
                     &founder_member_cell,
                     Value::Null,
@@ -1508,7 +1508,11 @@ fn build_member_state_transition_event_for_station(
         member_principal_id,
         station_id.clone(),
     ));
-    let member_cell_subject = member_id.canonical_key()?;
+    // `member.state` is keyed by the complete ActorId. ActorId is structured
+    // canonical JSON, so the registry's canonical_json composite rule hashes
+    // that JSON string into the single safe CellRef subject segment.
+    let member_actor_key = member_id.canonical_key()?;
+    let member_cell_subject = arkret_sdk::composite_subject(&[member_actor_key.as_str()])?;
     // Strong `membership_payload` (`event-payload.schema.json`). The schema's
     // `allOf` if/then makes `realm_id` + `actor_id` + `delivery_status`
     // REQUIRED whenever `membership == "join"`; we carry `realm_id` for every
@@ -1941,7 +1945,13 @@ mod notary_derivation_tests {
             "realm_id": realm,
             "expected_state_digest": format!("sha256:{}", "1".repeat(64)),
             "patch": {
-                "controller_id": "ak:did_core:web:bob.example"
+                "controller_id": {
+                    "kind": "account",
+                    "account_id": {
+                        "principal_id": "ak:did_core:web:bob.example",
+                        "station_id": "ak:did_core:web:principal.example"
+                    }
+                }
             },
             "successor_acceptance": "successor-detached-proof"
         }))

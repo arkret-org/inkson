@@ -260,7 +260,7 @@ fn projected_member_profiles_use_only_verified_canonical_identity_fields() {
         realm_id.to_owned(),
         serde_json::json!({
             "member_roster_entries": [{
-                "actor_id": "ak:did_core:web:alice.example",
+                "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:alice.example","station_id":"ak:did_core:web:principal.example"}},
                 "display_name": "Alice",
                 "subject_id": "ak:did_core:web:acme.example:users:alice",
                 "handle_claims": [{
@@ -295,12 +295,12 @@ fn projected_member_profiles_classify_authority_root_controller_as_owner() {
         realm_id.to_owned(),
         serde_json::json!({
             "member_roster_entries": [{
-                "actor_id": "ak:did_core:web:alice.example",
+                "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:alice.example","station_id":"ak:did_core:web:principal.example"}},
                 "membership": "join"
             }],
             "state": {"events": [{
                 "kind": "ak.realm.create",
-                "actor_id": "ak:did_core:web:alice.example",
+                "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:alice.example","station_id":"ak:did_core:web:principal.example"}},
                 "payload": {"object": {}}
             }]}
         }),
@@ -325,11 +325,11 @@ fn projected_member_profiles_preserve_pending_invite_membership() {
         serde_json::json!({
             "member_roster_entries": [
                 {
-                    "actor_id": "ak:did_core:web:alice.example",
+                    "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:alice.example","station_id":"ak:did_core:web:principal.example"}},
                     "membership": "join"
                 },
                 {
-                    "actor_id": "ak:did_core:web:bob.example",
+                    "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:bob.example","station_id":"ak:did_core:web:principal.example"}},
                     "membership": "invite"
                 }
             ]
@@ -354,9 +354,9 @@ fn joined_member_signature_lists_only_joined_members_sorted() {
         realm_id.to_owned(),
         serde_json::json!({
             "member_roster_entries": [
-                { "actor_id": "ak:did_core:web:carol.example", "membership": "join" },
-                { "actor_id": "ak:did_core:web:alice.example", "membership": "join" },
-                { "actor_id": "ak:did_core:web:bob.example", "membership": "invite" }
+                { "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:carol.example","station_id":"ak:did_core:web:principal.example"}}, "membership": "join" },
+                { "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:alice.example","station_id":"ak:did_core:web:principal.example"}}, "membership": "join" },
+                { "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:bob.example","station_id":"ak:did_core:web:principal.example"}}, "membership": "invite" }
             ]
         }),
     );
@@ -380,8 +380,8 @@ fn joined_member_signature_reads_raw_member_state_join() {
         serde_json::json!({
             "kind": "ak.member.state",
             "write_state": "synced",
-            "body": {
-                "actor_id": "ak:did_core:web:bob.example",
+            "payload": {
+                "member_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:bob.example","station_id":"ak:did_core:web:principal.example"}},
                 "membership": "join"
             }
         }),
@@ -405,9 +405,11 @@ fn accepted_invite_route_binds_delivery_service_and_accepting_device() {
         serde_json::json!({
             "kind": "ak.invite.create",
             "invite_id": invite_id,
-            "invitee_id": invitee,
+            "invitee_account_id": {
+                "principal_id": invitee,
+                "station_id": "ak:did_core:web:principal.example"
+            },
             "event_id": "ak:event:A4CYJzQmAt__oBoyRdn8Kbzp9uK8Qv1wxZwStS_7lUHA",
-            "recipient_id": "ak:did_core:web:principal.example"
         }),
     );
     store.upsert_raw_operation(
@@ -416,7 +418,10 @@ fn accepted_invite_route_binds_delivery_service_and_accepting_device() {
         serde_json::json!({
             "kind": "ak.invite.create",
             "invite_id": invite_id,
-            "invitee_id": invitee,
+            "invitee_account_id": {
+                "principal_id": invitee,
+                "station_id": "ak:did_core:web:principal.example"
+            },
             "event_id": "ak:event:A4CYJzQmAt__oBoyRdn8Kbzp9uK8Qv1wxZwStS_7lUHA"
         }),
     );
@@ -425,7 +430,10 @@ fn accepted_invite_route_binds_delivery_service_and_accepting_device() {
         Some(realm_id.to_owned()),
         serde_json::json!({
             "kind": "ak.invite.accept",
-            "actor_id": invitee,
+            "actor_id": {"kind":"account","account_id":{
+                "principal_id": invitee,
+                "station_id": "ak:did_core:web:principal.example"
+            }},
             "signing_device_id": device_id,
             "event_id": "ak:event:ACfHq_7preT7wHLHc3wh1uUqb9gWVTeJlk4olFvqggpM",
             "body": { "invite_id": invite_id }
@@ -461,9 +469,11 @@ fn accepted_human_invite_route_fails_closed_without_exact_accepting_device() {
         serde_json::json!({
             "kind": "ak.invite.create",
             "invite_id": invite_id,
-            "invitee_id": invitee,
+            "invitee_account_id": {
+                "principal_id": invitee,
+                "station_id": "ak:did_core:web:principal.example"
+            },
             "event_id": "ak:event:A4CYJzQmAt__oBoyRdn8Kbzp9uK8Qv1wxZwStS_7lUHA",
-            "recipient_id": "ak:did_core:web:principal.example"
         }),
     );
     store.append_raw_operation(
@@ -471,7 +481,10 @@ fn accepted_human_invite_route_fails_closed_without_exact_accepting_device() {
         Some(realm_id.to_owned()),
         serde_json::json!({
             "kind": "ak.invite.accept",
-            "actor_id": invitee,
+            "actor_id": {"kind":"account","account_id":{
+                "principal_id": invitee,
+                "station_id": "ak:did_core:web:principal.example"
+            }},
             "event_id": "ak:event:ACfHq_7preT7wHLHc3wh1uUqb9gWVTeJlk4olFvqggpM",
             "body": { "invite_id": invite_id }
         }),
@@ -512,11 +525,11 @@ fn projected_duplicate_member_keeps_first_roster_entry() {
         serde_json::json!({
             "member_roster_entries": [
                 {
-                    "actor_id": "ak:did_core:web:bob.example",
+                    "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:bob.example","station_id":"ak:did_core:web:principal.example"}},
                     "membership": "invite"
                 },
                 {
-                    "actor_id": "ak:did_core:web:bob.example",
+                    "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:bob.example","station_id":"ak:did_core:web:principal.example"}},
                     "membership": "join"
                 }
             ]
@@ -541,7 +554,10 @@ fn projected_member_profiles_restore_pending_invites_from_raw_operations() {
         Some(realm_id.to_owned()),
         serde_json::json!({
             "kind": "ak.invite.create",
-            "invitee_id": "ak:did_core:web:bob.example",
+            "invitee_account_id": {
+                "principal_id": "ak:did_core:web:bob.example",
+                "station_id": "ak:did_core:web:principal.example"
+            },
             "invitee_label": "bob:example.com",
             "state": "pending"
         }),
@@ -591,7 +607,10 @@ fn projected_member_profiles_promote_invite_accept_to_join_from_raw_operations()
         serde_json::json!({
             "kind": "ak.invite.create",
             "invite_id": invite_id,
-            "invitee_id": "ak:did_core:web:bob.example",
+            "invitee_account_id": {
+                "principal_id": "ak:did_core:web:bob.example",
+                "station_id": "ak:did_core:web:principal.example"
+            },
             "invitee_label": "bob:example.com",
             "state": "pending"
         }),
@@ -627,8 +646,8 @@ fn queued_invite_accept_does_not_promote_join_but_realm_remains_reconcilable() {
         serde_json::json!({
             "encrypted": true,
             "member_roster_entries": [
-                { "actor_id": "ak:did_core:web:alice.example", "membership": "join" },
-                { "actor_id": "ak:did_core:web:bob.example", "membership": "invite" }
+                { "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:alice.example","station_id":"ak:did_core:web:principal.example"}}, "membership": "join" },
+                { "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:bob.example","station_id":"ak:did_core:web:principal.example"}}, "membership": "invite" }
             ]
         }),
     );
@@ -641,7 +660,10 @@ fn queued_invite_accept_does_not_promote_join_but_realm_remains_reconcilable() {
         serde_json::json!({
             "kind": "ak.invite.create",
             "invite_id": invite_id,
-            "invitee_id": "ak:did_core:web:bob.example",
+            "invitee_account_id": {
+                "principal_id": "ak:did_core:web:bob.example",
+                "station_id": "ak:did_core:web:principal.example"
+            },
             "invitee_label": "bob:example.com",
             "state": "pending"
         }),
@@ -690,7 +712,10 @@ fn projected_member_profiles_drop_locally_cancelled_pending_invites() {
         serde_json::json!({
             "kind": "ak.invite.create",
             "invite_id": invite_id,
-            "invitee_id": "ak:did_core:web:bob.example",
+            "invitee_account_id": {
+                "principal_id": "ak:did_core:web:bob.example",
+                "station_id": "ak:did_core:web:principal.example"
+            },
             "invitee_label": "bob:example.com",
             "state": "pending"
         }),
@@ -720,7 +745,7 @@ fn raw_pending_invite_does_not_override_join_projection() {
         realm_id.to_owned(),
         serde_json::json!({
             "member_roster_entries": [{
-                "actor_id": "ak:did_core:web:bob.example",
+                "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:bob.example","station_id":"ak:did_core:web:principal.example"}},
                 "membership": "join"
             }]
         }),
@@ -730,7 +755,10 @@ fn raw_pending_invite_does_not_override_join_projection() {
         Some(realm_id.to_owned()),
         serde_json::json!({
             "kind": "ak.invite.create",
-            "invitee_id": "ak:did_core:web:bob.example",
+            "invitee_account_id": {
+                "principal_id": "ak:did_core:web:bob.example",
+                "station_id": "ak:did_core:web:principal.example"
+            },
             "state": "pending"
         }),
     );
@@ -754,8 +782,8 @@ fn admission_candidates_exclude_direct_conversation_realms() {
             "encrypted": true,
             "member_roster_entries_limited": false,
             "member_roster_entries": [
-                { "actor_id": "ak:did_core:web:alice.example", "membership": "join" },
-                { "actor_id": "ak:did_core:web:agent.example", "membership": "join" }
+                { "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:alice.example","station_id":"ak:did_core:web:principal.example"}}, "membership": "join" },
+                { "actor_id": {"kind":"service","service_id":"ak:did_core:web:agent.example"}, "membership": "join" }
             ],
             "state_at_window_start": {
                 "realm_metadata": {
@@ -788,7 +816,7 @@ fn projected_membership_uses_positive_limited_roster_without_claiming_completene
             "encrypted": true,
             "member_roster_entries_limited": true,
             "member_roster_entries": [
-                { "actor_id": "ak:did_core:web:bob.example", "membership": "join" }
+                { "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:bob.example","station_id":"ak:did_core:web:principal.example"}}, "membership": "join" }
             ]
         }),
     );

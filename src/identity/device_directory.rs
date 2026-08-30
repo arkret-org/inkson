@@ -435,9 +435,13 @@ pub fn verify_persistent_envelope_proofs(
     envelope: &serde_json::Value,
     public_key: &PublicKeyMaterial,
 ) -> bool {
-    let Some(actor_id) = envelope.get("actor_id").and_then(|value| value.as_str()) else {
+    let Some(actor_id) = envelope
+        .get("actor_id")
+        .and_then(|value| serde_json::from_value::<arkret_sdk::ActorId>(value.clone()).ok())
+    else {
         return false;
     };
+    let actor_principal = actor_id.signing_principal_id().as_str();
     let Some(proofs) = envelope.get("proofs").and_then(|value| value.as_array()) else {
         return false;
     };
@@ -449,7 +453,7 @@ pub fn verify_persistent_envelope_proofs(
     };
     proofs
         .iter()
-        .any(|proof| verify_proof_value(&preimage, proof, actor_id, public_key))
+        .any(|proof| verify_proof_value(&preimage, proof, actor_principal, public_key))
 }
 
 pub fn is_device_frontier_event_kind(kind: &str) -> bool {

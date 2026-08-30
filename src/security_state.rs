@@ -158,6 +158,11 @@ pub fn security_projection_for_scope_id<'a>(
 /// membership fallback — those are projection mirrors of a different fact,
 /// and post-P1 realm projections no longer carry them at all.
 pub fn realm_authority_root_controller_from_events(events: &[Value]) -> Option<String> {
+    let controller_principal = |value: &Value| {
+        serde_json::from_value::<arkret_sdk::ActorId>(value.clone())
+            .ok()
+            .map(|actor| actor.signing_principal_id().as_str().to_owned())
+    };
     let mut controller: Option<String> = None;
     for event in events {
         let Some(kind) = event
@@ -168,22 +173,16 @@ pub fn realm_authority_root_controller_from_events(events: &[Value]) -> Option<S
             continue;
         };
         if kind == arkret_sdk::EventKind::RealmCreate.as_str() {
-            controller = event
-                .get("actor_id")
-                .and_then(Value::as_str)
-                .map(|actor_id| actor_id.trim().to_owned())
-                .filter(|actor_id| !actor_id.is_empty());
+            controller = event.get("actor_id").and_then(&controller_principal);
         } else if kind == arkret_wire::event_kind_str::REALM_OWNER_TRANSFER && controller.is_some()
         {
             // Only the envelope-authorized patch moves the controller; a
             // transfer projected before any create is unanchored and ignored.
             if let Some(next) = event
                 .pointer("/payload/patch/controller_id")
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .filter(|next| !next.is_empty())
+                .and_then(&controller_principal)
             {
-                controller = Some(next.to_owned());
+                controller = Some(next);
             }
         }
     }
@@ -371,7 +370,11 @@ mod tests {
     fn realm_authority_root_controller_comes_from_create_envelope_actor() {
         let events = json!([{
             "kind": "ak.realm.create",
-            "actor_id": "ak:did_core:webvh:z6mkcreator",
+            "actor_id": {
+                "kind": "hosted_principal",
+                "principal_id": "ak:did_core:webvh:z6mkcreator",
+                "station_id": "ak:did_core:web:station.example"
+            },
             "payload": {
                 "object": {
                     "schema": "ak.schema.realm_genesis.v1",
@@ -390,7 +393,11 @@ mod tests {
         let events = json!([
             {
                 "kind": "ak.realm.create",
-                "actor_id": "ak:did_core:webvh:z6mkcreator",
+                "actor_id": {
+                    "kind": "hosted_principal",
+                    "principal_id": "ak:did_core:webvh:z6mkcreator",
+                    "station_id": "ak:did_core:web:station.example"
+                },
                 "payload": {
                     "object": {
                         "schema": "ak.schema.realm_genesis.v1",
@@ -400,16 +407,28 @@ mod tests {
             },
             {
                 "kind": "ak.realm.owner.transfer",
-                "actor_id": "ak:did_core:webvh:z6mkcreator",
+                "actor_id": {
+                    "kind": "hosted_principal",
+                    "principal_id": "ak:did_core:webvh:z6mkcreator",
+                    "station_id": "ak:did_core:web:station.example"
+                },
                 "payload": {
                     "patch": {
-                        "controller_id": "ak:did_core:web:successor.example"
+                        "controller_id": {
+                            "kind": "hosted_principal",
+                            "principal_id": "ak:did_core:web:successor.example",
+                            "station_id": "ak:did_core:web:station.example"
+                        }
                     }
                 }
             },
             {
                 "kind": "ak.realm.authority.reset",
-                "actor_id": "ak:did_core:web:successor.example",
+                "actor_id": {
+                    "kind": "hosted_principal",
+                    "principal_id": "ak:did_core:web:successor.example",
+                    "station_id": "ak:did_core:web:station.example"
+                },
                 "payload": {
                     "destructive_confirmation": "ak.realm.authority.reset"
                 }
@@ -435,14 +454,22 @@ mod tests {
         let events = json!([
             {
                 "kind": "ak.realm.create",
-                "actor_id": "ak:did_core:webvh:z6mkcreator",
+                "actor_id": {
+                    "kind": "hosted_principal",
+                    "principal_id": "ak:did_core:webvh:z6mkcreator",
+                    "station_id": "ak:did_core:web:station.example"
+                },
                 "payload": { "object": { "schema": "ak.schema.realm_genesis.v1" } }
             },
             {
                 "kind": "ak.realm.owner.transfer",
                 "payload": {
                     "patch": {
-                        "controller_id": "ak:did_core:web:successor.example"
+                        "controller_id": {
+                            "kind": "hosted_principal",
+                            "principal_id": "ak:did_core:web:successor.example",
+                            "station_id": "ak:did_core:web:station.example"
+                        }
                     }
                 }
             }

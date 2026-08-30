@@ -264,14 +264,6 @@ mod tests {
             Some(format!("{}:0", event.event_id()).as_str())
         );
         let mut projected_payload = operation.payload().clone();
-        projected_payload
-            .get_mut("grant")
-            .and_then(Value::as_object_mut)
-            .unwrap()
-            .insert(
-                "issuer_station_id".to_owned(),
-                Value::String(operation.intent().actor_id().route_service_id().to_string()),
-            );
         let projected_grant = projected_payload
             .get_mut("grant")
             .and_then(Value::as_object_mut)

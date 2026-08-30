@@ -57,8 +57,18 @@ pub(crate) fn first_string_in_candidates<'a>(
         .find_map(|candidate| value_string_at(candidate, keys))
 }
 
-pub(crate) fn message_actor_from_candidates<'a>(candidates: &[&'a Value]) -> Option<&'a str> {
-    first_string_in_candidates(candidates, &["actor_id"])
+pub(crate) fn actor_principal_from_value(value: &Value) -> Option<String> {
+    serde_json::from_value::<arkret_sdk::ActorId>(value.clone())
+        .ok()
+        .map(|actor| actor.signing_principal_id().as_str().to_owned())
+}
+
+pub(crate) fn message_actor_from_candidates(candidates: &[&Value]) -> Option<String> {
+    candidates.iter().find_map(|candidate| {
+        candidate
+            .get("actor_id")
+            .and_then(actor_principal_from_value)
+    })
 }
 
 fn discussion_event_kind(value: &Value) -> Option<&str> {

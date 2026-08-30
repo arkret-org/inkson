@@ -48,12 +48,11 @@ pub(crate) fn realm_member_roster(projection: Option<&Value>) -> Vec<RealmMember
         let Some(map) = member.as_object() else {
             continue;
         };
-        let Some(actor_id) = map
-            .get("actor_id")
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-        else {
+        let Some(actor_id) = map.get("actor_id").and_then(|value| {
+            serde_json::from_value::<arkret_sdk::ActorId>(value.clone())
+                .ok()
+                .map(|actor| actor.signing_principal_id().as_str().to_owned())
+        }) else {
             continue;
         };
         let string_field = |key: &str| {
@@ -64,7 +63,7 @@ pub(crate) fn realm_member_roster(projection: Option<&Value>) -> Vec<RealmMember
                 .map(str::to_owned)
         };
         let row = RealmMemberRow {
-            actor_id: actor_id.to_owned(),
+            actor_id,
             membership: string_field("membership"),
             identity_event_ids: map
                 .get("identity_event_ids")

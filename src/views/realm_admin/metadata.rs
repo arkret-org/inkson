@@ -182,8 +182,8 @@ mod tests {
             realm_id.to_owned(),
             serde_json::json!({
                 "member_roster_entries": [
-                    {"actor_id": "ak:did_core:web:alice.example", "membership": "join"},
-                    {"actor_id": "ak:did_core:web:agent.example", "membership": "join"}
+                    {"actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:alice.example","station_id":"ak:did_core:web:principal.example"}}, "membership": "join"},
+                    {"actor_id": {"kind":"service","service_id":"ak:did_core:web:agent.example"}, "membership": "join"}
                 ]
             }),
         );
@@ -205,9 +205,9 @@ mod tests {
             realm_id.to_owned(),
             serde_json::json!({
                 "owner": "did:web:owner.example",
-                "admins": [{"actor_id": "ak:did_core:web:admin.example", "membership": "join"}],
+                "admins": [{"actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:admin.example","station_id":"ak:did_core:web:principal.example"}}, "membership": "join"}],
                 "summary": {
-                    "members": [{"actor_id": "ak:did_core:web:member.example", "membership": "join"}],
+                    "members": [{"actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:member.example","station_id":"ak:did_core:web:principal.example"}}, "membership": "join"}],
                     "created_by": "did:web:owner.example"
                 }
             }),

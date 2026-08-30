@@ -8,8 +8,8 @@ pub(crate) use crate::state::projection::message_ops::message_operations_from_ev
 // engine's ingest step, not chat rendering). Re-exported so every existing
 // chat-model consumer keeps resolving through this module.
 pub(crate) use crate::state::projection::message_ops::{
-    first_string_in_candidates, message_actor_from_candidates, message_candidates,
-    message_kind_is_create, message_kind_is_revise, value_string_at,
+    actor_principal_from_value, first_string_in_candidates, message_actor_from_candidates,
+    message_candidates, message_kind_is_create, message_kind_is_revise, value_string_at,
 };
 
 pub(crate) fn chat_reply_quote_preview(
@@ -107,7 +107,8 @@ pub(crate) fn local_redaction_tombstone_for_message(
     redacted_at: chrono::DateTime<chrono::Utc>,
     redaction_ref: Option<&str>,
 ) -> Value {
-    let actor_id = principal_core_key(&message.sender).unwrap_or_default();
+    let actor_id = principal_core_key(&message.sender)
+        .and_then(|principal| crate::mls_api_helpers::local_account_actor_id(&principal).ok());
     let mut event = json!({
         "kind": event_kind_str::MESSAGE_CREATE,
         "event_id": message.id.clone(),
@@ -267,10 +268,11 @@ fn sort_reactions(reactions: &mut Vec<(String, Vec<String>)>) {
     reactions.sort_by(|left, right| left.0.cmp(&right.0));
 }
 
-fn reaction_actor_from_value(value: &Value) -> Option<&str> {
+fn reaction_actor_from_value(value: &Value) -> Option<String> {
     value
         .as_str()
-        .or_else(|| value_string_at(value, &["actor_id"]))
+        .map(ToOwned::to_owned)
+        .or_else(|| value.get("actor_id").and_then(actor_principal_from_value))
 }
 
 fn push_reaction_summary_value(reactions: &mut Vec<(String, Vec<String>)>, value: &Value) {
@@ -284,7 +286,7 @@ fn push_reaction_summary_value(reactions: &mut Vec<(String, Vec<String>)>, value
             };
             for member in members {
                 if let Some(actor) = reaction_actor_from_value(member) {
-                    push_reaction_member(reactions, key, actor);
+                    push_reaction_member(reactions, key, &actor);
                 }
             }
         }
@@ -301,7 +303,7 @@ fn push_reaction_summary_value(reactions: &mut Vec<(String, Vec<String>)>, value
             };
             for member in members {
                 if let Some(actor) = reaction_actor_from_value(member) {
-                    push_reaction_member(reactions, key, actor);
+                    push_reaction_member(reactions, key, &actor);
                 }
             }
         }
@@ -378,14 +380,14 @@ fn reaction_marker_from_event(event: &Value) -> Option<ReactionMarker> {
     if key.is_empty() {
         return None;
     }
-    let actor = first_string_in_candidates(&candidates, &["actor_id"])?.trim();
-    if actor.is_empty() {
+    let actor = message_actor_from_candidates(&candidates)?;
+    if actor.trim().is_empty() {
         return None;
     }
     Some(ReactionMarker {
         target_ref: target_ref.to_owned(),
         key: key.to_owned(),
-        actor: actor.to_owned(),
+        actor,
         active,
     })
 }
@@ -953,7 +955,7 @@ fn verify_chat_envelope_proof_with_local_identity(
             .is_some_and(|proofs| !proofs.is_empty())
             && candidate
                 .get("actor_id")
-                .and_then(Value::as_str)
+                .and_then(actor_principal_from_value)
                 .is_some_and(|actor| !actor.trim().is_empty())
     });
     let envelope = match proof_bearing {
@@ -970,7 +972,7 @@ fn verify_chat_envelope_proof_with_local_identity(
             let attributed = candidates.iter().copied().any(|candidate| {
                 candidate
                     .get("actor_id")
-                    .and_then(Value::as_str)
+                    .and_then(actor_principal_from_value)
                     .is_some_and(|actor| !actor.trim().is_empty())
             });
             return if attributed {
@@ -982,7 +984,7 @@ fn verify_chat_envelope_proof_with_local_identity(
     };
     let actor = envelope
         .get("actor_id")
-        .and_then(Value::as_str)
+        .and_then(actor_principal_from_value)
         .unwrap_or_default();
     if actor.is_empty() {
         return ChatProofVerdict::Rejected;
@@ -993,16 +995,16 @@ fn verify_chat_envelope_proof_with_local_identity(
     // executed_by and therefore continue to require an actor-controlled key.
     let proof_controller = envelope
         .get("executed_by")
-        .and_then(Value::as_str)
+        .and_then(actor_principal_from_value)
         .filter(|controller| !controller.trim().is_empty())
-        .unwrap_or(actor);
-    if !persistent_proof_controllers_match(envelope, proof_controller) {
+        .unwrap_or_else(|| actor.clone());
+    if !persistent_proof_controllers_match(envelope, &proof_controller) {
         return ChatProofVerdict::Rejected;
     }
-    let Some(device) = persistent_proof_sender_device(envelope, proof_controller) else {
+    let Some(device) = persistent_proof_sender_device(envelope, &proof_controller) else {
         return ChatProofVerdict::Unresolved;
     };
-    match crate::identity::device_directory::cached_device_signing_key(proof_controller, device) {
+    match crate::identity::device_directory::cached_device_signing_key(&proof_controller, device) {
         crate::identity::device_directory::CacheLookup::Hit(key) => {
             if crate::identity::device_directory::verify_persistent_envelope_proofs(envelope, &key)
             {
@@ -1160,9 +1162,13 @@ pub(crate) fn verified_chat_sender_domain_for_realm(
     })?;
     let actor = envelope
         .get("executed_by")
-        .or_else(|| envelope.get("actor_id"))
-        .and_then(Value::as_str)?;
-    let device = persistent_proof_sender_device(envelope, actor)?;
+        .and_then(actor_principal_from_value)
+        .or_else(|| {
+            envelope
+                .get("actor_id")
+                .and_then(actor_principal_from_value)
+        })?;
+    let device = persistent_proof_sender_device(envelope, &actor)?;
     let device = arkret_sdk::DeviceId::new(device.to_owned()).ok()?;
     Some(device.as_str().as_bytes().to_vec())
 }
@@ -1189,14 +1195,14 @@ fn verify_minimal_metadata_chat_author(
             .is_some_and(|proofs| !proofs.is_empty())
             && candidate
                 .get("actor_id")
-                .and_then(Value::as_str)
+                .and_then(actor_principal_from_value)
                 .is_some_and(|actor| !actor.trim().is_empty())
     });
     let Some(envelope) = proof_bearing else {
         let attributed = candidates.iter().copied().any(|candidate| {
             candidate
                 .get("actor_id")
-                .and_then(Value::as_str)
+                .and_then(actor_principal_from_value)
                 .is_some_and(|actor| !actor.trim().is_empty())
         });
         return if attributed {
@@ -1207,9 +1213,9 @@ fn verify_minimal_metadata_chat_author(
     };
     let actor = envelope
         .get("actor_id")
-        .and_then(Value::as_str)
+        .and_then(actor_principal_from_value)
         .unwrap_or_default();
-    let Ok(actor_id) = arkret_sdk::DidCoreId::new(actor.to_owned()) else {
+    let Ok(actor_id) = arkret_sdk::DidCoreId::new(actor) else {
         return ChatProofVerdict::Rejected;
     };
     // The envelope's encrypted-content coordinates are the trust-anchor
@@ -1584,7 +1590,7 @@ pub(crate) fn chat_message_from_event_with_sidecar(
     } else {
         reactions_from_candidates(&candidates)
     };
-    let sender = message_actor_from_candidates(&candidates)?.to_owned();
+    let sender = message_actor_from_candidates(&candidates)?;
     Some(ChatMessage {
         realm_id: first_string_in_candidates(&candidates, &["realm_id"])
             .unwrap_or(realm_id)
@@ -1595,10 +1601,12 @@ pub(crate) fn chat_message_from_event_with_sidecar(
         // AKP-0008 §4.10 — act-on-behalf carries a signed envelope-level
         // `executed_by`. When present and distinct from the actor, the
         // renderer shows the "controller via agent" double signature.
-        executed_by: first_string_in_candidates(&candidates, &["executed_by"])
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(ToOwned::to_owned),
+        executed_by: candidates.iter().find_map(|candidate| {
+            candidate
+                .get("executed_by")
+                .and_then(actor_principal_from_value)
+                .filter(|value| !value.trim().is_empty())
+        }),
         body,
         content_format,
         timestamp: short_message_time(first_string_in_candidates(&candidates, &["created_at"])),
@@ -1747,7 +1755,7 @@ pub(crate) fn poll_cards_from_events_with_sidecar(
                 continue;
             };
             if let Some(index) = by_poll_id.get(&poll_ref).copied() {
-                cards[index].vote_choices(actor, &selections);
+                cards[index].vote_choices(&actor, &selections);
             }
             continue;
         }
@@ -2091,10 +2099,11 @@ pub(crate) fn typing_actor_snapshot_from_signals(
 }
 
 pub(crate) fn sync_presence_actor(event: &Value) -> Option<String> {
-    value_string_at(event, &["user_id", "actor_id", "actor"])
+    value_string_at(event, &["user_id", "actor"])
         .map(str::trim)
         .filter(|actor| !actor.is_empty())
         .map(ToOwned::to_owned)
+        .or_else(|| event.get("actor_id").and_then(actor_principal_from_value))
 }
 
 fn sync_presence_payload(event: &Value) -> &Value {

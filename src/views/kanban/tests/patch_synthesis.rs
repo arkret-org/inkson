@@ -203,7 +203,7 @@ fn card_synthesis_track_entries_preserve_append_history() {
             payload: json!({
                 "kind": "ak.strand.update",
                 "operation_id": "op-1",
-                "actor_id": "ak:did_core:web:acme.example:users:alice",
+                "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:acme.example:users:alice","station_id":"ak:did_core:web:principal.example"}},
                 "created_at": "2026-05-22T10:00:00.000Z",
                 "write_state": "queued",
                 "body": {
@@ -221,7 +221,7 @@ fn card_synthesis_track_entries_preserve_append_history() {
             payload: json!({
                 "kind": "ak.strand.update",
                 "operation_id": "op-2",
-                "actor_id": "ak:did_core:web:acme.example:users:bob",
+                "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:acme.example:users:bob","station_id":"ak:did_core:web:principal.example"}},
                 "created_at": "2026-05-22T11:00:00.000Z",
                 "write_state": "queued",
                 "body": {
@@ -276,7 +276,7 @@ fn card_synthesis_track_entries_replay_full_set_events_without_reattributing_his
             payload: json!({
                 "kind": "ak.strand.update",
                 "operation_id": "op-1",
-                "actor_id": "ak:did_core:web:acme.example:users:alice",
+                "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:acme.example:users:alice","station_id":"ak:did_core:web:principal.example"}},
                 "created_at": "2026-05-22T10:00:00.000Z",
                 "write_state": "synced",
                 "body": {
@@ -294,7 +294,7 @@ fn card_synthesis_track_entries_replay_full_set_events_without_reattributing_his
             payload: json!({
                 "kind": "ak.strand.update",
                 "operation_id": "op-2",
-                "actor_id": "ak:did_core:web:acme.example:users:bob",
+                "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:acme.example:users:bob","station_id":"ak:did_core:web:principal.example"}},
                 "created_at": "2026-05-22T11:00:00.000Z",
                 "write_state": "synced",
                 "body": {
@@ -342,7 +342,7 @@ fn local_event_sourced_ops_recover_authors_without_per_tab_backfill() {
         json!({
             "event_kind": "ak.strand.update",
             "event_id": "ak:event:AZUYAeUiTiKHqTOGKrrTfa2xZPZj09T6IRYuDuCNc9ZQ",
-            "actor_id": "ak:did_core:web:acme.example:users:alice",
+            "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:acme.example:users:alice","station_id":"ak:did_core:web:principal.example"}},
             "created_at": "2026-05-22T10:00:00.000Z",
             "realm_id": TEST_REALM_ID,
             "payload": {
@@ -353,7 +353,7 @@ fn local_event_sourced_ops_recover_authors_without_per_tab_backfill() {
         json!({
             "event_kind": "ak.strand.update",
             "event_id": "ak:event:AYiSAxDIS8PlP8d9iucotDVTdZ9-CahOJVw2Km3R38HU",
-            "actor_id": "ak:did_core:web:acme.example:users:bob",
+            "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:acme.example:users:bob","station_id":"ak:did_core:web:principal.example"}},
             "created_at": "2026-05-22T11:00:00.000Z",
             "realm_id": TEST_REALM_ID,
             "payload": {
@@ -414,7 +414,7 @@ fn engine_ingest_dedupes_resent_strand_update_by_canonical_event_id() {
     let event = json!({
         "kind": "ak.strand.update",
         "event_id": "ak:event:AZUYAeUiTiKHqTOGKrrTfa2xZPZj09T6IRYuDuCNc9ZQ",
-        "actor_id": "ak:did_core:web:acme.example:users:alice",
+        "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:acme.example:users:alice","station_id":"ak:did_core:web:principal.example"}},
         "created_at": "2026-05-22T10:00:00.000Z",
         "realm_id": "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0",
         "payload": {
@@ -517,7 +517,10 @@ fn card_synthesis_author_prefers_cached_member_primary_handle() {
     let projection = json!({
         "realm_id": TEST_REALM_ID,
         "member_roster_entries": [{
-            "actor_id": actor,
+            "actor_id": {"kind": "account", "account_id": {
+                "principal_id": actor,
+                "station_id": "ak:did_core:web:principal.example"
+            }},
             "membership": "join",
             "subject_id": subject,
             "member_display_state_digest": digest
@@ -563,7 +566,10 @@ fn late_join_synthesis_author_resolves_handle_from_roster_actor_id() {
     let projection = json!({
         "realm_id": TEST_REALM_ID,
         "member_roster_entries": [{
-            "actor_id": actor,
+            "actor_id": {"kind": "account", "account_id": {
+                "principal_id": actor,
+                "station_id": "ak:did_core:web:principal.example"
+            }},
             "membership": "join"
         }]
     });
@@ -603,7 +609,10 @@ fn synthesis_author_uses_the_same_persisted_self_handle_as_member_surfaces() {
     let projection = json!({
         "realm_id": TEST_REALM_ID,
         "member_roster_entries": [{
-            "actor_id": actor,
+            "actor_id": {"kind": "account", "account_id": {
+                "principal_id": actor,
+                "station_id": "ak:did_core:web:principal.example"
+            }},
             "membership": "join"
         }]
     });
@@ -662,7 +671,7 @@ fn strand_participant_ids_filters_by_target_strand_and_pulls_unique_actors() {
                 "kind": "ak.strand.update",
                 "body": {
                     "strand_id": "ak:strand:AOh8dxjVYDgM4sgWMvKYvKA-rHBR4-IIEc7fiwGJ7P1w",
-                    "actor_id": "ak:did_core:web:alice.example",
+                    "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:alice.example","station_id":"ak:did_core:web:principal.example"}},
                 },
             }),
         },
@@ -677,7 +686,7 @@ fn strand_participant_ids_filters_by_target_strand_and_pulls_unique_actors() {
                     "target_ref": "ak:strand:AOh8dxjVYDgM4sgWMvKYvKA-rHBR4-IIEc7fiwGJ7P1w",
                     // Canonical actor key only; forbidden `sender`
                     // fields are hard-rejected.
-                    "actor_id": "ak:did_core:web:bob.example",
+                    "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:bob.example","station_id":"ak:did_core:web:principal.example"}},
                 },
             }),
         },
@@ -691,7 +700,7 @@ fn strand_participant_ids_filters_by_target_strand_and_pulls_unique_actors() {
                 "kind": "ak.strand.update",
                 "body": {
                     "strand_id": "ak:strand:A4EpRDvQloG8EYOGEPnGhe1SLpxBiLQbOvlptwBvvPkA",
-                    "actor_id": "ak:did_core:web:carol.example",
+                    "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:carol.example","station_id":"ak:did_core:web:principal.example"}},
                 },
             }),
         },
