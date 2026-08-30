@@ -15,9 +15,9 @@
 pub use arkret_sdk::SignalSequence;
 use serde_json::Value;
 
-/// Sender-side sequence within one `(scope_ref, sender_device_id)` stream.
+/// Sender-side sequence within one `(sender_actor_id, sender_device_id, scope_ref)` stream.
 ///
-/// The receiver dedupes on `(sender_device_id, scope_ref, payload_sequence)`
+/// The receiver dedupes on `(sender_actor_id, sender_device_id, scope_ref, payload_sequence)`
 /// (`signal.md` §2). The sequence is inside the ciphertext, so a service can
 /// only suppress replays by whole-envelope digest.
 const SIGNAL_SEQUENCE_RESERVATION_BLOCK: u64 = 256;
@@ -37,6 +37,7 @@ fn signal_sequence_reservations()
 }
 
 fn signal_sequence_domain(
+    sender_actor_id: &arkret_sdk::ActorId,
     sender_device_id: &arkret_sdk::DeviceId,
     scope_ref: &arkret_sdk::ScopeRef,
 ) -> anyhow::Result<String> {
@@ -44,25 +45,30 @@ fn signal_sequence_domain(
 
     let mut transcript = Vec::new();
     transcript.extend_from_slice(b"ak.signal-sequence-domain-v1\0");
+    transcript.extend_from_slice(&arkret_sdk::canonical::canonical_json_bytes(
+        sender_actor_id,
+    )?);
+    transcript.push(0);
     transcript.extend_from_slice(sender_device_id.as_str().as_bytes());
     transcript.push(0);
     transcript.extend_from_slice(&arkret_sdk::canonical::canonical_json_bytes(scope_ref)?);
     Ok(hex::encode(sha2::Sha256::digest(transcript)))
 }
 
-/// Consume a sequence from a durably reserved per-device/per-scope block.
+/// Consume a sequence from a durably reserved per-actor/per-device/per-scope block.
 ///
 /// The durable high-water is committed before the first number in a new block
 /// is returned.  A crash may therefore burn the unused tail, which is valid;
 /// no restart, failed submit, process, or browser tab can reuse it.
 pub async fn next_signal_sequence(
-    _state_store: &crate::runtime::input::StateStoreHandle,
+    state_store: &crate::runtime::input::StateStoreHandle,
+    sender_actor_id: &arkret_sdk::ActorId,
     sender_device_id: &arkret_sdk::DeviceId,
     scope_ref: &arkret_sdk::ScopeRef,
 ) -> anyhow::Result<SignalSequence> {
-    let domain = signal_sequence_domain(sender_device_id, scope_ref)?;
-    let account_namespace = _state_store.read(|store| store.signal_sequence_store_namespace());
-    let cached_domain = format!("{account_namespace}\0{domain}");
+    let domain = signal_sequence_domain(sender_actor_id, sender_device_id, scope_ref)?;
+    let context = state_store.read(|store| store.signal_sequence_store_context(sender_actor_id))?;
+    let cached_domain = format!("{}\0{domain}", context.namespace);
     {
         let mut reservations = signal_sequence_reservations()
             .lock()
@@ -77,14 +83,15 @@ pub async fn next_signal_sequence(
     }
 
     #[cfg(not(target_arch = "wasm32"))]
-    let first = {
-        let path = _state_store.read(|store| store.signal_sequence_store_path());
-        reserve_signal_sequence_block_in_file(&path, &domain, SIGNAL_SEQUENCE_RESERVATION_BLOCK)?
-    };
+    let first = reserve_signal_sequence_block_in_file(
+        &context.path,
+        &domain,
+        SIGNAL_SEQUENCE_RESERVATION_BLOCK,
+    )?;
 
     #[cfg(target_arch = "wasm32")]
     let first = reserve_signal_sequence_block_in_browser(
-        &format!("inkson.signal_sequence.v1.{account_namespace}.{domain}"),
+        &format!("inkson.signal_sequence.v1.{}.{domain}", context.namespace),
         SIGNAL_SEQUENCE_RESERVATION_BLOCK,
     )
     .await?;
@@ -1206,6 +1213,73 @@ mod tests {
                 "{class:?} TTL"
             );
         }
+    }
+
+    #[test]
+    fn sequence_domain_preserves_the_complete_sender_actor() {
+        let first = actor();
+        let mut second = first.as_account_id().unwrap().clone();
+        second.station_id =
+            arkret_sdk::DidCoreId::new("ak:did_core:web:other-station.example").unwrap();
+        let second = arkret_sdk::ActorId::account(second);
+        let device =
+            arkret_sdk::DeviceId::new("ak:device:0196419b-0000-7000-8000-000000000001").unwrap();
+        let scope = arkret_sdk::ScopeRef::Realm { realm_id: realm() };
+        assert_ne!(
+            signal_sequence_domain(&first, &device, &scope).unwrap(),
+            signal_sequence_domain(&second, &device, &scope).unwrap(),
+        );
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[tokio::test]
+    async fn sequence_store_rejects_anonymous_other_accounts_and_pending_login() {
+        let path = std::env::temp_dir().join(format!(
+            "inkson-signal-account-{}-{}.json",
+            std::process::id(),
+            crate::operation::uuid_v7(),
+        ));
+        let mut store = crate::state::LocalStateStore::with_path(path);
+        assert!(store.signal_sequence_store_context(&actor()).is_err());
+        store.switch_test_account("did:web:signal-account.example");
+        let authority = store.active_authority().unwrap();
+        let sender = arkret_sdk::ActorId::account(authority.clone());
+        let context = store.signal_sequence_store_context(&sender).unwrap();
+        assert_eq!(
+            context.namespace,
+            crate::identity::active_account::authority_namespace(&authority).unwrap()
+        );
+        assert!(context.path.to_string_lossy().contains(&context.namespace));
+        let mut other = authority;
+        other.station_id =
+            arkret_sdk::DidCoreId::new("ak:did_core:web:other-station.example").unwrap();
+        assert!(
+            store
+                .signal_sequence_store_context(&arkret_sdk::ActorId::account(other))
+                .is_err()
+        );
+        let shared = std::sync::Arc::new(std::sync::Mutex::new(store));
+        let read = shared.clone();
+        let write = shared.clone();
+        let handle = crate::runtime::input::StateStoreHandle::new(
+            move |callback| callback(&read.lock().unwrap()),
+            move |callback| callback(&mut write.lock().unwrap()),
+        );
+        let device =
+            arkret_sdk::DeviceId::new("ak:device:0196419b-0000-7000-8000-000000000001").unwrap();
+        let scope = arkret_sdk::ScopeRef::Realm { realm_id: realm() };
+        assert_eq!(
+            next_signal_sequence(&handle, &sender, &device, &scope)
+                .await
+                .unwrap(),
+            SignalSequence::new(1),
+        );
+        shared.lock().unwrap().begin_pending_login(&device, None);
+        assert!(
+            next_signal_sequence(&handle, &sender, &device, &scope)
+                .await
+                .is_err()
+        );
     }
 
     #[cfg(not(target_arch = "wasm32"))]

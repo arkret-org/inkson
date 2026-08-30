@@ -286,6 +286,13 @@ async fn accepted_device_evidence(
             anchor.resolve_did_document(&method_did)?
         }
     };
+    arkret_sdk::identity::validate_verification_method_relationship(
+        &document,
+        &attestation.proof.verification_method,
+        &method_did,
+        arkret_sdk::identity::DidVerificationRelationship::AssertionMethod,
+    )
+    .ok()?;
     let method = arkret_sdk::resolve_verification_method_key_from_document(
         &document,
         attestation.proof.verification_method.as_str(),
@@ -673,6 +680,117 @@ mod verification_method_controller_tests {
         cached_device_authorize_event_id, seed_device_authorization_for_test,
         verification_method_controller_matches_signer,
     };
+
+    #[tokio::test]
+    async fn a_projection_key_must_be_a_current_station_assertion_method() {
+        struct PinnedAnchor(arkret_sdk::DidDocument);
+        impl super::DidAnchor for PinnedAnchor {
+            fn resolve_did_document(
+                &self,
+                did: &arkret_sdk::Did,
+            ) -> Option<arkret_sdk::DidDocument> {
+                (&self.0.id == did).then(|| self.0.clone())
+            }
+        }
+        let station_did = arkret_sdk::Did::new("did:web:projection-station.example").unwrap();
+        let method = arkret_sdk::DidUrl::new(format!("{station_did}#assertion")).unwrap();
+        let account = arkret_sdk::AccountId::new(
+            arkret_sdk::DidCoreId::new("ak:did_core:web:projection-principal.example").unwrap(),
+            arkret_sdk::project_did_to_core_id(&station_did).unwrap(),
+        );
+        let device =
+            arkret_sdk::DeviceId::new("ak:device:0196419b-0000-7000-8000-000000000001").unwrap();
+        let now = arkret_sdk::canonical::normalize_timestamp_canonical(chrono::Utc::now());
+        let signing_key = ed25519_dalek::SigningKey::from_bytes(&[43u8; 32]);
+        let public_key =
+            arkret_sdk::ed25519_pubkey_to_did_key_multibase(signing_key.verifying_key().as_bytes());
+        let attestation =
+            arkret_sdk::signatures::device_projection::sign_device_projection_attestation(
+                arkret_models_crypto::DeviceProjectionAttestationCore {
+                    account_id: account.clone(),
+                    device_id: device.clone(),
+                    device_signing_key_did: arkret_sdk::DidKey::new(format!(
+                        "did:key:{public_key}"
+                    ))
+                    .unwrap(),
+                    hpke_key: arkret_sdk::NonEmptyString::new("hpke-test").unwrap(),
+                    device_authorize_event_id: arkret_sdk::EventId::new(
+                        "ak:event:AfAnsJqSlM9bHVI7P1QBMOEW3p5P1PNQu7BBMpiSnD_e",
+                    )
+                    .unwrap(),
+                    authorized_generation_ref: 7,
+                    device_status: arkret_models_crypto::DeviceStatus::Active,
+                    attested_at: now,
+                    expires_at: now + chrono::Duration::minutes(5),
+                },
+                method.clone(),
+                &signing_key,
+            )
+            .unwrap();
+        let outcome: arkret_models_crypto::KeysQueryOutcome =
+            serde_json::from_value(serde_json::json!({
+                "device_keys": [{"account_id": account, "device_keys": {
+                    device.as_str(): {
+                        "algorithms": {}, "trust_algorithms": [],
+                        "device_projection_attestation": attestation
+                    }
+                }}],
+                "failures": [],
+                "device_generations": [{"account_id": account, "generation_state": {
+                    "current_device_generation_ref": 7,
+                    "device_generation_status": "active"
+                }}]
+            }))
+            .unwrap();
+        let mut document: arkret_sdk::DidDocument = serde_json::from_value(serde_json::json!({
+            "id": station_did,
+            "verificationMethod": [{
+                "id": method,
+                "controller": station_did,
+                "type": "Multikey",
+                "publicKeyMultibase": public_key
+            }]
+        }))
+        .unwrap();
+        assert!(
+            super::accepted_device_evidence(
+                &outcome,
+                &PinnedAnchor(document.clone()),
+                &account,
+                device.as_str(),
+            )
+            .await
+            .is_none()
+        );
+        document.raw_properties.insert(
+            "assertionMethod".to_owned(),
+            serde_json::json!(["#another-key"]),
+        );
+        assert!(
+            super::accepted_device_evidence(
+                &outcome,
+                &PinnedAnchor(document.clone()),
+                &account,
+                device.as_str(),
+            )
+            .await
+            .is_none()
+        );
+        document.raw_properties.insert(
+            "assertionMethod".to_owned(),
+            serde_json::json!(["#assertion"]),
+        );
+        assert!(
+            super::accepted_device_evidence(
+                &outcome,
+                &PinnedAnchor(document),
+                &account,
+                device.as_str(),
+            )
+            .await
+            .is_some()
+        );
+    }
 
     #[test]
     fn verified_projection_cache_rejects_rollback_conflict_and_revoked_replay() {

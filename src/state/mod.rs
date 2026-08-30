@@ -196,6 +196,12 @@ pub(crate) struct LocalStatePersistBarrier {
     persist_health: Arc<Mutex<Option<String>>>,
 }
 
+pub(crate) struct SignalSequenceStoreContext {
+    pub namespace: String,
+    #[cfg(not(target_arch = "wasm32"))]
+    pub path: PathBuf,
+}
+
 impl LocalStatePersistBarrier {
     pub(crate) async fn wait(self) -> anyhow::Result<()> {
         let result = self.inner.wait().await;
@@ -658,8 +664,8 @@ impl LocalStateStore {
     /// second process can lock and advance this high-water without rewriting
     /// or racing unrelated projections.
     #[cfg(not(target_arch = "wasm32"))]
-    pub(crate) fn signal_sequence_store_path(&self) -> PathBuf {
-        let account = self.account_state_path(&self.effective_account_key());
+    fn signal_sequence_store_path(&self, namespace: &str) -> PathBuf {
+        let account = self.account_state_path(namespace);
         let file_name = format!(
             "{}.signal-sequences.jsonl",
             account
@@ -673,11 +679,28 @@ impl LocalStateStore {
             .unwrap_or_else(|| PathBuf::from(file_name))
     }
 
-    /// Stable namespace for the active account's Signal sequence allocator.
-    /// Process-local block caches and browser storage include it so an account
-    /// switch cannot consume a block persisted for a different account.
-    pub(crate) fn signal_sequence_store_namespace(&self) -> String {
-        self.effective_account_key()
+    /// Pin the sender's account and physical storage from one root snapshot.
+    /// A pending login or a different active account must not reserve sequences
+    /// for a stale sender, including from a process-local reservation block.
+    pub(crate) fn signal_sequence_store_context(
+        &self,
+        sender_actor_id: &arkret_sdk::ActorId,
+    ) -> anyhow::Result<SignalSequenceStoreContext> {
+        let authority = sender_actor_id
+            .as_account_id()
+            .ok_or_else(|| anyhow::anyhow!("Signal sender requires an active account"))?;
+        let root = self.read_root();
+        if root.pending_login.is_some()
+            || root.active_entry().map(|entry| &entry.authority) != Some(authority)
+        {
+            anyhow::bail!("Signal sender does not match the active account");
+        }
+        let namespace = account_storage_scope(authority)?;
+        Ok(SignalSequenceStoreContext {
+            #[cfg(not(target_arch = "wasm32"))]
+            path: self.signal_sequence_store_path(&namespace),
+            namespace,
+        })
     }
 
     /// The single source of truth for the root index: ALWAYS read through from

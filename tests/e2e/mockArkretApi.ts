@@ -211,7 +211,7 @@ function canonicalSha256(value: unknown) {
 
 function realmActorFrontier(
   realmId: string,
-  actorId: string,
+  actorId: Record<string, unknown>,
   nextActorSeq: number,
   frontierEventIds: string[],
   digestSuite: "sha256" | "blake3",
@@ -1153,13 +1153,18 @@ export async function mockArkretApi(
         unknown
       >;
       const actorId =
-        typeof selector.actor_id === "string" ? selector.actor_id : null;
+        selector.actor_id !== null &&
+        typeof selector.actor_id === "object" &&
+        !Array.isArray(selector.actor_id)
+          ? (selector.actor_id as Record<string, unknown>)
+          : null;
       const realmId =
         typeof selector.realm_id === "string" ? selector.realm_id : null;
       if (actorId && realmId) {
         const actorEvents = projectionEvents.filter(
           (event) =>
-            eventRealmId(event) === realmId && event.actor_id === actorId,
+            eventRealmId(event) === realmId &&
+            canonicalJson(event.actor_id) === canonicalJson(actorId),
         );
         const referenced = new Set(
           actorEvents.flatMap((event) =>

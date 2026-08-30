@@ -2034,8 +2034,12 @@ impl EventSubmitter {
         // Realm id and send time are no longer arguments: `signal.md` §1.1
         // forbids a plaintext restating what the signed envelope already
         // carries, so the closed profiles do not have fields for them.
+        if header.sender_actor_id.as_account_id() != Some(authority) {
+            anyhow::bail!("Signal sender does not match the encryption authority");
+        }
         let sequence = crate::signal::next_signal_sequence(
             state_store,
+            &header.sender_actor_id,
             &header.sender_device_id,
             &header.scope_ref,
         )
@@ -2043,6 +2047,7 @@ impl EventSubmitter {
         let plaintext = payload.to_plaintext(&header.sender_actor_id, sequence)?;
         let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
         let encrypted_payload = state_store.write(|store| {
+            store.signal_sequence_store_context(&header.sender_actor_id)?;
             crate::signal::encrypt_signal_payload_with_store(
                 store,
                 secure_store.as_ref(),

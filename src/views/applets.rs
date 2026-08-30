@@ -616,7 +616,8 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
                                             return;
                                         };
                                         let actor_id = account.principal_id().clone();
-                                        let install_actor_id = account.principal_id().clone();
+                                        let install_actor_id = arkret_sdk::ActorId::account(account.authority.clone());
+                                        let target_station_id = account.authority.station_id.clone();
                                         let circle = install_circle_id();
                                         let approve_actions = parse_applet_approval_actions(
                                             &install_approve_actions(),
@@ -646,17 +647,6 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
                                                 ghost_actor_mode: Some(ghost_actor_mode),
                                             };
                                             let requested_at = crate::clock::now_utc_millis();
-                                            let target_station_id = match
-                                                crate::operation::authoring_station_id()
-                                            {
-                                                Ok(value) => value,
-                                                Err(error) => {
-                                                    install_status.set(format!(
-                                                        "cannot bind install to Station: {error}"
-                                                    ));
-                                                    return;
-                                                }
-                                            };
                                             let package_digest = match package.package_digest.clone() {
                                                 Some(value) => value,
                                                 None => {
