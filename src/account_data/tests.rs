@@ -354,41 +354,36 @@ fn typed_blocklist_entries_filter_by_closed_mode_surface_and_expiry() {
     };
 
     let created_at = "2026-08-02T00:00:00.000Z".parse().unwrap();
+    let actor = blocklist_test_actor("ak:did_core:web:station-a.example");
     let mut entry = new_blocklist_entry(
         BlocklistUiTargetKind::Actor,
-        "ak:did_core:web:alice.example",
+        &actor,
         Some("spam".to_owned()),
         vec![AccountBlocklistSurface::Messages],
         None,
         created_at,
     )
     .unwrap();
-    assert!(is_blocked(
-        &[entry.clone()],
-        "ak:did_core:web:alice.example"
-    ));
+    assert!(is_blocked(&[entry.clone()], &actor));
     assert!(!suppresses_notifications(
         &[entry.clone()],
-        "ak:did_core:web:alice.example",
+        &actor,
         &[AccountBlocklistSurface::Notifications],
     ));
 
     entry.mode = AccountBlocklistMode::Mute;
-    assert!(!is_blocked(
-        &[entry.clone()],
-        "ak:did_core:web:alice.example"
-    ));
+    assert!(!is_blocked(&[entry.clone()], &actor));
     entry.applies_to = vec![AccountBlocklistSurface::Notifications];
     assert!(suppresses_notifications(
         &[entry.clone()],
-        "ak:did_core:web:alice.example",
+        &actor,
         &[AccountBlocklistSurface::Notifications],
     ));
 
     entry.expires_at = Some("2020-01-01T00:00:00.000Z".parse().unwrap());
     assert!(!suppresses_notifications(
         &[entry],
-        "ak:did_core:web:alice.example",
+        &actor,
         &[AccountBlocklistSurface::Notifications],
     ));
 }
@@ -399,10 +394,11 @@ fn typed_blocklist_mutators_dedupe_and_unblock_exact_targets() {
 
     let mut entries = Vec::new();
     let created_at = "2026-08-02T00:00:00.000Z".parse().unwrap();
+    let actor = blocklist_test_actor("ak:did_core:web:station-a.example");
     assert!(block_target_in(
         &mut entries,
         BlocklistUiTargetKind::Actor,
-        "ak:did_core:web:alice.example",
+        &actor,
         None,
         vec![AccountBlocklistSurface::Messages],
         None,
@@ -411,7 +407,7 @@ fn typed_blocklist_mutators_dedupe_and_unblock_exact_targets() {
     assert!(!block_target_in(
         &mut entries,
         BlocklistUiTargetKind::Actor,
-        "ak:did_core:web:alice.example",
+        &actor,
         None,
         vec![AccountBlocklistSurface::Messages],
         None,
@@ -432,11 +428,50 @@ fn typed_blocklist_mutators_dedupe_and_unblock_exact_targets() {
     let domain_target = entries[1].target.clone();
     assert!(unblock_target_in(&mut entries, &domain_target));
     assert_eq!(entries.len(), 1);
-    assert!(unblock_user_in(
+    assert!(unblock_user_in(&mut entries, &actor));
+    assert!(entries.is_empty());
+}
+
+fn blocklist_test_actor(station: &str) -> String {
+    arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+        arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example").unwrap(),
+        arkret_sdk::DidCoreId::new(station).unwrap(),
+    ))
+    .to_string()
+}
+
+#[test]
+fn actor_blocklist_never_merges_same_principal_at_different_stations() {
+    use arkret_models_collaboration::objects::productivity::AccountBlocklistSurface;
+    let first = blocklist_test_actor("ak:did_core:web:station-a.example");
+    let second = blocklist_test_actor("ak:did_core:web:station-b.example");
+    let mut entries = Vec::new();
+    let now = chrono::Utc::now();
+    assert!(!block_user_in(
+        &mut entries,
+        "ak:did_core:web:alice.example",
+        None,
+        now
+    ));
+    assert!(block_user_in(&mut entries, &first, None, now));
+    assert!(is_blocked(&entries, &first));
+    assert!(!is_blocked(&entries, &second));
+    assert!(!is_blocked(&entries, "ak:did_core:web:alice.example"));
+    assert!(!suppresses_notifications(
+        &entries,
+        &second,
+        &[AccountBlocklistSurface::Notifications]
+    ));
+    assert!(!unblock_user_in(&mut entries, &second));
+    assert!(!unblock_user_in(
         &mut entries,
         "ak:did_core:web:alice.example"
     ));
-    assert!(entries.is_empty());
+    assert!(block_user_in(&mut entries, &second, None, now));
+    assert_eq!(entries.len(), 2);
+    assert!(unblock_user_in(&mut entries, &first));
+    assert!(!is_blocked(&entries, &first));
+    assert!(is_blocked(&entries, &second));
 }
 
 #[test]

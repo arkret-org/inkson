@@ -59,7 +59,7 @@ fn target_kind_placeholder(kind: crate::account_data::BlocklistUiTargetKind) -> 
         crate::account_data::BlocklistUiTargetKind::Domain => "example.com",
         crate::account_data::BlocklistUiTargetKind::Organization => "ak:did_core:web:acme.example",
         crate::account_data::BlocklistUiTargetKind::Actor => {
-            "ak:did_core:webvh:<scid>:alice.example"
+            r#"{"kind":"account","account_id":{"principal_id":"ak:did_core:web:alice.example","station_id":"ak:did_core:web:station.example"}}"#
         }
     }
 }
@@ -76,8 +76,12 @@ fn expiry_choice_to_rfc3339(choice: &str) -> Option<chrono::DateTime<chrono::Utc
     Some(chrono::Utc::now() + duration)
 }
 
-fn is_valid_identity_id(input: &str) -> bool {
-    arkret_sdk::DidCoreId::new(input.trim().to_owned()).is_ok()
+fn is_valid_identity_id(kind: crate::account_data::BlocklistUiTargetKind, input: &str) -> bool {
+    if kind == crate::account_data::BlocklistUiTargetKind::Actor {
+        serde_json::from_str::<arkret_sdk::ActorId>(input).is_ok()
+    } else {
+        arkret_sdk::DidCoreId::new(input.trim().to_owned()).is_ok()
+    }
 }
 
 #[component]
@@ -103,9 +107,8 @@ pub fn BlocklistSettingsCard(principal_id: Signal<String>, token: Signal<String>
     let mut applies_to = use_signal(|| crate::account_data::DEFAULT_BLOCKLIST_APPLIES_TO.to_vec());
     let mut status = use_signal(String::new);
 
-    // Live validation: identity kinds (actor / service / organization) require
-    // a stable DidCoreId; `domain` requires a domain. At least one surface must
-    // be selected.
+    // Actor targets require an explicit full ActorId; service/organization targets
+    // require a DidCoreId. Domain targets require a domain and at least one surface.
     let kind_now = target_kind();
     let is_identity_kind = kind_now.is_identity();
     let raw_input = add_input();
@@ -113,7 +116,7 @@ pub fn BlocklistSettingsCard(principal_id: Signal<String>, token: Signal<String>
     let input_empty = input_trimmed.is_empty();
     let input_valid = !input_empty
         && if is_identity_kind {
-            is_valid_identity_id(input_trimmed)
+            is_valid_identity_id(kind_now, input_trimmed)
         } else {
             crate::views::settings::is_likely_valid_domain(input_trimmed)
         };
@@ -127,12 +130,16 @@ pub fn BlocklistSettingsCard(principal_id: Signal<String>, token: Signal<String>
     } else {
         "blocklist-id blocklist-id-invalid"
     };
-    let invalid_hint = if is_identity_kind {
+    let invalid_hint = if kind_now == crate::account_data::BlocklistUiTargetKind::Actor {
+        "Enter a complete ActorId JSON object, including the target Station for an account or hosted principal."
+    } else if is_identity_kind {
         "Enter a valid stable identity id (e.g. ak:did_core:webvh:<scid>)."
     } else {
         "Enter a valid domain (e.g. example.com)."
     };
-    let target_input_label = if is_identity_kind {
+    let target_input_label = if kind_now == crate::account_data::BlocklistUiTargetKind::Actor {
+        "Target ActorId"
+    } else if is_identity_kind {
         "Target stable id"
     } else {
         "Target domain"
@@ -169,9 +176,9 @@ pub fn BlocklistSettingsCard(principal_id: Signal<String>, token: Signal<String>
                             };
                             let entry_value = crate::account_data::blocklist_target_value(&entry.target);
                             let entry_label = if crate::account_data::target_is_actor(&entry.target) {
-                                actor_display_label(&state_store.read(), entry_value)
+                                actor_display_label(&state_store.read(), &entry_value)
                             } else {
-                                short_protocol_id(entry_value)
+                                short_protocol_id(&entry_value)
                             };
                             let applies_summary = entry.applies_to.iter()
                                 .map(|surface| crate::account_data::blocklist_surface_label(*surface))
@@ -440,11 +447,31 @@ mod tests {
     use super::is_valid_identity_id;
 
     #[test]
-    fn actor_block_target_requires_canonical_identity_id() {
-        assert!(is_valid_identity_id("ak:did_core:webvh:z6mkfixtureactor"));
+    fn actor_block_target_requires_full_actor_id() {
+        use crate::account_data::BlocklistUiTargetKind as Kind;
+        let actor = account_actor("ak:did_core:web:station.example");
+        assert!(is_valid_identity_id(Kind::Actor, &actor));
         assert!(!is_valid_identity_id(
-            "did:webvh:z6mkfixtureactor:actor.example"
+            Kind::Actor,
+            "ak:did_core:web:bob.example"
         ));
+        assert!(!is_valid_identity_id(
+            Kind::Actor,
+            r#"{"kind":"account","account_id":{"principal_id":"ak:did_core:web:bob.example"}}"#
+        ));
+        assert!(is_valid_identity_id(
+            Kind::Service,
+            "ak:did_core:web:station.example"
+        ));
+        assert!(!is_valid_identity_id(Kind::Service, &actor));
+    }
+
+    fn account_actor(station: &str) -> String {
+        arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+            arkret_sdk::DidCoreId::new("ak:did_core:web:bob.example").unwrap(),
+            arkret_sdk::DidCoreId::new(station).unwrap(),
+        ))
+        .to_string()
     }
 
     #[test]
@@ -452,19 +479,21 @@ mod tests {
         let mut store = crate::state::isolated_store_for_tests("settings-blocklist");
         assert!(store.client_blocklist().is_empty());
 
-        assert!(store.block_user("ak:did_core:web:bob.example", None));
+        let actor = account_actor("ak:did_core:web:station.example");
         assert!(!store.block_user("ak:did_core:web:bob.example", None));
+        assert!(store.block_user(&actor, None));
+        assert!(!store.block_user(&actor, None));
 
         let entries = store.client_blocklist();
         assert_eq!(entries.len(), 1);
         assert_eq!(
             crate::account_data::blocklist_target_value(&entries[0].target),
-            "ak:did_core:web:bob.example"
+            actor
         );
         assert!(crate::account_data::target_is_actor(&entries[0].target));
         assert_eq!(
             store.pending_personal_block_sagas(),
-            std::collections::BTreeSet::from(["ak:did_core:web:bob.example".to_owned()])
+            std::collections::BTreeSet::from([actor.clone()])
         );
 
         let remote = entries.clone();
@@ -474,11 +503,41 @@ mod tests {
         assert_eq!(store.client_blocklist_revision(), 4);
         assert_eq!(store.client_blocklist(), remote);
 
-        store.complete_personal_block_saga("ak:did_core:web:bob.example");
+        store.complete_personal_block_saga(&actor);
         assert!(store.pending_personal_block_sagas().is_empty());
 
-        assert!(store.unblock_user("ak:did_core:web:bob.example"));
-        assert!(!store.unblock_user("ak:did_core:web:bob.example"));
+        assert!(store.unblock_user(&actor));
+        assert!(!store.unblock_user(&actor));
         assert!(store.client_blocklist().is_empty());
+    }
+
+    #[test]
+    fn block_sagas_preserve_distinct_stations_and_canonicalize_input() {
+        let mut store = crate::state::isolated_store_for_tests("settings-blocklist-stations");
+        let first = account_actor("ak:did_core:web:station-a.example");
+        let second = account_actor("ak:did_core:web:station-b.example");
+        let pretty = serde_json::to_string_pretty(
+            &serde_json::from_str::<arkret_sdk::ActorId>(&first).unwrap(),
+        )
+        .unwrap();
+        assert!(store.block_user(&pretty, None));
+        assert!(!store.block_user(&first, None));
+        assert!(store.block_target(
+            crate::account_data::BlocklistUiTargetKind::Actor,
+            &second,
+            None,
+            Vec::new(),
+            None
+        ));
+        assert_eq!(
+            store.pending_personal_block_sagas(),
+            std::collections::BTreeSet::from([first.clone(), second.clone()])
+        );
+        assert!(store.unblock_user(&first));
+        assert_eq!(store.client_blocklist().len(), 1);
+        assert_eq!(
+            crate::account_data::blocklist_target_value(&store.client_blocklist()[0].target),
+            second
+        );
     }
 }

@@ -205,17 +205,19 @@ impl LocalStateStore {
     /// pushing the new list to soland via
     /// `ak.account_data.set("ak.account.blocklist", …)`.
     pub fn block_user(&mut self, actor_id: impl AsRef<str>, reason: Option<String>) -> bool {
+        let Ok(actor) = serde_json::from_str::<arkret_sdk::ActorId>(actor_id.as_ref()) else {
+            return false;
+        };
+        let actor_key = actor.to_string();
         self.ensure_cached_loaded();
         let changed = crate::account_data::block_user_in(
             &mut self.cached.client_blocklist,
-            actor_id.as_ref(),
+            &actor_key,
             reason,
             chrono::Utc::now(),
         );
         if changed {
-            self.cached
-                .pending_personal_block_sagas
-                .insert(actor_id.as_ref().trim().to_owned());
+            self.cached.pending_personal_block_sagas.insert(actor_key);
             let _ = self.flush();
         }
         changed
@@ -262,9 +264,11 @@ impl LocalStateStore {
         );
         if changed {
             if kind == crate::account_data::BlocklistUiTargetKind::Actor {
+                let actor = serde_json::from_str::<arkret_sdk::ActorId>(value.as_ref())
+                    .expect("accepted actor block target must contain an ActorId");
                 self.cached
                     .pending_personal_block_sagas
-                    .insert(value.as_ref().trim().to_owned());
+                    .insert(actor.to_string());
             }
             let _ = self.flush();
         }

@@ -108,7 +108,7 @@ fn target_from_ui(
                 kind,
                 actor_id: match kind {
                     AccountBlocklistDidTargetKind::Actor => {
-                        crate::mls_api_helpers::local_account_actor_id(&value)
+                        serde_json::from_str::<arkret_sdk::ActorId>(&value)
                             .map_err(|error| error.to_string())?
                     }
                     AccountBlocklistDidTargetKind::Service
@@ -145,13 +145,19 @@ pub fn blocklist_target_kind_label(target: &AccountBlocklistTarget) -> &'static 
     }
 }
 
-pub fn blocklist_target_value(target: &AccountBlocklistTarget) -> &str {
+pub fn blocklist_target_value(target: &AccountBlocklistTarget) -> String {
     match target {
-        AccountBlocklistTarget::Did(target) => target.actor_id.signing_principal_id().as_str(),
-        AccountBlocklistTarget::DeviceId(target) => target.object_ref.as_str(),
-        AccountBlocklistTarget::DeviceVerificationMethod(target) => target.value.as_str(),
-        AccountBlocklistTarget::Applet(target) => target.object_ref.as_str(),
-        AccountBlocklistTarget::Value(target) => target.value.as_str(),
+        AccountBlocklistTarget::Did(target) => match target.kind {
+            AccountBlocklistDidTargetKind::Actor => target.actor_id.to_string(),
+            AccountBlocklistDidTargetKind::Service
+            | AccountBlocklistDidTargetKind::Organization => {
+                target.actor_id.signing_principal_id().to_string()
+            }
+        },
+        AccountBlocklistTarget::DeviceId(target) => target.object_ref.to_string(),
+        AccountBlocklistTarget::DeviceVerificationMethod(target) => target.value.to_string(),
+        AccountBlocklistTarget::Applet(target) => target.object_ref.to_string(),
+        AccountBlocklistTarget::Value(target) => target.value.to_string(),
     }
 }
 
@@ -246,13 +252,13 @@ fn actor_entries_filter_surface(
     surface: AccountBlocklistSurface,
     include_mute: bool,
 ) -> bool {
-    let Ok(needle) = arkret_sdk::DidCoreId::new(actor_id.trim().to_owned()) else {
+    let Ok(needle) = serde_json::from_str::<arkret_sdk::ActorId>(actor_id) else {
         return false;
     };
     let now = chrono::Utc::now();
     list.iter().any(|entry| {
-        target_is_actor(&entry.target)
-            && blocklist_target_value(&entry.target) == needle.as_str()
+        matches!(&entry.target, AccountBlocklistTarget::Did(target)
+            if target.kind == AccountBlocklistDidTargetKind::Actor && target.actor_id == needle)
             && entry_filters_surface(entry, surface, include_mute, now)
     })
 }
@@ -317,13 +323,13 @@ pub fn block_target_in(
 }
 
 pub fn unblock_user_in(list: &mut Vec<AccountBlocklistPayloadEntry>, actor_id: &str) -> bool {
-    let Ok(needle) = arkret_sdk::DidCoreId::new(actor_id.trim().to_owned()) else {
+    let Ok(needle) = serde_json::from_str::<arkret_sdk::ActorId>(actor_id) else {
         return false;
     };
     let before = list.len();
     list.retain(|entry| {
-        !(target_is_actor(&entry.target)
-            && blocklist_target_value(&entry.target) == needle.as_str())
+        !matches!(&entry.target, AccountBlocklistTarget::Did(target)
+            if target.kind == AccountBlocklistDidTargetKind::Actor && target.actor_id == needle)
     });
     list.len() != before
 }
