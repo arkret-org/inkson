@@ -5,7 +5,7 @@
 //! resulting Circle id falls out of that Event. The server neither names the
 //! Circle nor signs for the user.
 
-use super::{TypedOperationBuilder, circle_id_value, did_id, realm_id_value, trim_realm_id};
+use super::{TypedOperationBuilder, circle_id_value, realm_id_value, trim_realm_id};
 
 /// Everything the create surface lets a user choose about a new Circle.
 ///
@@ -34,7 +34,7 @@ pub fn circle_member_state(
     realm_id: &str,
     actor: &str,
     circle_id: &str,
-    target_actor: &str,
+    target_actor: &arkret_sdk::ActorId,
     membership: arkret_sdk::CircleMembership,
 ) -> anyhow::Result<TypedOperationBuilder> {
     circle_member_state_with_expected(
@@ -52,16 +52,13 @@ pub fn circle_member_state_with_expected(
     realm_id: &str,
     actor: &str,
     circle_id: &str,
-    target_actor: &str,
+    target_actor: &arkret_sdk::ActorId,
     membership: arkret_sdk::CircleMembership,
     expected_membership: arkret_wire::WirePresence<arkret_sdk::CircleMembership>,
 ) -> anyhow::Result<TypedOperationBuilder> {
     let payload = arkret_sdk::CircleMemberStatePayload {
         circle_id: circle_id_value(circle_id)?,
-        member_id: arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
-            did_id(target_actor)?,
-            crate::operation::authoring_station_id()?,
-        )),
+        member_id: target_actor.clone(),
         membership,
         reason: None,
         effective_at: None,
@@ -70,6 +67,44 @@ pub fn circle_member_state_with_expected(
     Ok(TypedOperationBuilder::new::<
         arkret_sdk::event_spec::CircleMemberState,
     >(realm_id, actor, payload))
+}
+
+#[cfg(test)]
+mod member_actor_tests {
+    use super::*;
+
+    #[test]
+    fn circle_membership_preserves_remote_actor_kind_and_station() {
+        let principal = arkret_sdk::DidCoreId::new("ak:did_core:web:bob.example").unwrap();
+        let station = arkret_sdk::DidCoreId::new("ak:did_core:web:remote.example").unwrap();
+        for target in [
+            arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+                principal.clone(),
+                station.clone(),
+            )),
+            arkret_sdk::ActorId::hosted_principal(principal.clone(), station),
+            arkret_sdk::ActorId::service(principal),
+        ] {
+            for membership in [
+                arkret_sdk::CircleMembership::Invite,
+                arkret_sdk::CircleMembership::Leave,
+            ] {
+                let builder = circle_member_state_with_expected(
+                    "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-",
+                    "ak:did_core:web:alice.example",
+                    "ak:circle:AcsXlJSItqSzy43Swu0nFz2ijj4Yaf0RgjmoTeivRt8M",
+                    &target,
+                    membership,
+                    arkret_wire::WirePresence::Value(arkret_sdk::CircleMembership::Join),
+                )
+                .unwrap();
+                assert_eq!(
+                    builder.intent().unwrap().payload().get("member_id"),
+                    Some(&serde_json::to_value(&target).unwrap())
+                );
+            }
+        }
+    }
 }
 
 /// Build one of the three canonical Circle lifecycle Control Moves.

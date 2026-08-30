@@ -213,7 +213,7 @@ pub fn CirclesPanel(
                                                 let circle_id = circle.circle_id.to_string();
                                                 let member_realm_id = circle.realm_id.to_string();
                                                 let principal_id = principal_id.clone();
-                                                let actor_id = member.to_string();
+                                                let actor_id = member.clone();
                                                 move |_| {
                                                     busy.set(true);
                                                     let base = base.clone();
@@ -249,8 +249,8 @@ pub fn CirclesPanel(
                                 input {
                                     r#type: "text",
                                     value: "{member_actor}",
-                                    placeholder: "Member DID",
-                                    "aria-label": "Circle member DID",
+                                    placeholder: "Complete member ActorId JSON",
+                                    "aria-label": "Circle member ActorId",
                                     oninput: move |event| member_actor.set(event.value()),
                                 }
                                 select {
@@ -273,12 +273,8 @@ pub fn CirclesPanel(
                                         let member_realm_id = circle.realm_id.to_string();
                                         let principal_id = principal_id.clone();
                                         move |_| {
-                                            let Ok(member_did) = arkret_sdk::Did::new(member_actor().trim().to_owned()) else {
-                                                status.set("Enter a valid member DID".to_owned());
-                                                return;
-                                            };
-                                            let Ok(member_id) = arkret_sdk::project_did_to_core_id(&member_did) else {
-                                                status.set("Member DID cannot be projected to an Arkret actor id".to_owned());
+                                            let Ok(member_id) = serde_json::from_str::<arkret_sdk::ActorId>(member_actor().trim()) else {
+                                                status.set("Enter a complete member ActorId including its identity kind and Station when applicable".to_owned());
                                                 return;
                                             };
                                             let membership = match member_state().as_str() {
@@ -297,7 +293,7 @@ pub fn CirclesPanel(
                                             spawn(async move {
                                                 let outcome = with_authed_api(&base, credential, |api| async move {
                                                     crate::transport::circle::add_circle_member(
-                                                        &api.event_submitter()?, &member_realm_id, &principal_id, &circle_id, member_id.as_str(), membership,
+                                                        &api.event_submitter()?, &member_realm_id, &principal_id, &circle_id, &member_id, membership,
                                                     ).await
                                                 }).await;
                                                 match outcome {
@@ -474,6 +470,7 @@ pub fn CirclesPanel(
                                                 return;
                                             }
                                         };
+                                        let creator_actor = create_event.actor_id().clone();
                                         let create_operation = create_event;
                                         busy.set(true);
                                         status.set("Creating Circle and establishing initial membership…".to_owned());
@@ -498,7 +495,7 @@ pub fn CirclesPanel(
                                                     created.realm_id.as_str(),
                                                     actor_id.as_str(),
                                                     created.circle_id.as_str(),
-                                                    actor_id.as_str(),
+                                                    &creator_actor,
                                                     arkret_sdk::CircleMembership::Join,
                                                 ).await?;
                                                 Ok::<_, anyhow::Error>(created.circle_id.to_string())
