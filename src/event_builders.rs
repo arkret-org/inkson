@@ -448,7 +448,7 @@ fn build_realm_bootstrap_membership_intent(
         .into_iter()
         .collect(),
         service_resolution,
-        did_document_digest: None,
+        document_digest: None,
         resolved_at: event_timestamp(),
         service_acceptance_ref: None,
         holder_proof_ref: None,
