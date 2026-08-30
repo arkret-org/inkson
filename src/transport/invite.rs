@@ -411,7 +411,6 @@ impl crate::transport::TransportClient {
                     },
                 )
                 .await?;
-            let target_id = resolved.subject_id().clone();
             let handle = arkret_models_identity::Handle::parse(&resolved.handle)
                 .map_err(|err| anyhow::anyhow!("directory returned invalid handle: {err}"))?;
             let introduction_evidence = match resolved_handle_claim(&resolved)? {
@@ -439,7 +438,7 @@ impl crate::transport::TransportClient {
         })
     }
 
-    /// U3 — pull an existing contact into a Realm using their DID directly,
+    /// U3 — pull an existing contact into a Realm using their complete AccountId,
     /// with explicit-address evidence (no locator URL). The Contact's current
     /// bidirectional `invite` scope is checked by the caller as an independent
     /// action gate and is never translated into Consent evidence.
@@ -449,27 +448,12 @@ impl crate::transport::TransportClient {
         &self,
         realm_id: &str,
         actor_id: &str,
-        contact_did: &str,
-        recipient_id: Option<&str>,
+        contact_account: &arkret_sdk::AccountId,
     ) -> anyhow::Result<(String, String)> {
-        let contact_did = contact_did.trim();
-        arkret_sdk::Did::new(contact_did.to_owned())
-            .map_err(|err| anyhow::anyhow!("invalid contact DID `{contact_did}`: {err}"))?;
-        let recipient_id = recipient_id
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "contact `{contact_did}` has no attested recipient service; use the invite link path instead"
-                )
-            })?;
-        let _recipient_service =
-            arkret_sdk::DidCoreId::new(recipient_id.to_owned()).map_err(|err| {
-                anyhow::anyhow!("invalid contact recipient service `{recipient_id}`: {err}")
-            })?;
         let _ = (
             realm_id,
             actor_id,
+            contact_account,
             contact_explicit_address_evidence_digest()?,
         );
         anyhow::bail!(

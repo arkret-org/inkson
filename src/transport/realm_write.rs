@@ -224,8 +224,11 @@ pub async fn transition_member_state(
     to_state: &str,
     reason: &str,
 ) -> anyhow::Result<SubmitEventResult> {
+    let member: arkret_sdk::ActorId = serde_json::from_str(member).map_err(|error| {
+        anyhow::anyhow!("membership target must be a complete ActorId: {error}")
+    })?;
     let event = build_member_state_transition_event(
-        realm_id, actor_id, member, from_state, to_state, reason,
+        realm_id, actor_id, &member, from_state, to_state, reason,
     )?;
     // The CBA basis is resolved once, at the authoring boundary, from the Realm
     // Seal frontier. Post-bootstrap transitions (ban / kick / leave / unban)
@@ -579,7 +582,7 @@ pub async fn leave_realm(
         submitter,
         realm_id,
         actor_id,
-        actor_id,
+        &arkret_sdk::ActorId::account(submitter.authority()?.clone()).to_string(),
         Some("join"),
         "leave",
         "self_leave",
@@ -600,7 +603,7 @@ pub async fn rejoin_direct_conversation(
         submitter,
         realm_id.as_str(),
         actor_id.as_str(),
-        actor_id.as_str(),
+        &arkret_sdk::ActorId::account(submitter.authority()?.clone()).to_string(),
         Some("leave"),
         "join",
         "direct_conversation_self_rejoin",

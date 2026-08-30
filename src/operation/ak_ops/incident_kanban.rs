@@ -2,7 +2,7 @@
 
 use serde_json::json;
 
-use super::{TypedOperationBuilder, did_id, realm_id_value, strand_create_payload, trim_realm_id};
+use super::{TypedOperationBuilder, realm_id_value, strand_create_payload, trim_realm_id};
 
 /// Build a `ak.strand.create` for a Kanban card Strand and include the
 /// initial Board/List position component used by board projections.

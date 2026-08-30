@@ -4,6 +4,78 @@ pub(crate) fn normalize_participant_id(value: &str) -> Option<arkret_sdk::DidCor
     arkret_sdk::DidCoreId::new(value.trim().to_owned()).ok()
 }
 
+#[cfg(test)]
+#[test]
+fn participant_membership_identity_and_self_badge_are_station_scoped() {
+    let principal = "ak:did_core:web:chat-roster-isolation.example";
+    let own = crate::mls_api_helpers::local_account_actor_id(principal).unwrap();
+    let remote = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+        own.signing_principal_id().clone(),
+        arkret_sdk::DidCoreId::new("ak:did_core:web:remote-station.example").unwrap(),
+    ));
+    let projection = serde_json::json!({"member_roster_entries": [
+        {"actor_id": own, "membership":"join"},
+        {"actor_id": remote, "membership":"join", "subject_id": principal}
+    ]});
+    let participants = space_participants(
+        Some(&projection),
+        &LocalStateStore::default(),
+        "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
+        principal,
+    );
+    assert_eq!(participants.len(), 2);
+    assert_eq!(
+        participants
+            .iter()
+            .filter(|participant| participant.is_self)
+            .count(),
+        1
+    );
+    assert!(
+        participants
+            .iter()
+            .find(|participant| participant.actor_id.as_ref() == Some(&own))
+            .unwrap()
+            .is_self
+    );
+    assert!(
+        !participants
+            .iter()
+            .find(|participant| participant.actor_id.as_ref() == Some(&remote))
+            .unwrap()
+            .is_self
+    );
+    assert_ne!(participants[0].roster_key(), participants[1].roster_key());
+}
+
+#[cfg(test)]
+#[test]
+fn owned_agent_inventory_does_not_classify_another_stations_member() {
+    let principal = "ak:did_core:web:agent-inventory-isolation.example";
+    let remote = arkret_sdk::ActorId::hosted_principal(
+        arkret_sdk::DidCoreId::new(principal).unwrap(),
+        arkret_sdk::DidCoreId::new("ak:did_core:web:remote-station.example").unwrap(),
+    );
+    let mut participants = Vec::new();
+    upsert_participant(
+        &mut participants,
+        &remote,
+        SpaceParticipantRole::Member,
+        "ak:did_core:web:controller.example",
+        None,
+        None,
+    );
+    let inventory = owned_agent_metadata(
+        &std::collections::BTreeMap::from([(principal.to_owned(), "assistant".to_owned())]),
+        "ak:did_core:web:controller.example",
+        None,
+    );
+    annotate_agent_participants_with_metadata(&mut participants, &inventory);
+    assert!(!participants[0].is_agent);
+    assert!(participants[0].agent_metadata.is_none());
+    assert_eq!(participants[0].actor_id, Some(remote));
+}
+
 pub(crate) fn clean_participant_display_name(
     value: &str,
     principal_id: Option<&str>,
@@ -35,19 +107,19 @@ pub(crate) fn mention_label_for_participant(participant: &SpaceParticipant) -> O
 
 pub(crate) fn upsert_participant(
     participants: &mut Vec<SpaceParticipant>,
-    participant_id: &str,
+    actor_id: &arkret_sdk::ActorId,
     role: SpaceParticipantRole,
     own_principal_id: &str,
     display_name: Option<(String, u8)>,
     handle_label: Option<String>,
 ) {
-    let Some(principal_id) = normalize_participant_id(participant_id) else {
-        return;
-    };
-    let is_self = same_principal_core(principal_id.as_str(), own_principal_id);
-    if let Some(existing) = participants.iter_mut().find(|candidate| {
-        same_principal_core(candidate.principal_id.as_str(), principal_id.as_str())
-    }) {
+    let principal_id = actor_id.signing_principal_id().clone();
+    let is_self = crate::mls_api_helpers::local_account_actor_id(own_principal_id)
+        .is_ok_and(|own_actor| own_actor == *actor_id);
+    if let Some(existing) = participants
+        .iter_mut()
+        .find(|candidate| candidate.actor_id.as_ref() == Some(actor_id))
+    {
         existing.is_self |= is_self;
         if let Some((display_name, rank)) = display_name
             && (existing.display_name.is_none() || rank < existing.display_name_rank)
@@ -63,6 +135,7 @@ pub(crate) fn upsert_participant(
             .map(|(name, rank)| (Some(name), rank))
             .unwrap_or((None, u8::MAX));
         participants.push(SpaceParticipant {
+            actor_id: Some(actor_id.clone()),
             principal_id,
             display_name,
             handle_label,
@@ -82,10 +155,6 @@ pub(crate) fn participant_roster_rows(
     participants: &[SpaceParticipant],
     visible_agent_ids: &std::collections::BTreeSet<String>,
 ) -> Vec<ParticipantRosterRow> {
-    let visible_principal_ids = participants
-        .iter()
-        .map(|participant| participant.principal_id.as_str())
-        .collect::<std::collections::BTreeSet<_>>();
     let mut agents_by_controller =
         std::collections::BTreeMap::<String, Vec<SpaceParticipant>>::new();
     for participant in participants.iter().filter(|participant| {
@@ -97,14 +166,18 @@ pub(crate) fn participant_roster_rows(
         let Some(metadata) = participant.agent_metadata.as_ref() else {
             continue;
         };
-        let Some(controller_id) = visible_principal_ids
+        let controllers = participants
             .iter()
-            .find(|visible| same_principal_core(visible, &metadata.controller_id))
-        else {
+            .filter(|candidate| {
+                same_principal_core(candidate.principal_id.as_str(), &metadata.controller_id)
+            })
+            .collect::<Vec<_>>();
+        // Principal-only display metadata cannot choose between two Station accounts.
+        let [controller] = controllers.as_slice() else {
             continue;
         };
         agents_by_controller
-            .entry((*controller_id).to_owned())
+            .entry(controller.roster_key())
             .or_default()
             .push(participant.clone());
     }
@@ -120,7 +193,7 @@ pub(crate) fn participant_roster_rows(
     let grouped_agent_ids = agents_by_controller
         .values()
         .flatten()
-        .map(|agent| agent.principal_id.as_str())
+        .map(|agent| agent.roster_key())
         .collect::<std::collections::BTreeSet<_>>();
 
     let mut rows = Vec::new();
@@ -132,10 +205,10 @@ pub(crate) fn participant_roster_rows(
         {
             continue;
         }
-        if grouped_agent_ids.contains(participant.principal_id.as_str()) {
+        if grouped_agent_ids.contains(&participant.roster_key()) {
             continue;
         }
-        if let Some(agents) = agents_by_controller.get(participant.principal_id.as_str())
+        if let Some(agents) = agents_by_controller.get(&participant.roster_key())
             && !agents.is_empty()
         {
             rows.push(ParticipantRosterRow::ControllerWithAgents {
@@ -165,8 +238,11 @@ pub(crate) fn direct_agent_is_conversation_peer(
     direct_peer_id: &str,
     projected_member_ids: &std::collections::BTreeSet<String>,
 ) -> bool {
-    !agent_id.trim().is_empty()
-        && (agent_id == direct_peer_id || projected_member_ids.contains(agent_id))
+    let Ok(actor) = serde_json::from_str::<arkret_sdk::ActorId>(agent_id) else {
+        return false;
+    };
+    serde_json::from_str::<arkret_sdk::ActorId>(direct_peer_id).is_ok_and(|peer| peer == actor)
+        || projected_member_ids.contains(&actor.to_string())
 }
 
 pub(crate) fn space_participants(
@@ -178,11 +254,6 @@ pub(crate) fn space_participants(
     let mut participants = Vec::new();
 
     for row in crate::views::member_display::realm_member_roster(projection) {
-        let is_self = same_principal_core(&row.actor_id, principal_id)
-            || row
-                .subject_id
-                .as_deref()
-                .is_some_and(|subject| same_principal_core(subject, principal_id));
         let display =
             crate::views::member_display::resolve_member_display(state_store, realm_id, &row);
         upsert_participant(
@@ -193,24 +264,18 @@ pub(crate) fn space_participants(
             display.display_name.map(|name| (name, 1)),
             display.primary_handle,
         );
-        if is_self
-            && let Some(participant) = participants
-                .iter_mut()
-                .find(|participant| participant.principal_id.as_str() == row.actor_id)
-        {
-            participant.is_self = true;
-        }
     }
 
     if !principal_id.trim().is_empty()
         && !participants.iter().any(|participant| participant.is_self)
+        && let Ok(own_actor) = crate::mls_api_helpers::local_account_actor_id(principal_id)
     {
         let account_handle = state_store
             .primary_handle_for_principal_id(principal_id)
             .and_then(|handle| mention_handle_label_from_value(&handle));
         upsert_participant(
             &mut participants,
-            principal_id,
+            &own_actor,
             SpaceParticipantRole::Member,
             principal_id,
             None,
@@ -222,7 +287,7 @@ pub(crate) fn space_participants(
         right
             .is_self
             .cmp(&left.is_self)
-            .then_with(|| left.principal_id.cmp(&right.principal_id))
+            .then_with(|| left.actor_id.cmp(&right.actor_id))
     });
     participants
 }

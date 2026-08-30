@@ -39,7 +39,7 @@ use serde_json::Value;
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct ActorKey {
     pub realm_id: String,
-    pub actor_id: String,
+    pub actor_id: arkret_sdk::ActorId,
 }
 
 /// Stored `ak.member.identity.update` event record. Carries the parsed
@@ -83,7 +83,12 @@ impl MemberIdentityStore {
     /// Events that fail to parse are silently skipped (we don't crash
     /// the sync loop on a malformed payload); production code SHOULD
     /// surface a structured warning via `last_error`.
-    pub fn ingest_inline(&mut self, realm_id: &str, actor_id: &str, identity_events: &[Value]) {
+    pub fn ingest_inline(
+        &mut self,
+        realm_id: &str,
+        actor_id: &arkret_sdk::ActorId,
+        identity_events: &[Value],
+    ) {
         for event in identity_events {
             let Some(event_id) = event
                 .get("event_id")
@@ -131,14 +136,17 @@ impl MemberIdentityStore {
     /// `(realm, actor)`. Applies the SDK's replacement-edge filter and
     /// returns the most recently asserted plaintext identity, or `None`
     /// when every effective event is still `decryption_pending`.
-    pub fn current_identity(&self, realm_id: &str, actor_id: &str) -> Option<MemberIdentity> {
+    pub fn current_identity(
+        &self,
+        realm_id: &str,
+        actor_id: &arkret_sdk::ActorId,
+    ) -> Option<MemberIdentity> {
         let key = ActorKey {
             realm_id: realm_id.to_owned(),
             actor_id: actor_id.to_owned(),
         };
         let stored = self.inner.get(&key)?;
         let sdk_realm_id = RealmId::new(realm_id).ok()?;
-        let sdk_actor_id = arkret_sdk::DidCoreId::new(actor_id.trim().to_owned()).ok()?;
 
         // Build the (EventId, &Payload) candidate list the SDK helper
         // expects. Drop entries whose event_id won't parse.
@@ -148,7 +156,7 @@ impl MemberIdentityStore {
                 // Filter by (realm, actor, segment) per the helper's
                 // contract.
                 if stored_event.payload.realm_id != sdk_realm_id
-                    || stored_event.payload.actor_id.signing_principal_id() != &sdk_actor_id
+                    || &stored_event.payload.actor_id != actor_id
                     || !matches!(
                         stored_event.payload.segment,
                         MemberIdentitySegment::MemberIdentity
@@ -191,6 +199,11 @@ impl MemberIdentityStore {
             if let IdentityPayloadCarrier::MemberIdentity { member_identity } =
                 &payload.identity_payload
             {
+                if member_identity.actor_id != payload.actor_id
+                    || member_identity.realm_id != payload.realm_id
+                {
+                    continue;
+                }
                 // MID-5: fail-closed proof verification. A candidate whose proof
                 // does not (a) bind `payload_digest` to the recomputed canonical
                 // digest AND (b) verify under the asserter's authoritative
@@ -219,7 +232,7 @@ impl MemberIdentityStore {
     /// still `decryption_pending`. Drives the "muted placeholder" UI
     /// state per MID-6.
     #[cfg(test)]
-    pub fn is_decryption_pending(&self, realm_id: &str, actor_id: &str) -> bool {
+    pub fn is_decryption_pending(&self, realm_id: &str, actor_id: &arkret_sdk::ActorId) -> bool {
         let key = ActorKey {
             realm_id: realm_id.to_owned(),
             actor_id: actor_id.to_owned(),
@@ -415,18 +428,22 @@ mod tests {
             "kind": "ak.member.identity.update",
             "payload": payload,
         });
-        store.ingest_inline(TEST_REALM, actor_id.as_str(), &[event]);
+        store.ingest_inline(
+            TEST_REALM,
+            &crate::mls_api_helpers::local_account_actor_id(actor_id.as_str()).unwrap(),
+            &[event],
+        );
         // MID-5: a directory-resolved, correctly-signed proof verifies and the
         // effective identity is surfaced.
         let identity = store
-            .current_identity(TEST_REALM, actor_id.as_str())
+            .current_identity(
+                TEST_REALM,
+                &crate::mls_api_helpers::local_account_actor_id(actor_id.as_str()).unwrap(),
+            )
             .expect("resolved");
         assert_eq!(identity.subject_actor_id.signing_principal_id(), &actor_id);
         assert_eq!(identity.display_profile.display_name, "Alice v1");
-        assert!(!store.is_decryption_pending(
-            TEST_REALM,
-            identity.actor_id.signing_principal_id().as_str()
-        ));
+        assert!(!store.is_decryption_pending(TEST_REALM, &identity.actor_id));
         crate::identity::device_directory::invalidate_actor(
             identity.actor_id.signing_principal_id().as_str(),
         );
@@ -449,12 +466,53 @@ mod tests {
             "kind": "ak.member.identity.update",
             "payload": signed_payload(actor, TEST_DEVICE, "Impersonator", &attacker),
         });
-        store.ingest_inline(TEST_REALM, actor, &[event]);
+        store.ingest_inline(
+            TEST_REALM,
+            &crate::mls_api_helpers::local_account_actor_id(actor).unwrap(),
+            &[event],
+        );
         assert!(
-            store.current_identity(TEST_REALM, actor).is_none(),
+            store
+                .current_identity(
+                    TEST_REALM,
+                    &crate::mls_api_helpers::local_account_actor_id(actor).unwrap()
+                )
+                .is_none(),
             "forged identity must not be surfaced"
         );
         crate::identity::device_directory::invalidate_actor(actor);
+    }
+
+    #[test]
+    fn signed_identity_does_not_cross_station_cache_keys() {
+        let principal = "did:web:identity-station-isolation.example";
+        let first = crate::mls_api_helpers::local_account_actor_id(principal).unwrap();
+        let second = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+            first.signing_principal_id().clone(),
+            arkret_sdk::DidCoreId::new("ak:did_core:web:other-station.example").unwrap(),
+        ));
+        let signer = SigningKey::from_bytes(&[91u8; 32]);
+        seed_directory(first.signing_principal_id().as_str(), TEST_DEVICE, &signer);
+        let event = json!({
+            "event_id": "ak:event:ATOz4l-vKJUCGZDmS_knGS9TjZ64pkOzx-HNGAgY5RGJ",
+            "kind": "ak.member.identity.update",
+            "payload": signed_payload(principal, TEST_DEVICE, "Station A", &signer),
+        });
+        let mut store = MemberIdentityStore::new();
+        store.ingest_inline(TEST_REALM, &first, std::slice::from_ref(&event));
+        store.ingest_inline(TEST_REALM, &second, std::slice::from_ref(&event));
+        assert!(store.current_identity(TEST_REALM, &first).is_some());
+        assert!(store.current_identity(TEST_REALM, &second).is_none());
+        let mut durable = crate::state::LocalStateStore::default();
+        durable.ingest_member_identity_events(TEST_REALM, &first, std::slice::from_ref(&event));
+        durable.ingest_member_identity_events(TEST_REALM, &second, &[event]);
+        assert_eq!(durable.load().member_identity_events[TEST_REALM].len(), 2);
+        assert!(
+            durable
+                .resolved_member_identity(TEST_REALM, &second)
+                .is_none()
+        );
+        crate::identity::device_directory::invalidate_actor(first.signing_principal_id().as_str());
     }
 
     #[test]
@@ -470,8 +528,19 @@ mod tests {
             "kind": "ak.member.identity.update",
             "payload": signed_payload(actor, TEST_DEVICE, "Unresolved", &signer),
         });
-        store.ingest_inline(TEST_REALM, actor, &[event]);
-        assert!(store.current_identity(TEST_REALM, actor).is_none());
+        store.ingest_inline(
+            TEST_REALM,
+            &crate::mls_api_helpers::local_account_actor_id(actor).unwrap(),
+            &[event],
+        );
+        assert!(
+            store
+                .current_identity(
+                    TEST_REALM,
+                    &crate::mls_api_helpers::local_account_actor_id(actor).unwrap()
+                )
+                .is_none()
+        );
     }
 
     #[test]
@@ -499,12 +568,12 @@ mod tests {
                 }
             }
         });
-        store.ingest_inline(realm, actor.as_str(), &[event]);
+        store.ingest_inline(realm, &actor_id, &[event]);
         // MID-4: encrypted carrier without a usable MLS group state →
         // decryption_pending. The UI fallback path renders a muted
         // placeholder rather than the raw DID.
-        assert!(store.current_identity(realm, actor.as_str()).is_none());
-        assert!(store.is_decryption_pending(realm, actor.as_str()));
+        assert!(store.current_identity(realm, &actor_id).is_none());
+        assert!(store.is_decryption_pending(realm, &actor_id));
     }
 
     #[test]
@@ -517,9 +586,23 @@ mod tests {
             "kind": "ak.strand.move",
             "payload": signed_payload(actor, TEST_DEVICE, "Alice", &signer),
         });
-        store.ingest_inline(TEST_REALM, actor, &[event]);
-        assert!(store.current_identity(TEST_REALM, actor).is_none());
-        assert!(!store.is_decryption_pending(TEST_REALM, actor));
+        store.ingest_inline(
+            TEST_REALM,
+            &crate::mls_api_helpers::local_account_actor_id(actor).unwrap(),
+            &[event],
+        );
+        assert!(
+            store
+                .current_identity(
+                    TEST_REALM,
+                    &crate::mls_api_helpers::local_account_actor_id(actor).unwrap()
+                )
+                .is_none()
+        );
+        assert!(!store.is_decryption_pending(
+            TEST_REALM,
+            &crate::mls_api_helpers::local_account_actor_id(actor).unwrap()
+        ));
     }
 
     #[test]

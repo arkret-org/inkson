@@ -326,11 +326,17 @@ fn lifecycle_projection_builds_persisted_board_columns_and_cards() {
         board_space_id: Some(board_id.to_owned()),
         list_space_id: Some(list_id.to_owned()),
         rank: Some("U".to_owned()),
-        assigned_actor_ids: vec!["ak:did_core:web:alice.example".to_owned()],
+        assigned_actor_ids: vec![
+            crate::mls_api_helpers::local_account_actor_id("ak:did_core:web:alice.example")
+                .unwrap(),
+        ],
         assigned_to_relations: vec![
             crate::state::projection_views::AssignedToRelationProjectionView {
                 relation_id: "ak:relation:ASc_XP_IqOBAY6GgbPMLFCeZmi0uBNaWvHazHgmn-B8K".to_owned(),
-                actor_id: "ak:did_core:web:alice.example".to_owned(),
+                actor_id: crate::mls_api_helpers::local_account_actor_id(
+                    "ak:did_core:web:alice.example",
+                )
+                .unwrap(),
             },
         ],
         schema_refs: Vec::new(),
@@ -366,7 +372,10 @@ fn lifecycle_projection_builds_persisted_board_columns_and_cards() {
         card.assigned_to_relations,
         vec![CardAssignedToRelation {
             relation_id: "ak:relation:ASc_XP_IqOBAY6GgbPMLFCeZmi0uBNaWvHazHgmn-B8K".to_owned(),
-            actor_id: "ak:did_core:web:alice.example".to_owned(),
+            actor_id: crate::mls_api_helpers::local_account_actor_id(
+                "ak:did_core:web:alice.example"
+            )
+            .unwrap(),
         }]
     );
     assert_eq!(card.due, "2026-05-22");

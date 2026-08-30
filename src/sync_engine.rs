@@ -2726,13 +2726,7 @@ fn ingest_member_identity_events_from_projection(
         })
         .collect();
 
-    for source in [
-        body.get("members"),
-        body.get("summary").and_then(|s| s.get("members")),
-    ]
-    .into_iter()
-    .flatten()
-    {
+    for source in [body.get("member_roster_entries")].into_iter().flatten() {
         let Some(items) = source.as_array() else {
             continue;
         };
@@ -2740,10 +2734,9 @@ fn ingest_member_identity_events_from_projection(
             let Some(map) = entry.as_object() else {
                 continue;
             };
-            let Some(actor_id) = map
-                .get("actor_id")
-                .and_then(crate::state::projection::message_ops::actor_principal_from_value)
-            else {
+            let Some(actor_id) = map.get("actor_id").and_then(|value| {
+                serde_json::from_value::<arkret_sdk::ActorId>(value.clone()).ok()
+            }) else {
                 continue;
             };
             // Inline events have priority — they're complete envelopes.

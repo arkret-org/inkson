@@ -629,7 +629,11 @@ fn build_member_state_transition_event_matches_event_schema() {
     let envelope = event_builders::build_member_state_transition_event(
         TEST_REALM_ID,
         TEST_ACTOR_ID,
-        TEST_INVITEE_DID,
+        &arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+            arkret_sdk::project_did_to_core_id(&arkret_sdk::Did::new(TEST_INVITEE_DID).unwrap())
+                .unwrap(),
+            arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap(),
+        )),
         Some("invite"),
         "join",
         "invite_accept",
@@ -828,10 +832,7 @@ fn sas_key_verification_device_message_matches_device_message_schema() {
     )
     .expect("typed key-verification target")
     .single_recipient(
-        arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
-            arkret_sdk::DidCoreId::new("ak:did_core:web:bob.example").expect("fixture recipient"),
-            arkret_sdk::DidCoreId::new("ak:did_core:web:server.example").unwrap(),
-        )),
+        arkret_sdk::DidCoreId::new("ak:did_core:web:bob.example").expect("fixture recipient"),
         arkret_sdk::DeviceId::new(target_device).expect("fixture target device"),
     )
     .expect("build typed device-message request");

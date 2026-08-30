@@ -787,7 +787,7 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
                                     }
                                 }
                                 {
-                                    let sender_blocked = blocked_actor_id_set.contains(&msg.sender)
+                                    let sender_blocked = msg.actor_id.as_ref().is_some_and(|actor| blocked_actor_id_set.contains(&actor.to_string()))
                                         && !blocked_show_anyway.read().contains(&msg.id);
                                     let content_kind = if msg.redacted {
                                         "msg-content redacted"
@@ -821,7 +821,7 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
                                     }
                                 }
                                 if !msg.redacted
-                                    && blocked_actor_id_set.contains(&msg.sender)
+                                    && msg.actor_id.as_ref().is_some_and(|actor| blocked_actor_id_set.contains(&actor.to_string()))
                                     && !blocked_show_anyway.read().contains(&msg.id)
                                 {
                                     Button {

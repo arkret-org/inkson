@@ -289,14 +289,14 @@ pub async fn respond_contact(
     requester: &str,
     action: &str,
 ) -> anyhow::Result<()> {
-    let requester_core_id = crate::mls_api_helpers::principal_core_id(requester)?;
+    let requester_actor: arkret_sdk::ActorId = serde_json::from_str(requester)?;
     let contacts = http.contacts_list().await?;
     let row = contacts
         .contacts
         .into_iter()
         .find(|row| {
             row.state == arkret_sdk::ContactState::PendingIncoming
-                && crate::models::contact_peer_id(row) == requester_core_id
+                && row.peer.contact_actor_id() == requester_actor
         })
         .ok_or_else(|| {
             anyhow::anyhow!(
@@ -315,14 +315,14 @@ pub async fn respond_contact_with_request_id(
     request_event_ref: &str,
     action: &str,
 ) -> anyhow::Result<()> {
-    let requester_core_id = crate::mls_api_helpers::principal_core_id(requester)?;
+    let requester_actor: arkret_sdk::ActorId = serde_json::from_str(requester)?;
     let contacts = http.contacts_list().await?;
     let row = contacts
         .contacts
         .into_iter()
         .find(|row| {
             row.state == arkret_sdk::ContactState::PendingIncoming
-                && crate::models::contact_peer_id(row) == requester_core_id
+                && row.peer.contact_actor_id() == requester_actor
                 && row.request_event_ref.as_ref().is_some_and(|event_ref| {
                     event_ref.as_str() == request_event_ref.trim()
                 })
@@ -642,6 +642,7 @@ pub async fn direct_conversation_resolve(
 ) -> anyhow::Result<arkret_sdk::direct_conversation_ops::DirectConversationResolveOutcome> {
     let http = api.http();
     let peer_descriptor = direct_conversation_peer_descriptor(peer, peer_controller)?;
+    let peer_actor = peer_descriptor.contact_actor_id();
     let body = arkret_sdk::direct_conversation_ops::DirectConversationResolveRequestBody {
         peer: peer_descriptor,
     };
@@ -653,7 +654,13 @@ pub async fn direct_conversation_resolve(
         preserve_resolved_direct_conversation(
             peer,
             &outcome,
-            ensure_owned_agent_direct_reply(http, state_store, peer, &outcome).await,
+            ensure_owned_agent_direct_reply(
+                http,
+                state_store,
+                peer_actor.signing_principal_id().as_str(),
+                &outcome,
+            )
+            .await,
         );
     }
     if direct_conversation_coordinates(&outcome).is_some() {
@@ -691,8 +698,8 @@ pub async fn direct_conversation_found(
 pub async fn create_direct_conversation_from_resolve(
     submitter: &crate::event_submit::EventSubmitter,
     resolve: &arkret_sdk::DirectConversationResolveOutcome,
-    founder_did: &arkret_sdk::Did,
-    peer_did: &arkret_sdk::Did,
+    founder_account: &arkret_sdk::AccountId,
+    peer_account: &arkret_sdk::AccountId,
 ) -> anyhow::Result<arkret_sdk::DirectConversationFoundingAcceptanceOutcome> {
     let arkret_sdk::DirectConversationResolveOutcome::CreationRequired {
         next_founding_input,
@@ -700,11 +707,15 @@ pub async fn create_direct_conversation_from_resolve(
     else {
         anyhow::bail!("Direct Conversation resolver did not grant founding authority");
     };
+    anyhow::ensure!(
+        submitter.authority()? == founder_account,
+        "Direct Conversation founder differs from the authenticated AccountId"
+    );
     let trust_domain = submitter.events_describe().await?.trust_domain;
     let notary = submitter.current_service_notary().await?;
     let steps = crate::event_builders::build_direct_conversation_founding_steps(
-        founder_did,
-        peer_did,
+        founder_account,
+        peer_account,
         notary,
         trust_domain,
         next_founding_input,
@@ -731,19 +742,16 @@ fn direct_conversation_peer_descriptor(
     peer: &str,
     peer_controller: Option<&str>,
 ) -> anyhow::Result<arkret_sdk::contact_operations::ContactPeer> {
+    let actor_id: arkret_sdk::ActorId = serde_json::from_str(peer)?;
     Ok(match peer_controller {
         Some(controller_id) => arkret_sdk::contact_operations::ContactPeer::Agent {
-            actor_id: arkret_sdk::ActorId::service(did_for_request_field("peer.agent_id", peer)?),
-            controller_account_id: arkret_sdk::AccountId::new(
-                did_for_request_field("peer.controller_id", controller_id)?,
-                crate::operation::authoring_station_id()?,
-            ),
+            actor_id,
+            controller_account_id: serde_json::from_str(controller_id)?,
         },
         None => arkret_sdk::contact_operations::ContactPeer::Human {
-            account_id: arkret_sdk::AccountId::new(
-                did_for_request_field("peer", peer)?,
-                crate::operation::authoring_station_id()?,
-            ),
+            account_id: actor_id.as_account_id().cloned().ok_or_else(|| {
+                anyhow::anyhow!("human Contact peer requires a complete AccountId actor")
+            })?,
         },
     })
 }
@@ -1076,13 +1084,14 @@ pub async fn tombstone_contact(
         ContactPreparedOutcome, ContactTombstonePrepareRequestBody, ContactTombstoneRequestBody,
     };
 
+    let peer_actor: arkret_sdk::ActorId = serde_json::from_str(peer)?;
     let contacts = http.contacts_list().await?;
     let row = contacts
         .contacts
         .into_iter()
         .find(|row| {
             row.state == arkret_sdk::ContactState::Accepted
-                && crate::models::contact_peer_id(row).as_str() == peer.trim()
+                && row.peer.contact_actor_id() == peer_actor
         })
         .ok_or_else(|| {
             anyhow::anyhow!("Contact tombstone for `{peer}` requires a fresh accepted list row")
@@ -1818,25 +1827,34 @@ mod tests {
 
     #[test]
     fn owned_agent_direct_peer_keeps_its_controller_binding() {
-        let peer = direct_conversation_peer_descriptor(
-            "did:web:agents.example:assistant",
-            Some("did:web:alice.example"),
-        )
-        .expect("owned Agent peer");
+        let actor = json!({"kind":"hosted_principal", "principal_id":"ak:did_core:web:agents.example:assistant", "station_id":"ak:did_core:web:remote-station.example"});
+        let controller = json!({"principal_id":"ak:did_core:web:alice.example", "station_id":"ak:did_core:web:remote-station.example"});
+        let peer =
+            direct_conversation_peer_descriptor(&actor.to_string(), Some(&controller.to_string()))
+                .expect("owned Agent peer");
 
         assert_eq!(
             serde_json::to_value(peer).expect("serialize peer"),
             json!({
                 "kind": "agent",
-                "actor_id": {
-                    "kind": "service",
-                    "service_id": "ak:did_core:web:agents.example:assistant"
-                },
-                "controller_account_id": {
-                    "principal_id": "ak:did_core:web:alice.example",
-                    "station_id": "ak:did_core:web:principal.example"
-                }
+                "actor_id": actor,
+                "controller_account_id": controller
             })
+        );
+    }
+
+    #[test]
+    fn direct_peer_requires_complete_remote_account() {
+        assert!(direct_conversation_peer_descriptor("did:web:alice.example", None).is_err());
+        let account = arkret_sdk::AccountId::new(
+            arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example").unwrap(),
+            arkret_sdk::DidCoreId::new("ak:did_core:web:remote-station.example").unwrap(),
+        );
+        let actor = arkret_sdk::ActorId::account(account.clone());
+        let peer = direct_conversation_peer_descriptor(&actor.to_string(), None).unwrap();
+        assert_eq!(
+            serde_json::to_value(peer).unwrap(),
+            json!({"kind":"human", "account_id":account})
         );
     }
 }

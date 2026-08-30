@@ -107,8 +107,7 @@ pub(crate) fn local_redaction_tombstone_for_message(
     redacted_at: chrono::DateTime<chrono::Utc>,
     redaction_ref: Option<&str>,
 ) -> Value {
-    let actor_id = principal_core_key(&message.sender)
-        .and_then(|principal| crate::mls_api_helpers::local_account_actor_id(&principal).ok());
+    let actor_id = message.actor_id.clone();
     let mut event = json!({
         "kind": event_kind_str::MESSAGE_CREATE,
         "event_id": message.id.clone(),
@@ -1597,6 +1596,11 @@ pub(crate) fn chat_message_from_event_with_sidecar(
             .to_owned(),
         id: event_id,
         protocol_message_id,
+        actor_id: candidates.iter().find_map(|candidate| {
+            candidate
+                .get("actor_id")
+                .and_then(|value| serde_json::from_value::<arkret_sdk::ActorId>(value.clone()).ok())
+        }),
         sender,
         // AKP-0008 §4.10 — act-on-behalf carries a signed envelope-level
         // `executed_by`. When present and distinct from the actor, the

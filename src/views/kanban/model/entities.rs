@@ -101,42 +101,32 @@ impl KanbanCard {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct CardAssignedToRelation {
     pub(crate) relation_id: String,
-    pub(crate) actor_id: String,
+    pub(crate) actor_id: arkret_sdk::ActorId,
 }
 
-pub(crate) fn card_assigned_actor_ids(card: &KanbanCard) -> Vec<String> {
+pub(crate) fn card_assigned_actor_ids(card: &KanbanCard) -> Vec<arkret_sdk::ActorId> {
     let mut actor_ids = BTreeSet::new();
     for relation in &card.assigned_to_relations {
-        let actor_id = relation.actor_id.trim();
-        if !actor_id.is_empty() {
-            actor_ids.insert(actor_id.to_owned());
-        }
-    }
-    if actor_ids.is_empty() {
-        for actor_id in card
-            .assignee
-            .split(',')
-            .map(str::trim)
-            .filter(|value| value.starts_with("did:"))
-            .filter(|value| !value.is_empty())
-        {
-            actor_ids.insert(actor_id.to_owned());
-        }
+        actor_ids.insert(relation.actor_id.clone());
     }
     actor_ids.into_iter().collect()
 }
 
-pub(crate) fn assignee_value_from_actor_ids(actor_ids: &BTreeSet<String>) -> String {
+pub(crate) fn assignee_value_from_actor_ids(actor_ids: &BTreeSet<arkret_sdk::ActorId>) -> String {
     if actor_ids.is_empty() {
         "—".to_owned()
     } else {
-        actor_ids.iter().cloned().collect::<Vec<_>>().join(", ")
+        actor_ids
+            .iter()
+            .map(|actor| actor.signing_principal_id().as_str())
+            .collect::<Vec<_>>()
+            .join(", ")
     }
 }
 
 pub(crate) fn apply_card_assignment_projection(
     card: &mut KanbanCard,
-    actor_ids: &BTreeSet<String>,
+    actor_ids: &BTreeSet<arkret_sdk::ActorId>,
     relations: Vec<CardAssignedToRelation>,
     state: CardState,
 ) {

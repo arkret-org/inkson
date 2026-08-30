@@ -53,7 +53,7 @@ pub(super) struct KanbanController {
     pub card_detail_edit_status: Signal<String>,
     pub assignee_picker_open: Signal<bool>,
     pub assignee_filter: Signal<String>,
-    pub assignee_selected_actor_ids: Signal<BTreeSet<String>>,
+    pub assignee_selected_actor_ids: Signal<BTreeSet<arkret_sdk::ActorId>>,
     pub assignee_edit_status: Signal<String>,
     pub due_picker_open: Signal<bool>,
     pub due_edit_value: Signal<String>,

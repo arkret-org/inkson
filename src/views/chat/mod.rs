@@ -1975,7 +1975,7 @@ pub fn ChatPanel(
     };
     let projected_member_ids = participants
         .iter()
-        .map(|participant| participant.principal_id.to_string())
+        .filter_map(|participant| participant.actor_id.as_ref().map(ToString::to_string))
         .collect::<std::collections::BTreeSet<_>>();
     let own_controller_handle = participants
         .iter()
@@ -2065,20 +2065,30 @@ pub fn ChatPanel(
     }
     if direct_mode {
         public_agent_ids.extend(
-            known_agent_ids
+            participants_for_messages
                 .iter()
-                .filter(|agent_id| {
-                    direct_agent_is_conversation_peer(
-                        agent_id,
-                        &direct_peer_id,
-                        &projected_member_ids,
-                    )
+                .filter(|participant| {
+                    participant.is_agent
+                        && direct_agent_is_conversation_peer(
+                            &participant.roster_key(),
+                            &direct_peer_id,
+                            &projected_member_ids,
+                        )
                 })
-                .cloned(),
+                .map(|participant| participant.principal_id.to_string()),
         );
     }
     participants.retain(|participant| {
-        !participant.is_agent || public_agent_ids.contains(participant.principal_id.as_str())
+        !participant.is_agent
+            || (if direct_mode {
+                direct_agent_is_conversation_peer(
+                    &participant.roster_key(),
+                    &direct_peer_id,
+                    &projected_member_ids,
+                )
+            } else {
+                public_agent_ids.contains(participant.principal_id.as_str())
+            })
     });
     let sidecar_owned_agents = sidecar_owned_agent_participants(&participants, &principal_id);
     // Actor mentions in a Sidecar are intentionally narrower than the Realm
@@ -3036,7 +3046,7 @@ pub fn ChatPanel(
                             "data-testid": "presence-list",
                             for participant in &presence_participants {
                                 {
-                                    let principal_id_attr = participant.principal_id.to_string();
+                                    let principal_id_attr = participant.roster_key();
                                     let live_labels = presence_labels();
                                     let display = display_label_for_actor(
                                         &state_store.read(),

@@ -103,7 +103,7 @@ pub(crate) fn projected_members_for_realm(store: &LocalStateStore, realm_id: &st
     };
     crate::views::member_display::realm_member_roster(Some(projection))
         .into_iter()
-        .map(|row| row.actor_id)
+        .map(|row| row.actor_id.to_string())
         .collect()
 }
 
@@ -191,8 +191,13 @@ mod tests {
         assert_eq!(
             projected_members_for_realm(&store, realm_id),
             vec![
-                "ak:did_core:web:agent.example".to_owned(),
-                "ak:did_core:web:alice.example".to_owned()
+                crate::mls_api_helpers::local_account_actor_id("ak:did_core:web:alice.example")
+                    .unwrap()
+                    .to_string(),
+                arkret_sdk::ActorId::service(
+                    arkret_sdk::DidCoreId::new("ak:did_core:web:agent.example").unwrap()
+                )
+                .to_string()
             ]
         );
     }

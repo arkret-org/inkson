@@ -265,7 +265,11 @@ fn notification_from_stored(
     if eval_ctx.event_kind.starts_with("ak.applet.") {
         blocklist_surfaces.push(AccountBlocklistSurface::Applets);
     }
-    if eval_ctx.sender.as_deref().is_some_and(|sender| {
+    let full_sender = match &value {
+        StoredNotification::Event { notification } => Some(notification.actor_id.to_string()),
+        _ => None,
+    };
+    if full_sender.as_deref().is_some_and(|sender| {
         crate::account_data::suppresses_notifications(
             &local_state.client_blocklist,
             sender,

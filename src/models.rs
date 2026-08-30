@@ -582,7 +582,15 @@ mod tests {
         let rows = crate::views::member_display::realm_member_roster(Some(projection));
         assert_eq!(
             rows.into_iter().map(|row| row.actor_id).collect::<Vec<_>>(),
-            vec![bob.to_owned(), alice.to_owned()]
+            vec![bob, alice]
+                .into_iter()
+                .map(
+                    |principal| arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+                        arkret_sdk::DidCoreId::new(principal).unwrap(),
+                        arkret_sdk::DidCoreId::new("ak:did_core:web:station.example").unwrap(),
+                    ))
+                )
+                .collect::<Vec<_>>()
         );
     }
 

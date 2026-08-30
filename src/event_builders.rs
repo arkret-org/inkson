@@ -367,7 +367,10 @@ fn build_realm_bootstrap_membership_intent(
         Some(&facets.station_id),
         realm_id,
         actor_id,
-        actor_id,
+        &arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+            crate::mls_api_helpers::principal_core_id(&facets.actor_id)?,
+            facets.station_id.clone(),
+        )),
         None,
         "join",
         "creator_membership",
@@ -675,20 +678,15 @@ pub fn build_managed_agent_pcr_bootstrap_steps(
 /// what enforces that: there is no point at which a member exists carrying an id
 /// that the next authoring pass would have to rewrite.
 pub fn build_direct_conversation_founding_steps(
-    founder_did: &arkret_sdk::Did,
-    peer_did: &arkret_sdk::Did,
+    founder_actor: &arkret_sdk::AccountId,
+    peer_actor: &arkret_sdk::AccountId,
     notary: arkret_sdk::NotaryValue,
     trust_domain: arkret_sdk::TrustDomainId,
     _input: &arkret_sdk::DirectConversationFoundingInput,
 ) -> anyhow::Result<Vec<crate::event_submit::EventUnitStep>> {
     let created_at = event_timestamp();
-    let station_id = crate::operation::authoring_station_id()?;
-    let founder_actor = arkret_sdk::AccountId::new(
-        arkret_sdk::project_did_to_core_id(founder_did)?,
-        station_id.clone(),
-    );
-    let peer_actor =
-        arkret_sdk::AccountId::new(arkret_sdk::project_did_to_core_id(peer_did)?, station_id);
+    let founder_actor = founder_actor.clone();
+    let peer_actor = peer_actor.clone();
     let create_payload = arkret_sdk::direct_conversation_realm_create_payload(
         arkret_sdk::GenesisSalt::generate()?,
         trust_domain,
@@ -698,7 +696,7 @@ pub fn build_direct_conversation_founding_steps(
     let create_cell = arkret_wire::null_subject_cell(arkret_wire::CellFamilyId::REALM_CREATE_V1);
     let create_precondition = head_eq_precondition(&create_cell, Value::Null)?;
 
-    let founder = founder_did.clone();
+    let founder = founder_actor.clone();
     let create_step: crate::event_submit::EventUnitStep = {
         let founder = founder.clone();
         Box::new(move |_authored| {
@@ -706,9 +704,10 @@ pub fn build_direct_conversation_founding_steps(
             // Event. The value passed here only names the scope constructor and
             // is discarded for `ak.realm.create`.
             Ok(vec![
-                TypedOperationBuilder::new::<arkret_sdk::event_spec::RealmCreate>(
+                TypedOperationBuilder::new_for_station::<arkret_sdk::event_spec::RealmCreate>(
                     DIRECT_CONVERSATION_GENESIS_SCOPE_PLACEHOLDER,
-                    founder.as_str(),
+                    founder.principal_id.as_str(),
+                    founder.station_id.clone(),
                     create_payload,
                 )
                 .preconditions(vec![create_precondition])
@@ -736,9 +735,10 @@ pub fn build_direct_conversation_founding_steps(
             let member_cell_subject = arkret_sdk::composite_subject(&[peer_actor_key.as_str()])?;
             let member_cell = format!("ak:cell:ak.component.member.state.v1:{member_cell_subject}");
             Ok(vec![
-                TypedOperationBuilder::new::<arkret_sdk::event_spec::MemberState>(
+                TypedOperationBuilder::new_for_station::<arkret_sdk::event_spec::MemberState>(
                     create.realm_id.to_string(),
-                    founder.as_str(),
+                    founder.principal_id.as_str(),
+                    founder.station_id.clone(),
                     membership,
                 )
                 .target_ref(member_cell_subject)
@@ -761,9 +761,10 @@ pub fn build_direct_conversation_founding_steps(
                 created_at,
             );
             Ok(vec![
-                TypedOperationBuilder::new::<arkret_sdk::event_spec::StrandCreate>(
+                TypedOperationBuilder::new_for_station::<arkret_sdk::event_spec::StrandCreate>(
                     create.realm_id.to_string(),
-                    founder.as_str(),
+                    founder.principal_id.as_str(),
+                    founder.station_id.clone(),
                     strand_payload,
                 )
                 .created_at(created_at)
@@ -789,9 +790,10 @@ pub fn build_direct_conversation_founding_steps(
             let founder_member_cell =
                 format!("ak:cell:ak.component.member.state.v1:{founder_member_cell_subject}");
             Ok(vec![
-                TypedOperationBuilder::new::<arkret_sdk::event_spec::MemberState>(
+                TypedOperationBuilder::new_for_station::<arkret_sdk::event_spec::MemberState>(
                     create.realm_id.to_string(),
-                    founder.as_str(),
+                    founder.principal_id.as_str(),
+                    founder.station_id.clone(),
                     founder_membership,
                 )
                 .target_ref(founder_member_cell_subject)
@@ -1463,7 +1465,7 @@ fn build_plaintext_visible_services_event_for_station(
 pub fn build_member_state_transition_event(
     realm_id: &str,
     actor_id: &str,
-    member_actor_id: &str,
+    member_actor_id: &arkret_sdk::ActorId,
     from_state: Option<&str>,
     to_state: &str,
     reason: &str,
@@ -1483,7 +1485,7 @@ fn build_member_state_transition_event_for_station(
     station_id: Option<&arkret_sdk::DidCoreId>,
     realm_id: &str,
     actor_id: &str,
-    member_actor_id: &str,
+    member_actor_id: &arkret_sdk::ActorId,
     from_state: Option<&str>,
     to_state: &str,
     reason: &str,
@@ -1499,15 +1501,10 @@ fn build_member_state_transition_event_for_station(
         "ban" => MembershipPayloadState::Ban,
         other => return Err(anyhow::anyhow!("unknown membership state {other}")),
     };
-    let member_principal_id = crate::mls_api_helpers::principal_core_id(member_actor_id)
-        .map_err(|err| anyhow::anyhow!("member actor_id not a valid core_id: {err}"))?;
     let station_id = station_id
         .cloned()
         .unwrap_or(crate::operation::authoring_station_id()?);
-    let member_id = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
-        member_principal_id,
-        station_id.clone(),
-    ));
+    let member_id = member_actor_id.clone();
     // `member.state` is keyed by the complete ActorId. ActorId is structured
     // canonical JSON, so the registry's canonical_json composite rule hashes
     // that JSON string into the single safe CellRef subject segment.

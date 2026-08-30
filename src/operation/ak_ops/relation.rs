@@ -17,6 +17,16 @@ pub(crate) fn relation_create_payload(
     from_ref: &str,
     to_ref: &str,
 ) -> anyhow::Result<arkret_sdk::RelationCreatePayload> {
+    relation_create_payload_with_endpoints(realm_id, actor, kind, from_ref.into(), to_ref.into())
+}
+
+fn relation_create_payload_with_endpoints(
+    realm_id: &str,
+    actor: &str,
+    kind: &str,
+    from_ref: arkret_sdk::RelationEndpoint,
+    to_ref: arkret_sdk::RelationEndpoint,
+) -> anyhow::Result<arkret_sdk::RelationCreatePayload> {
     Ok(arkret_sdk::RelationCreatePayload::new(
         arkret_sdk::Relation {
             schema: arkret_sdk::SchemaId::RELATION_V1.to_owned(),
@@ -26,8 +36,8 @@ pub(crate) fn relation_create_payload(
             scope_circle_id: None,
             effective_scope: None,
             relation_kind: arkret_sdk::RelationKind::from_wire(kind),
-            from_ref: from_ref.to_owned(),
-            to_ref: to_ref.to_owned(),
+            from_ref,
+            to_ref,
             rank: None,
             fields: Default::default(),
             state: None,
@@ -38,19 +48,6 @@ pub(crate) fn relation_create_payload(
             updated_at: None,
         },
     ))
-}
-
-/// `created_by` carries a `did_core_id` (`zh/models/common-fields.md` §4.1).
-/// Callers hand this module whichever spelling they hold, so a `did:` URI
-/// is projected through the registered adapter rather than rejected.
-fn actor_core_id(actor: &str) -> anyhow::Result<arkret_sdk::DidCoreId> {
-    if let Ok(core) = arkret_sdk::DidCoreId::new(actor.to_owned()) {
-        return Ok(core);
-    }
-    let did = arkret_sdk::Did::new(actor.to_owned())
-        .map_err(|err| anyhow::anyhow!("invalid actor id {actor:?}: {err:?}"))?;
-    arkret_sdk::project_did_to_core_id(&did)
-        .map_err(|err| anyhow::anyhow!("invalid actor id {actor:?}: {err:?}"))
 }
 
 /// Build a schema-legal `ak.relation.create` event.
@@ -69,6 +66,29 @@ pub fn relation_create(
         realm_id,
         actor,
         relation_create_payload(realm_id, actor, kind, from_ref, to_ref)?,
+    ))
+}
+
+/// Build a `ak.relation.tombstone` event targeting an existing Relation.
+pub fn relation_create_for_actor(
+    realm_id: &str,
+    actor: &str,
+    kind: &str,
+    from_ref: &str,
+    target_actor: &arkret_sdk::ActorId,
+) -> anyhow::Result<TypedOperationBuilder> {
+    Ok(TypedOperationBuilder::new::<
+        arkret_sdk::event_spec::RelationCreate,
+    >(
+        realm_id,
+        actor,
+        relation_create_payload_with_endpoints(
+            realm_id,
+            actor,
+            kind,
+            from_ref.into(),
+            target_actor.clone().into(),
+        )?,
     ))
 }
 

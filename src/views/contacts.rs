@@ -208,10 +208,11 @@ fn ContactRow(
     let mut busy = use_signal(|| false);
     let mut confirm_block = use_signal(|| false);
 
-    let peer = crate::models::contact_peer_id(&contact).to_string();
+    let peer_principal = crate::models::contact_peer_id(&contact).to_string();
+    let peer = contact.peer.contact_actor_id().to_string();
     let state = contact.state;
-    let peer_label = actor_display_label(&state_store.read(), &peer);
-    let existing_remark = state_store.read().contact_remark(&peer);
+    let peer_label = actor_display_label(&state_store.read(), &peer_principal);
+    let existing_remark = state_store.read().contact_remark(&peer_principal);
     let mut petname_input = use_signal(|| {
         existing_remark
             .as_ref()
@@ -261,7 +262,7 @@ fn ContactRow(
                 // peer DID's state in the session-scoped resolution cache. UX
                 // hint only; it does not replace authority validation (see the
                 // TRUST-CACHE comment at the top of the file).
-                TrustCacheBadge { peer: peer.clone() }
+                TrustCacheBadge { peer: peer_principal.clone() }
             }
             if !contact.bidirectional_scopes.is_empty() {
                 div { class: "muted",
@@ -289,7 +290,7 @@ fn ContactRow(
                         variant: ButtonVariant::Secondary,
                         "data-testid": "contact-petname-save-{peer}",
                         onclick: {
-                            let peer = peer.clone();
+                            let peer = peer_principal.clone();
                             let existing = existing_remark.clone();
                             let base = base_url.clone();
                             move |_| {
@@ -508,8 +509,8 @@ fn ContactRow(
                                                 DirectConversationEntry::ReadyToCreate => {
                                                     let actor = crate::app::SessionContext::get()
                                                         .active_account()
-                                                        .map(|account| account.did().clone());
-                                                    let peer_did = arkret_sdk::Did::new(peer.clone()).ok();
+                                                        .map(|account| account.authority.clone());
+                                                    let peer_did = serde_json::from_str::<arkret_sdk::ActorId>(&peer).ok().and_then(|actor| actor.as_account_id().cloned());
                                                     match (actor, peer_did) {
                                                         (Some(actor), Some(peer_did)) => {
                                                             row_status.set(tr("contacts.dm.creating"));
@@ -574,7 +575,7 @@ fn ContactRow(
                             "data-testid": "contact-call-voice-{peer}",
                             disabled: busy(),
                             onclick: {
-                                let peer = peer.clone();
+                                let peer = peer_principal.clone();
                                 move |_| {
                                     nav.push(Route::Call {
                                         call_id: String::new(),
@@ -592,7 +593,7 @@ fn ContactRow(
                             "data-testid": "contact-call-video-{peer}",
                             disabled: busy(),
                             onclick: {
-                                let peer = peer.clone();
+                                let peer = peer_principal.clone();
                                 move |_| {
                                     nav.push(Route::Call {
                                         call_id: String::new(),
@@ -845,7 +846,7 @@ pub fn ContactsPanel(token: Signal<String>) -> Element {
                             ul { class: "settings-list",
                                 for contact in contact_rows {
                                     ContactRow {
-                                        key: "{crate::models::contact_peer_id(&contact)}",
+                                        key: "{contact.peer.contact_actor_id()}",
                                         token,
                                         contact: contact.clone(),
                                         on_changed: move |_| reload.set(reload() + 1),

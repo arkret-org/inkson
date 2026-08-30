@@ -1,6 +1,57 @@
 use super::*;
 
 #[test]
+fn assignment_mutations_preserve_same_principal_accounts_at_different_stations() {
+    use super::super::assignment::{
+        assignment_relations_after_mutations, card_assignment_mutations,
+    };
+    let principal = arkret_sdk::DidCoreId::new("ak:did_core:web:assignee.example").unwrap();
+    let actor = |station: &str| {
+        arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+            principal.clone(),
+            arkret_sdk::DidCoreId::new(station).unwrap(),
+        ))
+    };
+    let first = actor("ak:did_core:web:station-a.example");
+    let second = actor("ak:did_core:web:station-b.example");
+    let mut card = test_card(
+        "ak:strand:AiRwjMAZ14M9aj2p96Vy4ORV9RjgnslFIV7wS1_2Zhig",
+        "U",
+    );
+    let selected = std::collections::BTreeSet::from([first.clone(), second.clone()]);
+    let creates =
+        card_assignment_mutations(TEST_REALM_ID, "did:web:author.example", &card, &selected)
+            .unwrap();
+    assert_eq!(creates.len(), 2);
+    for mutation in &creates {
+        assert_eq!(
+            mutation.operation().payload_for_schema()["relation"]["to_ref"],
+            serde_json::to_value(mutation.actor_id()).unwrap()
+        );
+    }
+    card.assigned_to_relations = vec![
+        CardAssignedToRelation {
+            actor_id: first.clone(),
+            relation_id: "ak:relation:AiRwjMAZ14M9aj2p96Vy4ORV9RjgnslFIV7wS1_2Zhig".to_owned(),
+        },
+        CardAssignedToRelation {
+            actor_id: second.clone(),
+            relation_id: "ak:relation:AFjQnGmj11wy2rA2YjgbfhdhIJlFu9cPeZN5Ld0XzQp4".to_owned(),
+        },
+    ];
+    let retained = std::collections::BTreeSet::from([second.clone()]);
+    let removes =
+        card_assignment_mutations(TEST_REALM_ID, "did:web:author.example", &card, &retained)
+            .unwrap();
+    assert_eq!(removes.len(), 1);
+    assert_eq!(removes[0].actor_id(), &first);
+    assert_eq!(
+        assignment_relations_after_mutations(&card, &retained, &removes)[0].actor_id,
+        second
+    );
+}
+
+#[test]
 fn realm_member_roster_reads_r32_wire_shape() {
     // R3.2 (arkret-spec @ b56cab1): roster entries carry
     // `actor_id` + `membership` + optional `subject_id` /
@@ -31,7 +82,12 @@ fn realm_member_roster_reads_r32_wire_shape() {
     assert_eq!(rows.len(), 2);
     let alice = rows
         .iter()
-        .find(|row| row.actor_id.contains("alice"))
+        .find(|row| {
+            row.actor_id
+                .signing_principal_id()
+                .as_str()
+                .contains("alice")
+        })
         .unwrap();
     assert_eq!(alice.membership.as_deref(), Some("join"));
     assert_eq!(
@@ -48,7 +104,12 @@ fn realm_member_roster_reads_r32_wire_shape() {
 
     let webvh = rows
         .iter()
-        .find(|row| row.actor_id.starts_with("ak:did_core:webvh:"))
+        .find(|row| {
+            row.actor_id
+                .signing_principal_id()
+                .as_str()
+                .starts_with("ak:did_core:webvh:")
+        })
         .unwrap();
     assert_eq!(webvh.membership.as_deref(), Some("invite"));
     assert!(webvh.identity_event_ids.is_empty());
@@ -110,7 +171,10 @@ fn realm_member_roster_reads_only_root_members() {
 
     let rows = realm_member_roster(Some(&projection));
     assert_eq!(rows.len(), 1);
-    assert_eq!(rows[0].actor_id, "ak:did_core:web:canonical.example");
+    assert_eq!(
+        rows[0].actor_id.signing_principal_id().as_str(),
+        "ak:did_core:web:canonical.example"
+    );
 }
 
 #[test]
@@ -165,7 +229,10 @@ fn member_display_label_uses_identity_name_when_no_verified_handle_exists() {
     };
 
     let row = RealmMemberRow {
-        actor_id: "ak:did_core:web:acme.example:users:alice".to_owned(),
+        actor_id: crate::mls_api_helpers::local_account_actor_id(
+            "ak:did_core:web:acme.example:users:alice",
+        )
+        .unwrap(),
         membership: Some("join".to_owned()),
         identity_event_ids: vec![],
         member_display_state_digest: None,
@@ -177,7 +244,10 @@ fn member_display_label_uses_identity_name_when_no_verified_handle_exists() {
 
     // Decryption-pending / no MemberIdentity → fall back to compact DID.
     let bare = RealmMemberRow {
-        actor_id: "ak:did_core:webvh:zQmPr8aaaaaaaaaaaaaaaaa7h4q87ha".to_owned(),
+        actor_id: crate::mls_api_helpers::local_account_actor_id(
+            "ak:did_core:webvh:zQmPr8aaaaaaaaaaaaaaaaa7h4q87ha",
+        )
+        .unwrap(),
         membership: None,
         identity_event_ids: vec![],
         member_display_state_digest: None,
@@ -193,7 +263,10 @@ fn member_display_label_uses_identity_name_when_no_verified_handle_exists() {
 #[test]
 fn member_display_label_prefers_inline_verified_handle_claim() {
     let row = RealmMemberRow {
-        actor_id: "ak:did_core:webvh:zQmPairwiseActor".to_owned(),
+        actor_id: crate::mls_api_helpers::local_account_actor_id(
+            "ak:did_core:webvh:zQmPairwiseActor",
+        )
+        .unwrap(),
         membership: Some("join".to_owned()),
         identity_event_ids: vec![],
         member_display_state_digest: Some(
@@ -221,7 +294,10 @@ fn member_display_label_prefers_inline_verified_handle_claim() {
 #[test]
 fn member_display_label_rejects_unverified_or_noncanonical_handle_claims() {
     let row = RealmMemberRow {
-        actor_id: "ak:did_core:webvh:zQmPairwiseActor".to_owned(),
+        actor_id: crate::mls_api_helpers::local_account_actor_id(
+            "ak:did_core:webvh:zQmPairwiseActor",
+        )
+        .unwrap(),
         membership: Some("join".to_owned()),
         identity_event_ids: vec![],
         member_display_state_digest: None,
@@ -258,7 +334,8 @@ fn member_display_label_rejects_unverified_or_noncanonical_handle_claims() {
 #[test]
 fn member_display_label_uses_cached_directory_primary_handle() {
     let row = RealmMemberRow {
-        actor_id: "ak:did_core:webvh:zQmPrincipal".to_owned(),
+        actor_id: crate::mls_api_helpers::local_account_actor_id("ak:did_core:webvh:zQmPrincipal")
+            .unwrap(),
         membership: Some("join".to_owned()),
         identity_event_ids: vec![],
         member_display_state_digest: None,
@@ -278,7 +355,7 @@ fn resolved_member_display_uses_persisted_current_account_handle() {
     let actor = "ak:did_core:web:current-account.example";
     let did = "did:web:current-account.example";
     let row = RealmMemberRow {
-        actor_id: actor.to_owned(),
+        actor_id: crate::mls_api_helpers::local_account_actor_id(actor).unwrap(),
         membership: Some("join".to_owned()),
         identity_event_ids: vec![],
         member_display_state_digest: None,
@@ -299,7 +376,8 @@ fn resolved_member_display_uses_persisted_current_account_handle() {
 #[test]
 fn member_handle_lookup_keeps_authoritative_subject_separate_from_actor_candidate() {
     let row = RealmMemberRow {
-        actor_id: "ak:did_core:webvh:zQmPrincipal".to_owned(),
+        actor_id: crate::mls_api_helpers::local_account_actor_id("ak:did_core:webvh:zQmPrincipal")
+            .unwrap(),
         membership: Some("join".to_owned()),
         identity_event_ids: vec![],
         member_display_state_digest: None,
@@ -318,7 +396,10 @@ fn member_handle_lookup_keeps_authoritative_subject_separate_from_actor_candidat
         &std::collections::BTreeSet::new(),
     );
     assert_eq!(requests.len(), 1);
-    assert_eq!(requests[0].subject_id, row.actor_id);
+    assert_eq!(
+        requests[0].subject_id,
+        row.actor_id.signing_principal_id().as_str()
+    );
     assert_eq!(requests[0].realm_id, TEST_REALM_ID);
 }
 

@@ -75,7 +75,7 @@ pub struct StrandProjectionView {
     #[serde(default)]
     pub rank: Option<String>,
     #[serde(default)]
-    pub assigned_actor_ids: Vec<String>,
+    pub assigned_actor_ids: Vec<arkret_sdk::ActorId>,
     #[serde(default)]
     pub assigned_to_relations: Vec<AssignedToRelationProjectionView>,
     #[serde(default)]
@@ -111,7 +111,7 @@ pub struct StrandProjectionView {
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 pub struct AssignedToRelationProjectionView {
     pub relation_id: String,
-    pub actor_id: String,
+    pub actor_id: arkret_sdk::ActorId,
 }
 
 impl From<arkret_sdk::ProjectionSpaceRow> for SpaceContainerProjectionView {
@@ -134,7 +134,7 @@ impl From<arkret_sdk::ProjectionAssignedToRelation> for AssignedToRelationProjec
     fn from(relation: arkret_sdk::ProjectionAssignedToRelation) -> Self {
         Self {
             relation_id: relation.relation_id.as_str().to_owned(),
-            actor_id: relation.actor_id.signing_principal_id().as_str().to_owned(),
+            actor_id: relation.actor_id,
         }
     }
 }
@@ -165,11 +165,7 @@ impl From<arkret_sdk::ProjectionStrandRow> for StrandProjectionView {
                 .list_space_id
                 .map(|space_id| space_id.as_str().to_owned()),
             rank: row.rank,
-            assigned_actor_ids: row
-                .assigned_actor_ids
-                .into_iter()
-                .map(|actor_id| actor_id.as_str().to_owned())
-                .collect(),
+            assigned_actor_ids: row.assigned_actor_ids,
             assigned_to_relations: row
                 .assigned_to_relations
                 .into_iter()

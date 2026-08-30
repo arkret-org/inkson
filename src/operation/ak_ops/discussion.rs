@@ -1,8 +1,7 @@
 //! Discussion Strand / Circle builders.
 
 use super::{
-    TypedOperationBuilder, circle_id_value, did_id, realm_id_value, strand_create_payload,
-    trim_realm_id,
+    TypedOperationBuilder, circle_id_value, realm_id_value, strand_create_payload, trim_realm_id,
 };
 
 /// Build a canonical `ak.strand.create` discussion operation with the full

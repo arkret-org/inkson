@@ -45,6 +45,7 @@ fn sidecar_projection_message_for_realm(
         realm_id: realm_id.to_owned(),
         id: id.to_owned(),
         protocol_message_id: None,
+        actor_id: None,
         sender: "ak:did_core:web:example.test:alice".to_owned(),
         executed_by: None,
         body: body.to_owned(),
@@ -896,6 +897,7 @@ fn chat_message_reply_target_prefers_protocol_message_id() {
         protocol_message_id: Some(
             "ak:message:ARbUzETAsZ3suuQ0GSmBWTsNjmUnTEEl_ZnDOUWRPm-N".to_owned(),
         ),
+        actor_id: None,
         sender: "ak:did_core:web:example.com:users:bob".to_owned(),
         executed_by: None,
         body: "hello".to_owned(),
@@ -929,6 +931,7 @@ fn chat_message_mutation_target_prefers_protocol_message_id_after_revision() {
         protocol_message_id: Some(
             "ak:message:ARbUzETAsZ3suuQ0GSmBWTsNjmUnTEEl_ZnDOUWRPm-N".to_owned(),
         ),
+        actor_id: None,
         sender: "ak:did_core:web:example.com:users:bob".to_owned(),
         executed_by: None,
         body: "edited".to_owned(),
@@ -1616,6 +1619,7 @@ fn durable_redaction_folds_onto_controller_only_create() {
         protocol_message_id: Some(message_id.to_owned()),
         realm_id: realm_id.to_owned(),
         strand_id: "ak:strand:AbZt0K_NvenxSDAkOnSDRtorrvUXhGqxSoqT2bFL7m8H".to_owned(),
+        actor_id: None,
         sender: "ak:did_core:web:alice.example".to_owned(),
         body: "sensitive body".to_owned(),
         content_format: None,
@@ -1966,6 +1970,7 @@ fn merge_chat_messages_dedupes_tombstones_by_protocol_message_id() {
             realm_id: "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0".to_owned(),
             id: id.to_owned(),
             protocol_message_id: Some(protocol_message_id.to_owned()),
+            actor_id: None,
             sender: "ak:did_core:web:bob.example".to_owned(),
             executed_by: None,
             body: String::new(),
@@ -2054,6 +2059,7 @@ fn merge_chat_messages_keeps_newer_revision_when_older_create_arrives_late() {
             realm_id: "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0".to_owned(),
             id: id.to_owned(),
             protocol_message_id: Some(protocol_message_id.to_owned()),
+            actor_id: None,
             sender: "ak:did_core:web:bob.example".to_owned(),
             executed_by: None,
             body: body.to_owned(),
@@ -2288,6 +2294,10 @@ fn message_operations_from_events_folds_shared_pin_control_events() {
 
 #[test]
 fn local_redaction_tombstone_replaces_raw_message_without_plaintext() {
+    let remote_actor = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+        arkret_sdk::DidCoreId::new("ak:did_core:web:bob.example").unwrap(),
+        arkret_sdk::DidCoreId::new("ak:did_core:web:remote-station.example").unwrap(),
+    ));
     let redacted_at = chrono::DateTime::parse_from_rfc3339("2026-05-22T10:05:00.000Z")
         .unwrap()
         .with_timezone(&chrono::Utc);
@@ -2297,6 +2307,7 @@ fn local_redaction_tombstone_replaces_raw_message_without_plaintext() {
         protocol_message_id: Some(
             "ak:message:Asg8IZtPYZi06QwoJAIWUIU5xUWxDRtHCQPTUuSSipb8".to_owned(),
         ),
+        actor_id: Some(remote_actor.clone()),
         sender: "ak:did_core:web:bob.example".to_owned(),
         executed_by: None,
         body: "secret".to_owned(),
@@ -2322,6 +2333,10 @@ fn local_redaction_tombstone_replaces_raw_message_without_plaintext() {
         Some("ak:event:A-RSupDyayuw4R7tIwZPpZWnF36wsoZuXYPDzQJ-jmhk"),
     );
     assert_eq!(tombstone["event_id"], message.id);
+    assert_eq!(
+        tombstone["actor_id"],
+        serde_json::to_value(remote_actor).unwrap()
+    );
     assert_eq!(
         tombstone["message_id"],
         "ak:message:Asg8IZtPYZi06QwoJAIWUIU5xUWxDRtHCQPTUuSSipb8"
@@ -2768,6 +2783,7 @@ fn pending_message_refreshes_from_restored_private_plaintext_sidecar() {
         realm_id: realm.to_owned(),
         id: "ak:event:AJhsY0DZJGk1qN28pQapwgLRRgx7kyis3JdX2xGL1Cj8".to_owned(),
         protocol_message_id: Some(message_id.to_owned()),
+        actor_id: None,
         sender: "ak:did_core:web:alice.example".to_owned(),
         executed_by: None,
         body: String::new(),
@@ -2969,6 +2985,7 @@ fn treats_canonical_principal_id_as_own_sender() {
 #[test]
 fn participant_display_name_prefers_local_remark() {
     let participants = vec![SpaceParticipant {
+        actor_id: None,
         principal_id: arkret_sdk::DidCoreId::new("ak:did_core:web:bob.example".to_owned()).unwrap(),
         display_name: Some("Bobby".to_owned()),
         handle_label: None,
@@ -3002,6 +3019,7 @@ fn participant_display_name_prefers_local_remark() {
 #[test]
 fn sender_display_label_does_not_invent_domain_for_localpart() {
     let participants = vec![SpaceParticipant {
+        actor_id: None,
         principal_id: arkret_sdk::DidCoreId::new(
             "ak:did_core:web:local.host:users:alice".to_owned(),
         )
@@ -3029,6 +3047,7 @@ fn sender_display_label_does_not_invent_domain_for_localpart() {
 #[test]
 fn own_sender_label_prefers_account_handle_over_did_derived_materialized_id() {
     let participants = vec![SpaceParticipant {
+        actor_id: None,
         principal_id: arkret_sdk::DidCoreId::new(
             "ak:did_core:web:auth.local.host:users:01ktwstvaef1dby1xf5mnkxss8".to_owned(),
         )
@@ -3056,6 +3075,7 @@ fn own_sender_label_prefers_account_handle_over_did_derived_materialized_id() {
 #[test]
 fn sender_display_label_prefers_projection_handle_label() {
     let participants = vec![SpaceParticipant {
+        actor_id: None,
         principal_id: arkret_sdk::DidCoreId::new(
             "ak:did_core:web:example.com:users:bob".to_owned(),
         )
@@ -3181,6 +3201,7 @@ fn extracts_participant_handle_label_from_inline_handle_claims() {
 #[test]
 fn mention_label_for_participant_never_derives_handle_from_did() {
     let participant = SpaceParticipant {
+        actor_id: None,
         principal_id: arkret_sdk::DidCoreId::new(
             "ak:did_core:web:example.com:users:bob".to_owned(),
         )
@@ -3200,6 +3221,7 @@ fn mention_label_for_participant_never_derives_handle_from_did() {
 #[test]
 fn mention_label_for_participant_requires_handle() {
     let participant = SpaceParticipant {
+        actor_id: None,
         principal_id: arkret_sdk::DidCoreId::new(
             "ak:did_core:webvh:zQmed2r1bBnz5cpB6SoL1UxvqNQPQpimEnHy7Rc9VLLrifC".to_owned(),
         )
@@ -3224,6 +3246,7 @@ fn agent_metadata_from_mentions_recovers_selector_audit_metadata() {
         protocol_message_id: Some(
             "ak:message:AS8XThowW7JnZc80U10gJh-_lqkA-iSQ-LAvBXj6_9O5".to_owned(),
         ),
+        actor_id: None,
         sender: "ak:did_core:web:example.com:users:bob".to_owned(),
         executed_by: None,
         body: "@alice:example.com/summary".to_owned(),
@@ -3592,6 +3615,7 @@ fn mention_only_participation_does_not_expose_agent_in_roster() {
 #[test]
 fn participant_roster_rows_groups_agents_under_visible_controller() {
     let controller = SpaceParticipant {
+        actor_id: None,
         principal_id: arkret_sdk::DidCoreId::new(
             "ak:did_core:web:example.com:users:alice".to_owned(),
         )
@@ -3605,6 +3629,7 @@ fn participant_roster_rows_groups_agents_under_visible_controller() {
         agent_metadata: None,
     };
     let agent = SpaceParticipant {
+        actor_id: None,
         principal_id: arkret_sdk::DidCoreId::new(
             "ak:did_core:web:agents.example:summary".to_owned(),
         )
@@ -3660,21 +3685,31 @@ fn participant_roster_rows_groups_agents_under_visible_controller() {
 
 #[test]
 fn direct_agent_peer_visibility_does_not_require_reply_participation() {
-    let agent = "ak:did_core:web:example.com:agents:aa";
-    let projected_members = std::collections::BTreeSet::from([agent.to_owned()]);
+    let principal = arkret_sdk::DidCoreId::new("ak:did_core:web:example.com:agents:aa").unwrap();
+    let agent = arkret_sdk::ActorId::hosted_principal(
+        principal.clone(),
+        arkret_sdk::DidCoreId::new("ak:did_core:web:station-a.example").unwrap(),
+    )
+    .to_string();
+    let other_station = arkret_sdk::ActorId::hosted_principal(
+        principal,
+        arkret_sdk::DidCoreId::new("ak:did_core:web:station-b.example").unwrap(),
+    )
+    .to_string();
+    let projected_members = std::collections::BTreeSet::from([agent.clone()]);
     assert!(direct_agent_is_conversation_peer(
-        agent,
+        &agent,
         "",
         &projected_members
     ));
     assert!(direct_agent_is_conversation_peer(
-        agent,
-        agent,
+        &agent,
+        &agent,
         &std::collections::BTreeSet::new()
     ));
     assert!(!direct_agent_is_conversation_peer(
-        "ak:did_core:web:example.com:agents:other",
-        agent,
+        &other_station,
+        &agent,
         &projected_members
     ));
 }
@@ -3682,6 +3717,7 @@ fn direct_agent_peer_visibility_does_not_require_reply_participation() {
 #[test]
 fn mention_candidate_for_own_agent_uses_me_alias() {
     let controller = SpaceParticipant {
+        actor_id: None,
         principal_id: arkret_sdk::DidCoreId::new(
             "ak:did_core:web:example.com:users:alice".to_owned(),
         )
@@ -3695,6 +3731,7 @@ fn mention_candidate_for_own_agent_uses_me_alias() {
         agent_metadata: None,
     };
     let agent = SpaceParticipant {
+        actor_id: None,
         principal_id: arkret_sdk::DidCoreId::new(
             "ak:did_core:web:agents.example:summary".to_owned(),
         )
@@ -3729,6 +3766,7 @@ fn mention_candidate_for_own_agent_uses_me_alias() {
 #[test]
 fn mention_candidate_for_current_user_uses_structured_me_alias() {
     let participant = SpaceParticipant {
+        actor_id: None,
         principal_id: arkret_sdk::DidCoreId::new(
             "ak:did_core:web:example.com:users:alice".to_owned(),
         )
@@ -3853,6 +3891,7 @@ fn owned_agent_inventory_enriches_existing_realm_member_metadata() {
 fn explicit_member_click_builds_user_and_owned_agent_mentions() {
     let principal_id = "ak:did_core:web:example.com:users:alice";
     let member = SpaceParticipant {
+        actor_id: None,
         principal_id: arkret_sdk::DidCoreId::new(
             "ak:did_core:web:example.com:users:bob".to_owned(),
         )
@@ -3878,6 +3917,7 @@ fn explicit_member_click_builds_user_and_owned_agent_mentions() {
     assert!(!clicked_member.is_agent);
 
     let unannotated_owned_agent = SpaceParticipant {
+        actor_id: None,
         principal_id: arkret_sdk::DidCoreId::new(
             "ak:did_core:web:agents.example:summary".to_owned(),
         )
@@ -3927,6 +3967,7 @@ fn explicit_member_click_builds_user_and_owned_agent_mentions() {
 #[test]
 fn mention_candidate_for_other_agent_keeps_canonical_controller_handle() {
     let controller = SpaceParticipant {
+        actor_id: None,
         principal_id: arkret_sdk::DidCoreId::new(
             "ak:did_core:web:example.com:users:bob".to_owned(),
         )
@@ -3940,6 +3981,7 @@ fn mention_candidate_for_other_agent_keeps_canonical_controller_handle() {
         agent_metadata: None,
     };
     let agent = SpaceParticipant {
+        actor_id: None,
         principal_id: arkret_sdk::DidCoreId::new(
             "ak:did_core:web:agents.example:summary".to_owned(),
         )
@@ -3972,6 +4014,7 @@ fn mention_candidate_for_other_agent_keeps_canonical_controller_handle() {
 #[test]
 fn agent_candidate_visibility_keeps_owned_agents_and_hides_private_remote_agents() {
     let own_controller = SpaceParticipant {
+        actor_id: None,
         principal_id: arkret_sdk::DidCoreId::new(
             "ak:did_core:web:example.com:users:alice".to_owned(),
         )
@@ -3985,6 +4028,7 @@ fn agent_candidate_visibility_keeps_owned_agents_and_hides_private_remote_agents
         agent_metadata: None,
     };
     let own_agent = SpaceParticipant {
+        actor_id: None,
         principal_id: arkret_sdk::DidCoreId::new(
             "ak:did_core:web:agents.example:alice-summary".to_owned(),
         )
@@ -4003,6 +4047,7 @@ fn agent_candidate_visibility_keeps_owned_agents_and_hides_private_remote_agents
         }),
     };
     let remote_agent = SpaceParticipant {
+        actor_id: None,
         principal_id: arkret_sdk::DidCoreId::new(
             "ak:did_core:web:agents.example:bob-summary".to_owned(),
         )
@@ -4056,6 +4101,7 @@ fn agent_candidate_visibility_keeps_owned_agents_and_hides_private_remote_agents
 #[test]
 fn sidecar_presence_excludes_realm_humans_and_foreign_agents() {
     let controller = SpaceParticipant {
+        actor_id: None,
         principal_id: arkret_sdk::DidCoreId::new(
             "ak:did_core:web:example.com:users:alice".to_owned(),
         )
@@ -4069,6 +4115,7 @@ fn sidecar_presence_excludes_realm_humans_and_foreign_agents() {
         agent_metadata: None,
     };
     let realm_human = SpaceParticipant {
+        actor_id: None,
         principal_id: arkret_sdk::DidCoreId::new(
             "ak:did_core:web:example.com:users:bob".to_owned(),
         )
@@ -4082,6 +4129,7 @@ fn sidecar_presence_excludes_realm_humans_and_foreign_agents() {
         agent_metadata: None,
     };
     let owned_agent = SpaceParticipant {
+        actor_id: None,
         principal_id: arkret_sdk::DidCoreId::new(
             "ak:did_core:web:agents.example:alice-summary".to_owned(),
         )
@@ -4100,6 +4148,7 @@ fn sidecar_presence_excludes_realm_humans_and_foreign_agents() {
         }),
     };
     let foreign_agent = SpaceParticipant {
+        actor_id: None,
         principal_id: arkret_sdk::DidCoreId::new(
             "ak:did_core:web:agents.example:bob-summary".to_owned(),
         )
@@ -4134,6 +4183,7 @@ fn sidecar_presence_excludes_realm_humans_and_foreign_agents() {
 #[test]
 fn mention_candidate_without_handle_is_not_displayed_as_did() {
     let participant = SpaceParticipant {
+        actor_id: None,
         principal_id: arkret_sdk::DidCoreId::new("ak:did_core:web:bob.example".to_owned()).unwrap(),
         display_name: Some("Bob Example".to_owned()),
         handle_label: None,
@@ -4897,6 +4947,7 @@ mod merge_duplicate_create_message_alignment_tests {
             protocol_message_id: Some(
                 "ak:message:AZhIGxyGMJYSpWhMOugJZewLoNM88CzSBohQQRpKgw1c".to_owned(),
             ),
+            actor_id: None,
             sender: "ak:did_core:web:bob.example".to_owned(),
             executed_by: None,
             body: body.to_owned(),

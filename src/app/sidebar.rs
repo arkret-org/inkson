@@ -460,7 +460,14 @@ pub(super) fn delete_sidebar_contact(
     mut direct_contact_rows: Signal<Vec<crate::models::ContactListRow>>,
     mut direct_contacts_loaded: Signal<bool>,
 ) {
-    let peer_label = crate::views::helpers::actor_display_label(&state_store.read(), &peer);
+    let peer_label = serde_json::from_str::<arkret_sdk::ActorId>(&peer)
+        .map(|actor| {
+            crate::views::helpers::actor_display_label(
+                &state_store.read(),
+                actor.signing_principal_id().as_str(),
+            )
+        })
+        .unwrap_or_else(|_| crate::views::helpers::short_protocol_id(&peer));
     crate::components::feedback::toast_info(
         "feedback.contact_deleting",
         vec![("name", peer_label.clone())],
@@ -479,7 +486,7 @@ pub(super) fn delete_sidebar_contact(
             Ok(_) => {
                 let next_rows: Vec<_> = direct_contact_rows()
                     .into_iter()
-                    .filter(|row| crate::models::contact_peer_id(row).as_str() != peer)
+                    .filter(|row| row.peer.contact_actor_id().to_string() != peer)
                     .collect();
                 state_store
                     .write()

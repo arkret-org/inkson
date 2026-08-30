@@ -190,7 +190,9 @@ impl MemberProfile {
 }
 
 fn member_identity_fallback_label(did: &str) -> String {
-    short_protocol_id(did)
+    serde_json::from_str::<arkret_sdk::ActorId>(did)
+        .map(|actor| short_protocol_id(actor.signing_principal_id().as_str()))
+        .unwrap_or_else(|_| short_protocol_id(did))
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -369,10 +371,17 @@ fn principal_core_key(value: &str) -> Option<String> {
         })
 }
 
-fn same_principal_core(left: &str, right: &str) -> bool {
-    principal_core_key(left)
-        .zip(principal_core_key(right))
-        .is_some_and(|(left, right)| left == right)
+fn is_local_account_actor(actor_key: &str, principal: &str) -> bool {
+    serde_json::from_str::<arkret_sdk::ActorId>(actor_key)
+        .ok()
+        .zip(crate::mls_api_helpers::local_account_actor_id(principal).ok())
+        .is_some_and(|(actor, local)| actor == local)
+}
+
+fn owned_agent_actor_key(principal: &str) -> Option<String> {
+    let station = crate::operation::authoring_station_id().ok()?;
+    let principal = crate::mls_api_helpers::principal_core_id(principal).ok()?;
+    Some(arkret_sdk::ActorId::hosted_principal(principal, station).to_string())
 }
 
 fn push_unique(out: &mut Vec<String>, value: impl Into<String>) {
@@ -474,7 +483,7 @@ fn projected_member_profiles_for_realm(
         for row in crate::views::member_display::realm_member_roster(Some(projection)) {
             let display =
                 crate::views::member_display::resolve_member_display(store, realm_id, &row);
-            let mut profile = MemberProfile::bare(row.actor_id);
+            let mut profile = MemberProfile::bare(row.actor_id.to_string());
             profile.confusable_contact_warning =
                 crate::views::member_display::public_display_conflicts_with_other_contact(
                     &contact_anchor_index,
@@ -494,11 +503,11 @@ fn projected_member_profiles_for_realm(
     // source is the Realm authority-root cell derived from the accepted
     // `ak.realm.create` Event, so classify the owner from that projected Event
     // rather than the discarded `owners` / `admins` presentation mirrors.
-    if let Some(owner_id) = crate::security_state::realm_authority_root_controller_for_realm(
+    if let Some(root) = crate::security_state::realm_authority_root_value_for_realm(
         &state.realm_tree_projections,
         realm_id,
     ) {
-        let mut owner = MemberProfile::bare(owner_id);
+        let mut owner = MemberProfile::bare(root.controller_id.to_string());
         owner.membership = Some("join".to_owned());
         owner.is_owner = true;
         upsert_member_profile(&mut rows, owner);
@@ -575,9 +584,9 @@ fn group_members_with_owned_agents(
         .iter()
         .map(|member| member.actor_id.as_str())
         .collect();
-    let owned_agent_ids: BTreeSet<&str> = owned_agents
+    let owned_agent_ids: BTreeSet<String> = owned_agents
         .iter()
-        .map(|agent| agent.agent_id.as_str())
+        .filter_map(|agent| owned_agent_actor_key(&agent.agent_id))
         .collect();
     let mut groups = BTreeMap::<String, MemberGroup>::new();
 
@@ -599,7 +608,10 @@ fn group_members_with_owned_agents(
 
     let mut in_realm_agents: Vec<MemberAgentRow> = owned_agents
         .iter()
-        .filter(|agent| member_set.contains(agent.agent_id.as_str()))
+        .filter(|agent| {
+            owned_agent_actor_key(&agent.agent_id)
+                .is_some_and(|key| member_set.contains(key.as_str()))
+        })
         .cloned()
         .collect();
     in_realm_agents.sort_by(|a, b| {
@@ -614,9 +626,11 @@ fn group_members_with_owned_agents(
         } else {
             controller
         };
-        if !controller.is_empty() {
+        if let Ok(controller) = crate::mls_api_helpers::local_account_actor_id(controller)
+            .map(|actor| actor.to_string())
+        {
             let controller_profile = member_by_actor
-                .get(controller)
+                .get(controller.as_str())
                 .map(|member| (*member).clone())
                 .unwrap_or_else(|| MemberProfile::bare(controller.to_owned()));
             groups
@@ -632,8 +646,10 @@ fn group_members_with_owned_agents(
 
     let mut groups = groups.into_values().collect::<Vec<_>>();
     groups.sort_by(|left, right| {
-        let left_is_self = same_principal_core(&left.controller.actor_id, fallback_controller_id);
-        let right_is_self = same_principal_core(&right.controller.actor_id, fallback_controller_id);
+        let left_is_self =
+            is_local_account_actor(&left.controller.actor_id, fallback_controller_id);
+        let right_is_self =
+            is_local_account_actor(&right.controller.actor_id, fallback_controller_id);
         right_is_self
             .cmp(&left_is_self)
             .then_with(|| {
@@ -652,12 +668,17 @@ fn split_owned_agents_for_realm(
 ) -> (Vec<MemberAgentRow>, Vec<MemberAgentRow>) {
     let joined = owned_agents
         .iter()
-        .filter(|agent| member_set.contains(&agent.agent_id))
+        .filter(|agent| {
+            owned_agent_actor_key(&agent.agent_id).is_some_and(|key| member_set.contains(&key))
+        })
         .cloned()
         .collect();
     let available = owned_agents
         .iter()
-        .filter(|agent| !member_set.contains(&agent.agent_id) && agent.status == "active")
+        .filter(|agent| {
+            owned_agent_actor_key(&agent.agent_id).is_some_and(|key| !member_set.contains(&key))
+                && agent.status == "active"
+        })
         .cloned()
         .collect();
     (joined, available)
@@ -682,7 +703,10 @@ fn upsert_pending_invite_profile(
     label: Option<&str>,
     invite_id: Option<&str>,
 ) {
-    let Some(actor_id) = principal_core_key(actor_id) else {
+    let Some(actor_id) = serde_json::from_str::<arkret_sdk::ActorId>(actor_id)
+        .ok()
+        .map(|actor| actor.to_string())
+    else {
         return;
     };
     let actor_id = actor_id.as_str();
@@ -750,8 +774,8 @@ fn local_pending_invite_profile_from_raw_operation(
     if !matches!(state.as_str(), "pending" | "pending_invite" | "invite") {
         return None;
     }
-    let direct_invitee =
-        raw_invite_create_account_id(payload).map(|account_id| account_id.principal_id.to_string());
+    let direct_invitee = raw_invite_create_account_id(payload)
+        .map(|account_id| arkret_sdk::ActorId::account(account_id).to_string());
     let invite_id = trimmed_string(payload.get("invite_id").or_else(|| payload.get("id")));
     let actor_id = direct_invitee
         .clone()
@@ -904,6 +928,7 @@ fn claim_target_device_id(
 
 fn raw_member_actor_id(payload: &Value) -> Option<String> {
     [
+        payload.pointer("/body/member_id"),
         payload.pointer("/payload/member_id"),
         payload.get("actor_id"),
     ]
@@ -912,7 +937,7 @@ fn raw_member_actor_id(payload: &Value) -> Option<String> {
     .find_map(|value| {
         serde_json::from_value::<arkret_sdk::ActorId>(value.clone())
             .ok()
-            .map(|actor| actor.signing_principal_id().as_str().to_owned())
+            .map(|actor| actor.to_string())
     })
 }
 
@@ -930,7 +955,8 @@ fn raw_member_membership(payload: &Value) -> Option<String> {
 }
 
 fn raw_invite_create_invitee(payload: &Value) -> Option<String> {
-    raw_invite_create_account_id(payload).map(|account_id| account_id.principal_id.to_string())
+    raw_invite_create_account_id(payload)
+        .map(|account_id| arkret_sdk::ActorId::account(account_id).to_string())
 }
 
 fn raw_invite_create_account_id(payload: &Value) -> Option<arkret_sdk::AccountId> {
@@ -1051,7 +1077,7 @@ fn member_group_in_section(
         MemberRosterSection::Owners => group.controller.is_owner,
         MemberRosterSection::Admins => group.controller.is_admin && !group.controller.is_owner,
         MemberRosterSection::MyAgents => {
-            same_principal_core(&group.controller.actor_id, principal_id)
+            is_local_account_actor(&group.controller.actor_id, principal_id)
         }
         MemberRosterSection::PendingInvites => false,
     }
@@ -1636,6 +1662,8 @@ pub(crate) async fn submit_mls_admission_for_invitee(
     invitee_id: String,
 ) -> anyhow::Result<Option<u64>> {
     let _authoring_guard = mls_admission_authoring_lock().lock().await;
+    let invitee_actor: arkret_sdk::ActorId = serde_json::from_str(&invitee_id)?;
+    let invitee_principal = invitee_actor.signing_principal_id().as_str();
     let account = crate::app::SessionContext::get()
         .active_account()
         .ok_or_else(|| anyhow::anyhow!("active account context is unavailable"))?;
@@ -1737,7 +1765,7 @@ pub(crate) async fn submit_mls_admission_for_invitee(
         mls_clients
             .mls()
             .claim_pairwise_key_package(
-                &invitee_id,
+                invitee_principal,
                 &realm_id,
                 requester,
                 Some(&claim_route.destination_id),
@@ -1750,7 +1778,7 @@ pub(crate) async fn submit_mls_admission_for_invitee(
         mls_clients
             .mls()
             .claim_key_package(
-                &invitee_id,
+                invitee_principal,
                 &realm_id,
                 &actor_id,
                 &device_id,
@@ -1770,6 +1798,12 @@ pub(crate) async fn submit_mls_admission_for_invitee(
         .into_iter()
         .next()
         .ok_or_else(|| anyhow::anyhow!("KeyPackage claim succeeded without a claim record"))?;
+    anyhow::ensure!(
+        crate::mls::governance_proof::claimed_actor_id(&claim, &claim_receipt)
+            .map_err(anyhow::Error::msg)?
+            == invitee_actor,
+        "KeyPackage claim actor does not match the selected complete member ActorId"
+    );
     // Refresh after the claim as well: membership/policy may have advanced
     // while the remote claim request was in flight.
     ensure_mls_governance_proof_for_next_commit(
@@ -1902,8 +1936,7 @@ fn projected_realm_membership_hint(
     let joined = crate::views::member_display::realm_member_roster(Some(projection))
         .into_iter()
         .filter(|member| member.membership.as_deref() == Some("join"))
-        .map(|member| member.actor_id)
-        .filter(|actor_id| !actor_id.trim().is_empty())
+        .map(|member| member.actor_id.to_string())
         .collect();
     let completeness = if projection
         .get("member_roster_entries_limited")
@@ -2152,14 +2185,15 @@ pub(crate) async fn reconcile_mls_admissions_for_realm(
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
     let group_member_ids: BTreeSet<String> = {
         let store = state_store.read();
-        match crate::mls::runtime::mls_group_member_principal_ids_for_realm(
+        match crate::mls::runtime::mls_group_member_actor_ids_for_effective_scope(
             &store,
             secure_store.as_ref(),
             &realm_id,
+            None,
             &account.authority,
             &account.device_id,
         ) {
-            Some(ids) => ids.into_iter().collect(),
+            Some(ids) => ids.into_iter().map(|actor| actor.to_string()).collect(),
             None => {
                 // No local group roster: either no snapshot, the device
                 // snapshot secret could not be loaded, or the envelope failed
@@ -2185,7 +2219,7 @@ pub(crate) async fn reconcile_mls_admissions_for_realm(
             .filter(|id| {
                 let id = id.trim();
                 !id.is_empty()
-                    && !same_principal_core(id, &actor_id)
+                    && !is_local_account_actor(id, &actor_id)
                     && !group_member_ids.contains(id)
             })
             .collect()
@@ -2845,14 +2879,14 @@ pub fn RealmMembersPanel(
         .filter(|member| member.is_governance_principal())
         .count();
     let self_is_known_governance = active_members.iter().any(|member| {
-        same_principal_core(&member.actor_id, &principal_id) && member.is_governance_principal()
+        is_local_account_actor(&member.actor_id, &principal_id) && member.is_governance_principal()
     });
     // Authority-root controller: `capabilities.md` §10.4 L858 — the root
     // controller's only exit is `ak.realm.owner.transfer`, regardless of how
     // many other admins exist, so this outranks the softer last-admin guard.
     let self_is_root_controller = active_members
         .iter()
-        .any(|member| same_principal_core(&member.actor_id, &principal_id) && member.is_owner);
+        .any(|member| is_local_account_actor(&member.actor_id, &principal_id) && member.is_owner);
     let self_leave_disabled_reason = if self_is_root_controller {
         Some(
             "Transfer Realm ownership first (ak.realm.owner.transfer, Realm settings → Security \
@@ -3017,7 +3051,7 @@ pub fn RealmMembersPanel(
                                                         onclick: {
                                                             let base = base_url.clone();
                                                             let realm = selected_realm_id.clone();
-                                                            let target = agent_id.clone();
+                                                            let target = owned_agent_actor_key(&agent_id).unwrap_or_default();
                                                             let target_label = agent_title.clone();
                                                             let actor_id = principal_id.clone();
                                                             move |_| {
@@ -3119,12 +3153,13 @@ pub fn RealmMembersPanel(
                                         div { class: "settings-list",
                                             for contact in invite_contacts.read().clone() {
                                                 {
-                                                    let did = crate::models::contact_peer_id(&contact).to_string();
-                                                    let did_label = actor_display_label(&state_store.read(), &did);
+                                                    let peer_actor = contact.peer.contact_actor_id();
+                                                    let did = peer_actor.to_string();
+                                                    let did_label = actor_display_label(&state_store.read(), peer_actor.signing_principal_id().as_str());
                                                     let checked = selected_contacts.read().contains(&did);
                                                     let eligible =
                                                         crate::models::contact_grants_me_invite(&contact);
-                                                    let usable = eligible;
+                                                    let usable = eligible && peer_actor.as_account_id().is_some();
                                                     let not_authorized = !usable;
                                                     let did_for_toggle = did.clone();
                                                     rsx! {
@@ -3176,19 +3211,12 @@ pub fn RealmMembersPanel(
                                                         let api_token = token();
                                                         // Resolve the destination pairs up front so the
                                                         // async task doesn't borrow the rendered rows.
-                                                        let targets: Vec<(String, Option<String>)> = invite_contacts
+                                                        let targets: Vec<arkret_sdk::AccountId> = invite_contacts
                                                             .read()
                                                             .iter()
-                                                            .filter(|c| selected_contacts.read().contains(crate::models::contact_peer_id(c).as_str()))
+                                                            .filter(|c| selected_contacts.read().contains(&c.peer.contact_actor_id().to_string()))
                                                             .filter(|c| crate::models::contact_grants_me_invite(c))
-                                                            .map(|c| {
-                                                                (
-                                                                    crate::models::contact_peer_id(c).to_string(),
-                                                        c.peer_host_id
-                                                            .as_ref()
-                                                            .map(ToString::to_string),
-                                                                )
-                                                            })
+                                                            .filter_map(|c| c.peer.contact_actor_id().as_account_id().cloned())
                                                             .collect();
                                                         if targets.is_empty() {
                                                             status_msg.set(crate::i18n::tr("realm_admin.invite_none_eligible"));
@@ -3213,25 +3241,19 @@ pub fn RealmMembersPanel(
                                                             let mut ok = 0_usize;
                                                             let mut last_err = String::new();
                                                             let mut ok_invites =
-                                                                Vec::<(String, String, String, Option<String>)>::new();
-                                                            for (did, recipient_id) in targets {
+                                                                Vec::<(arkret_sdk::AccountId, String, String)>::new();
+                                                            for account in targets {
                                                                 match api
                                                                     .invite_contact_to_realm(
                                                                         &realm,
                                                                         &actor,
-                                                                        &did,
-                                                                        recipient_id.as_deref(),
+                                                                        &account,
                                                                     )
                                                                     .await
                                                                 {
                                                                     Ok((event_id, invite_id)) => {
                                                                         ok += 1;
-                                                                        ok_invites.push((
-                                                                            did,
-                                                                            event_id.clone(),
-                                                                            invite_id,
-                                                                            recipient_id,
-                                                                        ));
+                                                                        ok_invites.push((account, event_id.clone(), invite_id));
                                                                         frontier_state.set(event_id);
                                                                     }
                                                                     Err(err) => last_err = err.to_string(),
@@ -3241,7 +3263,8 @@ pub fn RealmMembersPanel(
                                                                 let mut next_members = members.read().clone();
                                                                 {
                                                                     let mut store = state_store.write();
-                                                                    for (did, event_id, invite_id, recipient_id) in ok_invites {
+                                                                    for (account, event_id, invite_id) in ok_invites {
+                                                                        let did = arkret_sdk::ActorId::account(account.clone()).to_string();
                                                                         upsert_pending_invite_profile(&mut next_members, &did, None, Some(&invite_id));
                                                                         store.append_raw_operation(
                                                                             event_id.clone(),
@@ -3249,10 +3272,9 @@ pub fn RealmMembersPanel(
                                                                             json!({
                                                                                 "kind": event_kind_str::INVITE_CREATE,
                                                                                 "invite_id": invite_id,
-                                                                                "invitee_id": did,
+                                                                                "invitee_account_id": account,
                                                                                 "state": "pending",
                                                                                 "event_id": event_id,
-                                                                                "recipient_id": recipient_id,
                                                                             }),
                                                                         );
                                                                     }
@@ -3431,7 +3453,7 @@ pub fn RealmMembersPanel(
                                                                 let mut next_members = members.read().clone();
                                                                 upsert_pending_invite_profile(
                                                                     &mut next_members,
-                                                                    invitee.account_id.principal_id.as_str(),
+                                                                    &arkret_sdk::ActorId::account(invitee.account_id.clone()).to_string(),
                                                                     Some(&invitee_label),
                                                                     Some(&invite_id),
                                                                 );
@@ -3650,7 +3672,7 @@ pub fn RealmMembersPanel(
                             let member = member_profile.actor_id.clone();
                             let member_label = member_profile.primary_label();
                             let public_label = member_profile.public_label();
-                            let is_self = member.trim() == principal_id.trim();
+                            let is_self = is_local_account_actor(&member, &principal_id);
                             let has_agents = !group.agents.is_empty();
                             let group_class = if has_agents {
                                 "member-group has-agents"
@@ -3827,7 +3849,7 @@ pub fn RealmMembersPanel(
                                                 div { class: "member-self-agent-list",
                                                     for owned_agent in self_realm_agent_rows.clone() {
                                                         {
-                                                            let agent_in_realm = member_set.contains(&owned_agent.agent_id);
+                                                            let agent_in_realm = owned_agent_actor_key(&owned_agent.agent_id).is_some_and(|key| member_set.contains(&key));
                                                             let policy = owned_agent.mention_policy;
                                                             let policy_class = policy.badge_class();
                                                             let policy_label = policy.label();
@@ -3870,7 +3892,7 @@ pub fn RealmMembersPanel(
                                                                                     onclick: {
                                                                                         let base = base_url.clone();
                                                                                         let realm = selected_realm_id.clone();
-                                                                                        let target = agent_id.clone();
+                                                                                        let target = owned_agent_actor_key(&agent_id).unwrap_or_default();
                                                                                         let target_label = agent_title.clone();
                                                                                         let actor_principal_id = principal_id.clone();
                                                                                         move |_| {

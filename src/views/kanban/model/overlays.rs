@@ -234,6 +234,7 @@ pub(crate) fn overlay_local_card_assignment_records(
 
 fn overlay_local_assignment_create(columns: &mut [KanbanColumn], payload: &Value) {
     let body = payload.get("body").or_else(|| payload.get("payload"));
+    let body = body.and_then(|body| body.get("relation").or(Some(body)));
     let relation_kind = json_path_string(body, &["relation_kind"])
         .or_else(|| json_path_string(body, &["kind"]))
         .unwrap_or_default();
@@ -243,8 +244,10 @@ fn overlay_local_assignment_create(columns: &mut [KanbanColumn], payload: &Value
     let Some(strand_id) = json_path_string(body, &["from_ref"]) else {
         return;
     };
-    let Some(actor_id) = json_path_string(body, &["to_ref"])
-        .or_else(|| json_path_string(Some(payload), &["assignment_actor_id"]))
+    let Some(actor_id) = body
+        .and_then(|body| body.get("to_ref"))
+        .or_else(|| payload.get("assignment_actor_id"))
+        .and_then(|value| serde_json::from_value::<arkret_sdk::ActorId>(value.clone()).ok())
     else {
         return;
     };
@@ -299,12 +302,16 @@ fn overlay_local_assignment_tombstone(columns: &mut [KanbanColumn], payload: &Va
                 .iter()
                 .find(|relation| relation.relation_id == relation_id)
                 .map(|relation| relation.actor_id.clone())
-                .or_else(|| json_path_string(Some(payload), &["assignment_actor_id"]));
+                .or_else(|| {
+                    payload.get("assignment_actor_id").and_then(|value| {
+                        serde_json::from_value::<arkret_sdk::ActorId>(value.clone()).ok()
+                    })
+                });
             let mut actor_ids = card_assigned_actor_ids(card)
                 .into_iter()
                 .collect::<BTreeSet<_>>();
             if let Some(actor_id) = removed_actor {
-                actor_ids.remove(actor_id.trim());
+                actor_ids.remove(&actor_id);
             }
             let relations = card
                 .assigned_to_relations

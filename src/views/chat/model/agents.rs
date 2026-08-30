@@ -119,13 +119,14 @@ pub(crate) fn upsert_agent_participants(
         let Some(agent_principal_id) = normalize_participant_id(agent_id) else {
             continue;
         };
-        if participants
-            .iter()
-            .any(|participant| participant.principal_id == agent_principal_id)
-        {
+        if participants.iter().any(|participant| {
+            participant.principal_id == agent_principal_id
+                && owned_agent_inventory_matches(participant)
+        }) {
             continue;
         }
         participants.push(SpaceParticipant {
+            actor_id: None,
             principal_id: agent_principal_id,
             display_name: (!metadata.display_name.is_empty())
                 .then_some(metadata.display_name.clone()),
@@ -143,11 +144,26 @@ pub(crate) fn upsert_agent_participants(
     }
 }
 
+/// This metadata map belongs to the selected account's owned-Agent inventory.
+/// Its principal labels cannot identify a hosted actor at another Station.
+fn owned_agent_inventory_matches(participant: &SpaceParticipant) -> bool {
+    match participant.actor_id.as_ref() {
+        None => true, // Inventory-only display row, never a membership identity.
+        Some(arkret_sdk::ActorId::HostedPrincipal { station_id, .. }) => {
+            crate::operation::authoring_station_id().is_ok_and(|local| local == *station_id)
+        }
+        Some(_) => false,
+    }
+}
+
 pub(crate) fn annotate_agent_participants_with_metadata(
     participants: &mut [SpaceParticipant],
     agent_metadata: &std::collections::BTreeMap<String, AgentParticipantMetadata>,
 ) {
     for participant in participants.iter_mut() {
+        if !owned_agent_inventory_matches(participant) {
+            continue;
+        }
         if let Some(metadata) = agent_metadata.get(participant.principal_id.as_str()) {
             participant.is_agent = true;
             participant.agent_metadata = Some(metadata.clone());

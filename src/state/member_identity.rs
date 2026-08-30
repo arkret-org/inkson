@@ -12,7 +12,7 @@ impl LocalStateStore {
     pub fn ingest_member_identity_events(
         &mut self,
         realm_id: impl Into<String>,
-        actor_id: impl Into<String>,
+        actor_id: &arkret_sdk::ActorId,
         events: &[Value],
     ) {
         if events.is_empty() {
@@ -20,13 +20,13 @@ impl LocalStateStore {
         }
         self.ensure_cached_loaded();
         let realm_id = realm_id.into();
-        let actor_id = actor_id.into();
+        let actor_key = actor_id.to_string();
         let bucket = self
             .cached
             .member_identity_events
             .entry(realm_id)
             .or_default()
-            .entry(actor_id)
+            .entry(actor_key)
             .or_default();
         for event in events {
             let Some(event_id) = event.get("event_id").and_then(Value::as_str) else {
@@ -58,7 +58,7 @@ impl LocalStateStore {
     pub fn resolved_member_identity(
         &self,
         realm_id: &str,
-        actor_id: &str,
+        actor_id: &arkret_sdk::ActorId,
     ) -> Option<arkret_sdk::MemberIdentity> {
         let envelopes = self.member_identity_envelopes(realm_id, actor_id);
         if envelopes.is_empty() {
@@ -156,11 +156,15 @@ impl LocalStateStore {
         let _ = self.flush();
     }
 
-    fn member_identity_envelopes(&self, realm_id: &str, actor_id: &str) -> Vec<Value> {
+    fn member_identity_envelopes(
+        &self,
+        realm_id: &str,
+        actor_id: &arkret_sdk::ActorId,
+    ) -> Vec<Value> {
         self.cached
             .member_identity_events
             .get(realm_id)
-            .and_then(|by_actor| by_actor.get(actor_id))
+            .and_then(|by_actor| by_actor.get(&actor_id.to_string()))
             .cloned()
             .unwrap_or_default()
     }

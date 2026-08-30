@@ -128,7 +128,7 @@ fn CardMemberMentionRow(
                 "data-testid": "card-detail-member-mention-button",
                 "aria-label": "Mention {label}",
                 onclick: {
-                    let mention_target = member_id.clone();
+                    let mention_target = serde_json::from_str::<arkret_sdk::ActorId>(&member_id).map(|actor| actor.signing_principal_id().to_string()).unwrap_or_default();
                     move |_| {
                         onmention.call(crate::views::chat::MentionInsertRequest::new(
                             mention_target.clone(),
@@ -1643,7 +1643,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                             let assignee_title = if assigned_actor_ids.is_empty() {
                                                                 "unassigned".to_owned()
                                                             } else {
-                                                                assigned_actor_ids.join(", ")
+                                                                assigned_actor_ids.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ")
                                                             };
                                                             let picker_rows = assignment_picker_roster(&realm_member_rows, card);
                                                             let picker_filter = assignee_filter();
@@ -1659,11 +1659,11 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                             &realm_member_rows,
                                                                             &row.actor_id,
                                                                         );
-                                                                        assignee_filter_matches(&picker_filter, &label, &row.actor_id).then(|| {
+                                                                        assignee_filter_matches(&picker_filter, &label, &row.actor_id.to_string()).then(|| {
                                                                             (
                                                                                 row.actor_id.clone(),
                                                                                 label.clone(),
-                                                                                short_protocol_id(&row.actor_id),
+                                                                                short_protocol_id(row.actor_id.signing_principal_id().as_str()),
                                                                             )
                                                                         })
                                                                     })
@@ -2599,7 +2599,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                             }
                                                                         }
                                                                         members.sort_by_key(|row| !card_member_is_current_account(row, &principal_id));
-                                                                        agents.sort_by_key(|(row, slug)| (*slug, row.actor_id.as_str()));
+                                                                        agents.sort_by_key(|(row, slug)| (*slug, &row.actor_id));
                                                                         let has_controller = members.iter().any(|row| {
                                                                             card_member_is_current_account(row, &principal_id)
                                                                         });
@@ -2608,7 +2608,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                         "data-testid": "card-detail-realm-members",
                                                                         for row in members {
                                                                             {
-                                                                                let member_id = row.actor_id.clone();
+                                                                                let member_id = row.actor_id.to_string();
                                                                                 let is_self = card_member_is_current_account(row, &principal_id);
                                                                                 let store = state_store.read();
                                                                                  let label = crate::views::member_display::resolve_member_display(
@@ -2632,10 +2632,10 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                                                 for (agent, slug) in &agents {
                                                                                                     CardMemberMentionRow {
                                                                                                         key: "{agent.actor_id}",
-                                                                                                        member_id: agent.actor_id.clone(),
+                                                                                                        member_id: agent.actor_id.to_string(),
                                                                                                         label: (*slug).to_owned(),
                                                                                                         agent_slug: Some((*slug).to_owned()),
-                                                                                                        in_strand: participant_set.contains(&agent.actor_id),
+                                                                                                        in_strand: participant_set.contains(&agent.actor_id.to_string()),
                                                                                                         onmention: on_member_mention,
                                                                                                     }
                                                                                                 }
@@ -2649,10 +2649,10 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                             for (agent, slug) in agents {
                                                                                 CardMemberMentionRow {
                                                                                     key: "{agent.actor_id}",
-                                                                                    member_id: agent.actor_id.clone(),
+                                                                                    member_id: agent.actor_id.to_string(),
                                                                                     label: slug.to_owned(),
                                                                                     agent_slug: Some(slug.to_owned()),
-                                                                                    in_strand: participant_set.contains(&agent.actor_id),
+                                                                                    in_strand: participant_set.contains(&agent.actor_id.to_string()),
                                                                                     onmention: on_member_mention,
                                                                                 }
                                                                             }

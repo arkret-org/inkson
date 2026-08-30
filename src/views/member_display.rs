@@ -9,7 +9,7 @@ use crate::state::LocalStateStore;
 /// Canonical Realm roster row from the root `member_roster_entries[]` projection.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct RealmMemberRow {
-    pub actor_id: String,
+    pub actor_id: arkret_sdk::ActorId,
     pub membership: Option<String>,
     pub identity_event_ids: Vec<String>,
     pub member_display_state_digest: Option<String>,
@@ -48,11 +48,10 @@ pub(crate) fn realm_member_roster(projection: Option<&Value>) -> Vec<RealmMember
         let Some(map) = member.as_object() else {
             continue;
         };
-        let Some(actor_id) = map.get("actor_id").and_then(|value| {
-            serde_json::from_value::<arkret_sdk::ActorId>(value.clone())
-                .ok()
-                .map(|actor| actor.signing_principal_id().as_str().to_owned())
-        }) else {
+        let Some(actor_id) = map
+            .get("actor_id")
+            .and_then(|value| serde_json::from_value::<arkret_sdk::ActorId>(value.clone()).ok())
+        else {
             continue;
         };
         let string_field = |key: &str| {
@@ -144,7 +143,7 @@ fn member_handle_lookup_subject(
         // Directory still has to return a verified claim for this exact DID
         // under the Realm context; a pairwise actor simply yields no claim.
         .or_else(|| {
-            principal_core_subject(&row.actor_id)
+            principal_core_subject(row.actor_id.signing_principal_id().as_str())
         })
 }
 
@@ -287,17 +286,20 @@ pub(crate) fn resolve_member_display(
             )
             .and_then(|entry| entry.primary_handle)
     });
-    let primary_handle = [subject_id.as_deref(), Some(row.actor_id.as_str())]
-        .into_iter()
-        .flatten()
-        .find_map(|principal_id| store.primary_handle_for_principal_id(principal_id))
-        .and_then(|handle| {
-            crate::identity::handle::parse_user_handle(&handle).map(|parsed| parsed.display)
-        })
-        .or(cached_handle.and_then(|handle| {
-            crate::identity::handle::parse_user_handle(&handle).map(|parsed| parsed.display)
-        }))
-        .or_else(|| verified_inline_handle(row));
+    let primary_handle = [
+        subject_id.as_deref(),
+        Some(row.actor_id.signing_principal_id().as_str()),
+    ]
+    .into_iter()
+    .flatten()
+    .find_map(|principal_id| store.primary_handle_for_principal_id(principal_id))
+    .and_then(|handle| {
+        crate::identity::handle::parse_user_handle(&handle).map(|parsed| parsed.display)
+    })
+    .or(cached_handle.and_then(|handle| {
+        crate::identity::handle::parse_user_handle(&handle).map(|parsed| parsed.display)
+    }))
+    .or_else(|| verified_inline_handle(row));
     let display_name = identity.as_ref().and_then(|identity| {
         let name = identity.display_profile.display_name.trim();
         (!name.is_empty()).then(|| name.to_owned())
@@ -419,15 +421,21 @@ pub(crate) fn member_label(
                 (!name.is_empty()).then(|| name.to_owned())
             })
         })
-        .unwrap_or_else(|| short_protocol_id(&row.actor_id))
+        .unwrap_or_else(|| short_protocol_id(row.actor_id.signing_principal_id().as_str()))
 }
 
 pub(crate) fn owned_agent_slug<'a>(
     row: &RealmMemberRow,
     owned_agent_slugs: &'a BTreeMap<String, String>,
 ) -> Option<&'a str> {
+    let arkret_sdk::ActorId::HostedPrincipal { station_id, .. } = &row.actor_id else {
+        return None;
+    };
+    if !crate::operation::authoring_station_id().is_ok_and(|local| local == *station_id) {
+        return None;
+    }
     owned_agent_slugs
-        .get(&row.actor_id)
+        .get(row.actor_id.signing_principal_id().as_str())
         .or_else(|| {
             row.subject_id
                 .as_ref()
@@ -439,6 +447,44 @@ pub(crate) fn owned_agent_slug<'a>(
 #[cfg(test)]
 mod petname_tests {
     use super::*;
+
+    #[test]
+    fn roster_keeps_accounts_at_different_stations_distinct() {
+        let principal =
+            arkret_sdk::DidCoreId::new("ak:did_core:web:roster-isolation.example").unwrap();
+        let actor = |station| {
+            arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+                principal.clone(),
+                arkret_sdk::DidCoreId::new(station).unwrap(),
+            ))
+        };
+        let first = actor("ak:did_core:web:station-a.example");
+        let second = actor("ak:did_core:web:station-b.example");
+        let projection = serde_json::json!({"member_roster_entries": [
+            {"actor_id": first, "membership": "join"},
+            {"actor_id": second, "membership": "invite"},
+            {"actor_id": first, "membership": "leave"},
+            {"actor_id": principal, "membership": "join"}
+        ]});
+        let rows = realm_member_roster(Some(&projection));
+        assert_eq!(rows.len(), 2);
+        assert_eq!(
+            rows.iter()
+                .find(|row| row.actor_id == first)
+                .unwrap()
+                .membership
+                .as_deref(),
+            Some("join")
+        );
+        assert_eq!(
+            rows.iter()
+                .find(|row| row.actor_id == second)
+                .unwrap()
+                .membership
+                .as_deref(),
+            Some("invite")
+        );
+    }
 
     fn remark(principal_id: &str, petname: &str) -> crate::account_data::ContactRemark {
         crate::account_data::ContactRemark::new(
@@ -476,7 +522,7 @@ mod petname_tests {
 
     fn realm_row(actor_id: &str, subject_id: Option<&str>) -> RealmMemberRow {
         RealmMemberRow {
-            actor_id: actor_id.to_owned(),
+            actor_id: crate::mls_api_helpers::local_account_actor_id(actor_id).unwrap(),
             membership: Some("join".to_owned()),
             identity_event_ids: Vec::new(),
             member_display_state_digest: None,

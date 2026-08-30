@@ -399,7 +399,7 @@ fn member_state_ban_event_uses_realm_scoped_member_cell() {
     let event = build_member_state_transition_event(
         "ak:realm:AVFSR4O2uTcP6zGsyewp0OdaGeDZBXQAUZ9VIEKLSXYo",
         "did:web:alice.example",
-        "did:web:bob.example",
+        &crate::mls_api_helpers::local_account_actor_id("did:web:bob.example").unwrap(),
         Some("join"),
         "ban",
         "admin_ban",

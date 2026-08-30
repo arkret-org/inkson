@@ -2255,11 +2255,12 @@ fn AppBootstrap() -> Element {
                                                                                     &base,
                                                                                     api_token,
                                                                                     |api| async move {
+                                                                                        anyhow::ensure!(api.event_submitter()?.authority()?.principal_id == crate::mls_api_helpers::principal_core_id(&controller_id)?, "active controller account changed while opening Agent conversation");
                                                                                         crate::transport::account::direct_conversation_resolve(
                                                                                             &api,
                                                                                             state_store,
-                                                                                            &agent_id,
-                                                                                            Some(&controller_id),
+                                                                                            &arkret_sdk::ActorId::hosted_principal(crate::mls_api_helpers::principal_core_id(&agent_id)?, api.event_submitter()?.authority()?.station_id.clone()).to_string(),
+                                                                                            Some(&serde_json::to_string(api.event_submitter()?.authority()?)?),
                                                                                             true,
                                                                                         ).await
                                                                                     },
@@ -2333,7 +2334,8 @@ fn AppBootstrap() -> Element {
                             } else {
                                 for contact in filtered_direct_contact_rows.iter() {
                                     {
-                                        let peer = crate::models::contact_peer_id(contact).to_string();
+                                        let peer_principal = crate::models::contact_peer_id(contact).to_string();
+                                        let peer = contact.peer.contact_actor_id().to_string();
                                         let state_label =
                                             crate::models::contact_state_wire(contact.state).to_owned();
                                         let scopes_label = contact
@@ -2364,8 +2366,8 @@ fn AppBootstrap() -> Element {
                                                     arkret_sdk::contact_operations::ContactPeer::Human { .. }
                                                 );
                                         let contact_remark =
-                                            contact_remarks_for_sidebar.get(&peer).cloned();
-                                        let display_name = actor_display_label(&state_store.read(), &peer);
+                                            contact_remarks_for_sidebar.get(&peer_principal).cloned();
+                                        let display_name = actor_display_label(&state_store.read(), &peer_principal);
                                         let opening_key = format!("contact:{peer}");
                                         let opening_target = direct_chat_opening();
                                         let chat_open_blocked = opening_target.is_some();
@@ -2602,7 +2604,7 @@ fn AppBootstrap() -> Element {
                                                                 title: "{pin_contact_label}",
                                                                 "aria-label": "{pin_contact_label}",
                                                                 onclick: {
-                                                                    let peer = peer.clone();
+                                                                    let peer = peer_principal.clone();
                                                                     let existing = contact_remark.clone();
                                                                     let next_pinned = !is_pinned_contact;
                                                                     move |event: dioxus::events::MouseEvent| {
@@ -2658,10 +2660,7 @@ fn AppBootstrap() -> Element {
                                                 div { class: "contact-agent-list", "data-testid": "contact-sidebar-contact-agents",
                                         for agent in contact.contact_agent_projections.iter() {
                                                     {
-                                                        let agent_id = agent
-                                                            .actor_id
-                                                            .signing_principal_id()
-                                                            .to_string();
+                                                        let agent_id = agent.actor_id.to_string();
                                                         let agent_label = agent.display_name.clone()
                                                             .or_else(|| agent.agent_slug.clone())
                                                             .unwrap_or_else(|| short_protocol_id(&agent_id));
@@ -2671,7 +2670,10 @@ fn AppBootstrap() -> Element {
                                                             .as_ref()
                                                             .map(ToString::to_string)
                                                             .unwrap_or_default();
-                                                        let controller = peer.clone();
+                                                        let controller = match &contact.peer {
+                                                            arkret_sdk::contact_operations::ContactPeer::Human { account_id } => serde_json::to_string(account_id),
+                                                            arkret_sdk::contact_operations::ContactPeer::Agent { controller_account_id, .. } => serde_json::to_string(controller_account_id),
+                                                        }.unwrap_or_default();
                                                         let opening_key = format!("contact-agent:{agent_id}");
                                                         let opening_target = direct_chat_opening();
                                                         let chat_open_blocked = opening_target.is_some();

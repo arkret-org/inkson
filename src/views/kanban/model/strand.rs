@@ -42,7 +42,14 @@ pub(crate) fn strand_projection_assignee(
     if strand.assigned_actor_ids.is_empty() {
         return None;
     }
-    Some(strand.assigned_actor_ids.join(", "))
+    Some(
+        strand
+            .assigned_actor_ids
+            .iter()
+            .map(|actor| actor.signing_principal_id().as_str())
+            .collect::<Vec<_>>()
+            .join(", "),
+    )
 }
 
 pub(crate) fn strand_projection_assigned_to_relations(
@@ -53,8 +60,8 @@ pub(crate) fn strand_projection_assigned_to_relations(
         .iter()
         .filter_map(|relation| {
             let relation_id = relation.relation_id.trim();
-            let actor_id = relation.actor_id.trim();
-            (!relation_id.is_empty() && !actor_id.is_empty()).then(|| CardAssignedToRelation {
+            let actor_id = &relation.actor_id;
+            (!relation_id.is_empty()).then(|| CardAssignedToRelation {
                 relation_id: relation_id.to_owned(),
                 actor_id: actor_id.to_owned(),
             })

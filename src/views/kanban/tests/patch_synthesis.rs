@@ -712,8 +712,12 @@ fn strand_participant_ids_filters_by_target_strand_and_pulls_unique_actors() {
     assert_eq!(
         actor_ids,
         vec![
-            "ak:did_core:web:alice.example".to_owned(),
-            "ak:did_core:web:bob.example".to_owned(),
+            crate::mls_api_helpers::local_account_actor_id("ak:did_core:web:alice.example")
+                .unwrap()
+                .to_string(),
+            crate::mls_api_helpers::local_account_actor_id("ak:did_core:web:bob.example")
+                .unwrap()
+                .to_string(),
         ]
     );
     assert!(strand_participant_ids(&ops, "").is_empty());

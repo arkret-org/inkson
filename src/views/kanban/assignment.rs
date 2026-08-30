@@ -13,12 +13,12 @@ pub(super) enum CardAssignmentMutation {
     /// it has no id until the create is accepted: the optimistic row is keyed by
     /// the write's holder-local operation id until then.
     Create {
-        actor_id: String,
+        actor_id: arkret_sdk::ActorId,
         operation: crate::operation::LocalOperation,
     },
     /// Removing an existing assignment, which already has a Relation id.
     Tombstone {
-        actor_id: String,
+        actor_id: arkret_sdk::ActorId,
         relation_id: String,
         operation: crate::operation::LocalOperation,
     },
@@ -33,7 +33,7 @@ impl CardAssignmentMutation {
         }
     }
 
-    pub(super) fn actor_id(&self) -> &str {
+    pub(super) fn actor_id(&self) -> &arkret_sdk::ActorId {
         match self {
             Self::Create { actor_id, .. } | Self::Tombstone { actor_id, .. } => actor_id,
         }
@@ -62,12 +62,12 @@ enum QueuedAssignmentBody {
 struct QueuedAssignmentRecord<'a> {
     kind: arkret_sdk::EventKind,
     operation_id: &'a str,
-    actor_id: String,
+    actor_id: arkret_sdk::ActorId,
     created_at: String,
     write_state: &'static str,
     body: QueuedAssignmentBody,
     assignment_strand_id: &'a str,
-    assignment_actor_id: &'a str,
+    assignment_actor_id: &'a arkret_sdk::ActorId,
     assignment_relation_id: String,
 }
 
@@ -85,36 +85,25 @@ fn queued_assignment_body(
 }
 
 pub(super) fn normalize_assignee_selection(
-    selected_actor_ids: BTreeSet<String>,
-) -> Result<BTreeSet<String>, String> {
-    let mut normalized = BTreeSet::new();
-    for actor_id in selected_actor_ids {
-        let actor_id = actor_id.trim();
-        if actor_id.is_empty() {
-            continue;
-        }
-        if !actor_id.starts_with("did:") {
-            return Err(format!("assignee actor id must be a DID: {actor_id}"));
-        }
-        normalized.insert(actor_id.to_owned());
-    }
-    Ok(normalized)
+    selected_actor_ids: BTreeSet<arkret_sdk::ActorId>,
+) -> Result<BTreeSet<arkret_sdk::ActorId>, String> {
+    Ok(selected_actor_ids)
 }
 
 pub(super) fn card_assignment_mutations(
     realm_id: &str,
     actor_id: &str,
     current: &KanbanCard,
-    selected_actor_ids: &BTreeSet<String>,
+    selected_actor_ids: &BTreeSet<arkret_sdk::ActorId>,
 ) -> Result<Vec<CardAssignmentMutation>, String> {
     let current_actor_ids = card_assigned_actor_ids(current)
         .into_iter()
         .collect::<BTreeSet<_>>();
-    let mut relation_ids_by_actor = BTreeMap::<String, Vec<String>>::new();
+    let mut relation_ids_by_actor = BTreeMap::<arkret_sdk::ActorId, Vec<String>>::new();
     for relation in &current.assigned_to_relations {
         let relation_id = relation.relation_id.trim();
-        let actor_id = relation.actor_id.trim();
-        if relation_id.is_empty() || actor_id.is_empty() {
+        let actor_id = &relation.actor_id;
+        if relation_id.is_empty() {
             continue;
         }
         relation_ids_by_actor
@@ -128,7 +117,7 @@ pub(super) fn card_assignment_mutations(
     // assignment events; `assignee_id` is the person being assigned/unassigned
     // and only appears as the relation target.
     for assignee_id in selected_actor_ids.difference(&current_actor_ids) {
-        let operation = crate::operation::ak_ops::relation_create(
+        let operation = crate::operation::ak_ops::relation_create_for_actor(
             realm_id,
             actor_id,
             "assigned_to",
@@ -151,7 +140,7 @@ pub(super) fn card_assignment_mutations(
         let Some(relation_ids) = relation_ids_by_actor.get(assignee_id) else {
             return Err(format!(
                 "assignment for {} is missing its relation_id; refresh before removing it",
-                short_protocol_id(assignee_id)
+                short_protocol_id(assignee_id.signing_principal_id().as_str())
             ));
         };
         for relation_id in relation_ids {
@@ -172,7 +161,7 @@ pub(super) fn card_assignment_mutations(
 
 pub(super) fn assignment_relations_after_mutations(
     current: &KanbanCard,
-    selected_actor_ids: &BTreeSet<String>,
+    selected_actor_ids: &BTreeSet<arkret_sdk::ActorId>,
     mutations: &[CardAssignmentMutation],
 ) -> Vec<CardAssignedToRelation> {
     let tombstoned = mutations
@@ -185,7 +174,7 @@ pub(super) fn assignment_relations_after_mutations(
     let mut relations = current
         .assigned_to_relations
         .iter()
-        .filter(|relation| selected_actor_ids.contains(relation.actor_id.trim()))
+        .filter(|relation| selected_actor_ids.contains(&relation.actor_id))
         .filter(|relation| !tombstoned.contains(relation.relation_id.trim()))
         .cloned()
         .collect::<Vec<_>>();
@@ -221,7 +210,7 @@ pub(super) fn dispatch_card_assignees_update(
     realm_id: String,
     actor_id: String,
     current: KanbanCard,
-    selected_actor_ids: BTreeSet<String>,
+    selected_actor_ids: BTreeSet<arkret_sdk::ActorId>,
     mut selected_card: Signal<Option<KanbanCard>>,
     mut state_store: SyncSignal<LocalStateStore>,
     mut board_status: Signal<String>,
@@ -294,7 +283,7 @@ pub(super) fn dispatch_card_assignees_update(
         let record = match serde_json::to_value(QueuedAssignmentRecord {
             kind: operation.kind().clone(),
             operation_id: &operation_id,
-            actor_id: operation.actor_id().to_string(),
+            actor_id: operation.actor_id().clone(),
             created_at: arkret_sdk::canonical::format_timestamp_canonical(operation.created_at()),
             write_state: "queued",
             body,

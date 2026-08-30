@@ -104,8 +104,8 @@ pub(super) fn DiscussionParticipantRow(
     nested_agent: bool,
     show_binding_details: bool,
 ) -> Element {
-    let participant_id_attr = participant.principal_id.to_string();
-    let participant_id_label = short_protocol_id(&participant_id_attr);
+    let participant_id_attr = participant.roster_key();
+    let participant_id_label = short_protocol_id(participant.principal_id.as_str());
     let owner_label = agent_controller_label(&participant, &participants);
     let selector_label = agent_selector_label(&participant);
     let agent_slug = participant

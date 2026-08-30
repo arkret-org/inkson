@@ -373,6 +373,7 @@ mod act_on_behalf_tests {
 
     fn agent_participant(principal_id: &str) -> SpaceParticipant {
         SpaceParticipant {
+            actor_id: None,
             principal_id: normalize_participant_id(principal_id)
                 .expect("valid participant core id"),
             display_name: Some("Summary Assistant".to_owned()),

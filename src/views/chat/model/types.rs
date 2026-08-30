@@ -120,6 +120,8 @@ pub(crate) struct ChatMessage {
     pub(crate) realm_id: String,
     pub(crate) id: String,
     pub(crate) protocol_message_id: Option<String>,
+    /// Signed membership actor, kept separately from the principal display label.
+    pub(crate) actor_id: Option<arkret_sdk::ActorId>,
     pub(crate) sender: String,
     /// AKP-0008 §4.10 — envelope-level `executed_by`. Present only for
     /// act-on-behalf events: `sender` (actor_id) is the controller and
@@ -256,6 +258,8 @@ pub(crate) struct AgentParticipantMetadata {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct SpaceParticipant {
+    /// Full membership identity; absent only for display-only agent metadata.
+    pub(crate) actor_id: Option<arkret_sdk::ActorId>,
     pub(crate) principal_id: arkret_sdk::DidCoreId,
     pub(crate) display_name: Option<String>,
     pub(crate) handle_label: Option<String>,
@@ -276,6 +280,15 @@ pub(crate) struct MentionInlinePart {
     pub(crate) text: String,
     pub(crate) mention_label: Option<String>,
     pub(crate) is_local: bool,
+}
+
+impl SpaceParticipant {
+    pub(crate) fn roster_key(&self) -> String {
+        self.actor_id
+            .as_ref()
+            .map(ToString::to_string)
+            .unwrap_or_else(|| format!("display-principal:{}", self.principal_id))
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

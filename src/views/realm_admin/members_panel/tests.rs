@@ -1,7 +1,17 @@
 use super::*;
 
+fn actor_key(id: &str) -> String {
+    let principal = arkret_sdk::DidCoreId::new(id).unwrap();
+    let station = arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap();
+    if id.contains("agent") {
+        arkret_sdk::ActorId::hosted_principal(principal, station).to_string()
+    } else {
+        arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(principal, station)).to_string()
+    }
+}
+
 fn member(id: &str) -> MemberProfile {
-    MemberProfile::bare(id.to_owned())
+    MemberProfile::bare(actor_key(id))
 }
 
 fn agent(id: &str, controller: &str, name: &str) -> MemberAgentRow {
@@ -64,7 +74,7 @@ fn my_agents_list_only_shows_joined_agents_and_picker_only_shows_available_activ
         "Paused",
     );
     paused.status = "paused".to_owned();
-    let members = BTreeSet::from([joined.agent_id.clone()]);
+    let members = BTreeSet::from([actor_key(&joined.agent_id)]);
 
     let (in_realm, candidates) =
         split_owned_agents_for_realm(&[joined.clone(), available.clone(), paused], &members);
@@ -108,9 +118,15 @@ fn splits_pending_invites_out_of_active_members() {
     let (active, pending) = split_member_profiles(vec![alice, bob]);
 
     assert_eq!(active.len(), 1);
-    assert_eq!(active[0].actor_id, "ak:did_core:web:alice.example");
+    assert_eq!(
+        active[0].actor_id,
+        actor_key("ak:did_core:web:alice.example")
+    );
     assert_eq!(pending.len(), 1);
-    assert_eq!(pending[0].actor_id, "ak:did_core:web:bob.example");
+    assert_eq!(
+        pending[0].actor_id,
+        actor_key("ak:did_core:web:bob.example")
+    );
 }
 
 #[test]
@@ -121,7 +137,7 @@ fn optimistic_pending_invite_does_not_downgrade_joined_member() {
 
     upsert_pending_invite_profile(
         &mut rows,
-        "ak:did_core:web:alice.example",
+        &actor_key("ak:did_core:web:alice.example"),
         Some("Alice"),
         None,
     );
@@ -138,7 +154,7 @@ fn optimistic_pending_invite_records_display_handle() {
 
     upsert_pending_invite_profile(
         &mut rows,
-        "ak:did_core:web:bob.example",
+        &actor_key("ak:did_core:web:bob.example"),
         Some("bob:example.com"),
         None,
     );
@@ -207,18 +223,18 @@ fn groups_current_account_with_owned_agent_members() {
 
     let alice = groups
         .iter()
-        .find(|group| group.controller.actor_id == "ak:did_core:web:alice.example")
+        .find(|group| group.controller.actor_id == actor_key("ak:did_core:web:alice.example"))
         .expect("alice group exists");
     assert_eq!(alice.agents.len(), 1);
     assert_eq!(alice.agents[0].agent_id, "ak:did_core:web:agent.example");
     assert_eq!(
         groups[0].controller.actor_id,
-        "ak:did_core:web:alice.example"
+        actor_key("ak:did_core:web:alice.example")
     );
     assert!(
         groups
             .iter()
-            .all(|group| group.controller.actor_id != "ak:did_core:web:agent.example")
+            .all(|group| group.controller.actor_id != actor_key("ak:did_core:web:agent.example"))
     );
 }
 
@@ -241,14 +257,14 @@ fn groups_agent_members_under_reported_controller() {
 
     let bob = groups
         .iter()
-        .find(|group| group.controller.actor_id == "ak:did_core:web:bob.example")
+        .find(|group| group.controller.actor_id == actor_key("ak:did_core:web:bob.example"))
         .expect("bob group exists");
     assert_eq!(bob.agents.len(), 1);
     assert_eq!(bob.agents[0].agent_id, "ak:did_core:web:bob-agent.example");
     assert!(
-        groups
-            .iter()
-            .all(|group| group.controller.actor_id != "ak:did_core:web:bob-agent.example")
+        groups.iter().all(
+            |group| group.controller.actor_id != actor_key("ak:did_core:web:bob-agent.example")
+        )
     );
 }
 
@@ -279,7 +295,7 @@ fn projected_member_profiles_use_only_verified_canonical_identity_fields() {
     let profiles = projected_member_profiles_for_realm(&store, realm_id);
     let alice = profiles
         .iter()
-        .find(|profile| profile.actor_id == "ak:did_core:web:alice.example")
+        .find(|profile| profile.actor_id == actor_key("ak:did_core:web:alice.example"))
         .expect("alice profile exists");
     assert_eq!(alice.display_name, None);
     assert_eq!(alice.handles, vec!["alice:acme.example"]);
@@ -309,7 +325,7 @@ fn projected_member_profiles_classify_authority_root_controller_as_owner() {
     let profiles = projected_member_profiles_for_realm(&store, realm_id);
     let alice = profiles
         .iter()
-        .find(|profile| profile.actor_id == "ak:did_core:web:alice.example")
+        .find(|profile| profile.actor_id == actor_key("ak:did_core:web:alice.example"))
         .expect("authority-root controller is present");
     assert!(alice.is_owner);
     assert_eq!(alice.membership.as_deref(), Some("join"));
@@ -340,9 +356,15 @@ fn projected_member_profiles_preserve_pending_invite_membership() {
     let (active, pending) = split_member_profiles(profiles);
 
     assert_eq!(active.len(), 1);
-    assert_eq!(active[0].actor_id, "ak:did_core:web:alice.example");
+    assert_eq!(
+        active[0].actor_id,
+        actor_key("ak:did_core:web:alice.example")
+    );
     assert_eq!(pending.len(), 1);
-    assert_eq!(pending[0].actor_id, "ak:did_core:web:bob.example");
+    assert_eq!(
+        pending[0].actor_id,
+        actor_key("ak:did_core:web:bob.example")
+    );
     assert_eq!(pending[0].membership.as_deref(), Some("invite"));
 }
 
@@ -366,7 +388,11 @@ fn joined_member_signature_lists_only_joined_members_sorted() {
     // deliberately independent and still reads canonical accepted history.
     assert_eq!(
         joined_member_signature_for_realm(&store, realm_id),
-        "ak:did_core:web:alice.example,ak:did_core:web:carol.example"
+        [
+            actor_key("ak:did_core:web:alice.example"),
+            actor_key("ak:did_core:web:carol.example")
+        ]
+        .join(",")
     );
 }
 
@@ -388,7 +414,7 @@ fn joined_member_signature_reads_raw_member_state_join() {
     );
     assert_eq!(
         joined_member_signature_for_realm(&store, realm_id),
-        "ak:did_core:web:bob.example"
+        actor_key("ak:did_core:web:bob.example")
     );
 }
 
@@ -441,7 +467,7 @@ fn accepted_invite_route_binds_delivery_service_and_accepting_device() {
     );
 
     assert_eq!(
-        accepted_invite_claim_route(&store, realm_id, invitee),
+        accepted_invite_claim_route(&store, realm_id, &actor_key(invitee)),
         Some(AcceptedInviteClaimRoute {
             destination_id: "ak:did_core:web:principal.example".to_owned(),
             target_device_id: Some(device_id.to_owned()),
@@ -451,7 +477,7 @@ fn accepted_invite_route_binds_delivery_service_and_accepting_device() {
         accepted_invite_claim_route(
             &store,
             "ak:realm:Ac4tyK_nwe4AYgJmR9A6pbiRrGZiDOx-i-EVWYUQabXC",
-            invitee,
+            &actor_key(invitee),
         )
         .is_none()
     );
@@ -491,13 +517,13 @@ fn accepted_human_invite_route_fails_closed_without_exact_accepting_device() {
     );
 
     assert_eq!(
-        accepted_invite_claim_route(&store, realm_id, invitee),
+        accepted_invite_claim_route(&store, realm_id, &actor_key(invitee)),
         Some(AcceptedInviteClaimRoute {
             destination_id: "ak:did_core:web:principal.example".to_owned(),
             target_device_id: None,
         })
     );
-    let route = accepted_invite_claim_route(&store, realm_id, invitee).unwrap();
+    let route = accepted_invite_claim_route(&store, realm_id, &actor_key(invitee)).unwrap();
     assert!(claim_target_device_id(&route, false).is_err());
     assert_eq!(claim_target_device_id(&route, true).unwrap(), None);
 }
@@ -541,7 +567,10 @@ fn projected_duplicate_member_keeps_first_roster_entry() {
 
     assert!(active.is_empty());
     assert_eq!(pending.len(), 1);
-    assert_eq!(pending[0].actor_id, "ak:did_core:web:bob.example");
+    assert_eq!(
+        pending[0].actor_id,
+        actor_key("ak:did_core:web:bob.example")
+    );
     assert_eq!(pending[0].membership.as_deref(), Some("invite"));
 }
 
@@ -568,7 +597,10 @@ fn projected_member_profiles_restore_pending_invites_from_raw_operations() {
 
     assert!(active.is_empty());
     assert_eq!(pending.len(), 1);
-    assert_eq!(pending[0].actor_id, "ak:did_core:web:bob.example");
+    assert_eq!(
+        pending[0].actor_id,
+        actor_key("ak:did_core:web:bob.example")
+    );
     assert_eq!(pending[0].handles, vec!["bob:example.com"]);
     assert_eq!(pending[0].invite_is_direct, Some(true));
 }
@@ -631,7 +663,7 @@ fn projected_member_profiles_promote_invite_accept_to_join_from_raw_operations()
     let (active, pending) = split_member_profiles(profiles);
 
     assert_eq!(active.len(), 1);
-    assert_eq!(active[0].actor_id, "ak:did_core:web:bob.example");
+    assert_eq!(active[0].actor_id, actor_key("ak:did_core:web:bob.example"));
     assert_eq!(active[0].membership.as_deref(), Some("join"));
     assert!(pending.is_empty());
 }
@@ -686,17 +718,18 @@ fn queued_invite_accept_does_not_promote_join_but_realm_remains_reconcilable() {
     assert!(
         active
             .iter()
-            .all(|profile| profile.actor_id != "ak:did_core:web:bob.example")
+            .all(|profile| profile.actor_id != actor_key("ak:did_core:web:bob.example"))
     );
     assert!(pending.iter().any(|profile| {
-        profile.actor_id == "ak:did_core:web:bob.example"
+        profile.actor_id == actor_key("ak:did_core:web:bob.example")
             && profile.membership.as_deref() == Some("invite")
     }));
     let candidates = mls_admission_candidate_realms_for_actor(&store, "did:web:alice.example");
     assert_eq!(candidates.len(), 1);
     assert_eq!(candidates[0].0, realm_id);
     assert_eq!(
-        candidates[0].1, "ak:did_core:web:alice.example",
+        candidates[0].1,
+        actor_key("ak:did_core:web:alice.example"),
         "queued local intent is not accepted membership, while the Realm is still inspected so canonical history can close the gap"
     );
 }
@@ -767,7 +800,7 @@ fn raw_pending_invite_does_not_override_join_projection() {
     let (active, pending) = split_member_profiles(profiles);
 
     assert_eq!(active.len(), 1);
-    assert_eq!(active[0].actor_id, "ak:did_core:web:bob.example");
+    assert_eq!(active[0].actor_id, actor_key("ak:did_core:web:bob.example"));
     assert_eq!(active[0].membership.as_deref(), Some("join"));
     assert!(pending.is_empty());
 }
@@ -825,7 +858,7 @@ fn projected_membership_uses_positive_limited_roster_without_claiming_completene
     assert_eq!(membership.completeness, MembershipCompleteness::Limited);
     assert_eq!(
         membership.joined,
-        BTreeSet::from(["ak:did_core:web:bob.example".to_owned()])
+        BTreeSet::from([actor_key("ak:did_core:web:bob.example")])
     );
 }
 

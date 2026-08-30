@@ -16,11 +16,8 @@ pub(super) use crate::views::member_display::{
 };
 
 pub(super) fn card_member_is_current_account(row: &RealmMemberRow, principal_id: &str) -> bool {
-    actor_is_current_account(&row.actor_id, principal_id)
-        || row
-            .subject_id
-            .as_deref()
-            .is_some_and(|subject_id| actor_is_current_account(subject_id, principal_id))
+    crate::mls_api_helpers::local_account_actor_id(principal_id)
+        .is_ok_and(|own_actor| own_actor == row.actor_id)
 }
 
 pub(super) fn member_roster_realm_context(
@@ -111,8 +108,9 @@ pub(super) fn strand_participant_ids(
         .into_iter()
         .flatten()
         {
-            if let Some(actor_id) =
-                crate::state::projection::message_ops::actor_principal_from_value(actor)
+            if let Some(actor_id) = serde_json::from_value::<arkret_sdk::ActorId>(actor.clone())
+                .ok()
+                .map(|actor| actor.to_string())
             {
                 actor_ids.insert(actor_id);
             }
@@ -149,18 +147,28 @@ pub(super) fn member_display_label_for_actor(
     if actor_id.is_empty() || realm_id.is_empty() {
         return None;
     }
-    let row = context.member_rows.iter().find(|row| {
-        row.actor_id.trim() == actor_id
-            || row
-                .subject_id
-                .as_deref()
-                .map(str::trim)
-                .is_some_and(|subject| subject == actor_id)
-    })?;
+    let row = context
+        .member_rows
+        .iter()
+        .find(|row| row.actor_id.to_string() == actor_id)
+        .or_else(|| {
+            // Legacy display-only authors may carry a principal, but an ambiguous
+            // principal must never pick an arbitrary Station's identity profile.
+            let mut matches = context.member_rows.iter().filter(|row| {
+                row.actor_id.signing_principal_id().as_str() == actor_id
+                    || row
+                        .subject_id
+                        .as_deref()
+                        .map(str::trim)
+                        .is_some_and(|subject| subject == actor_id)
+            });
+            let row = matches.next()?;
+            matches.next().is_none().then_some(row)
+        })?;
     Some(crate::views::member_display::resolve_member_display(state_store, realm_id, row).label)
 }
 
-pub(super) fn bare_member_row(actor_id: String) -> RealmMemberRow {
+pub(super) fn bare_member_row(actor_id: arkret_sdk::ActorId) -> RealmMemberRow {
     RealmMemberRow {
         actor_id,
         membership: None,
@@ -176,7 +184,7 @@ pub(super) fn assignment_picker_roster(
     member_rows: &[RealmMemberRow],
     card: &KanbanCard,
 ) -> Vec<RealmMemberRow> {
-    let mut rows = BTreeMap::<String, RealmMemberRow>::new();
+    let mut rows = BTreeMap::<arkret_sdk::ActorId, RealmMemberRow>::new();
     for row in member_rows {
         rows.entry(row.actor_id.clone())
             .or_insert_with(|| row.clone());
@@ -192,14 +200,18 @@ pub(super) fn assignee_label_for_actor(
     state_store: &LocalStateStore,
     realm_context: &str,
     member_rows: &[RealmMemberRow],
-    actor_id: &str,
+    actor_id: &arkret_sdk::ActorId,
 ) -> String {
-    let context = CardAuthorDisplayContext {
-        realm_id: realm_context,
-        member_rows,
-    };
-    member_display_label_for_actor(state_store, Some(context), actor_id)
-        .unwrap_or_else(|| actor_display_label(state_store, actor_id))
+    member_rows
+        .iter()
+        .find(|row| &row.actor_id == actor_id)
+        .map(|row| {
+            crate::views::member_display::resolve_member_display(state_store, realm_context, row)
+                .label
+        })
+        .unwrap_or_else(|| {
+            actor_display_label(state_store, actor_id.signing_principal_id().as_str())
+        })
 }
 
 pub(super) fn assignee_filter_matches(filter: &str, label: &str, actor_id: &str) -> bool {
