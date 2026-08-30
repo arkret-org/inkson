@@ -679,7 +679,7 @@ fn local_state_store_persists_push_registration_state() {
     let path = temp_state_path("push-registration");
     let mut store = LocalStateStore::with_path(path.clone());
     store.save_push_registration(PushRegistrationState {
-        principal_id: None,
+        account_id: None,
         registration_id: Some(arkret_wire::OpaqueLocalId::new("push:local").unwrap()),
         device_id: "dev_inkson".to_owned(),
         platform: Some("desktop".to_owned()),

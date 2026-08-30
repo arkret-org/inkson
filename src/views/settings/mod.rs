@@ -2090,27 +2090,14 @@ pub fn SettingsPanel(
                                     let base = base_url();
                                     let api_token = token();
                                     let dev = device_id();
-                                    let principal_id = principal_id();
+                                    let push_account_id = account_authority();
                                     let persisted_grant = state_store.read().session_grant();
                                     spawn(async move {
-                                        let principal_id = if principal_id.trim().is_empty() {
-                                            None
-                                        } else {
-                                            let Ok(principal_id) =
-                                                arkret_sdk::DidCoreId::new(principal_id)
-                                            else {
-                                                tracing::error!(
-                                                    "push registration rejected an invalid principal_id"
-                                                );
-                                                return;
-                                            };
-                                            Some(principal_id)
-                                        };
                                         let context = crate::push::registration::RegisterContext {
                                             station_url: base,
                                             floria_gateway_url: crate::push::floria_gateway_url(),
                                             device_id: dev,
-                                            principal_id,
+                                            account_id: Some(push_account_id),
                                             authorization_credential: Some(api_token),
                                             session_grant: None,
                                             active_circle_id: None,
