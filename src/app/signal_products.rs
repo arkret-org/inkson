@@ -24,6 +24,28 @@ const AUTHZ_VERDICT_TTL_MS: u64 = 30_000;
 /// Hard cap on cached verdicts, evicting the oldest first.
 const MAX_AUTHZ_VERDICTS: usize = 256;
 
+fn signal_authorization_cache_key(
+    actor: &arkret_sdk::ActorId,
+    seal: &arkret_sdk::SealId,
+    action: &str,
+    realm: &arkret_sdk::RealmId,
+) -> String {
+    format!("{realm}|{actor}|{seal}|{action}")
+}
+
+fn signal_authorization_request(
+    actor: &arkret_sdk::ActorId,
+    action: &str,
+    realm: arkret_sdk::RealmId,
+) -> arkret_models_collaboration::governance::authorization::AuthzCheckRequestBody {
+    arkret_models_collaboration::governance::authorization::AuthzCheckRequestBody {
+        actor_id: actor.clone(),
+        action: action.to_owned(),
+        resource: Some(arkret_sdk::WireResourceSelector::realm(realm)),
+        context: None,
+    }
+}
+
 fn agent_prefetch_needed_for_directory_lookup(
     lookup: &crate::identity::device_directory::CacheLookup,
 ) -> bool {
@@ -122,10 +144,14 @@ impl AppSignalProductSink {
         action: &str,
         realm_id: &str,
     ) -> bool {
-        let key = format!(
-            "{realm_id}|{}|{}|{action}",
-            plaintext.actor_id.signing_principal_id().as_str(),
-            plaintext.seal_ref.as_str()
+        let Ok(resource_realm_id) = arkret_sdk::RealmId::new(realm_id.to_owned()) else {
+            return false;
+        };
+        let key = signal_authorization_cache_key(
+            &plaintext.actor_id,
+            &plaintext.seal_ref,
+            action,
+            &resource_realm_id,
         );
         if let Some(allowed) = self.cached_verdict(&key) {
             return allowed;
@@ -133,18 +159,15 @@ impl AppSignalProductSink {
         let Some(api) = self.authenticated_api() else {
             return false;
         };
-        let Ok(resource_realm_id) = arkret_sdk::RealmId::new(realm_id.to_owned()) else {
-            return false;
-        };
+        // Admission already authenticated the full sender Actor. Reconstructing
+        // an account from its principal and our Station would query a different
+        // participant, and would also collapse HostedPrincipal into Account.
+        let request = signal_authorization_request(&plaintext.actor_id, action, resource_realm_id);
         let allowed = match api.sdk_http_client() {
-            Ok(http) => crate::transport::realm_read::authz_check_resource(
-                &http,
-                plaintext.actor_id.signing_principal_id().as_str(),
-                action,
-                Some(arkret_sdk::WireResourceSelector::realm(resource_realm_id)),
-            )
-            .await
-            .is_ok_and(|outcome| crate::transport::realm_read::authz_allowed(&outcome)),
+            Ok(http) => http
+                .authz_check(&request)
+                .await
+                .is_ok_and(|outcome| crate::transport::realm_read::authz_allowed(&outcome)),
             Err(_) => false,
         };
         self.remember_verdict(key, allowed);
@@ -316,6 +339,36 @@ impl SignalProductSink for AppSignalProductSink {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn signal_authorization_preserves_the_verified_actor_and_station() {
+        let principal = arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example").unwrap();
+        let station_a = arkret_sdk::DidCoreId::new("ak:did_core:web:station-a.example").unwrap();
+        let station_b = arkret_sdk::DidCoreId::new("ak:did_core:web:station-b.example").unwrap();
+        let actors = [
+            arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+                principal.clone(),
+                station_a.clone(),
+            )),
+            arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(principal.clone(), station_b)),
+            arkret_sdk::ActorId::hosted_principal(principal, station_a),
+        ];
+        let realm =
+            arkret_sdk::RealmId::new("ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19")
+                .unwrap();
+        let seal = arkret_sdk::SealId::new(format!("ak:seal:sha256:{}", "a".repeat(64))).unwrap();
+        let mut keys = std::collections::BTreeSet::new();
+        for actor in actors {
+            let request = signal_authorization_request(&actor, "ak.message.create", realm.clone());
+            assert_eq!(request.actor_id, actor);
+            assert!(keys.insert(signal_authorization_cache_key(
+                &actor,
+                &seal,
+                "ak.message.create",
+                &realm,
+            )));
+        }
+    }
 
     #[test]
     fn negative_device_directory_verdict_still_allows_agent_evidence_prefetch() {
