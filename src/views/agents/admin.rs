@@ -844,7 +844,7 @@ fn spawn_set_agent_enabled(
                 signer.as_ref(),
                 account.did(),
                 device_id.as_str(),
-                agent_actor_id.signing_principal_id(),
+                &agent_actor_id,
                 key_state.principal_control_realm_id.as_str(),
                 state_store,
             )
@@ -886,7 +886,7 @@ fn spawn_set_agent_enabled(
                 signer.as_ref(),
                 account.did(),
                 device_id.as_str(),
-                agent_actor_id.signing_principal_id(),
+                &agent_actor_id,
                 key_state.principal_control_realm_id.as_str(),
                 state_store,
             )
@@ -1728,7 +1728,6 @@ fn spawn_provision_agent(
                 &account_for_bootstrap,
                 &bootstrap_outcome.agent_id,
                 &bootstrap_outcome.principal_control_realm_id,
-                &bootstrap_outcome.controller_authorization_ref,
             )
             .await
         })
@@ -2420,7 +2419,7 @@ pub fn PersonalAgentAdminPanel(
                                                         let pairing_expired = selected_pairing_is_expired;
                                                         let slug = replacement_agent_slug.clone();
                                                         move |_| {
-                                                            let Some((agent_id, realm_id, authorization_ref)) = target.clone() else {
+                                                            let Some((agent_id, realm_id, _)) = target.clone() else {
                                                                 last_op_status.set(
                                                                     "Agent PCR binding is unavailable; refresh the Agent details and retry."
                                                                         .to_owned(),
@@ -2456,7 +2455,6 @@ pub fn PersonalAgentAdminPanel(
                                                                             &account,
                                                                             &bootstrap_agent_id,
                                                                             &realm_id,
-                                                                            &authorization_ref,
                                                                         )
                                                                         .await
                                                                     },
@@ -2832,7 +2830,7 @@ pub fn PersonalAgentAdminPanel(
                                                 let base = base_url.clone();
                                                 let target = security_refresh_target.clone();
                                                 move |_| {
-                                                    let Some((agent_id, realm_id, authorization_ref)) = target.clone() else {
+                                                    let Some((agent_id, realm_id, _)) = target.clone() else {
                                                         last_op_status.set("Agent security binding is unavailable; refresh details and retry.".to_owned());
                                                         return;
                                                     };
@@ -2869,7 +2867,6 @@ pub fn PersonalAgentAdminPanel(
                                                                 &account,
                                                                 &agent_id,
                                                                 &realm_id,
-                                                                authorization_ref.as_str(),
                                                             )
                                                             .await
                                                             .err()

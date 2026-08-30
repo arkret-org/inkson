@@ -11,7 +11,7 @@ pub struct CircleScopeRotateDraft {
     pub steps: Vec<crate::event_submit::EventUnitStep>,
     pub post_commit_snapshot: crate::mls::persistence::MlsSnapshotEnvelope,
     pub removed_leaves: Vec<u32>,
-    pub removed_principals: Vec<String>,
+    pub removed_actors: Vec<arkret_sdk::ActorId>,
 }
 
 fn circle_effective_scope(
@@ -30,12 +30,10 @@ fn build_remove_proposal_event(
     realm_id: &str,
     effective_scope: Option<&arkret_sdk::ScopeRef>,
     actor_id: &str,
-    target_principal_id: &str,
+    target_actor_id: &arkret_sdk::ActorId,
     proposal: &arkret_sdk::MlsProposalEnvelope,
     governance_binding: arkret_sdk::MlsGovernanceBindingPayload,
 ) -> Result<crate::operation::LocalOperation, String> {
-    let target_principal = crate::mls_api_helpers::principal_core_id(target_principal_id)
-        .map_err(|err| format!("invalid remove target principal id: {err:?}"))?;
     let proposal_payload = arkret_sdk::MlsProposalPayload {
         mls_group_id: arkret_sdk::MlsGroupId::new(proposal.group_id.clone())
             .map_err(|err| format!("invalid MLS group id: {err}"))?,
@@ -43,7 +41,7 @@ fn build_remove_proposal_event(
         proposal_type: arkret_sdk::MlsProposalType::Remove,
         proposal_bytes_b64: proposal.proposal.clone(),
         proposal_digest: proposal.proposal_digest.clone(),
-        target_principal_id: Some(target_principal),
+        target_actor_id: Some(target_actor_id.clone()),
         target_authorization_incarnation: None,
         governance_binding,
     };
@@ -70,7 +68,7 @@ fn build_remove_scope_rotate_draft(
     authority: &arkret_sdk::AccountId,
     actor_id: &str,
     device_id: &arkret_sdk::DeviceId,
-    target_principal_ids: &[&str],
+    target_actor_ids: &[arkret_sdk::ActorId],
     revocation_membership_frontier: &[arkret_sdk::EventId],
     sidecar_binding: Option<arkret_sdk::SidecarMlsBinding>,
 ) -> Result<CircleScopeRotateDraft, String> {
@@ -94,7 +92,7 @@ fn build_remove_scope_rotate_draft(
             circle_id,
             authority,
             device_id,
-            target_principal_ids,
+            target_actor_ids,
             revocation_membership_frontier,
             sidecar_binding.clone(),
         )
@@ -102,7 +100,7 @@ fn build_remove_scope_rotate_draft(
     if remove.proposals.is_empty() {
         return Err("OpenMLS remove did not produce durable proposal artifacts".to_owned());
     }
-    if remove.proposals.len() != remove.removed_principals.len() {
+    if remove.proposals.len() != remove.removed_actors.len() {
         return Err(
             "OpenMLS remove proposal artifacts do not align with removed principals".to_owned(),
         );
@@ -125,17 +123,13 @@ fn build_remove_scope_rotate_draft(
         );
     }
     let mut proposals = Vec::with_capacity(remove.proposals.len());
-    for (proposal, removed_principal) in remove
-        .proposals
-        .iter()
-        .zip(remove.removed_principals.iter())
-    {
+    for (proposal, removed_principal) in remove.proposals.iter().zip(remove.removed_actors.iter()) {
         proposals.push(
             build_remove_proposal_event(
                 realm_id,
                 Some(&effective_scope),
                 actor_id,
-                removed_principal.as_str(),
+                removed_principal,
                 proposal,
                 proposal_governance_binding.clone(),
             )?
@@ -169,11 +163,7 @@ fn build_remove_scope_rotate_draft(
         steps: vec![Box::new(move |_| Ok(proposals)), commit_step],
         post_commit_snapshot,
         removed_leaves: remove.removed_leaves,
-        removed_principals: remove
-            .removed_principals
-            .into_iter()
-            .map(|did| did.to_string())
-            .collect(),
+        removed_actors: remove.removed_actors,
     })
 }
 
@@ -184,7 +174,7 @@ pub fn build_realm_remove_members_scope_rotate_draft(
     authority: &arkret_sdk::AccountId,
     actor_id: &str,
     device_id: &arkret_sdk::DeviceId,
-    target_principal_ids: &[&str],
+    target_actor_ids: &[arkret_sdk::ActorId],
     revocation_membership_frontier: &[arkret_sdk::EventId],
 ) -> Result<CircleScopeRotateDraft, String> {
     build_remove_scope_rotate_draft(
@@ -195,7 +185,7 @@ pub fn build_realm_remove_members_scope_rotate_draft(
         authority,
         actor_id,
         device_id,
-        target_principal_ids,
+        target_actor_ids,
         revocation_membership_frontier,
         None,
     )
@@ -209,7 +199,7 @@ pub fn build_circle_remove_members_scope_rotate_draft(
     authority: &arkret_sdk::AccountId,
     actor_id: &str,
     device_id: &arkret_sdk::DeviceId,
-    target_principal_ids: &[&str],
+    target_actor_ids: &[arkret_sdk::ActorId],
     revocation_membership_frontier: &[arkret_sdk::EventId],
 ) -> Result<CircleScopeRotateDraft, String> {
     let circle = circle_id.trim();
@@ -224,7 +214,7 @@ pub fn build_circle_remove_members_scope_rotate_draft(
         authority,
         actor_id,
         device_id,
-        target_principal_ids,
+        target_actor_ids,
         revocation_membership_frontier,
         None,
     )

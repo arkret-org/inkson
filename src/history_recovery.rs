@@ -1152,7 +1152,7 @@ pub async fn converge_member_history_recovery(
         let incarnation =
             match arkret_sdk::current_authorization_incarnation_from_verified_checkpoint(
                 &checkpoint,
-                &actor_id,
+                &arkret_sdk::ActorId::account(authority.clone()),
                 circle_id,
             ) {
                 Ok(incarnation) => incarnation,

@@ -897,7 +897,7 @@ fn membership_removal_frontier(
 
 fn realm_membership_removal_basis(
     projection: &Value,
-) -> Option<(BTreeSet<String>, Vec<arkret_sdk::EventId>)> {
+) -> Option<(BTreeSet<arkret_sdk::ActorId>, Vec<arkret_sdk::EventId>)> {
     // A truncated roster is not negative membership evidence.  Waiting for a
     // complete projection is required before comparing it with the MLS tree.
     if projection
@@ -912,12 +912,10 @@ fn realm_membership_removal_basis(
         .as_array()?
         .iter()
         .filter(|member| member.get("membership").and_then(Value::as_str) == Some("join"))
-        .filter_map(|member| {
-            member
-                .get("actor_id")
-                .and_then(crate::state::projection::message_ops::actor_principal_from_value)
+        .map(|member| {
+            serde_json::from_value::<arkret_sdk::ActorId>(member.get("actor_id")?.clone()).ok()
         })
-        .collect::<BTreeSet<_>>();
+        .collect::<Option<BTreeSet<_>>>()?;
     let membership_frontier = membership_removal_frontier(projection, None);
     (!membership_frontier.is_empty()).then_some((active_members, membership_frontier))
 }
@@ -932,17 +930,17 @@ pub(crate) fn circle_mls_removal_candidates(
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
     realm_id: &str,
     circle_id: &str,
-    active_members: &BTreeSet<String>,
+    active_members: &BTreeSet<arkret_sdk::ActorId>,
     authority: &arkret_sdk::AccountId,
     device_id: &arkret_sdk::DeviceId,
-) -> Option<Vec<(String, Vec<arkret_sdk::EventId>)>> {
+) -> Option<Vec<(arkret_sdk::ActorId, Vec<arkret_sdk::EventId>)>> {
     let state = state_store.load();
     let projection = state.realm_tree_projections.get(realm_id)?;
     let membership_frontier = membership_removal_frontier(projection, Some(circle_id));
     if membership_frontier.is_empty() {
         return None;
     }
-    let mut mls_members = crate::mls::runtime::mls_group_member_principal_ids_for_effective_scope(
+    let mut mls_members = crate::mls::runtime::mls_group_member_actor_ids_for_effective_scope(
         state_store,
         secure_store,
         realm_id,
@@ -967,14 +965,15 @@ fn realm_default_mls_removal_candidates(
     realm_id: &str,
     authority: &arkret_sdk::AccountId,
     device_id: &arkret_sdk::DeviceId,
-) -> Option<Vec<(String, Vec<arkret_sdk::EventId>)>> {
+) -> Option<Vec<(arkret_sdk::ActorId, Vec<arkret_sdk::EventId>)>> {
     let state = state_store.load();
     let projection = state.realm_tree_projections.get(realm_id)?;
     let (active_members, membership_frontier) = realm_membership_removal_basis(projection)?;
-    let mut mls_members = crate::mls::runtime::mls_group_member_principal_ids_for_realm(
+    let mut mls_members = crate::mls::runtime::mls_group_member_actor_ids_for_effective_scope(
         state_store,
         secure_store,
         realm_id,
+        None,
         authority,
         device_id,
     )?;
@@ -1072,7 +1071,7 @@ async fn run_circle_scope_rotate_pass(
             .as_ref()
             .filter(|removals| !removals.is_empty())
         {
-            let target_principal_ids: Vec<String> = removals
+            let target_actor_ids: Vec<arkret_sdk::ActorId> = removals
                 .iter()
                 .map(|(principal_id, _)| principal_id.clone())
                 .collect();
@@ -1114,7 +1113,7 @@ async fn run_circle_scope_rotate_pass(
             else {
                 tracing::debug!(
                     %realm_id,
-                    ?target_principal_ids,
+                    ?target_actor_ids,
                     "sync_engine: Realm MLS remove skipped without local snapshot",
                 );
                 continue;
@@ -1125,14 +1124,14 @@ async fn run_circle_scope_rotate_pass(
                 )
             });
             let proof_leaves = match proof_leaves {
-                Ok(leaves) => crate::mls::governance_proof::security_frontier_without_principals(
+                Ok(leaves) => crate::mls::governance_proof::security_frontier_without_actors(
                     leaves,
-                    &target_principal_ids,
+                    &target_actor_ids,
                 ),
                 Err(error) => {
                     tracing::debug!(
                         %realm_id,
-                        ?target_principal_ids,
+                        ?target_actor_ids,
                         %error,
                         "sync_engine: Realm MLS remove security frontier deferred",
                     );
@@ -1155,7 +1154,7 @@ async fn run_circle_scope_rotate_pass(
                 Err(error) => {
                     tracing::debug!(
                         %realm_id,
-                        ?target_principal_ids,
+                        ?target_actor_ids,
                         %error,
                         "sync_engine: Realm MLS remove proof request deferred",
                     );
@@ -1166,7 +1165,7 @@ async fn run_circle_scope_rotate_pass(
             let actor_for_submit = actor_id.clone();
             let authority_for_submit = authority.clone();
             let device_for_submit = device_id.clone();
-            let targets_for_submit = target_principal_ids.clone();
+            let targets_for_submit = target_actor_ids.clone();
             let frontier_for_submit = revocation_membership_frontier.clone();
             let state_store = ctx.state_store.clone();
             let submitted = crate::transport::auth::with_authed_api(
@@ -1184,8 +1183,6 @@ async fn run_circle_scope_rotate_pass(
                     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
                     let draft = state_store
                         .read(|store| {
-                            let target_refs: Vec<&str> =
-                                targets_for_submit.iter().map(String::as_str).collect();
                             crate::circle_mls::build_realm_remove_members_scope_rotate_draft(
                                 store,
                                 secure_store.as_ref(),
@@ -1193,13 +1190,13 @@ async fn run_circle_scope_rotate_pass(
                                 &authority_for_submit,
                                 &actor_for_submit,
                                 &device_for_submit,
-                                &target_refs,
+                                &targets_for_submit,
                                 &frontier_for_submit,
                             )
                         })
                         .map_err(anyhow::Error::msg)?;
                     let post_commit_snapshot = draft.post_commit_snapshot;
-                    let removed_principals = draft.removed_principals;
+                    let removed_actors = draft.removed_actors;
                     // The commit's id exists only once the unit is authored, so
                     // the group-state reference is read from the authored result
                     // rather than from a draft that has none.
@@ -1215,16 +1212,12 @@ async fn run_circle_scope_rotate_pass(
                     submitter
                         .submit_signed_sdk_events_batch(&authored, None)
                         .await?;
-                    Ok::<_, anyhow::Error>((
-                        post_commit_snapshot,
-                        removed_principals,
-                        commit_event_id,
-                    ))
+                    Ok::<_, anyhow::Error>((post_commit_snapshot, removed_actors, commit_event_id))
                 },
             )
             .await;
             match submitted {
-                Ok((post_commit_snapshot, removed_principals, commit_event_id)) => {
+                Ok((post_commit_snapshot, removed_actors, commit_event_id)) => {
                     if generation.get() != start_generation {
                         return;
                     }
@@ -1249,8 +1242,8 @@ async fn run_circle_scope_rotate_pass(
                     }
                     tracing::info!(
                         %realm_id,
-                        ?target_principal_ids,
-                        ?removed_principals,
+                        ?target_actor_ids,
+                        ?removed_actors,
                         "sync_engine: Realm-default MLS remove commit accepted",
                     );
                     // One canonical MLS group rotation per pass. Every Realm
@@ -1264,7 +1257,7 @@ async fn run_circle_scope_rotate_pass(
                     }
                     tracing::debug!(
                         %realm_id,
-                        ?target_principal_ids,
+                        ?target_actor_ids,
                         error = %error.display_diagnostic(),
                         "sync_engine: Realm-default MLS remove commit deferred",
                     );
@@ -1275,7 +1268,7 @@ async fn run_circle_scope_rotate_pass(
 
         let circle_removals: std::collections::BTreeMap<
             String,
-            Vec<(String, Vec<arkret_sdk::EventId>)>,
+            Vec<(arkret_sdk::ActorId, Vec<arkret_sdk::EventId>)>,
         > = circles
             .circle_views
             .iter()
@@ -1285,8 +1278,8 @@ async fn run_circle_scope_rotate_pass(
             })
             .filter_map(|circle| {
                 let circle_id = circle.circle_id.to_string();
-                let active_members: BTreeSet<String> =
-                    circle.member_ids.iter().map(ToString::to_string).collect();
+                let active_members: BTreeSet<arkret_sdk::ActorId> =
+                    circle.member_ids.iter().cloned().collect();
                 let removals = ctx.state_store.read(|store| {
                     circle_mls_removal_candidates(
                         store,
@@ -1361,7 +1354,7 @@ async fn run_circle_scope_rotate_pass(
                 );
                 continue;
             }
-            let target_principal_ids: Vec<String> = removals
+            let target_actor_ids: Vec<arkret_sdk::ActorId> = removals
                 .iter()
                 .map(|(principal_id, _)| principal_id.clone())
                 .collect();
@@ -1372,8 +1365,6 @@ async fn run_circle_scope_rotate_pass(
             revocation_membership_frontier.sort();
             revocation_membership_frontier.dedup();
             let draft = ctx.state_store.read(|store| {
-                let target_refs: Vec<&str> =
-                    target_principal_ids.iter().map(String::as_str).collect();
                 crate::circle_mls::build_circle_remove_members_scope_rotate_draft(
                     store,
                     secure_store.as_ref(),
@@ -1382,7 +1373,7 @@ async fn run_circle_scope_rotate_pass(
                     &authority,
                     &actor_id,
                     &device_id,
-                    &target_refs,
+                    &target_actor_ids,
                     &revocation_membership_frontier,
                 )
             });
@@ -1392,7 +1383,7 @@ async fn run_circle_scope_rotate_pass(
                     tracing::debug!(
                         %realm_id,
                         %circle_id,
-                        ?target_principal_ids,
+                        ?target_actor_ids,
                         error = %err,
                         "sync_engine: Circle scope-rotate draft build skipped",
                     );
@@ -1402,7 +1393,7 @@ async fn run_circle_scope_rotate_pass(
             let steps = draft.steps;
             let post_commit_snapshot = draft.post_commit_snapshot;
             let removed_leaves = draft.removed_leaves;
-            let removed_principals = draft.removed_principals;
+            let removed_actors = draft.removed_actors;
             // The commit's id comes back with the authored unit: it does not
             // exist until the proposals it references have been authored.
             let (outcome, commit_event_id) =
@@ -1434,7 +1425,7 @@ async fn run_circle_scope_rotate_pass(
                         tracing::debug!(
                             %realm_id,
                             %circle_id,
-                            ?target_principal_ids,
+                            ?target_actor_ids,
                             error = %err.display_diagnostic(),
                             "sync_engine: Circle scope-rotate submit failed",
                         );
@@ -1471,9 +1462,9 @@ async fn run_circle_scope_rotate_pass(
             tracing::info!(
                 %realm_id,
                 %circle_id,
-                ?target_principal_ids,
+                ?target_actor_ids,
                 ?removed_leaves,
-                ?removed_principals,
+                ?removed_actors,
                 mls_group_id = ?outcome.mls_group_id,
                 note = ?outcome.note,
                 "sync_engine: Circle scope-rotate commit accepted",
@@ -3166,7 +3157,10 @@ mod tests {
         let (active, frontier) = realm_membership_removal_basis(&projection).unwrap();
         assert_eq!(
             active,
-            BTreeSet::from(["ak:did_core:webvh:z6mkfixture:alice.example".to_owned()])
+            BTreeSet::from([crate::mls_api_helpers::local_account_actor_id(
+                "ak:did_core:webvh:z6mkfixture:alice.example"
+            )
+            .unwrap()])
         );
         assert_eq!(
             frontier,

@@ -251,8 +251,14 @@ fn create_creator_mls_snapshot_for_effective_scope_with_binding(
         arkret_sdk::MlsEndpointIdentity::NativeAgentRuntime { .. }
         | arkret_sdk::MlsEndpointIdentity::MinimalMetadataPairwise { .. } => None,
     };
+    let creator_actor = match &group.identity().endpoint {
+        arkret_sdk::MlsEndpointIdentity::MinimalMetadataPairwise {
+            pairwise_actor_id, ..
+        } => arkret_sdk::ActorId::service(pairwise_actor_id.clone()),
+        _ => arkret_sdk::ActorId::account(authority.clone()),
+    };
     group
-        .install_local_creator_binding(device_authorize_event_id)
+        .install_local_creator_binding(creator_actor, device_authorize_event_id)
         .map_err(|error| MlsRuntimeError::Genesis(format!("bind creator leaf: {error}")))?;
     let (group_info_bytes, ratchet_tree_bytes) = group
         .public_group_state_bytes()

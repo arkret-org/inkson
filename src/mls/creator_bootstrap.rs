@@ -185,7 +185,7 @@ pub(crate) async fn ensure_creator_realm_mls_genesis(
         .map_err(|error| format!("MLS genesis Event submitter: {error}"))?;
 
     let leaves = crate::mls::governance_proof::singleton_security_frontier_leaf(
-        actor_id,
+        &arkret_sdk::ActorId::account(authority.clone()),
         device_id.as_str(),
     )?;
     // Resolve server acceptance before touching the pre-Genesis authoring

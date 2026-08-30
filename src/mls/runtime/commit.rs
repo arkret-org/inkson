@@ -122,7 +122,7 @@ pub(crate) fn build_mls_remove_members_commit_for_effective_scope_with_sidecar_b
     circle_id: Option<&str>,
     authority: &AccountId,
     device_id: &DeviceId,
-    target_principal_ids: &[&str],
+    target_actor_ids: &[arkret_sdk::ActorId],
     revocation_membership_frontier: &[arkret_sdk::EventId],
     sidecar_binding: Option<arkret_sdk::SidecarMlsBinding>,
 ) -> Result<
@@ -134,9 +134,9 @@ pub(crate) fn build_mls_remove_members_commit_for_effective_scope_with_sidecar_b
     MlsRuntimeError,
 > {
     canonical_mls_remove_membership_frontier(revocation_membership_frontier)?;
-    if target_principal_ids.is_empty() {
+    if target_actor_ids.is_empty() {
         return Err(MlsRuntimeError::Commit(
-            "MLS Remove commit requires at least one target principal".to_owned(),
+            "MLS Remove commit requires at least one target actor".to_owned(),
         ));
     }
     let circle = circle_id
@@ -164,13 +164,6 @@ pub(crate) fn build_mls_remove_members_commit_for_effective_scope_with_sidecar_b
         .ok_or(MlsRuntimeError::MissingWelcome)?;
     let secret = load_device_snapshot_secret(secure_store, authority, device_id)
         .map_err(MlsRuntimeError::DeviceSecret)?;
-    let targets: Vec<arkret_sdk::DidCoreId> = target_principal_ids
-        .iter()
-        .map(|target| {
-            crate::mls_api_helpers::principal_core_id(target)
-                .map_err(|err| MlsRuntimeError::Identity(format!("{err:?}")))
-        })
-        .collect::<Result<_, _>>()?;
     // COR-04: bind the commit to the Seal-view epoch floor so a stale / rolled-back
     // local snapshot can't silently fork the group from an outdated epoch.
     let epoch_floor = super::seal_view_epoch_floor(state_store, realm_id);
@@ -193,7 +186,7 @@ pub(crate) fn build_mls_remove_members_commit_for_effective_scope_with_sidecar_b
         ));
     }
     let remove = group
-        .remove_members_by_principal_with_governance_binding(&targets, &governance_binding)
+        .remove_members_by_actor_with_governance_binding(target_actor_ids, &governance_binding)
         .map_err(|err| MlsRuntimeError::Commit(err.to_string()))?;
     let post_state = group
         .export_state_record()

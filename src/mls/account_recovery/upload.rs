@@ -162,6 +162,7 @@ async fn ensure_initial_active_series(
     // The active-series Event id exists once it is authored; the batch submit
     // reports the accepted ids, so the successor Seal binds the Event that was
     // actually accepted.
+    let account_actor = event.actor_id().clone();
     let accepted = submitter
         .submit_sdk_events_batch(control_realm.as_str(), vec![event.into_intent()], None)
         .await?;
@@ -175,7 +176,7 @@ async fn ensure_initial_active_series(
         })?;
     let history = crate::event_signer::PrincipalControlHistory::load(
         &http,
-        &arkret_sdk::DidCoreId::new(actor_id.to_owned())?,
+        &account_actor,
         control_realm,
         "key-backup active-series successor Seal construction",
     )

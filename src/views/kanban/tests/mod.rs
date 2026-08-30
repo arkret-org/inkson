@@ -88,7 +88,7 @@ pub(super) fn creator_realm_projection(
         "__kind": "realm",
         "content_scheme": encryption_profile,
         "member_roster_entries_limited": false,
-        "member_roster_entries": [{ "actor_id": actor_id, "membership": "join" }],
+        "member_roster_entries": [{ "actor_id": crate::mls_api_helpers::local_account_actor_id(actor_id.as_str()).unwrap(), "membership": "join" }],
         "summary": {
             "title": "Encrypted Realm",
             "encryption_profile": encryption_profile,

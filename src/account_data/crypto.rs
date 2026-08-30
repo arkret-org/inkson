@@ -33,7 +33,7 @@ pub fn account_data_namespace_key(authority: &arkret_sdk::AccountId) -> anyhow::
 
 /// Seal `plaintext` for `account_data_key` under the account authority's secret.
 ///
-/// The envelope AAD binds the authority's principal actor and `account_data_key`, so a value
+/// The envelope AAD binds the complete Station account actor and `account_data_key`, so a value
 /// cannot be replayed under another key or another account.
 pub fn encrypt_account_data_value(
     authority: &arkret_sdk::AccountId,
@@ -53,7 +53,7 @@ pub fn encrypt_account_data_value(
         .map_err(|_| anyhow::anyhow!("account secret must be 32 bytes"))?;
     let envelope = arkret_sdk::account_data_crypto::seal_account_data_value(
         &secret,
-        &authority.principal_id,
+        &arkret_sdk::ActorId::account(authority.clone()),
         account_data_key,
         plaintext,
     )?;
@@ -80,7 +80,7 @@ pub fn decrypt_account_data_value(
         .map_err(|_| anyhow::anyhow!("account secret must be 32 bytes"))?;
     arkret_sdk::account_data_crypto::open_account_data_value(
         &secret,
-        &authority.principal_id,
+        &arkret_sdk::ActorId::account(authority.clone()),
         account_data_key,
         &envelope,
     )

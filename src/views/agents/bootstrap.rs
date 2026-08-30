@@ -1,6 +1,6 @@
-//! Controller-side Agent PCR bootstrap and managed recovery publication.
+//! Controller-side Agent PCR acceptance and Seal finalization for pairing.
 
-use dioxus::prelude::{ReadableExt, SyncSignal, WritableExt};
+use dioxus::prelude::{SyncSignal, WritableExt};
 
 use crate::state::LocalStateStore;
 
@@ -49,13 +49,6 @@ fn has_managed_agent_pcr_create(events: &[arkret_sdk::Event]) -> bool {
                 .and_then(serde_json::Value::as_str)
                 == Some(arkret_bootstrap::PRINCIPAL_CONTROL_PURPOSE)
     })
-}
-
-fn mls_genesis_event_id(events: &[arkret_sdk::Event]) -> Option<arkret_sdk::EventId> {
-    events
-        .iter()
-        .find(|event| event.kind == arkret_sdk::EventKind::MlsGenesis)
-        .map(|event| event.event_id.clone())
 }
 
 async fn submit_managed_agent_pcr_seal(
@@ -122,7 +115,7 @@ pub(crate) async fn ensure_managed_agent_pcr_seal_current<
     signer: &crate::event_signer::InksonEventSigner,
     controller_did: &arkret_sdk::Did,
     device_id: &str,
-    agent_id: &arkret_sdk::DidCoreId,
+    agent_id: &arkret_sdk::ActorId,
     realm_id: &str,
     state_store: S,
 ) -> anyhow::Result<(arkret_sdk::RealmSealFrontierView, arkret_sdk::Seal)> {
@@ -247,7 +240,8 @@ pub(crate) async fn seal_self_principal_event_current(
     let predecessor = submitter
         .seals_frontier_realm_head(realm_id.as_str())
         .await?;
-    let controller_actor_id = arkret_sdk::project_did_to_core_id(controller_did)?;
+    let controller_actor_id =
+        crate::mls_api_helpers::local_account_actor_id(controller_did.as_str())?;
     let history = crate::event_signer::PrincipalControlHistory::load(
         &http,
         &controller_actor_id,
@@ -306,13 +300,17 @@ pub(crate) async fn seal_managed_agent_pcr_current(
     )?;
     let submitter = api.event_submitter()?;
     let http = api.sdk_http_client()?;
+    let agent_actor_id = arkret_sdk::ActorId::hosted_principal(
+        agent_id.clone(),
+        account.authority.station_id.clone(),
+    );
     let (_, seal) = ensure_managed_agent_pcr_seal_current(
         &submitter,
         &http,
         signer.as_ref(),
         account.did(),
         device_id.as_str(),
-        agent_id,
+        &agent_actor_id,
         realm_id.as_str(),
         state_store,
     )
@@ -320,17 +318,15 @@ pub(crate) async fn seal_managed_agent_pcr_current(
     Ok(seal)
 }
 
-/// Complete the client-owned half of `agent_provision`: create the Agent PCR,
-/// generate its epoch-0 MLS state locally, publish a controller-owned managed
-/// recovery envelope, and select that envelope's series from the controller
-/// PCR before returning pairing material to the UI.
+/// Seal the accepted managed Agent PCR before returning pairing material.
+/// Agent active MLS state belongs to its runtime endpoint, never the controller
+/// device. Pairing depends on accepted control authority, not an MLS snapshot.
 pub(crate) async fn bootstrap_provisioned_agent(
     api: &crate::transport::TransportClient,
     mut state_store: SyncSignal<LocalStateStore>,
     account: &crate::config::ActiveAccountContext,
     agent_id: &arkret_sdk::DidCoreId,
     realm_id: &arkret_sdk::RealmId,
-    controller_authorization_ref: &str,
 ) -> anyhow::Result<()> {
     let signer = crate::event_signer::active_signer()
         .ok_or_else(|| anyhow::anyhow!("active controller signer is unavailable"))?;
@@ -343,16 +339,18 @@ pub(crate) async fn bootstrap_provisioned_agent(
     )?;
     let submitter = api.event_submitter()?;
     let http = api.sdk_http_client()?;
+    let agent_actor_id = arkret_sdk::ActorId::hosted_principal(
+        agent_id.clone(),
+        account.authority.station_id.clone(),
+    );
     let accepted_events = crate::event_signer::PrincipalControlHistory::load(
         &http,
-        agent_id,
+        &agent_actor_id,
         realm_id,
         "managed Agent PCR bootstrap",
     )
     .await?
     .into_events();
-    let agent_id_typed = agent_id.clone();
-    let agent_id = agent_id.as_str();
     let realm_id = realm_id.as_str();
 
     if !has_managed_agent_pcr_create(&accepted_events) {
@@ -367,7 +365,7 @@ pub(crate) async fn bootstrap_provisioned_agent(
         signer.as_ref(),
         account.did(),
         device_id.as_str(),
-        &agent_id_typed,
+        &agent_actor_id,
         realm_id,
         state_store,
     )
@@ -381,163 +379,9 @@ pub(crate) async fn bootstrap_provisioned_agent(
         },
     );
 
-    let group_id = arkret_sdk::base64url_encode(realm_id.as_bytes());
-    let leaves = crate::mls::governance_proof::singleton_security_frontier_leaf(
-        agent_id,
-        device_id.as_str(),
-    )
-    .map_err(anyhow::Error::msg)?;
-    let proof_request = crate::mls::governance_proof::proof_request(
-        &state_store.read(),
-        realm_id,
-        None,
-        group_id,
-        0,
-        0,
-        leaves.clone(),
-    )
-    .map_err(anyhow::Error::msg)?;
-    crate::mls::governance_proof::fetch_verify_and_cache_proof_bundle(
-        api,
-        state_store,
-        &proof_request,
-        &leaves,
-    )
-    .await
-    .map_err(anyhow::Error::msg)?;
-
-    let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-    let existing_genesis = mls_genesis_event_id(&accepted_events);
-    let frontier = if let Some(event_id) = existing_genesis {
-        state_store
-            .write()
-            .mark_mls_genesis_emitted_with_event(realm_id.to_owned(), &event_id)
-            .map_err(anyhow::Error::msg)?;
-        if state_store.read().mls_snapshot_for(realm_id).is_none() {
-            anyhow::bail!(
-                "Agent PCR MLS genesis exists, but this controller device has no local private group state"
-            );
-        }
-        ensure_managed_agent_pcr_seal_current(
-            &submitter,
-            &http,
-            signer.as_ref(),
-            account.did(),
-            device_id.as_str(),
-            &agent_id_typed,
-            realm_id,
-            state_store,
-        )
-        .await?
-        .1
-    } else {
-        let summary = {
-            let mut store = state_store.write();
-            match crate::mls::runtime::ensure_creator_mls_snapshot(
-                &mut store,
-                secure_store.as_ref(),
-                realm_id,
-                &account.authority,
-                &device_id,
-            )
-            .map_err(|error| anyhow::anyhow!(error.user_message()))?
-            {
-                Some(summary) => summary,
-                None => crate::mls::runtime::initial_mls_snapshot_summary_from_existing(
-                    &store,
-                    secure_store.as_ref(),
-                    realm_id,
-                    &account.authority,
-                    &device_id,
-                )
-                .map_err(|error| anyhow::anyhow!(error.user_message()))?
-                .ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "Agent PCR has no recoverable epoch-0 MLS state for genesis retry"
-                    )
-                })?,
-            }
-        };
-        let genesis = {
-            let mut store = state_store.write();
-            crate::mls::group_events::build_creator_mls_genesis_event(
-                &mut store,
-                realm_id,
-                agent_id,
-                Some(&summary),
-            )
-            .map_err(anyhow::Error::msg)?
-        }
-        .ok_or_else(|| anyhow::anyhow!("Agent PCR MLS genesis was not built"))?;
-        let genesis = genesis
-            .with_executed_by(account.authority.principal_id.clone())
-            .with_authorization_ref(
-                arkret_sdk::AuthorizationRef::new(controller_authorization_ref.to_owned())
-                    .map_err(anyhow::Error::msg)?,
-            );
-        crate::mls::runtime::upload_mls_genesis_public_material(api, &summary)
-            .await
-            .map_err(|error| anyhow::anyhow!(error.user_message()))?;
-        match submitter.submit_sdk_event(&genesis).await {
-            // The accepted id is the only one the encrypted writes may bind to.
-            Ok(accepted) => state_store
-                .write()
-                .mark_mls_genesis_emitted_with_event(
-                    realm_id.to_owned(),
-                    &arkret_sdk::EventId::new(accepted.event_id.clone())
-                        .map_err(anyhow::Error::msg)?,
-                )
-                .map_err(anyhow::Error::msg)?,
-            Err(error)
-                if crate::ephemeral::events_submit_rejected_for_reason(
-                    &error,
-                    &arkret_sdk::ReasonCode::MlsGenesisAlreadyExists,
-                ) =>
-            {
-                let accepted_events = crate::event_signer::PrincipalControlHistory::load(
-                    &http,
-                    &agent_id_typed,
-                    &arkret_sdk::RealmId::new(realm_id.to_owned())?,
-                    "managed Agent PCR duplicate MLS genesis lookup",
-                )
-                .await?
-                .into_events();
-                let event_id = mls_genesis_event_id(&accepted_events).ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "Agent PCR reports duplicate MLS genesis but exposes no accepted genesis"
-                    )
-                })?;
-                state_store
-                    .write()
-                    .mark_mls_genesis_emitted_with_event(realm_id.to_owned(), &event_id)
-                    .map_err(anyhow::Error::msg)?;
-            }
-            Err(error) => return Err(error),
-        }
-        let (_, frontier) = ensure_managed_agent_pcr_seal_current(
-            &submitter,
-            &http,
-            signer.as_ref(),
-            account.did(),
-            device_id.as_str(),
-            &agent_id_typed,
-            realm_id,
-            state_store,
-        )
-        .await?;
-        frontier
-    };
-    state_store.write().set_realm_seal_view(
-        realm_id.to_owned(),
-        crate::state::LocalSealView {
-            frontier: vec![frontier.id.to_string()],
-            state_root: Some(frontier.state_root.to_string()),
-            ..Default::default()
-        },
-    );
-    if state_store.read().mls_snapshot_for(realm_id).is_none() {
-        anyhow::bail!("Agent PCR MLS snapshot was not persisted");
-    }
+    // A fresh Agent runtime must generate its own endpoint key and initialize
+    // or join its MLS group through the normal authenticated lifecycle. The
+    // controller cannot publish a Genesis that disguises its leaf as the Agent.
     Ok(())
 }
 

@@ -159,18 +159,31 @@ fn verify_active_backup_series(list_payload: &Value, backup_kind: &str) -> Resul
     verify_series_chain(tail, &bodies)
 }
 
-fn observe_active_series_versions(
+pub(super) fn observe_active_series_versions(
     list_payload: &Value,
     state_store: &mut crate::state::LocalStateStore,
+    authority: &arkret_sdk::AccountId,
     actor_id: &str,
 ) -> Result<()> {
+    if crate::mls_api_helpers::principal_core_id(actor_id)? != authority.principal_id {
+        return Err(anyhow!("backup restore principal binding mismatch"));
+    }
+    let expected_actor = arkret_sdk::ActorId::account(authority.clone());
+    // Validate both pointers and envelopes before advancing any rollback floor.
+    // A shared principal at another Station is a distinct backup owner.
+    for body in super::selection::iter_backup_bodies(list_payload) {
+        if backup_actor(body)? != expected_actor {
+            return Err(anyhow!("backup envelope actor binding mismatch"));
+        }
+    }
+    let mut versions = Vec::new();
     for record in list_payload
         .get("active_series")
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
     {
-        if record.get("actor_id").and_then(Value::as_str) != Some(actor_id) {
+        if backup_actor(record)? != expected_actor {
             return Err(anyhow!("active-series actor binding mismatch"));
         }
         let backup_kind = record
@@ -181,9 +194,25 @@ fn observe_active_series_versions(
             .get("series_pointer_version")
             .and_then(Value::as_u64)
             .ok_or_else(|| anyhow!("active-series record omitted series_pointer_version"))?;
-        state_store.observe_key_backup_active_series_version(actor_id, backup_kind, version)?;
+        versions.push((backup_kind, version));
+    }
+    for (backup_kind, version) in versions {
+        state_store.observe_key_backup_active_series_version(
+            &expected_actor,
+            backup_kind,
+            version,
+        )?;
     }
     Ok(())
+}
+
+fn backup_actor(body: &Value) -> Result<arkret_sdk::ActorId> {
+    serde_json::from_value(
+        body.get("actor_id")
+            .cloned()
+            .ok_or_else(|| anyhow!("backup record omits actor_id"))?,
+    )
+    .map_err(|error| anyhow!("invalid backup actor_id: {error}"))
 }
 
 /// Pure-fetch helper: list the server's key backups and return the
@@ -291,8 +320,9 @@ async fn fetch_authoritative_active_series(
     api: &crate::transport::TransportClient,
     actor_id: &str,
 ) -> Result<Vec<Value>> {
-    let actor = crate::mls_api_helpers::principal_core_id(actor_id)
+    let account_actor = crate::mls_api_helpers::local_account_actor_id(actor_id)
         .map_err(|error| anyhow!("invalid backup actor_id: {error}"))?;
+    let actor = account_actor.signing_principal_id().clone();
     let http = api.http();
     let realm_id = crate::identity::principal_control::resolve_accepted(http, &actor).await?;
     let events = api
@@ -306,7 +336,10 @@ async fn fetch_authoritative_active_series(
     )?;
     let mut active_events = accepted_events
         .iter()
-        .filter(|event| event.kind.as_str() == event_kind_str::KEY_BACKUP_ACTIVE_SERIES)
+        .filter(|event| {
+            event.kind.as_str() == event_kind_str::KEY_BACKUP_ACTIVE_SERIES
+                && event.actor_id == account_actor
+        })
         .collect::<Vec<_>>();
     if active_events.is_empty() {
         return Ok(Vec::new());
@@ -366,11 +399,9 @@ async fn fetch_authoritative_active_series(
             serde_json::to_value(&event.payload)?,
         )
         .map_err(|error| anyhow!("accepted active-series Event is invalid: {error}"))?;
-        if record.actor_id.signing_principal_id() != &actor
-            || event.actor_id.signing_principal_id() != &actor
-        {
+        if record.actor_id != account_actor || event.actor_id != account_actor {
             return Err(anyhow!(
-                "accepted active-series Event actor does not match its principal control realm"
+                "accepted active-series Event actor does not match its exact Station account"
             ));
         }
         verify_active_series_record_signature(&record, &keys)?;
@@ -875,7 +906,7 @@ pub async fn restore_mls_history_with_passphrase_from_payload(
     passphrase: &[u8],
 ) -> Result<RestoreReport> {
     let mut report = RestoreReport::default();
-    observe_active_series_versions(list_payload, state_store, actor_id)?;
+    observe_active_series_versions(list_payload, state_store, authority, actor_id)?;
 
     // Step 1: refresh the local account secret from the server backup when it
     // exists. This deliberately runs even if a local secret is present: a
@@ -951,7 +982,7 @@ pub async fn restore_mls_history_with_recovery_key_from_payload(
 ) -> Result<RestoreReport> {
     let _ = device_id;
     let mut report = RestoreReport::default();
-    observe_active_series_versions(list_payload, state_store, actor_id)?;
+    observe_active_series_versions(list_payload, state_store, authority, actor_id)?;
     verify_active_backup_series(
         list_payload,
         crate::key_backup::BackupKind::SecretStorage.as_str(),
@@ -1004,7 +1035,9 @@ pub async fn restore_mls_history_with_local_secret_from_payload(
     actor_id: &str,
 ) -> RestoreReport {
     let mut report = RestoreReport::default();
-    if let Err(error) = observe_active_series_versions(list_payload, state_store, actor_id) {
+    if let Err(error) =
+        observe_active_series_versions(list_payload, state_store, authority, actor_id)
+    {
         report.failed = 1;
         report.first_error = Some(error.to_string());
         return report;
@@ -1148,12 +1181,7 @@ async fn restore_history_backup(
     let kdf_nh = usize::from(arkret_sdk::registered_mls_ciphersuite_kdf_nh(
         &cipher_suite,
     )?);
-    let producer = arkret_sdk::DidCoreId::new(
-        body.get("actor_id")
-            .and_then(Value::as_str)
-            .ok_or_else(|| anyhow!("mls_history envelope omits actor_id"))?
-            .to_owned(),
-    )?;
+    let producer = backup_actor(body)?;
     let candidates = arkret_state::history_backup::restore_history_backup_candidates(
         &plaintext,
         &producer,

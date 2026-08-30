@@ -695,8 +695,17 @@ fn encrypted_private_patch_with_ready_snapshot_replaces_plaintext() {
     .unwrap();
     let governance_binding =
         crate::mls::governance_proof::cached_verified_binding(&state, &proof_request).unwrap();
-    let group = identity
+    let mut group = identity
         .create_group_with_governance_binding(realm.as_bytes(), &governance_binding)
+        .unwrap();
+    group
+        .install_local_creator_binding(
+            arkret_sdk::ActorId::account(test_authority(actor)),
+            Some(
+                arkret_sdk::EventId::new("ak:event:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1")
+                    .unwrap(),
+            ),
+        )
         .unwrap();
     let record = group.export_state_record().unwrap();
     let mut envelope = crate::mls::persistence::encrypt_state(
@@ -714,7 +723,7 @@ fn encrypted_private_patch_with_ready_snapshot_replaces_plaintext() {
             "content_scheme": "mls_rfc9420",
             "member_roster_entries_limited": false,
             "member_roster_entries": [{
-                "actor_id": crate::mls_api_helpers::principal_core_id(actor).unwrap(),
+                "actor_id": arkret_sdk::ActorId::account(test_authority(actor)),
                 "membership": "join"
             }]
         }),

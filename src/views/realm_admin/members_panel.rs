@@ -1778,7 +1778,7 @@ pub(crate) async fn submit_mls_admission_for_invitee(
         &realm_id,
         &mls_actor_id,
         &device_id,
-        &[&claim],
+        &[(&claim, &claim_receipt)],
     )
     .await?;
     // History sharing (encryption-and-audit.md): retain the CURRENT (pre-commit)
@@ -2343,9 +2343,11 @@ async fn ensure_mls_genesis_frontier_for_invite(
             "local epoch-0 MLS snapshot is not available; create or restore this device's MLS state before inviting into an encrypted Realm"
         )
     })?;
-    let leaves =
-        crate::mls::governance_proof::singleton_security_frontier_leaf(actor_id, device_id)
-            .map_err(anyhow::Error::msg)?;
+    let leaves = crate::mls::governance_proof::singleton_security_frontier_leaf(
+        &arkret_sdk::ActorId::account(account.authority.clone()),
+        device_id,
+    )
+    .map_err(anyhow::Error::msg)?;
     let genesis_request = crate::mls::governance_proof::proof_request(
         &state_store.read(),
         realm_id,
@@ -2428,7 +2430,10 @@ async fn ensure_mls_governance_proof_for_next_commit(
     realm_id: &str,
     actor_id: &str,
     device_id: &str,
-    added_claims: &[&arkret_sdk::KeyPackageClaimRecord],
+    added_claims: &[(
+        &arkret_sdk::KeyPackageClaimRecord,
+        &arkret_sdk::PeerKeyPackageClaimReceipt,
+    )],
 ) -> anyhow::Result<()> {
     let account = crate::app::SessionContext::get()
         .active_account()
@@ -2453,14 +2458,20 @@ async fn ensure_mls_governance_proof_for_next_commit(
         let effective_scope = arkret_sdk::ScopeRef::Realm { realm_id };
         let key_packages = added_claims
             .iter()
-            .map(|claim| crate::mls_api_helpers::keypackage_claim_record_to_mls_record(claim))
+            .map(|(claim, _)| crate::mls_api_helpers::keypackage_claim_record_to_mls_record(claim))
             .collect::<Result<Vec<_>, _>>()?;
+        let target_actors = added_claims
+            .iter()
+            .map(|(claim, receipt)| crate::mls::governance_proof::claimed_actor_id(claim, receipt))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(anyhow::Error::msg)?;
         crate::mls::governance_proof::preview_security_frontier_with_added_keypackages(
             &state_store.read(),
             &effective_scope,
             &account.authority,
             &account.device_id,
             &key_packages,
+            &target_actors,
         )
         .map_err(anyhow::Error::msg)?
     };
@@ -2490,7 +2501,10 @@ async fn refresh_mls_governance_target_basis(
     api: &crate::transport::TransportClient,
     mut state_store: SyncSignal<LocalStateStore>,
     realm_id: &str,
-    added_claims: &[&arkret_sdk::KeyPackageClaimRecord],
+    added_claims: &[(
+        &arkret_sdk::KeyPackageClaimRecord,
+        &arkret_sdk::PeerKeyPackageClaimReceipt,
+    )],
 ) -> anyhow::Result<()> {
     const ATTEMPTS: usize = 20;
     const DELAY: std::time::Duration = std::time::Duration::from_millis(250);
@@ -2500,10 +2514,13 @@ async fn refresh_mls_governance_target_basis(
         let checkpoint = store
             .trusted_mls_governance_checkpoint(realm_id)
             .ok_or_else(|| anyhow::anyhow!("MLS governance checkpoint is unavailable"))?;
-        let requires_membership_advance = added_claims.iter().any(|claim| {
+        let requires_membership_advance = added_claims.iter().any(|(claim, receipt)| {
+            let Ok(actor) = crate::mls::governance_proof::claimed_actor_id(claim, receipt) else {
+                return true;
+            };
             arkret_sdk::current_authorization_incarnation_from_verified_checkpoint(
                 &checkpoint,
-                &claim.principal_id,
+                &actor,
                 None,
             )
             .is_err()

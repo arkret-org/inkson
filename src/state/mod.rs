@@ -352,13 +352,13 @@ impl LocalStateStore {
 
     pub(crate) const SECURE_SESSION_GRANT_KEY: &'static str = "auth.session_grant.v1";
 
-    fn active_series_highest_seen_key(actor_id: &str, backup_kind: &str) -> String {
+    fn active_series_highest_seen_key(actor_id: &arkret_sdk::ActorId, backup_kind: &str) -> String {
         format!("{actor_id}\u{1f}{backup_kind}")
     }
 
     pub(crate) fn observe_key_backup_active_series_version(
         &mut self,
-        actor_id: &str,
+        actor_id: &arkret_sdk::ActorId,
         backup_kind: &str,
         version: u64,
     ) -> anyhow::Result<()> {

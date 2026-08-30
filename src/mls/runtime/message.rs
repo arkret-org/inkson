@@ -1335,6 +1335,21 @@ pub fn mls_group_member_principal_ids_for_realm(
 }
 
 /// Local RFC 9420 member roster of one effective MLS scope.
+pub(crate) fn mls_group_member_actor_ids_for_effective_scope(
+    state_store: &crate::state::LocalStateStore,
+    secure_store: &dyn SecureKeyStore,
+    realm_id: &str,
+    circle_id: Option<&str>,
+    authority: &AccountId,
+    device_id: &DeviceId,
+) -> Option<Vec<arkret_sdk::ActorId>> {
+    let snapshot = state_store.mls_snapshot_for_effective_scope(realm_id, circle_id)?;
+    let secret = load_device_snapshot_secret(secure_store, authority, device_id).ok()?;
+    let group = crate::mls::persistence::restore_envelope(&snapshot, &secret, 0).ok()?;
+    group.member_actor_ids().ok()
+}
+
+/// Cryptographic signing-principal projection, not a Realm membership roster.
 pub fn mls_group_member_principal_ids_for_effective_scope(
     state_store: &crate::state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
@@ -2547,14 +2562,16 @@ fn ensure_realm_membership_is_covered_for_send(
     if circle_id.is_some() {
         return Ok(());
     }
-    let Some(joined) = state_store.complete_joined_member_hint_for_realm(realm_id) else {
+    let Some(joined) = state_store
+        .complete_joined_member_hint_for_realm(realm_id)
+        .map_err(|error| MlsRuntimeError::Identity(error.to_string()))?
+    else {
         return Ok(());
     };
     let group_members = group
-        .member_principal_ids()
+        .member_actor_ids()
         .map_err(|error| MlsRuntimeError::Identity(error.to_string()))?
         .into_iter()
-        .map(|did| did.to_string())
         .collect::<std::collections::BTreeSet<_>>();
     if group_members != joined {
         return Err(MlsRuntimeError::EncryptionTransitionPending);
@@ -2573,16 +2590,18 @@ pub(crate) fn realm_mls_roster_matches_complete_membership_hint(
     authority: &AccountId,
     device_id: &DeviceId,
 ) -> Option<bool> {
-    let joined = state_store.complete_joined_member_hint_for_realm(realm_id)?;
-    let members = mls_group_member_principal_ids_for_realm(
-        state_store,
-        secure_store,
-        realm_id,
-        authority,
-        device_id,
-    )?
-    .into_iter()
-    .collect::<std::collections::BTreeSet<_>>();
+    let joined = match state_store.complete_joined_member_hint_for_realm(realm_id) {
+        Ok(joined) => joined?,
+        Err(_) => return Some(false),
+    };
+    let snapshot = state_store.mls_snapshot_for_effective_scope(realm_id, None)?;
+    let secret = load_device_snapshot_secret(secure_store, authority, device_id).ok()?;
+    let group = crate::mls::persistence::restore_envelope(&snapshot, &secret, 0).ok()?;
+    let members = group
+        .member_actor_ids()
+        .ok()?
+        .into_iter()
+        .collect::<std::collections::BTreeSet<_>>();
     Some(members == joined)
 }
 

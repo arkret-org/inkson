@@ -25,7 +25,7 @@ fn seed_complete_rfc9420_projection(
     realm: &str,
     actor: &str,
 ) {
-    let actor_id = crate::mls_api_helpers::principal_core_id(actor).unwrap();
+    let actor_id = arkret_sdk::ActorId::account(test_authority(actor));
     state.save_realm_tree_projection(
         realm,
         json!({
@@ -78,7 +78,7 @@ fn creator_snapshot_bootstrap_makes_space_encryptable() {
             "content_scheme": "mls_rfc9420",
             "member_roster_entries_limited": false,
             "member_roster_entries": [{
-                "actor_id": crate::mls_api_helpers::principal_core_id(actor).unwrap(),
+                "actor_id": arkret_sdk::ActorId::account(test_authority(actor)),
                 "membership": "join"
             }]
         }),
@@ -127,6 +127,89 @@ fn creator_snapshot_bootstrap_makes_space_encryptable() {
     assert!(encrypted_again.3.is_none());
     assert!(encrypted_again.4.is_none());
     assert_eq!(state.mls_snapshot_for(realm).unwrap().epoch, 0);
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn complete_membership_hint_does_not_alias_same_principal_at_another_station() {
+    let mut state = temp_state_store("station-scoped-roster-hint");
+    let secure = MemorySecureKeyStore::new();
+    let principal = "did:web:alice.example";
+    let authority = test_authority(principal);
+    let device = test_device("ak:device:01904100-0000-7000-8000-000000000001");
+    let realm = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
+    super::seed_genesis_governance_proof(&mut state, realm);
+    super::seed_human_creator_authorization(principal, device.as_str());
+    seed_complete_rfc9420_projection(&mut state, realm, principal);
+    ensure_creator_mls_snapshot(&mut state, &secure, realm, &authority, &device).unwrap();
+    super::seed_current_group_state_ref(&mut state, realm);
+    assert_eq!(
+        realm_mls_roster_matches_complete_membership_hint(
+            &state, &secure, realm, &authority, &device,
+        ),
+        Some(true)
+    );
+
+    let foreign = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+        authority.principal_id.clone(),
+        arkret_sdk::DidCoreId::new("ak:did_core:web:other.example").unwrap(),
+    ));
+    state.save_realm_tree_projection(
+        realm,
+        json!({
+            "content_scheme": "mls_rfc9420",
+            "member_roster_entries_limited": false,
+            "member_roster_entries": [{ "actor_id": foreign, "membership": "join" }],
+        }),
+    );
+    assert_eq!(
+        realm_mls_roster_matches_complete_membership_hint(
+            &state, &secure, realm, &authority, &device,
+        ),
+        Some(false)
+    );
+    assert!(matches!(
+        encrypt_values_with_device_snapshot(
+            &mut state,
+            &secure,
+            realm,
+            &authority,
+            &device,
+            "application/vnd.arkret.test+json",
+            &[b"must not send".to_vec()],
+        ),
+        Err(MlsRuntimeError::EncryptionTransitionPending)
+    ));
+
+    state.save_realm_tree_projection(realm, json!({
+        "member_roster_entries_limited": false,
+        "member_roster_entries": [
+            { "actor_id": arkret_sdk::ActorId::account(authority.clone()), "membership": "join" },
+            { "actor_id": foreign, "membership": "join" },
+        ],
+    }));
+    assert_eq!(
+        state
+            .complete_joined_member_hint_for_realm(realm)
+            .unwrap()
+            .unwrap()
+            .len(),
+        2
+    );
+    state.save_realm_tree_projection(
+        realm,
+        json!({
+            "member_roster_entries_limited": false,
+            "member_roster_entries": [{ "actor_id": principal, "membership": "join" }],
+        }),
+    );
+    assert!(state.complete_joined_member_hint_for_realm(realm).is_err());
+    assert_eq!(
+        realm_mls_roster_matches_complete_membership_hint(
+            &state, &secure, realm, &authority, &device,
+        ),
+        Some(false)
+    );
 }
 
 /// Sidecar exchange binding transport (`zh/models/sidecar.md` §7.2.1): the
@@ -346,7 +429,7 @@ fn encrypted_write_blocks_until_content_scheme_projection_arrives() {
             "encrypted": true,
             "member_roster_entries_limited": false,
             "member_roster_entries": [{
-                "actor_id": crate::mls_api_helpers::principal_core_id(actor).unwrap(),
+                "actor_id": arkret_sdk::ActorId::account(test_authority(actor)),
                 "membership": "join"
             }]
         }),
@@ -1012,7 +1095,16 @@ fn encrypted_write_uses_device_key_snapshot_when_ready() {
         DeviceId::new(device.to_owned()).unwrap(),
     )
     .unwrap();
-    let group = identity.create_group(realm.as_bytes()).unwrap();
+    let mut group = identity.create_group(realm.as_bytes()).unwrap();
+    group
+        .install_local_creator_binding(
+            arkret_sdk::ActorId::account(test_authority(actor)),
+            Some(
+                arkret_sdk::EventId::new("ak:event:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1")
+                    .unwrap(),
+            ),
+        )
+        .unwrap();
     let record = group.export_state_record().unwrap();
     let bytes = serde_json::to_vec(&record).unwrap();
     let envelope = crate::mls::persistence::encrypt_state(
@@ -1076,7 +1168,7 @@ fn minimal_overdue_epoch_blocks_before_counter_advance() {
             "content_scheme": "mls_rfc9420",
             "member_roster_entries_limited": false,
             "member_roster_entries": [{
-                "actor_id": crate::mls_api_helpers::principal_core_id(actor).unwrap(),
+                "actor_id": arkret_sdk::ActorId::account(test_authority(actor)),
                 "membership": "join"
             }]
         }),

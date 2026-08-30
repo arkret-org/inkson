@@ -243,17 +243,6 @@ pub(crate) async fn fetch_verify_and_cache_proof<S: GovernanceProofStateStore>(
         .map(|(_, binding)| binding)
 }
 
-pub(crate) async fn fetch_verify_and_cache_proof_bundle<S: GovernanceProofStateStore>(
-    api: &crate::transport::TransportClient,
-    state_store: S,
-    request: &arkret_sdk::MlsGovernanceProofRequestBody,
-    leaves: &[arkret_sdk::MlsSecurityFrontierLeaf],
-) -> Result<arkret_sdk::MlsGovernanceProofBundle, String> {
-    fetch_verify_and_cache_proof_internal(api, state_store, request, leaves, None, None)
-        .await
-        .map(|(bundle, _)| bundle)
-}
-
 pub(crate) async fn fetch_verify_and_cache_expected_proof<S: GovernanceProofStateStore>(
     api: &crate::transport::TransportClient,
     state_store: S,
@@ -661,6 +650,29 @@ pub(crate) fn leaf_authority_hint_from_claim(
     })
 }
 
+/// Recover the complete target only from the checked peer claim receipt,
+/// never from the inviting client's selected Station.
+pub(crate) fn claimed_actor_id(
+    claim: &arkret_sdk::KeyPackageClaimRecord,
+    receipt: &arkret_sdk::PeerKeyPackageClaimReceipt,
+) -> Result<arkret_sdk::ActorId, String> {
+    arkret_sdk::validate_target_claim_evidence(claim, receipt)
+        .map_err(|error| format!("invalid target claim evidence: {error}"))?;
+    if claim.pairwise_verification_method.is_some() {
+        Ok(arkret_sdk::ActorId::service(claim.principal_id.clone()))
+    } else if claim.agent_id.is_some() {
+        Ok(arkret_sdk::ActorId::hosted_principal(
+            claim.principal_id.clone(),
+            receipt.destination_id.clone(),
+        ))
+    } else {
+        Ok(arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+            claim.principal_id.clone(),
+            receipt.destination_id.clone(),
+        )))
+    }
+}
+
 pub(crate) fn leaf_authority_hints_from_welcome(
     welcome: &arkret_sdk::MlsWelcomePayload,
 ) -> Result<Vec<MlsLeafAuthorityHint>, String> {
@@ -844,7 +856,7 @@ pub(crate) fn install_cached_transition_leaf_bindings_with_hints(
         let credential = frontier_leaf.credential_ref.as_str();
 
         if let Some(retained) = retained_bindings.get(&frontier_leaf.leaf_index) {
-            if retained.principal_id != frontier_leaf.principal_id
+            if retained.actor_id != frontier_leaf.actor_id
                 || retained.credential_ref != frontier_leaf.credential_ref
                 || retained.signature_key != signature_key_b64
             {
@@ -858,7 +870,7 @@ pub(crate) fn install_cached_transition_leaf_bindings_with_hints(
             arkret_sdk::DeviceId::new(credential.to_owned())
         {
             let endpoint = arkret_sdk::MlsEndpointIdentity::human_device(
-                frontier_leaf.principal_id.clone(),
+                frontier_leaf.actor_id.signing_principal_id().clone(),
                 device_id.clone(),
             );
             let mut hints = authority_hints
@@ -874,7 +886,7 @@ pub(crate) fn install_cached_transition_leaf_bindings_with_hints(
                 })?
             } else {
                 let cached_key = match crate::identity::device_directory::cached_device_signing_key(
-                    frontier_leaf.principal_id.as_str(),
+                    frontier_leaf.actor_id.signing_principal_id().as_str(),
                     device_id.as_str(),
                 ) {
                     crate::identity::device_directory::CacheLookup::Hit(key) => key,
@@ -897,7 +909,7 @@ pub(crate) fn install_cached_transition_leaf_bindings_with_hints(
                     );
                 }
                 crate::identity::device_directory::cached_device_authorize_event_id(
-                    frontier_leaf.principal_id.as_str(),
+                    frontier_leaf.actor_id.signing_principal_id().as_str(),
                     device_id.as_str(),
                 )
                 .ok_or_else(|| {
@@ -907,7 +919,9 @@ pub(crate) fn install_cached_transition_leaf_bindings_with_hints(
             (endpoint, Some(authority))
         } else if credential.starts_with("ak:did_core:key:") {
             let expected_actor = format!("ak:did_core:key:{multibase}");
-            if credential != expected_actor || frontier_leaf.principal_id.as_str() != credential {
+            if credential != expected_actor
+                || frontier_leaf.actor_id.signing_principal_id().as_str() != credential
+            {
                 return Err(
                     "minimal-metadata MLS credential does not name its exact leaf key".to_owned(),
                 );
@@ -916,21 +930,21 @@ pub(crate) fn install_cached_transition_leaf_bindings_with_hints(
                 .map_err(|error| format!("invalid pairwise MLS method: {error}"))?;
             (
                 arkret_sdk::MlsEndpointIdentity::minimal_metadata_pairwise(
-                    frontier_leaf.principal_id.clone(),
+                    frontier_leaf.actor_id.signing_principal_id().clone(),
                     method,
                 )
                 .map_err(|error| format!("invalid pairwise MLS endpoint: {error}"))?,
                 None,
             )
         } else {
-            if frontier_leaf.principal_id.as_str() != credential {
+            if frontier_leaf.actor_id.signing_principal_id().as_str() != credential {
                 return Err("Native Agent MLS credential differs from its principal".to_owned());
             }
             let mut hints = authority_hints.iter().filter(|hint| {
                 matches!(
                     &hint.endpoint,
                     arkret_sdk::MlsEndpointIdentity::NativeAgentRuntime { agent_id, .. }
-                        if agent_id == &frontier_leaf.principal_id
+                        if agent_id == frontier_leaf.actor_id.signing_principal_id()
                 )
             });
             let hint = hints.next().ok_or_else(|| {
@@ -943,7 +957,7 @@ pub(crate) fn install_cached_transition_leaf_bindings_with_hints(
         };
         installed.push(arkret_sdk::MlsVerifiedLeafBinding {
             leaf_index: frontier_leaf.leaf_index,
-            principal_id: frontier_leaf.principal_id.clone(),
+            actor_id: frontier_leaf.actor_id.clone(),
             endpoint,
             credential_ref: frontier_leaf.credential_ref.clone(),
             signature_key: signature_key_b64,
@@ -981,7 +995,7 @@ pub(crate) fn reconstruct_transition_security_frontier(
     if genesis_matches.next().is_some() {
         return Err("MLS transition replay has multiple accepted Genesis Events".to_owned());
     }
-    let mut principals = BTreeMap::from([(0_u32, genesis.actor_id.signing_principal_id().clone())]);
+    let mut principals = BTreeMap::from([(0_u32, genesis.actor_id.clone())]);
 
     let mut commits = checkpoint
         .accepted_events
@@ -1037,8 +1051,8 @@ pub(crate) fn reconstruct_transition_security_frontier(
                         .to_owned(),
                 );
             }
-            let target = proposal.target_principal_id.ok_or_else(|| {
-                "accepted MLS membership Proposal omits target_principal_id".to_owned()
+            let target = proposal.target_actor_id.ok_or_else(|| {
+                "accepted MLS membership Proposal omits target_actor_id".to_owned()
             })?;
             match proposal.proposal_type {
                 arkret_sdk::MlsProposalType::Add => {
@@ -1092,7 +1106,7 @@ pub(crate) fn reconstruct_transition_security_frontier(
         .map_err(|error| format!("invalid post-transition MLS credential: {error}"))?;
         leaves.push(arkret_sdk::MlsSecurityFrontierLeaf {
             leaf_index: leaf.leaf_index,
-            principal_id,
+            actor_id: principal_id,
             credential_ref,
         });
     }
@@ -1223,7 +1237,7 @@ pub(crate) fn seed_test_governance_proof(
 pub(crate) fn seed_test_security_frontier_leaves() -> Vec<arkret_sdk::MlsSecurityFrontierLeaf> {
     vec![arkret_sdk::MlsSecurityFrontierLeaf {
         leaf_index: 0,
-        principal_id: arkret_sdk::DidCoreId::new(
+        actor_id: crate::mls_api_helpers::local_account_actor_id(
             "ak:did_core:webvh:z6mkfixturealice:alice.example",
         )
         .unwrap(),
@@ -1315,13 +1329,12 @@ fn verify_request_binding(
 }
 
 pub(crate) fn singleton_security_frontier_leaf(
-    principal_id: &str,
+    actor_id: &arkret_sdk::ActorId,
     device_id: &str,
 ) -> Result<Vec<arkret_sdk::MlsSecurityFrontierLeaf>, String> {
     Ok(vec![arkret_sdk::MlsSecurityFrontierLeaf {
         leaf_index: 0,
-        principal_id: crate::mls_api_helpers::principal_core_id(principal_id)
-            .map_err(|error| format!("MLS leaf principal is invalid: {error}"))?,
+        actor_id: actor_id.clone(),
         credential_ref: arkret_sdk::NonEmptyString::new(device_id.to_owned())
             .map_err(|error| format!("MLS leaf credential ref is invalid: {error}"))?,
     }])
@@ -1376,6 +1389,7 @@ pub(crate) fn preview_security_frontier_with_added_keypackages(
     authority: &arkret_sdk::AccountId,
     device_id: &arkret_sdk::DeviceId,
     records: &[arkret_sdk::MlsKeyPackageRecord],
+    actors: &[arkret_sdk::ActorId],
 ) -> Result<Vec<arkret_sdk::MlsSecurityFrontierLeaf>, String> {
     let snapshot = state_store
         .mls_snapshot_for_scope(effective_scope)
@@ -1390,15 +1404,43 @@ pub(crate) fn preview_security_frontier_with_added_keypackages(
     let group = crate::mls::persistence::restore_envelope(&snapshot, &secret, 0)
         .map_err(|error| format!("restore MLS group for Add preview: {error}"))?;
     group
-        .preview_add_members_security_frontier(records)
+        .preview_add_members_security_frontier(records, actors)
         .map_err(|error| format!("stage exact MLS Add frontier: {error}"))
 }
 
-pub(crate) fn security_frontier_without_principals(
+pub(crate) fn security_frontier_without_actors(
     mut leaves: Vec<arkret_sdk::MlsSecurityFrontierLeaf>,
-    removed: &[String],
+    removed: &[arkret_sdk::ActorId],
 ) -> Vec<arkret_sdk::MlsSecurityFrontierLeaf> {
-    let removed = removed.iter().map(String::as_str).collect::<BTreeSet<_>>();
-    leaves.retain(|leaf| !removed.contains(leaf.principal_id.as_str()));
+    let removed = removed.iter().collect::<BTreeSet<_>>();
+    leaves.retain(|leaf| !removed.contains(&leaf.actor_id));
     leaves
+}
+
+#[cfg(test)]
+mod actor_frontier_tests {
+    use super::*;
+
+    #[test]
+    fn removing_one_station_actor_preserves_other_account_with_same_principal() {
+        let principal = arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example").unwrap();
+        let actors = ["alpha.example", "beta.example"].map(|station| {
+            arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+                principal.clone(),
+                arkret_sdk::DidCoreId::new(format!("ak:did_core:web:{station}")).unwrap(),
+            ))
+        });
+        let leaves = actors
+            .iter()
+            .enumerate()
+            .map(|(index, actor)| arkret_sdk::MlsSecurityFrontierLeaf {
+                leaf_index: index as u32,
+                actor_id: actor.clone(),
+                credential_ref: arkret_sdk::NonEmptyString::new(format!("device-{index}")).unwrap(),
+            })
+            .collect();
+        let retained = security_frontier_without_actors(leaves, &[actors[0].clone()]);
+        assert_eq!(retained.len(), 1);
+        assert_eq!(retained[0].actor_id, actors[1]);
+    }
 }

@@ -6,7 +6,7 @@ use arkret_sdk::contact_operations::{
 use arkret_sdk::{IdempotencyKey, PreparedEventDraft, ProtocolOperationId, ReservationHandle};
 
 pub(crate) struct PrincipalSuccessorSealContext {
-    actor_id: arkret_sdk::DidCoreId,
+    actor_id: arkret_sdk::ActorId,
     control_realm: arkret_sdk::RealmId,
     predecessor: arkret_sdk::Seal,
 }
@@ -18,8 +18,9 @@ pub(crate) async fn prepare_principal_successor_seal(
     let signer = crate::event_signer::active_signer()
         .ok_or_else(|| anyhow::anyhow!("active device signer is required for principal commit"))?;
     let principal = arkret_sdk::Did::new(signer.signer_did().to_owned())?;
-    let actor_id = arkret_sdk::project_did_to_core_id(&principal)?;
-    if contact_event.actor_id.signing_principal_id() != &actor_id {
+    let principal_id = arkret_sdk::project_did_to_core_id(&principal)?;
+    let actor_id = crate::mls_api_helpers::local_account_actor_id(principal_id.as_str())?;
+    if contact_event.actor_id != actor_id {
         anyhow::bail!("prepared principal Event actor does not match the active signer");
     }
     let control_realm = contact_event.realm_id.clone();
@@ -70,7 +71,7 @@ pub(crate) async fn submit_principal_successor_seal(
         .device_id()
         .ok_or_else(|| anyhow::anyhow!("principal Seal signer requires a bound device_id"))?;
     let hlc = crate::signing_stamp::issue_protocol_hlc(
-        context.actor_id.as_str(),
+        context.actor_id.signing_principal_id().as_str(),
         device_id,
         context.control_realm.as_str(),
     )?;

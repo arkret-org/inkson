@@ -158,7 +158,7 @@ fn current_authorization_incarnation(
     state_store: &LocalStateStore,
     realm_id: &str,
     circle_id: Option<&str>,
-    target: &arkret_sdk::DidCoreId,
+    target: &arkret_sdk::ActorId,
 ) -> Result<arkret_sdk::AuthorizationIncarnation, String> {
     let realm_id = arkret_sdk::RealmId::new(realm_id.to_owned())
         .map_err(|error| format!("invalid MLS admission Realm id: {error}"))?;
@@ -187,6 +187,7 @@ fn build_add_proposal_event(
     effective_scope: Option<&arkret_sdk::ScopeRef>,
     actor_id: &str,
     claim: &arkret_sdk::KeyPackageClaimRecord,
+    target_actor: &arkret_sdk::ActorId,
     proposal: &arkret_sdk::MlsProposalEnvelope,
     target_authorization_incarnation: arkret_sdk::AuthorizationIncarnation,
     governance_binding: arkret_sdk::MlsGovernanceBindingPayload,
@@ -211,7 +212,7 @@ fn build_add_proposal_event(
         proposal_type: arkret_sdk::MlsProposalType::Add,
         proposal_bytes_b64: proposal.proposal.clone(),
         proposal_digest: proposal.proposal_digest.clone(),
-        target_principal_id: Some(claim.principal_id.clone()),
+        target_actor_id: Some(target_actor.clone()),
         target_authorization_incarnation: Some(target_authorization_incarnation),
         governance_binding,
     };
@@ -310,13 +311,15 @@ fn build_realm_mls_admission_events_from_verified_claim(
         &previous_governance_binding,
         None,
     )?;
+    let target_actor = crate::mls::governance_proof::claimed_actor_id(claim, claim_receipt)?;
     let target_authorization_incarnation =
-        current_authorization_incarnation(state_store, realm_id, None, &claim.principal_id)?;
+        current_authorization_incarnation(state_store, realm_id, None, &target_actor)?;
     let proposal = build_add_proposal_event(
         realm_id,
         None,
         &actor_id,
         claim,
+        &target_actor,
         &add.proposal,
         target_authorization_incarnation,
         commit_basis.governance_binding().clone(),
@@ -908,6 +911,28 @@ mod tests {
         }
     }
 
+    #[test]
+    fn claimed_actor_uses_receipt_station_not_inviter_station() {
+        let realm = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
+        let bob = arkret_sdk::ArkretMlsIdentity::new_test_human_device(
+            crate::mls_api_helpers::principal_core_id("did:web:bob.example").unwrap(),
+            arkret_sdk::DeviceId::new("ak:device:01904100-0000-7000-8000-0000000000b1").unwrap(),
+        )
+        .unwrap();
+        let claim = claim_from_key_package(
+            &bob.key_package_record().unwrap(),
+            "ak:event:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1",
+        );
+        let mut receipt = self_claim_receipt(&claim, realm, "did:web:alice.example", "Y2xhaW0");
+        let alpha = crate::mls::governance_proof::claimed_actor_id(&claim, &receipt).unwrap();
+        receipt.destination_id =
+            arkret_sdk::DidCoreId::new("ak:did_core:web:beta.example").unwrap();
+        let beta = crate::mls::governance_proof::claimed_actor_id(&claim, &receipt).unwrap();
+        assert_eq!(alpha.signing_principal_id(), beta.signing_principal_id());
+        assert_ne!(alpha, beta);
+        assert_eq!(beta.route_service_id(), &receipt.destination_id);
+    }
+
     fn welcome_authoring_receipt(claim_request_id: &str) -> arkret_sdk::PeerKeyPackageClaimReceipt {
         let claim = arkret_sdk::KeyPackageClaimRecord {
             claim_id: "keypackage-test:welcome-authoring".to_owned(),
@@ -996,6 +1021,7 @@ mod tests {
             None,
             "did:web:alice.example",
             &claim,
+            &crate::mls_api_helpers::local_account_actor_id(claim.principal_id.as_str()).unwrap(),
             &proposal,
             incarnation.clone(),
             binding.clone(),
@@ -1007,7 +1033,13 @@ mod tests {
             human.target_authorization_incarnation,
             Some(incarnation.clone())
         );
-        assert_eq!(human.target_principal_id, Some(claim.principal_id.clone()));
+        assert_eq!(
+            human.target_actor_id,
+            Some(
+                crate::mls_api_helpers::local_account_actor_id(claim.principal_id.as_str())
+                    .unwrap()
+            )
+        );
 
         claim.device_id = None;
         claim.device_authorize_event_id = None;
@@ -1025,6 +1057,10 @@ mod tests {
             None,
             "did:web:alice.example",
             &claim,
+            &arkret_sdk::ActorId::hosted_principal(
+                claim.principal_id.clone(),
+                crate::operation::authoring_station_id().unwrap(),
+            ),
             &proposal,
             incarnation.clone(),
             binding,
@@ -1033,7 +1069,13 @@ mod tests {
         .typed_payload::<arkret_wire::event_spec::MlsProposal>()
         .unwrap();
         assert_eq!(native.target_authorization_incarnation, Some(incarnation));
-        assert_eq!(native.target_principal_id, Some(claim.principal_id));
+        assert_eq!(
+            native.target_actor_id,
+            Some(arkret_sdk::ActorId::hosted_principal(
+                claim.principal_id,
+                crate::operation::authoring_station_id().unwrap()
+            ))
+        );
     }
 
     #[cfg(not(target_arch = "wasm32"))]

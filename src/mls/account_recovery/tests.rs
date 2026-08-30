@@ -134,7 +134,7 @@ fn recovery_hpke_backup() -> Value {
 fn active_series_record(backup_kind: &str, active_series_id: &str) -> Value {
     serde_json::json!({
         "schema": SchemaId::KEY_BACKUP_ACTIVE_SERIES_V1,
-        "actor_id": ACTOR,
+        "actor_id": arkret_sdk::ActorId::account(authority()),
         "backup_kind": backup_kind,
         "active_series_id": active_series_id,
         "series_pointer_version": 1,
@@ -168,6 +168,73 @@ fn payload_with_inferred_active_series(backups: Vec<Value>) -> Value {
 }
 
 use arkret_wire::SchemaId;
+
+#[test]
+fn active_series_restore_preserves_station_scoped_rollback_floors() {
+    let mut state = crate::state::isolated_store_for_tests("backup-actor-floors");
+    let alpha = authority();
+    let beta = arkret_sdk::AccountId::new(
+        alpha.principal_id.clone(),
+        arkret_sdk::DidCoreId::new("ak:did_core:web:beta.example").unwrap(),
+    );
+    let payload = |account: &arkret_sdk::AccountId, version| {
+        serde_json::json!({
+            "active_series": [{
+                "actor_id": arkret_sdk::ActorId::account(account.clone()),
+                "backup_kind": "secret_storage",
+                "series_pointer_version": version,
+            }],
+            "backups": [],
+        })
+    };
+    super::restore::observe_active_series_versions(&payload(&alpha, 5), &mut state, &alpha, ACTOR)
+        .unwrap();
+    super::restore::observe_active_series_versions(&payload(&beta, 1), &mut state, &beta, ACTOR)
+        .unwrap();
+    assert_eq!(state.load().key_backup_active_series_highest_seen.len(), 2);
+    let error = super::restore::observe_active_series_versions(
+        &payload(&alpha, 4),
+        &mut state,
+        &alpha,
+        ACTOR,
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("backup_frontier_stale"));
+}
+
+#[test]
+fn active_series_restore_rejects_foreign_station_and_scalar_actors() {
+    let mut state = crate::state::isolated_store_for_tests("backup-actor-binding");
+    let account = authority();
+    let foreign = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+        account.principal_id.clone(),
+        arkret_sdk::DidCoreId::new("ak:did_core:web:other.example").unwrap(),
+    ));
+    for actor in [serde_json::json!(foreign), serde_json::json!(ACTOR)] {
+        let mut payload = serde_json::json!({
+            "active_series": [active_series_record("secret_storage", ACTIVE_SECRET_STORAGE_SERIES)],
+            "backups": [],
+        });
+        payload["active_series"][0]["actor_id"] = actor.clone();
+        assert!(
+            super::restore::observe_active_series_versions(&payload, &mut state, &account, ACTOR,)
+                .is_err()
+        );
+        payload["active_series"][0]["actor_id"] =
+            serde_json::json!(arkret_sdk::ActorId::account(account.clone()));
+        payload["backups"] = serde_json::json!([{ "actor_id": actor }]);
+        assert!(
+            super::restore::observe_active_series_versions(&payload, &mut state, &account, ACTOR,)
+                .is_err()
+        );
+        assert!(
+            state
+                .load()
+                .key_backup_active_series_highest_seen
+                .is_empty()
+        );
+    }
+}
 
 #[test]
 fn wrap_then_unwrap_round_trips_the_secret() {

@@ -434,7 +434,6 @@ pub fn AgentRuntimeApprovalPrompt(
                                             &account,
                                             &agent_did,
                                             &key_state.principal_control_realm_id,
-                                            key_state.controller_authorization_ref.as_str(),
                                         )
                                         .await
                                         .err()

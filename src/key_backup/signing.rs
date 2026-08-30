@@ -407,7 +407,8 @@ mod tests {
         let backup = arkret_sdk::KeyBackupSummary {
             backup_id: arkret_sdk::BackupId::new("ak:backup:0196419b-0000-7000-8000-000000000001")
                 .unwrap(),
-            actor_id: crate::mls_api_helpers::principal_core_id("did:web:alice.example").unwrap(),
+            actor_id: crate::mls_api_helpers::local_account_actor_id("did:web:alice.example")
+                .unwrap(),
             device_id: None,
             backup_kind: arkret_sdk::BackupKind::MlsHistory,
             backup_version: "kb_1".to_owned(),

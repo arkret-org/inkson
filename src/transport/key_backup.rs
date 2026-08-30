@@ -99,14 +99,16 @@ impl crate::transport::TransportClient {
         let query_event_id = if viewer_event_id.is_none() {
             let outcome = crate::transport::keys::query_keys(
                 &http,
-                payload.actor_id.as_str(),
+                payload.actor_id.signing_principal_id().as_str(),
                 device_id.as_str(),
             )
             .await?;
-            let generation = outcome.device_generations.get(&payload.actor_id);
+            let generation = outcome
+                .device_generations
+                .get(payload.actor_id.signing_principal_id());
             outcome
                 .device_keys
-                .get(&payload.actor_id)
+                .get(payload.actor_id.signing_principal_id())
                 .and_then(|devices| devices.get(&device_id))
                 .filter(|record| record.is_usable_in_generation(generation))
                 .map(|record| {

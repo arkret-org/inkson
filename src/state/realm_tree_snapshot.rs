@@ -174,40 +174,40 @@ impl LocalStateStore {
             .is_some_and(crate::security_state::realm_projection_is_encrypted)
     }
 
-    /// Joined-principal projection hint when account sync explicitly says the
+    /// Joined-actor projection hint when account sync explicitly says the
     /// roster is complete. A missing/limited roster is `None`. This is useful
     /// for conservative mismatch detection and reconciliation wakeups, but it
     /// never replaces verified membership Events or MLS governance proofs.
     pub fn complete_joined_member_hint_for_realm(
         &self,
         realm_id: &str,
-    ) -> Option<std::collections::BTreeSet<String>> {
+    ) -> anyhow::Result<Option<std::collections::BTreeSet<arkret_sdk::ActorId>>> {
         let state = self.load();
-        let projection = state.realm_tree_projections.get(realm_id.trim())?;
+        let Some(projection) = state.realm_tree_projections.get(realm_id.trim()) else {
+            return Ok(None);
+        };
         if projection
             .get("member_roster_entries_limited")
             .and_then(Value::as_bool)
             != Some(false)
         {
-            return None;
+            return Ok(None);
         }
         let members = projection
             .get("member_roster_entries")
-            .and_then(Value::as_array)?;
-        Some(
+            .and_then(Value::as_array)
+            .ok_or_else(|| anyhow::anyhow!("complete Realm roster omits member entries"))?;
+        Ok(Some(
             members
                 .iter()
                 .filter(|member| member.get("membership").and_then(Value::as_str) == Some("join"))
-                .filter_map(|member| {
-                    member
-                        .get("actor_id")
-                        .and_then(Value::as_str)
-                        .map(str::trim)
-                        .filter(|actor_id| !actor_id.is_empty())
-                        .map(ToOwned::to_owned)
+                .map(|member| {
+                    serde_json::from_value::<arkret_sdk::ActorId>(
+                        member.get("actor_id").cloned().unwrap_or(Value::Null),
+                    )
                 })
-                .collect(),
-        )
+                .collect::<Result<_, _>>()?,
+        ))
     }
 
     /// The effective `durability_policy` (RRK, realm-and-space.md §2.3.1) for

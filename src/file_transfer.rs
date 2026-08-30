@@ -32,15 +32,20 @@ const NAMESPACE_KEY_INFO: &[u8] = b"arkret-file-transfer-account-data-key-v1";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FileTransferCryptoContext {
+    actor_id: arkret_sdk::ActorId,
     account_data_secret: [u8; CONTENT_KEY_LEN],
     namespace_key: [u8; CONTENT_KEY_LEN],
 }
 
 impl FileTransferCryptoContext {
-    pub fn from_account_secret(account_secret: &str) -> anyhow::Result<Self> {
+    pub fn from_account_secret(
+        authority: &arkret_sdk::AccountId,
+        account_secret: &str,
+    ) -> anyhow::Result<Self> {
         let account_data_secret = decode_fixed::<CONTENT_KEY_LEN>(account_secret.trim())
             .map_err(|error| anyhow::anyhow!("account secret: {error}"))?;
         Ok(Self {
+            actor_id: arkret_sdk::ActorId::account(authority.clone()),
             account_data_secret,
             namespace_key: derive_account_subkey(account_secret, NAMESPACE_KEY_INFO)?,
         })
@@ -90,7 +95,7 @@ pub fn load_or_create_file_transfer_crypto_context(
         crate::mls::runtime::load_account_mls_secret(secure_store.as_ref(), authority)
             .map_err(|error| anyhow::anyhow!("account MLS secret unavailable: {error}"))?
             .ok_or_else(|| anyhow::anyhow!("account MLS secret recovery is required"))?;
-    FileTransferCryptoContext::from_account_secret(&account_secret.secret)
+    FileTransferCryptoContext::from_account_secret(authority, &account_secret.secret)
 }
 
 pub fn load_file_transfer_crypto_context(
@@ -103,7 +108,7 @@ pub fn load_file_transfer_crypto_context(
     else {
         return Ok(None);
     };
-    FileTransferCryptoContext::from_account_secret(&account_secret.secret).map(Some)
+    FileTransferCryptoContext::from_account_secret(authority, &account_secret.secret).map(Some)
 }
 
 pub async fn upload_actor_private_file(
@@ -456,11 +461,15 @@ fn seal_record_envelope(
     account_data_key: &str,
     actor_id: &str,
 ) -> anyhow::Result<Value> {
-    let actor_core_id = crate::mls_api_helpers::principal_core_id(actor_id)?;
+    if crate::mls_api_helpers::principal_core_id(actor_id)?
+        != *crypto.actor_id.signing_principal_id()
+    {
+        anyhow::bail!("file-transfer author differs from the crypto context account");
+    }
     let plaintext = serde_json::to_value(record)?;
     let envelope = arkret_sdk::account_data_crypto::seal_account_data_value(
         &crypto.account_data_secret,
-        &actor_core_id,
+        &crypto.actor_id,
         account_data_key,
         &plaintext,
     )?;
@@ -477,10 +486,9 @@ fn open_record_envelope(
         serde_json::from_value(envelope.clone()).map_err(|error| {
             anyhow::anyhow!("file-transfer account-data outer envelope: {error}")
         })?;
-    let actor_id = outer.aad.actor_id.clone();
     let plaintext = arkret_sdk::account_data_crypto::open_account_data_value(
         &crypto.account_data_secret,
-        &actor_id,
+        &crypto.actor_id,
         account_data_key,
         &outer,
     )?;
@@ -658,6 +666,13 @@ fn valid_mime_token(value: &str) -> bool {
 mod tests {
     use super::*;
 
+    fn test_authority() -> arkret_sdk::AccountId {
+        arkret_sdk::AccountId::new(
+            crate::mls_api_helpers::principal_core_id(ACTOR).unwrap(),
+            arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap(),
+        )
+    }
+
     const ACTOR: &str = "did:web:alice.example";
     const DEVICE: &str = "ak:device:01904100-0000-7000-8000-000000000001";
 
@@ -672,8 +687,11 @@ mod tests {
 
     #[test]
     fn file_transfer_cas_merge_uses_hlc_and_preserves_terminal_delete() {
-        let crypto =
-            FileTransferCryptoContext::from_account_secret(&test_account_secret()).unwrap();
+        let crypto = FileTransferCryptoContext::from_account_secret(
+            &test_authority(),
+            &test_account_secret(),
+        )
+        .unwrap();
         let prepared = prepare_actor_private_file(
             &crypto,
             &test_pcr(),
@@ -733,8 +751,11 @@ mod tests {
 
     #[test]
     fn prepared_file_round_trips_through_record_envelope_and_content_aead() {
-        let crypto =
-            FileTransferCryptoContext::from_account_secret(&test_account_secret()).unwrap();
+        let crypto = FileTransferCryptoContext::from_account_secret(
+            &test_authority(),
+            &test_account_secret(),
+        )
+        .unwrap();
         let prepared = prepare_actor_private_file(
             &crypto,
             &test_pcr(),
@@ -755,6 +776,17 @@ mod tests {
             .unwrap();
         let key = record_account_key(&record, &crypto).unwrap();
         let envelope = seal_record_envelope(&record, &crypto, &key, ACTOR).unwrap();
+        let other_account = arkret_sdk::AccountId::new(
+            test_authority().principal_id,
+            arkret_sdk::DidCoreId::new("ak:did_core:web:other.example").unwrap(),
+        );
+        let other_crypto =
+            FileTransferCryptoContext::from_account_secret(&other_account, &test_account_secret())
+                .unwrap();
+        assert!(
+            open_record_envelope(&envelope, &other_crypto, &key).is_err(),
+            "same principal and secret must not admit a different Station account"
+        );
         let entry = json!({
             "account_data_key": key,
             "content": envelope,
@@ -771,8 +803,11 @@ mod tests {
 
     #[test]
     fn record_envelope_must_match_account_data_key() {
-        let crypto =
-            FileTransferCryptoContext::from_account_secret(&test_account_secret()).unwrap();
+        let crypto = FileTransferCryptoContext::from_account_secret(
+            &test_authority(),
+            &test_account_secret(),
+        )
+        .unwrap();
         let prepared = prepare_actor_private_file(
             &crypto,
             &test_pcr(),
@@ -807,8 +842,11 @@ mod tests {
 
     #[test]
     fn digest_or_blob_ref_drift_fails_closed() {
-        let crypto =
-            FileTransferCryptoContext::from_account_secret(&test_account_secret()).unwrap();
+        let crypto = FileTransferCryptoContext::from_account_secret(
+            &test_authority(),
+            &test_account_secret(),
+        )
+        .unwrap();
         let prepared = prepare_actor_private_file(
             &crypto,
             &test_pcr(),
@@ -833,8 +871,11 @@ mod tests {
 
     #[test]
     fn top_level_and_content_aad_must_match() {
-        let crypto =
-            FileTransferCryptoContext::from_account_secret(&test_account_secret()).unwrap();
+        let crypto = FileTransferCryptoContext::from_account_secret(
+            &test_authority(),
+            &test_account_secret(),
+        )
+        .unwrap();
         let prepared = prepare_actor_private_file(
             &crypto,
             &test_pcr(),
