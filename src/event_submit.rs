@@ -2005,7 +2005,7 @@ impl EventSubmitter {
         let seal_ref = self.current_seal_for(scope_ref.realm_id().as_str()).await?;
         let header = crate::signal::SignalHeader::new(
             scope_ref,
-            authority.principal_id.clone(),
+            arkret_sdk::ActorId::account(authority.clone()),
             device_id.clone(),
             arkret_sdk::SealId::new(seal_ref)
                 .map_err(|error| anyhow::anyhow!("invalid signal seal_ref: {error}"))?,

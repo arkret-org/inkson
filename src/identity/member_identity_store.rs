@@ -283,7 +283,6 @@ fn verify_member_identity_proof(identity: &MemberIdentity) -> bool {
     }
 
     // The verification_method controller MUST be the asserting actor.
-    let actor_id = identity.actor_id.signing_principal_id().as_str();
     let (controller, fragment) = match proof.verification_method.split_once('#') {
         Some((controller, fragment)) => (
             controller
@@ -312,20 +311,22 @@ fn verify_member_identity_proof(identity: &MemberIdentity) -> bool {
     // Resolve the asserter's authoritative device signing key (sync, cache-only;
     // primed by the sync engine's member-identity prefetch). Miss / NegativeHit
     // are fail-closed.
-    let verifying_key =
-        match crate::identity::device_directory::cached_device_signing_key(actor_id, device_id) {
-            crate::identity::device_directory::CacheLookup::Hit(material) => {
-                let Ok(bytes) = material.ed25519_bytes() else {
-                    return false;
-                };
-                let Ok(key) = VerifyingKey::from_bytes(&bytes) else {
-                    return false;
-                };
-                key
-            }
-            crate::identity::device_directory::CacheLookup::NegativeHit
-            | crate::identity::device_directory::CacheLookup::Miss => return false,
-        };
+    let verifying_key = match crate::identity::device_directory::cached_device_signing_key(
+        &identity.actor_id.to_string(),
+        device_id,
+    ) {
+        crate::identity::device_directory::CacheLookup::Hit(material) => {
+            let Ok(bytes) = material.ed25519_bytes() else {
+                return false;
+            };
+            let Ok(key) = VerifyingKey::from_bytes(&bytes) else {
+                return false;
+            };
+            key
+        }
+        crate::identity::device_directory::CacheLookup::NegativeHit
+        | crate::identity::device_directory::CacheLookup::Miss => return false,
+    };
 
     // (b) signature over the canonical payload bytes (the same bytes the digest
     // commits to).

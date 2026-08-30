@@ -32,7 +32,7 @@ fn build_register_request(
     let push_key = "apns:0123456789abcdef0123456789abcdef";
     let idempotency_key = format!("inkson-push-register-{device_id}");
     let config = chime::PushDeviceConfig {
-        principal_id: None,
+        account_id: None,
         device_id,
         push_key: Some(push_key),
         platform: Some(current_platform()),

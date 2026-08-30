@@ -1003,7 +1003,17 @@ fn verify_chat_envelope_proof_with_local_identity(
     let Some(device) = persistent_proof_sender_device(envelope, &proof_controller) else {
         return ChatProofVerdict::Unresolved;
     };
-    match crate::identity::device_directory::cached_device_signing_key(&proof_controller, device) {
+    let Some(proof_actor) = envelope
+        .get("executed_by")
+        .or_else(|| envelope.get("actor_id"))
+        .and_then(|value| serde_json::from_value::<arkret_sdk::ActorId>(value.clone()).ok())
+    else {
+        return ChatProofVerdict::Rejected;
+    };
+    match crate::identity::device_directory::cached_device_signing_key(
+        &proof_actor.to_string(),
+        device,
+    ) {
         crate::identity::device_directory::CacheLookup::Hit(key) => {
             if crate::identity::device_directory::verify_persistent_envelope_proofs(envelope, &key)
             {
@@ -1024,17 +1034,21 @@ fn verify_chat_envelope_proof_with_local_identity(
             // actor, device id, active signer binding and detached proof must
             // all agree, and a directory NegativeHit (revoked/absent device)
             // is never overridden.
-            let local_key = local_identity.and_then(|(_, local_actor, local_device)| {
-                if local_actor != proof_controller || local_device.as_str() != device {
-                    return None;
-                }
-                let signer = crate::event_signer::active_signer()?;
-                if signer.device_id() != Some(device) {
-                    return None;
-                }
-                let multibase = signer.public_key_multibase()?;
-                crate::identity::device_directory::public_key_from_directory_value(&multibase)
-            });
+            let local_key =
+                local_identity.and_then(|(local_account, local_actor, local_device)| {
+                    if proof_actor.as_account_id() != Some(local_account)
+                        || local_actor != proof_controller
+                        || local_device.as_str() != device
+                    {
+                        return None;
+                    }
+                    let signer = crate::event_signer::active_signer()?;
+                    if signer.device_id() != Some(device) {
+                        return None;
+                    }
+                    let multibase = signer.public_key_multibase()?;
+                    crate::identity::device_directory::public_key_from_directory_value(&multibase)
+                });
             match local_key {
                 Some(key)
                     if crate::identity::device_directory::verify_persistent_envelope_proofs(

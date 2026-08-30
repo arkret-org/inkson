@@ -28,7 +28,7 @@
 //!     station_url: "https://principal.example".into(),
 //!     floria_gateway_url: "https://push.example/_arkret/edge/push/notify".into(),
 //!     device_id: "dev-inkson".into(),
-//!     principal_id: Some(arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example")?),
+//!     account_id: Some(active_account.authority.clone()),
 //!     authorization_credential: Some(api_token),
 //!     session_grant: None,
 //!     active_circle_id: None,
@@ -91,7 +91,7 @@ pub enum PushRegistrationError {
 }
 
 /// Inputs to [`register_via_chime`]. Tracked as a struct (vs a 6-arg
-/// fn) so call sites stay readable when `principal_id` /
+/// fn) so call sites stay readable when `account_id` /
 /// `authorization_credential`
 /// flip from `None` to `Some` after coauth lands.
 #[derive(Clone, Debug)]
@@ -109,7 +109,7 @@ pub struct RegisterContext {
     pub device_id: String,
     /// Owning actor's stable Arkret identity. `None` for the pre-login boot path; populated
     /// once OIDC / coauth resolves.
-    pub principal_id: Option<arkret_sdk::DidCoreId>,
+    pub account_id: Option<arkret_sdk::AccountId>,
     /// API authorization credential (chime client posts it in the standard
     /// `Authorization: Bearer ...` HTTP scheme).
     pub authorization_credential: Option<String>,
@@ -196,7 +196,7 @@ pub async fn unregister_via_chime(
         station_url: ctx.station_url.clone(),
         floria_gateway_url: String::new(),
         device_id: ctx.device_id.clone(),
-        principal_id: None,
+        account_id: None,
         authorization_credential: ctx.authorization_credential.clone(),
         session_grant: ctx.session_grant.clone(),
         active_circle_id: None,
@@ -273,9 +273,16 @@ fn resolve_chime_session_grant(
             ),
         });
     }
-    if ctx.principal_id.is_none() {
-        ctx.principal_id = Some(grant.account_id.principal_id.clone());
+    if ctx
+        .account_id
+        .as_ref()
+        .is_some_and(|account| account != &grant.account_id)
+    {
+        return Err(PushRegistrationError::SessionGrantMismatch {
+            reason: "persisted grant belongs to a different account".to_owned(),
+        });
     }
+    ctx.account_id = Some(grant.account_id.clone());
 
     let signing_key = session_grant_signing_key_from_pem(&grant.session_private_key_pem)
         .map_err(PushRegistrationError::SessionGrantProof)?;
@@ -386,7 +393,7 @@ fn build_request(
     };
     let platform = current_platform_str();
     let config = PushDeviceConfig {
-        principal_id: ctx.principal_id.clone(),
+        account_id: ctx.account_id.clone(),
         device_id: ctx.device_id.as_str(),
         push_key: Some(push_key),
         platform: Some(platform),
@@ -461,9 +468,10 @@ mod tests {
             station_url: "https://principal.example".to_owned(),
             floria_gateway_url: "https://push.example/_arkret/edge/push/notify".to_owned(),
             device_id: device.to_owned(),
-            principal_id: Some(
+            account_id: Some(arkret_sdk::AccountId::new(
                 arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example".to_owned()).unwrap(),
-            ),
+                arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap(),
+            )),
             authorization_credential: Some("session-secret".to_owned()),
             session_grant: None,
             active_circle_id: None,
@@ -528,7 +536,7 @@ mod tests {
         let mut store = isolated_store("grant-headers");
         store.set_session_grant(Some(persisted_grant(device_id)));
         let mut context = ctx(device_id);
-        context.principal_id = None;
+        context.account_id = None;
 
         let headers = resolve_chime_session_grant(&mut context, store.session_grant().as_ref())
             .expect("grant headers");
@@ -538,9 +546,9 @@ mod tests {
         assert!(headers.proof_jwt.as_deref().is_some_and(|v| !v.is_empty()));
         assert_eq!(
             context
-                .principal_id
+                .account_id
                 .as_ref()
-                .map(arkret_sdk::DidCoreId::as_str),
+                .map(|account| account.principal_id.as_str()),
             Some("ak:did_core:web:alice.example")
         );
     }
@@ -552,6 +560,20 @@ mod tests {
         let err =
             resolve_chime_session_grant(&mut context, store.session_grant().as_ref()).unwrap_err();
         assert!(matches!(err, PushRegistrationError::MissingSessionGrant));
+    }
+
+    #[test]
+    fn a_different_account_cannot_reuse_the_persisted_grant() {
+        let device = "ak:device:01904100-0000-7000-8000-000000000005";
+        let mut context = ctx(device);
+        context.account_id.as_mut().unwrap().station_id =
+            arkret_sdk::DidCoreId::new("ak:did_core:web:another.example").unwrap();
+        let error =
+            resolve_chime_session_grant(&mut context, Some(&persisted_grant(device))).unwrap_err();
+        assert!(matches!(
+            error,
+            PushRegistrationError::SessionGrantMismatch { .. }
+        ));
     }
 
     #[test]

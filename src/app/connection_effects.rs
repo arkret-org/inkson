@@ -180,7 +180,7 @@ pub(super) fn ConnectionEffects(state: ConnectionEffectState) -> Element {
                 let result =
                     crate::transport::auth::with_authed_api(&base, session, |api| async move {
                         super::connect::probe_device_authorization(
-                            &actor,
+                            &account,
                             &device,
                             &api,
                             did_cache.peek().clone(),

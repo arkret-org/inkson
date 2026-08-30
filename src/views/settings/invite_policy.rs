@@ -11,10 +11,10 @@
 //! YOU-01-006: the form edits a `arkret_sdk::InviteReceivePolicy` held whole in
 //! a signal. On GET we keep the *entire* server policy (including the
 //! `trusted_*` / `denied_principal_ids` lists this form does not surface);
-//! on SET we stamp the required `schema` constant and `subject_id = principal_id`
+//! on SET we stamp the required schema constant and exact active account_id
 //! and post the same object back, so server-stored lists survive the round-trip
 //! and the body satisfies the soland handler (which deserialises the SDK type
-//! with `deny_unknown_fields` and enforces `subject_id == session actor`).
+//! with deny_unknown_fields and enforces account_id == session account).
 //!
 //! The soland self-plane endpoint (`/_arkret/self/invite-receive-policy`)
 //! degrades gracefully — on a 404/501/405 GET it seeds the form with defaults,
@@ -148,23 +148,17 @@ fn constraints_lines(constraints: &arkret_wire::ReceivePolicyConstraints) -> Vec
 }
 
 #[component]
-pub fn InvitePolicySettingsCard(token: Signal<String>, principal_id: Signal<String>) -> Element {
-    let subject_id = match crate::mls_api_helpers::principal_core_id(&principal_id()) {
-        Ok(subject_id) => subject_id,
-        Err(error) => {
-            return rsx! {
-                div { class: "event", "data-testid": "invite-policy-panel",
-                    div { class: "error", "Invalid account DID: {error}" }
-                }
-            };
-        }
+pub fn InvitePolicySettingsCard(token: Signal<String>) -> Element {
+    let Some(account) = crate::app::SessionContext::get().active_account() else {
+        return rsx! { div { class: "error", "No active account" } };
     };
-    let subject_key = subject_id.as_str().to_owned();
+    let account_id = account.authority;
+    let subject_key = account_id.to_string();
     rsx! {
         InvitePolicySettingsCardBody {
             key: "{subject_key}",
             token,
-            subject_id,
+            account_id,
         }
     }
 }
@@ -172,7 +166,7 @@ pub fn InvitePolicySettingsCard(token: Signal<String>, principal_id: Signal<Stri
 #[component]
 fn InvitePolicySettingsCardBody(
     token: Signal<String>,
-    subject_id: arkret_sdk::DidCoreId,
+    account_id: arkret_sdk::AccountId,
 ) -> Element {
     // A4 — base_url from session context instead of a prop.
     let active_account = crate::app::SessionContext::get().active_account;
@@ -181,7 +175,7 @@ fn InvitePolicySettingsCardBody(
             .map(|account| account.server_url.to_string())
             .unwrap_or_default()
     });
-    let initial_subject_id = subject_id.clone();
+    let initial_subject_id = account_id.clone();
     let mut policy = use_signal(move || InviteReceivePolicy::spec_default(initial_subject_id));
     let mut loaded = use_signal(|| false);
     let mut loading = use_signal(|| true);
@@ -193,6 +187,7 @@ fn InvitePolicySettingsCardBody(
     // isn't wired on this deployment yet); any other error surfaces inline but
     // still lets the user edit + save against the real endpoint.
     {
+        let load_account_id = account_id.clone();
         use_effect(move || {
             if loaded() {
                 return;
@@ -200,6 +195,7 @@ fn InvitePolicySettingsCardBody(
             loaded.set(true);
             let base = base_url();
             let api_token = token();
+            let load_account_id = load_account_id.clone();
             spawn(async move {
                 match with_authed_api(&base, api_token, |api| async move {
                     let constraints = api
@@ -209,6 +205,7 @@ fn InvitePolicySettingsCardBody(
                         .and_then(|description| description.receive_policy_constraints);
                     let policy = crate::transport::account::get_invite_receive_policy(
                         &api.sdk_http_client()?,
+                        &load_account_id,
                     )
                     .await?;
                     Ok((policy, constraints))
@@ -470,12 +467,12 @@ fn InvitePolicySettingsCardBody(
                     onclick: move |_| {
                         let base = base_url();
                         let api_token = token();
-                        // Stamp the spec-required `schema` + `subject_id` before
+                        // Stamp the spec-required schema and exact account before
                         // SET; the SDK type carries the server's `trusted_*`
                         // lists from the GET hydrate, so they round-trip intact.
                         let mut to_save = policy.read().clone();
                         to_save.schema = SchemaId::INVITE_RECEIVE_POLICY_V1.to_owned();
-                        to_save.subject_id = subject_id.clone();
+                        to_save.account_id = account_id.clone();
                         saving.set(true);
                         status.set(tr("invite_policy.saving"));
                         spawn(async move {

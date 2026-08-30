@@ -332,7 +332,7 @@ fn verify_authorization_incarnation_is_retained_join(
 
 async fn current_ordinary_human_endpoint_authorization(
     http: &arkret_sdk::http_client::Client,
-    requester_did: &arkret_sdk::Did,
+    account_id: &arkret_sdk::AccountId,
     device_id: &arkret_sdk::DeviceId,
 ) -> anyhow::Result<arkret_sdk::RequesterEndpointAuthorization> {
     let requester_device_authorize_event_id =
@@ -342,23 +342,21 @@ async fn current_ordinary_human_endpoint_authorization(
         )
         .await
         .map_err(anyhow::Error::msg)?;
-    let keys = crate::transport::keys::query_keys(http, requester_did.as_str(), device_id.as_str())
-        .await?;
-    let actor_id = arkret_sdk::project_did_to_core_id(requester_did)?;
-    let generation = keys.device_generations.get(&actor_id).ok_or_else(|| {
+    let keys = crate::transport::keys::query_keys(http, account_id, device_id.as_str()).await?;
+    let generation = keys.generation_for(account_id).ok_or_else(|| {
         anyhow::anyhow!("history request device generation is absent from the PCR projection")
     })?;
     if generation.device_generation_status != arkret_sdk::DeviceGenerationStatus::Active {
         anyhow::bail!("history request device generation is not active");
     }
     let device = keys
-        .device_keys
-        .get(&actor_id)
+        .devices_for(account_id)
         .and_then(|devices| devices.get(device_id))
         .ok_or_else(|| {
             anyhow::anyhow!("history request device is absent from the PCR projection")
         })?;
     let attested = &device.device_projection_attestation.attestation;
+    device.validate_attestation_binding(account_id, device_id)?;
     if attested.device_status != arkret_sdk::DeviceStatus::Active
         || attested.authorized_generation_ref != generation.current_device_generation_ref
         || attested.device_authorize_event_id != requester_device_authorize_event_id
@@ -414,7 +412,7 @@ pub async fn author_and_create_ordinary_human_request(
 
     let http = http_client(api)?;
     let endpoint_authorization =
-        current_ordinary_human_endpoint_authorization(&http, requester_did, device_id).await?;
+        current_ordinary_human_endpoint_authorization(&http, authority, device_id).await?;
     let (trusted_history_base_basis, trusted_current_basis, _) =
         request_trust_bases(state_store, &plan.effective_scope)?;
     let (_, public_key) =

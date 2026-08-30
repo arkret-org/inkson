@@ -93,6 +93,7 @@ fn main() -> Result<()> {
         "realm-actor-frontier" => realm_actor_frontier(input)?,
         "service-resolution" => service_resolution()?,
         "principal-locator" => principal_locator(input)?,
+        "device-projection-attestation" => device_projection_attestation(input)?,
         "did-key-from-seed" => did_key_from_seed(input)?,
         "demo-realm-genesis" => demo_realm_genesis()?,
         "realm-genesis-seal" => realm_genesis_seal(input)?,
@@ -542,35 +543,49 @@ fn principal_locator(input: Value) -> Result<Value> {
     };
     let mut locator = arkret_sdk::PrincipalLocator {
         schema: arkret_sdk::PrincipalLocator::SCHEMA.to_owned(),
-        subject_id: input.subject_id,
-        recipient_id: authority.service_id,
+        account_id: arkret_sdk::AccountId::new(input.subject_id, authority.service_id),
         service_resolution,
         route_assistance: None,
-        recipient_kind: None,
         issued_at,
         expires_at,
         locator_ref_digest,
-        delivery_modes: Vec::new(),
         display_hint: None,
         proofs: Vec::new(),
     };
-    let unsigned = serde_json::to_value(&locator)?;
-    let payload_digest =
-        arkret_sdk::Hash::new(arkret_sdk::canonical::canonical_sha256(&unsigned)?)?;
+    let mut proof = arkret_sdk::DetachedPayloadProof {
+        kind: arkret_sdk::proof_kind::DETACHED_JWS.to_owned(),
+        verification_method: authority.verification_method,
+        payload_digest: locator.payload_digest()?,
+        created_at: issued_at,
+        domain: None,
+        audience: None,
+        jws: String::new(),
+    };
+    proof.jws = arkret_sdk::signatures::sign_ed25519_detached_jws(
+        &authority.signing_key,
+        &locator.proof_signing_bytes(&proof)?,
+    )?;
     locator.proofs.push(arkret_sdk::PrincipalLocatorProof {
         proof_purpose: arkret_sdk::PrincipalLocatorProofPurpose::RecipientServiceAcceptance,
-        proof: arkret_sdk::DetachedPayloadProof {
-            kind: arkret_sdk::proof_kind::DETACHED_JWS.to_owned(),
-            verification_method: authority.verification_method,
-            payload_digest,
-            created_at: issued_at,
-            domain: None,
-            audience: None,
-            jws: "e30..c2ln".to_owned(),
-        },
+        proof,
     });
     locator.validate_minimal()?;
     serde_json::to_value(locator).context("serialize principal-locator fixture")
+}
+
+fn device_projection_attestation(input: Value) -> Result<Value> {
+    let core: arkret_sdk::DeviceProjectionAttestationCore = serde_json::from_value(input)?;
+    let authority = mock_service_authority()?;
+    if core.account_id.station_id != authority.service_id {
+        bail!("mock Station cannot attest a foreign account");
+    }
+    let attestation =
+        arkret_sdk::signatures::device_projection::sign_device_projection_attestation(
+            core,
+            authority.verification_method,
+            &authority.signing_key,
+        )?;
+    serde_json::to_value(attestation).context("serialize device projection attestation fixture")
 }
 
 fn validate_mock_response(input: Value) -> Result<Value> {
@@ -993,22 +1008,24 @@ mod tests {
 
     #[test]
     fn realm_actor_frontier_command_matches_the_spec_vector() {
+        let fixture = arkret_schema::embedded_json_artifact("fixtures/sync-fixture.json")
+            .expect("embedded sync fixture");
+        let instance = &fixture["schema_validation_cases"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|case| case["name"] == "realm_actor_frontier_sibling_set_valid")
+            .expect("normative frontier vector")["instance"];
         let output = realm_actor_frontier(serde_json::json!({
-            "realm_id": "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
-            "actor_id": "ak:did_core:web:alice.example",
-            "next_actor_seq": 43,
-            "frontier_event_ids": [
-                "ak:event:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1",
-                "ak:event:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19"
-            ],
+            "realm_id": instance["realm_id"],
+            "actor_id": instance["actor_id"],
+            "next_actor_seq": instance["next_actor_seq"],
+            "frontier_event_ids": instance["frontier_event_ids"],
             "digest_suite": "sha256"
         }))
         .expect("typed frontier command");
 
-        assert_eq!(
-            output["frontier_digest"],
-            "sha256:cb4775b3b4590faa096cafd34b0dfd9abc77ad02729a451c0fe5dfdee10d5dc1"
-        );
+        assert_eq!(&output, instance);
     }
 
     #[test]

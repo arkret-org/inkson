@@ -502,7 +502,7 @@ fn device_authorization_probe_from_account_viewer(
 /// device bootstrap, while every later or key-mismatched device must use the
 /// user-approved pairing/recovery flow from key-management.md §5.1.
 pub(super) async fn probe_device_authorization(
-    actor: &arkret_sdk::Did,
+    account: &crate::config::ActiveAccountContext,
     device: &str,
     principal_api: &TransportClient,
     did_cache: arkret_sdk::identity::DidResolutionCache,
@@ -513,7 +513,7 @@ pub(super) async fn probe_device_authorization(
         &crate::transport::keys::list_devices(&principal_api.sdk_http_client()?).await?,
     )?;
     let signer_matches_directory =
-        current_event_signer_matches_directory(principal_api, actor, device, did_cache).await?;
+        current_event_signer_matches_directory(principal_api, account, device, did_cache).await?;
     Ok(device_authorization_probe_from_account_viewer(
         &viewer,
         device,
@@ -528,7 +528,7 @@ pub(super) async fn probe_device_authorization(
 /// accepted device through the founding enrollment endpoint.
 async fn current_event_signer_matches_directory(
     principal_api: &TransportClient,
-    actor: &arkret_sdk::Did,
+    account: &crate::config::ActiveAccountContext,
     device: &str,
     did_cache: arkret_sdk::identity::DidResolutionCache,
 ) -> anyhow::Result<bool> {
@@ -537,28 +537,25 @@ async fn current_event_signer_matches_directory(
         None => crate::event_signer::bootstrap_default_signer("inkson")
             .map_err(|error| anyhow::anyhow!("bootstrap device signer: {error}"))?,
     };
-    let actor_id = arkret_sdk::project_did_to_core_id(actor)?;
+    let account_id = &account.authority;
+    let actor_id = account.principal_id();
     let signer = crate::event_signer::bind_active_signer_device_id(device)
         .map_err(|error| anyhow::anyhow!("bind event signer device: {error}"))?
         .unwrap_or(signer);
     let signer_did = arkret_sdk::Did::new(signer.signer_did().to_owned())?;
-    if arkret_sdk::project_did_to_core_id(&signer_did)? != actor_id {
+    if &arkret_sdk::project_did_to_core_id(&signer_did)? != actor_id {
         return Ok(false);
     }
     let Some(public_key) = signer.public_key_multibase() else {
         return Ok(false);
     };
-    let outcome = crate::transport::keys::query_keys(
-        &principal_api.sdk_http_client()?,
-        actor.as_str(),
-        device,
-    )
-    .await?;
+    let outcome =
+        crate::transport::keys::query_keys(&principal_api.sdk_http_client()?, account_id, device)
+            .await?;
     let device_id = arkret_sdk::DeviceId::new(device.to_owned())?;
     let expected_key = format!("did:key:{public_key}");
     let signer_matches = outcome
-        .device_keys
-        .get(&actor_id)
+        .devices_for(account_id)
         .and_then(|devices| devices.get(&device_id))
         .map(|record| {
             record
@@ -577,10 +574,7 @@ async fn current_event_signer_matches_directory(
     );
     let accepted_key =
         crate::identity::device_directory::cache_accepted_device_evidence_from_outcome(
-            &outcome,
-            &anchor,
-            actor.as_str(),
-            device,
+            &outcome, &anchor, account_id, device,
         )
         .await;
     if accepted_key.as_ref()
@@ -590,9 +584,7 @@ async fn current_event_signer_matches_directory(
         return Ok(false);
     }
     crate::identity::authoring_generation::cache_principal_authoring_generation_from_keys(
-        &outcome,
-        actor.as_str(),
-        device,
+        &outcome, account_id, device,
     )
 }
 
@@ -1294,7 +1286,7 @@ pub(super) fn connect(
                     &session,
                     bootstrap_session_generation,
                     probe_device_authorization(
-                        accepted_account.did(),
+                        &accepted_account,
                         &device,
                         &authed,
                         ctx.did_cache.peek().clone(),
@@ -1338,7 +1330,7 @@ pub(super) fn connect(
                                         &session,
                                         bootstrap_session_generation,
                                         probe_device_authorization(
-                                            accepted_account.did(),
+                                            &accepted_account,
                                             &device,
                                             &authed,
                                             ctx.did_cache.peek().clone(),

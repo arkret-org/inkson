@@ -381,15 +381,11 @@ test("realm admin page handles metadata, modal member invite, epoch rotation and
   );
   expect(inviteBody.kind).toBe("ak.invite.create");
   expect(inviteBody.payload.invite_id).toBeUndefined();
-  expect(inviteBody.payload.invitee).toBe("ak:did_core:web:carol.example");
-  expect(inviteBody.payload.invite_delivery_target).toEqual(
-    expect.objectContaining({
-      recipient_id: CURRENT_STATION_ID,
-      service_resolution: expect.objectContaining({
-        current_record_url: expect.stringMatching(/^https:\/\//),
-      }),
-    }),
-  );
+  expect(inviteBody.payload.invitee_account_id).toEqual({
+    principal_id: "ak:did_core:web:carol.example",
+    station_id: CURRENT_STATION_ID,
+  });
+  expect(inviteBody.payload.invite_delivery_target).toBeUndefined();
   expect(inviteBody.payload.introduction_evidence_digest).toMatch(/^sha256:/);
   await expect(page.getByTestId("realm-members-status")).toContainText(
     "invited ak:did_core:web:carol.example",

@@ -506,7 +506,7 @@ pub(crate) async fn prefetch_for_signal(
             continue;
         };
         let binding = signing_key_binding(&evidence);
-        let sender_actor_id = envelope.sender_actor_id.clone();
+        let sender_actor_id = envelope.sender_actor_id.signing_principal_id().clone();
         if binding.agent_id != sender_actor_id
             || binding.verification_method != envelope.proof.verification_method
             || !current_evidence_matches_context(&evidence, &context)
@@ -678,6 +678,12 @@ fn signal_evidence_query(
     envelope: &arkret_wire::SignalEnvelope,
     context: &CachedAgentSignerEvidenceContext,
 ) -> Option<AgentSignerEvidenceQueryRequestBody> {
+    if !matches!(
+        envelope.sender_actor_id,
+        arkret_sdk::ActorId::HostedPrincipal { .. }
+    ) {
+        return None;
+    }
     let CachedAgentSignerEvidenceContext::CurrentSignal {
         operation_id,
         request_digest,
@@ -691,7 +697,7 @@ fn signal_evidence_query(
     Some(AgentSignerEvidenceQueryRequestBody {
         realm_id: envelope.realm_id.clone(),
         queries: vec![AgentSignerEvidenceQuerySelector::CurrentAdmission {
-            agent_id: envelope.sender_actor_id.clone(),
+            agent_id: envelope.sender_actor_id.signing_principal_id().clone(),
             verification_method: envelope.proof.verification_method.clone(),
             operation_id: operation_id.clone(),
             request_digest: request_digest.clone(),
@@ -711,8 +717,14 @@ pub(crate) fn resolve_cached_signal_key(
     store: &LocalStateStore,
     envelope: &arkret_wire::SignalEnvelope,
 ) -> Option<PublicKeyMaterial> {
+    if !matches!(
+        envelope.sender_actor_id,
+        arkret_sdk::ActorId::HostedPrincipal { .. }
+    ) {
+        return None;
+    }
     for entry in store.cached_agent_signer_evidence(
-        &envelope.sender_actor_id,
+        envelope.sender_actor_id.signing_principal_id(),
         &envelope.proof.verification_method,
     ) {
         let CachedAgentSignerEvidenceContext::CurrentSignal { request_digest, .. } =
@@ -966,7 +978,7 @@ fn validate_cached_current(
 ) -> Option<[u8; 32]> {
     validate_current_entry(
         entry,
-        &envelope.sender_actor_id,
+        envelope.sender_actor_id.signing_principal_id(),
         &envelope.proof.verification_method,
     )
 }

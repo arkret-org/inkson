@@ -1882,8 +1882,7 @@ fn proof_bearing_sender_device(
     let actor = object
         .get("actor_id")
         .or_else(|| object.get("sender_actor_id"))
-        .and_then(crate::state::projection::message_ops::actor_principal_from_value)
-        .filter(|actor| !actor.trim().is_empty())?;
+        .and_then(|value| serde_json::from_value::<arkret_sdk::ActorId>(value.clone()).ok())?;
     // AKP-0008 / AKP-0009: delegated Events keep the accountable principal
     // in `actor_id`, while `executed_by` identifies the runtime that actually
     // signed the envelope. Keep this selector byte-aligned with the chat proof
@@ -1892,10 +1891,9 @@ fn proof_bearing_sender_device(
     // and deliberately do not form a device-directory lookup here.
     let proof_subject = object
         .get("executed_by")
-        .and_then(crate::state::projection::message_ops::actor_principal_from_value)
-        .filter(|controller| !controller.trim().is_empty())
+        .and_then(|value| serde_json::from_value::<arkret_sdk::ActorId>(value.clone()).ok())
         .unwrap_or(actor);
-    let proof_subject = arkret_sdk::DidCoreId::new(proof_subject).ok()?;
+    let account_id = proof_subject.as_account_id()?;
     let proof_controller = proofs.iter().find_map(|proof| {
         let method = proof.get("verification_method").and_then(Value::as_str)?;
         let controller = {
@@ -1904,7 +1902,7 @@ fn proof_bearing_sender_device(
         };
         let controller = arkret_sdk::Did::new(controller.to_owned()).ok()?;
         let controller_core = arkret_sdk::project_did_to_core_id(&controller).ok()?;
-        (controller_core == proof_subject).then_some(controller)
+        (controller_core == account_id.principal_id).then_some(controller)
     })?;
     let device = object
         .get("device_id")
@@ -1916,7 +1914,7 @@ fn proof_bearing_sender_device(
         .or_else(|| {
             proof_sender_device_from_verification_method(object, proof_controller.as_str())
         })?;
-    Some((proof_controller.to_string(), device))
+    Some((account_id.to_string(), device))
 }
 
 fn proof_sender_device_from_verification_method(
@@ -3503,7 +3501,11 @@ mod tests {
         assert_eq!(
             pairs,
             vec![(
-                "did:web:bob.example".to_owned(),
+                crate::mls_api_helpers::local_account_actor_id("did:web:bob.example")
+                    .unwrap()
+                    .as_account_id()
+                    .unwrap()
+                    .to_string(),
                 "ak:device:0196419b-0000-7000-8000-0000000000bb".to_owned()
             )]
         );
@@ -4008,11 +4010,19 @@ mod tests {
             collect_persistent_proof_sender_devices(&response, &|_: &str| false),
             vec![
                 (
-                    "did:web:alice.example".to_owned(),
+                    crate::mls_api_helpers::local_account_actor_id("did:web:alice.example")
+                        .unwrap()
+                        .as_account_id()
+                        .unwrap()
+                        .to_string(),
                     "ak:device:01904100-0000-7000-8000-000000000001".to_owned()
                 ),
                 (
-                    "did:web:carol.example".to_owned(),
+                    crate::mls_api_helpers::local_account_actor_id("did:web:carol.example")
+                        .unwrap()
+                        .as_account_id()
+                        .unwrap()
+                        .to_string(),
                     "ak:device:01904100-0000-7000-8000-000000000002".to_owned()
                 )
             ]
@@ -4020,7 +4030,7 @@ mod tests {
     }
 
     #[test]
-    fn delegated_event_prefetches_executing_principals_device_key() {
+    fn service_executor_does_not_fabricate_an_account_device_query() {
         let controller = "ak:did_core:web:bob.example";
         let agent = "ak:did_core:web:bob.example:agent:assistant";
         let agent_full = "did:web:bob.example:agent:assistant";
@@ -4045,10 +4055,7 @@ mod tests {
             }),
         );
 
-        assert_eq!(
-            collect_persistent_proof_sender_devices(&response, &|_: &str| false),
-            vec![(agent_full.to_owned(), device.to_owned())]
-        );
+        assert!(collect_persistent_proof_sender_devices(&response, &|_: &str| false).is_empty());
     }
 
     #[test]

@@ -97,19 +97,21 @@ impl crate::transport::TransportClient {
             .as_ref()
             .and_then(|viewer| key_backup_authorized_event_ref_for_device(viewer, &device_id));
         let query_event_id = if viewer_event_id.is_none() {
-            let outcome = crate::transport::keys::query_keys(
-                &http,
-                payload.actor_id.signing_principal_id().as_str(),
-                device_id.as_str(),
-            )
-            .await?;
-            let generation = outcome
-                .device_generations
-                .get(payload.actor_id.signing_principal_id());
+            let account_id = payload
+                .actor_id
+                .as_account_id()
+                .ok_or_else(|| anyhow::anyhow!("key backup requires an exact account actor"))?;
+            let outcome =
+                crate::transport::keys::query_keys(&http, account_id, device_id.as_str()).await?;
+            let generation = outcome.generation_for(account_id);
             outcome
-                .device_keys
-                .get(payload.actor_id.signing_principal_id())
+                .devices_for(account_id)
                 .and_then(|devices| devices.get(&device_id))
+                .filter(|record| {
+                    record
+                        .validate_attestation_binding(account_id, &device_id)
+                        .is_ok()
+                })
                 .filter(|record| record.is_usable_in_generation(generation))
                 .map(|record| {
                     record

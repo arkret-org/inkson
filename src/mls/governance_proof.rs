@@ -886,7 +886,7 @@ pub(crate) fn install_cached_transition_leaf_bindings_with_hints(
                 })?
             } else {
                 let cached_key = match crate::identity::device_directory::cached_device_signing_key(
-                    frontier_leaf.actor_id.signing_principal_id().as_str(),
+                    &frontier_leaf.actor_id.to_string(),
                     device_id.as_str(),
                 ) {
                     crate::identity::device_directory::CacheLookup::Hit(key) => key,
@@ -909,7 +909,7 @@ pub(crate) fn install_cached_transition_leaf_bindings_with_hints(
                     );
                 }
                 crate::identity::device_directory::cached_device_authorize_event_id(
-                    frontier_leaf.actor_id.signing_principal_id().as_str(),
+                    &frontier_leaf.actor_id.to_string(),
                     device_id.as_str(),
                 )
                 .ok_or_else(|| {

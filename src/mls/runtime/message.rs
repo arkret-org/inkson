@@ -1683,9 +1683,10 @@ pub(super) fn verify_welcome_claim_envelope_signer(
         }
     };
     let requester_did = requester_did.as_str();
+    let requester_account_selector = envelope.requester_actor_id.to_string();
     let requester_device_id = requester_device_id.as_str();
     if crate::identity::device_directory::cached_device_authorize_event_id(
-        requester_did,
+        &requester_account_selector,
         requester_device_id,
     )
     .as_ref()
@@ -1696,7 +1697,7 @@ pub(super) fn verify_welcome_claim_envelope_signer(
         ));
     }
     let verifying_key = match crate::identity::device_directory::cached_device_signing_key(
-        requester_did,
+        &requester_account_selector,
         requester_device_id,
     ) {
         crate::identity::device_directory::CacheLookup::Hit(material) => {

@@ -95,7 +95,7 @@ impl garth::SignalSenderKeyResolver for DirectorySenderKeyResolver {
     ) -> Option<garth::VerifiedSignalSenderKey> {
         let (public_key, authority) =
             crate::identity::device_directory::cached_signal_sender_evidence(
-                envelope.sender_actor_id.as_str(),
+                &envelope.sender_actor_id.to_string(),
                 envelope.sender_device_id.as_str(),
             )?;
         garth::VerifiedSignalSenderKey::from_directory_evidence(
@@ -671,7 +671,9 @@ mod tests {
     }
 
     fn sender_resolution_envelope() -> arkret_wire::SignalEnvelope {
-        let actor_id = arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example").unwrap();
+        let actor_id =
+            crate::mls_api_helpers::local_account_actor_id("ak:did_core:web:alice.example")
+                .unwrap();
         let sender_device_id =
             arkret_sdk::DeviceId::new("ak:device:01904100-0000-7000-8000-000000000002").unwrap();
         arkret_wire::SignalEnvelope {
@@ -723,11 +725,11 @@ mod tests {
     }
 
     #[test]
-    fn signal_sender_resolution_requires_the_verified_authority_tuple() {
+    fn signal_sender_resolution_requires_the_exact_verified_account() {
         use garth::SignalSenderKeyResolver as _;
 
         let envelope = sender_resolution_envelope();
-        let actor = envelope.sender_actor_id.as_str();
+        let actor = envelope.sender_actor_id.signing_principal_id().as_str();
         let device = envelope.sender_device_id.as_str();
         let public_key = crate::identity::device_directory::public_key_from_directory_value(
             "did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuVkhY7g94pVQyG98x",
@@ -750,16 +752,22 @@ mod tests {
             actor,
             device,
             public_key,
-            arkret_sdk::AccountId::new(
-                envelope.sender_actor_id.clone(),
-                arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap(),
-            ),
+            envelope.sender_actor_id.as_account_id().unwrap().clone(),
         );
         assert!(
             DirectorySenderKeyResolver
                 .resolve_sender_key(&envelope)
                 .is_some(),
-            "the exact verified device and authority tuple must enable Signal admission"
+            "the exact verified account enables Signal admission"
+        );
+        let mut foreign = envelope.clone();
+        let mut account = foreign.sender_actor_id.as_account_id().unwrap().clone();
+        account.station_id = arkret_sdk::DidCoreId::new("ak:did_core:web:another.example").unwrap();
+        foreign.sender_actor_id = arkret_sdk::ActorId::account(account);
+        assert!(
+            DirectorySenderKeyResolver
+                .resolve_sender_key(&foreign)
+                .is_none()
         );
         crate::identity::device_directory::invalidate_actor(actor);
     }
