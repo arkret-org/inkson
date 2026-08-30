@@ -2,7 +2,7 @@
 //!
 //! `governance-objects.md` §5.3 forbids materializing private delivery
 //! material on the Invite object, so the authz Invite read model never carries
-//! an accept token. The Principal Server delivers it on the holder-private
+//! an accept token. The Station delivers it on the holder-private
 //! account-data cell `ak.account.invite_delivery` (the same carrier family
 //! `consent-model.md` §6.1.1 defines for the quarantine inbox), persisted
 //! server-side as a bounded CAS register and fanned out live as an

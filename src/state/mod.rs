@@ -29,7 +29,7 @@ const LOCAL_STATE_STORAGE_KEY: &str = "inkson.local_state.v1";
 const ANONYMOUS_ACCOUNT_NAMESPACE: &str = "anonymous";
 
 /// Canonical physical namespace for an accepted account authority pair.
-fn account_storage_scope(authority: &arkret_sdk::PrincipalAuthorityKey) -> anyhow::Result<String> {
+fn account_storage_scope(authority: &arkret_sdk::AccountId) -> anyhow::Result<String> {
     crate::identity::active_account::authority_namespace(authority)
 }
 
@@ -801,7 +801,7 @@ impl LocalStateStore {
             let secure_store_ready = true;
             if secure_store_ready {
                 // Restoring an account-local session requires the accepted
-                // PrincipalAuthorityKey. The root retains only a DID,
+                // AccountId. The root retains only a DID,
                 // so fail closed instead of guessing a secure-store scope from
                 // a core/full string. Authority-scoped restore is wired only
                 // after the root/profile context can be reconstructed.

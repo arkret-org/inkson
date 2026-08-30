@@ -748,7 +748,7 @@ impl InksonEventSigner {
     /// `kid` protected-header claim. Unlike [`Self::detached_jws_over`], this
     /// follows RFC 7515 signing input rules and signs
     /// `b64u(header) "." b64u(payload)`. The session-grant refresh endpoint
-    /// verifies this shape against the Principal Server's authorized device
+    /// verifies this shape against the Station's authorized device
     /// key.
     pub fn detached_jws_over_payload_with_kid(
         &self,

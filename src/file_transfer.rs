@@ -83,7 +83,7 @@ struct PreparedFileTransfer {
 }
 
 pub fn load_or_create_file_transfer_crypto_context(
-    authority: &arkret_sdk::PrincipalAuthorityKey,
+    authority: &arkret_sdk::AccountId,
 ) -> anyhow::Result<FileTransferCryptoContext> {
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
     let account_secret =
@@ -94,7 +94,7 @@ pub fn load_or_create_file_transfer_crypto_context(
 }
 
 pub fn load_file_transfer_crypto_context(
-    authority: &arkret_sdk::PrincipalAuthorityKey,
+    authority: &arkret_sdk::AccountId,
 ) -> anyhow::Result<Option<FileTransferCryptoContext>> {
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
     let Some(account_secret) =

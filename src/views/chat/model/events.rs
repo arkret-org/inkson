@@ -686,11 +686,7 @@ fn chat_messages_from_event_list_with_sidecar(
     realm_id: &str,
     events: &[Value],
     state_store: Option<&LocalStateStore>,
-    decrypt_identity: Option<(
-        &arkret_sdk::PrincipalAuthorityKey,
-        &str,
-        &arkret_sdk::DeviceId,
-    )>,
+    decrypt_identity: Option<(&arkret_sdk::AccountId, &str, &arkret_sdk::DeviceId)>,
 ) -> Vec<ChatMessage> {
     fold_event_list_into_chat_messages(Vec::new(), realm_id, events, state_store, decrypt_identity)
 }
@@ -700,11 +696,7 @@ fn fold_event_list_into_chat_messages(
     realm_id: &str,
     events: &[Value],
     state_store: Option<&LocalStateStore>,
-    decrypt_identity: Option<(
-        &arkret_sdk::PrincipalAuthorityKey,
-        &str,
-        &arkret_sdk::DeviceId,
-    )>,
+    decrypt_identity: Option<(&arkret_sdk::AccountId, &str, &arkret_sdk::DeviceId)>,
 ) -> Vec<ChatMessage> {
     let mut durable_messages = Vec::new();
     let mut pending_revisions = Vec::<(String, ChatMessage)>::new();
@@ -891,7 +883,7 @@ pub(crate) fn chat_message_from_event(realm_id: &str, event: &Value) -> Option<C
 fn decrypt_chat_encrypted_content_value(
     state_store: &LocalStateStore,
     realm_id: &str,
-    authority: &arkret_sdk::PrincipalAuthorityKey,
+    authority: &arkret_sdk::AccountId,
     device_id: &arkret_sdk::DeviceId,
     effective_scope: Option<&arkret_sdk::ScopeRef>,
     encrypted_content: &Value,
@@ -948,11 +940,7 @@ pub(crate) fn verify_chat_envelope_proof(event: &Value) -> ChatProofVerdict {
 
 fn verify_chat_envelope_proof_with_local_identity(
     event: &Value,
-    local_identity: Option<(
-        &arkret_sdk::PrincipalAuthorityKey,
-        &str,
-        &arkret_sdk::DeviceId,
-    )>,
+    local_identity: Option<(&arkret_sdk::AccountId, &str, &arkret_sdk::DeviceId)>,
 ) -> ChatProofVerdict {
     // Locate the envelope layer that actually carries `actor_id` + `proofs`.
     // Projected chat events nest the signed envelope under `event` / `envelope`
@@ -1074,11 +1062,7 @@ pub(crate) fn verify_chat_envelope_proof_for_realm(
     realm_id: &str,
     event: &Value,
     state_store: Option<&LocalStateStore>,
-    decrypt_identity: Option<(
-        &arkret_sdk::PrincipalAuthorityKey,
-        &str,
-        &arkret_sdk::DeviceId,
-    )>,
+    decrypt_identity: Option<(&arkret_sdk::AccountId, &str, &arkret_sdk::DeviceId)>,
 ) -> ChatProofVerdict {
     if let Some(store) = state_store
         && store.realm_projection_is_minimal_metadata(realm_id)
@@ -1154,11 +1138,7 @@ pub(crate) fn verified_chat_sender_domain_for_realm(
     realm_id: &str,
     event: &Value,
     state_store: Option<&LocalStateStore>,
-    decrypt_identity: Option<(
-        &arkret_sdk::PrincipalAuthorityKey,
-        &str,
-        &arkret_sdk::DeviceId,
-    )>,
+    decrypt_identity: Option<(&arkret_sdk::AccountId, &str, &arkret_sdk::DeviceId)>,
 ) -> Option<Vec<u8>> {
     if verify_chat_envelope_proof_for_realm(realm_id, event, state_store, decrypt_identity)
         != ChatProofVerdict::Verified
@@ -1199,11 +1179,7 @@ fn verify_minimal_metadata_chat_author(
     store: &LocalStateStore,
     realm_id: &str,
     event: &Value,
-    decrypt_identity: Option<(
-        &arkret_sdk::PrincipalAuthorityKey,
-        &str,
-        &arkret_sdk::DeviceId,
-    )>,
+    decrypt_identity: Option<(&arkret_sdk::AccountId, &str, &arkret_sdk::DeviceId)>,
 ) -> ChatProofVerdict {
     let candidates = message_candidates(event);
     let proof_bearing = candidates.iter().copied().find(|candidate| {
@@ -1417,11 +1393,7 @@ pub(crate) fn chat_message_from_event_with_sidecar(
     realm_id: &str,
     event: &Value,
     state_store: Option<&LocalStateStore>,
-    decrypt_identity: Option<(
-        &arkret_sdk::PrincipalAuthorityKey,
-        &str,
-        &arkret_sdk::DeviceId,
-    )>,
+    decrypt_identity: Option<(&arkret_sdk::AccountId, &str, &arkret_sdk::DeviceId)>,
 ) -> Option<ChatMessage> {
     let candidates = message_candidates(event);
     let is_redaction_tombstone = message_is_redaction_tombstone(&candidates);
@@ -1649,11 +1621,7 @@ pub(crate) fn chat_messages_from_events_with_sidecar(
     realm_id: &str,
     events: &[Value],
     state_store: Option<&LocalStateStore>,
-    decrypt_identity: Option<(
-        &arkret_sdk::PrincipalAuthorityKey,
-        &str,
-        &arkret_sdk::DeviceId,
-    )>,
+    decrypt_identity: Option<(&arkret_sdk::AccountId, &str, &arkret_sdk::DeviceId)>,
 ) -> Vec<ChatMessage> {
     chat_messages_from_event_list_with_sidecar(realm_id, events, state_store, decrypt_identity)
 }
@@ -1709,11 +1677,7 @@ pub(crate) fn poll_cards_from_events_with_sidecar(
     realm_id: &str,
     events: &[Value],
     state_store: Option<&LocalStateStore>,
-    decrypt_identity: Option<(
-        &arkret_sdk::PrincipalAuthorityKey,
-        &str,
-        &arkret_sdk::DeviceId,
-    )>,
+    decrypt_identity: Option<(&arkret_sdk::AccountId, &str, &arkret_sdk::DeviceId)>,
 ) -> Vec<crate::messaging::polls::PollCard> {
     let mut cards = Vec::<crate::messaging::polls::PollCard>::new();
     let mut by_poll_id = std::collections::BTreeMap::<String, usize>::new();
@@ -1899,11 +1863,7 @@ pub(crate) fn apply_shared_pin_event(
 pub(crate) fn chat_messages_from_sync_realms_with_sidecar(
     realms: &std::collections::BTreeMap<String, Value>,
     state_store: Option<&LocalStateStore>,
-    decrypt_identity: Option<(
-        &arkret_sdk::PrincipalAuthorityKey,
-        &str,
-        &arkret_sdk::DeviceId,
-    )>,
+    decrypt_identity: Option<(&arkret_sdk::AccountId, &str, &arkret_sdk::DeviceId)>,
 ) -> Vec<ChatMessage> {
     let mut messages = Vec::new();
     for (realm_id, body) in realms {
@@ -2052,11 +2012,7 @@ pub(crate) fn moderation_appeal_prompts_from_sync_realms(
 pub(crate) fn poll_cards_from_sync_realms_with_sidecar(
     realms: &std::collections::BTreeMap<String, Value>,
     state_store: Option<&LocalStateStore>,
-    decrypt_identity: Option<(
-        &arkret_sdk::PrincipalAuthorityKey,
-        &str,
-        &arkret_sdk::DeviceId,
-    )>,
+    decrypt_identity: Option<(&arkret_sdk::AccountId, &str, &arkret_sdk::DeviceId)>,
 ) -> Vec<crate::messaging::polls::PollCard> {
     let mut cards = Vec::new();
     for (realm_id, body) in realms {
@@ -2326,11 +2282,7 @@ pub(crate) fn presence_maps_from_sync_events(
 pub(crate) fn chat_messages_from_local_state_with_sidecar(
     state: &ClientLocalState,
     state_store: Option<&LocalStateStore>,
-    decrypt_identity: Option<(
-        &arkret_sdk::PrincipalAuthorityKey,
-        &str,
-        &arkret_sdk::DeviceId,
-    )>,
+    decrypt_identity: Option<(&arkret_sdk::AccountId, &str, &arkret_sdk::DeviceId)>,
 ) -> Vec<ChatMessage> {
     let events = state
         .raw_operations
@@ -2360,11 +2312,7 @@ pub(crate) fn fold_local_state_into_chat_messages_with_sidecar(
     seed: Vec<ChatMessage>,
     state: &ClientLocalState,
     state_store: Option<&LocalStateStore>,
-    decrypt_identity: Option<(
-        &arkret_sdk::PrincipalAuthorityKey,
-        &str,
-        &arkret_sdk::DeviceId,
-    )>,
+    decrypt_identity: Option<(&arkret_sdk::AccountId, &str, &arkret_sdk::DeviceId)>,
 ) -> Vec<ChatMessage> {
     let events = state
         .raw_operations
@@ -2386,11 +2334,7 @@ pub(crate) fn fold_local_state_into_chat_messages_with_sidecar(
 pub(crate) fn poll_cards_from_local_state_with_sidecar(
     state: &ClientLocalState,
     state_store: Option<&LocalStateStore>,
-    decrypt_identity: Option<(
-        &arkret_sdk::PrincipalAuthorityKey,
-        &str,
-        &arkret_sdk::DeviceId,
-    )>,
+    decrypt_identity: Option<(&arkret_sdk::AccountId, &str, &arkret_sdk::DeviceId)>,
 ) -> Vec<crate::messaging::polls::PollCard> {
     let events = state
         .raw_operations

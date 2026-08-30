@@ -22,8 +22,8 @@ pub fn prepare_registration_checkpoint(
         "",
         0,
     )?;
-    let endpoint = Url::parse(&handoff.principal_server_url)
-        .context("Principal Server URL cannot drive did:webvh inception")?;
+    let endpoint =
+        Url::parse(&handoff.station_url).context("Station URL cannot drive did:webvh inception")?;
     let created_at = Utc::now().with_nanosecond(0).unwrap_or_else(Utc::now);
     let local_id = handoff
         .request_id
@@ -57,7 +57,7 @@ pub fn prepare_registration_checkpoint(
     )?
     .to_string();
     Ok(PendingPrincipalRegistration {
-        principal_server_url: handoff.principal_server_url.clone(),
+        station_url: handoff.station_url.clone(),
         gate_account_base_url: handoff.gate_account_base_url.clone(),
         handoff_request_id: handoff.request_id.clone(),
         account_handle: handoff.account_handle.clone(),
@@ -143,7 +143,7 @@ pub fn recover_registration_checkpoint_from_reservation(
     )?
     .to_string();
     Ok(PendingPrincipalRegistration {
-        principal_server_url: handoff.principal_server_url.clone(),
+        station_url: handoff.station_url.clone(),
         gate_account_base_url: handoff.gate_account_base_url.clone(),
         handoff_request_id: handoff.request_id.clone(),
         account_handle: handoff.account_handle.clone(),
@@ -243,7 +243,7 @@ pub fn checkpoint_belongs_to_handoff(
     checkpoint: &PendingPrincipalRegistration,
     handoff: &PendingAccountHandoff,
 ) -> bool {
-    let same_context = checkpoint.principal_server_url == handoff.principal_server_url
+    let same_context = checkpoint.station_url == handoff.station_url
         && checkpoint.gate_account_base_url == handoff.gate_account_base_url
         && checkpoint.trust_domain == handoff.trust_domain
         && checkpoint.account_subject.is_some()
@@ -739,11 +739,11 @@ async fn verify_registration_terminal_evidence(
         anyhow::bail!("Account Authority receipt proof controller mismatch");
     }
     // Both the Account Authority service DID and the newly-created principal
-    // DID are method histories hosted by the configured Principal Server.
+    // DID are method histories hosted by the configured Station.
     // The Account Authority client only serves gate/account operations; its
     // human root is not an identity registry and cannot resolve either log.
     let principal_client =
-        arkret_sdk::http_client::ClientBuilder::new(Url::parse(&checkpoint.principal_server_url)?)
+        arkret_sdk::http_client::ClientBuilder::new(Url::parse(&checkpoint.station_url)?)
             .allow_insecure_localhost()
             .build()?;
     let authority_history = crate::identity::history::fetch_complete_identity_history(
@@ -751,7 +751,7 @@ async fn verify_registration_terminal_evidence(
         &authority_did,
     )
     .await
-    .context("fetch complete Account Authority DID history from Principal Server")?;
+    .context("fetch complete Account Authority DID history from Station")?;
     let authority_resolver =
         crate::identity::history::FrozenAuthorityHistoryResolver::new(&authority_history)?;
     garth::verify_binding_receipt_at_issuance(receipt, &authority_resolver)
@@ -886,7 +886,7 @@ mod tests {
 
     fn handoff(device_id: &str, fence: u64) -> PendingAccountHandoff {
         PendingAccountHandoff {
-            principal_server_url: "https://principal.example".to_owned(),
+            station_url: "https://principal.example".to_owned(),
             gate_account_base_url: "https://account.example/_arkret/gate/account".to_owned(),
             request_id: "ak:request:019f0000-0000-7000-8000-000000000001".to_owned(),
             oidc_state: None,

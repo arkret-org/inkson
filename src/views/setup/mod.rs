@@ -60,7 +60,7 @@ pub fn SetupPanel(
     let realm_security_class = use_signal(|| "standard".to_owned());
     // Spec realm-and-space.md §2.3 advanced create-locked fields; safe defaults
     // `restricted` / `sha256`. The Realm notary signer is frozen from verified
-    // Principal Server signer evidence during submission.
+    // Station signer evidence during submission.
     let realm_federation_policy = use_signal(|| "restricted".to_owned());
     let realm_digest_algorithm = use_signal(|| "sha256".to_owned());
     let realm_state = use_signal(|| tr("setup.state.draft"));

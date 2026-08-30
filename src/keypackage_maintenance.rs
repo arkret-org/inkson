@@ -54,7 +54,7 @@ pub(crate) struct KeyPackageMaintenanceLease {
 
 fn endpoint_scope(
     base_url: &str,
-    authority: &arkret_sdk::PrincipalAuthorityKey,
+    authority: &arkret_sdk::AccountId,
     device_id: &arkret_sdk::DeviceId,
 ) -> anyhow::Result<String> {
     let base = crate::app::server_key(base_url);
@@ -124,7 +124,7 @@ fn release_lease(state: &mut LeaseState, owner_id: &str, fence: u64) -> anyhow::
 
 pub(crate) async fn acquire(
     base_url: &str,
-    authority: &arkret_sdk::PrincipalAuthorityKey,
+    authority: &arkret_sdk::AccountId,
     device_id: &arkret_sdk::DeviceId,
 ) -> anyhow::Result<Option<KeyPackageMaintenanceLease>> {
     let scope = endpoint_scope(base_url, authority, device_id)?;
@@ -339,8 +339,8 @@ async fn release_browser(scope: &str, owner_id: &str, fence: u64) -> anyhow::Res
 mod tests {
     use super::*;
 
-    fn authority(principal: &str, server: &str) -> arkret_sdk::PrincipalAuthorityKey {
-        arkret_sdk::PrincipalAuthorityKey::new(
+    fn authority(principal: &str, server: &str) -> arkret_sdk::AccountId {
+        arkret_sdk::AccountId::new(
             arkret_sdk::DidCoreId::new(principal.to_owned()).unwrap(),
             arkret_sdk::DidCoreId::new(server.to_owned()).unwrap(),
         )

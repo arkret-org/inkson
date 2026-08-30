@@ -343,7 +343,7 @@ pub(super) fn build_dnd_account_data_body(enabled: bool, mode: &str) -> serde_js
 pub(super) fn push_dnd_account_data(
     base_url: String,
     api_token: String,
-    authority: arkret_sdk::PrincipalAuthorityKey,
+    authority: arkret_sdk::AccountId,
     actor_id: String,
     device_id: String,
     enabled: bool,

@@ -69,7 +69,7 @@ pub fn build_founding_authorize_payload(
 #[allow(clippy::too_many_arguments)]
 pub fn build_genesis_unit(
     principal_did: arkret_sdk::Did,
-    principal_server_id: arkret_sdk::DidCoreId,
+    station_id: arkret_sdk::DidCoreId,
     genesis_salt: arkret_sdk::GenesisSalt,
     trust_domain: arkret_sdk::TrustDomainId,
     did_inception_version_id: String,
@@ -134,7 +134,7 @@ pub fn build_genesis_unit(
     let mut create = arkret_bootstrap::build_self_principal_pcr_create(
         arkret_bootstrap::SelfPrincipalPcrCreateInput {
             principal_id: principal_id.clone(),
-            principal_server_id,
+            station_id,
             principal_did: principal_did.clone(),
             notary: founding_notary,
             genesis_salt,
@@ -171,7 +171,7 @@ pub fn build_genesis_unit(
     // The PCR Realm exists only after the signed create draft has a stable
     // Event id. The authorize slot must use that exact event-derived id.
     let realm_id = create.realm_id.clone();
-    let principal_server_id = create.principal_server_id.clone();
+    let station_id = create.station_id.clone();
     let authorize_hlc = crate::signing_stamp::issue_protocol_hlc_with_secret(
         principal_did.as_str(),
         device_signer
@@ -185,7 +185,7 @@ pub fn build_genesis_unit(
         arkret_sdk::TypedEventDraft::<arkret_sdk::event_spec::DeviceAuthorize>::new(
             arkret_sdk::ScopeRef::Realm { realm_id },
             principal_id,
-            principal_server_id,
+            station_id,
             payload,
         )?
         .with_prev_refs(vec![create.event_id().clone()])

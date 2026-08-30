@@ -245,14 +245,14 @@ pub(super) fn ConnectionEffects(state: ConnectionEffectState) -> Element {
                 .session_grant()
                 .as_ref()
                 .is_some_and(|grant| {
-                    !crate::identity::session_refresh::grant_matches_principal_server(grant, &base)
+                    !crate::identity::session_refresh::grant_matches_station(grant, &base)
                 });
             if stale_for_selected_server {
                 token.set(String::new());
                 transition_session_boot_state(
                     session_boot_state,
                     SessionBootState::Unauthenticated,
-                    "persisted grant belongs to another principal server",
+                    "persisted grant belongs to another Station",
                 );
                 persist_config(
                     config_store,

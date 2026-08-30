@@ -1,6 +1,6 @@
 //! §2.9 E2EE reaction sealing and routing-tag derivation.
 
-use arkret_sdk::{DeviceId, PrincipalAuthorityKey};
+use arkret_sdk::{AccountId, DeviceId};
 use arkret_wire::event_kind_str;
 
 use super::{MlsRuntimeError, load_device_snapshot_secret, should_force_epoch_advance};
@@ -37,7 +37,7 @@ pub fn encrypt_reaction_with_device_snapshot(
     state_store: &mut crate::state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
-    authority: &PrincipalAuthorityKey,
+    authority: &AccountId,
     device_id: &DeviceId,
     target_ref: &arkret_sdk::EventId,
     created_at: chrono::DateTime<chrono::Utc>,

@@ -121,7 +121,7 @@ impl DpopHandle {
     ///
     /// Used after a DPoP-bound session-grant rotation: the rotated grant's
     /// `session_public_key` is this device key (the grant binds to the same key
-    /// the rotation proof proved possession of), so the principal-server
+    /// the rotation proof proved possession of), so the station
     /// introspection proof must be signed with this key. Persisting it as the
     /// rotated grant's `session_private_key_pem` lets the existing proof path
     /// (`session_grant_signing_key_from_pem`) sign with the right key, uniformly
@@ -599,8 +599,8 @@ mod tests {
     // YOU-05-010: shared hermetic state-store fixture from `local_state`.
     use crate::state::isolated_store_for_tests as isolated_store;
 
-    fn test_authority(actor: &str) -> arkret_sdk::PrincipalAuthorityKey {
-        arkret_sdk::PrincipalAuthorityKey::new(
+    fn test_authority(actor: &str) -> arkret_sdk::AccountId {
+        arkret_sdk::AccountId::new(
             crate::mls_api_helpers::principal_core_id(actor).unwrap(),
             arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example".to_owned()).unwrap(),
         )

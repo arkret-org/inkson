@@ -35,7 +35,7 @@ pub enum WriteState {
     Optimistic,
     /// Sitting in the local offline queue, waiting for the network.
     Queued,
-    /// Submitted to the Principal Server; awaiting acknowledgement.
+    /// Submitted to the Station; awaiting acknowledgement.
     Submitted,
     /// Reducer accepted — equivalent to `Synced` but kept separate so the
     /// activity stream can render the moment of acceptance.
@@ -135,7 +135,7 @@ impl WriteState {
             Self::Synced => "Aligned with the sync frontier; reducer has accepted.",
             Self::Optimistic => "Applied optimistically on the client; not yet queued.",
             Self::Queued => "Queued in the local offline buffer, waiting for the network.",
-            Self::Submitted => "Submitted to the Principal Server; awaiting acknowledgement.",
+            Self::Submitted => "Submitted to the Station; awaiting acknowledgement.",
             Self::Accepted => "Reducer accepted; local state has been merged.",
             Self::SoftFailed => {
                 "Reducer rejected (schema passed but the transition is illegal); rewritable."

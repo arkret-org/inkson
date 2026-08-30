@@ -43,7 +43,7 @@ pub(crate) struct PreparedRotationBackupClass {
 
 pub(crate) fn prepare_rotation_backup_material(
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
-    authority: &arkret_sdk::PrincipalAuthorityKey,
+    authority: &arkret_sdk::AccountId,
     actor_id: &str,
     device_id: &str,
     recovery_words: &str,
@@ -128,7 +128,7 @@ pub(crate) async fn execute_device_revoke_security_rotation(
     api: &crate::transport::TransportClient,
     secure_store: std::sync::Arc<dyn SecureKeyStore + Send + Sync>,
     state_store: SyncSignal<crate::state::LocalStateStore>,
-    authority: &arkret_sdk::PrincipalAuthorityKey,
+    authority: &arkret_sdk::AccountId,
     actor_id: &str,
     current_device_id: &str,
     target_device_id: &str,
@@ -316,7 +316,7 @@ async fn resume_device_revoke_security_rotation(
     api: &crate::transport::TransportClient,
     secure_store: std::sync::Arc<dyn SecureKeyStore + Send + Sync>,
     state_store: SyncSignal<crate::state::LocalStateStore>,
-    authority: &arkret_sdk::PrincipalAuthorityKey,
+    authority: &arkret_sdk::AccountId,
     actor_id: &str,
     current_device_id: &str,
     target_device_id: &str,
@@ -354,7 +354,7 @@ async fn drive_security_rotation(
     api: &crate::transport::TransportClient,
     secure_store: std::sync::Arc<dyn SecureKeyStore + Send + Sync>,
     mut state_store: SyncSignal<crate::state::LocalStateStore>,
-    authority: &arkret_sdk::PrincipalAuthorityKey,
+    authority: &arkret_sdk::AccountId,
     actor_id: &str,
     current_device_id: &str,
     target_device_id: &str,
@@ -842,7 +842,7 @@ mod rotation_resume_tests {
         let _scope = crate::secure_key_store::DeviceSeedScopeTestGuard::replace(None);
         let store = garth::MemorySecureKeyStore::new();
         let user_store = crate::secure_key_store::UserLocalStore::new(
-            arkret_sdk::PrincipalAuthorityKey::new(
+            arkret_sdk::AccountId::new(
                 arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example".to_owned()).unwrap(),
                 arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example".to_owned()).unwrap(),
             ),

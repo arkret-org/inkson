@@ -68,7 +68,7 @@ pub fn merge_notification_inbox_values(
 /// overwritten — losing another device's state to a decode bug is worse than
 /// failing the write.
 pub fn merge_notification_inbox_account_data(
-    authority: &arkret_sdk::PrincipalAuthorityKey,
+    authority: &arkret_sdk::AccountId,
     account_data_key: &str,
     candidate: &NotificationInboxValue,
     current: Option<&arkret_sdk::AccountDataRow>,
@@ -93,7 +93,7 @@ pub fn merge_notification_inbox_account_data(
 /// Entries that do not decrypt or do not bind their own key are skipped: a
 /// foreign or corrupt inbox record must never silently archive a notification.
 pub fn notification_inbox_states_from_account_data_events(
-    authority: &arkret_sdk::PrincipalAuthorityKey,
+    authority: &arkret_sdk::AccountId,
     events: &[arkret_sdk::Event],
 ) -> Vec<NotificationInboxValue> {
     events

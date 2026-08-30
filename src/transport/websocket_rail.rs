@@ -1,7 +1,7 @@
 //! The one WebSocket a session may hold, and the transports the three stream
 //! engines take off it.
 //!
-//! §1 asks an authenticated Principal Server session to establish a single
+//! §1 asks an authenticated Station session to establish a single
 //! Arkret WebSocket and multiplex the covered operations as channels on it.
 //! inkson runs account, events and Signal as three independently spawned
 //! engines, so "one socket" has to be a shared service rather than something

@@ -247,14 +247,14 @@ test("login page delegates account lifecycle to coauth OIDC", async ({
   await expect(page.getByTestId("login-server-url")).toHaveValue(
     "https://local.host/",
   );
-  // Neutral client: the principal-server field is a free-text URL input with a
+  // Neutral client: the station field is a free-text URL input with a
   // custom-styled preset dropdown (no native <datalist>, no browser autofill).
   await expect(page.getByTestId("login-server-url")).not.toHaveAttribute(
     "list",
     /.*/,
   );
   await expect(
-    page.locator("datalist#login-principal-server-options"),
+    page.locator("datalist#login-station-options"),
   ).toHaveCount(0);
   // The preset list is collapsed until the toggle is clicked, then offers the
   // configured presets as one-click choices.

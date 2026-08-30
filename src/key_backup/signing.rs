@@ -228,7 +228,7 @@ pub async fn fetch_key_backup_with_recovery_session_unlock_proof(
     recovery_key_material: &arkret_sdk::identity_root::IdentityRecoveryKeyMaterial,
 ) -> anyhow::Result<Value> {
     recovery_session.validate()?;
-    if recovery_session.principal_authority.principal_id.as_str() != principal_id
+    if recovery_session.account_id.principal_id.as_str() != principal_id
         || recovery_session.requesting_device_id.as_str() != requesting_device_id
         || !matches!(
             recovery_session.state,

@@ -71,7 +71,7 @@ pub struct SearchDestination {
 pub fn local_decrypted_index_search(
     realms: &std::collections::BTreeMap<String, Value>,
     store: &LocalStateStore,
-    authority: &arkret_sdk::PrincipalAuthorityKey,
+    authority: &arkret_sdk::AccountId,
     device_id: &arkret_sdk::DeviceId,
     query: &str,
     realm_ids: &[String],
@@ -417,7 +417,7 @@ pub fn GlobalSearchPanel(
 fn run_search(
     q: String,
     state_store: SyncSignal<LocalStateStore>,
-    authority: arkret_sdk::PrincipalAuthorityKey,
+    authority: arkret_sdk::AccountId,
     device_id: arkret_sdk::DeviceId,
     mut results: Signal<ResultRows>,
     mut loading: Signal<bool>,
@@ -454,13 +454,11 @@ mod tests {
 
     use super::*;
 
-    fn authority(actor: &str) -> arkret_sdk::PrincipalAuthorityKey {
-        arkret_sdk::PrincipalAuthorityKey {
+    fn authority(actor: &str) -> arkret_sdk::AccountId {
+        arkret_sdk::AccountId {
             principal_id: crate::mls_api_helpers::principal_core_id(actor).unwrap(),
-            principal_server_id: arkret_sdk::DidCoreId::new(
-                "ak:did_core:web:principal.example".to_owned(),
-            )
-            .unwrap(),
+            station_id: arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example".to_owned())
+                .unwrap(),
         }
     }
 

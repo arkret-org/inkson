@@ -100,17 +100,17 @@ running bare `dx serve` can miss those changes with Dioxus 0.7.
 
 Platform notes:
 
-- Web builds use the Dioxus web renderer and must talk to `soland` through an HTTP(S) origin allowed by the Principal Server CORS configuration. Keep the settings panel pointed at the externally reachable server URL, not an internal desktop-only loopback address.
+- Web builds use the Dioxus web renderer and must talk to `soland` through an HTTP(S) origin allowed by the Station CORS configuration. Keep the settings panel pointed at the externally reachable server URL, not an internal desktop-only loopback address.
 - Windows and Linux desktop builds use the Dioxus desktop renderer. Local development defaults to `https://local.host` and stores the last server/account/device/session settings in the local config store.
 - iOS/mobile builds use the Dioxus mobile renderer. Device builds require the platform toolchain (`dx`, Xcode/iOS signing on macOS for iOS, platform SDKs for other mobile targets). Treat loopback URLs as emulator-local; use a LAN or tunneled server URL when testing against a desktop server process.
 - All platforms use the same typed API client, bounded retry/backoff policy, Arkret error envelope decoding, and encrypted-payload preservation path.
 
-Principal server presets can be added to the local config file with `principal_servers`. The login screen shows these values as selectable suggestions while still accepting a custom URL:
+Station presets can be added to the local config file with `stations`. The login screen shows these values as selectable suggestions while still accepting a custom URL:
 
 ```json
 {
   "server_url": "https://local.host",
-  "principal_servers": [
+  "stations": [
     "https://local.host",
     "https://stage.example",
     "https://prod.example"
@@ -203,6 +203,6 @@ Unauthenticated users see only the login or registration entry screen. After a r
 - Space list and exact directory resolve.
 - Timeline/composer surface with plaintext development mode and encrypted payload preservation.
 - Sync status, device queue count, Event Envelope audit status, directory browser, settings, devices, push registration, and moderation report controls.
-- Server-owned OIDC/coauth sign-in and registration. The client opens the authorization URL from server discovery and completes the callback into a Principal Server session.
+- Server-owned OIDC/coauth sign-in and registration. The client opens the authorization URL from server discovery and completes the callback into a Station session.
 
 ---

@@ -5,7 +5,7 @@ and pointing it at already deployed Arkret services.
 
 ## Service pairing
 
-Configure the Principal Server base URL in the Settings view or local config.
+Configure the Station base URL in the Settings view or local config.
 For local release testing, run soland first and use an externally reachable
 origin for web builds:
 
@@ -17,7 +17,7 @@ cargo run -- --bind local.host:443
 Web deployments must satisfy all of the following:
 
 - The soland origin is allowed by CORS.
-- Discovery returns the Principal Server, coauth, and push-gateway endpoints.
+- Discovery returns the Station, coauth, and push-gateway endpoints.
 - TLS is valid for the browser origin used by the client.
 - The UI is served from the web image or a static host that preserves the
   Dioxus generated asset paths.
@@ -38,7 +38,7 @@ Required deployment inputs:
 - chime gateway reachable from the client network.
 - coauth session grant persisted in local state before `register_device`.
 - Platform push credentials configured on the gateway, not embedded in inkson.
-- The client principal server URL and device ID match the persisted grant; the
+- The client Station URL and device ID match the persisted grant; the
   registration path fails closed on mismatch.
 
 Privacy requirements:

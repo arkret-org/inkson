@@ -188,10 +188,10 @@ const currentPrincipalServiceResolution = inksonWire<Record<string, any>>(
 );
 const currentPrincipalServiceRecord =
   currentPrincipalServiceResolution.service_resolution_record.record;
-export const CURRENT_PRINCIPAL_SERVER_ID = String(
+export const CURRENT_STATION_ID = String(
   currentPrincipalServiceRecord.service_id,
 );
-export const CURRENT_PRINCIPAL_SERVER_DID = String(
+export const CURRENT_STATION_DID = String(
   currentPrincipalServiceRecord.did,
 );
 
@@ -911,7 +911,7 @@ export async function mockArkretApi(
       realm_id: DEMO_REALM,
       scope_ref: { kind: "realm", realm_id: DEMO_REALM },
       actor_id: accountPrincipalCoreId,
-      principal_server_id: CURRENT_PRINCIPAL_SERVER_ID,
+      station_id: CURRENT_STATION_ID,
       actor_seq: actorSeq,
       created_at: createdAt,
       hlc: `01964137${String(actorSeq).padStart(4, "0")}-0000-12345678`,
@@ -1012,30 +1012,13 @@ export async function mockArkretApi(
       route.request().method() === "GET"
     ) {
       if (url.hostname === "auth.local.host") {
-        return json(route, {
-          service_id: "ak:did_core:web:auth.local.host",
-          service_kind: "auth_server",
-          protocol_version: "1.0",
-          auth_metadata: {
-            did_binding_methods: ["did_controller_key", "device_key"],
-            mode: "development",
-            account_authority: {
-              origin: "https://auth.local.host",
-              gate_account_base_url: "https://auth.local.host/_arkret/gate/account",
-            },
-            methods: [
-              {
-                method: "oidc",
-                issuer: "https://auth.local.host/",
-                openid_configuration:
-                  "https://auth.local.host/.well-known/openid-configuration",
-                client_id: "01GFWR28C4KNE04WG3HKXB7C9R",
-                scopes: ["openid", "profile"],
-                grant_exchange: { kind: "account_handoff" },
-              },
-            ],
-          },
-          limits: {},
+        return route.fulfill({
+          status: 404,
+          contentType: "application/json",
+          body: JSON.stringify({
+            errcode: "route_not_found",
+            error: "authentication providers do not expose a public Arkret service role",
+          }),
         });
       }
       return json(route, principalServiceDescribe());
@@ -1904,7 +1887,7 @@ export async function mockArkretApi(
         proofs: [
           {
             kind: "detached_jws",
-            verification_method: `${CURRENT_PRINCIPAL_SERVER_DID}#mimi-identifier-query`,
+            verification_method: `${CURRENT_STATION_DID}#mimi-identifier-query`,
             payload_digest: `sha256:${"0".repeat(64)}`,
             created_at: "2026-04-28T12:00:00.000Z",
             jws: "e30..c2ln",
@@ -2019,7 +2002,7 @@ export async function mockArkretApi(
         ].sort((left, right) =>
           canonicalJson(left).localeCompare(canonicalJson(right)),
         );
-        const receiptIssuer = CURRENT_PRINCIPAL_SERVER_ID;
+        const receiptIssuer = CURRENT_STATION_ID;
         const createdAt = "2026-08-09T00:00:00.000Z";
         return {
           binding_receipt: {
@@ -2174,7 +2157,7 @@ export async function mockArkretApi(
               realm_id: DEMO_REALM,
               scope_ref: { kind: "realm", realm_id: DEMO_REALM },
               actor_id: accountPrincipalCoreId,
-              principal_server_id: CURRENT_PRINCIPAL_SERVER_ID,
+              station_id: CURRENT_STATION_ID,
               actor_seq: 101,
               created_at: "2026-04-28T12:01:00.000Z",
               hlc: "019641370001-0000-12345678",
@@ -2217,7 +2200,7 @@ export async function mockArkretApi(
               realm_id: DEMO_REALM,
               scope_ref: { kind: "realm", realm_id: DEMO_REALM },
               actor_id: accountPrincipalCoreId,
-              principal_server_id: CURRENT_PRINCIPAL_SERVER_ID,
+              station_id: CURRENT_STATION_ID,
               actor_seq: 102,
               created_at: "2026-04-28T12:02:00.000Z",
               hlc: "019641370002-0000-12345678",
@@ -2492,10 +2475,10 @@ export async function mockArkretApi(
         body.audience ??
         body.realm_id ??
         body.requester ??
-        CURRENT_PRINCIPAL_SERVER_ID;
+        CURRENT_STATION_ID;
       const memberDeliveryBinding = {
-        recipient_id: CURRENT_PRINCIPAL_SERVER_ID,
-        recipient_kind: "principal_server",
+        recipient_id: CURRENT_STATION_ID,
+        recipient_kind: "station",
         binding_source: "explicit",
         delivery_modes: ["events", "sync", "to_device", "push", "keypackages"],
       };
@@ -2508,7 +2491,7 @@ export async function mockArkretApi(
         handle_claim: {
           subject: "did:web:alice.example",
           handle: body.handle,
-          issuer: CURRENT_PRINCIPAL_SERVER_ID,
+          issuer: CURRENT_STATION_ID,
           audience,
           created_at: "2026-04-28T12:00:00.000Z",
           member_delivery_binding: memberDeliveryBinding,
@@ -2544,12 +2527,12 @@ export async function mockArkretApi(
           {
             subject,
             handle: subjectPrimaryHandle,
-            issuer: CURRENT_PRINCIPAL_SERVER_ID,
-            vouching_id: CURRENT_PRINCIPAL_SERVER_ID,
+            issuer: CURRENT_STATION_ID,
+            vouching_id: CURRENT_STATION_ID,
             binding_state: "verified",
             claim_kind: "handle_binding",
             visibility: "public",
-            audience: CURRENT_PRINCIPAL_SERVER_ID,
+            audience: CURRENT_STATION_ID,
             created_at: "2026-04-28T12:00:00.000Z",
             verified_at: "2026-04-28T12:00:00.000Z",
             expires_at: "2027-04-28T12:00:00.000Z",
@@ -2575,9 +2558,9 @@ export async function mockArkretApi(
       route.request().method() === "GET"
     ) {
       return json(route, {
-        service_id: CURRENT_PRINCIPAL_SERVER_ID,
+        service_id: CURRENT_STATION_ID,
         service_resolution: {
-          did: CURRENT_PRINCIPAL_SERVER_DID,
+          did: CURRENT_STATION_DID,
           method_history_head: "development-unverified",
           version_id: "development-unverified",
         },
@@ -2757,7 +2740,7 @@ export async function mockArkretApi(
 
     // invite-addressing.md §7 — `ak.self.invites.command.dispatch.v1`. The client
     // hands raw `introduction_evidence` plus the accepted Event to its OWN
-    // Principal Server; it never signs federation material and never calls the
+    // Station; it never signs federation material and never calls the
     // peer surface. The response is the closed `invite_delivery_outcome`: §5.1
     // keeps the low-trust tier opaque (`deferred`, no `disclosed_outcome`) and
     // only lets the high-trust tier disclose `delivered | blocked`.
@@ -2804,7 +2787,7 @@ export async function mockArkretApi(
       const body = await route.request().postDataJSON();
       return json(route, {
         did_document:
-          body.did === CURRENT_PRINCIPAL_SERVER_DID
+          body.did === CURRENT_STATION_DID
             ? serverDidDocument
             : { id: body.did },
         key_log_head: null,
@@ -3119,7 +3102,7 @@ export async function mockArkretApi(
               device_projection_attestation: {
                 attestation: {
                   principal_id: requestedPrincipalId,
-                  principal_server_id: CURRENT_PRINCIPAL_SERVER_ID,
+                  station_id: CURRENT_STATION_ID,
                   device_id: requestedDeviceId,
                   device_signing_key:
                     "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
@@ -3132,7 +3115,7 @@ export async function mockArkretApi(
                   expires_at: "2036-08-24T00:00:00.000Z",
                 },
                 proof: {
-                  verification_method: `${CURRENT_PRINCIPAL_SERVER_DID}#notary-key`,
+                  verification_method: `${CURRENT_STATION_DID}#notary-key`,
                   created_at: attestedAt,
                   jws: "fixture",
                 },
@@ -3180,14 +3163,14 @@ export async function mockArkretApi(
           schema: "ak.schema.handle_claim.v1",
           handle: primaryHandle,
           subject: accountPrincipalCoreId,
-          issuer: CURRENT_PRINCIPAL_SERVER_ID,
+          issuer: CURRENT_STATION_ID,
           binding_state: "verified",
           created_at: "2026-04-28T12:00:00.000Z",
           expires_at: "2099-04-28T12:00:00.000Z",
           proofs: [
             {
               kind: "detached_jws",
-              verification_method: `${CURRENT_PRINCIPAL_SERVER_DID}#handle-claim-key`,
+              verification_method: `${CURRENT_STATION_DID}#handle-claim-key`,
               payload_digest: `sha256:${"0".repeat(64)}`,
               created_at: "2026-04-28T12:00:00.000Z",
               proof_purpose: "holder_acceptance",
@@ -3920,7 +3903,7 @@ export async function mockArkretApi(
             retained_faults: [],
           },
           observation_coordinate: {
-            service_id: CURRENT_PRINCIPAL_SERVER_ID,
+            service_id: CURRENT_STATION_ID,
             sequence: 1,
             observed_at: "2026-04-28T12:00:00.000Z",
           },
@@ -4050,7 +4033,7 @@ export async function mockArkretApi(
         issued_at: "2026-05-19T00:00:00.000Z",
         signature: {
           alg: "Ed25519",
-          kid: `${CURRENT_PRINCIPAL_SERVER_DID}#media-ice`,
+          kid: `${CURRENT_STATION_DID}#media-ice`,
           sig: "placeholder",
         },
       });
@@ -4074,7 +4057,7 @@ export async function mockArkretApi(
       return json(route, {
         report_id: "ak:report:e2e",
         status: "queued",
-        routed_to: [`${CURRENT_PRINCIPAL_SERVER_DID}#moderation`],
+        routed_to: [`${CURRENT_STATION_DID}#moderation`],
       });
     }
 
@@ -4215,14 +4198,14 @@ function realmPreview() {
 
 function principalServiceDescribe() {
   return {
-    service_id: CURRENT_PRINCIPAL_SERVER_ID,
+    service_id: CURRENT_STATION_ID,
     service_resolution: {
-      did: CURRENT_PRINCIPAL_SERVER_DID,
+      did: CURRENT_STATION_DID,
       method_history_head: currentPrincipalServiceRecord.method_history_head,
       version_id: currentPrincipalServiceRecord.version_id,
     },
     trust_domain: "ak:trust_domain:server.local",
-    service_kind: "principal_server",
+    service_kind: "station",
     protocol_version: "1.0",
     supported_profiles: [
       "ak.profile.minimal_client.v1",
@@ -4233,7 +4216,7 @@ function principalServiceDescribe() {
       "ak.profile.push_gateway.v1",
       "ak.profile.mimi_interop.v1",
       "ak.profile.core_event_store.v1",
-      "ak.profile.principal_server_events_api.v1",
+      "ak.profile.station_events_api.v1",
     ],
     supported_features: [],
     ...currentHttpDescribeCapabilities([
@@ -4308,8 +4291,8 @@ function identityRegistryServiceDescribe() {
 function joinCandidate() {
   return {
     realm_id: DEMO_REALM,
-    service_id: CURRENT_PRINCIPAL_SERVER_ID,
-    service_kind: "principal_server",
+    service_id: CURRENT_STATION_ID,
+    service_kind: "station",
     role: "primary",
     endpoint: null,
     operations: ["ak.self.events.command.submit.v1"],
@@ -4349,7 +4332,7 @@ function mimiProviderDirectory() {
   ];
   return {
     schema: "ak.schema.mimi_interop.v1",
-    service_id: CURRENT_PRINCIPAL_SERVER_ID,
+    service_id: CURRENT_STATION_ID,
     service_kind: "mimi_provider_facade",
     supported_profiles: ["ak.profile.mimi_interop.v1"],
     mimi: {
@@ -4370,7 +4353,7 @@ function mimiProviderDirectory() {
     },
     proof: {
       kind: "detached_jws",
-      verification_method: `${CURRENT_PRINCIPAL_SERVER_DID}#mimi-provider`,
+      verification_method: `${CURRENT_STATION_DID}#mimi-provider`,
       payload_digest: `sha256:${"0".repeat(64)}`,
       created_at: "2026-04-28T12:00:00.000Z",
       jws: "e30..c2ln",

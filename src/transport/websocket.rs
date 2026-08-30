@@ -448,7 +448,7 @@ mod browser {
 pub(crate) mod tests_support {
     pub(crate) fn describe_without_websocket() -> arkret_sdk::ServiceDescribe {
         super::tests::describe_with(
-            "ak.operation_bundle.principal_server.http_core.v1",
+            "ak.operation_bundle.station.http_core.v1",
             arkret_sdk::TransportBinding::HttpJson {
                 base_url: "https://server.example/_arkret".to_owned(),
                 extension_profile_required: (),
@@ -458,7 +458,7 @@ pub(crate) mod tests_support {
 
     pub(crate) fn describe_with_websocket() -> arkret_sdk::ServiceDescribe {
         super::tests::describe_with(
-            "ak.operation_bundle.principal_server.websocket.v1",
+            "ak.operation_bundle.station.websocket.v1",
             super::tests::websocket_transport(super::CLIENT_MAX_FRAME_BYTES),
         )
     }
@@ -486,7 +486,7 @@ pub(crate) mod tests {
         binding: arkret_sdk::TransportBinding,
     ) -> arkret_sdk::ServiceDescribe {
         let mut bundles = vec![
-            "ak.operation_bundle.principal_server.describe.v1".to_owned(),
+            "ak.operation_bundle.station.describe.v1".to_owned(),
             bundle_id.to_owned(),
         ];
         bundles.sort();
@@ -505,7 +505,7 @@ pub(crate) mod tests {
         arkret_sdk::ServiceDescribe::development(
             arkret_sdk::Did::new("did:web:server.example").unwrap(),
             arkret_sdk::TrustDomainId::new("ak:trust_domain:server.example").unwrap(),
-            arkret_sdk::ServiceKind::PrincipalServer,
+            arkret_sdk::ServiceKind::Station,
             bundles,
             transports,
         )
@@ -514,7 +514,7 @@ pub(crate) mod tests {
     #[test]
     fn a_service_without_the_profile_stays_on_http() {
         let selector = WebSocketTransportSelector::from_describe(&describe_with(
-            "ak.operation_bundle.principal_server.http_core.v1",
+            "ak.operation_bundle.station.http_core.v1",
             arkret_sdk::TransportBinding::HttpJson {
                 base_url: "https://server.example/_arkret".to_owned(),
                 extension_profile_required: (),
@@ -526,7 +526,7 @@ pub(crate) mod tests {
     #[test]
     fn an_advertised_binding_is_used_when_this_build_can_honour_it() {
         let selector = WebSocketTransportSelector::from_describe(&describe_with(
-            "ak.operation_bundle.principal_server.websocket.v1",
+            "ak.operation_bundle.station.websocket.v1",
             websocket_transport(CLIENT_MAX_FRAME_BYTES),
         ));
         assert_eq!(
@@ -540,7 +540,7 @@ pub(crate) mod tests {
         // §4 makes the effective limit a minimum, and a client that cannot
         // buffer what the service may send has no usable binding.
         let selector = WebSocketTransportSelector::from_describe(&describe_with(
-            "ak.operation_bundle.principal_server.websocket.v1",
+            "ak.operation_bundle.station.websocket.v1",
             websocket_transport(CLIENT_MAX_FRAME_BYTES + 1024),
         ));
         assert!(selector.descriptor().is_none());
@@ -549,7 +549,7 @@ pub(crate) mod tests {
     #[test]
     fn an_incompatible_close_drops_the_binding_until_discovery_changes() {
         let mut selector = WebSocketTransportSelector::from_describe(&describe_with(
-            "ak.operation_bundle.principal_server.websocket.v1",
+            "ak.operation_bundle.station.websocket.v1",
             websocket_transport(CLIENT_MAX_FRAME_BYTES),
         ));
         selector.welcomed();
@@ -563,7 +563,7 @@ pub(crate) mod tests {
     #[test]
     fn a_policy_failure_keeps_one_retry_and_keeps_the_binding() {
         let mut selector = WebSocketTransportSelector::from_describe(&describe_with(
-            "ak.operation_bundle.principal_server.websocket.v1",
+            "ak.operation_bundle.station.websocket.v1",
             websocket_transport(CLIENT_MAX_FRAME_BYTES),
         ));
         selector.welcomed();

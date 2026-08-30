@@ -35,7 +35,7 @@ enum RegistrationFailureKind {
 
 #[component]
 pub fn RegistrationPanel() -> Element {
-    let mut principal_server = crate::app::SessionContext::get().base_url;
+    let mut station = crate::app::SessionContext::get().base_url;
     let mut state_store = crate::app::SessionContext::get().state_store;
     let session = use_context::<crate::runtime::services::RuntimeServices>().session;
     let i18n = use_context::<crate::i18n::I18nSignal>();
@@ -81,20 +81,20 @@ pub fn RegistrationPanel() -> Element {
                         }
                     }
                 }
-                Label { html_for: "register-server", "Principal server" }
+                Label { html_for: "register-server", "Station" }
                 Input {
                     id: "register-server",
                     "data-testid": "register-server",
-                    value: "{principal_server}",
+                    value: "{station}",
                     disabled: busy(),
-                    oninput: move |event: FormEvent| principal_server.set(event.value()),
+                    oninput: move |event: FormEvent| station.set(event.value()),
                 }
                 Button {
                     variant: ButtonVariant::Primary,
                     "data-testid": "register-open-account-authority",
                     disabled: busy(),
                     onclick: move |_| {
-                        let server = principal_server();
+                        let server = station();
                         let ui_locale = i18n.read().0.code().to_owned();
                         let session = session.clone();
                         // This route is the explicit new-identity intent.  A

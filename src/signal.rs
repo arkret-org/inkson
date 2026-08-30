@@ -595,7 +595,7 @@ pub fn restore_signal_mls_session(
     state_store: &crate::state::LocalStateStore,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
     scope_ref: &arkret_sdk::ScopeRef,
-    authority: &arkret_sdk::PrincipalAuthorityKey,
+    authority: &arkret_sdk::AccountId,
     device_id: &arkret_sdk::DeviceId,
     expected_epoch: u64,
 ) -> anyhow::Result<SignalMlsSession> {
@@ -627,7 +627,7 @@ pub fn restore_signal_mls_session(
 pub fn encrypt_signal_payload_with_store(
     state_store: &mut crate::state::LocalStateStore,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
-    authority: &arkret_sdk::PrincipalAuthorityKey,
+    authority: &arkret_sdk::AccountId,
     header: &SignalHeader,
     material: &SignalKeyMaterial,
     plaintext: &[u8],

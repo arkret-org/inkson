@@ -326,7 +326,7 @@ test("topbar breadcrumbs avoid duplicated route and server context", async ({
     "Settings / Settings",
   );
   await expect(page.getByTestId("topbar-crumbs")).not.toContainText(
-    "Principal Server https://",
+    "Station https://",
   );
 });
 

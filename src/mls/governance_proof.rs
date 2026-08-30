@@ -1323,7 +1323,7 @@ pub(crate) fn current_security_frontier_leaves(
     state_store: &crate::state::LocalStateStore,
     realm_id: &str,
     circle_id: Option<&str>,
-    authority: &arkret_sdk::PrincipalAuthorityKey,
+    authority: &arkret_sdk::AccountId,
     device_id: &arkret_sdk::DeviceId,
 ) -> Result<Vec<arkret_sdk::MlsSecurityFrontierLeaf>, String> {
     let realm = arkret_sdk::RealmId::new(realm_id.to_owned())
@@ -1342,7 +1342,7 @@ pub(crate) fn current_security_frontier_leaves(
 pub(crate) fn current_security_frontier_leaves_for_scope(
     state_store: &crate::state::LocalStateStore,
     effective_scope: &arkret_sdk::ScopeRef,
-    authority: &arkret_sdk::PrincipalAuthorityKey,
+    authority: &arkret_sdk::AccountId,
     device_id: &arkret_sdk::DeviceId,
 ) -> Result<Vec<arkret_sdk::MlsSecurityFrontierLeaf>, String> {
     let snapshot = state_store
@@ -1365,7 +1365,7 @@ pub(crate) fn current_security_frontier_leaves_for_scope(
 pub(crate) fn preview_security_frontier_with_added_keypackages(
     state_store: &crate::state::LocalStateStore,
     effective_scope: &arkret_sdk::ScopeRef,
-    authority: &arkret_sdk::PrincipalAuthorityKey,
+    authority: &arkret_sdk::AccountId,
     device_id: &arkret_sdk::DeviceId,
     records: &[arkret_sdk::MlsKeyPackageRecord],
 ) -> Result<Vec<arkret_sdk::MlsSecurityFrontierLeaf>, String> {

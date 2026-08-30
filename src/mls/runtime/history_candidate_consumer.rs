@@ -9,7 +9,7 @@ struct ExternalHistoryDecryptTask {
 
 fn external_history_decrypt_tasks(
     state_store: SyncSignal<crate::state::LocalStateStore>,
-    authority: &arkret_sdk::PrincipalAuthorityKey,
+    authority: &arkret_sdk::AccountId,
     actor_id: &str,
     device_id: &arkret_sdk::DeviceId,
 ) -> Result<Vec<ExternalHistoryDecryptTask>, String> {
@@ -128,7 +128,7 @@ fn external_history_decrypt_tasks(
 /// driver from creating requests for unverified projection-shaped input.
 pub(crate) fn missing_external_history_ranges(
     state_store: SyncSignal<crate::state::LocalStateStore>,
-    authority: &arkret_sdk::PrincipalAuthorityKey,
+    authority: &arkret_sdk::AccountId,
     actor_id: &str,
     device_id: &arkret_sdk::DeviceId,
 ) -> Result<
@@ -187,7 +187,7 @@ pub(crate) fn missing_external_history_ranges(
 /// durably bind every candidate outcome before publishing plaintext to reads.
 pub(crate) fn converge_external_history_candidate_decryptions(
     mut state_store: SyncSignal<crate::state::LocalStateStore>,
-    authority: &arkret_sdk::PrincipalAuthorityKey,
+    authority: &arkret_sdk::AccountId,
     actor_id: &str,
     device_id: &arkret_sdk::DeviceId,
     now: chrono::DateTime<chrono::Utc>,

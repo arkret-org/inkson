@@ -147,7 +147,7 @@ pub enum OrganizationError {
 /// Build a `did:webvh` inception for a new organization (D2, client side).
 ///
 /// `principal_endpoint` is the soland base URL (the organization is anchored to
-/// this Principal Server's `did:webvh` method authority). `local_id` is the
+/// this Station's `did:webvh` method authority). `local_id` is the
 /// organization's stable handle / slug. `also_known_as` carries optional
 /// reverse-link handles. Organizations use the service-identity WebVH profile:
 /// they are not human principals and therefore must not publish a principal

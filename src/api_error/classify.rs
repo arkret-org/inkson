@@ -95,7 +95,7 @@ pub fn is_auth_expired_error(error: &anyhow::Error) -> bool {
 /// This predicate is intentionally only used at the account-viewer bootstrap
 /// call site. A structured 404 there cannot be repaired by continuing with the
 /// locally cached actor: a fresh Account Authority sign-in must recreate the
-/// Principal Server projection before the authenticated shell is usable.
+/// Station projection before the authenticated shell is usable.
 pub fn is_account_viewer_projection_missing_error(error: &anyhow::Error) -> bool {
     api_error_status_and_envelope(error).is_some_and(|(status, envelope)| {
         status == StatusCode::NOT_FOUND
@@ -129,7 +129,7 @@ pub fn is_device_revoked_error(error: &anyhow::Error) -> bool {
 }
 
 /// True when local authenticated-request construction cannot obtain the
-/// active session or its Principal Server-scoped session grant.
+/// active session or its Station-scoped session grant.
 pub fn is_authenticated_session_unavailable_error(error: &anyhow::Error) -> bool {
     let message = error.to_string();
     message.contains("no session grant is available")
@@ -262,7 +262,7 @@ fn terminal_session_grant_message(message: &str) -> bool {
             || message.contains("expired")
             || message.contains("locked")
             || message.contains("suspended")
-            // soland's introspection wording when the Auth Server no longer
+            // soland's introspection wording when the private authentication process no longer
             // recognizes the grant at all (e.g. coauth restarted and lost
             // it): "session grant introspection was rejected by the Auth
             // Server". Without this arm the client kept the dead grant and

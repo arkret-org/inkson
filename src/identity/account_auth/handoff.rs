@@ -367,7 +367,7 @@ mod tests {
         holder_jkt: &str,
     ) -> crate::state::PendingAccountHandoff {
         crate::state::PendingAccountHandoff {
-            principal_server_url: "https://principal.example".to_owned(),
+            station_url: "https://principal.example".to_owned(),
             gate_account_base_url: "https://account.example/_arkret/gate/account".to_owned(),
             request_id: request_id.to_owned(),
             oidc_state: None,

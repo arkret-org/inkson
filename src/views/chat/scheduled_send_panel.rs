@@ -12,7 +12,7 @@ use super::*;
 pub(super) struct ScheduledSendPanelContext {
     pub realm_id: String,
     pub strand_id: String,
-    pub authority: arkret_sdk::PrincipalAuthorityKey,
+    pub authority: arkret_sdk::AccountId,
     pub device_id: arkret_sdk::DeviceId,
     pub token: Signal<String>,
     pub draft: Signal<String>,

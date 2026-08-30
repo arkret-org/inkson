@@ -756,7 +756,7 @@ impl RealmMlsExporter {
     pub fn for_realm(
         snapshot: Option<crate::mls::persistence::MlsSnapshotEnvelope>,
         secure_store: &dyn crate::secure_key_store::SecureKeyStore,
-        authority: &arkret_sdk::PrincipalAuthorityKey,
+        authority: &arkret_sdk::AccountId,
         device_id: &arkret_sdk::DeviceId,
     ) -> Result<Self, RtcClientError> {
         let snapshot = snapshot.ok_or(RtcClientError::E2eeKeySourceUnauthorised)?;
@@ -1097,13 +1097,11 @@ mod tests {
     const EXPORTER_DEVICE: &str = "ak:device:01904100-0000-7000-8000-000000000001";
     const EXPORTER_REALM: &str = "ak:realm:AcsFZ3o2tOdN3EFpNceeLV-aI3jZkB9S34_4YIwJ5DLy";
 
-    fn test_authority(actor: &str) -> arkret_sdk::PrincipalAuthorityKey {
-        arkret_sdk::PrincipalAuthorityKey {
+    fn test_authority(actor: &str) -> arkret_sdk::AccountId {
+        arkret_sdk::AccountId {
             principal_id: crate::mls_api_helpers::principal_core_id(actor).unwrap(),
-            principal_server_id: arkret_sdk::DidCoreId::new(
-                "ak:did_core:web:principal.example".to_owned(),
-            )
-            .unwrap(),
+            station_id: arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example".to_owned())
+                .unwrap(),
         }
     }
 

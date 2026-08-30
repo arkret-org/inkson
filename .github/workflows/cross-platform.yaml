@@ -46,10 +46,10 @@
 # The cross_platform spec files (subtle_crypto / push_subscribe /
 # local_storage / oidc_pkce) currently drive raw browser APIs against
 # the dx serve bundle and don't authenticate. The TEST_ACCOUNT_* and
-# MOCK_PRINCIPAL_SERVER_URL env passthroughs below are wired in
+# MOCK_STATION_URL env passthroughs below are wired in
 # anticipation of future cross_platform specs that will exercise
 # authenticated paths (e.g. an OIDC happy-path flow that posts to a
-# mock principal server, or a passkey enrolment that needs a stable
+# mock Station, or a passkey enrolment that needs a stable
 # test-account credential pair).
 #
 # The Run step uses `${{ secrets.X }}` lookups that resolve to empty
@@ -68,7 +68,7 @@
 #      test account (e.g. `cross-platform-bot.example`).
 #    - `TEST_ACCOUNT_PASSWORD` — bootstrap password / passkey-bypass
 #      token for the same account. Rotated quarterly.
-#    - `MOCK_PRINCIPAL_SERVER_URL` — base URL of a long-lived mock
+#    - `MOCK_STATION_URL` — base URL of a long-lived mock
 #      server instance (defaults to in-process Playwright stub when
 #      unset; an external mock lets the WebKit secure-context tests
 #      run over `https://`).
@@ -233,7 +233,7 @@ jobs:
           # CI flag — playwright.config.ts uses it to decide whether
           # to reuse an existing dev server.
           CI: "1"
-          # Round 35 (C37.2): test-account + mock principal server
+          # Round 35 (C37.2): test-account + mock Station
           # passthroughs. The current specs don't read these — they
           # drive raw browser APIs against the dx serve bundle. The
           # passthrough is wired in anticipation of future
@@ -246,7 +246,7 @@ jobs:
           # Adding the secrets: see the workflow header docstring.
           TEST_ACCOUNT_USERNAME: ${{ secrets.TEST_ACCOUNT_USERNAME }}
           TEST_ACCOUNT_PASSWORD: ${{ secrets.TEST_ACCOUNT_PASSWORD }}
-          MOCK_PRINCIPAL_SERVER_URL: ${{ secrets.MOCK_PRINCIPAL_SERVER_URL }}
+          MOCK_STATION_URL: ${{ secrets.MOCK_STATION_URL }}
         run: npx playwright test --config tests/cross_platform/playwright.config.ts
 
       - name: Upload Playwright HTML report on failure

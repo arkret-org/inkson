@@ -1,4 +1,4 @@
-use arkret_sdk::{DeviceId, Did, DidCoreId, PrincipalAuthorityKey, PrincipalResolutionProjection};
+use arkret_sdk::{AccountId, DeviceId, Did, DidCoreId, PrincipalResolutionProjection};
 use serde::{Deserialize, Serialize};
 use url::Url;
 
@@ -12,7 +12,7 @@ use url::Url;
 #[serde(deny_unknown_fields)]
 pub struct ActiveAccountContext {
     pub profile_id: String,
-    pub authority: PrincipalAuthorityKey,
+    pub authority: AccountId,
     pub resolution: PrincipalResolutionProjection,
     pub device_id: DeviceId,
     pub server_url: Url,
@@ -22,7 +22,7 @@ pub struct ActiveAccountContext {
 #[serde(deny_unknown_fields)]
 struct PersistedActiveAccountContext {
     profile_id: String,
-    authority: PrincipalAuthorityKey,
+    authority: AccountId,
     resolution: PrincipalResolutionProjection,
     device_id: DeviceId,
     server_url: Url,
@@ -63,7 +63,7 @@ impl ActiveAccountContext {
     /// boundary.
     pub(crate) fn new(
         profile_id: String,
-        authority: PrincipalAuthorityKey,
+        authority: AccountId,
         resolution: PrincipalResolutionProjection,
         device_id: DeviceId,
         server_url: Url,
@@ -146,9 +146,9 @@ impl ActiveAccountContext {
         verified_service_id: &DidCoreId,
         next: Url,
     ) -> anyhow::Result<()> {
-        if verified_service_id != &self.authority.principal_server_id {
+        if verified_service_id != &self.authority.station_id {
             return Err(anyhow::anyhow!(
-                "route refresh belongs to a different Principal Server"
+                "route refresh belongs to a different Station"
             ));
         }
         validate_server_url(&next)?;
@@ -157,7 +157,7 @@ impl ActiveAccountContext {
     }
 }
 
-pub(crate) fn authority_namespace(authority: &PrincipalAuthorityKey) -> anyhow::Result<String> {
+pub(crate) fn authority_namespace(authority: &AccountId) -> anyhow::Result<String> {
     authority
         .validate()
         .map_err(|error| anyhow::anyhow!(error.to_string()))?;
@@ -176,7 +176,7 @@ fn validate_server_url(url: &Url) -> anyhow::Result<()> {
         return Ok(());
     }
     Err(anyhow::anyhow!(
-        "active Principal Server route must be HTTPS (or loopback HTTP) without credentials, query or fragment"
+        "active Station route must be HTTPS (or loopback HTTP) without credentials, query or fragment"
     ))
 }
 
@@ -207,7 +207,7 @@ mod tests {
     fn context(service: &str, route: &str) -> ActiveAccountContext {
         ActiveAccountContext::new(
             "ak:profile:019b0000-0000-7000-8000-000000000001".to_owned(),
-            PrincipalAuthorityKey::new(core("ak:did_core:webvh:zAlice"), core(service)),
+            AccountId::new(core("ak:did_core:webvh:zAlice"), core(service)),
             projection("did:webvh:zAlice:old.example:users:alice", 1),
             DeviceId::new("ak:device:019b0000-0000-7000-8000-000000000001").unwrap(),
             Url::parse(route).unwrap(),
@@ -252,7 +252,7 @@ mod tests {
 
         let other_principal = ActiveAccountContext::new(
             "ak:profile:019b0000-0000-7000-8000-000000000002".to_owned(),
-            PrincipalAuthorityKey::new(
+            AccountId::new(
                 core("ak:did_core:webvh:zBob"),
                 core("ak:did_core:webvh:zServerA"),
             ),

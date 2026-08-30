@@ -43,14 +43,13 @@ pub(crate) fn has_bootstrap_refresh_material(
     };
     let state = store.load();
     state.session_grant.as_ref().is_some_and(|grant| {
-        crate::identity::session_refresh::grant_matches_principal_server(
-            grant,
-            account.server_url.as_str(),
-        ) && crate::identity::session_refresh::grant_matches_principal_id(
-            grant,
-            account.principal_id(),
-        ) && grant.device_id == account.device_id
-            && grant.audience_id == account.authority.principal_server_id
+        crate::identity::session_refresh::grant_matches_station(grant, account.server_url.as_str())
+            && crate::identity::session_refresh::grant_matches_principal_id(
+                grant,
+                account.principal_id(),
+            )
+            && grant.device_id == account.device_id
+            && grant.audience_id == account.authority.station_id
             && !crate::identity::session_refresh::grant_is_dead(grant)
     })
 }
@@ -266,7 +265,7 @@ pub(crate) fn mls_recovery_setup_missing(
     list_payload: &Value,
     state_store: &LocalStateStore,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
-    authority: &arkret_sdk::PrincipalAuthorityKey,
+    authority: &arkret_sdk::AccountId,
     actor_id: &arkret_sdk::DidCoreId,
     account_recovery_configured: Option<bool>,
 ) -> bool {
@@ -297,7 +296,7 @@ pub(crate) fn mls_recovery_setup_missing(
 pub(crate) fn mls_welcome_bootstrap_key(
     server_url: &url::Url,
     session_credential: &str,
-    authority: &arkret_sdk::PrincipalAuthorityKey,
+    authority: &arkret_sdk::AccountId,
     device_id: &arkret_sdk::DeviceId,
     realm_id: &arkret_sdk::RealmId,
     e2ee_ready: bool,
@@ -309,13 +308,13 @@ pub(crate) fn mls_welcome_bootstrap_key(
     let base = server_key(server_url.as_str());
     let session = session_credential.trim();
     let principal = authority.principal_id.as_str();
-    let principal_server = authority.principal_server_id.as_str();
+    let station = authority.station_id.as_str();
     let device = device_id.as_str();
     let realm = realm_id.as_str();
     if base.is_empty()
         || session.is_empty()
         || principal.is_empty()
-        || principal_server.is_empty()
+        || station.is_empty()
         || device.is_empty()
         || realm.is_empty()
     {
@@ -325,7 +324,7 @@ pub(crate) fn mls_welcome_bootstrap_key(
     let mut token_hash = DefaultHasher::new();
     session.hash(&mut token_hash);
     Some(format!(
-        "{base}|{principal}|{principal_server}|{device}|{realm}|{:016x}",
+        "{base}|{principal}|{station}|{device}|{realm}|{:016x}",
         token_hash.finish()
     ))
 }
@@ -333,7 +332,7 @@ pub(crate) fn mls_welcome_bootstrap_key(
 pub(crate) fn mls_key_package_publish_key(
     server_url: &url::Url,
     session_credential: &str,
-    authority: &arkret_sdk::PrincipalAuthorityKey,
+    authority: &arkret_sdk::AccountId,
     device_id: &arkret_sdk::DeviceId,
     e2ee_ready: bool,
     sync_bootstrap_complete: bool,
@@ -344,12 +343,12 @@ pub(crate) fn mls_key_package_publish_key(
     let base = server_key(server_url.as_str());
     let session = session_credential.trim();
     let principal = authority.principal_id.as_str();
-    let principal_server = authority.principal_server_id.as_str();
+    let station = authority.station_id.as_str();
     let device = device_id.as_str();
     if base.is_empty()
         || session.is_empty()
         || principal.is_empty()
-        || principal_server.is_empty()
+        || station.is_empty()
         || device.is_empty()
     {
         return None;
@@ -358,14 +357,14 @@ pub(crate) fn mls_key_package_publish_key(
     let mut token_hash = DefaultHasher::new();
     session.hash(&mut token_hash);
     Some(format!(
-        "{base}|{principal}|{principal_server}|{device}|{:016x}",
+        "{base}|{principal}|{station}|{device}|{:016x}",
         token_hash.finish()
     ))
 }
 
 pub(crate) fn local_mls_key_package_publish_hint(
     base_url: &str,
-    authority: &arkret_sdk::PrincipalAuthorityKey,
+    authority: &arkret_sdk::AccountId,
     device_id: &arkret_sdk::DeviceId,
 ) -> String {
     let base_scope = server_key(base_url);
@@ -387,7 +386,7 @@ pub(crate) fn local_mls_key_package_publish_hint(
 pub(crate) async fn ensure_local_mls_key_package_inventory(
     base_url: String,
     session_credential: String,
-    authority: arkret_sdk::PrincipalAuthorityKey,
+    authority: arkret_sdk::AccountId,
     service_account_id: arkret_sdk::ServiceAccountId,
     device_id: arkret_sdk::DeviceId,
 ) -> Result<Option<String>, String> {
@@ -409,7 +408,7 @@ pub(crate) async fn ensure_local_mls_key_package_inventory(
 pub(crate) async fn manual_refill_local_mls_key_packages(
     base_url: String,
     session_credential: String,
-    authority: arkret_sdk::PrincipalAuthorityKey,
+    authority: arkret_sdk::AccountId,
     service_account_id: arkret_sdk::ServiceAccountId,
     device_id: arkret_sdk::DeviceId,
 ) -> Result<usize, String> {
@@ -436,7 +435,7 @@ struct LocalMlsKeyPackageMaintenanceOutcome {
 async fn maintain_local_mls_key_packages(
     base_url: &str,
     session_credential: &str,
-    authority: &arkret_sdk::PrincipalAuthorityKey,
+    authority: &arkret_sdk::AccountId,
     service_account_id: &arkret_sdk::ServiceAccountId,
     device_id: &arkret_sdk::DeviceId,
 ) -> Result<LocalMlsKeyPackageMaintenanceOutcome, String> {
@@ -483,7 +482,7 @@ async fn maintain_local_mls_key_packages(
 async fn run_local_mls_key_package_maintenance_cycle(
     base_url: &str,
     session_credential: &str,
-    authority: &arkret_sdk::PrincipalAuthorityKey,
+    authority: &arkret_sdk::AccountId,
     service_account_id: &arkret_sdk::ServiceAccountId,
     device_id: &arkret_sdk::DeviceId,
 ) -> Result<LocalMlsKeyPackageMaintenanceOutcome, String> {
@@ -632,7 +631,7 @@ async fn run_local_mls_key_package_maintenance_cycle(
 async fn publish_fresh_local_mls_key_package_batch(
     base_url: &str,
     session_credential: &str,
-    authority: &arkret_sdk::PrincipalAuthorityKey,
+    authority: &arkret_sdk::AccountId,
     device_id: &arkret_sdk::DeviceId,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
     count: usize,
@@ -744,7 +743,7 @@ async fn publish_fresh_local_mls_key_package_batch(
 
 fn delete_unpublished_local_mls_key_package_state(
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
-    authority: &arkret_sdk::PrincipalAuthorityKey,
+    authority: &arkret_sdk::AccountId,
     device_id: &arkret_sdk::DeviceId,
     key_package_id: &str,
     key_package_ref: &str,
@@ -768,7 +767,7 @@ fn delete_unpublished_local_mls_key_package_state(
 pub(crate) async fn ensure_pairwise_mls_key_package_published(
     base_url: String,
     session_credential: String,
-    authority: arkret_sdk::PrincipalAuthorityKey,
+    authority: arkret_sdk::AccountId,
     device_id: arkret_sdk::DeviceId,
     realm_id: arkret_sdk::RealmId,
 ) -> Result<Option<String>, String> {
@@ -1116,7 +1115,7 @@ pub(crate) async fn bootstrap_mls_welcome_for_realm(
     base_url: String,
     session_credential: String,
     actor_id: String,
-    authority: arkret_sdk::PrincipalAuthorityKey,
+    authority: arkret_sdk::AccountId,
     device_id: arkret_sdk::DeviceId,
     realm_id: String,
     mut state_store: SyncSignal<LocalStateStore>,

@@ -110,7 +110,7 @@ If any of the above fails, jump to
 | Linux | `apt remove inkson` / `dnf remove inkson` / delete AppImage. Use `secret-tool clear` to remove keyring entries. |
 | Web | Clear site data in your browser DevTools (Application → Storage). |
 
-Removing the app does **not** revoke the device on the Principal Server.
+Removing the app does **not** revoke the device on the Station.
 Use **Settings → Devices → Revoke** before uninstalling so the revocation
 envelope is published while you still have signing material.
 

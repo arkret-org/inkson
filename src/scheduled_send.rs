@@ -49,7 +49,7 @@ pub(crate) struct PreparedScheduledSendPlan {
 }
 
 pub(crate) fn prepare_scheduled_send_plan(
-    authority: &arkret_sdk::PrincipalAuthorityKey,
+    authority: &arkret_sdk::AccountId,
     device_id: &arkret_sdk::DeviceId,
     existing_scheduled_send_id: Option<&str>,
     send_at: &str,
@@ -89,7 +89,7 @@ pub(crate) fn prepare_scheduled_send_plan(
 /// their own account-data key are skipped: a foreign or corrupt plan must
 /// never be dispatched, edited, or deleted by this client.
 pub(crate) fn staged_scheduled_send_plans(
-    authority: &arkret_sdk::PrincipalAuthorityKey,
+    authority: &arkret_sdk::AccountId,
     state_store: &LocalStateStore,
 ) -> Vec<DueScheduledSendPlan> {
     let state = state_store.load();
@@ -131,7 +131,7 @@ pub(crate) fn staged_scheduled_send_plans(
 
 /// The subset of [`staged_scheduled_send_plans`] whose `send_at` has passed.
 pub(crate) fn due_scheduled_send_plans(
-    authority: &arkret_sdk::PrincipalAuthorityKey,
+    authority: &arkret_sdk::AccountId,
     state_store: &LocalStateStore,
     now: DateTime<Utc>,
 ) -> Vec<DueScheduledSendPlan> {
@@ -227,7 +227,7 @@ async fn retire_scheduled_send_plan(
 /// data entry was retired).
 pub(crate) async fn dispatch_due_scheduled_sends(
     submitter: &EventSubmitter,
-    authority: &arkret_sdk::PrincipalAuthorityKey,
+    authority: &arkret_sdk::AccountId,
     state_store: SyncSignal<LocalStateStore>,
 ) -> anyhow::Result<usize> {
     if submitter.authority()? != authority {
@@ -269,7 +269,7 @@ pub(crate) async fn dispatch_due_scheduled_sends(
 
 async fn dispatch_due_plan(
     submitter: &EventSubmitter,
-    authority: &arkret_sdk::PrincipalAuthorityKey,
+    authority: &arkret_sdk::AccountId,
     actor_id: &str,
     state_store: SyncSignal<LocalStateStore>,
     plan: &DueScheduledSendPlan,

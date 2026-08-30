@@ -358,7 +358,7 @@ async fn recover_mls_snapshot_for_encrypted_write(
     session_credential: &str,
     realm_id: &str,
     actor_id: &str,
-    authority: &arkret_sdk::PrincipalAuthorityKey,
+    authority: &arkret_sdk::AccountId,
     device_id: &arkret_sdk::DeviceId,
     mut state_store: SyncSignal<LocalStateStore>,
 ) -> Result<(), String> {
@@ -502,7 +502,7 @@ async fn recover_mls_snapshot_for_encrypted_write(
 fn encrypted_realm_write_mls_ready(
     state_store: &LocalStateStore,
     realm_id: &str,
-    authority: &arkret_sdk::PrincipalAuthorityKey,
+    authority: &arkret_sdk::AccountId,
 ) -> bool {
     // A snapshot and account secret alone are only executable key material;
     // they do not prove that the snapshot's Genesis/Commit won governance.

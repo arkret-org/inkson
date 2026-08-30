@@ -6,7 +6,7 @@ use super::*;
 pub(super) struct ChatComposerContext {
     pub embedded: bool,
     pub selected_channel_info: Option<ChannelEntity>,
-    pub authority: arkret_sdk::PrincipalAuthorityKey,
+    pub authority: arkret_sdk::AccountId,
     pub did: arkret_sdk::Did,
     pub principal_id: arkret_sdk::DidCoreId,
     pub account_display_label: String,

@@ -937,16 +937,17 @@ mod tests {
         };
         event.proofs.push(producer.clone().into());
         event.proofs.push(
-            arkret_sdk::PrincipalServerAdmissionProof {
-                kind: arkret_sdk::PrincipalServerAdmissionProofKind::PrincipalServerAdmission,
+            arkret_sdk::StationAdmissionProof {
+                kind: arkret_sdk::StationAdmissionProofKind::StationAdmission,
                 verification_method: arkret_sdk::DidUrl::new(
                     "did:web:principal.example#admission-1",
                 )
                 .unwrap(),
                 event_digest: digest,
-                producer_proof_digest:
-                    arkret_sdk::PrincipalServerAdmissionProof::producer_proof_digest(&producer)
-                        .unwrap(),
+                producer_proof_digest: arkret_sdk::StationAdmissionProof::producer_proof_digest(
+                    &producer,
+                )
+                .unwrap(),
                 producer_verification_method: producer.verification_method.clone(),
                 producer_signing_key_did: arkret_sdk::DidKey::new("did:key:z6MkhFixtureDeviceKey")
                     .unwrap(),

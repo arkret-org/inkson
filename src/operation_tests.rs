@@ -860,7 +860,7 @@ fn invite_helpers_emit_canonical_kinds() {
             current_record_url: "https://server.example/_arkret/open/services/ak%3Adid_core%3Aweb%3Aserver.example/resolution".to_owned(),
             pinned_record_digest: None,
         },
-        recipient_kind: Some("principal_server".to_owned()),
+        recipient_kind: Some("station".to_owned()),
     };
     let introduction_evidence_digest =
         crate::canonical::canonical_sha256(&json!({"kind": "explicit_address"})).unwrap();

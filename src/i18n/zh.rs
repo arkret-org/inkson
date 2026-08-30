@@ -244,8 +244,8 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("login.working", "处理中...");
     dict.set("login.title", "登录");
     dict.set("login.completing", "正在完成登录");
-    dict.set("login.principal_server", "登录服务器");
-    dict.set("login.principal_server_url", "登录服务器地址");
+    dict.set("login.station", "登录服务器");
+    dict.set("login.station_url", "登录服务器地址");
     dict.set("login.show_preset_servers", "显示预设服务器");
     dict.set("login.preset_servers", "预设服务器");
     dict.set("login.status.signed_out", "未登录");
@@ -1637,10 +1637,7 @@ fn add_contacts_keys_zh(dict: &mut TranslationDict) {
     dict.set("invite_policy.kind.locator_ref", "邀请链接");
     dict.set("invite_policy.kind.shared_realm", "同群成员");
     dict.set("invite_policy.kind.handle_claim", "知道我 handle 的人");
-    dict.set(
-        "invite_policy.kind.same_principal_server",
-        "同一服务器的用户",
-    );
+    dict.set("invite_policy.kind.same_station", "同一服务器的用户");
     dict.set("invite_policy.kind.explicit_address", "任何知道我地址的人");
     dict.set(
         "invite_policy.explicit_label",

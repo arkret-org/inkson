@@ -462,7 +462,7 @@ mod wasm_bootstrap {
         ) {
             self.ensure_cached_loaded();
             let effective_did = self.effective_account_key();
-            // The root key cannot prove a PrincipalAuthorityKey, so it is not
+            // The root key cannot prove a AccountId, so it is not
             // an acceptable source for restoring an account-local session
             // secret. Session credentials are committed explicitly before
             // publication and are never repaired by account-state hydration.
@@ -627,7 +627,7 @@ mod tests {
                 "ak:device:01964137-0000-7000-8000-000000000001".to_owned(),
             )
             .unwrap(),
-            principal_server_url: url::Url::parse("https://soland.example").unwrap(),
+            station_url: url::Url::parse("https://soland.example").unwrap(),
             grant_expires_at: None,
             stored_at: chrono::Utc::now(),
         }

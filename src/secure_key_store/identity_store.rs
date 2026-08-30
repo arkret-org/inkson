@@ -5,7 +5,7 @@
 //! expands it with the validated authority/device supplied at construction time.
 //! Pre-principal transactions use [`PendingLocalStore`].
 
-use arkret_sdk::{DeviceId, PrincipalAuthorityKey};
+use arkret_sdk::{AccountId, DeviceId};
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 
@@ -170,17 +170,14 @@ impl GlobalLocalStore {
 /// contains bounded digests of the typed authority and device coordinates.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct UserLocalStore {
-    authority: PrincipalAuthorityKey,
+    authority: AccountId,
     device_id: DeviceId,
     namespace: String,
 }
 
 impl UserLocalStore {
-    pub fn new(
-        authority: PrincipalAuthorityKey,
-        device_id: DeviceId,
-    ) -> Result<Self, SecureKeyStoreError> {
-        let authority_digest = super::principal_authority_storage_digest(&authority)?;
+    pub fn new(authority: AccountId, device_id: DeviceId) -> Result<Self, SecureKeyStoreError> {
+        let authority_digest = super::account_id_storage_digest(&authority)?;
         let device_digest = super::device_storage_digest(&device_id);
         let namespace = format!("inkson.authority.{authority_digest}.device.{device_digest}");
         Ok(Self {
@@ -191,7 +188,7 @@ impl UserLocalStore {
     }
 
     #[must_use]
-    pub fn authority(&self) -> &PrincipalAuthorityKey {
+    pub fn authority(&self) -> &AccountId {
         &self.authority
     }
 
@@ -632,7 +629,7 @@ mod tests {
 
     fn user(principal: &str, server: &str, device_id: DeviceId) -> UserLocalStore {
         UserLocalStore::new(
-            PrincipalAuthorityKey::new(
+            AccountId::new(
                 arkret_sdk::DidCoreId::new(principal.to_owned()).unwrap(),
                 arkret_sdk::DidCoreId::new(server.to_owned()).unwrap(),
             ),

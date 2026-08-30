@@ -24,7 +24,7 @@ use serde_json::{Value, json};
 
 pub fn build_agent_provision_intent(
     controller_did: &Did,
-    controller_principal_server_id: &DidCoreId,
+    controller_station_id: &DidCoreId,
     controller_realm_id: &RealmId,
     agent_id: &DidCoreId,
     principal_control_realm_id: &RealmId,
@@ -46,7 +46,7 @@ pub fn build_agent_provision_intent(
             HandleVisibility::Private,
             None,
             arkret_bootstrap::AgentProvisionIntentOptions {
-                controller_principal_server_id: controller_principal_server_id.clone(),
+                controller_station_id: controller_station_id.clone(),
                 created_at,
                 seal_basis: None,
             },

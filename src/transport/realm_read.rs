@@ -57,9 +57,9 @@ pub async fn effective_grants(
     http: &arkret_sdk::http_client::Client,
     realm_id: &arkret_sdk::RealmId,
     subject: &arkret_sdk::DidCoreId,
-    subject_principal_server_id: &arkret_sdk::DidCoreId,
+    subject_station_id: &arkret_sdk::DidCoreId,
 ) -> anyhow::Result<GrantList> {
-    http.authz_effective_grants(realm_id, subject, subject_principal_server_id, None)
+    http.authz_effective_grants(realm_id, subject, subject_station_id, None)
         .await
         .map_err(anyhow::Error::from)
 }

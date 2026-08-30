@@ -11,7 +11,7 @@ pub use chime::{
 use serde_json::Value;
 
 pub fn push_rules_from_account_data(
-    authority: &arkret_sdk::PrincipalAuthorityKey,
+    authority: &arkret_sdk::AccountId,
     entries: &[arkret_sdk::Event],
 ) -> Option<PushRulesConfig> {
     let value = encrypted_account_data_content(authority, entries, AccountDataKey::PUSH_RULES)?;
@@ -37,7 +37,7 @@ pub fn push_rules_from_account_data(
 }
 
 pub fn dnd_settings_from_account_data(
-    authority: &arkret_sdk::PrincipalAuthorityKey,
+    authority: &arkret_sdk::AccountId,
     entries: &[arkret_sdk::Event],
 ) -> Option<DndSettings> {
     let value = encrypted_account_data_content(authority, entries, AccountDataKey::DND_SCHEDULE)?;
@@ -55,7 +55,7 @@ pub fn dnd_settings_from_account_data(
 }
 
 fn encrypted_account_data_content(
-    authority: &arkret_sdk::PrincipalAuthorityKey,
+    authority: &arkret_sdk::AccountId,
     entries: &[arkret_sdk::Event],
     account_data_key: &str,
 ) -> Option<Value> {

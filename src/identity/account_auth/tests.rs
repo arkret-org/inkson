@@ -47,7 +47,7 @@ fn s256_challenge_matches_rfc7636_test_vector() {
 /// as `type`, MUST hash the grant JWT into `grant_jwt_digest`, and MUST
 /// round-trip the challenge / audience / grant_id verbatim. coauth's
 /// verifier requires every one of those exact strings - drift here
-/// would surface as `InvalidProof` at the principal server.
+/// would surface as `InvalidProof` at the Station.
 #[test]
 fn session_grant_proof_signs_canonical_claims() {
     use ed25519_dalek::{SigningKey, Verifier};
@@ -474,10 +474,10 @@ fn principal_description() -> arkret_sdk::ServiceDescribe {
     let mut description = arkret_sdk::ServiceDescribe::development(
         arkret_sdk::Did::new("did:webvh:z6mkfixture:principal.example".to_owned()).unwrap(),
         arkret_sdk::TrustDomainId::new("ak:trust_domain:principal.example".to_owned()).unwrap(),
-        arkret_sdk::ServiceKind::PrincipalServer,
+        arkret_sdk::ServiceKind::Station,
         vec![
-            "ak.operation_bundle.principal_server.describe.v1".to_owned(),
-            "ak.operation_bundle.principal_server.http_core.v1".to_owned(),
+            "ak.operation_bundle.station.describe.v1".to_owned(),
+            "ak.operation_bundle.station.http_core.v1".to_owned(),
         ],
         vec![arkret_sdk::TransportBinding::HttpJson {
             base_url: "https://principal.example/_arkret".to_owned(),

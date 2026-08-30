@@ -68,7 +68,7 @@ pub fn build_oidc_authorize_scaffold(
 /// Build a standard OpenID Connect authorization-code + PKCE authorize URL
 /// from a discovery document and auth method. No Arkret-private scopes are
 /// required: `scope` is `openid` plus the method's declared scopes. Device and
-/// Principal Server bindings belong to the typed AccountHandoff/session wire,
+/// Station bindings belong to the typed AccountHandoff/session wire,
 /// not OAuth scope or RFC 8707 resource projection.
 #[allow(clippy::too_many_arguments)]
 fn build_standard_authorize_url(
@@ -145,7 +145,7 @@ fn build_standard_authorize_url(
 pub fn build_persisted_oidc_scaffold(
     bundle: &OidcScaffoldBundle,
     gate_account_base_url: &str,
-    principal_server_url: &str,
+    station_url: &str,
     device_id: &str,
     issuer: &str,
     principal_trust_domain: &arkret_sdk::TrustDomainId,
@@ -157,7 +157,7 @@ pub fn build_persisted_oidc_scaffold(
         expected_nonce: bundle.nonce.clone(),
         code_verifier: bundle.code_verifier.clone(),
         client_id: bundle.client_id.clone(),
-        principal_server_url: principal_server_url.to_owned(),
+        station_url: station_url.to_owned(),
         device_id: device_id.to_owned(),
         principal_audience: bundle.principal_audience.clone(),
         callback_uri: bundle.callback_uri.clone(),

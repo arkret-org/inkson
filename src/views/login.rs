@@ -12,8 +12,8 @@ use garth::{
 
 use crate::components::UiIcon;
 use crate::config::{
-    LocalConfigStore, normalize_device_id, normalize_server_url, principal_server_options_for,
-    same_server_url,
+    LocalConfigStore, normalize_device_id, normalize_server_url, same_server_url,
+    station_options_for,
 };
 use crate::identity::account_auth::{
     AuthorityResolver, OidcEntryPoint, build_oidc_authorize_scaffold,
@@ -348,15 +348,14 @@ pub fn LoginPanel(
     let mut is_busy = use_signal(|| auto_capture_callback);
     let mut callback_started = use_signal(|| false);
     let mut state_store_write = state_store;
-    // Whether the styled Principal Server preset list is expanded. Inkson is a
+    // Whether the styled Station preset list is expanded. Inkson is a
     // neutral client: the field is a free-text URL input that the user can edit
     // to point at ANY server, with this custom-styled dropdown offering the
     // configured presets (and the current value) as one-click choices.
     let mut server_menu_open = use_signal(|| false);
-    // Principal Server presets come from local config, with the current value
+    // Station presets come from local config, with the current value
     // and the local development default merged in.
-    let principal_server_options =
-        principal_server_options_for(&base_url(), &config_store.read().load().principal_servers);
+    let station_options = station_options_for(&base_url(), &config_store.read().load().stations);
 
     let callback_session = use_signal(|| session.clone());
     use_future(move || async move {
@@ -414,7 +413,7 @@ pub fn LoginPanel(
                         }
                     };
                 account.profile_id = profile_id;
-                let principal_server_url = normalize_server_url(account.server_url.as_str());
+                let station_url = normalize_server_url(account.server_url.as_str());
                 let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
                 let prepared_keys = match prepare_completed_login_dpop_key(
                     secure_store.as_ref(),
@@ -512,7 +511,7 @@ pub fn LoginPanel(
                     );
                 }
                 active_account.set(Some(account.clone()));
-                base_url.set(principal_server_url.clone());
+                base_url.set(station_url.clone());
                 principal_id.set(Some(account.principal_id().clone()));
                 device_id.set(account.device_id.to_string());
                 crate::app::accept_authenticated_session(
@@ -793,7 +792,7 @@ pub fn LoginPanel(
             }
 
             div { class: "auth-form",
-                Label { html_for: "login-server-url-input", {crate::i18n::tr("login.principal_server")} }
+                Label { html_for: "login-server-url-input", {crate::i18n::tr("login.station")} }
                 // Inkson is a neutral client: this is a free-text Principal
                 // Server URL the user can edit to point at ANY server. The
                 // custom-styled dropdown below offers the configured presets
@@ -805,7 +804,7 @@ pub fn LoginPanel(
                     Input {
                         id: "login-server-url-input",
                         "data-testid": "login-server-url",
-                        "aria-label": crate::i18n::tr("login.principal_server_url"),
+                        "aria-label": crate::i18n::tr("login.station_url"),
                         autocomplete: "off",
                         value: "{base_url}",
                         disabled: is_busy(),
@@ -836,7 +835,7 @@ pub fn LoginPanel(
                             "data-testid": "login-server-options",
                             role: "listbox",
                             "aria-label": crate::i18n::tr("login.preset_servers"),
-                            for option_url in principal_server_options.iter() {
+                            for option_url in station_options.iter() {
                                 button {
                                     key: "{option_url}",
                                     r#type: "button",
@@ -1196,7 +1195,7 @@ fn can_resume_returning_handoff_for_callback(
 }
 
 fn pending_handoff_from_authority(
-    principal_server_url: &str,
+    station_url: &str,
     gate_account_base_url: &str,
     audience: &arkret_sdk::DidCoreId,
     device_id: &str,
@@ -1251,7 +1250,7 @@ fn pending_handoff_from_authority(
         ),
     };
     crate::state::PendingAccountHandoff {
-        principal_server_url: principal_server_url.to_owned(),
+        station_url: station_url.to_owned(),
         gate_account_base_url: gate_account_base_url.to_owned(),
         request_id: outcome.request_id.to_string(),
         oidc_state: Some(oidc_state.to_owned()),
@@ -1472,7 +1471,7 @@ impl PreparedOidcAuthorization {
 }
 
 pub(crate) async fn prepare_oidc_authorization(
-    principal_server_url: &str,
+    station_url: &str,
     device_id: &str,
     entry_point: OidcEntryPoint,
     expected_principal_did: Option<&arkret_sdk::Did>,
@@ -1481,13 +1480,13 @@ pub(crate) async fn prepare_oidc_authorization(
 ) -> Result<PreparedOidcAuthorization, String> {
     // T1.Y1 — discover the Account Authority + auth methods from the Principal
     // Server's root `/_arkret/describe` (service-surface §2.5.1).
-    let principal = TransportClient::unauthenticated(principal_server_url)
-        .map_err(|error| format!("Invalid principal server URL: {error}"))?;
+    let principal = TransportClient::unauthenticated(station_url)
+        .map_err(|error| format!("Invalid Station URL: {error}"))?;
     let description = principal
         .describe()
         .await
-        .map_err(|error| format_sign_in_discovery_error(principal_server_url, &error))?;
-    let resolver = AuthorityResolver::from_description(principal_server_url, &description)
+        .map_err(|error| format_sign_in_discovery_error(station_url, &error))?;
+    let resolver = AuthorityResolver::from_description(station_url, &description)
         .map_err(|error| format!("Account Authority discovery failed: {error}"))?;
     let method = resolver
         .oidc_method()
@@ -1513,7 +1512,7 @@ pub(crate) async fn prepare_oidc_authorization(
     let scaffold = build_persisted_oidc_scaffold(
         &bundle,
         &resolver.gate_account_base_url,
-        principal_server_url,
+        station_url,
         device_id,
         &discovery.issuer,
         &resolver.principal_trust_domain,
@@ -1551,8 +1550,8 @@ fn oidc_discovery_url(method: &arkret_sdk::AuthMethod) -> Option<String> {
         })
 }
 
-fn format_sign_in_discovery_error(principal_server_url: &str, error: &anyhow::Error) -> String {
-    let normalized = normalize_server_url(principal_server_url);
+fn format_sign_in_discovery_error(station_url: &str, error: &anyhow::Error) -> String {
+    let normalized = normalize_server_url(station_url);
     let local_hint = url::Url::parse(&normalized)
         .ok()
         .and_then(|url| url.host_str().map(str::to_owned))
@@ -1565,7 +1564,7 @@ fn format_sign_in_discovery_error(principal_server_url: &str, error: &anyhow::Er
 
     if local_hint {
         format!(
-            "Could not reach {normalized} for server sign-in discovery. Start the local Principal Server on local.host:443 and make sure its HTTPS certificate is trusted. Details: {error}"
+            "Could not reach {normalized} for server sign-in discovery. Start the local Station on local.host:443 and make sure its HTTPS certificate is trusted. Details: {error}"
         )
     } else {
         format!("Could not reach {normalized} for server sign-in discovery: {error}")
@@ -1606,10 +1605,10 @@ async fn finish_oidc_callback(
     if gate_account_base_url.trim().is_empty() {
         return Err("Sign-in state is missing the Account Authority base.".to_owned());
     }
-    let principal_server_url = if scaffold.principal_server_url.trim().is_empty() {
+    let station_url = if scaffold.station_url.trim().is_empty() {
         gate_account_base_url.clone()
     } else {
-        scaffold.principal_server_url.clone()
+        scaffold.station_url.clone()
     };
     let sdk_base_url = crate::identity::session_refresh::sdk_base_url_from_gate_account_base_url(
         &gate_account_base_url,
@@ -1676,7 +1675,7 @@ async fn finish_oidc_callback(
         let principal_id = arkret_sdk::project_did_to_core_id(expected_principal)
             .map_err(|error| format!("Project resumable account principal: {error}"))?;
         match exchange_bound_handoff_session(
-            &principal_server_url,
+            &station_url,
             &sdk_base_url,
             &pending_handoff,
             &handoff_grant,
@@ -1713,7 +1712,7 @@ async fn finish_oidc_callback(
     }
     let principal_audience =
         arkret_sdk::DidCoreId::new(scaffold.principal_audience.trim().to_owned())
-            .map_err(|error| format!("invalid Principal Server audience core_id: {error}"))?;
+            .map_err(|error| format!("invalid Station audience core_id: {error}"))?;
     let http = ClientBuilder::new(sdk_base_url.clone())
         .allow_insecure_localhost()
         .auth(Auth::Dpop(dpop_handle.sdk_dpop_proof_only_auth()))
@@ -1750,7 +1749,7 @@ async fn finish_oidc_callback(
         scaffold.expected_device_id.as_ref(),
     );
     let pending_handoff = pending_handoff_from_authority(
-        &principal_server_url,
+        &station_url,
         &gate_account_base_url,
         &principal_audience,
         &device,
@@ -1778,7 +1777,7 @@ async fn finish_oidc_callback(
     ) = (&account_route, &disposition)
     {
         match exchange_bound_handoff_session(
-            &principal_server_url,
+            &station_url,
             &sdk_base_url,
             &pending_handoff,
             &handoff.account_handoff_grant,
@@ -1826,7 +1825,7 @@ async fn finish_oidc_callback(
 /// and device gate outcome together.
 #[allow(clippy::too_many_arguments)]
 async fn exchange_bound_handoff_session(
-    principal_server_url: &str,
+    station_url: &str,
     sdk_base_url: &url::Url,
     pending_handoff: &crate::state::PendingAccountHandoff,
     handoff_grant: &str,
@@ -1844,7 +1843,7 @@ async fn exchange_bound_handoff_session(
             .with_principal_id(principal_id.clone())
             .with_device_id(device_id.as_str());
     let outcome = issue_bound_handoff_session(
-        principal_server_url,
+        station_url,
         sdk_base_url,
         pending_handoff,
         handoff_grant,
@@ -1906,7 +1905,7 @@ fn returning_device_block_code(reason: ReturningDeviceBlockReason) -> &'static s
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn issue_bound_handoff_session(
-    principal_server_url: &str,
+    station_url: &str,
     sdk_base_url: &url::Url,
     pending_handoff: &crate::state::PendingAccountHandoff,
     handoff_grant: &str,
@@ -1917,9 +1916,8 @@ pub(crate) async fn issue_bound_handoff_session(
     correlation: &mut crate::identity::account_auth::transition::LoginCorrelation,
 ) -> Result<CompletedLogin, ReturningSessionExchangeError> {
     let now = Utc::now();
-    let principal_server_id = pending_handoff.audience_id.clone();
-    let authority =
-        arkret_sdk::PrincipalAuthorityKey::new(principal_id.clone(), principal_server_id);
+    let station_id = pending_handoff.audience_id.clone();
+    let authority = arkret_sdk::AccountId::new(principal_id.clone(), station_id);
     let proof_expires_at = std::cmp::min(
         now + chrono::Duration::minutes(5),
         pending_handoff.expires_at,
@@ -2066,20 +2064,20 @@ pub(crate) async fn issue_bound_handoff_session(
             "Account Authority returned a session for a different principal or device.".to_owned(),
         ));
     }
-    let principal = TransportClient::unauthenticated(principal_server_url)
-        .map_err(|error| format!("Invalid principal server URL: {error}"))?;
+    let principal = TransportClient::unauthenticated(station_url)
+        .map_err(|error| format!("Invalid Station URL: {error}"))?;
     let authed_principal = principal
         .with_session_grant_dpop(session_grant.grant_jwt.clone(), dpop_handle.clone())
         .map_err(|error| format!("Attach returning SessionGrant + DPoP: {error}"))?;
     let principal_http = authed_principal
         .sdk_http_client()
-        .map_err(|error| format!("Build authenticated Principal Server client: {error}"))?;
+        .map_err(|error| format!("Build authenticated Station client: {error}"))?;
     let account = crate::transport::account::account_me(&principal_http)
         .await
-        .map_err(|error| format!("Principal server rejected the returning session: {error}"))?;
+        .map_err(|error| format!("Station rejected the returning session: {error}"))?;
     if account.principal_id != principal_id {
         return Err(ReturningSessionExchangeError::Fatal(
-            "Principal server account does not match the authenticated handoff.".to_owned(),
+            "Station account does not match the authenticated handoff.".to_owned(),
         ));
     }
     let session_private_key_pem = dpop_handle
@@ -2091,14 +2089,14 @@ pub(crate) async fn issue_bound_handoff_session(
             dpop_handle.seed_b64().as_str(),
         )
         .map_err(|error| format!("DPoP device key record failed: {error}"))?;
-    let principal_server_route = url::Url::parse(&normalize_server_url(principal_server_url))
-        .map_err(|error| format!("Invalid Principal Server route: {error}"))?;
+    let station_route = url::Url::parse(&normalize_server_url(station_url))
+        .map_err(|error| format!("Invalid Station route: {error}"))?;
     let active_account = crate::transport::account::resolve_active_account_context(
         &principal_http,
         format!("ak:profile:{}", crate::operation::uuid_v7()),
         authority.clone(),
         device_id.clone(),
-        principal_server_route.clone(),
+        station_route.clone(),
     )
     .await
     .map_err(|error| {
@@ -2107,8 +2105,8 @@ pub(crate) async fn issue_bound_handoff_session(
     let persisted_session_grant = persisted_session_grant_from_state(
         &session_grant,
         &session_private_key_pem,
-        url::Url::parse(principal_server_url).map_err(|error| {
-            ReturningSessionExchangeError::Fatal(format!("invalid Principal Server route: {error}"))
+        url::Url::parse(station_url).map_err(|error| {
+            ReturningSessionExchangeError::Fatal(format!("invalid Station route: {error}"))
         })?,
         device_id.clone(),
     );
@@ -2132,7 +2130,7 @@ pub(crate) async fn issue_bound_handoff_session(
 fn persisted_session_grant_from_state(
     grant: &SessionGrantState,
     session_private_key_pem: &str,
-    principal_server_url: url::Url,
+    station_url: url::Url,
     device_id: arkret_sdk::DeviceId,
 ) -> PersistedSessionGrant {
     PersistedSessionGrant {
@@ -2143,7 +2141,7 @@ fn persisted_session_grant_from_state(
         principal_id: grant.principal_id.clone(),
         service_account_id: grant.service_account_id.clone(),
         device_id,
-        principal_server_url,
+        station_url,
         grant_expires_at: Some(grant.expires_at),
         stored_at: Utc::now(),
     }
@@ -2203,7 +2201,7 @@ mod tests {
 
     fn test_active_account(did: &str, device_id: &str) -> crate::config::ActiveAccountContext {
         let did = arkret_sdk::Did::new(did.to_owned()).unwrap();
-        let authority = arkret_sdk::PrincipalAuthorityKey::new(
+        let authority = arkret_sdk::AccountId::new(
             arkret_sdk::project_did_to_core_id(&did).unwrap(),
             arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example".to_owned()).unwrap(),
         );
@@ -2237,7 +2235,7 @@ mod tests {
                 "ak:device:01904100-0000-7000-8000-000000000001".to_owned(),
             )
             .unwrap(),
-            principal_server_url: url::Url::parse("https://principal.example").unwrap(),
+            station_url: url::Url::parse("https://principal.example").unwrap(),
             grant_expires_at: Some(now + chrono::Duration::seconds(3600)),
             stored_at: now,
         }
@@ -2248,7 +2246,7 @@ mod tests {
         account_handle: &str,
     ) -> crate::state::PendingAccountHandoff {
         crate::state::PendingAccountHandoff {
-            principal_server_url: "https://principal.example".to_owned(),
+            station_url: "https://principal.example".to_owned(),
             gate_account_base_url: "https://auth.example/_arkret/gate/account".to_owned(),
             request_id: request_id.to_owned(),
             oidc_state: None,
@@ -2455,7 +2453,7 @@ mod tests {
 
     #[test]
     fn oidc_callback_restores_bootstrap_device_seed_scope() {
-        let authority = arkret_sdk::PrincipalAuthorityKey::new(
+        let authority = arkret_sdk::AccountId::new(
             crate::mls_api_helpers::principal_core_id("did:web:old.example").unwrap(),
             arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example".to_owned()).unwrap(),
         );

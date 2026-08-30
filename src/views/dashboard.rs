@@ -498,7 +498,7 @@ pub fn DashboardPanel(
                         div { class: "settings-row",
                             div {
                                 div { class: "label f-12", "Event frontier" }
-                                div { class: "sub", if has_session { "Principal Server reported" } else { "Not loaded" } }
+                                div { class: "sub", if has_session { "Station reported" } else { "Not loaded" } }
                             }
                             span { class: "mono f-11", "data-testid": "event-frontier-card", title: "{frontier_state}", "{frontier_state_label}" }
                         }
@@ -577,7 +577,7 @@ pub fn DashboardPanel(
                         }
                         div { style: "padding: 12px 16px;",
                             if protocol_health().is_empty() {
-                                div { class: "muted f-12", "Run checks after changing the Principal Server. Collaboration starts in Spaces; operational checks stay here." }
+                                div { class: "muted f-12", "Run checks after changing the Station. Collaboration starts in Spaces; operational checks stay here." }
                             } else {
                                 div { class: "stack-sm",
                                     for (name, status) in protocol_health() {

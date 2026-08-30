@@ -805,7 +805,7 @@ pub fn SettingsPanel(
                                 }
                                 div { class: "metric-grid",
                                     div { class: "metric",
-                                        strong { "Principal Server" }
+                                        strong { "Station" }
                                         span { "{base_url}" }
                                     }
                                     div { class: "metric",
@@ -2107,7 +2107,7 @@ pub fn SettingsPanel(
                                             Some(principal_id)
                                         };
                                         let context = crate::push::registration::RegisterContext {
-                                            principal_server_url: base,
+                                            station_url: base,
                                             floria_gateway_url: crate::push::floria_gateway_url(),
                                             device_id: dev,
                                             principal_id,
@@ -2165,7 +2165,7 @@ pub fn SettingsPanel(
                                     let registration = state_store.read().push_registration();
                                     spawn(async move {
                                         let context = crate::push::registration::UnregisterContext {
-                                            principal_server_url: base,
+                                            station_url: base,
                                             device_id: dev,
                                             authorization_credential: Some(api_token),
                                             session_grant: None,

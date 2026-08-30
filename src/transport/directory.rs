@@ -438,7 +438,7 @@ mod route_tests {
     #[test]
     fn principal_description_is_never_a_directory_fallback() {
         let description = description(
-            ServiceKind::PrincipalServer,
+            ServiceKind::Station,
             vec!["ak.operation_bundle.directory_service.http_core.v1".to_owned()],
         );
         assert!(list_handles_http_json_base(&description).is_err());

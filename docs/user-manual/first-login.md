@@ -6,7 +6,7 @@ Principal Control Realm (PCR).
 
 ## 1. Authenticate the account
 
-1. Select the Principal Server and complete discovery.
+1. Select the Station and complete discovery.
 2. Sign in through coauth and obtain an Unbound Account Handoff constrained to
    the current DPoP holder and an identity-creation lease.
 3. If the account is already bound, Inkson continues the existing-identity path

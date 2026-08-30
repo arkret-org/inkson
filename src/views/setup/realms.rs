@@ -691,7 +691,7 @@ pub(super) fn RealmsSection(
                         // (restricted / sha256) suit the dev +
                         // small-deployment cases; production operators
                         // tweak as needed. The notary signer is derived from
-                        // verified Principal Server evidence, not selected by
+                        // verified Station evidence, not selected by
                         // an unbacked profile string.
                         details { class: "setup-advanced",
                             "data-testid": "realm-advanced-config",

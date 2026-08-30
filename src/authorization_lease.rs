@@ -5,7 +5,7 @@
 //! submission carries the complete signed Event and is admitted atomically
 //! against current accepted state.
 //!
-//! The authenticated Principal Server issues leases through the standard
+//! The authenticated Station issues leases through the standard
 //! `ak.self.authorization_leases.command.issue.v1` operation after a read-only
 //! pre-admission pass. The client never mints, edits, or extends lease bytes.
 
@@ -167,7 +167,7 @@ fn lease_covers_event_kind(action: &str, event_kind: &str) -> bool {
         || action == event_kind
 }
 
-/// Ask the authenticated Principal Server to validate final signed Events and
+/// Ask the authenticated Station to validate final signed Events and
 /// issue one publication lease per Event, then install the returned leases.
 pub async fn acquire_for_events(
     http: &arkret_sdk::http_client::Client,
@@ -223,7 +223,7 @@ pub async fn acquire_for_events(
     Ok(outcome.authorization_leases)
 }
 
-/// Ask the authenticated Principal Server for authorization of one registered
+/// Ask the authenticated Station for authorization of one registered
 /// non-Event operation. The server rederives the current basis and authority
 /// policy; the client-provided intent is only the typed target.
 pub async fn acquire_for_intent(
@@ -312,7 +312,7 @@ pub fn initial_submission(
 ///
 /// A non-genesis Control Move resolves its [`ProposalAuthorityRoute`] first,
 /// then either signs the authority Ack locally or asks the authenticated
-/// Principal Server for its independently signed one, and finally assembles the
+/// Station for its independently signed one, and finally assembles the
 /// canonical Ack set. DataEvents do not enter the proposal protocol and
 /// therefore keep the Ack field absent.
 pub async fn standard_initial_submission(
@@ -331,7 +331,7 @@ pub async fn standard_initial_submission(
                 })?;
                 Some(local.issue_authority_ack(event, digest_suite, &signer)?)
             }
-            ProposalAuthorityRoute::PrincipalServerAdmission => None,
+            ProposalAuthorityRoute::StationAdmission => None,
         };
         if let Some(authority_ack) = authority_ack {
             submission.control_proposal_ack = Some(
@@ -399,7 +399,7 @@ pub async fn delayed_initial_submission(
                 })?;
                 Some(local.issue_authority_ack(event, digest_suite, &signer)?)
             }
-            ProposalAuthorityRoute::PrincipalServerAdmission => Some(
+            ProposalAuthorityRoute::StationAdmission => Some(
                 http.issue_control_proposal_ack(
                     &arkret_wire::ControlProposalAckIssueRequest {
                         event: event.clone(),
@@ -471,22 +471,22 @@ pub(crate) enum ProposalAuthorityRoute {
     /// The accepted successor Seal is the sole authority decision, so the
     /// submission must omit a second Control Proposal Ack.
     AuthorityAuthoredSelfPrincipal,
-    /// The already-authenticated receiving Principal Server performs the
+    /// The already-authenticated receiving Station performs the
     /// atomic admission check (or issues the delayed-publication Ack) from its
     /// accepted state. This branch performs no DID/PCR resolution in Inkson.
-    PrincipalServerAdmission,
+    StationAdmission,
     /// This device holds the whole proposal authority for the Realm.
-    LocalPrincipal(LocalPrincipalAuthority),
+    LocalPrincipal(LocalAccountAuthority),
 }
 
 /// A resolved local proposal authority: the immutable authority-set digest and
 /// the principal whose device key must sign under it.
-pub(crate) struct LocalPrincipalAuthority {
+pub(crate) struct LocalAccountAuthority {
     authority_set_ref: arkret_sdk::Hash,
     signer_actor_id: arkret_sdk::DidCoreId,
 }
 
-impl LocalPrincipalAuthority {
+impl LocalAccountAuthority {
     /// Sign, or reuse an already signed, authority Ack for this proposal.
     pub(crate) fn issue_authority_ack(
         &self,
@@ -562,12 +562,12 @@ pub(crate) fn is_managed_agent_pcr_genesis(event: &arkret_sdk::Event) -> bool {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ProposalAuthorityRouteKind {
     /// A pre-join membership proposal is intentionally unable to read Realm
-    /// history. The receiving Principal Server validates its candidate basis
+    /// history. The receiving Station validates its candidate basis
     /// and pending invite/application state directly.
-    PreJoinPrincipalServerAdmission,
+    PreJoinStationAdmission,
     /// An ordinary Realm is admitted by the already-authenticated receiving
-    /// Principal Server. This is not a human current-DID/PCR lookup.
-    PrincipalServerAdmission,
+    /// Station. This is not a human current-DID/PCR lookup.
+    StationAdmission,
     /// A managed Agent's Control Realm, written by its delegated controller.
     ManagedAgentPcr,
     /// A controller's own principal-control Realm.  Agent provisioning is a
@@ -591,7 +591,7 @@ fn classify_proposal_authority_route(
                 })
                 .is_some_and(|membership| matches!(membership.as_str(), "join" | "knock")));
     if pre_join_membership_proposal {
-        return Ok(ProposalAuthorityRouteKind::PreJoinPrincipalServerAdmission);
+        return Ok(ProposalAuthorityRouteKind::PreJoinStationAdmission);
     }
     // The managed-delegation shape is checked first: it names both a different
     // executor and the Agent's `#managed-controller` delegation, so it can only
@@ -612,7 +612,7 @@ fn classify_proposal_authority_route(
     if event.kind == arkret_sdk::EventKind::AgentProvision || recovery_policy_set {
         return Ok(ProposalAuthorityRouteKind::SelfPrincipalPcr);
     }
-    Ok(ProposalAuthorityRouteKind::PrincipalServerAdmission)
+    Ok(ProposalAuthorityRouteKind::StationAdmission)
 }
 
 async fn resolve_proposal_authority_route(
@@ -620,10 +620,10 @@ async fn resolve_proposal_authority_route(
     event: &arkret_sdk::Event,
 ) -> anyhow::Result<ProposalAuthorityRoute> {
     match classify_proposal_authority_route(event)? {
-        ProposalAuthorityRouteKind::PreJoinPrincipalServerAdmission => {
-            Ok(ProposalAuthorityRoute::PrincipalServerAdmission)
+        ProposalAuthorityRouteKind::PreJoinStationAdmission => {
+            Ok(ProposalAuthorityRoute::StationAdmission)
         }
-        ProposalAuthorityRouteKind::PrincipalServerAdmission => {
+        ProposalAuthorityRouteKind::StationAdmission => {
             let accepted = http
                 .events_read_all_pages(event.realm_id.as_str())
                 .await
@@ -634,7 +634,7 @@ async fn resolve_proposal_authority_route(
             )?;
             match self_principal_pcr_authority_set_ref_from_events(event, &accepted_events) {
                 Ok(_) => Ok(ProposalAuthorityRoute::AuthorityAuthoredSelfPrincipal),
-                Err(_) => Ok(ProposalAuthorityRoute::PrincipalServerAdmission),
+                Err(_) => Ok(ProposalAuthorityRoute::StationAdmission),
             }
         }
         ProposalAuthorityRouteKind::ManagedAgentPcr => {
@@ -678,7 +678,7 @@ async fn resolve_proposal_authority_route(
                 anyhow::anyhow!("managed Agent PCR controls always carry executed_by")
             })?;
             Ok(ProposalAuthorityRoute::LocalPrincipal(
-                LocalPrincipalAuthority {
+                LocalAccountAuthority {
                     authority_set_ref,
                     signer_actor_id: signer_principal,
                 },
@@ -974,7 +974,7 @@ mod tests {
         let ordinary = event();
         assert_eq!(
             classify_proposal_authority_route(&ordinary).unwrap(),
-            ProposalAuthorityRouteKind::PrincipalServerAdmission,
+            ProposalAuthorityRouteKind::StationAdmission,
             "an ordinary Realm write must not degrade to a local self-signature"
         );
 
@@ -1006,7 +1006,7 @@ mod tests {
         );
         assert_eq!(
             classify_proposal_authority_route(&foreign_delegation).unwrap(),
-            ProposalAuthorityRouteKind::PrincipalServerAdmission
+            ProposalAuthorityRouteKind::StationAdmission
         );
 
         // Self-executed writes are never managed delegations, whatever the
@@ -1015,7 +1015,7 @@ mod tests {
         self_executed.executed_by = Some(self_executed.actor_id.clone());
         assert_eq!(
             classify_proposal_authority_route(&self_executed).unwrap(),
-            ProposalAuthorityRouteKind::PrincipalServerAdmission
+            ProposalAuthorityRouteKind::StationAdmission
         );
 
         let mut invite_accept = event();
@@ -1026,7 +1026,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             classify_proposal_authority_route(&invite_accept).unwrap(),
-            ProposalAuthorityRouteKind::PreJoinPrincipalServerAdmission,
+            ProposalAuthorityRouteKind::PreJoinStationAdmission,
             "an invitee must not need membership-gated Realm history to submit acceptance"
         );
 
@@ -1035,7 +1035,7 @@ mod tests {
             serde_json::from_value(serde_json::json!({ "membership": "knock" })).unwrap();
         assert_eq!(
             classify_proposal_authority_route(&knock).unwrap(),
-            ProposalAuthorityRouteKind::PreJoinPrincipalServerAdmission,
+            ProposalAuthorityRouteKind::PreJoinStationAdmission,
             "a knock applicant must not need membership-gated Realm history"
         );
     }
@@ -1073,7 +1073,7 @@ mod tests {
                 realm_id: provision.realm_id.clone(),
             },
             provision.actor_id.clone(),
-            provision.principal_server_id.clone(),
+            provision.station_id.clone(),
             0,
             arkret_sdk::Hlc::new("000000000000-0000-00000000").unwrap(),
             serde_json::to_value(arkret_sdk::RealmCreatePayload::new(genesis)).unwrap(),

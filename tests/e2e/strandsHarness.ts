@@ -1,10 +1,10 @@
 import { expect, test } from "@playwright/test";
 import {
-  CURRENT_PRINCIPAL_SERVER_ID,
+  CURRENT_STATION_ID,
   mockArkretApi,
 } from "./mockArkretApi";
 
-export { CURRENT_PRINCIPAL_SERVER_ID };
+export { CURRENT_STATION_ID };
 
 export function submittedEvent(body: any) {
   const entry = Array.isArray(body.events)
@@ -18,7 +18,7 @@ export const DEMO_REALM =
 export const DEMO_BOARD_SPACE =
   "ak:space:AY61QviMxoJ0ALEn5U39bA7Qbi1BxHCrOq4950m2JRjM";
 const DEFAULT_SERVER_URL = "https://local.host";
-const DEFAULT_SERVER_AUDIENCE = CURRENT_PRINCIPAL_SERVER_ID;
+const DEFAULT_SERVER_AUDIENCE = CURRENT_STATION_ID;
 const DEFAULT_ACCOUNT_DID = "did:web:alice.example";
 const DEFAULT_ACCOUNT_CORE_ID = "ak:did_core:web:alice.example";
 const DEFAULT_DEVICE_ID = "ak:device:01964137-0000-7000-8000-0000000000a1";
@@ -62,7 +62,7 @@ export function testLocalConfig(
   const did = overrides.did ?? DEFAULT_ACCOUNT_DID;
   const deviceId = overrides.deviceId ?? DEFAULT_DEVICE_ID;
   return {
-    principal_servers: [serverUrl],
+    stations: [serverUrl],
     active_account: {
       profile_id: "ak:profile:e2e-alice",
       authority: {
@@ -70,7 +70,7 @@ export function testLocalConfig(
           did === DEFAULT_ACCOUNT_DID
             ? DEFAULT_ACCOUNT_CORE_ID
             : coreIdForDid(did),
-        principal_server_id: DEFAULT_SERVER_AUDIENCE,
+        station_id: DEFAULT_SERVER_AUDIENCE,
       },
       resolution: {
         did: did,

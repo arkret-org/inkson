@@ -57,7 +57,7 @@ fn projection_text_from_private_sidecar(value: String) -> String {
 pub fn projection_events_from_sync_realms(
     realms: &std::collections::BTreeMap<String, Value>,
     store: Option<&crate::state::LocalStateStore>,
-    decrypt_identity: Option<(&arkret_sdk::PrincipalAuthorityKey, &arkret_sdk::DeviceId)>,
+    decrypt_identity: Option<(&arkret_sdk::AccountId, &arkret_sdk::DeviceId)>,
 ) -> Vec<ProjectionEvent> {
     let mut events = Vec::new();
     for (realm_id, body) in realms {

@@ -31,28 +31,25 @@ mod sync_states;
 
 // ── Shared test helpers (used by multiple topic submodules) ─
 
-pub(super) fn test_authority(principal: &str) -> arkret_sdk::PrincipalAuthorityKey {
+pub(super) fn test_authority(principal: &str) -> arkret_sdk::AccountId {
     test_authority_at_server(principal, "ak:did_core:web:test-server.example")
 }
 
-pub(super) fn test_authority_at_server(
-    principal: &str,
-    principal_server: &str,
-) -> arkret_sdk::PrincipalAuthorityKey {
+pub(super) fn test_authority_at_server(principal: &str, station: &str) -> arkret_sdk::AccountId {
     let principal_id = arkret_sdk::DidCoreId::new(principal.to_owned()).unwrap_or_else(|_| {
         let did = arkret_sdk::Did::new(principal.to_owned()).expect("principal DID");
         arkret_sdk::project_did_to_core_id(&did).expect("principal core projection")
     });
-    arkret_sdk::PrincipalAuthorityKey::new(
+    arkret_sdk::AccountId::new(
         principal_id,
-        arkret_sdk::DidCoreId::new(principal_server.to_owned()).unwrap(),
+        arkret_sdk::DidCoreId::new(station.to_owned()).unwrap(),
     )
 }
 
-pub(super) fn test_profile_id(authority: &arkret_sdk::PrincipalAuthorityKey) -> String {
+pub(super) fn test_profile_id(authority: &arkret_sdk::AccountId) -> String {
     format!(
         "ak:profile:{}",
-        crate::secure_key_store::principal_authority_storage_digest(authority).unwrap()
+        crate::secure_key_store::account_id_storage_digest(authority).unwrap()
     )
 }
 
@@ -67,7 +64,7 @@ pub(super) fn test_account_context(did: &arkret_sdk::Did) -> crate::config::Acti
 
 pub(super) fn test_account_context_for_authority(
     did: &arkret_sdk::Did,
-    authority: arkret_sdk::PrincipalAuthorityKey,
+    authority: arkret_sdk::AccountId,
 ) -> crate::config::ActiveAccountContext {
     crate::config::ActiveAccountContext::new(
         test_profile_id(&authority),

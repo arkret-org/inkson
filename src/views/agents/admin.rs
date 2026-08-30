@@ -1065,7 +1065,7 @@ fn spawn_provision_agent(
             return;
         }
         let controller_did = account.did().clone();
-        let (controller_recovery_evidence, controller_principal_server_id) = match state_store
+        let (controller_recovery_evidence, controller_station_id) = match state_store
             .read()
             .recovery_material_evidence()
         {
@@ -1073,12 +1073,12 @@ fn spawn_provision_agent(
                 if evidence.controller_authority.as_ref() == Some(&account.authority)
                     && evidence.principal_did == controller_did =>
             {
-                let principal_server_id = evidence
+                let station_id = evidence
                     .controller_authority
                     .as_ref()
-                    .map(|authority| authority.principal_server_id.clone());
-                match principal_server_id {
-                    Some(principal_server_id) => (evidence, principal_server_id),
+                    .map(|authority| authority.station_id.clone());
+                match station_id {
+                    Some(station_id) => (evidence, station_id),
                     None => unreachable!("the guarded evidence has an authority pair"),
                 }
             }
@@ -1186,7 +1186,7 @@ fn spawn_provision_agent(
             operation_id: operation_id.clone(),
             idempotency_key: idempotency_key.clone(),
             did: did.clone(),
-            controller_principal_server_id,
+            controller_station_id,
             slug: slug.clone(),
             requested_scope: requested_scope.clone(),
             pairing_ttl_ms: None,
@@ -1390,19 +1390,18 @@ fn spawn_provision_agent(
             }
         };
         let principal_control_realm_id = frozen_genesis.realm_id.clone();
-        let controller_principal_server_id = match crate::operation::authoring_principal_server_id()
-        {
+        let controller_station_id = match crate::operation::authoring_station_id() {
             Ok(value) => value,
             Err(error) => {
                 last_op_status.set(format!(
-                    "Create failed: resolve controller Principal Server: {error}"
+                    "Create failed: resolve controller Station: {error}"
                 ));
                 return;
             }
         };
         let draft = match build_agent_provision_intent(
             &controller_did,
-            &controller_principal_server_id,
+            &controller_station_id,
             &controller_realm_id,
             &agent_id,
             &principal_control_realm_id,

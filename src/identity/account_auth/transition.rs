@@ -133,7 +133,7 @@ pub struct LoginCorrelation {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub session_grant_id: Option<String>,
     /// Public digest of the exact session intent. Coauth forwards it to the
-    /// Principal Server as the gate `intent_digest`, so one signed device gate
+    /// Station as the gate `intent_digest`, so one signed device gate
     /// receipt can be found from a client record without any secret.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub session_intent_digest: Option<String>,

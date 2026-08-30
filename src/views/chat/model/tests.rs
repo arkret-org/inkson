@@ -16,10 +16,10 @@ mod device_identity_proof_tests {
         signed_message_envelope_inner(signer, actor_id, Some(device_id))
     }
 
-    fn authority(actor: &str) -> arkret_sdk::PrincipalAuthorityKey {
+    fn authority(actor: &str) -> arkret_sdk::AccountId {
         let principal_id = crate::mls_api_helpers::principal_core_id(actor).unwrap();
-        arkret_sdk::PrincipalAuthorityKey {
-            principal_server_id: principal_id.clone(),
+        arkret_sdk::AccountId {
+            station_id: principal_id.clone(),
             principal_id,
         }
     }

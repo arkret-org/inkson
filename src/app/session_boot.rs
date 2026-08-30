@@ -6,7 +6,7 @@ pub(super) fn session_grant_boot_usable(
     now_unix: i64,
 ) -> bool {
     if grant.grant_jwt.trim().is_empty()
-        || !crate::identity::session_refresh::grant_matches_principal_server(
+        || !crate::identity::session_refresh::grant_matches_station(
             grant,
             active_account.server_url.as_str(),
         )
@@ -15,7 +15,7 @@ pub(super) fn session_grant_boot_usable(
             active_account.principal_id(),
         )
         || grant.device_id != active_account.device_id
-        || grant.audience_id != active_account.authority.principal_server_id
+        || grant.audience_id != active_account.authority.station_id
     {
         return false;
     }
@@ -357,7 +357,7 @@ pub(super) fn inject_test_session_credential(
 /// secure store, with a thumbprint that equals the grant's `cnf.jkt` because
 /// both derive from the same seed, and (2) persists a `PersistedSessionGrant`
 /// whose
-/// `principal_server_url` is the active server so the bootstrap does not treat
+/// `station_url` is the active server so the bootstrap does not treat
 /// it as stale, and (3) creates the account MLS root that a completed first-device
 /// enrollment would already have established.
 #[cfg(all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test"))]
@@ -637,14 +637,14 @@ pub(super) async fn inject_test_session_grant(
         service_account_id,
         device_id: arkret_sdk::DeviceId::new(device_id.to_owned()).ok()?,
         // MUST match the active server so the bootstrap does not discard the
-        // grant as stale (see `grant_matches_principal_server`).
-        principal_server_url: url::Url::parse(server_url).ok()?,
+        // grant as stale (see `grant_matches_station`).
+        station_url: url::Url::parse(server_url).ok()?,
         grant_expires_at: Some(now + chrono::Duration::hours(8)),
         stored_at: now,
     };
-    let principal_server_id = arkret_sdk::DidCoreId::new(audience.clone()).ok()?;
+    let station_id = arkret_sdk::DidCoreId::new(audience.clone()).ok()?;
     let user_store = match crate::secure_key_store::UserLocalStore::new(
-        arkret_sdk::PrincipalAuthorityKey::new(grant.principal_id.clone(), principal_server_id),
+        arkret_sdk::AccountId::new(grant.principal_id.clone(), station_id),
         grant.device_id.clone(),
     ) {
         Ok(user_store) => user_store,

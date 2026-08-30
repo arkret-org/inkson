@@ -16,7 +16,7 @@ use crate::event_builders::{
     build_capability_relinquish_control_intent, build_member_state_transition_event,
     build_plaintext_visible_services_event, build_realm_alias_event,
     build_realm_alias_rename_event, build_realm_alias_tombstone_event, build_realm_archive_event,
-    build_realm_authority_reset_control_intent, build_realm_bootstrap_steps_for_principal_server,
+    build_realm_authority_reset_control_intent, build_realm_bootstrap_steps_for_station,
     build_realm_destroy_event, build_realm_owner_transfer_control_intent,
     build_realm_profile_replacement_event, build_realm_state_event, build_space_create_event,
     build_space_lifecycle_event, parse_wire_enum, recommended_realm_policy_bundle_value,
@@ -71,13 +71,13 @@ pub async fn create_realm(
     }
 
     let join_rule = validate_join_rule_v1(join_rule)?;
-    let principal_server_id = submitter.authority()?.principal_server_id.clone();
+    let station_id = submitter.authority()?.station_id.clone();
     let notary_did = submitter.service_did().await?;
     let described_server_id =
         arkret_sdk::project_did_to_core_id(&arkret_sdk::Did::new(notary_did.clone())?)?;
-    if described_server_id != principal_server_id {
+    if described_server_id != station_id {
         anyhow::bail!(
-            "authenticated Principal Server authority does not match the current service description"
+            "authenticated Station authority does not match the current service description"
         );
     }
     let notary = submitter.current_service_notary().await?;
@@ -88,8 +88,8 @@ pub async fn create_realm(
     let genesis_salt = arkret_sdk::GenesisSalt::generate()?;
     // The Realm id is not minted here: it is derived from the genesis Event
     // the builder produces (spec realm-and-space.md section 2.5.0).
-    let steps = build_realm_bootstrap_steps_for_principal_server(
-        principal_server_id,
+    let steps = build_realm_bootstrap_steps_for_station(
+        station_id,
         genesis_salt,
         actor_id,
         &notary_did,

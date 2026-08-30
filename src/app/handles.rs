@@ -98,9 +98,9 @@ pub(super) fn same_server_url(left: &str, right: &str) -> bool {
 
 pub(super) fn server_options_for(
     current_server_url: &str,
-    configured_principal_servers: &[url::Url],
+    configured_stations: &[url::Url],
 ) -> Vec<String> {
-    crate::config::principal_server_options_for(current_server_url, configured_principal_servers)
+    crate::config::station_options_for(current_server_url, configured_stations)
 }
 
 #[derive(Clone, Copy)]
@@ -195,7 +195,7 @@ pub(super) fn select_server(server_url: String, ctx: ServerSelectionContext) {
     personal_handles.set(Vec::new());
     personal_handles_status.set("Not published".to_owned());
     personal_handles_lookup_key.set(String::new());
-    crate::operation::set_authoring_principal_server_id(None);
+    crate::operation::set_authoring_station_id(None);
     server_description.set(None);
     server_probe_status.set("server not probed".to_owned());
     status.set(ConnectionState::Offline.label().to_owned());

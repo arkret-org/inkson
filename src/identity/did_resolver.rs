@@ -398,7 +398,7 @@ impl ResolverDidAnchor {
         }
     }
 
-    /// Resolve the configured Principal Server's own WebVH document without
+    /// Resolve the configured Station's own WebVH document without
     /// weakening the untrusted actor-DID SSRF guard. The caller must first
     /// establish that `service` is the `service_id` returned by the same
     /// authenticated SDK client's describe endpoint. The DID host and port

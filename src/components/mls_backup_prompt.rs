@@ -147,7 +147,7 @@ pub(crate) fn recovery_key_filename_from_handles(handles: &[String]) -> String {
 struct MlsPrivatePlaintextBackupPayload {
     base_url: String,
     token: String,
-    authority: Option<arkret_sdk::PrincipalAuthorityKey>,
+    authority: Option<arkret_sdk::AccountId>,
     principal_control_realm_id: Option<arkret_sdk::RealmId>,
     actor_id: String,
     device_id: String,
@@ -183,7 +183,7 @@ fn mark_mls_backup_after_write_probe_started(key: String) -> bool {
 pub(crate) fn schedule_mls_private_plaintext_backup_after_encrypted_write(
     base_url: String,
     token: String,
-    authority: arkret_sdk::PrincipalAuthorityKey,
+    authority: arkret_sdk::AccountId,
     actor_id: String,
     device_id: String,
     state_store: SyncSignal<LocalStateStore>,
@@ -400,7 +400,7 @@ pub fn try_needs_mls_backup_signal() -> Option<Signal<bool>> {
 pub async fn maybe_auto_backup_mls_after_encrypted_write(
     base_url: String,
     token: String,
-    authority: arkret_sdk::PrincipalAuthorityKey,
+    authority: arkret_sdk::AccountId,
     actor_id: String,
     device_id: String,
     state_store: SyncSignal<LocalStateStore>,
@@ -420,7 +420,7 @@ pub async fn maybe_auto_backup_mls_after_encrypted_write(
 async fn maybe_backup_or_flag_mls_backup_after_encrypted_write(
     base_url: String,
     token: String,
-    authority: arkret_sdk::PrincipalAuthorityKey,
+    authority: arkret_sdk::AccountId,
     actor_id: String,
     auto_backup: Option<(String, SyncSignal<LocalStateStore>)>,
     needs_mls_backup: Signal<bool>,
@@ -615,7 +615,7 @@ async fn maybe_backup_or_flag_mls_backup_after_encrypted_write(
 fn upload_mls_backup_with_recovery_key(
     base: String,
     session: String,
-    authority: arkret_sdk::PrincipalAuthorityKey,
+    authority: arkret_sdk::AccountId,
     actor: String,
     device: String,
     recovery_secret: String,

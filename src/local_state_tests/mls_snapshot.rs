@@ -69,7 +69,7 @@ fn logout_session_clear_shreds_memory_and_preserves_encrypted_e2ee_state() {
             "ak:device:01904100-0000-7000-8000-000000000001".to_owned(),
         )
         .unwrap(),
-        principal_server_url: url::Url::parse("https://principal.example").unwrap(),
+        station_url: url::Url::parse("https://principal.example").unwrap(),
         grant_expires_at: None,
         stored_at: chrono::Utc::now(),
     };

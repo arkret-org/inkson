@@ -301,7 +301,7 @@ fn accepted_direct_message_final(
     if event.kind != arkret_sdk::EventKind::MessageCreate
         || event.executed_by.is_some()
         || event
-            .validate_principal_server_admission_binding(digest_suite)
+            .validate_station_admission_binding(digest_suite)
             .is_err()
     {
         return None;
@@ -617,16 +617,17 @@ mod tests {
         );
         let producer = event.proofs[0].as_producer().unwrap().clone();
         event.proofs.push(
-            arkret_sdk::PrincipalServerAdmissionProof {
-                kind: arkret_sdk::PrincipalServerAdmissionProofKind::PrincipalServerAdmission,
+            arkret_sdk::StationAdmissionProof {
+                kind: arkret_sdk::StationAdmissionProofKind::StationAdmission,
                 verification_method: arkret_sdk::DidUrl::new(
                     "did:web:principal.example#admission-1",
                 )
                 .unwrap(),
                 event_digest: producer.event_digest.clone(),
-                producer_proof_digest:
-                    arkret_sdk::PrincipalServerAdmissionProof::producer_proof_digest(&producer)
-                        .unwrap(),
+                producer_proof_digest: arkret_sdk::StationAdmissionProof::producer_proof_digest(
+                    &producer,
+                )
+                .unwrap(),
                 producer_verification_method: producer.verification_method.clone(),
                 producer_signing_key_did: arkret_sdk::DidKey::new("did:key:z6MkhFixtureDeviceKey")
                     .unwrap(),

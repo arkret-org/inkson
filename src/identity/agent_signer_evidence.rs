@@ -432,7 +432,7 @@ async fn materialize_verified_cache_entry(
     {
         let method = match proof {
             arkret_sdk::EventProof::Producer(proof) => &proof.verification_method,
-            arkret_sdk::EventProof::PrincipalServerAdmission(proof) => &proof.verification_method,
+            arkret_sdk::EventProof::StationAdmission(proof) => &proof.verification_method,
         };
         if verification_method_public_keys.contains_key(method.as_str()) {
             continue;
@@ -1214,11 +1214,9 @@ fn event_agent_identity(envelope: &Value) -> Option<(arkret_sdk::Event, DidCoreI
     Some((event, agent_id, verification_method))
 }
 
-fn origin_admission(
-    event: &arkret_sdk::Event,
-) -> Option<&arkret_sdk::PrincipalServerAdmissionProof> {
+fn origin_admission(event: &arkret_sdk::Event) -> Option<&arkret_sdk::StationAdmissionProof> {
     event.proofs.iter().find_map(|proof| match proof {
-        arkret_sdk::EventProof::PrincipalServerAdmission(value) => Some(value),
+        arkret_sdk::EventProof::StationAdmission(value) => Some(value),
         arkret_sdk::EventProof::Producer(_) => None,
     })
 }

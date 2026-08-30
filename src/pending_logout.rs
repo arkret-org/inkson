@@ -51,7 +51,7 @@ const RECORD_TTL_HOURS: i64 = 24;
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PendingLogout {
     /// Exact account authority whose logout record owns this secure-store slot.
-    pub authority: arkret_sdk::PrincipalAuthorityKey,
+    pub authority: arkret_sdk::AccountId,
     /// Exact account device whose grant-binding material is journalled.
     pub device_id: arkret_sdk::DeviceId,
     /// The grant JWT to revoke at coauth. `None` when the store held no
@@ -70,16 +70,16 @@ pub struct PendingLogout {
     /// Thumbprint that must re-derive from `device_seed_b64`.
     #[serde(default)]
     pub device_jkt: Option<String>,
-    /// Principal-server URL the grant was issued against; used to re-resolve
+    /// Station URL the grant was issued against; used to re-resolve
     /// the Account Authority `gate_account_base_url` if it was not journalled.
     #[serde(default)]
-    pub principal_server_url: Option<url::Url>,
+    pub station_url: Option<url::Url>,
     /// T1.Y4 — resolved Account Authority `gate_account_base_url`; the single
     /// `/logout` origin. Preferred over re-resolving from
-    /// `principal_server_url` at retry time.
+    /// `station_url` at retry time.
     #[serde(default)]
     pub gate_account_base_url: Option<url::Url>,
-    /// Principal-server base URL for diagnostics.
+    /// Station base URL for diagnostics.
     pub base_url: url::Url,
     /// Last in-memory session credential captured for diagnostics. The single
     /// hard logout authenticates with the grant + DPoP, not this value.
@@ -109,7 +109,7 @@ impl PendingLogout {
     fn storage_key(&self) -> anyhow::Result<String> {
         Ok(format!(
             "{PENDING_LOGOUT_STORAGE_PREFIX}{}.{}",
-            crate::secure_key_store::principal_authority_storage_digest(&self.authority)
+            crate::secure_key_store::account_id_storage_digest(&self.authority)
                 .map_err(|error| anyhow::anyhow!(error.to_string()))?,
             crate::secure_key_store::device_storage_digest(&self.device_id)
         ))
@@ -124,11 +124,10 @@ impl PendingLogout {
 
     /// True when there is a server-side grant chain to terminate. Requires the
     /// grant JWT + grant-binding material + a routable Account Authority base (either
-    /// the journalled `gate_account_base_url` or a `principal_server_url` to
+    /// the journalled `gate_account_base_url` or a `station_url` to
     /// re-resolve it from).
     pub fn has_coauth_revoke(&self) -> bool {
-        let has_route =
-            self.gate_account_base_url.as_ref().is_some() || self.principal_server_url.is_some();
+        let has_route = self.gate_account_base_url.as_ref().is_some() || self.station_url.is_some();
         self.grant_jwt.is_some()
             && self.device_seed_b64.is_some()
             && self.device_jkt.is_some()
@@ -210,13 +209,11 @@ async fn hard_logout_at_authority(
     let gate_account_base_url = match record.gate_account_base_url.as_ref() {
         Some(base) => base.clone(),
         _ => {
-            let principal_server_url = record.principal_server_url.as_ref().ok_or_else(|| {
-                anyhow::anyhow!(
-                    "pending logout missing gate_account_base_url and principal_server_url"
-                )
+            let station_url = record.station_url.as_ref().ok_or_else(|| {
+                anyhow::anyhow!("pending logout missing gate_account_base_url and station_url")
             })?;
             let resolved = crate::identity::account_auth::resolve_principal_gate_account_base_url(
-                principal_server_url.as_str(),
+                station_url.as_str(),
             )
             .await
             .map_err(|error| anyhow::anyhow!("resolve account authority: {error}"))?;
@@ -332,7 +329,7 @@ mod tests {
 
     fn base_record(created_at: DateTime<Utc>) -> PendingLogout {
         PendingLogout {
-            authority: arkret_sdk::PrincipalAuthorityKey::new(
+            authority: arkret_sdk::AccountId::new(
                 arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example").unwrap(),
                 arkret_sdk::DidCoreId::new("ak:did_core:web:soland.example").unwrap(),
             ),
@@ -341,7 +338,7 @@ mod tests {
             grant_jwt: Some("eyJ.grant.jwt".to_owned()),
             device_seed_b64: Some("seed".to_owned()),
             device_jkt: Some("jkt".to_owned()),
-            principal_server_url: Some(url::Url::parse("https://soland.example").unwrap()),
+            station_url: Some(url::Url::parse("https://soland.example").unwrap()),
             gate_account_base_url: Some(
                 url::Url::parse("https://soland.example/_arkret/gate/account").unwrap(),
             ),
@@ -405,15 +402,15 @@ mod tests {
         no_jkt.device_jkt = None;
         assert!(!no_jkt.has_coauth_revoke());
 
-        // No route at all (neither gate_account_base_url nor principal_server_url).
+        // No route at all (neither gate_account_base_url nor station_url).
         let mut no_route = base_record(now);
-        no_route.principal_server_url = None;
+        no_route.station_url = None;
         no_route.gate_account_base_url = None;
         assert!(!no_route.has_coauth_revoke());
 
         // gate_account_base_url alone is a sufficient route.
         let mut base_only = base_record(now);
-        base_only.principal_server_url = None;
+        base_only.station_url = None;
         assert!(base_only.has_coauth_revoke());
     }
 

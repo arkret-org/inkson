@@ -34,9 +34,9 @@ const TEST_SERVICE_ID: &str = "ak:did_core:web:server.example";
 const TEST_SERVICE_DID: &str = "did:web:server.example";
 
 fn test_genesis_salt() -> arkret_sdk::GenesisSalt {
-    inkson::operation::set_authoring_principal_server_id(Some(
+    inkson::operation::set_authoring_station_id(Some(
         arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example".to_owned())
-            .expect("test Principal Server core id is canonical"),
+            .expect("test Station core id is canonical"),
     ));
     arkret_sdk::GenesisSalt::new("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
         .expect("test Realm genesis salt is canonical")

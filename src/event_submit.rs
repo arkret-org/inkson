@@ -45,7 +45,7 @@ pub struct EventSubmitter {
     http: arkret_sdk::http_client::Client,
     /// Exact account authority captured when this submitter is constructed.
     /// Durable queue operations never re-read the process-global active scope.
-    authority: Option<arkret_sdk::PrincipalAuthorityKey>,
+    authority: Option<arkret_sdk::AccountId>,
     describe_cache: OnceCell<ServiceDescribe>,
     state_store: Option<crate::runtime::input::StateStoreHandle>,
 }
@@ -680,7 +680,7 @@ where
 
 /// Compare a producer-authored Event with its accepted projection.
 ///
-/// Acceptance appends exactly one Principal Server admission proof. That
+/// Acceptance appends exactly one Station admission proof. That
 /// proof is outside the producer transcript but is part of the retained
 /// accepted envelope, so whole-envelope equality would reject every valid
 /// admission. Validate the closed accepted proof set first, then remove only
@@ -695,7 +695,7 @@ pub(crate) fn accepted_event_preserves_authored_envelope(
         || arkret_sdk::Hash::new(accepted.event_digest_with_digest_suite(digest_suite)?)?
             != arkret_sdk::Hash::new(authored.event_digest_with_digest_suite(digest_suite)?)?
         || accepted
-            .validate_principal_server_admission_binding(digest_suite)
+            .validate_station_admission_binding(digest_suite)
             .is_err()
     {
         return Ok(false);
@@ -703,11 +703,11 @@ pub(crate) fn accepted_event_preserves_authored_envelope(
     let mut accepted_authored_projection = accepted.clone();
     accepted_authored_projection
         .proofs
-        .retain(|proof| proof.as_principal_server_admission().is_none());
+        .retain(|proof| proof.as_station_admission().is_none());
     let mut expected_authored_projection = authored.clone();
     expected_authored_projection
         .proofs
-        .retain(|proof| proof.as_principal_server_admission().is_none());
+        .retain(|proof| proof.as_station_admission().is_none());
     Ok(accepted_authored_projection == expected_authored_projection)
 }
 
@@ -1175,7 +1175,7 @@ fn mls_outbound_requires_accepted_state_store(snapshot: &garth::SendQueueSnapsho
 /// send has no accepted Message id yet, because the Message is named by the
 /// create Event nobody has accepted.
 pub(crate) async fn pending_chat_outbound_local_operation_ids(
-    authority: &arkret_sdk::PrincipalAuthorityKey,
+    authority: &arkret_sdk::AccountId,
     realm_id: &str,
     strand_id: &str,
 ) -> anyhow::Result<std::collections::BTreeSet<String>> {
@@ -1276,7 +1276,7 @@ impl EventSubmitter {
         self
     }
 
-    pub(crate) fn with_authority(mut self, authority: arkret_sdk::PrincipalAuthorityKey) -> Self {
+    pub(crate) fn with_authority(mut self, authority: arkret_sdk::AccountId) -> Self {
         self.authority = Some(authority);
         self
     }
@@ -1300,10 +1300,10 @@ impl EventSubmitter {
         ))
     }
 
-    pub(crate) fn authority(&self) -> anyhow::Result<&arkret_sdk::PrincipalAuthorityKey> {
+    pub(crate) fn authority(&self) -> anyhow::Result<&arkret_sdk::AccountId> {
         self.authority.as_ref().ok_or_else(|| {
             anyhow::anyhow!(
-                "durable Event submission requires an active PrincipalAuthorityKey captured when the submitter was created"
+                "durable Event submission requires an active AccountId captured when the submitter was created"
             )
         })
     }
@@ -1898,12 +1898,12 @@ impl EventSubmitter {
             .await
     }
 
-    async fn verify_origin_principal_server(&self, intent: &EventIntent) -> anyhow::Result<()> {
+    async fn verify_origin_station(&self, intent: &EventIntent) -> anyhow::Result<()> {
         let origin = self.describe_cached().await?.service_id.clone();
-        if intent.principal_server_id() != &origin {
+        if intent.station_id() != &origin {
             anyhow::bail!(
-                "Event-declared origin {} does not match this Principal Server {}",
-                intent.principal_server_id(),
+                "Event-declared origin {} does not match this Station {}",
+                intent.station_id(),
                 origin
             );
         }
@@ -1919,7 +1919,7 @@ impl EventSubmitter {
             .to_string())
     }
 
-    /// Resolve and freeze the exact Principal Server signer used as the
+    /// Resolve and freeze the exact Station signer used as the
     /// single-signer notary for a newly created Realm.
     ///
     /// The descriptor is derived only from independently verified,
@@ -1993,7 +1993,7 @@ impl EventSubmitter {
     pub async fn send_scope_signal(
         &self,
         scope_ref: arkret_sdk::ScopeRef,
-        authority: &arkret_sdk::PrincipalAuthorityKey,
+        authority: &arkret_sdk::AccountId,
         device_id: &arkret_sdk::DeviceId,
         material: &crate::signal::SignalKeyMaterial,
         payload: &crate::signal::SignalPayload,
@@ -2022,7 +2022,7 @@ impl EventSubmitter {
     /// v1 has no plaintext branch to fall back to.
     pub async fn send_signal(
         &self,
-        authority: &arkret_sdk::PrincipalAuthorityKey,
+        authority: &arkret_sdk::AccountId,
         header: crate::signal::SignalHeader,
         material: &crate::signal::SignalKeyMaterial,
         payload: &crate::signal::SignalPayload,
@@ -2196,7 +2196,7 @@ impl EventSubmitter {
         digest_suite: arkret_sdk::DigestSuite,
     ) -> crate::event_signer::EventProofContext {
         // Durable Event envelopes are portable Realm facts. Binding their
-        // proof to the authoring Principal Server would make the original
+        // proof to the authoring Station would make the original
         // signature unverifiable after federation to another Realm host.
         crate::event_signer::EventProofContext::new().with_digest_suite(digest_suite)
     }
@@ -2900,7 +2900,7 @@ impl EventSubmitter {
         authoring: SemanticAuthoring,
         digest_suite: arkret_sdk::DigestSuite,
     ) -> anyhow::Result<AuthoredAttempt> {
-        self.verify_origin_principal_server(intent).await?;
+        self.verify_origin_station(intent).await?;
         let mut intent = intent.clone();
         // The authority-root claim is a producer-signed envelope member and a
         // SEMANTIC decision: a fresh submission may resolve one, while a replay
@@ -3330,7 +3330,7 @@ impl EventSubmitter {
         let mut chain = UnitAuthoringChain::default();
         for step in steps {
             for mut intent in step(&authored)? {
-                self.verify_origin_principal_server(&intent).await?;
+                self.verify_origin_station(&intent).await?;
                 validate_capability_grant_payload(&intent)?;
                 chain.observe(&intent, authored.is_empty())?;
                 let (actor_seq, prev_refs) = match chain.basis_within_unit(&intent)? {
@@ -3503,10 +3503,9 @@ impl EventSubmitter {
         &self,
         body: &arkret_models_collaboration::agent_operations::AgentKeyPairRequestBody,
     ) -> anyhow::Result<arkret_models_collaboration::agent_operations::AgentKeyPairOutcome> {
-        let principal_server_url = self.http.base_url().as_str();
+        let station_url = self.http.base_url().as_str();
         let authority =
-            crate::identity::account_auth::AuthorityResolver::discover(principal_server_url)
-                .await?;
+            crate::identity::account_auth::AuthorityResolver::discover(station_url).await?;
         let gate_account_base_url = url::Url::parse(&authority.gate_account_base_url)?;
         let authority_origin = gate_account_base_url.origin().ascii_serialization();
         let authority_http = account_authority_http_client(&authority_origin)?;

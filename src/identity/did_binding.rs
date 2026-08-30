@@ -72,7 +72,7 @@ pub(crate) const BINDING_HARD_EXPIRY_DAYS: i64 = 30;
 /// `did-usage-and-verification.md` §4 permits reusing an earlier verification
 /// result "only when it is bound to the same DID, trust domain, purpose, policy
 /// digest and an acceptable freshness". For a client the trust domain is *the
-/// deployment whose word we took* — i.e. the Principal Server origin the
+/// deployment whose word we took* — i.e. the Station origin the
 /// account is signed in to. Two accounts on two servers therefore never share
 /// an acceptance even if the same DID appears in both.
 #[derive(Clone, Debug, PartialEq, Eq)]

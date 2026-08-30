@@ -262,7 +262,7 @@ fn missing_creation_handoff_surface(
 
 fn profile_id_for_authority(
     state_store: &crate::state::LocalStateStore,
-    authority: &arkret_sdk::PrincipalAuthorityKey,
+    authority: &arkret_sdk::AccountId,
 ) -> String {
     state_store
         .known_profile_id_for_authority(authority)
@@ -275,14 +275,12 @@ async fn resolve_handoff_active_account(
     device_id: arkret_sdk::DeviceId,
     state_store: SyncSignal<crate::state::LocalStateStore>,
 ) -> anyhow::Result<crate::config::ActiveAccountContext> {
-    let authority = arkret_sdk::PrincipalAuthorityKey::new(
+    let authority = arkret_sdk::AccountId::new(
         arkret_sdk::project_did_to_core_id(did)?,
         handoff.audience_id.clone(),
     );
     let profile_id = profile_id_for_authority(&state_store.read(), &authority);
-    let server_url = url::Url::parse(&crate::config::normalize_server_url(
-        &handoff.principal_server_url,
-    ))?;
+    let server_url = url::Url::parse(&crate::config::normalize_server_url(&handoff.station_url))?;
     let http = crate::transport::TransportClient::unauthenticated(server_url.as_str())?
         .sdk_http_client()?;
     crate::transport::account::resolve_active_account_context(
@@ -724,9 +722,8 @@ async fn stage_device_setup_pairing(
         .bound_principal_id
         .clone()
         .ok_or_else(|| anyhow::anyhow!("bound account principal is missing"))?;
-    let principal_server_id = handoff.audience_id.clone();
-    let authority =
-        arkret_sdk::PrincipalAuthorityKey::new(principal_id.clone(), principal_server_id);
+    let station_id = handoff.audience_id.clone();
+    let authority = arkret_sdk::AccountId::new(principal_id.clone(), station_id);
     let handoff_device = arkret_sdk::DeviceId::new(handoff.device_id.clone())?;
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
     let user_store =
@@ -784,7 +781,7 @@ async fn stage_device_setup_pairing(
             ..Default::default()
         }),
     };
-    let http = crate::transport::TransportClient::unauthenticated(&handoff.principal_server_url)?
+    let http = crate::transport::TransportClient::unauthenticated(&handoff.station_url)?
         .sdk_http_client()?;
     let stage = http.device_pairing_stage(&stage_body).await?;
     let challenge =
@@ -818,7 +815,7 @@ async fn stage_device_setup_pairing(
     let token =
         device_pairing_handoff_token(&stage.device_pairing_request_id, &stage.pairing_code)?;
     let deep_link = device_pairing_deep_link(
-        &handoff.principal_server_url,
+        &handoff.station_url,
         &token,
         &challenge_proof,
         &target_attestation,
@@ -841,7 +838,7 @@ async fn check_device_setup_pairing(
         .bound_principal_did
         .clone()
         .ok_or_else(|| anyhow::anyhow!("bound account principal DID is missing"))?;
-    let http = crate::transport::TransportClient::unauthenticated(&handoff.principal_server_url)?
+    let http = crate::transport::TransportClient::unauthenticated(&handoff.station_url)?
         .sdk_http_client()?;
     let outcome = http
         .device_pairing_status(&arkret_sdk::DevicePairingStatusRequestBody {
@@ -862,7 +859,7 @@ async fn check_device_setup_pairing(
     if request.pending_key {
         let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
         let pending = crate::secure_key_store::PendingLocalStore::new(request.device_id.clone());
-        let authority = arkret_sdk::PrincipalAuthorityKey::new(
+        let authority = arkret_sdk::AccountId::new(
             handoff
                 .bound_principal_id
                 .clone()
@@ -1234,12 +1231,12 @@ async fn recover_bound_principal_device(
     let session = api
         .create_recovery_session(&arkret_models_crypto::RecoverySessionCreateRequestBody {
             request_id: arkret_sdk::RequestId::new(handoff.request_id.clone())?,
-            principal_authority: arkret_sdk::PrincipalAuthorityKey::new(
+            account_id: arkret_sdk::AccountId::new(
                 handoff
                     .bound_principal_id
                     .clone()
                     .context("bound recovery handoff has no principal id")?,
-                crate::operation::authoring_principal_server_id()?,
+                crate::operation::authoring_station_id()?,
             ),
             requesting_device_id: arkret_sdk::DeviceId::new(replacement_device_id.to_owned())?,
             trust_domain: arkret_sdk::TrustDomainId::new(handoff.trust_domain.clone())?,
@@ -1328,7 +1325,7 @@ async fn issue_recovery_session_transport(
     {
         anyhow::bail!("recovery SessionGrant outcome changed its frozen authority binding");
     }
-    crate::transport::TransportClient::unauthenticated(&handoff.principal_server_url)?
+    crate::transport::TransportClient::unauthenticated(&handoff.station_url)?
         .with_session_grant_dpop(outcome.session_grant, holder)
 }
 
@@ -1339,8 +1336,7 @@ async fn activate_recovery_replacement_signer(
         .bound_principal_id
         .as_ref()
         .context("bound recovery handoff has no principal")?;
-    let authority =
-        arkret_sdk::PrincipalAuthorityKey::new(principal_id.clone(), handoff.audience_id.clone());
+    let authority = arkret_sdk::AccountId::new(principal_id.clone(), handoff.audience_id.clone());
     let device_id = arkret_sdk::DeviceId::new(handoff.device_id.clone())?;
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
     let user_store = crate::secure_key_store::UserLocalStore::new(authority, device_id.clone())?;
@@ -1381,8 +1377,7 @@ async fn issue_recovery_completion_grant(
     let account_handoff_grant = crate::identity::account_auth::load_account_handoff_grant(handoff)?
         .ok_or_else(|| anyhow::anyhow!("account handoff credential is unavailable"))?;
     let authority =
-        crate::identity::account_auth::AuthorityResolver::discover(&handoff.principal_server_url)
-            .await?;
+        crate::identity::account_auth::AuthorityResolver::discover(&handoff.station_url).await?;
     let account_base = crate::identity::session_refresh::sdk_base_url_from_gate_account_base_url(
         &authority.gate_account_base_url,
     )?;
@@ -1455,7 +1450,7 @@ async fn issue_recovery_completion_grant(
         principal_id: session.principal_id.clone(),
         service_account_id: session.service_account_id.clone(),
         device_id: arkret_sdk::DeviceId::new(handoff.device_id.clone())?,
-        principal_server_url: url::Url::parse(&handoff.principal_server_url)?,
+        station_url: url::Url::parse(&handoff.station_url)?,
         grant_expires_at: Some(session.expires_at),
         stored_at: chrono::Utc::now(),
     };
@@ -1584,12 +1579,10 @@ fn accepted_account_session_client(
     grant: &crate::state::PersistedSessionGrant,
     dpop: &crate::identity::account_auth::grant_dpop::DpopHandle,
 ) -> anyhow::Result<crate::transport::TransportClient> {
-    if !crate::identity::session_refresh::grant_matches_principal_server(
-        grant,
-        account.server_url.as_str(),
-    ) || !crate::identity::session_refresh::grant_matches_principal_did(grant, account.did())
+    if !crate::identity::session_refresh::grant_matches_station(grant, account.server_url.as_str())
+        || !crate::identity::session_refresh::grant_matches_principal_did(grant, account.did())
         || grant.device_id != account.device_id
-        || grant.audience_id != account.authority.principal_server_id
+        || grant.audience_id != account.authority.station_id
     {
         anyhow::bail!("session grant does not belong to the accepted onboarding account");
     }
@@ -1750,19 +1743,17 @@ async fn collect_bound_completion_resume_inventory(
     };
     let authority_matches = arkret_sdk::project_did_to_core_id(&checkpoint.did)
         .is_ok_and(|principal_id| principal_id == account.authority.principal_id)
-        && handoff.audience_id == account.authority.principal_server_id
+        && handoff.audience_id == account.authority.station_id
         && handoff.bound_principal_id.as_ref() == Some(&account.authority.principal_id)
         && handoff.bound_principal_did.as_ref() == Some(&checkpoint.did);
     let device_slot_matches = stored_device_id
         .as_ref()
         .is_none_or(|device_id| device_id == &account.device_id);
     let grant_matches_account = session_grant.as_ref().is_some_and(|grant| {
-        crate::identity::session_refresh::grant_matches_principal_server(
-            grant,
-            account.server_url.as_str(),
-        ) && crate::identity::session_refresh::grant_matches_principal_did(grant, account.did())
+        crate::identity::session_refresh::grant_matches_station(grant, account.server_url.as_str())
+            && crate::identity::session_refresh::grant_matches_principal_did(grant, account.did())
             && grant.device_id == account.device_id
-            && grant.audience_id == account.authority.principal_server_id
+            && grant.audience_id == account.authority.station_id
     });
     let grant_is_live = session_grant
         .as_ref()
@@ -1907,7 +1898,7 @@ async fn reissue_accepted_onboarding_session(
             ))
         })?;
     let authority =
-        crate::identity::account_auth::AuthorityResolver::discover(&handoff.principal_server_url)
+        crate::identity::account_auth::AuthorityResolver::discover(&handoff.station_url)
             .await
             .map_err(|error| {
                 AcceptedSessionReissueError::Retryable(
@@ -1923,7 +1914,7 @@ async fn reissue_accepted_onboarding_session(
             .with_principal_id(account.principal_id().clone())
             .with_device_id(account.device_id.as_str());
     let issued = crate::views::login::issue_bound_handoff_session(
-        &handoff.principal_server_url,
+        &handoff.station_url,
         &account_base,
         handoff,
         &handoff_grant,
@@ -2330,7 +2321,7 @@ fn PendingAccountIdentityCreation(
     } else {
         1
     };
-    let hosting_name = hosting_label(&handoff.principal_server_url);
+    let hosting_name = hosting_label(&handoff.station_url);
     let resumes_reserved_identity = key_source.peek().requires_existing_key();
     let reoffers_retained_key = key_source.peek().was_recovered_from_secure_store();
     let handoff_for_creation = handoff.clone();
@@ -3008,7 +2999,7 @@ async fn create_and_bind_identity(
         let device_public_key = format!("did:key:{device_public_key_multibase}");
         let hpke_key = {
             let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-            let authority = arkret_sdk::PrincipalAuthorityKey::new(
+            let authority = arkret_sdk::AccountId::new(
                 arkret_sdk::project_did_to_core_id(&checkpoint.did)?,
                 handoff.audience_id.clone(),
             );
@@ -3141,7 +3132,7 @@ async fn create_and_bind_identity(
             principal_id: completion.session_grant.principal_id.clone(),
             service_account_id: completion.session_grant.service_account_id.clone(),
             device_id: arkret_sdk::DeviceId::new(device.to_owned())?,
-            principal_server_url: url::Url::parse(&handoff.principal_server_url)?,
+            station_url: url::Url::parse(&handoff.station_url)?,
             grant_expires_at: Some(completion.session_grant.expires_at),
             stored_at: chrono::Utc::now(),
         };
@@ -3581,10 +3572,8 @@ fn validate_completed_recovery_material(
         .pcr_genesis_receipt
         .as_ref()
         .context("completed recovery checkpoint omits its PCR genesis receipt")?;
-    let expected_authority = arkret_sdk::PrincipalAuthorityKey::new(
-        account.principal_id().clone(),
-        receipt.issuer_id.clone(),
-    );
+    let expected_authority =
+        arkret_sdk::AccountId::new(account.principal_id().clone(), receipt.issuer_id.clone());
     if evidence.principal_id != *account.principal_id()
         || evidence.principal_did != *account.did()
         || evidence.device_id != account.device_id
@@ -3710,14 +3699,13 @@ async fn finish_principal_setup(
         .clone()
         .context("recovery-material evidence omits PCR genesis unit")?;
     let principal_id = account.principal_id().clone();
-    let principal_server_id = registration
+    let station_id = registration
         .pcr_genesis_receipt
         .as_ref()
         .context("recovery-material evidence omits PCR genesis receipt")?
         .issuer_id
         .clone();
-    let controller_authority =
-        arkret_sdk::PrincipalAuthorityKey::new(principal_id.clone(), principal_server_id);
+    let controller_authority = arkret_sdk::AccountId::new(principal_id.clone(), station_id);
     let recovery_material_evidence = crate::state::RecoveryMaterialEvidence {
         principal_id,
         service_account_id: completed.persisted_grant.service_account_id.clone(),
@@ -3802,7 +3790,7 @@ mod tests {
             arkret_sdk::Did::new("did:webvh:z6mkfixture:principal.example".to_owned()).unwrap();
         crate::config::ActiveAccountContext::new(
             "ak:profile:test".to_owned(),
-            arkret_sdk::PrincipalAuthorityKey::new(
+            arkret_sdk::AccountId::new(
                 arkret_sdk::project_did_to_core_id(&did).unwrap(),
                 arkret_sdk::DidCoreId::new(
                     "ak:did_core:webvh:z6mkfixture:server.example".to_owned(),
@@ -4048,11 +4036,11 @@ mod tests {
             grant_jwt: "signed.session.grant".to_owned(),
             session_private_key_pem: String::new(),
             grant_id: "ak:session_grant:Af0GheZX08ev4L1fQoFdngIpe5c_9Lk7SQqfN4jztzDW".to_owned(),
-            audience_id: account.authority.principal_server_id.clone(),
+            audience_id: account.authority.station_id.clone(),
             principal_id: account.authority.principal_id.clone(),
             service_account_id: arkret_sdk::ServiceAccountId::new("account-1").unwrap(),
             device_id: account.device_id.clone(),
-            principal_server_url: account.server_url.clone(),
+            station_url: account.server_url.clone(),
             grant_expires_at: Some(chrono::Utc::now() + chrono::Duration::hours(1)),
             stored_at: chrono::Utc::now(),
         };
@@ -4889,7 +4877,7 @@ mod tests {
         lease_fence: Option<u64>,
     ) -> crate::state::PendingAccountHandoff {
         crate::state::PendingAccountHandoff {
-            principal_server_url: "https://principal.example".to_owned(),
+            station_url: "https://principal.example".to_owned(),
             gate_account_base_url: "https://auth.example/_arkret/gate/account".to_owned(),
             request_id: request_id.to_owned(),
             oidc_state: None,

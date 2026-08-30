@@ -140,7 +140,7 @@ pub fn CapabilitiesSettingsCard(principal_id: Signal<String>, token: Signal<Stri
                 return;
             }
         };
-        let principal_server_id = match crate::operation::authoring_principal_server_id() {
+        let station_id = match crate::operation::authoring_station_id() {
             Ok(value) => value,
             Err(error) => {
                 status.set(format!("Failed to load capabilities: {error}"));
@@ -156,7 +156,7 @@ pub fn CapabilitiesSettingsCard(principal_id: Signal<String>, token: Signal<Stri
                         &http,
                         &realm_id,
                         &subject,
-                        &principal_server_id,
+                        &station_id,
                     )
                     .await?;
                     grants.extend(
@@ -490,7 +490,7 @@ mod tests {
             "schema": "ak.schema.capability.v1",
             "realm_id": "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-",
             "issuer_id": "ak:did_core:web:alice.example",
-            "issuer_principal_server_id": "ak:did_core:web:principal.example",
+            "issuer_station_id": "ak:did_core:web:principal.example",
             "subject": subject,
             "actions": ["ak.message.create"],
             "resources": [
@@ -511,7 +511,7 @@ mod tests {
             }]
         });
         if principal_subject {
-            value["subject_principal_server_id"] = json!("ak:did_core:web:principal.example");
+            value["subject_station_id"] = json!("ak:did_core:web:principal.example");
         }
         serde_json::from_value(value).expect("sample grant decodes as SDK CapabilityGrant")
     }

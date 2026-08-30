@@ -3,7 +3,7 @@ use super::*;
 #[component]
 pub(super) fn ChatEffects(
     controller: ChatController,
-    authority: arkret_sdk::PrincipalAuthorityKey,
+    authority: arkret_sdk::AccountId,
     principal_id: String,
     device_id: arkret_sdk::DeviceId,
     selected_realm_id: String,

@@ -52,10 +52,8 @@ pub async fn refresh_pending_onboarding(
                 .bound_principal_id
                 .as_ref()
                 .ok_or_else(|| anyhow::anyhow!("account handoff holder key is unavailable"))?;
-            let authority = arkret_sdk::PrincipalAuthorityKey::new(
-                principal_id.clone(),
-                handoff.audience_id.clone(),
-            );
+            let authority =
+                arkret_sdk::AccountId::new(principal_id.clone(), handoff.audience_id.clone());
             let user_store =
                 crate::secure_key_store::UserLocalStore::new(authority, pending_device_id.clone())?;
             let stored_device = user_store
@@ -308,7 +306,7 @@ pub(crate) fn checkpoint_continues_bound_creation(
         .as_ref()
         == Some(bound)
         && checkpoint.device_id == handoff.device_id
-        && checkpoint.principal_server_url == handoff.principal_server_url
+        && checkpoint.station_url == handoff.station_url
         && checkpoint.gate_account_base_url == handoff.gate_account_base_url
         && checkpoint.trust_domain == handoff.trust_domain
         && checkpoint.account_subject.is_some()
@@ -378,7 +376,7 @@ mod tests {
         crate::state::PendingPrincipalRegistration,
     ) {
         let handoff = PendingAccountHandoff {
-            principal_server_url: "https://principal.example".to_owned(),
+            station_url: "https://principal.example".to_owned(),
             gate_account_base_url: "https://auth.example/_arkret/gate/account".to_owned(),
             request_id: "ak:request:019f0000-0000-7000-8000-000000000010".to_owned(),
             oidc_state: None,

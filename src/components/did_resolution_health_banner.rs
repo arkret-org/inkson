@@ -15,7 +15,7 @@ pub enum DidResolutionHealthReason {
     IdentityDescribeFailedStaleCache,
     IdentityDescribeFailedNoCache,
     UnsupportedIdentityProtocol,
-    UnsupportedPrincipalServer,
+    UnsupportedStation,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -44,9 +44,9 @@ impl DidResolutionHealth {
         Self::Healthy
     }
 
-    pub fn unsupported_principal_server() -> Self {
+    pub fn unsupported_station() -> Self {
         Self::Outage {
-            reason: DidResolutionHealthReason::UnsupportedPrincipalServer,
+            reason: DidResolutionHealthReason::UnsupportedStation,
         }
     }
 
@@ -105,7 +105,7 @@ impl DidResolutionHealth {
                     }
                 }
                 DidResolutionHealthReason::IdentityDescribeFailedNoCache
-                | DidResolutionHealthReason::UnsupportedPrincipalServer => {
+                | DidResolutionHealthReason::UnsupportedStation => {
                     DidResolutionHealthPresentation {
                         token: "degraded",
                         label: "did_health.label.degraded",
@@ -123,14 +123,12 @@ impl DidResolutionHealth {
                         detail: "did_health.detail.no_cache",
                     }
                 }
-                DidResolutionHealthReason::UnsupportedPrincipalServer => {
-                    DidResolutionHealthPresentation {
-                        token: "outage",
-                        label: "did_health.label.server_metadata",
-                        title: "did_health.title.service_unavailable",
-                        detail: "did_health.detail.server_metadata",
-                    }
-                }
+                DidResolutionHealthReason::UnsupportedStation => DidResolutionHealthPresentation {
+                    token: "outage",
+                    label: "did_health.label.server_metadata",
+                    title: "did_health.title.service_unavailable",
+                    detail: "did_health.detail.server_metadata",
+                },
                 DidResolutionHealthReason::IdentityDescribeFailedFreshCache
                 | DidResolutionHealthReason::IdentityDescribeFailedStaleCache
                 | DidResolutionHealthReason::UnsupportedIdentityProtocol => {

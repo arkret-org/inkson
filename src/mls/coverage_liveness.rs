@@ -108,7 +108,7 @@ pub(crate) async fn ensure_mls_governance_coverage(
     mut state_store: SyncSignal<LocalStateStore>,
     realm_id: &str,
     circle_id: Option<&str>,
-    authority: &arkret_sdk::PrincipalAuthorityKey,
+    authority: &arkret_sdk::AccountId,
     device_id: &arkret_sdk::DeviceId,
 ) -> Result<bool, String> {
     let actor_id = authority.principal_id.as_str();

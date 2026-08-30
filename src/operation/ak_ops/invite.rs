@@ -112,10 +112,10 @@ fn invite_cancel_payload(
     Ok((payload, invite_id_ref))
 }
 
-pub fn invite_cancel_for_principal_server(
+pub fn invite_cancel_for_station(
     realm_id: &str,
     actor: &str,
-    principal_server_id: arkret_sdk::DidCoreId,
+    station_id: arkret_sdk::DidCoreId,
     invite_id: &str,
     invitee: &str,
     target_state: &str,
@@ -123,11 +123,8 @@ pub fn invite_cancel_for_principal_server(
 ) -> anyhow::Result<TypedOperationBuilder> {
     let (payload, invite_id_ref) = invite_cancel_payload(invite_id, invitee, target_state, reason)?;
     Ok(
-        TypedOperationBuilder::new_for_principal_server::<arkret_sdk::event_spec::InviteCancel>(
-            realm_id,
-            actor,
-            principal_server_id,
-            payload,
+        TypedOperationBuilder::new_for_station::<arkret_sdk::event_spec::InviteCancel>(
+            realm_id, actor, station_id, payload,
         )
         .target_ref(invite_id_ref),
     )

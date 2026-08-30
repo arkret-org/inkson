@@ -98,7 +98,7 @@ fn handle_resolution_exposes_delivery_binding_without_requiring_it_for_invites()
             "created_at": "2026-06-12T08:00:00.000Z",
             "member_delivery_binding": {
                 "recipient_id": "ak:did_core:web:local.host",
-                "recipient_kind": "principal_server",
+                "recipient_kind": "station",
                 "binding_source": "explicit",
                 "delivery_modes": ["events"]
             }

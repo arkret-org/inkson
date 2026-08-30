@@ -214,7 +214,7 @@ async fn ensure_initial_active_series(
         .any(|digest| digest == &active_series_digest)
     {
         return Err(anyhow!(
-            "Principal Server did not seal the {wire_kind} active-series Event"
+            "Station did not seal the {wire_kind} active-series Event"
         ));
     }
 
@@ -302,7 +302,7 @@ async fn fetch_active_series_tail(
 pub async fn upload_mls_account_secret_backup_with_passphrase(
     api: &crate::transport::TransportClient,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
-    authority: &arkret_sdk::PrincipalAuthorityKey,
+    authority: &arkret_sdk::AccountId,
     control_realm: &arkret_sdk::RealmId,
     actor_id: &str,
     device_id: &str,
@@ -382,7 +382,7 @@ pub async fn upload_mls_account_secret_backup_with_passphrase(
 pub async fn upload_mls_account_secret_backup_with_recovery_key(
     api: &crate::transport::TransportClient,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
-    authority: &arkret_sdk::PrincipalAuthorityKey,
+    authority: &arkret_sdk::AccountId,
     control_realm: &arkret_sdk::RealmId,
     actor_id: &str,
     device_id: &str,
@@ -410,7 +410,7 @@ pub async fn upload_mls_account_secret_backup_with_recovery_key(
 pub async fn upload_mls_account_secret_backup_with_recovery_public_key(
     api: &crate::transport::TransportClient,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
-    authority: &arkret_sdk::PrincipalAuthorityKey,
+    authority: &arkret_sdk::AccountId,
     control_realm: &arkret_sdk::RealmId,
     actor_id: &str,
     device_id: &str,
@@ -496,7 +496,7 @@ pub async fn upload_local_authoritative_mls_history_backups_with_recovery_public
     api: &crate::transport::TransportClient,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
     state_store: &crate::state::LocalStateStore,
-    authority: &arkret_sdk::PrincipalAuthorityKey,
+    authority: &arkret_sdk::AccountId,
     control_realm: &arkret_sdk::RealmId,
     actor_id: &str,
     device_id: &str,
@@ -618,7 +618,7 @@ pub(crate) async fn upload_local_authoritative_mls_history_records_with_recovery
 pub async fn upload_mls_private_plaintext_backup(
     api: &crate::transport::TransportClient,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
-    authority: &arkret_sdk::PrincipalAuthorityKey,
+    authority: &arkret_sdk::AccountId,
     control_realm: &arkret_sdk::RealmId,
     actor_id: &str,
     device_id: &str,
@@ -677,7 +677,7 @@ pub async fn fetch_mls_private_plaintext_backup_body(
 pub async fn upload_mls_private_plaintext_backup_with_previous(
     api: &crate::transport::TransportClient,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
-    authority: &arkret_sdk::PrincipalAuthorityKey,
+    authority: &arkret_sdk::AccountId,
     control_realm: &arkret_sdk::RealmId,
     actor_id: &str,
     device_id: &str,

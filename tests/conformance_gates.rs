@@ -250,15 +250,15 @@ const TEST_ANCHOR_REF: &str =
     "ak:seal:sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 
 fn test_genesis_salt() -> arkret_sdk::GenesisSalt {
-    select_authoring_principal_server();
+    select_authoring_station();
     arkret_sdk::GenesisSalt::new("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
         .expect("test Realm genesis salt is canonical")
 }
 
-fn select_authoring_principal_server() {
-    inkson::operation::set_authoring_principal_server_id(Some(
+fn select_authoring_station() {
+    inkson::operation::set_authoring_station_id(Some(
         arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example".to_owned())
-            .expect("test Principal Server core id is canonical"),
+            .expect("test Station core id is canonical"),
     ));
 }
 
@@ -509,7 +509,7 @@ fn build_realm_create_event_matches_event_schema() {
 
 #[test]
 fn build_space_create_event_matches_event_schema() {
-    select_authoring_principal_server();
+    select_authoring_station();
     let envelope = event_builders::build_space_create_event(
         TEST_REALM_ID,
         TEST_ACTOR_ID,
@@ -526,7 +526,7 @@ fn build_space_create_event_matches_event_schema() {
 
 #[test]
 fn build_space_lifecycle_event_archive_matches_event_schema() {
-    select_authoring_principal_server();
+    select_authoring_station();
     let envelope = event_builders::build_space_lifecycle_event(
         TEST_SPACE_ID,
         TEST_REALM_ID,
@@ -540,7 +540,7 @@ fn build_space_lifecycle_event_archive_matches_event_schema() {
 
 #[test]
 fn build_space_lifecycle_event_restore_matches_event_schema() {
-    select_authoring_principal_server();
+    select_authoring_station();
     let envelope = event_builders::build_space_lifecycle_event(
         TEST_SPACE_ID,
         TEST_REALM_ID,
@@ -554,7 +554,7 @@ fn build_space_lifecycle_event_restore_matches_event_schema() {
 
 #[test]
 fn build_space_lifecycle_event_tombstone_matches_event_schema() {
-    select_authoring_principal_server();
+    select_authoring_station();
     let envelope = event_builders::build_space_lifecycle_event(
         TEST_SPACE_ID,
         TEST_REALM_ID,
@@ -568,7 +568,7 @@ fn build_space_lifecycle_event_tombstone_matches_event_schema() {
 
 #[test]
 fn build_realm_state_event_join_rule_matches_event_schema() {
-    select_authoring_principal_server();
+    select_authoring_station();
     let envelope =
         event_builders::build_realm_state_event::<arkret_sdk::event_spec::RealmJoinRule>(
             TEST_REALM_ID,
@@ -583,7 +583,7 @@ fn build_realm_state_event_join_rule_matches_event_schema() {
 
 #[test]
 fn build_realm_state_event_history_access_matches_event_schema() {
-    select_authoring_principal_server();
+    select_authoring_station();
     let envelope =
         event_builders::build_realm_state_event::<arkret_sdk::event_spec::RealmHistoryAccess>(
             TEST_REALM_ID,
@@ -598,7 +598,7 @@ fn build_realm_state_event_history_access_matches_event_schema() {
 
 #[test]
 fn build_realm_preview_policy_event_matches_event_schema() {
-    select_authoring_principal_server();
+    select_authoring_station();
     let envelope =
         event_builders::build_realm_state_event::<arkret_sdk::event_spec::RealmPreviewPolicy>(
             TEST_REALM_ID,
@@ -625,7 +625,7 @@ fn build_realm_preview_policy_event_matches_event_schema() {
 
 #[test]
 fn build_member_state_transition_event_matches_event_schema() {
-    select_authoring_principal_server();
+    select_authoring_station();
     let envelope = event_builders::build_member_state_transition_event(
         TEST_REALM_ID,
         TEST_ACTOR_ID,
@@ -641,7 +641,7 @@ fn build_member_state_transition_event_matches_event_schema() {
 
 #[test]
 fn build_plaintext_visible_services_event_matches_event_schema() {
-    select_authoring_principal_server();
+    select_authoring_station();
     let envelope = event_builders::build_plaintext_visible_services_event(
         TEST_REALM_ID,
         TEST_ACTOR_ID,
@@ -795,7 +795,7 @@ fn realm_bootstrap_carries_alias_as_a_facet_event_not_on_the_closed_realm_object
 /// id from it before authoring the provision declaration.
 #[test]
 fn managed_agent_pcr_prepare_builds_an_exact_ref_free_create() {
-    select_authoring_principal_server();
+    select_authoring_station();
     let agent_did = arkret_sdk::Did::new("did:web:agent.example").unwrap();
     let root_public_key = arkret_sdk::ed25519_pubkey_to_did_key_multibase(&[7_u8; 32]);
     let events = common::author_unit(

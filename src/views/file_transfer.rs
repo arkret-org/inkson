@@ -340,7 +340,7 @@ fn FileTransferRow(
 fn refresh_items(
     base_url: String,
     api_token: String,
-    authority: arkret_sdk::PrincipalAuthorityKey,
+    authority: arkret_sdk::AccountId,
     actor_id: String,
     _device_id: String,
     mut items: Signal<Vec<FileTransferItem>>,

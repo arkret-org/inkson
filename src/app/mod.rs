@@ -12,7 +12,7 @@ use crate::config::{ClientConfig, LocalConfigStore, normalize_server_url};
 use crate::conformance::profile_ready;
 use crate::i18n::{TextDirection, UiLocale};
 use crate::models::{
-    RealmTreeNode, RealmTreeNodeKind, ServiceDescribe, missing_v1_principal_server_requirements,
+    RealmTreeNode, RealmTreeNodeKind, ServiceDescribe, missing_v1_station_requirements,
     projection_realm_id_for_known_node, service_supports_event_envelope_write_plane,
 };
 // R28-B — realm-tree / projection / field-extraction helpers moved to
@@ -253,12 +253,7 @@ fn AppBootstrap() -> Element {
     let initial_server_url = initial_active_account
         .as_ref()
         .map(|account| account.server_url.to_string())
-        .or_else(|| {
-            initial_config
-                .principal_servers
-                .first()
-                .map(ToString::to_string)
-        })
+        .or_else(|| initial_config.stations.first().map(ToString::to_string))
         .unwrap_or_else(|| "https://local.host".to_owned());
     let initial_principal_id = initial_active_account
         .as_ref()
@@ -1045,8 +1040,8 @@ fn AppBootstrap() -> Element {
     let sidebar_is_collapsed = sidebar_collapsed();
     let sidebar_is_resizing = sidebar_resizing();
     let server_menu_is_open = server_menu_open();
-    let configured_principal_servers = config_store.read().load().principal_servers;
-    let server_options = server_options_for(&base_url(), &configured_principal_servers);
+    let configured_stations = config_store.read().load().stations;
+    let server_options = server_options_for(&base_url(), &configured_stations);
     let sidebar_style = format!("--sidebar-w: {:.0}px;", sidebar_width());
     let theme_is_night = theme_renders_as_night(&active_theme, system_theme_is_night());
     // The shell's `data-theme` carries the *raw* chosen mode
@@ -3818,7 +3813,7 @@ fn AppBootstrap() -> Element {
                                                     };
                                                     // Capture the grant + grant-binding key BEFORE the
                                                     // local wipe below: hard logout MUST also terminate
-                                                    // the Auth Server session (revoke grant + finish
+                                                    // the private authentication session (revoke grant + finish
                                                     // browser session) so the rotation chain can't be
                                                     // resumed (account-lifecycle §4.1), and that needs
                                                     // the grant JWT + a grant-binding DPoP proof.
@@ -3850,12 +3845,12 @@ fn AppBootstrap() -> Element {
                                                             device_jkt: logout_device_handle
                                                                 .as_ref()
                                                                 .map(|handle| handle.jkt().to_owned()),
-                                                            principal_server_url: logout_grant
+                                                            station_url: logout_grant
                                                                 .as_ref()
-                                                                .map(|grant| grant.principal_server_url.clone()),
+                                                                .map(|grant| grant.station_url.clone()),
                                                             // T1.Y4 — re-resolved at
                                                             // logout time from the
-                                                            // principal server's
+                                                            // Station's
                                                             // describe.auth_metadata.
                                                             gate_account_base_url: None,
                                                             base_url: active.server_url.clone(),

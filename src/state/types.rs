@@ -612,7 +612,7 @@ where
 /// resumed bootstrap must ask the user to re-enter the cold recovery secret.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct PendingAccountHandoff {
-    pub principal_server_url: String,
+    pub station_url: String,
     pub gate_account_base_url: String,
     pub request_id: String,
     /// OIDC state whose authenticated callback created this handoff. This is
@@ -670,7 +670,7 @@ pub struct PendingAccountHandoff {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct PendingPrincipalRegistration {
-    pub principal_server_url: String,
+    pub station_url: String,
     pub gate_account_base_url: String,
     pub handoff_request_id: String,
     /// Account Authority handle copied only for UI display and artifact naming.
@@ -748,7 +748,7 @@ pub struct RecoveryMaterialEvidence {
     pub bootstrap_seal: arkret_sdk::Seal,
     /// Public account authority pair used for controller-authorized operations.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub controller_authority: Option<arkret_sdk::PrincipalAuthorityKey>,
+    pub controller_authority: Option<arkret_sdk::AccountId>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -1268,7 +1268,7 @@ pub struct ClientLocalState {
     #[serde(default)]
     pub pending_personal_block_sagas: BTreeSet<String>,
     /// Round 4 (spec a77b995) — last `trust_domain` advertised by the
-    /// connected principal server's Round 4 `ServiceDescribe` response.
+    /// connected Station's Round 4 `ServiceDescribe` response.
     /// Threaded through to strands that need to canonicalise into
     /// transport / signing transcripts.
     /// `None` until the first successful `/server/describe` lands.
@@ -1317,7 +1317,7 @@ pub struct ClientLocalState {
 #[serde(deny_unknown_fields)]
 pub struct AccountIndexEntry {
     pub profile_id: String,
-    pub authority: arkret_sdk::PrincipalAuthorityKey,
+    pub authority: arkret_sdk::AccountId,
 }
 
 /// Cross-account UI device preferences — the ONLY part of local state shared
@@ -1398,10 +1398,7 @@ impl RootIndex {
     }
 
     #[cfg(test)]
-    pub fn authority_for_profile(
-        &self,
-        profile_id: &str,
-    ) -> Option<&arkret_sdk::PrincipalAuthorityKey> {
+    pub fn authority_for_profile(&self, profile_id: &str) -> Option<&arkret_sdk::AccountId> {
         self.known_profiles
             .iter()
             .find(|known| known.profile_id == profile_id)
@@ -1475,8 +1472,8 @@ pub struct PersistedSessionGrant {
     pub service_account_id: arkret_sdk::ServiceAccountId,
     /// Device id bound to the grant.
     pub device_id: arkret_sdk::DeviceId,
-    /// Principal-server base URL whose `/_arkret/self/*` surface accepts this grant.
-    pub principal_server_url: url::Url,
+    /// Station base URL whose `/_arkret/self/*` surface accepts this grant.
+    pub station_url: url::Url,
     /// When the grant itself stops being usable. Once we pass this the
     /// next refresh attempt will fail and the user must re-login.
     #[serde(default)]
@@ -1637,8 +1634,8 @@ impl MlsReceiveOverlay {
 mod authority_root_tests {
     use super::*;
 
-    fn authority(server: &str) -> arkret_sdk::PrincipalAuthorityKey {
-        arkret_sdk::PrincipalAuthorityKey::new(
+    fn authority(server: &str) -> arkret_sdk::AccountId {
+        arkret_sdk::AccountId::new(
             arkret_sdk::DidCoreId::new("ak:did_core:webvh:zAlice".to_owned()).unwrap(),
             arkret_sdk::DidCoreId::new(server.to_owned()).unwrap(),
         )

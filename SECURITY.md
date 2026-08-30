@@ -100,7 +100,7 @@ register-device request whose `push_key` matches the documented
 placeholder markers BEFORE the body crosses the wire. The chime
 orchestrator (`crate::push_registration::register_via_chime`) calls
 this guard between resolving the real provider token and posting to
-the principal server; a buggy provider that returns a placeholder
+the Station; a buggy provider that returns a placeholder
 trips a `PushRegistrationError::PlaceholderTokenRejected` fail-closed
 error rather than leaking the marker to floria.
 

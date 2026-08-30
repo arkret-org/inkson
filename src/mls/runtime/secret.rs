@@ -7,7 +7,7 @@
 
 use std::collections::BTreeMap;
 
-use arkret_sdk::{DeviceId, PrincipalAuthorityKey};
+use arkret_sdk::{AccountId, DeviceId};
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 
@@ -60,10 +60,10 @@ pub struct AccountMlsSecretRotation {
 
 /// Account-scoped storage key for a specific MLS snapshot-secret version.
 pub fn account_mls_secret_key_for_version(
-    authority: &PrincipalAuthorityKey,
+    authority: &AccountId,
     version: u32,
 ) -> Result<String, SecureKeyStoreError> {
-    let authority_digest = crate::secure_key_store::principal_authority_storage_digest(authority)?;
+    let authority_digest = crate::secure_key_store::account_id_storage_digest(authority)?;
     Ok(format!(
         "{ACCOUNT_MLS_SECRET_PREFIX}.v{version}.{authority_digest}"
     ))
@@ -71,9 +71,7 @@ pub fn account_mls_secret_key_for_version(
 
 /// Default write key for the account-scoped MLS snapshot secret shared by every
 /// device of the account. Recoverable via the user's recovery passphrase.
-pub fn account_mls_secret_key(
-    authority: &PrincipalAuthorityKey,
-) -> Result<String, SecureKeyStoreError> {
+pub fn account_mls_secret_key(authority: &AccountId) -> Result<String, SecureKeyStoreError> {
     account_mls_secret_key_for_version(authority, ACCOUNT_MLS_SECRET_CURRENT_VERSION)
 }
 
@@ -90,7 +88,7 @@ fn validate_account_secret(secret: &str) -> Result<(), SecureKeyStoreError> {
 /// secret.
 pub fn store_account_mls_secret_version(
     store: &dyn SecureKeyStore,
-    authority: &PrincipalAuthorityKey,
+    authority: &AccountId,
     version: u32,
     secret: &str,
 ) -> Result<(), SecureKeyStoreError> {
@@ -115,7 +113,7 @@ pub fn store_account_mls_secret_version(
 /// recovered backup ineffective.
 pub fn replace_account_mls_secret_version(
     store: &dyn SecureKeyStore,
-    authority: &PrincipalAuthorityKey,
+    authority: &AccountId,
     version: u32,
     secret: &str,
 ) -> Result<(), SecureKeyStoreError> {
@@ -145,7 +143,7 @@ pub fn replace_account_mls_secret_version(
 /// recovery import path after unwrapping the recovery vault.
 pub fn store_account_mls_secret(
     store: &dyn SecureKeyStore,
-    authority: &PrincipalAuthorityKey,
+    authority: &AccountId,
     secret: &str,
 ) -> Result<(), SecureKeyStoreError> {
     store_account_mls_secret_version(store, authority, ACCOUNT_MLS_SECRET_CURRENT_VERSION, secret)
@@ -154,7 +152,7 @@ pub fn store_account_mls_secret(
 /// Load the highest local account-secret version currently present.
 pub fn load_account_mls_secret(
     store: &dyn SecureKeyStore,
-    authority: &PrincipalAuthorityKey,
+    authority: &AccountId,
 ) -> Result<Option<StoredAccountMlsSecret>, SecureKeyStoreError> {
     for version in (1..=ACCOUNT_MLS_SECRET_MAX_SCAN_VERSION).rev() {
         let key = account_mls_secret_key_for_version(authority, version)?;
@@ -167,10 +165,8 @@ pub fn load_account_mls_secret(
     Ok(None)
 }
 
-fn account_mls_secret_verified_key(
-    authority: &PrincipalAuthorityKey,
-) -> Result<String, SecureKeyStoreError> {
-    let authority_digest = crate::secure_key_store::principal_authority_storage_digest(authority)?;
+fn account_mls_secret_verified_key(authority: &AccountId) -> Result<String, SecureKeyStoreError> {
+    let authority_digest = crate::secure_key_store::account_id_storage_digest(authority)?;
     Ok(format!(
         "{ACCOUNT_MLS_SECRET_PREFIX}.{ACCOUNT_MLS_SECRET_VERIFIED_MARKER}.v1.{authority_digest}"
     ))
@@ -180,7 +176,7 @@ fn account_mls_secret_verified_key(
 /// chain. Only a successful backup upload or recovery import may set this.
 pub fn mark_account_mls_secret_verified(
     store: &dyn SecureKeyStore,
-    authority: &PrincipalAuthorityKey,
+    authority: &AccountId,
 ) -> Result<(), SecureKeyStoreError> {
     store.store_secret(&account_mls_secret_verified_key(authority)?, "verified")
 }
@@ -189,7 +185,7 @@ pub fn mark_account_mls_secret_verified(
 /// the server recovery chain. A freshly generated bootstrap secret is false.
 pub fn account_mls_secret_verified(
     store: &dyn SecureKeyStore,
-    authority: &PrincipalAuthorityKey,
+    authority: &AccountId,
 ) -> Result<bool, SecureKeyStoreError> {
     Ok(store
         .get_secret(&account_mls_secret_verified_key(authority)?)?
@@ -212,7 +208,7 @@ fn generate_account_mls_secret() -> Result<String, SecureKeyStoreError> {
 ///      current account key, and returned.
 pub fn load_or_create_account_mls_secret(
     store: &dyn SecureKeyStore,
-    authority: &PrincipalAuthorityKey,
+    authority: &AccountId,
 ) -> Result<String, SecureKeyStoreError> {
     if let Some(existing) = load_account_mls_secret(store, authority)? {
         return Ok(existing.secret);
@@ -236,7 +232,7 @@ pub fn load_or_create_account_mls_secret(
 /// is durably stored first.
 pub async fn ensure_account_mls_secret_durable(
     store: &dyn SecureKeyStore,
-    authority: &PrincipalAuthorityKey,
+    authority: &AccountId,
 ) -> Result<String, SecureKeyStoreError> {
     if let Some(existing) = load_account_mls_secret(store, authority)? {
         // Re-commit the already-visible value: if the creation-time background
@@ -268,7 +264,7 @@ pub async fn ensure_account_mls_secret_durable(
 /// root that cannot open the account's existing snapshots or backups.
 pub async fn ensure_existing_account_mls_secret_durable(
     store: &dyn SecureKeyStore,
-    authority: &PrincipalAuthorityKey,
+    authority: &AccountId,
 ) -> Result<String, SecureKeyStoreError> {
     let existing =
         load_account_mls_secret(store, authority)?.ok_or(SecureKeyStoreError::NotFound)?;
@@ -282,7 +278,7 @@ pub async fn ensure_existing_account_mls_secret_durable(
 }
 
 pub fn mls_key_package_identity_state_key(
-    authority: &PrincipalAuthorityKey,
+    authority: &AccountId,
     device_id: &DeviceId,
     key_package_id: &str,
 ) -> Result<String, SecureKeyStoreError> {
@@ -306,7 +302,7 @@ pub fn mls_key_package_identity_state_key(
 /// request. Keep the first signed body scoped to the exact account and device
 /// so Welcome redelivery can resend identical canonical bytes after restart.
 pub(crate) fn mls_key_package_consume_request_key(
-    authority: &PrincipalAuthorityKey,
+    authority: &AccountId,
     device_id: &DeviceId,
     claim_id: &str,
 ) -> Result<String, SecureKeyStoreError> {
@@ -320,7 +316,7 @@ pub(crate) fn mls_key_package_consume_request_key(
 #[cfg(test)]
 pub fn store_mls_key_package_identity_state(
     store: &dyn SecureKeyStore,
-    authority: &PrincipalAuthorityKey,
+    authority: &AccountId,
     device_id: &DeviceId,
     key_package_id: &str,
     serialized_state: &[u8],
@@ -339,7 +335,7 @@ pub fn store_mls_key_package_identity_state(
 /// synchronous `store_mls_key_package_identity_state`).
 pub async fn store_mls_key_package_identity_state_durable(
     store: &dyn SecureKeyStore,
-    authority: &PrincipalAuthorityKey,
+    authority: &AccountId,
     device_id: &DeviceId,
     key_package_id: &str,
     serialized_state: &[u8],
@@ -357,7 +353,7 @@ pub async fn store_mls_key_package_identity_state_durable(
 
 pub fn load_mls_key_package_identity_state(
     store: &dyn SecureKeyStore,
-    authority: &PrincipalAuthorityKey,
+    authority: &AccountId,
     device_id: &DeviceId,
     key_package_id: &str,
 ) -> Result<Option<Vec<u8>>, SecureKeyStoreError> {
@@ -380,7 +376,7 @@ pub fn load_mls_key_package_identity_state(
 
 pub fn delete_mls_key_package_identity_state(
     store: &dyn SecureKeyStore,
-    authority: &PrincipalAuthorityKey,
+    authority: &AccountId,
     device_id: &DeviceId,
     key_package_id: &str,
 ) -> Result<(), SecureKeyStoreError> {
@@ -399,16 +395,16 @@ fn secure_key_component(value: &str, label: &str) -> Result<String, SecureKeySto
 }
 
 fn account_device_storage_suffix(
-    authority: &PrincipalAuthorityKey,
+    authority: &AccountId,
     device_id: &DeviceId,
 ) -> Result<String, SecureKeyStoreError> {
-    let authority = crate::secure_key_store::principal_authority_storage_digest(authority)?;
+    let authority = crate::secure_key_store::account_id_storage_digest(authority)?;
     let device = crate::secure_key_store::device_storage_digest(device_id);
     Ok(format!("{authority}.{device}"))
 }
 
 pub fn mls_key_package_inventory_key(
-    authority: &PrincipalAuthorityKey,
+    authority: &AccountId,
     device_id: &DeviceId,
 ) -> Result<String, SecureKeyStoreError> {
     let scope = account_device_storage_suffix(authority, device_id)?;
@@ -417,7 +413,7 @@ pub fn mls_key_package_inventory_key(
 
 pub fn store_mls_key_package_inventory(
     store: &dyn SecureKeyStore,
-    authority: &PrincipalAuthorityKey,
+    authority: &AccountId,
     device_id: &DeviceId,
     inventory: &arkret_sdk::LocalMlsKeyPackageInventory,
 ) -> Result<(), SecureKeyStoreError> {
@@ -429,7 +425,7 @@ pub fn store_mls_key_package_inventory(
 
 pub fn load_mls_key_package_inventory(
     store: &dyn SecureKeyStore,
-    authority: &PrincipalAuthorityKey,
+    authority: &AccountId,
     device_id: &DeviceId,
 ) -> Result<arkret_sdk::LocalMlsKeyPackageInventory, SecureKeyStoreError> {
     let key = mls_key_package_inventory_key(authority, device_id)?;
@@ -457,7 +453,7 @@ pub fn load_mls_key_package_inventory(
 }
 
 pub fn mls_pairwise_key_package_publish_marker_key(
-    authority: &PrincipalAuthorityKey,
+    authority: &AccountId,
     device_id: &DeviceId,
     realm_id: &arkret_sdk::RealmId,
 ) -> Result<String, SecureKeyStoreError> {
@@ -470,7 +466,7 @@ pub fn mls_pairwise_key_package_publish_marker_key(
 
 pub fn store_mls_pairwise_key_package_publish_marker(
     store: &dyn SecureKeyStore,
-    authority: &PrincipalAuthorityKey,
+    authority: &AccountId,
     device_id: &DeviceId,
     realm_id: &arkret_sdk::RealmId,
     key_package_id: &str,
@@ -487,7 +483,7 @@ pub fn store_mls_pairwise_key_package_publish_marker(
 
 pub fn load_mls_pairwise_key_package_publish_marker(
     store: &dyn SecureKeyStore,
-    authority: &PrincipalAuthorityKey,
+    authority: &AccountId,
     device_id: &DeviceId,
     realm_id: &arkret_sdk::RealmId,
 ) -> Result<Option<String>, SecureKeyStoreError> {
@@ -500,7 +496,7 @@ pub fn load_mls_pairwise_key_package_publish_marker(
 
 pub fn delete_mls_pairwise_key_package_publish_marker(
     store: &dyn SecureKeyStore,
-    authority: &PrincipalAuthorityKey,
+    authority: &AccountId,
     device_id: &DeviceId,
     realm_id: &arkret_sdk::RealmId,
 ) -> Result<(), SecureKeyStoreError> {
@@ -514,7 +510,7 @@ pub fn delete_mls_pairwise_key_package_publish_marker(
 /// stored key.
 pub fn load_device_snapshot_secret(
     store: &dyn SecureKeyStore,
-    authority: &PrincipalAuthorityKey,
+    authority: &AccountId,
     _device_id: &DeviceId,
 ) -> Result<String, SecureKeyStoreError> {
     if let Some(existing) = load_account_mls_secret(store, authority)? {
@@ -531,7 +527,7 @@ pub fn load_device_snapshot_secret(
 /// state and the secret store advance together.
 pub fn prepare_account_mls_secret_rotation(
     store: &dyn SecureKeyStore,
-    authority: &PrincipalAuthorityKey,
+    authority: &AccountId,
     snapshots: &BTreeMap<String, crate::mls::persistence::MlsSnapshotEnvelope>,
 ) -> Result<AccountMlsSecretRotation, MlsRuntimeError> {
     let previous_secret = load_account_mls_secret(store, authority)
@@ -596,7 +592,7 @@ pub fn prepare_account_mls_secret_rotation(
 
 /// Storage key for this device's history-recovery HPKE X25519 private key.
 fn device_hpke_private_key_key(
-    authority: &PrincipalAuthorityKey,
+    authority: &AccountId,
     device_id: &DeviceId,
 ) -> Result<String, SecureKeyStoreError> {
     let scope = account_device_storage_suffix(authority, device_id)?;
@@ -607,7 +603,7 @@ fn device_hpke_private_key_key(
 /// Network requests that advertise the public half must use this entry point.
 pub async fn load_or_create_device_hpke_keypair_durable(
     store: &dyn SecureKeyStore,
-    authority: &PrincipalAuthorityKey,
+    authority: &AccountId,
     device_id: &DeviceId,
 ) -> Result<(Vec<u8>, Vec<u8>), SecureKeyStoreError> {
     static HPKE_KEY_CREATE_LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> =
@@ -642,7 +638,7 @@ pub async fn load_or_create_device_hpke_keypair_durable(
 /// Load (without creating) this device's HPKE X25519 private key, if present.
 pub fn load_device_hpke_private_key(
     store: &dyn SecureKeyStore,
-    authority: &PrincipalAuthorityKey,
+    authority: &AccountId,
     device_id: &DeviceId,
 ) -> Result<Option<Vec<u8>>, SecureKeyStoreError> {
     let key = device_hpke_private_key_key(authority, device_id)?;
@@ -678,7 +674,7 @@ fn x25519_public_from_private(private_key: &[u8]) -> Result<Vec<u8>, SecureKeySt
 pub fn commit_account_mls_secret_rotation(
     state_store: &mut crate::state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
-    authority: &PrincipalAuthorityKey,
+    authority: &AccountId,
     rotation: &AccountMlsSecretRotation,
 ) -> Result<(), SecureKeyStoreError> {
     for (realm_id, envelope) in &rotation.rewrapped_snapshots {

@@ -29,7 +29,7 @@ pub fn ensure_creator_mls_snapshot(
     state_store: &mut crate::state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
-    authority: &arkret_sdk::PrincipalAuthorityKey,
+    authority: &arkret_sdk::AccountId,
     device_id: &arkret_sdk::DeviceId,
 ) -> Result<Option<InitialMlsSnapshotSummary>, MlsRuntimeError> {
     ensure_creator_mls_snapshot_for_effective_scope(
@@ -47,7 +47,7 @@ pub fn ensure_creator_mls_snapshot_for_effective_scope(
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
     circle_id: Option<&str>,
-    authority: &arkret_sdk::PrincipalAuthorityKey,
+    authority: &arkret_sdk::AccountId,
     device_id: &arkret_sdk::DeviceId,
 ) -> Result<Option<InitialMlsSnapshotSummary>, MlsRuntimeError> {
     ensure_creator_mls_snapshot_for_effective_scope_with_binding(
@@ -66,7 +66,7 @@ pub fn ensure_creator_mls_snapshot_for_effective_scope_with_binding(
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
     circle_id: Option<&str>,
-    authority: &arkret_sdk::PrincipalAuthorityKey,
+    authority: &arkret_sdk::AccountId,
     device_id: &arkret_sdk::DeviceId,
     sidecar_binding: Option<arkret_sdk::SidecarMlsBinding>,
 ) -> Result<Option<InitialMlsSnapshotSummary>, MlsRuntimeError> {
@@ -94,7 +94,7 @@ pub(crate) fn recreate_unaccepted_creator_mls_snapshot(
     state_store: &mut crate::state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
-    authority: &arkret_sdk::PrincipalAuthorityKey,
+    authority: &arkret_sdk::AccountId,
     device_id: &arkret_sdk::DeviceId,
 ) -> Result<InitialMlsSnapshotSummary, MlsRuntimeError> {
     let snapshot = state_store.mls_snapshot_for(realm_id).ok_or_else(|| {
@@ -141,7 +141,7 @@ fn create_creator_mls_snapshot_for_effective_scope_with_binding(
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
     circle_id: Option<&str>,
-    authority: &arkret_sdk::PrincipalAuthorityKey,
+    authority: &arkret_sdk::AccountId,
     device_id: &arkret_sdk::DeviceId,
     sidecar_binding: Option<arkret_sdk::SidecarMlsBinding>,
     replace_unaccepted_epoch_zero: bool,
@@ -291,7 +291,7 @@ pub fn initial_mls_snapshot_summary_from_existing(
     state_store: &crate::state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
-    authority: &arkret_sdk::PrincipalAuthorityKey,
+    authority: &arkret_sdk::AccountId,
     device_id: &arkret_sdk::DeviceId,
 ) -> Result<Option<InitialMlsSnapshotSummary>, MlsRuntimeError> {
     initial_mls_snapshot_summary_from_existing_for_effective_scope(
@@ -309,7 +309,7 @@ pub fn initial_mls_snapshot_summary_from_existing_for_effective_scope(
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
     circle_id: Option<&str>,
-    authority: &arkret_sdk::PrincipalAuthorityKey,
+    authority: &arkret_sdk::AccountId,
     device_id: &arkret_sdk::DeviceId,
 ) -> Result<Option<InitialMlsSnapshotSummary>, MlsRuntimeError> {
     initial_mls_snapshot_summary_from_existing_for_effective_scope_with_binding(
@@ -328,7 +328,7 @@ pub fn initial_mls_snapshot_summary_from_existing_for_effective_scope_with_bindi
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
     circle_id: Option<&str>,
-    authority: &arkret_sdk::PrincipalAuthorityKey,
+    authority: &arkret_sdk::AccountId,
     device_id: &arkret_sdk::DeviceId,
     sidecar_binding: Option<arkret_sdk::SidecarMlsBinding>,
 ) -> Result<Option<InitialMlsSnapshotSummary>, MlsRuntimeError> {

@@ -128,30 +128,29 @@ impl ProofMode {
 const DEFAULT_PROOF_MODE: ProofMode = ProofMode::Production;
 
 static PROOF_MODE: AtomicU8 = AtomicU8::new(0xFF);
-static AUTHORING_PRINCIPAL_SERVER_ID: OnceLock<RwLock<Option<arkret_sdk::DidCoreId>>> =
-    OnceLock::new();
+static AUTHORING_STATION_ID: OnceLock<RwLock<Option<arkret_sdk::DidCoreId>>> = OnceLock::new();
 
-pub fn set_authoring_principal_server_id(principal_server_id: Option<arkret_sdk::DidCoreId>) {
-    let slot = AUTHORING_PRINCIPAL_SERVER_ID.get_or_init(|| RwLock::new(None));
+pub fn set_authoring_station_id(station_id: Option<arkret_sdk::DidCoreId>) {
+    let slot = AUTHORING_STATION_ID.get_or_init(|| RwLock::new(None));
     *slot
         .write()
-        .unwrap_or_else(std::sync::PoisonError::into_inner) = principal_server_id;
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = station_id;
 }
 
-pub(crate) fn authoring_principal_server_id() -> anyhow::Result<arkret_sdk::DidCoreId> {
-    if let Some(principal_server_id) = AUTHORING_PRINCIPAL_SERVER_ID.get().and_then(|slot| {
+pub(crate) fn authoring_station_id() -> anyhow::Result<arkret_sdk::DidCoreId> {
+    if let Some(station_id) = AUTHORING_STATION_ID.get().and_then(|slot| {
         slot.read()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clone()
     }) {
-        return Ok(principal_server_id);
+        return Ok(station_id);
     }
     #[cfg(test)]
     {
         arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").map_err(anyhow::Error::msg)
     }
     #[cfg(not(test))]
-    anyhow::bail!("no authoring Principal Server is selected")
+    anyhow::bail!("no authoring Station is selected")
 }
 
 /// Returns the active [`ProofMode`]. Defaults to [`ProofMode::Production`]
@@ -408,27 +407,26 @@ impl TypedOperationBuilder {
     where
         K: arkret_sdk::EventSpec,
     {
-        let principal_server_id = authoring_principal_server_id();
-        let intent = principal_server_id.and_then(|principal_server_id| {
-            Self::draft_intent::<K>(realm_id, actor, principal_server_id, payload)
-        });
+        let station_id = authoring_station_id();
+        let intent = station_id
+            .and_then(|station_id| Self::draft_intent::<K>(realm_id, actor, station_id, payload));
         Self {
             intent,
             target_ref: None,
         }
     }
 
-    pub fn new_for_principal_server<K>(
+    pub fn new_for_station<K>(
         realm_id: impl Into<String>,
         actor: impl Into<String>,
-        principal_server_id: arkret_sdk::DidCoreId,
+        station_id: arkret_sdk::DidCoreId,
         payload: K::Payload,
     ) -> Self
     where
         K: arkret_sdk::EventSpec,
     {
         Self {
-            intent: Self::draft_intent::<K>(realm_id, actor, principal_server_id, payload),
+            intent: Self::draft_intent::<K>(realm_id, actor, station_id, payload),
             target_ref: None,
         }
     }
@@ -436,7 +434,7 @@ impl TypedOperationBuilder {
     fn draft_intent<K>(
         realm_id: impl Into<String>,
         actor: impl Into<String>,
-        principal_server_id: arkret_sdk::DidCoreId,
+        station_id: arkret_sdk::DidCoreId,
         payload: K::Payload,
     ) -> anyhow::Result<EventIntent>
     where
@@ -451,7 +449,7 @@ impl TypedOperationBuilder {
         };
         let actor_id = crate::mls_api_helpers::principal_core_id(&actor.into())
             .map_err(|err| anyhow::anyhow!("invalid actor_id core_id: {err}"))?;
-        arkret_sdk::TypedEventDraft::<K>::new(scope_ref, actor_id, principal_server_id, payload)
+        arkret_sdk::TypedEventDraft::<K>::new(scope_ref, actor_id, station_id, payload)
             .map_err(|err| anyhow::anyhow!("typed Event draft construction failed: {err}"))?
             .into_intent(crate::clock::now_utc_millis())
             .map_err(|err| anyhow::anyhow!("typed Event intent erasure failed: {err}"))

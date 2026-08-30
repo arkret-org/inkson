@@ -20,7 +20,7 @@
 
 use std::sync::RwLock;
 
-use arkret_sdk::{DeviceId, PrincipalAuthorityKey};
+use arkret_sdk::{AccountId, DeviceId};
 use base64::Engine as _;
 use base64::engine::general_purpose::{STANDARD_NO_PAD, URL_SAFE_NO_PAD};
 
@@ -49,7 +49,7 @@ pub const SIGNING_SEED_KEY: &str = "device.ed25519.signing_seed.v1";
 /// this is not a hot path.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ActiveDeviceSeedScope {
-    pub authority: PrincipalAuthorityKey,
+    pub authority: AccountId,
     pub device_id: DeviceId,
 }
 
@@ -80,7 +80,7 @@ impl DeviceSeedScopeTestGuard {
     /// `scope` as the active device-seed scope (`None` selects the neutral
     /// bootstrap state). The guarded test may freely mutate both globals;
     /// drop restores the pre-guard values.
-    pub(crate) fn replace(scope: Option<(&PrincipalAuthorityKey, &DeviceId)>) -> Self {
+    pub(crate) fn replace(scope: Option<(&AccountId, &DeviceId)>) -> Self {
         let lock = ACTIVE_DEVICE_SEED_SCOPE_TEST_MUTEX
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -110,7 +110,7 @@ impl Drop for DeviceSeedScopeTestGuard {
 
 /// Set the active authority/device seed scope, or `None`
 /// for the bootstrap scope.
-pub fn set_active_device_seed_scope(scope: Option<(&PrincipalAuthorityKey, &DeviceId)>) {
+pub fn set_active_device_seed_scope(scope: Option<(&AccountId, &DeviceId)>) {
     let normalized = scope.map(|(authority, device_id)| ActiveDeviceSeedScope {
         authority: authority.clone(),
         device_id: device_id.clone(),
@@ -198,7 +198,7 @@ fn identity_storage_key(
     match scope {
         DeviceSeedScope::Account(scope) => Ok(format!(
             "inkson.authority.{}.device.{}.{logical_key}",
-            super::principal_authority_storage_digest(&scope.authority)?,
+            super::account_id_storage_digest(&scope.authority)?,
             super::device_storage_digest(&scope.device_id)
         )),
         DeviceSeedScope::Pending(device_id) => Ok(format!(
@@ -632,7 +632,7 @@ mod grant_binding_tests {
     use crate::secure_key_store::MemorySecureKeyStore;
 
     fn activate_test_user() -> DeviceSeedScopeTestGuard {
-        let authority = PrincipalAuthorityKey::new(
+        let authority = AccountId::new(
             arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example".to_owned()).unwrap(),
             arkret_sdk::DidCoreId::new("ak:did_core:web:server.example".to_owned()).unwrap(),
         );

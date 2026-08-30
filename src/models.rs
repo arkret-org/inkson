@@ -153,7 +153,7 @@ pub fn missing_event_envelope_write_requirements(
 ) -> Vec<&'static str> {
     let mut missing = Vec::new();
     if !service_supports_profile(description, ProfileId::CORE_EVENT_STORE_V1)
-        && !service_supports_profile(description, ProfileId::PRINCIPAL_SERVER_EVENTS_API_V1)
+        && !service_supports_profile(description, ProfileId::STATION_EVENTS_API_V1)
     {
         missing.push(ProfileId::CORE_EVENT_STORE_V1);
     }
@@ -176,12 +176,10 @@ pub fn service_supports_event_envelope_write_plane(description: &ServiceDescribe
     missing_event_envelope_write_requirements(description).is_empty()
 }
 
-pub fn missing_v1_principal_server_requirements(
-    description: &ServiceDescribe,
-) -> Vec<&'static str> {
+pub fn missing_v1_station_requirements(description: &ServiceDescribe) -> Vec<&'static str> {
     let mut missing = Vec::new();
-    if description.service_kind != arkret_sdk::ServiceKind::PrincipalServer {
-        missing.push("service_kind=principal_server");
+    if description.service_kind != arkret_sdk::ServiceKind::Station {
+        missing.push("service_kind=station");
     }
     if description.protocol_version != "1.0" {
         missing.push("protocol_version=1.0");
@@ -583,10 +581,10 @@ mod tests {
         let description = arkret_sdk::ServiceDescribe::development(
             arkret_sdk::Did::new("did:webvh:z6mkfixture:service.example").unwrap(),
             arkret_sdk::TrustDomainId::new("ak:trust_domain:example.net").unwrap(),
-            arkret_sdk::ServiceKind::PrincipalServer,
+            arkret_sdk::ServiceKind::Station,
             vec![
-                "ak.operation_bundle.principal_server.describe.v1".to_owned(),
-                "ak.operation_bundle.principal_server.http_core.v1".to_owned(),
+                "ak.operation_bundle.station.describe.v1".to_owned(),
+                "ak.operation_bundle.station.http_core.v1".to_owned(),
             ],
             vec![arkret_sdk::TransportBinding::HttpJson {
                 base_url: "https://service.example/_arkret".to_owned(),
@@ -601,10 +599,10 @@ mod tests {
         let unrelated = arkret_sdk::ServiceDescribe::development(
             arkret_sdk::Did::new("did:webvh:z6mkfixture:service.example").unwrap(),
             arkret_sdk::TrustDomainId::new("ak:trust_domain:example.net").unwrap(),
-            arkret_sdk::ServiceKind::PrincipalServer,
+            arkret_sdk::ServiceKind::Station,
             vec![
-                "ak.operation_bundle.principal_server.agent_pairing_handoff.v1".to_owned(),
-                "ak.operation_bundle.principal_server.describe.v1".to_owned(),
+                "ak.operation_bundle.station.agent_pairing_handoff.v1".to_owned(),
+                "ak.operation_bundle.station.describe.v1".to_owned(),
             ],
             vec![arkret_sdk::TransportBinding::HttpJson {
                 base_url: "https://service.example/_arkret".to_owned(),

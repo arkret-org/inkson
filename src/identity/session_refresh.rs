@@ -91,7 +91,7 @@ impl SessionGrantTransport for ReplaceableSessionTransport {
 struct InksonAuthenticatedTransportFactory {
     principal_sdk_base_url: Url,
     account_sdk_base_url: Url,
-    principal_server_url: Url,
+    station_url: Url,
     device_handle: DpopHandle,
     refresh_transport: ReplaceableSessionTransport,
 }
@@ -126,7 +126,7 @@ impl InksonAuthenticatedTransportFactory {
     }
 
     fn persisted(&self, state: &SessionGrantState) -> anyhow::Result<PersistedSessionGrant> {
-        persisted_session_grant_from_state(state, &self.principal_server_url, &self.device_handle)
+        persisted_session_grant_from_state(state, &self.station_url, &self.device_handle)
     }
 }
 
@@ -170,7 +170,7 @@ impl AuthenticatedTransportFactory for InksonAuthenticatedTransportFactory {
 struct PersistedSessionGrantStore {
     secure_store: Arc<dyn SecureKeyStore + Send + Sync>,
     user_store: crate::secure_key_store::UserLocalStore,
-    principal_server_url: Url,
+    station_url: Url,
     device_handle: DpopHandle,
 }
 
@@ -190,13 +190,10 @@ impl SessionGrantStore for PersistedSessionGrantStore {
         &'a self,
         state: &'a SessionGrantState,
     ) -> impl std::future::Future<Output = garth::Result<()>> + garth::MaybeSend + 'a {
-        let encoded = persisted_session_grant_from_state(
-            state,
-            &self.principal_server_url,
-            &self.device_handle,
-        )
-        .and_then(|grant| serde_json::to_vec(&grant).map_err(Into::into))
-        .map_err(|error: anyhow::Error| garth::Error::Protocol(error.to_string()));
+        let encoded =
+            persisted_session_grant_from_state(state, &self.station_url, &self.device_handle)
+                .and_then(|grant| serde_json::to_vec(&grant).map_err(Into::into))
+                .map_err(|error: anyhow::Error| garth::Error::Protocol(error.to_string()));
         async move {
             let encoded = encoded?;
             self.secure_store
@@ -340,17 +337,14 @@ fn normalized_server_key(server_url: &Url) -> String {
         .to_ascii_lowercase()
 }
 
-/// True when a persisted grant is scoped to the active Principal Server.
+/// True when a persisted grant is scoped to the active Station.
 ///
 /// The client currently keeps one foreground server session. A grant minted
 /// for another server must not be refreshed in the background or persisted as
 /// the active server's credential.
-pub fn grant_matches_principal_server(
-    grant: &PersistedSessionGrant,
-    principal_server_url: &str,
-) -> bool {
-    let grant_server = normalized_server_key(&grant.principal_server_url);
-    let Ok(active_server_url) = Url::parse(principal_server_url) else {
+pub fn grant_matches_station(grant: &PersistedSessionGrant, station_url: &str) -> bool {
+    let grant_server = normalized_server_key(&grant.station_url);
+    let Ok(active_server_url) = Url::parse(station_url) else {
         return false;
     };
     let active_server = normalized_server_key(&active_server_url);
@@ -361,11 +355,9 @@ pub fn grant_matches_principal_server(
 /// authenticated SDK client. Due refresh and transport rebuild happen inside
 /// `SessionTransportProvider`; callers must not repeat expiry decisions.
 pub async fn provide_authenticated_sdk_client(
-    principal_server_url: &str,
+    station_url: &str,
 ) -> anyhow::Result<arkret_sdk::http_client::Client> {
-    Ok(provide_authenticated_session(principal_server_url)
-        .await?
-        .client)
+    Ok(provide_authenticated_session(station_url).await?.client)
 }
 
 pub(crate) struct AuthenticatedSession {
@@ -374,7 +366,7 @@ pub(crate) struct AuthenticatedSession {
 }
 
 fn load_active_session_grant(
-    principal_server_url: &str,
+    station_url: &str,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
 ) -> anyhow::Result<PersistedSessionGrant> {
     let scope = crate::secure_key_store::active_device_seed_scope()
@@ -384,8 +376,8 @@ fn load_active_session_grant(
         scope.device_id.clone(),
     )?;
     let grant = crate::state::load_session_grant_from_user_secure_store(&user_store, secure_store)?
-        .filter(|grant| grant_matches_principal_server(grant, principal_server_url))
-        .context("no session grant is available for the active principal server")?;
+        .filter(|grant| grant_matches_station(grant, station_url))
+        .context("no session grant is available for the active Station")?;
     if grant.principal_id != scope.authority.principal_id || grant.device_id != scope.device_id {
         anyhow::bail!("session grant does not match the active authority/device scope");
     }
@@ -406,7 +398,7 @@ pub(crate) fn load_account_session_grant_with_secure_store(
     )?;
     let grant = crate::state::load_session_grant_from_user_secure_store(&user_store, secure_store)?
         .context("no session grant is available for the accepted account")?;
-    if !grant_matches_principal_server(&grant, account.server_url.as_str()) {
+    if !grant_matches_station(&grant, account.server_url.as_str()) {
         anyhow::bail!("session grant does not match the accepted account server");
     }
     if !grant_matches_principal_did(&grant, account.did()) {
@@ -415,28 +407,28 @@ pub(crate) fn load_account_session_grant_with_secure_store(
     if grant.device_id != account.device_id {
         anyhow::bail!("session grant does not match the accepted account device");
     }
-    if grant.audience_id != account.authority.principal_server_id {
+    if grant.audience_id != account.authority.station_id {
         anyhow::bail!("session grant does not match the accepted account audience");
     }
     Ok(grant)
 }
 
 pub(crate) async fn provide_authenticated_session(
-    principal_server_url: &str,
+    station_url: &str,
 ) -> anyhow::Result<AuthenticatedSession> {
     provide_authenticated_session_with_secure_store(
-        principal_server_url,
+        station_url,
         crate::secure_key_store::default_secure_key_store("inkson"),
     )
     .await
 }
 
 async fn provide_authenticated_session_with_secure_store(
-    principal_server_url: &str,
+    station_url: &str,
     secure_store: Arc<dyn crate::secure_key_store::SecureKeyStore + Send + Sync>,
 ) -> anyhow::Result<AuthenticatedSession> {
     let mut store = LocalStateStore::default();
-    let grant = load_active_session_grant(principal_server_url, secure_store.as_ref())?;
+    let grant = load_active_session_grant(station_url, secure_store.as_ref())?;
     let device_handle =
         crate::identity::account_auth::grant_dpop::load_or_recover_device_key_with_secure_store(
             &mut store,
@@ -456,30 +448,26 @@ async fn provide_authenticated_session_with_secure_store(
         .context("authenticated session provider has no grant state")?;
     Ok(AuthenticatedSession {
         client,
-        grant: persisted_session_grant_from_state(
-            &state,
-            &grant.principal_server_url,
-            &device_handle,
-        )?,
+        grant: persisted_session_grant_from_state(&state, &grant.station_url, &device_handle)?,
     })
 }
 
 pub(crate) async fn refresh_authenticated_session_after_unauthorized(
-    principal_server_url: &str,
+    station_url: &str,
 ) -> anyhow::Result<AuthenticatedSession> {
     refresh_authenticated_session_after_unauthorized_with_secure_store(
-        principal_server_url,
+        station_url,
         crate::secure_key_store::default_secure_key_store("inkson"),
     )
     .await
 }
 
 async fn refresh_authenticated_session_after_unauthorized_with_secure_store(
-    principal_server_url: &str,
+    station_url: &str,
     secure_store: Arc<dyn crate::secure_key_store::SecureKeyStore + Send + Sync>,
 ) -> anyhow::Result<AuthenticatedSession> {
     let mut store = LocalStateStore::default();
-    let grant = load_active_session_grant(principal_server_url, secure_store.as_ref())?;
+    let grant = load_active_session_grant(station_url, secure_store.as_ref())?;
     let device_handle =
         crate::identity::account_auth::grant_dpop::load_or_recover_device_key_with_secure_store(
             &mut store,
@@ -508,20 +496,16 @@ async fn refresh_authenticated_session_after_unauthorized_with_secure_store(
         .context("refreshed session provider has no grant state")?;
     Ok(AuthenticatedSession {
         client,
-        grant: persisted_session_grant_from_state(
-            &state,
-            &grant.principal_server_url,
-            &device_handle,
-        )?,
+        grant: persisted_session_grant_from_state(&state, &grant.station_url, &device_handle)?,
     })
 }
 
 pub(crate) fn cached_authenticated_sdk_client(
-    principal_server_url: &str,
+    station_url: &str,
 ) -> Option<arkret_sdk::http_client::Client> {
-    let principal_server_url = Url::parse(principal_server_url).ok()?;
+    let station_url = Url::parse(station_url).ok()?;
     session_grant_runtime()
-        .get_for_server(&normalized_server_key(&principal_server_url))?
+        .get_for_server(&normalized_server_key(&station_url))?
         .cached_transport()
 }
 
@@ -531,7 +515,7 @@ async fn session_transport_provider(
     device_handle: &DpopHandle,
     secure_store: Arc<dyn crate::secure_key_store::SecureKeyStore + Send + Sync>,
 ) -> anyhow::Result<InksonSessionProvider> {
-    let server_key = normalized_server_key(&grant.principal_server_url);
+    let server_key = normalized_server_key(&grant.station_url);
     if let Some(provider) = runtime.get(&server_key, grant.device_id.as_str()) {
         return Ok(provider);
     }
@@ -547,17 +531,17 @@ async fn session_transport_provider(
 
     let gate_account_base_url =
         crate::identity::account_auth::resolve_principal_gate_account_base_url(
-            grant.principal_server_url.as_str(),
+            grant.station_url.as_str(),
         )
         .await
         .map_err(|error| anyhow::anyhow!("resolve Account Authority: {error}"))?;
     let account_sdk_base_url = sdk_base_url_from_gate_account_base_url(&gate_account_base_url)?;
-    let principal_sdk_base_url = grant.principal_server_url.clone();
+    let principal_sdk_base_url = grant.station_url.clone();
     let refresh_transport = ReplaceableSessionTransport::default();
     let factory = InksonAuthenticatedTransportFactory {
         principal_sdk_base_url,
         account_sdk_base_url,
-        principal_server_url: grant.principal_server_url.clone(),
+        station_url: grant.station_url.clone(),
         device_handle: device_handle.clone(),
         refresh_transport: refresh_transport.clone(),
     };
@@ -575,7 +559,7 @@ async fn session_transport_provider(
             active_scope.authority,
             active_scope.device_id,
         )?,
-        principal_server_url: grant.principal_server_url.clone(),
+        station_url: grant.station_url.clone(),
         device_handle: device_handle.clone(),
     };
     let refresh_options = SessionRefreshOptions {
@@ -613,7 +597,7 @@ fn session_provider_initialization_lock() -> &'static tokio::sync::Mutex<()> {
 
 fn persisted_session_grant_from_state(
     state: &SessionGrantState,
-    principal_server_url: &Url,
+    station_url: &Url,
     device_handle: &DpopHandle,
 ) -> anyhow::Result<PersistedSessionGrant> {
     let device_id = state
@@ -631,7 +615,7 @@ fn persisted_session_grant_from_state(
         principal_id: state.principal_id.clone(),
         service_account_id: state.service_account_id.clone(),
         device_id: device_id.clone(),
-        principal_server_url: principal_server_url.clone(),
+        station_url: station_url.clone(),
         grant_expires_at: Some(state.expires_at),
         stored_at: Utc::now(),
     })
@@ -827,7 +811,7 @@ mod tests {
                 "ak:device:01964137-0000-7000-8000-000000000001".to_owned(),
             )
             .unwrap(),
-            principal_server_url: url::Url::parse("https://soland.example").unwrap(),
+            station_url: url::Url::parse("https://soland.example").unwrap(),
             grant_expires_at: Some(Utc::now() + chrono::Duration::hours(1)),
             stored_at: Utc::now(),
         }
@@ -838,7 +822,7 @@ mod tests {
         let factory = InksonAuthenticatedTransportFactory {
             principal_sdk_base_url: Url::parse("https://soland.example/").unwrap(),
             account_sdk_base_url: Url::parse("https://coauth.example/").unwrap(),
-            principal_server_url: Url::parse("https://soland.example").unwrap(),
+            station_url: Url::parse("https://soland.example").unwrap(),
             device_handle: test_device_handle(),
             refresh_transport: ReplaceableSessionTransport::default(),
         };
@@ -880,7 +864,7 @@ mod tests {
     #[test]
     fn production_grant_restore_reads_the_active_secure_scope() {
         let grant = test_persisted_grant("ak:did_core:webvh:z6mkfixture:alice.example");
-        let authority = arkret_sdk::PrincipalAuthorityKey::new(
+        let authority = arkret_sdk::AccountId::new(
             grant.principal_id.clone(),
             arkret_sdk::DidCoreId::new("ak:did_core:webvh:z6mkfixture:soland.example".to_owned())
                 .unwrap(),
@@ -913,7 +897,7 @@ mod tests {
         let did = arkret_sdk::Did::new("did:webvh:z6mkfixture:alice.example".to_owned()).unwrap();
         let principal_id = arkret_sdk::project_did_to_core_id(&did).unwrap();
         let grant = test_persisted_grant(principal_id.as_str());
-        let authority = arkret_sdk::PrincipalAuthorityKey::new(
+        let authority = arkret_sdk::AccountId::new(
             principal_id,
             arkret_sdk::DidCoreId::new("ak:did_core:webvh:z6mkfixture:soland.example".to_owned())
                 .unwrap(),

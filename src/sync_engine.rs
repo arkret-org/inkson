@@ -930,7 +930,7 @@ pub(crate) fn circle_mls_removal_candidates(
     realm_id: &str,
     circle_id: &str,
     active_members: &BTreeSet<String>,
-    authority: &arkret_sdk::PrincipalAuthorityKey,
+    authority: &arkret_sdk::AccountId,
     device_id: &arkret_sdk::DeviceId,
 ) -> Option<Vec<(String, Vec<arkret_sdk::EventId>)>> {
     let state = state_store.load();
@@ -962,7 +962,7 @@ fn realm_default_mls_removal_candidates(
     state_store: &LocalStateStore,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
     realm_id: &str,
-    authority: &arkret_sdk::PrincipalAuthorityKey,
+    authority: &arkret_sdk::AccountId,
     device_id: &arkret_sdk::DeviceId,
 ) -> Option<Vec<(String, Vec<arkret_sdk::EventId>)>> {
     let state = state_store.load();
@@ -2880,7 +2880,7 @@ fn apply_notification_projection(
 fn apply_account_data(
     store: &mut LocalStateStore,
     response: &AccountSyncStep,
-    authority: &arkret_sdk::PrincipalAuthorityKey,
+    authority: &arkret_sdk::AccountId,
     principal_id: &str,
 ) -> Option<String> {
     apply_account_data_entries(
@@ -2894,7 +2894,7 @@ fn apply_account_data(
 pub(crate) fn apply_account_data_entries(
     store: &mut LocalStateStore,
     entries: &[arkret_sdk::Event],
-    authority: &arkret_sdk::PrincipalAuthorityKey,
+    authority: &arkret_sdk::AccountId,
     principal_id: &str,
 ) -> Option<String> {
     let mut synced_theme = None;

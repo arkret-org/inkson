@@ -6,8 +6,8 @@ use sha2::{Digest, Sha256};
 use super::INKSON_OIDC_REDIRECT_URI_NATIVE;
 use crate::config::validate_server_url;
 
-pub(crate) fn principal_audience(principal_server_url: &str) -> anyhow::Result<String> {
-    Ok(validate_server_url(principal_server_url)?
+pub(crate) fn principal_audience(station_url: &str) -> anyhow::Result<String> {
+    Ok(validate_server_url(station_url)?
         .join("api")?
         .to_string()
         .trim_end_matches('/')

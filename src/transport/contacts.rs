@@ -100,7 +100,7 @@ pub(crate) async fn submit_principal_successor_seal(
         .iter()
         .any(|digest| digest == &principal_digest)
     {
-        anyhow::bail!("Principal Server did not seal the accepted principal Event");
+        anyhow::bail!("Station did not seal the accepted principal Event");
     }
     Ok(())
 }

@@ -55,24 +55,22 @@ pub async fn account_me(http: &arkret_sdk::http_client::Client) -> anyhow::Resul
 pub async fn resolve_active_account_context(
     http: &arkret_sdk::http_client::Client,
     profile_id: String,
-    authority: arkret_sdk::PrincipalAuthorityKey,
+    authority: arkret_sdk::AccountId,
     device_id: arkret_sdk::DeviceId,
     server_url: url::Url,
 ) -> anyhow::Result<crate::config::ActiveAccountContext> {
     let public_resolution = http
-        .open_principal_resolution(&authority.principal_id, &authority.principal_server_id)
+        .open_principal_resolution(&authority.principal_id, &authority.station_id)
         .await?;
     anyhow::ensure!(
         public_resolution.authority() == authority,
         "public principal resolution returned another account authority"
     );
-    let principal_server_resolution = http
-        .open_service_resolution(&authority.principal_server_id)
-        .await?;
+    let station_resolution = http.open_service_resolution(&authority.station_id).await?;
     let (accepted_projection, _) =
         arkret_identity::verify_embedded_public_principal_resolution_history(
             &public_resolution,
-            &principal_server_resolution,
+            &station_resolution,
             chrono::Utc::now(),
         )?;
     crate::config::ActiveAccountContext::new(
@@ -1371,7 +1369,7 @@ pub(crate) async fn account_data_snapshot(
 /// is resolved here rather than left to the server — soland used to author these
 /// Events under its own DID, which put every holder's value for one key into a
 /// single cell keyed by the service.
-fn account_data_holder() -> anyhow::Result<(arkret_sdk::Did, arkret_sdk::PrincipalAuthorityKey)> {
+fn account_data_holder() -> anyhow::Result<(arkret_sdk::Did, arkret_sdk::AccountId)> {
     let scope = crate::secure_key_store::active_device_seed_scope()
         .ok_or_else(|| anyhow::anyhow!("no active account; cannot author an account_data Event"))?;
     let signer = crate::event_signer::active_signer()

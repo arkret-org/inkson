@@ -12,7 +12,7 @@ fn test_client_config(
     } else {
         arkret_sdk::Did::new(principal.to_owned()).unwrap()
     };
-    let authority = arkret_sdk::PrincipalAuthorityKey::new(
+    let authority = arkret_sdk::AccountId::new(
         arkret_sdk::project_did_to_core_id(&did).unwrap(),
         arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example".to_owned()).unwrap(),
     );
@@ -43,7 +43,7 @@ fn test_active_account(
         .unwrap()
 }
 
-fn test_authority(principal: &str) -> arkret_sdk::PrincipalAuthorityKey {
+fn test_authority(principal: &str) -> arkret_sdk::AccountId {
     test_active_account(
         principal,
         "https://local.host",
@@ -243,7 +243,7 @@ fn session_grant(grant_expires_in: i64) -> PersistedSessionGrant {
             "ak:device:01964137-0000-7000-8000-000000000001".to_owned(),
         )
         .unwrap(),
-        principal_server_url: url::Url::parse("https://local.host").unwrap(),
+        station_url: url::Url::parse("https://local.host").unwrap(),
         grant_expires_at: Some(now + chrono::Duration::seconds(grant_expires_in)),
         stored_at: now,
     }
@@ -256,7 +256,7 @@ fn session_grant_for_config(grant_expires_in: i64, config: &ClientConfig) -> Per
         .as_ref()
         .expect("test config has an active account")
         .authority
-        .principal_server_id
+        .station_id
         .clone();
     grant
 }
@@ -663,7 +663,7 @@ fn boot_session_credential_ignores_session_grant_for_other_server() {
         "bridge-token",
     );
     let mut grant = session_grant_for_config(3600, &config);
-    grant.principal_server_url = url::Url::parse("https://other.local.host").unwrap();
+    grant.station_url = url::Url::parse("https://other.local.host").unwrap();
     let state = ClientLocalState {
         session_grant: Some(grant),
         ..Default::default()
@@ -716,10 +716,10 @@ fn bootstrap_can_start_with_session_grant_without_live_credential() {
     let mut grant = session_grant(3600);
     let account = test_active_account(
         grant.principal_id.as_str(),
-        grant.principal_server_url.as_str(),
+        grant.station_url.as_str(),
         grant.device_id.as_str(),
     );
-    grant.audience_id = account.authority.principal_server_id.clone();
+    grant.audience_id = account.authority.station_id.clone();
     store.set_session_grant(Some(grant));
 
     assert!(has_bootstrap_refresh_material(&store, Some(&account)));
@@ -753,7 +753,7 @@ fn bootstrap_rejects_grant_for_a_different_active_account() {
 fn bootstrap_ignores_session_grant_for_other_server() {
     let mut store = isolated_store("bootstrap-other-server");
     let mut grant = session_grant(3600);
-    grant.principal_server_url = url::Url::parse("https://other.local.host").unwrap();
+    grant.station_url = url::Url::parse("https://other.local.host").unwrap();
     store.set_session_grant(Some(grant));
     let account = test_active_account(
         "did:web:alice.example",
@@ -830,7 +830,7 @@ fn rehydrated_session_credential_only_matches_active_config() {
 
     let other_authority = crate::config::ActiveAccountContext::new(
         "ak:profile:019b0000-0000-7000-8000-000000000002".to_owned(),
-        arkret_sdk::PrincipalAuthorityKey::new(
+        arkret_sdk::AccountId::new(
             account.authority.principal_id.clone(),
             arkret_sdk::DidCoreId::new("ak:did_core:web:other-principal.example".to_owned())
                 .unwrap(),
@@ -1094,19 +1094,14 @@ fn kanban_board_task_route_uses_realm_context_for_mls_bootstrap() {
     );
 }
 
-fn bootstrap_account_coordinates() -> (
-    url::Url,
-    arkret_sdk::PrincipalAuthorityKey,
-    arkret_sdk::DeviceId,
-) {
+fn bootstrap_account_coordinates() -> (url::Url, arkret_sdk::AccountId, arkret_sdk::DeviceId) {
     let did = arkret_sdk::Did::new("did:web:inkson.example".to_owned()).unwrap();
     let principal_id = arkret_sdk::project_did_to_core_id(&did).unwrap();
     (
         url::Url::parse("http://localhost:8080").unwrap(),
-        arkret_sdk::PrincipalAuthorityKey::new(
+        arkret_sdk::AccountId::new(
             principal_id,
-            arkret_sdk::DidCoreId::new("ak:did_core:web:principal-server.example".to_owned())
-                .unwrap(),
+            arkret_sdk::DidCoreId::new("ak:did_core:web:station.example".to_owned()).unwrap(),
         ),
         arkret_sdk::DeviceId::new("ak:device:01964137-0000-7000-8000-000000000001".to_owned())
             .unwrap(),

@@ -146,7 +146,7 @@ impl LocalStateStore {
     ///
     /// This is the counterpart of the structural principal scoping: the account
     /// entry already isolates principals, but one account can be pointed at a
-    /// different Principal Server (or the same account can be re-bootstrapped
+    /// different Station (or the same account can be re-bootstrapped
     /// against a different deployment). An acceptance made against the previous
     /// server must not authorize anything under the new one, so the moment the
     /// active trust domain changes every foreign-domain binding is removed

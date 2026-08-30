@@ -1,7 +1,7 @@
 use super::*;
 
-fn test_authority(actor: &str) -> arkret_sdk::PrincipalAuthorityKey {
-    arkret_sdk::PrincipalAuthorityKey::new(
+fn test_authority(actor: &str) -> arkret_sdk::AccountId {
+    arkret_sdk::AccountId::new(
         crate::mls_api_helpers::principal_core_id(actor).unwrap(),
         arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example".to_owned()).unwrap(),
     )
@@ -2480,7 +2480,7 @@ fn moderation_appeal_prompts_survive_sdk_event_round_trip() {
         "realm_id": realm_id,
         "scope_ref": {"kind": "realm", "realm_id": realm_id},
         "actor_id": "ak:did_core:web:moderator.example",
-        "principal_server_id": "ak:did_core:web:principal.example",
+        "station_id": "ak:did_core:web:principal.example",
         "actor_seq": 1,
         "created_at": "2026-07-19T00:00:00.000Z",
         "hlc": "019f73a34c00-0000-12345678",

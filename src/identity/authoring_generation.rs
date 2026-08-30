@@ -339,7 +339,7 @@ mod tests {
                 "device_projection_attestation": {
                     "attestation": {
                         "principal_id": principal.as_str(),
-                        "principal_server_id": principal.as_str(),
+                        "station_id": principal.as_str(),
                         "device_id": device.as_str(),
                         "device_signing_key_did": "did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuVkhY7g94pVQyG98x",
                         "hpke_key": "hpke-1",

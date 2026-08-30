@@ -780,7 +780,7 @@ fn clear_account_scoped_preserves_device_level_and_session_grant_state() {
             "ak:device:01904100-0000-7000-8000-000000000001".to_owned(),
         )
         .unwrap(),
-        principal_server_url: url::Url::parse("https://principal.example").unwrap(),
+        station_url: url::Url::parse("https://principal.example").unwrap(),
         grant_expires_at: None,
         stored_at: chrono::Utc::now(),
     };
@@ -829,7 +829,7 @@ fn production_persist_policy_strips_session_credentials_from_account_state() {
                 "ak:device:01904100-0000-7000-8000-000000000001".to_owned(),
             )
             .unwrap(),
-            principal_server_url: url::Url::parse("https://principal.example").unwrap(),
+            station_url: url::Url::parse("https://principal.example").unwrap(),
             grant_expires_at: None,
             stored_at: chrono::Utc::now(),
         }),
@@ -871,7 +871,7 @@ fn account_switch_isolates_authority_namespaces() {
             "ak:device:01904100-0000-7000-8000-000000000001".to_owned(),
         )
         .unwrap(),
-        principal_server_url: url::Url::parse("https://principal.example").unwrap(),
+        station_url: url::Url::parse("https://principal.example").unwrap(),
         grant_expires_at: None,
         stored_at: chrono::Utc::now(),
     }));
@@ -1121,7 +1121,7 @@ fn fresh_pending_login_never_moves_previous_account_onboarding_fields() {
         created_at: chrono::Utc::now(),
     }));
     let handoff = PendingAccountHandoff {
-        principal_server_url: "https://principal.example".to_owned(),
+        station_url: "https://principal.example".to_owned(),
         gate_account_base_url: "https://auth.example/_arkret/gate/account".to_owned(),
         request_id: "ak:request:019f0000-0000-7000-8000-000000000099".to_owned(),
         oidc_state: None,
@@ -1225,7 +1225,7 @@ fn accepted_context_promotion_moves_the_unfinished_handoff_with_its_registration
     let device = "ak:device:019f0000-0000-7000-8000-000000000001";
     let typed_device = arkret_sdk::DeviceId::new(device.to_owned()).unwrap();
     let handoff = PendingAccountHandoff {
-        principal_server_url: "https://principal.example".to_owned(),
+        station_url: "https://principal.example".to_owned(),
         gate_account_base_url: "https://auth.example/_arkret/gate/account".to_owned(),
         request_id: "ak:request:019f0000-0000-7000-8000-000000000000".to_owned(),
         oidc_state: None,
@@ -1313,7 +1313,7 @@ fn returning_login_clears_consumed_handoff_from_anonymous_namespace() {
     store.begin_pending_login(&typed_device, Some("holder-jkt"));
     store
         .set_pending_account_handoff(Some(PendingAccountHandoff {
-            principal_server_url: "https://principal.example".to_owned(),
+            station_url: "https://principal.example".to_owned(),
             gate_account_base_url: "https://auth.example/_arkret/gate/account".to_owned(),
             request_id: "ak:request:019f0000-0000-7000-8000-000000000123".to_owned(),
             oidc_state: Some("oidc-state".to_owned()),

@@ -202,7 +202,7 @@ fn build_formal_applet_install_events(
     effective_scope: &ScopeRef,
     approved_actions: &[String],
     actor_id: &str,
-    target_principal_server_id: &arkret_sdk::DidCoreId,
+    target_station_id: &arkret_sdk::DidCoreId,
     created_at: chrono::DateTime<chrono::Utc>,
 ) -> anyhow::Result<(
     crate::operation::LocalOperation,
@@ -250,7 +250,7 @@ fn build_formal_applet_install_events(
             realm_id: Some(realm_id.clone()),
             issuer_id: actor.clone(),
             subject: arkret_sdk::CapabilitySubject::CoreDid(package.service_id.clone()),
-            subject_principal_server_id: Some(target_principal_server_id.clone()),
+            subject_station_id: Some(target_station_id.clone()),
             actions: vec![action.to_owned()],
             resources: vec![resource.clone()],
             constraints: vec![constraint.clone()],
@@ -582,7 +582,7 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
                             span { "allow Applet-managed Ghost Actors" }
                         }
                         // Step 1 — author the administrator Events once, then ask
-                        // the Principal Server to sign the closed authoring request.
+                        // the Station to sign the closed authoring request.
                         div { class: "actions",
                             Button {
                                 variant: ButtonVariant::Secondary,
@@ -642,13 +642,13 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
                                                 ghost_actor_mode: Some(ghost_actor_mode),
                                             };
                                             let requested_at = crate::clock::now_utc_millis();
-                                            let target_principal_server_id = match
-                                                crate::operation::authoring_principal_server_id()
+                                            let target_station_id = match
+                                                crate::operation::authoring_station_id()
                                             {
                                                 Ok(value) => value,
                                                 Err(error) => {
                                                     install_status.set(format!(
-                                                        "cannot bind install to Principal Server: {error}"
+                                                        "cannot bind install to Station: {error}"
                                                     ));
                                                     return;
                                                 }
@@ -672,7 +672,7 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
                                                         &authored_scope,
                                                         &approve_actions,
                                                         actor_id.as_str(),
-                                                        &target_principal_server_id,
+                                                        &target_station_id,
                                                         requested_at,
                                                     )?;
                                                 let mut events = Vec::with_capacity(1 + grants.len());
@@ -693,7 +693,7 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
                                                         AppletInstallAuthoringRequestBasis {
                                                             schema: AppletInstallAuthoringRequestBasis::SCHEMA.to_owned(),
                                                             purpose: AppletManagedActorPurpose::InstallBot,
-                                                            target_principal_server_id,
+                                                            target_station_id,
                                                             install_actor_id,
                                                             applet_id: authored_package.applet_id.clone(),
                                                             service_id: authored_package.service_id.clone(),
@@ -781,7 +781,7 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
                                 },
                                 "Preview plan"
                             }
-                            // Step 2 — relay the exact Principal Server-signed
+                            // Step 2 — relay the exact Station-signed
                             // request to the Applet service, then commit the
                             // returned co-signed managed-actor bundle unchanged.
                             Button {

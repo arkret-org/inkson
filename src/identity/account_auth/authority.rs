@@ -49,15 +49,13 @@ pub fn issuer_handle_management_url(base_url: &str) -> Option<String> {
     }
 }
 
-pub async fn resolve_principal_gate_account_base_url(
-    principal_server_url: &str,
-) -> anyhow::Result<String> {
-    Ok(AuthorityResolver::discover(principal_server_url)
+pub async fn resolve_principal_gate_account_base_url(station_url: &str) -> anyhow::Result<String> {
+    Ok(AuthorityResolver::discover(station_url)
         .await?
         .gate_account_base_url)
 }
 
-/// T1.Y4 — Account Authority resolver. The Principal Server's root
+/// T1.Y4 — Account Authority resolver. The Station's root
 /// `/_arkret/describe` (service-surface §2.5.1) publishes a strongly-typed
 /// `auth_metadata.account_authority.gate_account_base_url`; every Arkret
 /// `/_arkret/gate/account/*` request MUST be derived from that single base,
@@ -73,21 +71,21 @@ pub struct AuthorityResolver {
     pub gate_account_base_url: String,
     /// Audience the issued session grant authenticates against.
     pub principal_audience: String,
-    /// Principal Server trust domain used by the principal-control bootstrap.
+    /// Station trust domain used by the principal-control bootstrap.
     pub principal_trust_domain: arkret_sdk::TrustDomainId,
     /// Authentication methods the Account Authority accepts.
     pub methods: Vec<arkret_sdk::AuthMethod>,
 }
 
 impl AuthorityResolver {
-    /// Discover the Account Authority from the Principal Server's root
+    /// Discover the Account Authority from the Station's root
     /// `/_arkret/describe` and its strongly-typed `auth_metadata`.
-    pub async fn discover(principal_server_url: &str) -> anyhow::Result<Self> {
+    pub async fn discover(station_url: &str) -> anyhow::Result<Self> {
         // describe/`auth_metadata` is deployment-stable, so resolve ONCE per
-        // principal server and reuse it. This is the choke point every
+        // Station and reuse it. This is the choke point every
         // session-grant rotation flows through; caching it here is what stops
         // an upstream refresh loop from storming `/_arkret/describe`.
-        let key = principal_server_url.trim().to_owned();
+        let key = station_url.trim().to_owned();
         if let Some(cached) =
             AUTHORITY_RESOLVER_CACHE.with(|cache| cache.borrow().get(&key).cloned())
         {
@@ -99,23 +97,23 @@ impl AuthorityResolver {
         // silence here means describe is coming from another caller. Remove once
         // the driver is fixed.
         tracing::warn!(target: "recovery_diag", server = %key, "authority discover cache-miss -> real describe");
-        let principal = TransportClient::unauthenticated(principal_server_url)?;
+        let principal = TransportClient::unauthenticated(station_url)?;
         let description = principal.describe().await?;
-        let resolver = Self::from_description(principal_server_url, &description)?;
+        let resolver = Self::from_description(station_url, &description)?;
         AUTHORITY_RESOLVER_CACHE.with(|cache| cache.borrow_mut().insert(key, resolver.clone()));
         Ok(resolver)
     }
 
     pub(crate) fn from_description(
-        principal_server_url: &str,
+        station_url: &str,
         description: &arkret_sdk::ServiceDescribe,
     ) -> anyhow::Result<Self> {
         let metadata = &description.auth_metadata;
-        let gate_account_base_url = resolve_gate_account_base_url(principal_server_url, metadata)?;
+        let gate_account_base_url = resolve_gate_account_base_url(station_url, metadata)?;
         let principal_audience = {
             let service_id = description.service_id.as_str().trim();
             if service_id.is_empty() {
-                principal_audience(principal_server_url)?
+                principal_audience(station_url)?
             } else {
                 service_id.to_owned()
             }
@@ -137,7 +135,7 @@ impl AuthorityResolver {
         {
             return Ok(method.clone());
         }
-        anyhow::bail!("principal server describe published no oidc auth method in methods[]")
+        anyhow::bail!("Station describe published no oidc auth method in methods[]")
     }
 }
 
@@ -146,7 +144,7 @@ impl AuthorityResolver {
 /// `account_authority.gate_account_base_url` is canonical. When the authority
 /// publishes only `origin`, derive `{origin}/_arkret/gate/account`.
 pub(crate) fn resolve_gate_account_base_url(
-    _principal_server_url: &str,
+    _station_url: &str,
     metadata: &arkret_sdk::AuthMetadata,
 ) -> anyhow::Result<String> {
     if let Some(authority) = metadata.account_authority.as_ref() {
@@ -159,7 +157,7 @@ pub(crate) fn resolve_gate_account_base_url(
             return gate_account_base_url_from_origin(origin);
         }
     }
-    anyhow::bail!("principal server describe is missing auth_metadata.account_authority")
+    anyhow::bail!("Station describe is missing auth_metadata.account_authority")
 }
 
 fn gate_account_base_url_from_origin(origin: &str) -> anyhow::Result<String> {

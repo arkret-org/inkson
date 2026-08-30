@@ -37,7 +37,7 @@ impl garth::AcceptedMlsArtifactStore for HostArtifactStore {
 
 struct HostArtifactApplicator {
     state: SyncSignal<crate::state::LocalStateStore>,
-    authority: arkret_sdk::PrincipalAuthorityKey,
+    authority: arkret_sdk::AccountId,
     device_id: arkret_sdk::DeviceId,
     local_authored_commit: Option<LocalAuthoredCommitStaging>,
 }
@@ -455,7 +455,7 @@ fn locally_executable(
     consumer: &garth::AcceptedMlsArtifactConsumer<HostArtifactStore>,
     state: &crate::state::LocalStateStore,
     event: &arkret_sdk::Event,
-    authority: &arkret_sdk::PrincipalAuthorityKey,
+    authority: &arkret_sdk::AccountId,
     device_id: &arkret_sdk::DeviceId,
 ) -> Result<bool, String> {
     match event.kind {
@@ -514,7 +514,7 @@ fn locally_executable(
 /// No projection Event or to-device envelope can enter this path directly.
 pub(crate) async fn converge_accepted_mls_artifacts(
     state: SyncSignal<crate::state::LocalStateStore>,
-    authority: &arkret_sdk::PrincipalAuthorityKey,
+    authority: &arkret_sdk::AccountId,
     device_id: &arkret_sdk::DeviceId,
 ) -> Result<usize, String> {
     let frontiers = {
@@ -578,7 +578,7 @@ pub(crate) async fn converge_accepted_mls_artifacts(
 /// admission unit must never turn a skipped Commit into a successful no-op.
 pub(crate) async fn converge_accepted_local_commit(
     state: SyncSignal<crate::state::LocalStateStore>,
-    authority: &arkret_sdk::PrincipalAuthorityKey,
+    authority: &arkret_sdk::AccountId,
     device_id: &arkret_sdk::DeviceId,
     event_id: &arkret_sdk::EventId,
     staged_snapshot: &garth::QueuedMlsSnapshot,

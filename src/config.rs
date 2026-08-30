@@ -13,7 +13,7 @@ use crate::identity::active_account::authority_namespace;
 use crate::operation::uuid_v7;
 
 const DEFAULT_SERVER_URL: &str = "https://local.host";
-const DEFAULT_PRINCIPAL_SERVERS: &[&str] = &[DEFAULT_SERVER_URL];
+const DEFAULT_STATIONS: &[&str] = &[DEFAULT_SERVER_URL];
 const LOCAL_PROXY_SERVER_URL: &str = "https://local.host";
 const LOCAL_PROXY_SERVER_PORT: u16 = 8787;
 const DEVICE_ID_PREFIX: &str = "ak:device:";
@@ -27,7 +27,7 @@ const PROFILES_STORAGE_KEY: &str = "inkson.profiles.v1";
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ClientConfig {
-    pub principal_servers: Vec<Url>,
+    pub stations: Vec<Url>,
     pub active_account: Option<ActiveAccountContext>,
     #[serde(default, skip_serializing)]
     pub session_credential: String,
@@ -36,7 +36,7 @@ pub struct ClientConfig {
 impl Default for ClientConfig {
     fn default() -> Self {
         Self {
-            principal_servers: default_principal_servers(),
+            stations: default_stations(),
             active_account: None,
             session_credential: String::new(),
         }
@@ -46,14 +46,14 @@ impl Default for ClientConfig {
 impl ClientConfig {
     pub fn authenticated(active_account: ActiveAccountContext, session_credential: String) -> Self {
         Self {
-            principal_servers: default_principal_servers(),
+            stations: default_stations(),
             active_account: Some(active_account),
             session_credential,
         }
     }
 
     fn normalized(mut self) -> Self {
-        self.principal_servers = normalize_principal_server_presets(&self.principal_servers);
+        self.stations = normalize_station_presets(&self.stations);
         if self.active_account.is_none() {
             self.session_credential.clear();
         }
@@ -83,7 +83,7 @@ impl ClientConfig {
     }
 
     pub fn same_runtime_state(&self, other: &Self) -> bool {
-        self.principal_servers == other.principal_servers
+        self.stations == other.stations
             && self.session_credential == other.session_credential
             && match (&self.active_account, &other.active_account) {
                 (None, None) => true,
@@ -99,8 +99,8 @@ impl ClientConfig {
     }
 }
 
-fn default_principal_servers() -> Vec<Url> {
-    DEFAULT_PRINCIPAL_SERVERS
+fn default_stations() -> Vec<Url> {
+    DEFAULT_STATIONS
         .iter()
         .filter_map(|server| Url::parse(server).ok())
         .collect()
@@ -117,30 +117,27 @@ pub fn same_server_url(left: &str, right: &str) -> bool {
     server_url_key(left) == server_url_key(right)
 }
 
-fn push_unique_principal_server(options: &mut Vec<Url>, server_url: &Url) {
+fn push_unique_station(options: &mut Vec<Url>, server_url: &Url) {
     if options.iter().any(|existing| existing == server_url) {
         return;
     }
     options.push(server_url.clone());
 }
 
-pub fn normalize_principal_server_presets(principal_servers: &[Url]) -> Vec<Url> {
+pub fn normalize_station_presets(stations: &[Url]) -> Vec<Url> {
     let mut options = Vec::<Url>::new();
-    for server_url in principal_servers {
-        push_unique_principal_server(&mut options, server_url);
+    for server_url in stations {
+        push_unique_station(&mut options, server_url);
     }
     if options.is_empty() {
-        for server_url in default_principal_servers() {
-            push_unique_principal_server(&mut options, &server_url);
+        for server_url in default_stations() {
+            push_unique_station(&mut options, &server_url);
         }
     }
     options
 }
 
-pub fn principal_server_options_for(
-    current_server_url: &str,
-    configured_principal_servers: &[Url],
-) -> Vec<String> {
+pub fn station_options_for(current_server_url: &str, configured_stations: &[Url]) -> Vec<String> {
     let mut options = Vec::<String>::new();
     let mut push = |candidate: &str| {
         let normalized = normalize_server_url(candidate);
@@ -153,10 +150,10 @@ pub fn principal_server_options_for(
         }
     };
     push(current_server_url);
-    for server_url in configured_principal_servers {
+    for server_url in configured_stations {
         push(server_url.as_str());
     }
-    for server_url in DEFAULT_PRINCIPAL_SERVERS {
+    for server_url in DEFAULT_STATIONS {
         push(server_url);
     }
     options
@@ -254,7 +251,7 @@ impl MultiProfileConfig {
                 .update_resolution(profile.account.resolution)?;
             existing.account.device_id = profile.account.device_id;
             existing.account.update_route(
-                &profile.account.authority.principal_server_id,
+                &profile.account.authority.station_id,
                 profile.account.server_url,
             )?;
             existing.session_credential = profile.session_credential;
@@ -611,33 +608,31 @@ impl LocalConfigStore {
 
     pub fn save(&mut self, config: ClientConfig) {
         let mut config = config.normalized();
-        self.preserve_principal_servers_for_runtime_save(&mut config);
+        self.preserve_stations_for_runtime_save(&mut config);
         self.cached = Some(config);
         // Fire-and-forget by design; a failed flush is latched (and logged)
         // by `flush` itself so the UI can still surface it.
         let _ = self.flush();
     }
 
-    fn preserve_principal_servers_for_runtime_save(&self, config: &mut ClientConfig) {
-        if normalize_principal_server_presets(&config.principal_servers)
-            != default_principal_servers()
-        {
+    fn preserve_stations_for_runtime_save(&self, config: &mut ClientConfig) {
+        if normalize_station_presets(&config.stations) != default_stations() {
             return;
         }
 
         let existing = self
             .cached
             .as_ref()
-            .map(|cached| cached.principal_servers.clone())
+            .map(|cached| cached.stations.clone())
             .or_else(|| {
                 self.read_persisted_config()
-                    .map(|persisted| persisted.principal_servers)
+                    .map(|persisted| persisted.stations)
             })
-            .map(|servers| normalize_principal_server_presets(&servers))
-            .unwrap_or_else(default_principal_servers);
+            .map(|servers| normalize_station_presets(&servers))
+            .unwrap_or_else(default_stations);
 
-        if existing != default_principal_servers() {
-            config.principal_servers = existing;
+        if existing != default_stations() {
+            config.stations = existing;
         }
     }
 
@@ -841,7 +836,7 @@ mod tests {
     ) -> ActiveAccountContext {
         ActiveAccountContext::new(
             profile.to_owned(),
-            arkret_sdk::PrincipalAuthorityKey::new(
+            arkret_sdk::AccountId::new(
                 arkret_sdk::DidCoreId::new(principal.to_owned()).unwrap(),
                 arkret_sdk::DidCoreId::new(service.to_owned()).unwrap(),
             ),
@@ -875,7 +870,7 @@ mod tests {
         assert!(config.active_account.is_none());
         assert!(config.session_credential.is_empty());
         assert_eq!(
-            config.principal_servers,
+            config.stations,
             vec![Url::parse("https://local.host").unwrap()]
         );
     }
@@ -938,7 +933,7 @@ mod tests {
         assert!(
             serde_json::from_value::<ClientConfig>(serde_json::json!({
                 "server_url": "https://principal.example",
-                "principal_servers": ["https://principal.example"],
+                "stations": ["https://principal.example"],
                 "principal_id": "ak:did_core:web:alice.example",
                 "device_id": "ak:device:019b0000-0000-7000-8000-000000000001",
                 "session_credential": ""

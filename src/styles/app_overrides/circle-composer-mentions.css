@@ -732,7 +732,7 @@
   transform: translateY(0);
 }
 
-/* Principal-server combobox: an editable URL field with a custom-styled
+/* Station combobox: an editable URL field with a custom-styled
    preset dropdown (a themed replacement for the unstyleable native
    <datalist> popup). */
 .auth-combobox {

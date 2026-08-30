@@ -493,7 +493,7 @@ mod account_signer_boot_tests {
 
     fn account(principal: &str, device: &str) -> crate::config::ActiveAccountContext {
         let did = arkret_sdk::Did::new(principal.to_owned()).unwrap();
-        let authority = arkret_sdk::PrincipalAuthorityKey::new(
+        let authority = arkret_sdk::AccountId::new(
             arkret_sdk::project_did_to_core_id(&did).unwrap(),
             arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example".to_owned()).unwrap(),
         );
@@ -522,7 +522,7 @@ mod account_signer_boot_tests {
             principal_id: arkret_sdk::DidCoreId::new(principal_id).unwrap(),
             service_account_id: arkret_sdk::ServiceAccountId::new("account-1").unwrap(),
             device_id: arkret_sdk::DeviceId::new(device_id.to_owned()).unwrap(),
-            principal_server_url: url::Url::parse("https://principal.example").unwrap(),
+            station_url: url::Url::parse("https://principal.example").unwrap(),
             grant_expires_at: Some(chrono::Utc::now() + chrono::Duration::hours(1)),
             stored_at: chrono::Utc::now(),
         }

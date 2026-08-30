@@ -13,7 +13,7 @@ impl LocalStateStore {
             .flatten()
     }
 
-    pub fn active_authority(&self) -> Option<arkret_sdk::PrincipalAuthorityKey> {
+    pub fn active_authority(&self) -> Option<arkret_sdk::AccountId> {
         let root = self.read_root();
         root.pending_login
             .is_none()
@@ -31,7 +31,7 @@ impl LocalStateStore {
 
     pub fn known_profile_id_for_authority(
         &self,
-        authority: &arkret_sdk::PrincipalAuthorityKey,
+        authority: &arkret_sdk::AccountId,
     ) -> Option<String> {
         self.read_root()
             .known_profiles

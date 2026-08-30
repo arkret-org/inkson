@@ -20,7 +20,7 @@ use crate::views::helpers::short_protocol_id;
 pub(crate) fn refresh_notifications(
     base_url: String,
     session_credential: Signal<String>,
-    authority: arkret_sdk::PrincipalAuthorityKey,
+    authority: arkret_sdk::AccountId,
     mut state_store: SyncSignal<LocalStateStore>,
     mut notifications: Signal<Vec<UiNotification>>,
     mut status_msg: Signal<String>,
@@ -268,7 +268,7 @@ pub(crate) fn mark_notification_read_state(
 pub(crate) fn set_notification_inbox_state(
     base_url: String,
     session_credential: String,
-    authority: arkret_sdk::PrincipalAuthorityKey,
+    authority: arkret_sdk::AccountId,
     actor_id: String,
     device_id: String,
     notification_id: String,
@@ -370,7 +370,7 @@ fn build_notification_inbox_candidate(
 pub(crate) fn run_notification_action(
     base_url: String,
     session_credential: Signal<String>,
-    authority: arkret_sdk::PrincipalAuthorityKey,
+    authority: arkret_sdk::AccountId,
     state_store: SyncSignal<LocalStateStore>,
     notifications: Signal<Vec<UiNotification>>,
     status_msg: Signal<String>,
@@ -401,7 +401,7 @@ pub(crate) fn run_notification_action(
 fn accept_invite_notification(
     base_url: String,
     session_credential: Signal<String>,
-    authority: arkret_sdk::PrincipalAuthorityKey,
+    authority: arkret_sdk::AccountId,
     mut state_store: SyncSignal<LocalStateStore>,
     mut notifications: Signal<Vec<UiNotification>>,
     mut status_msg: Signal<String>,

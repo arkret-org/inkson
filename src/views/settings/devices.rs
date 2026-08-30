@@ -571,7 +571,7 @@ fn render_device_list(
     device_id: Signal<String>,
     token: Signal<String>,
     state_store: SyncSignal<LocalStateStore>,
-    authority: arkret_sdk::PrincipalAuthorityKey,
+    authority: arkret_sdk::AccountId,
     revoke_passphrase: Signal<crate::fresh_device_recovery::RecoveryWordsInput>,
 ) -> Element {
     let rows = devices();
@@ -764,7 +764,7 @@ fn render_revoke_modal(
     state_store: SyncSignal<LocalStateStore>,
     principal_id: Signal<String>,
     device_id: Signal<String>,
-    authority: arkret_sdk::PrincipalAuthorityKey,
+    authority: arkret_sdk::AccountId,
     mut revoke_passphrase: Signal<crate::fresh_device_recovery::RecoveryWordsInput>,
 ) -> Element {
     let confirm_target = target.clone();
@@ -914,7 +914,7 @@ fn render_revoke_modal(
 fn render_pair_strand(
     principal_id: Signal<String>,
     device_id: Signal<String>,
-    authority: arkret_sdk::PrincipalAuthorityKey,
+    authority: arkret_sdk::AccountId,
     base_url: Signal<String>,
     token: Signal<String>,
     mut state_store: SyncSignal<LocalStateStore>,

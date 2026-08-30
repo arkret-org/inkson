@@ -148,15 +148,14 @@ async fn accepted_account_context(
     let server_url = url::Url::parse(server_url)?;
 
     // Login/onboarding only publish ActiveAccountContext after verifying the
-    // complete principal + Principal Server resolution histories. Connect must
+    // complete principal + Station resolution histories. Connect must
     // reuse that accepted state instead of making an empty, session-scoped DID
     // cache a second authentication authority. The cache is an optimization for
     // later resolutions and is intentionally cleared across account changes.
     if let Some(current) = current.filter(|account| {
         account.authority.principal_id == principal_id
-            && description.is_none_or(|description| {
-                account.authority.principal_server_id == description.service_id
-            })
+            && description
+                .is_none_or(|description| account.authority.station_id == description.service_id)
             && account.device_id == device_id
             && account.server_url == server_url
     }) {
@@ -165,11 +164,10 @@ async fn accepted_account_context(
 
     let description = description.ok_or_else(|| {
         anyhow::anyhow!(
-            "Principal Server describe is temporarily unavailable and no accepted account context can be reused"
+            "Station describe is temporarily unavailable and no accepted account context can be reused"
         )
     })?;
-    let authority =
-        arkret_sdk::PrincipalAuthorityKey::new(principal_id, description.service_id.clone());
+    let authority = arkret_sdk::AccountId::new(principal_id, description.service_id.clone());
     let profile_id = current
         .filter(|account| account.authority == authority)
         .map(|account| account.profile_id.clone())
@@ -675,7 +673,7 @@ pub(super) fn connect(
                 // manually retries.
                 let description = match bootstrap_request("server describe", api.describe()).await {
                     Ok(description) => {
-                        let missing = missing_v1_principal_server_requirements(&description);
+                        let missing = missing_v1_station_requirements(&description);
                         if !missing.is_empty() {
                             let message =
                                 format!("server describe rejected: missing {}", missing.join(", "));
@@ -683,11 +681,10 @@ pub(super) fn connect(
                             network_state.set("offline".to_owned());
                             last_error.set(Some(message.clone()));
                             server_probe_status.set(message);
-                            crate::operation::set_authoring_principal_server_id(None);
+                            crate::operation::set_authoring_station_id(None);
                             server_description.set(None);
-                            did_resolution_health.set(
-                                crate::components::DidResolutionHealth::unsupported_principal_server(),
-                            );
+                            did_resolution_health
+                                .set(crate::components::DidResolutionHealth::unsupported_station());
                             transition_session_boot_state(
                                 session_boot_state,
                                 if token().trim().is_empty() {
@@ -727,7 +724,7 @@ pub(super) fn connect(
                                 Some(description.trust_domain.as_str().to_owned());
                             store.save(snapshot);
                         }
-                        crate::operation::set_authoring_principal_server_id(Some(
+                        crate::operation::set_authoring_station_id(Some(
                             description.service_id.clone(),
                         ));
                         server_description.set(Some(description.clone()));
@@ -741,7 +738,7 @@ pub(super) fn connect(
                         network_state.set("reconnecting".to_owned());
                         last_error.set(Some(format!("describe: {error}")));
                         server_probe_status.set(format!("server describe failed: {error}"));
-                        crate::operation::set_authoring_principal_server_id(None);
+                        crate::operation::set_authoring_station_id(None);
                         server_description.set(None);
                         None
                     }
@@ -877,7 +874,7 @@ pub(super) fn connect(
                         invalidate_bootstrap_session(
                             &session,
                             format!(
-                                "Principal Server account projection is missing; sign in again to recreate it: {error}"
+                                "Station account projection is missing; sign in again to recreate it: {error}"
                             ),
                             session_boot_state,
                             sync_bootstrap_complete,
@@ -936,7 +933,7 @@ pub(super) fn connect(
                                         invalidate_bootstrap_session(
                                             &session,
                                             format!(
-                                                "Principal Server account projection is missing after session refresh; sign in again to recreate it: {retry_error}"
+                                                "Station account projection is missing after session refresh; sign in again to recreate it: {retry_error}"
                                             ),
                                             session_boot_state,
                                             sync_bootstrap_complete,
@@ -1187,7 +1184,7 @@ pub(super) fn connect(
                 }
                 principal_id.set(canonical_runtime_principal);
                 // DID-P2-B step 5, trust-domain half: an account entry can be
-                // re-pointed at a different Principal Server. A binding accepted
+                // re-pointed at a different Station. A binding accepted
                 // against the previous deployment must not authorize anything
                 // under the new one, so anything outside the *current* trust
                 // domain is dropped now rather than left to expire. Same-domain
@@ -1230,7 +1227,7 @@ pub(super) fn connect(
                                     grant,
                                     principal_id,
                                 )
-                            }) && crate::identity::session_refresh::grant_matches_principal_server(
+                            }) && crate::identity::session_refresh::grant_matches_station(
                                 grant, &base,
                             ) && crate::config::is_valid_device_id(grant.device_id.as_str())
                         })
@@ -2283,7 +2280,7 @@ pub(super) fn connect(
                 network_state.set("offline".to_owned());
                 last_error.set(Some(format!("invalid URL: {error}")));
                 server_probe_status.set(format!("server describe skipped: invalid URL: {error}"));
-                crate::operation::set_authoring_principal_server_id(None);
+                crate::operation::set_authoring_station_id(None);
                 server_description.set(None);
                 let cache = ctx.did_cache.read();
                 did_resolution_health.set(

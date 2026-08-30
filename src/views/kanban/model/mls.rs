@@ -21,7 +21,7 @@ pub(crate) struct MlsDecryptCtx<'a> {
 pub(crate) fn mls_decrypt_ctx_if_ready<'a>(
     state_store: &'a LocalStateStore,
     realm_id: &'a str,
-    authority: &arkret_sdk::PrincipalAuthorityKey,
+    authority: &arkret_sdk::AccountId,
 ) -> Option<MlsDecryptCtx<'a>> {
     let snapshot_requires_account_secret = state_store.mls_snapshot_for(realm_id).is_some();
     if snapshot_requires_account_secret {

@@ -2,7 +2,7 @@
 //!
 //! Each queue item carries the authoritative `(realm_id, actor_id)` authoring
 //! partition. Physical queues are additionally partitioned by the exact
-//! [`arkret_sdk::PrincipalAuthorityKey`] that owns the authenticated session;
+//! [`arkret_sdk::AccountId`] that owns the authenticated session;
 //! actor ids never serve as account-storage coordinates. Native
 //! clients use Garth's atomic `FileStore`; web clients persist the same SDK
 //! `SendQueueSnapshot` shape in origin storage until the IndexedDB contract
@@ -95,21 +95,21 @@ impl OutboundLane {
 }
 
 fn outbound_storage_scope(
-    authority: &arkret_sdk::PrincipalAuthorityKey,
+    authority: &arkret_sdk::AccountId,
     lane: OutboundLane,
 ) -> arkret_sdk::Result<String> {
-    let authority_digest = crate::secure_key_store::principal_authority_storage_digest(authority)
-        .map_err(|error| {
-        arkret_sdk::Error::Protocol(format!(
-            "derive durable outbound authority namespace: {error}"
-        ))
-    })?;
+    let authority_digest =
+        crate::secure_key_store::account_id_storage_digest(authority).map_err(|error| {
+            arkret_sdk::Error::Protocol(format!(
+                "derive durable outbound authority namespace: {error}"
+            ))
+        })?;
     Ok(format!("{authority_digest}.{}", lane.suffix()))
 }
 
 impl InksonOutboundStore {
     pub(crate) fn open(
-        authority: &arkret_sdk::PrincipalAuthorityKey,
+        authority: &arkret_sdk::AccountId,
         lane: OutboundLane,
     ) -> arkret_sdk::Result<Self> {
         let scope = outbound_storage_scope(authority, lane)?;
@@ -213,8 +213,8 @@ impl OutboundQueueStore for InksonOutboundStore {
 mod tests {
     use super::*;
 
-    fn authority(server: &str) -> arkret_sdk::PrincipalAuthorityKey {
-        arkret_sdk::PrincipalAuthorityKey::new(
+    fn authority(server: &str) -> arkret_sdk::AccountId {
+        arkret_sdk::AccountId::new(
             arkret_sdk::DidCoreId::new("ak:did_core:webvh:zPrincipal".to_owned()).unwrap(),
             arkret_sdk::DidCoreId::new(server.to_owned()).unwrap(),
         )

@@ -1,6 +1,6 @@
 //! §5.6 self-preservation and forced-epoch-advance MLS commit logic.
 
-use arkret_sdk::{DeviceId, PrincipalAuthorityKey};
+use arkret_sdk::{AccountId, DeviceId};
 
 use super::{MlsRuntimeError, load_device_snapshot_secret};
 use crate::secure_key_store::SecureKeyStore;
@@ -30,7 +30,7 @@ pub fn force_epoch_rotation_commit(
     state_store: &crate::state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
-    authority: &PrincipalAuthorityKey,
+    authority: &AccountId,
     device_id: &DeviceId,
 ) -> Result<
     (
@@ -55,7 +55,7 @@ pub fn force_epoch_rotation_commit_for_effective_scope(
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
     circle_id: Option<&str>,
-    authority: &PrincipalAuthorityKey,
+    authority: &AccountId,
     device_id: &DeviceId,
 ) -> Result<
     (
@@ -120,7 +120,7 @@ pub(crate) fn build_mls_remove_members_commit_for_effective_scope_with_sidecar_b
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
     circle_id: Option<&str>,
-    authority: &PrincipalAuthorityKey,
+    authority: &AccountId,
     device_id: &DeviceId,
     target_principal_ids: &[&str],
     revocation_membership_frontier: &[arkret_sdk::EventId],
@@ -241,7 +241,7 @@ pub(crate) fn build_add_member_commit_for_effective_scope(
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
     circle_id: Option<&str>,
-    authority: &PrincipalAuthorityKey,
+    authority: &AccountId,
     device_id: &DeviceId,
     member_key_package: &arkret_sdk::MlsKeyPackageRecord,
     member_authority_hint: &crate::mls::governance_proof::MlsLeafAuthorityHint,
@@ -272,7 +272,7 @@ pub(crate) fn build_add_member_commit_for_effective_scope_with_binding(
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
     circle_id: Option<&str>,
-    authority: &PrincipalAuthorityKey,
+    authority: &AccountId,
     device_id: &DeviceId,
     member_key_package: &arkret_sdk::MlsKeyPackageRecord,
     member_authority_hints: &[crate::mls::governance_proof::MlsLeafAuthorityHint],
@@ -447,7 +447,7 @@ pub fn build_idle_self_update_commit(
     state_store: &crate::state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
-    authority: &PrincipalAuthorityKey,
+    authority: &AccountId,
     actor_id: &str,
     device_id: &DeviceId,
     now: chrono::DateTime<chrono::Utc>,

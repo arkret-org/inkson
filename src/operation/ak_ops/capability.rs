@@ -147,7 +147,7 @@ pub fn capability_grant_actions_with_resources(
         realm_id: Some(realm_typed.clone()),
         issuer_id: actor_typed,
         subject: arkret_sdk::CapabilitySubject::CoreDid(subject_typed),
-        subject_principal_server_id: Some(crate::operation::authoring_principal_server_id()?),
+        subject_station_id: Some(crate::operation::authoring_station_id()?),
         actions: actions.iter().map(|action| (*action).to_owned()).collect(),
         resources,
         constraints: constraints_typed,
@@ -264,8 +264,8 @@ mod tests {
             .and_then(Value::as_object_mut)
             .unwrap()
             .insert(
-                "issuer_principal_server_id".to_owned(),
-                Value::String(operation.intent().principal_server_id().to_string()),
+                "issuer_station_id".to_owned(),
+                Value::String(operation.intent().station_id().to_string()),
             );
         let projected_grant = projected_payload
             .get_mut("grant")

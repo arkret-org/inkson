@@ -101,7 +101,7 @@ pub(crate) fn shared_message_pin_remove_operation(
 }
 
 pub(crate) fn load_chat_productivity_namespace_key(
-    authority: &arkret_sdk::PrincipalAuthorityKey,
+    authority: &arkret_sdk::AccountId,
 ) -> anyhow::Result<[u8; crate::account_data::PRODUCTIVITY_ACCOUNT_DATA_NAMESPACE_KEY_LEN]> {
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
     let account_secret =
@@ -246,7 +246,7 @@ pub(crate) fn chat_reaction_add_operation_encrypted(
 pub(crate) fn build_chat_reaction_add_operation(
     mut state_store: SyncSignal<LocalStateStore>,
     realm_id: &str,
-    authority: &arkret_sdk::PrincipalAuthorityKey,
+    authority: &arkret_sdk::AccountId,
     actor: &str,
     device_id: &arkret_sdk::DeviceId,
     event_id: &str,

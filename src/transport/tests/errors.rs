@@ -282,7 +282,7 @@ fn coauth_rejected_introspection_is_a_terminal_session_grant_loss() {
         error: decode_problem(
             StatusCode::UNAUTHORIZED,
             "unauthenticated",
-            "session grant introspection was rejected by the Auth Server",
+            "session grant introspection was rejected by the Station account authority",
         ),
     }
     .into();

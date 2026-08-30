@@ -130,7 +130,7 @@ fn demo_realm_genesis() -> Result<Value> {
     let producer_id = arkret_wire::project_did_to_core_id(&producer_did)?;
     let notary_public_key = authority.signing_key.verifying_key().to_bytes();
     let notary = arkret_sdk::NotaryValue::single_signer(arkret_sdk::NotarySignerDescriptor {
-        actor_id: authority.service_id.clone(),
+        actor_id: authority.station_id.clone(),
         verification_method: authority.verification_method.clone(),
         key_kind: arkret_sdk::NotaryKeyKind::Ed25519Raw32,
         jose_algorithm: arkret_sdk::NotaryJoseAlgorithm::Ed25519,
@@ -139,7 +139,7 @@ fn demo_realm_genesis() -> Result<Value> {
             notary_public_key,
         ))?,
     });
-    inkson::operation::set_authoring_principal_server_id(Some(authority.service_id.clone()));
+    inkson::operation::set_authoring_station_id(Some(authority.station_id.clone()));
     let operation = inkson::event_builders::build_realm_create_event(
         arkret_sdk::GenesisSalt::new(arkret_sdk::base64url_encode([9_u8; 32]))?,
         producer_id.as_str(),
@@ -156,7 +156,7 @@ fn demo_realm_genesis() -> Result<Value> {
         "ak:trust_domain:local.host",
         Some("mls_rfc9420"),
     )?;
-    inkson::operation::set_authoring_principal_server_id(None);
+    inkson::operation::set_authoring_station_id(None);
     let created_at = chrono::DateTime::parse_from_rfc3339("2026-04-28T12:00:00.000Z")?
         .with_timezone(&chrono::Utc);
     let mut event = operation
@@ -181,7 +181,7 @@ fn demo_realm_genesis() -> Result<Value> {
         .verification_method
         .clone();
     let facets = inkson::event_builders::RealmBootstrapFacets {
-        principal_server_id: authority.service_id.clone(),
+        station_id: authority.station_id.clone(),
         actor_id: producer_id.to_string(),
         notary_did: authority.did.to_string(),
         notary_service_origin: "https://server.local".to_owned(),
@@ -257,7 +257,7 @@ fn realm_genesis_seal(input: Value) -> Result<Value> {
     let digest_suite = arkret_sdk::DigestSuite::Sha256;
     let authority = mock_service_authority()?;
     let signer_evidence = arkret_sdk::AuthenticatedSignerResolutionEvidence::Service {
-        signer_id: authority.service_id.clone(),
+        signer_id: authority.station_id.clone(),
         verification_method: authority.verification_method.clone(),
         authenticated_resolution: authority.resolution.clone(),
     };
@@ -271,8 +271,8 @@ fn realm_genesis_seal(input: Value) -> Result<Value> {
     );
     for event in &mut input.events {
         anyhow::ensure!(
-            event.principal_server_id == authority.service_id,
-            "Realm genesis Event targets a different Principal Server"
+            event.station_id == authority.station_id,
+            "Realm genesis Event targets a different Station"
         );
         let producer = match event.proofs.as_slice() {
             [arkret_sdk::EventProof::Producer(producer)] => producer.clone(),
@@ -289,12 +289,13 @@ fn realm_genesis_seal(input: Value) -> Result<Value> {
             })?
             .clone();
         let accepted_at = chrono::Utc::now();
-        let mut admission = arkret_sdk::PrincipalServerAdmissionProof {
-            kind: arkret_sdk::PrincipalServerAdmissionProofKind::PrincipalServerAdmission,
+        let mut admission = arkret_sdk::StationAdmissionProof {
+            kind: arkret_sdk::StationAdmissionProofKind::StationAdmission,
             verification_method: authority.verification_method.clone(),
             event_digest: producer.event_digest.clone(),
-            producer_proof_digest:
-                arkret_sdk::PrincipalServerAdmissionProof::producer_proof_digest(&producer)?,
+            producer_proof_digest: arkret_sdk::StationAdmissionProof::producer_proof_digest(
+                &producer,
+            )?,
             producer_verification_method: producer.verification_method.clone(),
             producer_signing_key_did: producer_signing_key,
             producer_signer_resolution_evidence_ref: None,
@@ -307,11 +308,7 @@ fn realm_genesis_seal(input: Value) -> Result<Value> {
         admission.jws = admission_signer
             .sign_payload(&admission.canonical_binding_bytes()?)?
             .jws;
-        admission.validate_binding(
-            &producer.event_digest,
-            &producer,
-            &event.principal_server_id,
-        )?;
+        admission.validate_binding(&producer.event_digest, &producer, &event.station_id)?;
         event.proofs.push(admission.into());
     }
     let registry = arkret_sdk::lattice_registry::build_sdk_cell_registry();
@@ -445,7 +442,7 @@ fn mock_service_authority() -> Result<MockServiceAuthority> {
     };
     let describe_digest = route_binding_describe_digest(
         &service_id,
-        "principal_server",
+        "station",
         &commitment,
         "https://server.local/_arkret",
     )?;
@@ -453,7 +450,7 @@ fn mock_service_authority() -> Result<MockServiceAuthority> {
     let record = sign_service_resolution_record(
         ServiceResolutionRecordCore {
             service_id: service_id.clone(),
-            service_kind: "principal_server".to_owned(),
+            service_kind: "station".to_owned(),
             did,
             method_history_head: history_position.clone(),
             version_id: history_position.clone(),
@@ -542,7 +539,7 @@ fn principal_locator(input: Value) -> Result<Value> {
     let mut locator = arkret_sdk::PrincipalLocator {
         schema: arkret_sdk::PrincipalLocator::SCHEMA.to_owned(),
         subject_id: input.subject_id,
-        recipient_id: authority.service_id,
+        recipient_id: authority.station_id,
         service_resolution,
         route_assistance: None,
         recipient_kind: None,
@@ -736,7 +733,7 @@ fn range_completeness(input: Value) -> Result<Value> {
             realm_id: input.realm_id,
         },
         actor_id: issuer.clone(),
-        principal_server_id: issuer.clone(),
+        station_id: issuer.clone(),
         executed_by: None,
         authorization_ref: None,
         applet_id: None,

@@ -6,7 +6,7 @@ use crate::state::LocalStateStore;
 
 pub(crate) fn controller_signer_device_id(
     controller_did: &arkret_sdk::Did,
-    controller_authority: &arkret_sdk::PrincipalAuthorityKey,
+    controller_authority: &arkret_sdk::AccountId,
     signer: &crate::event_signer::InksonEventSigner,
     signer_account_scope: Option<&crate::secure_key_store::ActiveDeviceSeedScope>,
 ) -> anyhow::Result<arkret_sdk::DeviceId> {
@@ -102,7 +102,7 @@ async fn submit_managed_agent_pcr_seal(
         || outcome.accepted_event_digests != expected_digests
         || outcome.post_state_root != seal.state_root
     {
-        anyhow::bail!("Principal Server returned a mismatched managed Agent PCR Seal outcome");
+        anyhow::bail!("Station returned a mismatched managed Agent PCR Seal outcome");
     }
     Ok(seal)
 }
@@ -281,7 +281,7 @@ pub(crate) async fn seal_self_principal_event_current(
         || outcome.accepted_event_digests != expected_digests
         || outcome.post_state_root != seal.state_root
     {
-        anyhow::bail!("Principal Server returned a mismatched controller self-PCR Seal outcome");
+        anyhow::bail!("Station returned a mismatched controller self-PCR Seal outcome");
     }
     Ok(seal)
 }
@@ -547,19 +547,14 @@ mod tests {
 
     const TEST_DEVICE_ID: &str = "ak:device:01964137-0000-7000-8000-000000000001";
 
-    fn controller(did: &str) -> (arkret_sdk::Did, arkret_sdk::PrincipalAuthorityKey) {
+    fn controller(did: &str) -> (arkret_sdk::Did, arkret_sdk::AccountId) {
         let did = arkret_sdk::Did::new(did.to_owned()).unwrap();
         let principal_id = arkret_sdk::project_did_to_core_id(&did).unwrap();
         let server_id = arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap();
-        (
-            did,
-            arkret_sdk::PrincipalAuthorityKey::new(principal_id, server_id),
-        )
+        (did, arkret_sdk::AccountId::new(principal_id, server_id))
     }
 
-    fn scope(
-        authority: arkret_sdk::PrincipalAuthorityKey,
-    ) -> crate::secure_key_store::ActiveDeviceSeedScope {
+    fn scope(authority: arkret_sdk::AccountId) -> crate::secure_key_store::ActiveDeviceSeedScope {
         crate::secure_key_store::ActiveDeviceSeedScope {
             authority,
             device_id: arkret_sdk::DeviceId::new(TEST_DEVICE_ID).unwrap(),

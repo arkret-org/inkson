@@ -118,7 +118,7 @@ impl garth::SignalSenderKeyResolver for DirectorySenderKeyResolver {
 pub struct MlsSignalDecryptor {
     state_store: crate::runtime::input::StateStoreHandle,
     secure_store: std::sync::Arc<dyn crate::secure_key_store::SecureKeyStore + Send + Sync>,
-    authority: arkret_sdk::PrincipalAuthorityKey,
+    authority: arkret_sdk::AccountId,
     device_id: arkret_sdk::DeviceId,
     /// §10.1 obliges a receiver to keep a seen-counter set per
     /// `(key_ref, epoch, device_id, purpose, aead_profile)`. It is shared
@@ -129,7 +129,7 @@ pub struct MlsSignalDecryptor {
 impl MlsSignalDecryptor {
     pub fn new(
         state_store: crate::runtime::input::StateStoreHandle,
-        authority: arkret_sdk::PrincipalAuthorityKey,
+        authority: arkret_sdk::AccountId,
         device_id: arkret_sdk::DeviceId,
     ) -> Self {
         Self {
@@ -729,14 +729,14 @@ mod tests {
             DirectorySenderKeyResolver
                 .resolve_sender_key(&envelope)
                 .is_none(),
-            "a bare cached key must not replace its Principal Server authority evidence"
+            "a bare cached key must not replace its Station authority evidence"
         );
 
         crate::identity::device_directory::seed_signal_sender_for_test(
             actor,
             device,
             public_key,
-            arkret_sdk::PrincipalAuthorityKey::new(
+            arkret_sdk::AccountId::new(
                 envelope.sender_actor_id.clone(),
                 arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap(),
             ),

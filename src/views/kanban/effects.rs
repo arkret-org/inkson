@@ -62,7 +62,7 @@ pub(super) fn KanbanEffects(
     token: Signal<String>,
     selected_realm_id: String,
     projection_realm_id: String,
-    authority: arkret_sdk::PrincipalAuthorityKey,
+    authority: arkret_sdk::AccountId,
     principal_id: String,
     device_id: String,
     sync_cursor: Signal<String>,

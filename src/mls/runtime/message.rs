@@ -1,7 +1,7 @@
 //! Welcome application, application-payload encrypt / decrypt, and the SEC-08
 //! minimal-metadata AAD policy enforcement.
 
-use arkret_sdk::{DeviceId, PrincipalAuthorityKey};
+use arkret_sdk::{AccountId, DeviceId};
 use arkret_wire::event_kind_str;
 
 use super::{
@@ -165,7 +165,7 @@ pub(crate) fn decrypt_application_payload_for_effective_scope_internal(
     state_store: &crate::state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
-    authority: &PrincipalAuthorityKey,
+    authority: &AccountId,
     device_id: &DeviceId,
     payload: &arkret_sdk::EncryptedPayload,
     circle_id: Option<&str>,
@@ -244,7 +244,7 @@ pub fn decrypt_application_payload_for_scope_from_verified_sender(
     state_store: &crate::state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
-    authority: &PrincipalAuthorityKey,
+    authority: &AccountId,
     device_id: &DeviceId,
     payload: &arkret_sdk::EncryptedPayload,
     effective_scope: &arkret_sdk::ScopeRef,
@@ -277,7 +277,7 @@ pub fn decrypt_application_payload_for_scope_from_verified_sender(
 fn authenticate_received_identity_link(
     state_store: &crate::state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
-    authority: &PrincipalAuthorityKey,
+    authority: &AccountId,
     device_id: &DeviceId,
     effective_scope: &arkret_sdk::ScopeRef,
     payload: &arkret_sdk::EncryptedPayload,
@@ -369,7 +369,7 @@ fn decrypt_application_payload_for_scope_internal(
     state_store: &crate::state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
-    authority: &PrincipalAuthorityKey,
+    authority: &AccountId,
     device_id: &DeviceId,
     payload: &arkret_sdk::EncryptedPayload,
     effective_scope: &arkret_sdk::ScopeRef,
@@ -561,7 +561,7 @@ pub fn minimal_metadata_author_view(
     state_store: &crate::state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
-    authority: &PrincipalAuthorityKey,
+    authority: &AccountId,
     device_id: &DeviceId,
     group_id: &str,
     epoch: u64,
@@ -586,7 +586,7 @@ pub fn minimal_metadata_author_view(
 pub fn minimal_metadata_author_view_for_scope(
     state_store: &crate::state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
-    authority: &PrincipalAuthorityKey,
+    authority: &AccountId,
     device_id: &DeviceId,
     effective_scope: &arkret_sdk::ScopeRef,
     group_id: &str,
@@ -625,7 +625,7 @@ pub fn ordinary_agent_mls_author_view(
     state_store: &crate::state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
-    authority: &PrincipalAuthorityKey,
+    authority: &AccountId,
     device_id: &DeviceId,
     group_id: &str,
     epoch: u64,
@@ -870,7 +870,7 @@ pub(crate) fn derive_and_retain_realm_history_secret(
     state_store: &crate::state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
-    authority: &PrincipalAuthorityKey,
+    authority: &AccountId,
     device_id: &DeviceId,
 ) -> Result<Option<RetainedRealmHistorySecret>, MlsRuntimeError> {
     let Some(snapshot) = state_store.mls_snapshot_for(realm_id) else {
@@ -1032,7 +1032,7 @@ fn welcome_consume_candidate(
 /// pairwise actor authority.
 fn build_welcome_consume_request(
     secure_store: &dyn SecureKeyStore,
-    authority: &PrincipalAuthorityKey,
+    authority: &AccountId,
     device_id: &DeviceId,
     candidate: &WelcomeConsumeCandidate,
 ) -> Result<arkret_sdk::KeyPackagesConsumeRequestBody, String> {
@@ -1224,7 +1224,7 @@ fn validate_cached_welcome_consume_request(
 /// the same `claim_id`.
 pub(crate) async fn sign_welcome_consume_request(
     secure_store: &dyn SecureKeyStore,
-    authority: &PrincipalAuthorityKey,
+    authority: &AccountId,
     device_id: &DeviceId,
     candidate: &WelcomeConsumeCandidate,
 ) -> Result<arkret_sdk::KeyPackagesConsumeRequestBody, String> {
@@ -1321,7 +1321,7 @@ pub fn mls_group_member_principal_ids_for_realm(
     state_store: &crate::state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
-    authority: &PrincipalAuthorityKey,
+    authority: &AccountId,
     device_id: &DeviceId,
 ) -> Option<Vec<String>> {
     mls_group_member_principal_ids_for_effective_scope(
@@ -1340,7 +1340,7 @@ pub fn mls_group_member_principal_ids_for_effective_scope(
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
     circle_id: Option<&str>,
-    authority: &PrincipalAuthorityKey,
+    authority: &AccountId,
     device_id: &DeviceId,
 ) -> Option<Vec<String>> {
     let snapshot = state_store.mls_snapshot_for_effective_scope(realm_id, circle_id)?;
@@ -1786,7 +1786,7 @@ pub(crate) struct WelcomeSecurityFrontierPreview {
 pub(crate) fn preview_welcome_security_frontiers(
     checkpoint: &arkret_sdk::MlsGovernanceVerificationCheckpoint,
     secure_store: &dyn SecureKeyStore,
-    authority: &PrincipalAuthorityKey,
+    authority: &AccountId,
     device_id: &DeviceId,
     messages_value: &serde_json::Value,
 ) -> Result<Vec<WelcomeSecurityFrontierPreview>, String> {
@@ -1850,7 +1850,7 @@ pub(crate) fn apply_welcome_messages_with_device_snapshot(
     state_store: &mut crate::state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
-    authority: &PrincipalAuthorityKey,
+    authority: &AccountId,
     actor_id: &str,
     device_id: &DeviceId,
     messages_value: &serde_json::Value,
@@ -2109,7 +2109,7 @@ pub(crate) fn encrypt_values_with_device_snapshot(
     state_store: &mut crate::state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
-    authority: &PrincipalAuthorityKey,
+    authority: &AccountId,
     device_id: &DeviceId,
     content_type: &str,
     plaintext_values: &[Vec<u8>],
@@ -2151,7 +2151,7 @@ pub(crate) fn encrypt_values_with_device_snapshot_for_effective_scope(
     state_store: &mut crate::state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
-    authority: &PrincipalAuthorityKey,
+    authority: &AccountId,
     device_id: &DeviceId,
     content_type: &str,
     plaintext_values: &[Vec<u8>],
@@ -2355,7 +2355,7 @@ pub(crate) fn encrypt_message_with_device_snapshot(
     state_store: &mut crate::state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
-    authority: &PrincipalAuthorityKey,
+    authority: &AccountId,
     device_id: &DeviceId,
     content_type: &str,
     event_kind: &str,
@@ -2566,7 +2566,7 @@ pub(crate) fn realm_mls_roster_matches_complete_membership_hint(
     state_store: &crate::state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
-    authority: &PrincipalAuthorityKey,
+    authority: &AccountId,
     device_id: &DeviceId,
 ) -> Option<bool> {
     let joined = state_store.complete_joined_member_hint_for_realm(realm_id)?;

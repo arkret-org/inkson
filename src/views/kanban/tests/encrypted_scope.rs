@@ -1,7 +1,7 @@
 use super::*;
 
-fn test_authority(actor: &str) -> arkret_sdk::PrincipalAuthorityKey {
-    arkret_sdk::PrincipalAuthorityKey::new(
+fn test_authority(actor: &str) -> arkret_sdk::AccountId {
+    arkret_sdk::AccountId::new(
         crate::mls_api_helpers::principal_core_id(actor).unwrap(),
         arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example".to_owned()).unwrap(),
     )

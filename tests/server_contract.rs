@@ -7,7 +7,7 @@ use inkson::account_data::{
 use inkson::api_error::{TransportClientError, decode_arkret_error, is_auth_expired_error};
 use inkson::config::{ClientConfig, LocalConfigStore};
 use inkson::models::{
-    missing_event_envelope_write_requirements, missing_v1_principal_server_requirements,
+    missing_event_envelope_write_requirements, missing_v1_station_requirements,
     service_supports_event_envelope_write_plane,
 };
 use inkson::operation::TypedOperationBuilder;
@@ -117,12 +117,12 @@ fn inkson_accepts_server_contract_payloads() {
         "service_id": "ak:did_core:web:server.local",
         "service_resolution": service_resolution("did:web:server.local"),
         "trust_domain": "ak:trust_domain:server.local",
-        "service_kind": "principal_server",
+        "service_kind": "station",
         "protocol_version": "1.0",
         "supported_profiles": ["ak.profile.core_event_store.v1"],
         "supported_operation_bundles": [
-            "ak.operation_bundle.principal_server.describe.v1",
-            "ak.operation_bundle.principal_server.http_core.v1"
+            "ak.operation_bundle.station.describe.v1",
+            "ak.operation_bundle.station.http_core.v1"
         ],
         "transport_bindings": [{
             "kind": "http_json",
@@ -141,10 +141,7 @@ fn inkson_accepts_server_contract_payloads() {
         "development_mode": true,
     }))
     .unwrap();
-    assert_eq!(
-        describe.service_kind,
-        arkret_sdk::ServiceKind::PrincipalServer
-    );
+    assert_eq!(describe.service_kind, arkret_sdk::ServiceKind::Station);
     assert!(describe.supports_operation(arkret_sdk::ServiceOperationId::SelfAuthzReadCheckV1));
     assert_eq!(
         describe.transport_bindings[0].base_url(),
@@ -177,12 +174,12 @@ fn inkson_accepts_server_contract_payloads() {
         "service_id": "ak:did_core:web:server.local",
         "service_resolution": service_resolution("did:web:server.local"),
         "trust_domain": "ak:trust_domain:server.local",
-        "service_kind": "principal_server",
+        "service_kind": "station",
         "protocol_version": "1.0",
         "supported_profiles": ["ak.profile.minimal_client.v1"],
         "supported_operation_bundles": [
-            "ak.operation_bundle.principal_server.describe.v1",
-            "ak.operation_bundle.principal_server.http_core.v1"
+            "ak.operation_bundle.station.describe.v1",
+            "ak.operation_bundle.station.http_core.v1"
         ],
         "transport_bindings": [],
         "supported_features": [],
@@ -283,8 +280,8 @@ fn inkson_accepts_server_contract_payloads() {
             "service_resolution": {
                 "current_record_url": "https://server.local/_arkret/open/services/ak%3Adid_core%3Aweb%3Aserver.local/resolution"
             },
-            "service_kind": "principal_server",
-            "role": "joined_member_principal_server",
+            "service_kind": "station",
+            "role": "joined_member_station",
             "endpoint": "http://server",
             "operations": ["ak.peer.events.command.submit.v1"],
             "join_methods": ["invite_accept", "member_join"],
@@ -368,9 +365,9 @@ fn inkson_accepts_server_contract_payloads() {
             "schema": arkret_wire::SchemaId::CAPABILITY_V1,
             "realm_id": "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-",
             "issuer_id": "ak:did_core:web:server.local",
-            "issuer_principal_server_id": "ak:did_core:web:server.local",
+            "issuer_station_id": "ak:did_core:web:server.local",
             "subject": "ak:did_core:web:alice.example",
-            "subject_principal_server_id": "ak:did_core:web:server.local",
+            "subject_station_id": "ak:did_core:web:server.local",
             "issuer_authority_refs": [{
                 "kind": "realm_root",
                 "realm_id": "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-",
@@ -519,15 +516,15 @@ fn server_description_gates_event_envelope_write_plane() {
         "service_id": "ak:did_core:web:soland.local",
         "service_resolution": service_resolution("did:web:soland.local"),
         "trust_domain": "ak:trust_domain:soland.local",
-        "service_kind": "principal_server",
+        "service_kind": "station",
         "protocol_version": "1.0",
         "supported_profiles": [
             "ak.profile.core_event_store.v1",
-            "ak.profile.principal_server_events_api.v1"
+            "ak.profile.station_events_api.v1"
         ],
         "supported_operation_bundles": [
-            "ak.operation_bundle.principal_server.describe.v1",
-            "ak.operation_bundle.principal_server.http_core.v1"
+            "ak.operation_bundle.station.describe.v1",
+            "ak.operation_bundle.station.http_core.v1"
         ],
         "transport_bindings": [{
             "kind": "http_json",
@@ -545,7 +542,7 @@ fn server_description_gates_event_envelope_write_plane() {
     }))
     .unwrap();
     assert!(service_supports_event_envelope_write_plane(&events_ready));
-    assert!(missing_v1_principal_server_requirements(&events_ready).is_empty());
+    assert!(missing_v1_station_requirements(&events_ready).is_empty());
     assert!(missing_event_envelope_write_requirements(&events_ready).is_empty());
 
     // `service-describe.schema.json` closes the interop-surface object
@@ -555,22 +552,22 @@ fn server_description_gates_event_envelope_write_plane() {
     // exist. `notes` is the one free-text member left.
     let external_interop_surface = serde_json::to_value(
         arkret_sdk::InteropSurfaceEntry::external_interop("external_mimi_provider")
-            .with_notes("external interop surfaces must not redefine principal-server routes"),
+            .with_notes("external interop surfaces must not redefine station routes"),
     )
     .unwrap();
     let described_with_external_interop_surface = parse_server_description(json!({
         "service_id": "ak:did_core:web:local.host",
         "service_resolution": service_resolution("did:web:local.host"),
         "trust_domain": "ak:trust_domain:local.host",
-        "service_kind": "principal_server",
+        "service_kind": "station",
         "protocol_version": "1.0",
         "supported_profiles": [
             "ak.profile.core_event_store.v1",
-            "ak.profile.principal_server_events_api.v1"
+            "ak.profile.station_events_api.v1"
         ],
         "supported_operation_bundles": [
-            "ak.operation_bundle.principal_server.describe.v1",
-            "ak.operation_bundle.principal_server.http_core.v1"
+            "ak.operation_bundle.station.describe.v1",
+            "ak.operation_bundle.station.http_core.v1"
         ],
         "transport_bindings": [{
             "kind": "http_json",
@@ -614,12 +611,12 @@ fn server_description_gates_event_envelope_write_plane() {
     assert!(
         parse_server_description(json!({
             "service_id": "ak:did_core:web:minimal.local",
-            "service_kind": "principal_server",
+            "service_kind": "station",
             "protocol_version": "1.0",
             "supported_profiles": [],
             "supported_operation_bundles": [
-                "ak.operation_bundle.principal_server.describe.v1",
-                "ak.operation_bundle.principal_server.websocket.v1"
+                "ak.operation_bundle.station.describe.v1",
+                "ak.operation_bundle.station.websocket.v1"
             ],
             "supported_features": []
         }))
@@ -632,12 +629,12 @@ fn server_description_gates_event_envelope_write_plane() {
         "service_id": "ak:did_core:web:minimal.local",
         "service_resolution": service_resolution("did:web:minimal.local"),
         "trust_domain": "ak:trust_domain:minimal.local",
-        "service_kind": "principal_server",
+        "service_kind": "station",
         "protocol_version": "1.0",
         "supported_profiles": [],
         "supported_operation_bundles": [
-            "ak.operation_bundle.principal_server.agent_pairing_handoff.v1",
-            "ak.operation_bundle.principal_server.describe.v1"
+            "ak.operation_bundle.station.agent_pairing_handoff.v1",
+            "ak.operation_bundle.station.describe.v1"
         ],
         "transport_bindings": [{
             "kind": "http_json",
@@ -668,7 +665,7 @@ fn server_description_gates_event_envelope_write_plane() {
     // `plaintext_visibility` is now present + non-null, so it falls out of
     // the missing list; only the event write requirements remain.
     assert_eq!(
-        missing_v1_principal_server_requirements(&events_missing),
+        missing_v1_station_requirements(&events_missing),
         vec![
             "ak.profile.core_event_store.v1",
             "ak.self.events.read.describe.v1",
@@ -750,7 +747,7 @@ fn account_data_canonical_contact_and_realm_remark_keys_contract() {
 
 #[test]
 fn local_remarks_do_not_leak_into_event_push_search_log_or_directory_surfaces() {
-    inkson::operation::set_authoring_principal_server_id(Some(
+    inkson::operation::set_authoring_station_id(Some(
         arkret_sdk::DidCoreId::new("ak:did_core:web:server.local").unwrap(),
     ));
     fn assert_no_secret<T: serde::Serialize>(label: &str, value: &T, secret: &str) {

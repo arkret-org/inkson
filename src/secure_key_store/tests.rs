@@ -2,7 +2,7 @@ use super::*;
 
 fn test_user(device_suffix: &str) -> UserLocalStore {
     UserLocalStore::new(
-        arkret_sdk::PrincipalAuthorityKey::new(
+        arkret_sdk::AccountId::new(
             arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example".to_owned()).unwrap(),
             arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example".to_owned()).unwrap(),
         ),
@@ -637,16 +637,16 @@ fn history_secret_store_key_is_classified_indexeddb_only() {
 #[test]
 fn e2ee_plaintext_cache_key_is_account_scoped_and_indexeddb_only() {
     let principal = arkret_sdk::DidCoreId::new("ak:did_core:webvh:zAlice".to_owned()).unwrap();
-    let authority_a = arkret_sdk::PrincipalAuthorityKey::new(
+    let authority_a = arkret_sdk::AccountId::new(
         principal.clone(),
         arkret_sdk::DidCoreId::new("ak:did_core:webvh:zServerA".to_owned()).unwrap(),
     );
-    let authority_b = arkret_sdk::PrincipalAuthorityKey::new(
+    let authority_b = arkret_sdk::AccountId::new(
         principal,
         arkret_sdk::DidCoreId::new("ak:did_core:webvh:zServerB".to_owned()).unwrap(),
     );
-    let authority_a_namespace = principal_authority_storage_digest(&authority_a).unwrap();
-    let authority_b_namespace = principal_authority_storage_digest(&authority_b).unwrap();
+    let authority_a_namespace = account_id_storage_digest(&authority_a).unwrap();
+    let authority_b_namespace = account_id_storage_digest(&authority_b).unwrap();
     let alice = e2ee_plaintext_cache_store_key(&authority_a_namespace);
     let bob = e2ee_plaintext_cache_store_key(&authority_b_namespace);
     assert!(alice.starts_with(E2EE_PLAINTEXT_CACHE_KEY_PREFIX));

@@ -116,7 +116,7 @@ fn cache_sidecar_view_state(
 
 pub fn ingest_sidecar_view_state_account_data(
     store: &mut crate::state::LocalStateStore,
-    authority: &arkret_sdk::PrincipalAuthorityKey,
+    authority: &arkret_sdk::AccountId,
     principal_id: &str,
     account_data_key: &str,
     entry: &impl serde::Serialize,
@@ -797,7 +797,7 @@ fn try_begin_sidecar_auto_close(
 pub(crate) async fn submit_pending_sidecar_auto_close(
     base_url: &str,
     api_token: String,
-    authority: &arkret_sdk::PrincipalAuthorityKey,
+    authority: &arkret_sdk::AccountId,
     device_id: &arkret_sdk::DeviceId,
     mut state_store: SyncSignal<crate::state::LocalStateStore>,
     intent: PendingSidecarAutoCloseIntent,
@@ -935,7 +935,7 @@ fn decrypt_sidecar_scoped_envelope(
     store: &crate::state::LocalStateStore,
     realm_id: &str,
     controller_id: &str,
-    authority: &arkret_sdk::PrincipalAuthorityKey,
+    authority: &arkret_sdk::AccountId,
     device_id: &arkret_sdk::DeviceId,
     sidecar_id: &str,
     envelope_value: &serde_json::Value,
@@ -1054,7 +1054,7 @@ pub(crate) struct SidecarRefoldOutcome {
 pub(crate) fn refold_sidecar_exchanges_from_history(
     store: &mut crate::state::LocalStateStore,
     controller_id: &str,
-    authority: &arkret_sdk::PrincipalAuthorityKey,
+    authority: &arkret_sdk::AccountId,
     device_id: &arkret_sdk::DeviceId,
     realm_id: &str,
     extra_scope_hints: &[SidecarExchangeScopeHint],
@@ -1103,7 +1103,7 @@ pub(crate) async fn sync_sidecar_exchange_background(
     base_url: &str,
     api_token: String,
     controller_id: &str,
-    authority: &arkret_sdk::PrincipalAuthorityKey,
+    authority: &arkret_sdk::AccountId,
     device_id: &arkret_sdk::DeviceId,
     mut state_store: SyncSignal<crate::state::LocalStateStore>,
 ) -> anyhow::Result<SidecarBackgroundSyncOutcome> {
@@ -1894,7 +1894,7 @@ pub fn push_sidecar_display_mode(
     store: &mut crate::state::LocalStateStore,
     base_url: String,
     api_token: String,
-    authority: arkret_sdk::PrincipalAuthorityKey,
+    authority: arkret_sdk::AccountId,
     controller_did: arkret_sdk::Did,
     controller_id: String,
     device_id: arkret_sdk::DeviceId,

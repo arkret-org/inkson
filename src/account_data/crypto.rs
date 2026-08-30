@@ -24,9 +24,7 @@ pub fn account_data_namespace_key_from_secret(account_secret: &str) -> anyhow::R
     Ok(namespace_key)
 }
 
-pub fn account_data_namespace_key(
-    authority: &arkret_sdk::PrincipalAuthorityKey,
-) -> anyhow::Result<[u8; 32]> {
+pub fn account_data_namespace_key(authority: &arkret_sdk::AccountId) -> anyhow::Result<[u8; 32]> {
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
     let secret = crate::mls::runtime::load_account_mls_secret(secure_store.as_ref(), authority)?
         .ok_or_else(|| anyhow::anyhow!("account secret is unavailable"))?;
@@ -38,7 +36,7 @@ pub fn account_data_namespace_key(
 /// The envelope AAD binds the authority's principal actor and `account_data_key`, so a value
 /// cannot be replayed under another key or another account.
 pub fn encrypt_account_data_value(
-    authority: &arkret_sdk::PrincipalAuthorityKey,
+    authority: &arkret_sdk::AccountId,
     account_data_key: &str,
     plaintext: &Value,
 ) -> anyhow::Result<Value> {
@@ -64,7 +62,7 @@ pub fn encrypt_account_data_value(
 }
 
 pub fn decrypt_account_data_value(
-    authority: &arkret_sdk::PrincipalAuthorityKey,
+    authority: &arkret_sdk::AccountId,
     account_data_key: &str,
     value: &Value,
 ) -> anyhow::Result<Value> {
@@ -90,7 +88,7 @@ pub fn decrypt_account_data_value(
 }
 
 pub fn decrypt_account_data_entry<T: Serialize>(
-    authority: &arkret_sdk::PrincipalAuthorityKey,
+    authority: &arkret_sdk::AccountId,
     account_data_key: &str,
     entry: &T,
 ) -> anyhow::Result<Value> {
@@ -108,8 +106,8 @@ pub fn decrypt_account_data_entry<T: Serialize>(
 mod tests {
     use super::*;
 
-    fn authority() -> arkret_sdk::PrincipalAuthorityKey {
-        arkret_sdk::PrincipalAuthorityKey::new(
+    fn authority() -> arkret_sdk::AccountId {
+        arkret_sdk::AccountId::new(
             arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example".to_owned()).unwrap(),
             arkret_sdk::DidCoreId::new("ak:did_core:web:server.example".to_owned()).unwrap(),
         )

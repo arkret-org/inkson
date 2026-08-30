@@ -97,7 +97,7 @@ pub(crate) enum WelcomeRequester {
 fn admission_actor_and_requester(
     state_store: &LocalStateStore,
     realm_id: &str,
-    authority: &arkret_sdk::PrincipalAuthorityKey,
+    authority: &arkret_sdk::AccountId,
     ordinary_actor_id: &str,
     device_id: &arkret_sdk::DeviceId,
     requester_device_authorize_event_id: Option<&arkret_sdk::EventId>,
@@ -234,7 +234,7 @@ pub(crate) fn build_realm_mls_admission_events_from_claim(
     state_store: &LocalStateStore,
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
-    authority: &arkret_sdk::PrincipalAuthorityKey,
+    authority: &arkret_sdk::AccountId,
     actor_id: &str,
     device_id: &arkret_sdk::DeviceId,
     requester_device_authorize_event_id: Option<&arkret_sdk::EventId>,
@@ -261,7 +261,7 @@ fn build_realm_mls_admission_events_from_verified_claim(
     state_store: &LocalStateStore,
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
-    authority: &arkret_sdk::PrincipalAuthorityKey,
+    authority: &arkret_sdk::AccountId,
     actor_id: &str,
     device_id: &arkret_sdk::DeviceId,
     requester_device_authorize_event_id: Option<&arkret_sdk::EventId>,
@@ -1173,7 +1173,7 @@ mod tests {
         let mut claim_receipt = self_claim_receipt(&claim, realm, alice, claim_request_id);
         claim_receipt.request.target_principal_id =
             crate::mls_api_helpers::principal_core_id(alice).unwrap();
-        let authority = arkret_sdk::PrincipalAuthorityKey::new(
+        let authority = arkret_sdk::AccountId::new(
             crate::mls_api_helpers::principal_core_id(alice).unwrap(),
             arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example".to_owned()).unwrap(),
         );

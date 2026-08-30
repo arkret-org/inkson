@@ -320,7 +320,7 @@ mod tests {
     // its own scope instead of depending on whatever a neighbouring test
     // happens to leave behind.
     fn activate_test_scope() -> crate::secure_key_store::DeviceSeedScopeTestGuard {
-        let authority = arkret_sdk::PrincipalAuthorityKey::new(
+        let authority = arkret_sdk::AccountId::new(
             arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example".to_owned()).unwrap(),
             arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example".to_owned()).unwrap(),
         );

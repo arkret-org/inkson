@@ -6,7 +6,7 @@ use crate::state::LocalStateStore;
 pub(crate) fn try_local_mls_decrypt_core_for_scope_from_verified_sender(
     state_store: &LocalStateStore,
     realm_id: &str,
-    authority: &arkret_sdk::PrincipalAuthorityKey,
+    authority: &arkret_sdk::AccountId,
     device_id: &arkret_sdk::DeviceId,
     payload_value: &Value,
     effective_scope: &arkret_sdk::ScopeRef,

@@ -178,16 +178,14 @@ pub(crate) const E2EE_PLAINTEXT_CACHE_KEY_PREFIX: &str = "inkson.e2ee_plaintext_
 /// SDK canonical JSON form instead of concatenating the two DIDs, so the
 /// namespace cannot be ambiguous and does not expose an unbounded DID in a
 /// native filename or platform-keystore key.
-pub(crate) fn principal_authority_storage_digest(
-    authority: &arkret_sdk::PrincipalAuthorityKey,
+pub(crate) fn account_id_storage_digest(
+    authority: &arkret_sdk::AccountId,
 ) -> Result<String, SecureKeyStoreError> {
-    authority.validate().map_err(|error| {
-        SecureKeyStoreError::Backend(format!("invalid principal authority: {error}"))
-    })?;
+    authority
+        .validate()
+        .map_err(|error| SecureKeyStoreError::Backend(format!("invalid AccountId: {error}")))?;
     let canonical = arkret_sdk::canonical::canonical_json_bytes(authority).map_err(|error| {
-        SecureKeyStoreError::Backend(format!(
-            "canonicalize principal authority storage namespace: {error}"
-        ))
+        SecureKeyStoreError::Backend(format!("canonicalize AccountId storage namespace: {error}"))
     })?;
     Ok(arkret_sdk::canonical::sha256_base64url(canonical))
 }

@@ -25,7 +25,7 @@
 //!
 //! set_push_token_provider(Arc::new(FcmPushTokenProvider));
 //! let outcome = register_via_chime(RegisterContext {
-//!     principal_server_url: "https://principal.example".into(),
+//!     station_url: "https://principal.example".into(),
 //!     floria_gateway_url: "https://push.example/_arkret/edge/push/notify".into(),
 //!     device_id: "dev-inkson".into(),
 //!     principal_id: Some(arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example")?),
@@ -44,7 +44,7 @@ use chime::{
 use crate::identity::account_auth::{
     build_session_grant_introspection_proof_bundle, session_grant_signing_key_from_pem,
 };
-use crate::identity::session_refresh::grant_matches_principal_server;
+use crate::identity::session_refresh::grant_matches_station;
 use crate::push::{
     ensure_production_register_request, floria_gateway_url, registration_state_from_response,
 };
@@ -96,10 +96,10 @@ pub enum PushRegistrationError {
 /// flip from `None` to `Some` after coauth lands.
 #[derive(Clone, Debug)]
 pub struct RegisterContext {
-    /// Principal server base URL — the chime client posts the
+    /// Station base URL — the chime client posts the
     /// register-device request here. The push gateway URL itself
     /// (floria) goes in the request body's `push_gateway` field.
-    pub principal_server_url: String,
+    pub station_url: String,
     /// Floria gateway notify URL. Stamped into the register request as
     /// `push_gateway`. Falls back to [`floria_gateway_url`] (which is
     /// env-driven and resolves to an empty no-op in release builds
@@ -128,7 +128,7 @@ pub struct RegisterContext {
 
 #[derive(Clone, Debug)]
 pub struct UnregisterContext {
-    pub principal_server_url: String,
+    pub station_url: String,
     pub device_id: String,
     pub authorization_credential: Option<String>,
     pub session_grant: Option<String>,
@@ -157,7 +157,7 @@ struct ChimeSessionGrantHeaders {
 /// On non-wasm targets the chime client uses reqwest+rustls+tokio. On
 /// wasm32 the same client routes through reqwest's fetch-backed wasm32
 /// backend (no rustls, no tokio runtime), so the browser build drives a
-/// real HTTP POST to the principal server.
+/// real HTTP POST to the Station.
 pub async fn register_via_chime(
     mut ctx: RegisterContext,
     persisted_grant: Option<PersistedSessionGrant>,
@@ -169,7 +169,7 @@ pub async fn register_via_chime(
         .map_err(|err| PushRegistrationError::PlaceholderTokenRejected(err.to_string()))?;
 
     let client = chime_client(
-        &ctx.principal_server_url,
+        &ctx.station_url,
         ctx.authorization_credential.as_deref(),
         &session_grant,
     )?;
@@ -193,7 +193,7 @@ pub async fn unregister_via_chime(
     registration: Option<chime::PushRegistrationState>,
 ) -> Result<PushUnregisterDeviceOutcome, PushRegistrationError> {
     let mut grant_ctx = RegisterContext {
-        principal_server_url: ctx.principal_server_url.clone(),
+        station_url: ctx.station_url.clone(),
         floria_gateway_url: String::new(),
         device_id: ctx.device_id.clone(),
         principal_id: None,
@@ -205,7 +205,7 @@ pub async fn unregister_via_chime(
     let request = crate::push::build_unregister_request(&ctx.device_id, registration.as_ref())
         .map_err(PushRegistrationError::BuildRequest)?;
     let client = chime_client(
-        &ctx.principal_server_url,
+        &ctx.station_url,
         ctx.authorization_credential.as_deref(),
         &session_grant,
     )?;
@@ -217,11 +217,11 @@ pub async fn unregister_via_chime(
 }
 
 fn chime_client(
-    principal_server_url: &str,
+    station_url: &str,
     authorization_credential: Option<&str>,
     session_grant: &ChimeSessionGrantHeaders,
 ) -> Result<ArkretPushClient, PushRegistrationError> {
-    let mut client = ArkretPushClient::new(principal_server_url).with_required_session_grant(true);
+    let mut client = ArkretPushClient::new(station_url).with_required_session_grant(true);
     if let Some(token) = authorization_credential {
         client = client.with_bearer_token(token);
     }
@@ -260,9 +260,9 @@ fn resolve_chime_session_grant(
     let grant = persisted_grant
         .cloned()
         .ok_or(PushRegistrationError::MissingSessionGrant)?;
-    if !grant_matches_principal_server(&grant, &ctx.principal_server_url) {
+    if !grant_matches_station(&grant, &ctx.station_url) {
         return Err(PushRegistrationError::SessionGrantMismatch {
-            reason: "persisted grant belongs to a different principal server".to_owned(),
+            reason: "persisted grant belongs to a different Station".to_owned(),
         });
     }
     if grant.device_id.as_str() != ctx.device_id {
@@ -458,7 +458,7 @@ mod tests {
 
     fn ctx(device: &str) -> RegisterContext {
         RegisterContext {
-            principal_server_url: "https://principal.example".to_owned(),
+            station_url: "https://principal.example".to_owned(),
             floria_gateway_url: "https://push.example/_arkret/edge/push/notify".to_owned(),
             device_id: device.to_owned(),
             principal_id: Some(
@@ -485,7 +485,7 @@ mod tests {
                 .unwrap(),
             service_account_id: arkret_sdk::ServiceAccountId::new("account-1").unwrap(),
             device_id: arkret_sdk::DeviceId::new(device.to_owned()).unwrap(),
-            principal_server_url: url::Url::parse("https://principal.example/").unwrap(),
+            station_url: url::Url::parse("https://principal.example/").unwrap(),
             grant_expires_at: Some(Utc::now() + Duration::hours(1)),
             stored_at: Utc::now(),
         }

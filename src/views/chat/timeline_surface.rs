@@ -30,7 +30,7 @@ pub(super) struct ChatTimelineContext {
     pub visible_moderation_appeal_prompts: Vec<ModerationAppealPrompt>,
     pub strand_scope_lookup: std::collections::BTreeMap<String, StrandScopeCircle>,
     pub private_sidecar_strand_ids: std::collections::BTreeSet<String>,
-    pub authority: arkret_sdk::PrincipalAuthorityKey,
+    pub authority: arkret_sdk::AccountId,
     pub principal_id: arkret_sdk::DidCoreId,
     pub account_display_label: String,
     pub participants: Vec<SpaceParticipant>,

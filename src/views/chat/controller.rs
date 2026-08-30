@@ -37,7 +37,7 @@ fn shared_pin_operation_body(
 #[derive(Clone, PartialEq)]
 pub(super) struct ChatCommandContext {
     pub base_url: String,
-    pub authority: arkret_sdk::PrincipalAuthorityKey,
+    pub authority: arkret_sdk::AccountId,
     pub principal_id: arkret_sdk::DidCoreId,
     pub device_id: arkret_sdk::DeviceId,
     pub selected_realm_id: String,

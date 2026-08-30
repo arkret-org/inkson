@@ -11,7 +11,7 @@ async fn retain_current_history_secrets_before_clear(
     mut state_store: SyncSignal<crate::state::LocalStateStore>,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
     scope: &E2eePlaintextCacheClearScope,
-    authority: &arkret_sdk::PrincipalAuthorityKey,
+    authority: &arkret_sdk::AccountId,
     device_id: &arkret_sdk::DeviceId,
 ) -> anyhow::Result<usize> {
     let realms: Vec<String> = {

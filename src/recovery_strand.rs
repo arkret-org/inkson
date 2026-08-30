@@ -71,7 +71,7 @@ pub async fn submit_principal_bootstrap_seal(
         || outcome.accepted_event_digests != seal.delta
         || outcome.post_state_root != seal.state_root
     {
-        anyhow::bail!("Principal Server returned a mismatched PCR bootstrap Seal outcome");
+        anyhow::bail!("Station returned a mismatched PCR bootstrap Seal outcome");
     }
     Ok(())
 }
@@ -264,7 +264,7 @@ pub async fn verify_recovery_authority_evidence(
 }
 
 /// The frozen PCR genesis unit contains producer-authored Events. Resolution
-/// returns the accepted envelopes, which add exactly the Principal Server
+/// returns the accepted envelopes, which add exactly the Station
 /// admission proof. Compare the producer-authored projection byte-for-byte and
 /// independently require a valid admission binding; whole-envelope equality
 /// would incorrectly reject every legitimately admitted Event.
@@ -494,14 +494,14 @@ fn principal_scoped_recovery_policy_verification_method_id(
 pub async fn ensure_active_recovery_policy(
     api: &TransportClient,
     principal_did: &arkret_sdk::Did,
-    principal_authority: &arkret_sdk::PrincipalAuthorityKey,
+    account_id: &arkret_sdk::AccountId,
     device_id: &arkret_sdk::DeviceId,
     principal_control_realm_id: &arkret_sdk::RealmId,
     accepted_pcr_genesis_unit: &arkret_wire::PcrGenesisUnit,
     key_material: &arkret_sdk::identity_root::IdentityRecoveryKeyMaterial,
 ) -> anyhow::Result<RecoveryPolicySummary> {
     let principal_core_id = arkret_sdk::project_did_to_core_id(principal_did)?;
-    if principal_core_id != principal_authority.principal_id {
+    if principal_core_id != account_id.principal_id {
         anyhow::bail!("recovery policy principal projection does not match account authority");
     }
     if let Some(policy) = fetch_active_recovery_policy(api).await? {
@@ -519,7 +519,7 @@ pub async fn ensure_active_recovery_policy(
     publish_recovery_policy(
         api,
         principal_did,
-        principal_authority,
+        account_id,
         device_id,
         principal_control_realm_id,
         accepted_pcr_genesis_unit,
@@ -540,14 +540,14 @@ pub async fn ensure_active_recovery_policy(
 async fn publish_recovery_policy(
     api: &TransportClient,
     principal_did: &arkret_sdk::Did,
-    principal_authority: &arkret_sdk::PrincipalAuthorityKey,
+    account_id: &arkret_sdk::AccountId,
     device_id: &arkret_sdk::DeviceId,
     principal_control_realm_id: &arkret_sdk::RealmId,
     accepted_pcr_genesis_unit: &arkret_wire::PcrGenesisUnit,
     policy_value: Value,
 ) -> anyhow::Result<arkret_sdk::RecoveryPolicyPublishOutcome> {
     let principal_core_id = arkret_sdk::project_did_to_core_id(principal_did)?;
-    if principal_core_id != principal_authority.principal_id {
+    if principal_core_id != account_id.principal_id {
         anyhow::bail!("recovery policy principal projection does not match account authority");
     }
     let policy: RecoveryPolicy = serde_json::from_value(policy_value)?;
@@ -561,12 +561,12 @@ async fn publish_recovery_policy(
         policy_id: recovery_payload.policy_id,
         value: arkret_sdk::PolicyDocument::RecoveryPolicy(Box::new(recovery_payload.value)),
     };
-    let event = crate::operation::TypedOperationBuilder::new_for_principal_server::<
+    let event = crate::operation::TypedOperationBuilder::new_for_station::<
         arkret_sdk::event_spec::PolicySet,
     >(
         principal_control_realm_id.to_string(),
-        principal_authority.principal_id.as_str(),
-        principal_authority.principal_server_id.clone(),
+        account_id.principal_id.as_str(),
+        account_id.station_id.clone(),
         payload,
     )
     .build_sdk_event("inkson-recovery-policy")?;
@@ -687,7 +687,7 @@ async fn submit_first_recovery_policy_seal(
         || outcome.accepted_event_digests != vec![expected_digest]
         || outcome.post_state_root != expected_state_root
     {
-        anyhow::bail!("Principal Server returned a mismatched recovery-policy Seal outcome");
+        anyhow::bail!("Station returned a mismatched recovery-policy Seal outcome");
     }
     Ok(())
 }
@@ -767,7 +767,7 @@ pub fn build_recovery_unlock_proof_from_words(
     )?;
     let recovery_secret_ref = validate_active_policy_key_material(
         policy,
-        &session.principal_authority.principal_id,
+        &session.account_id.principal_id,
         &key_material,
     )?;
     arkret_sdk::identity_root::build_recovery_unlock_proof(
@@ -781,7 +781,7 @@ pub fn build_recovery_unlock_proof_from_words(
 pub async fn ensure_recovery_policy(
     api: &TransportClient,
     principal_did: &arkret_sdk::Did,
-    principal_authority: &arkret_sdk::PrincipalAuthorityKey,
+    account_id: &arkret_sdk::AccountId,
     device_id: &arkret_sdk::DeviceId,
     principal_control_realm_id: &arkret_sdk::RealmId,
     accepted_pcr_genesis_unit: &arkret_wire::PcrGenesisUnit,
@@ -795,7 +795,7 @@ pub async fn ensure_recovery_policy(
     ensure_active_recovery_policy(
         api,
         principal_did,
-        principal_authority,
+        account_id,
         device_id,
         principal_control_realm_id,
         accepted_pcr_genesis_unit,

@@ -55,7 +55,7 @@ pub struct PersistedOidcScaffold {
     pub expected_nonce: String,
     pub code_verifier: String,
     pub client_id: String,
-    pub principal_server_url: String,
+    pub station_url: String,
     pub device_id: String,
     pub principal_audience: String,
     pub callback_uri: String,
@@ -65,7 +65,7 @@ pub struct PersistedOidcScaffold {
     pub issuer: String,
     /// T1.Y4 — the resolved `gate_account_base_url` to POST `session-grants` to.
     pub gate_account_base_url: String,
-    /// Principal Server trust domain, distinct from the Account Authority's
+    /// Station trust domain, distinct from the Account Authority's
     /// own challenge transcript trust domain.
     pub principal_trust_domain: String,
     /// Optional local returning-account candidate. It never selects the

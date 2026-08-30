@@ -20,7 +20,7 @@ pub(super) async fn join_and_build_transport(
     base: &str,
     api_token: &str,
     join: &MediaJoinRequest,
-    authority: &arkret_sdk::PrincipalAuthorityKey,
+    authority: &arkret_sdk::AccountId,
     device: &arkret_sdk::DeviceId,
     realm_mls_snapshot: Option<crate::mls::persistence::MlsSnapshotEnvelope>,
 ) -> Result<(JoinedMediaSession, SharedTransport, Rc<PerSenderFrameKeys>), RtcClientError> {
@@ -52,7 +52,7 @@ async fn join_via_api(
     base: &str,
     api_token: &str,
     join: &MediaJoinRequest,
-    authority: &arkret_sdk::PrincipalAuthorityKey,
+    authority: &arkret_sdk::AccountId,
     device: &arkret_sdk::DeviceId,
     realm_mls_snapshot: Option<crate::mls::persistence::MlsSnapshotEnvelope>,
 ) -> Result<(JoinedMediaSession, PerSenderFrameKeys), RtcClientError> {

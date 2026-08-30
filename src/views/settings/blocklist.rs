@@ -43,7 +43,7 @@ const BLOCK_REASON_CODES: &[&str] = &[
 /// Human label for a `target.kind` value.
 fn target_kind_label(kind: crate::account_data::BlocklistUiTargetKind) -> &'static str {
     match kind {
-        crate::account_data::BlocklistUiTargetKind::Service => "Principal server / service",
+        crate::account_data::BlocklistUiTargetKind::Service => "Station / service",
         crate::account_data::BlocklistUiTargetKind::Domain => "Domain",
         crate::account_data::BlocklistUiTargetKind::Organization => "Organization",
         crate::account_data::BlocklistUiTargetKind::Actor => "Actor (user / agent)",

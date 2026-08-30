@@ -61,7 +61,7 @@ pub fn mls_restore_prompt_required(
     list_payload: &Value,
     _state_store: &crate::state::LocalStateStore,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
-    authority: &arkret_sdk::PrincipalAuthorityKey,
+    authority: &arkret_sdk::AccountId,
     actor_id: &str,
     device_id: &str,
 ) -> bool {
@@ -863,7 +863,7 @@ pub async fn restore_mls_history_with_passphrase_from_payload(
     list_payload: &Value,
     state_store: &mut crate::state::LocalStateStore,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
-    authority: &arkret_sdk::PrincipalAuthorityKey,
+    authority: &arkret_sdk::AccountId,
     actor_id: &str,
     device_id: &str,
     passphrase: &[u8],
@@ -937,7 +937,7 @@ pub async fn restore_mls_history_with_recovery_key_from_payload(
     list_payload: &Value,
     state_store: &mut crate::state::LocalStateStore,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
-    authority: &arkret_sdk::PrincipalAuthorityKey,
+    authority: &arkret_sdk::AccountId,
     actor_id: &str,
     device_id: &str,
     recovery_private_key: &[u8],
@@ -994,7 +994,7 @@ pub async fn restore_mls_history_with_local_secret_from_payload(
     list_payload: &Value,
     state_store: &mut crate::state::LocalStateStore,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
-    authority: &arkret_sdk::PrincipalAuthorityKey,
+    authority: &arkret_sdk::AccountId,
     actor_id: &str,
 ) -> RestoreReport {
     let mut report = RestoreReport::default();
@@ -1033,7 +1033,7 @@ async fn restore_history_and_sidecar(
     list_payload: &Value,
     state_store: &mut crate::state::LocalStateStore,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
-    authority: &arkret_sdk::PrincipalAuthorityKey,
+    authority: &arkret_sdk::AccountId,
     recovery_private_key: Option<&[u8]>,
     report: &mut RestoreReport,
 ) {
@@ -1077,7 +1077,7 @@ async fn restore_history_backup(
     body: &Value,
     state_store: &mut crate::state::LocalStateStore,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
-    authority: &arkret_sdk::PrincipalAuthorityKey,
+    authority: &arkret_sdk::AccountId,
     recovery_private_key: Option<&[u8]>,
 ) -> Result<()> {
     let plaintext = match mls_history_recipient_method(body) {
@@ -1175,7 +1175,7 @@ fn restore_private_plaintext_sidecar(
     sidecar_body: &Value,
     state_store: &mut crate::state::LocalStateStore,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
-    authority: &arkret_sdk::PrincipalAuthorityKey,
+    authority: &arkret_sdk::AccountId,
 ) -> Result<()> {
     let stored = crate::mls::runtime::load_account_mls_secret(secure_store, authority)
         .map_err(|err| anyhow!("load account MLS secret: {err}"))?
@@ -1206,7 +1206,7 @@ pub async fn auto_restore_mls_history_with_passphrase(
     api: &crate::transport::TransportClient,
     state_store: &mut crate::state::LocalStateStore,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
-    authority: &arkret_sdk::PrincipalAuthorityKey,
+    authority: &arkret_sdk::AccountId,
     actor_id: &str,
     device_id: &str,
     passphrase: &[u8],
@@ -1240,7 +1240,7 @@ pub async fn auto_restore_mls_history_with_passphrase(
 pub fn mls_backup_prompt_required(
     list_payload: &Value,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
-    authority: &arkret_sdk::PrincipalAuthorityKey,
+    authority: &arkret_sdk::AccountId,
 ) -> bool {
     if select_preferred_mls_account_secret_backup(list_payload).is_some() {
         return false;

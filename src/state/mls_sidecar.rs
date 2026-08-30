@@ -690,7 +690,7 @@ impl LocalStateStore {
     pub(crate) fn local_authoritative_history_secrets_for_backup(
         &self,
         secure_store: &dyn crate::secure_key_store::SecureKeyStore,
-        authority: &arkret_sdk::PrincipalAuthorityKey,
+        authority: &arkret_sdk::AccountId,
     ) -> Result<
         Vec<(
             arkret_sdk::HistoryEffectiveScope,

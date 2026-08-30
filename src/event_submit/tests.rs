@@ -44,7 +44,7 @@ fn sdk_intent_with_kind(realm_id: &str, kind: &str, actor_id: &str) -> EventInte
         "kind": kind,
         "scope_ref": {"kind": "realm", "realm_id": realm_id},
         "actor_id": actor_id,
-        "principal_server_id": "ak:did_core:web:principal.example",
+        "station_id": "ak:did_core:web:principal.example",
         "created_at": "2026-05-19T00:00:00.000Z",
         "payload": {}
     }))
@@ -179,7 +179,7 @@ fn scheduled_dispatch_crash_retry_preserves_exact_signed_event_bytes() {
             "realm_id": "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19"
         },
         "actor_id": "ak:did_core:web:alice.example",
-        "principal_server_id": "ak:did_core:web:principal.example",
+        "station_id": "ak:did_core:web:principal.example",
         "actor_seq": 7,
         "created_at": "2026-08-07T00:00:00.000Z",
         "hlc": "01986f440000-0001-a13f9c2e",
@@ -561,7 +561,7 @@ fn sdk_event_without_proof(actor_id: &str) -> arkret_sdk::Event {
         "realm_id": "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
         "scope_ref": {"kind": "realm", "realm_id": "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19"},
         "actor_id": actor_id,
-        "principal_server_id": "ak:did_core:web:principal.example",
+        "station_id": "ak:did_core:web:principal.example",
         "actor_seq": 1,
         "created_at": "2026-05-19T00:00:00.000Z",
         "hlc": "01970e589d21-0001-a13f9c2e",
@@ -588,7 +588,7 @@ fn sdk_event_with_kind(
         "realm_id": realm_id,
         "scope_ref": {"kind": "realm", "realm_id": realm_id},
         "actor_id": actor_id,
-        "principal_server_id": "ak:did_core:web:principal.example",
+        "station_id": "ak:did_core:web:principal.example",
         "actor_seq": 1,
         "created_at": "2026-05-19T00:00:00.000Z",
         "hlc": "01970e589d21-0001-a13f9c2e",
@@ -609,7 +609,7 @@ fn realm_create_sdk_event(event_id: &str, created_by: &str) -> arkret_sdk::Event
         "kind": "ak.realm.create",
         "scope_ref": {"kind": "realm_genesis"},
         "actor_id": created_by,
-        "principal_server_id": "ak:did_core:web:principal.example",
+        "station_id": "ak:did_core:web:principal.example",
         "actor_seq": 1,
         "created_at": "2026-05-19T00:00:00.000Z",
         "hlc": "01970e589d21-0001-a13f9c2e",
@@ -736,8 +736,8 @@ fn dead_endpoint_submitter() -> EventSubmitter {
     .with_authority(test_authority())
 }
 
-fn test_authority() -> arkret_sdk::PrincipalAuthorityKey {
-    arkret_sdk::PrincipalAuthorityKey::new(
+fn test_authority() -> arkret_sdk::AccountId {
+    arkret_sdk::AccountId::new(
         arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example".to_owned()).unwrap(),
         arkret_sdk::DidCoreId::new("ak:did_core:web:server.example".to_owned()).unwrap(),
     )
@@ -952,16 +952,15 @@ fn queued_mls_admission_round_trips_exact_welcome_material() {
         .expect("the authored Proposal has its producer proof");
     let mut accepted_proposal = authored_proposal.clone();
     accepted_proposal.proofs.push(
-        arkret_sdk::PrincipalServerAdmissionProof {
-            kind: arkret_sdk::PrincipalServerAdmissionProofKind::PrincipalServerAdmission,
-            verification_method: arkret_sdk::DidUrl::new(
-                "did:web:principal.example#admission-1",
+        arkret_sdk::StationAdmissionProof {
+            kind: arkret_sdk::StationAdmissionProofKind::StationAdmission,
+            verification_method: arkret_sdk::DidUrl::new("did:web:principal.example#admission-1")
+                .unwrap(),
+            event_digest: producer.event_digest.clone(),
+            producer_proof_digest: arkret_sdk::StationAdmissionProof::producer_proof_digest(
+                &producer,
             )
             .unwrap(),
-            event_digest: producer.event_digest.clone(),
-            producer_proof_digest:
-                arkret_sdk::PrincipalServerAdmissionProof::producer_proof_digest(&producer)
-                    .unwrap(),
             producer_verification_method: producer.verification_method.clone(),
             producer_signing_key_did: arkret_sdk::DidKey::new("did:key:z6MkhFixtureDeviceKey")
                 .unwrap(),
@@ -1009,7 +1008,7 @@ fn queued_mls_admission_round_trips_exact_welcome_material() {
         "kind": "ak.mls.commit",
         "scope_ref": {"kind": "realm", "realm_id": realm_id},
         "actor_id": "ak:did_core:web:alice.example",
-        "principal_server_id": "ak:did_core:web:principal.example",
+        "station_id": "ak:did_core:web:principal.example",
         "created_at": "2026-05-19T00:00:00.000Z",
         "payload": {"proposal_refs": [proposal.event_id()]}
     }))
@@ -1020,7 +1019,7 @@ fn queued_mls_admission_round_trips_exact_welcome_material() {
             "kind": "ak.mls.welcome",
             "scope_ref": {"kind": "realm", "realm_id": realm_id},
             "actor_id": "ak:did_core:web:alice.example",
-            "principal_server_id": "ak:did_core:web:principal.example",
+            "station_id": "ak:did_core:web:principal.example",
             "created_at": "2026-05-19T00:00:00.000Z",
             "payload": {
                 "commit_ref": commit.event_id(),
@@ -1291,8 +1290,8 @@ fn an_empty_frontier_authors_the_first_chain_position() {
 }
 
 #[tokio::test]
-async fn realm_bootstrap_preparation_requires_a_described_principal_server() {
-    crate::operation::set_authoring_principal_server_id(Some(
+async fn realm_bootstrap_preparation_requires_a_described_station() {
+    crate::operation::set_authoring_station_id(Some(
         arkret_sdk::DidCoreId::new("ak:did_core:web:server.example").unwrap(),
     ));
     let _signer = crate::event_signer::ActiveSignerTestGuard::replace(Some(std::sync::Arc::new(
@@ -1334,14 +1333,14 @@ async fn realm_bootstrap_preparation_requires_a_described_principal_server() {
         .with_authority(test_authority())
         .author_event_unit(steps)
         .await
-        .expect_err("authoring must resolve the selected Principal Server");
+        .expect_err("authoring must resolve the selected Station");
     crate::operation::set_proof_mode(previous_proof_mode);
     assert!(format!("{error:#}").contains("server describe"));
 }
 
 #[tokio::test]
 async fn ordinary_event_preparation_requires_describe_before_remote_frontier() {
-    crate::operation::set_authoring_principal_server_id(Some(
+    crate::operation::set_authoring_station_id(Some(
         arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap(),
     ));
     let intent = EventIntent::from_authored(&sdk_event_without_proof("did:web:alice.example"));

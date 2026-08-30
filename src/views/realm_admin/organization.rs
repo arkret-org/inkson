@@ -437,7 +437,7 @@ fn OrganizationCreatePanel(token: Signal<String>, principal_id: String) -> Eleme
                 span { class: "badge green", "server admin" }
             }
             div { class: "muted",
-                "Mint a new organization DID (did:webvh) anchored to this Principal Server. \
+                "Mint a new organization DID (did:webvh) anchored to this Station. \
                  The organization control private key is stored securely on this device — it \
                  is the signing authority for binding the organization to Realms."
             }
