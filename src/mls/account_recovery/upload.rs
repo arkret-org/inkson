@@ -173,19 +173,14 @@ async fn ensure_initial_active_series(
         .ok_or_else(|| {
             anyhow::anyhow!("key-backup active-series submit returned no accepted Event id")
         })?;
-    let accepted_rows = http
-        .events_read_all_pages(control_realm.as_str())
-        .await?
-        .events;
-    let mut accepted = crate::models::require_complete_event_rows(
-        &accepted_rows,
+    let history = crate::event_signer::PrincipalControlHistory::load(
+        &http,
+        &arkret_sdk::DidCoreId::new(actor_id.to_owned())?,
+        control_realm,
         "key-backup active-series successor Seal construction",
-    )?
-    .into_iter()
-    .filter(|event| event.actor_id.as_str() == actor_id)
-    .collect::<Vec<_>>();
-    accepted.sort_by_key(|event| event.actor_seq);
-    if accepted.last().map(|event| &event.event_id) != Some(&active_series_event_id) {
+    )
+    .await?;
+    if history.last().map(|event| &event.event_id) != Some(&active_series_event_id) {
         return Err(anyhow!(
             "accepted {wire_kind} active-series Event is not the actor frontier"
         ));
@@ -194,7 +189,7 @@ async fn ensure_initial_active_series(
         .ok_or_else(|| anyhow!("active device signer is required"))?;
     let hlc =
         crate::signing_stamp::issue_protocol_hlc(actor_id, device_id, control_realm.as_str())?;
-    let delta = crate::event_signer::pcr_successor_delta_digests(&accepted, &frontier)?;
+    let delta = crate::event_signer::pcr_successor_delta_digests(history.events(), &frontier)?;
     let availability = crate::event_signer::issue_pcr_successor_availability(
         &http,
         control_realm,
@@ -203,10 +198,11 @@ async fn ensure_initial_active_series(
     )
     .await?;
     let seal = signer
-        .sign_self_principal_linear_successor_seal(&accepted, &frontier, &availability, hlc)
+        .sign_self_principal_linear_successor_seal(&history, &frontier, &availability, hlc)
         .map_err(|error| anyhow!("sign {wire_kind} active-series successor Seal: {error}"))?;
     let active_series_digest = arkret_sdk::Hash::new(
-        accepted
+        history
+            .events()
             .last()
             .expect("checked")
             .event_digest_with_digest_suite(arkret_sdk::DigestSuite::Sha256)?,

@@ -787,7 +787,7 @@ fn spawn_set_agent_enabled(
             )
         } else {
             arkret_event_draft::build_agent_pause_intent(
-                agent_actor_id,
+                agent_actor_id.clone(),
                 controller_actor_id,
                 arkret_sdk::ScopeRef::Realm {
                     realm_id: key_state.principal_control_realm_id.clone(),
@@ -827,6 +827,7 @@ fn spawn_set_agent_enabled(
                 signer.as_ref(),
                 account.did(),
                 device_id.as_str(),
+                &agent_actor_id,
                 key_state.principal_control_realm_id.as_str(),
                 state_store,
             )
@@ -868,6 +869,7 @@ fn spawn_set_agent_enabled(
                 signer.as_ref(),
                 account.did(),
                 device_id.as_str(),
+                &agent_actor_id,
                 key_state.principal_control_realm_id.as_str(),
                 state_store,
             )
@@ -1535,6 +1537,7 @@ fn spawn_provision_agent(
             return;
         }
         let pcr_realm_for_seal = principal_control_realm_id.clone();
+        let agent_id_for_seal = agent_id.clone();
         let state_store_for_seal = state_store;
         let account_for_seal = account.clone();
         if let Err(error) = with_authed_api(&base, api_token.clone(), move |api| async move {
@@ -1542,6 +1545,7 @@ fn spawn_provision_agent(
                 &api,
                 state_store_for_seal,
                 &account_for_seal,
+                &agent_id_for_seal,
                 &pcr_realm_for_seal,
             )
             .await
@@ -2827,6 +2831,7 @@ pub fn PersonalAgentAdminPanel(
                                                                 &api,
                                                                 state_store,
                                                                 &account,
+                                                                &agent_id,
                                                                 &realm_id,
                                                             )
                                                             .await?;

@@ -61,6 +61,57 @@ use ed25519_dalek::{Signer as _, SigningKey};
 
 use crate::operation::{Audience, AuthoredEvent, ProofMode, current_proof_mode};
 
+/// Complete canonical history for one actor in one Principal Control Realm.
+///
+/// The representation and only construction path are intentionally confined
+/// to this module. Linear self-PCR
+/// successor signing accepts this type instead of an arbitrary Event slice so
+/// callers cannot accidentally feed it a Realm projection scan. Actor-scoped
+/// durable reads are the protocol source for principal control history; the
+/// Realm filter is applied locally because an actor-scoped scan can span more
+/// than one Realm.
+pub(crate) struct PrincipalControlHistory {
+    events: Vec<arkret_sdk::Event>,
+}
+
+impl PrincipalControlHistory {
+    pub(crate) async fn load(
+        http: &arkret_sdk::http_client::Client,
+        actor_id: &arkret_sdk::DidCoreId,
+        realm_id: &arkret_sdk::RealmId,
+        purpose: &str,
+    ) -> anyhow::Result<Self> {
+        let rows = http.events_read_all_pages_for_actor(actor_id).await?.events;
+        let mut events = crate::models::require_complete_event_rows(&rows, purpose)?
+            .into_iter()
+            .filter(|event| event.actor_id == *actor_id && event.realm_id == *realm_id)
+            .collect::<Vec<_>>();
+        events.sort_by(|left, right| {
+            left.actor_seq
+                .cmp(&right.actor_seq)
+                .then_with(|| left.event_id.cmp(&right.event_id))
+        });
+        if events.is_empty() {
+            anyhow::bail!(
+                "{purpose} found no canonical Events for actor {actor_id} in Realm {realm_id}"
+            );
+        }
+        Ok(Self { events })
+    }
+
+    pub(crate) fn events(&self) -> &[arkret_sdk::Event] {
+        &self.events
+    }
+
+    pub(crate) fn last(&self) -> Option<&arkret_sdk::Event> {
+        self.events.last()
+    }
+
+    pub(crate) fn into_events(self) -> Vec<arkret_sdk::Event> {
+        self.events
+    }
+}
+
 pub(crate) fn pcr_successor_delta_digests(
     events: &[arkret_sdk::Event],
     predecessor: &arkret_sdk::Seal,
@@ -605,13 +656,14 @@ impl InksonEventSigner {
         .map_err(|error| EventSignerError::Backend(error.to_string()))
     }
 
-    pub fn sign_self_principal_linear_successor_seal(
+    pub(crate) fn sign_self_principal_linear_successor_seal(
         &self,
-        events: &[arkret_sdk::Event],
+        history: &PrincipalControlHistory,
         predecessor: &arkret_sdk::Seal,
         availability: &arkret_sdk::SealAvailabilityReceiptIssueOutcome,
         hlc: arkret_sdk::Hlc,
     ) -> Result<arkret_sdk::Seal, EventSignerError> {
+        let events = history.events();
         let principal = events.first().ok_or_else(|| {
             EventSignerError::Encoding(
                 "principal successor Seal requires accepted Event history".to_owned(),

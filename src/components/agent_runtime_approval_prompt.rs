@@ -416,6 +416,7 @@ pub fn AgentRuntimeApprovalPrompt(
                                                 &api,
                                                 state_store,
                                                 &account,
+                                                &key_state.agent_id,
                                                 &key_state.principal_control_realm_id,
                                             )
                                             .await?;

@@ -51,6 +51,13 @@ fn has_managed_agent_pcr_create(events: &[arkret_sdk::Event]) -> bool {
     })
 }
 
+fn mls_genesis_event_id(events: &[arkret_sdk::Event]) -> Option<arkret_sdk::EventId> {
+    events
+        .iter()
+        .find(|event| event.kind == arkret_sdk::EventKind::MlsGenesis)
+        .map(|event| event.event_id.clone())
+}
+
 async fn submit_managed_agent_pcr_seal(
     http: &arkret_sdk::http_client::Client,
     signer: &crate::event_signer::InksonEventSigner,
@@ -115,6 +122,7 @@ pub(crate) async fn ensure_managed_agent_pcr_seal_current<
     signer: &crate::event_signer::InksonEventSigner,
     controller_did: &arkret_sdk::Did,
     device_id: &str,
+    agent_id: &arkret_sdk::DidCoreId,
     realm_id: &str,
     state_store: S,
 ) -> anyhow::Result<(arkret_sdk::RealmSealFrontierView, arkret_sdk::Seal)> {
@@ -127,10 +135,15 @@ pub(crate) async fn ensure_managed_agent_pcr_seal_current<
     {
         return Err(current.expect_err("checked managed PCR signed-head receipt error"));
     }
-    let accepted_events = submitter
-        .backfill(realm_id)
-        .await?
-        .complete_events("managed Agent PCR Seal materialization")?;
+    let realm_id_typed = arkret_sdk::RealmId::new(realm_id.to_owned())?;
+    let accepted_events = crate::event_signer::PrincipalControlHistory::load(
+        http,
+        agent_id,
+        &realm_id_typed,
+        "managed Agent PCR Seal materialization",
+    )
+    .await?
+    .into_events();
     let material =
         arkret_bootstrap::materialize_managed_agent_pcr_control(&accepted_events, &|event| {
             crate::operation::cell_write_projector(event, arkret_sdk::DigestSuite::Sha256)
@@ -235,19 +248,14 @@ pub(crate) async fn seal_self_principal_event_current(
         .seals_frontier_realm_head(realm_id.as_str())
         .await?;
     let controller_actor_id = arkret_sdk::project_did_to_core_id(controller_did)?;
-    let mut accepted = submitter
-        .backfill(realm_id.as_str())
-        .await?
-        .complete_events("controller self-PCR successor Seal construction")?
-        .into_iter()
-        .filter(|event| event.actor_id == controller_actor_id)
-        .collect::<Vec<_>>();
-    accepted.sort_by(|left, right| {
-        left.actor_seq
-            .cmp(&right.actor_seq)
-            .then_with(|| left.event_id.cmp(&right.event_id))
-    });
-    if accepted.last().map(|event| &event.event_id) != Some(expected_event_id) {
+    let history = crate::event_signer::PrincipalControlHistory::load(
+        &http,
+        &controller_actor_id,
+        realm_id,
+        "controller self-PCR successor Seal construction",
+    )
+    .await?;
+    if history.last().map(|event| &event.event_id) != Some(expected_event_id) {
         anyhow::bail!("accepted controller self-PCR Event is not the actor frontier");
     }
     let signer = crate::event_signer::active_signer()
@@ -260,12 +268,12 @@ pub(crate) async fn seal_self_principal_event_current(
         device_id,
         realm_id.as_str(),
     )?;
-    let delta = crate::event_signer::pcr_successor_delta_digests(&accepted, &predecessor)?;
+    let delta = crate::event_signer::pcr_successor_delta_digests(history.events(), &predecessor)?;
     let availability =
         crate::event_signer::issue_pcr_successor_availability(&http, realm_id, &predecessor, delta)
             .await?;
     let seal = signer
-        .sign_self_principal_linear_successor_seal(&accepted, &predecessor, &availability, hlc)
+        .sign_self_principal_linear_successor_seal(&history, &predecessor, &availability, hlc)
         .map_err(|error| anyhow::anyhow!("sign controller self-PCR successor Seal: {error}"))?;
     let expected_digests = seal.delta.clone();
     let outcome = http.events_submit_seal(&seal).await?;
@@ -284,6 +292,7 @@ pub(crate) async fn seal_managed_agent_pcr_current(
     api: &crate::transport::TransportClient,
     state_store: SyncSignal<LocalStateStore>,
     account: &crate::config::ActiveAccountContext,
+    agent_id: &arkret_sdk::DidCoreId,
     realm_id: &arkret_sdk::RealmId,
 ) -> anyhow::Result<arkret_sdk::Seal> {
     let signer = crate::event_signer::active_signer()
@@ -303,6 +312,7 @@ pub(crate) async fn seal_managed_agent_pcr_current(
         signer.as_ref(),
         account.did(),
         device_id.as_str(),
+        agent_id,
         realm_id.as_str(),
         state_store,
     )
@@ -331,22 +341,24 @@ pub(crate) async fn bootstrap_provisioned_agent(
         signer.as_ref(),
         signer_account_scope.as_ref(),
     )?;
-    let agent_id = agent_id.as_str();
-    let realm_id = realm_id.as_str();
     let submitter = api.event_submitter()?;
     let http = api.sdk_http_client()?;
+    let accepted_events = crate::event_signer::PrincipalControlHistory::load(
+        &http,
+        agent_id,
+        realm_id,
+        "managed Agent PCR bootstrap",
+    )
+    .await?
+    .into_events();
+    let agent_id_typed = agent_id.clone();
+    let agent_id = agent_id.as_str();
+    let realm_id = realm_id.as_str();
 
-    let accepted_events = submitter
-        .backfill(realm_id)
-        .await?
-        .complete_events("managed Agent PCR bootstrap")?;
     if !has_managed_agent_pcr_create(&accepted_events) {
         anyhow::bail!(
             "managed Agent PCR genesis is not accepted; provisioning must submit the exact locally frozen create Event before recovery bootstrap"
         );
-    }
-    if !has_managed_agent_pcr_create(&accepted_events) {
-        anyhow::bail!("Principal Server did not expose the accepted managed Agent PCR genesis");
     }
 
     let (_, initial_frontier_seal) = ensure_managed_agent_pcr_seal_current(
@@ -355,6 +367,7 @@ pub(crate) async fn bootstrap_provisioned_agent(
         signer.as_ref(),
         account.did(),
         device_id.as_str(),
+        &agent_id_typed,
         realm_id,
         state_store,
     )
@@ -394,7 +407,7 @@ pub(crate) async fn bootstrap_provisioned_agent(
     .map_err(anyhow::Error::msg)?;
 
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-    let existing_genesis = submitter.find_mls_genesis_event_id(realm_id).await?;
+    let existing_genesis = mls_genesis_event_id(&accepted_events);
     let frontier = if let Some(event_id) = existing_genesis {
         state_store
             .write()
@@ -411,6 +424,7 @@ pub(crate) async fn bootstrap_provisioned_agent(
             signer.as_ref(),
             account.did(),
             device_id.as_str(),
+            &agent_id_typed,
             realm_id,
             state_store,
         )
@@ -480,14 +494,19 @@ pub(crate) async fn bootstrap_provisioned_agent(
                     &arkret_sdk::ReasonCode::MlsGenesisAlreadyExists,
                 ) =>
             {
-                let event_id = submitter
-                    .find_mls_genesis_event_id(realm_id)
-                    .await?
-                    .ok_or_else(|| {
-                        anyhow::anyhow!(
-                            "Agent PCR reports duplicate MLS genesis but exposes no accepted genesis"
-                        )
-                    })?;
+                let accepted_events = crate::event_signer::PrincipalControlHistory::load(
+                    &http,
+                    &agent_id_typed,
+                    &arkret_sdk::RealmId::new(realm_id.to_owned())?,
+                    "managed Agent PCR duplicate MLS genesis lookup",
+                )
+                .await?
+                .into_events();
+                let event_id = mls_genesis_event_id(&accepted_events).ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "Agent PCR reports duplicate MLS genesis but exposes no accepted genesis"
+                    )
+                })?;
                 state_store
                     .write()
                     .mark_mls_genesis_emitted_with_event(realm_id.to_owned(), &event_id)
@@ -501,6 +520,7 @@ pub(crate) async fn bootstrap_provisioned_agent(
             signer.as_ref(),
             account.did(),
             device_id.as_str(),
+            &agent_id_typed,
             realm_id,
             state_store,
         )

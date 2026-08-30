@@ -53,19 +53,14 @@ pub(crate) async fn submit_principal_successor_seal(
     context: PrincipalSuccessorSealContext,
     principal_event: &arkret_sdk::Event,
 ) -> anyhow::Result<()> {
-    let accepted_rows = http
-        .events_read_all_pages_for_actor(&context.actor_id)
-        .await?
-        .events;
-    let mut accepted = crate::models::require_complete_event_rows(
-        &accepted_rows,
+    let history = crate::event_signer::PrincipalControlHistory::load(
+        http,
+        &context.actor_id,
+        &context.control_realm,
         "principal successor Seal construction",
-    )?
-    .into_iter()
-    .filter(|event| event.actor_id == context.actor_id)
-    .collect::<Vec<_>>();
-    accepted.sort_by_key(|event| event.actor_seq);
-    if accepted.last().map(|event| &event.event_id) != Some(&principal_event.event_id) {
+    )
+    .await?;
+    if history.last().map(|event| &event.event_id) != Some(&principal_event.event_id) {
         anyhow::bail!("accepted principal Event is not the actor frontier");
     }
 
@@ -79,7 +74,8 @@ pub(crate) async fn submit_principal_successor_seal(
         device_id,
         context.control_realm.as_str(),
     )?;
-    let delta = crate::event_signer::pcr_successor_delta_digests(&accepted, &context.predecessor)?;
+    let delta =
+        crate::event_signer::pcr_successor_delta_digests(history.events(), &context.predecessor)?;
     let availability = crate::event_signer::issue_pcr_successor_availability(
         http,
         &context.control_realm,
@@ -89,7 +85,7 @@ pub(crate) async fn submit_principal_successor_seal(
     .await?;
     let seal = signer
         .sign_self_principal_linear_successor_seal(
-            &accepted,
+            &history,
             &context.predecessor,
             &availability,
             hlc,
