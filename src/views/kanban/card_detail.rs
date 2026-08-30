@@ -846,13 +846,18 @@ fn raw_operation_synthesis_timestamp(record: &RawOperationRecord) -> String {
 
 fn raw_operation_synthesis_actor_id(record: &RawOperationRecord) -> String {
     let payload = &record.payload;
-    json_path_string(Some(payload), &["actor_id"])
-        .or_else(|| json_path_string(Some(payload), &["sender_actor_id"]))
-        .or_else(|| json_path_string(Some(payload), &["body", "actor_id"]))
-        .or_else(|| json_path_string(Some(payload), &["body", "sender_actor_id"]))
-        .or_else(|| json_path_string(Some(payload), &["payload", "actor_id"]))
-        .or_else(|| json_path_string(Some(payload), &["payload", "sender_actor_id"]))
-        .unwrap_or_default()
+    [
+        payload.get("actor_id"),
+        payload.get("sender_actor_id"),
+        payload.pointer("/body/actor_id"),
+        payload.pointer("/body/sender_actor_id"),
+        payload.pointer("/payload/actor_id"),
+        payload.pointer("/payload/sender_actor_id"),
+    ]
+    .into_iter()
+    .flatten()
+    .find_map(crate::state::projection::message_ops::actor_principal_from_value)
+    .unwrap_or_default()
 }
 
 fn synthesis_revision_for_raw_body(

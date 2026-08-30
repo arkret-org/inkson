@@ -912,8 +912,11 @@ fn realm_membership_removal_basis(
         .as_array()?
         .iter()
         .filter(|member| member.get("membership").and_then(Value::as_str) == Some("join"))
-        .filter_map(|member| member.get("actor_id").and_then(Value::as_str))
-        .map(str::to_owned)
+        .filter_map(|member| {
+            member
+                .get("actor_id")
+                .and_then(crate::state::projection::message_ops::actor_principal_from_value)
+        })
         .collect::<BTreeSet<_>>();
     let membership_frontier = membership_removal_frontier(projection, None);
     (!membership_frontier.is_empty()).then_some((active_members, membership_frontier))
@@ -1888,9 +1891,8 @@ fn proof_bearing_sender_device(
     let actor = object
         .get("actor_id")
         .or_else(|| object.get("sender_actor_id"))
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|actor| !actor.is_empty())?;
+        .and_then(crate::state::projection::message_ops::actor_principal_from_value)
+        .filter(|actor| !actor.trim().is_empty())?;
     // AKP-0008 / AKP-0009: delegated Events keep the accountable principal
     // in `actor_id`, while `executed_by` identifies the runtime that actually
     // signed the envelope. Keep this selector byte-aligned with the chat proof
@@ -1899,11 +1901,10 @@ fn proof_bearing_sender_device(
     // and deliberately do not form a device-directory lookup here.
     let proof_subject = object
         .get("executed_by")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|controller| !controller.is_empty())
+        .and_then(crate::state::projection::message_ops::actor_principal_from_value)
+        .filter(|controller| !controller.trim().is_empty())
         .unwrap_or(actor);
-    let proof_subject = arkret_sdk::DidCoreId::new(proof_subject.to_owned()).ok()?;
+    let proof_subject = arkret_sdk::DidCoreId::new(proof_subject).ok()?;
     let proof_controller = proofs.iter().find_map(|proof| {
         let method = proof.get("verification_method").and_then(Value::as_str)?;
         let controller = {
@@ -2748,12 +2749,15 @@ fn ingest_member_identity_events_from_projection(
             let Some(map) = entry.as_object() else {
                 continue;
             };
-            let Some(actor_id) = map.get("actor_id").and_then(Value::as_str) else {
+            let Some(actor_id) = map
+                .get("actor_id")
+                .and_then(crate::state::projection::message_ops::actor_principal_from_value)
+            else {
                 continue;
             };
             // Inline events have priority — they're complete envelopes.
             if let Some(events) = map.get("identity_events").and_then(Value::as_array) {
-                store.ingest_member_identity_events(realm_id, actor_id, events);
+                store.ingest_member_identity_events(realm_id, &actor_id, events);
             }
             // Otherwise hydrate envelopes from `state.events[]` keyed
             // by id. Missing references are dropped silently — the
@@ -2770,7 +2774,7 @@ fn ingest_member_identity_events_from_projection(
                     }
                 }
                 if !resolved.is_empty() {
-                    store.ingest_member_identity_events(realm_id, actor_id, &resolved);
+                    store.ingest_member_identity_events(realm_id, &actor_id, &resolved);
                 }
             }
         }
@@ -2786,8 +2790,12 @@ fn projection_event_kind(event: &Value) -> &str {
 }
 
 /// Read the stable actor id from the event, falling back to the roster entry.
-fn projection_event_actor_id<'a>(event: &'a Value, fallback: Option<&'a Value>) -> Option<&'a str> {
-    let from = |value: &'a Value| value.get("actor_id").and_then(Value::as_str);
+fn projection_event_actor_id(event: &Value, fallback: Option<&Value>) -> Option<String> {
+    let from = |value: &Value| {
+        value
+            .get("actor_id")
+            .and_then(crate::state::projection::message_ops::actor_principal_from_value)
+    };
     from(event).or_else(|| fallback.and_then(from))
 }
 
@@ -2836,9 +2844,10 @@ fn collect_device_frontier_actors(body: &Value) -> BTreeSet<String> {
         let subject = event
             .pointer("/payload/principal_id")
             .and_then(Value::as_str)
+            .map(str::to_owned)
             .or_else(|| projection_event_actor_id(event, fallback));
-        if let Some(subject) = subject.map(str::trim).filter(|value| !value.is_empty()) {
-            actors.insert(subject.to_owned());
+        if let Some(subject) = subject.filter(|value| !value.trim().is_empty()) {
+            actors.insert(subject);
         }
     });
     actors
@@ -3148,7 +3157,7 @@ mod tests {
                 "event_id": removal_event,
                 "kind": "ak.member.state",
                 "payload": {
-                    "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:webvh:z6mkfixture:bob.example","station_id":"ak:did_core:web:principal.example"}},
+                    "member_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:webvh:z6mkfixture:bob.example","station_id":"ak:did_core:web:principal.example"}},
                     "membership": "ban"
                 }
             }]}
@@ -3663,15 +3672,14 @@ mod tests {
             sdk_event(
                 arkret_sdk::EventKind::MemberState.as_str(),
                 json!({
-                    "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:bob.example","station_id":"ak:did_core:web:principal.example"}},
+                    "member_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:bob.example","station_id":"ak:did_core:web:principal.example"}},
                     "membership": "join"
                 }),
             ),
             sdk_event(
                 arkret_sdk::EventKind::InviteAccept.as_str(),
                 json!({
-                    "invite_id": "ak:invite:AT75JCcnHexLP4y-Juac4pnRIpfUaiaat4XhL9W7g610",
-                    "delivery_status": "unroutable"
+                    "invite_id": "ak:invite:AT75JCcnHexLP4y-Juac4pnRIpfUaiaat4XhL9W7g610"
                 }),
             ),
             sdk_event(arkret_sdk::EventKind::MlsCommit.as_str(), json!({})),
@@ -3699,13 +3707,13 @@ mod tests {
         let mut event = sdk_event(
             arkret_sdk::EventKind::InviteAccept.as_str(),
             json!({
-                "invite_id": "ak:invite:AT75JCcnHexLP4y-Juac4pnRIpfUaiaat4XhL9W7g610",
-                "delivery_status": "unroutable"
+                "invite_id": "ak:invite:AT75JCcnHexLP4y-Juac4pnRIpfUaiaat4XhL9W7g610"
             }),
         );
-        event.actor_id =
-            crate::mls_api_helpers::local_account_actor_id("ak:did_core:web:alice.example")
-                .unwrap();
+        event.actor_id = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+            arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example").unwrap(),
+            arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap(),
+        ));
         let event_digest = arkret_sdk::Hash::new(
             event
                 .event_digest_with_digest_suite(arkret_sdk::DigestSuite::Sha256)
@@ -4034,8 +4042,11 @@ mod tests {
             json!({
                 "timeline": {
                     "events": [{
-                        "actor_id": controller,
-                        "executed_by": agent,
+                        "actor_id": {"kind":"account","account_id":{
+                            "principal_id":controller,
+                            "station_id":"ak:did_core:web:principal.example"
+                        }},
+                        "executed_by": {"kind":"service","service_id":agent},
                         "device_id": device,
                         "proofs": [{
                             "verification_method": format!("{agent_full}#{device}")
@@ -4070,7 +4081,10 @@ mod tests {
             let entry = serde_json::from_value::<arkret_sdk::RealmSyncEntry>(json!({
                 "member_roster": {
                     "entries": [{
-                        "actor_id": actor_id,
+                        "actor_id": {"kind":"account","account_id":{
+                            "principal_id":actor_id,
+                            "station_id":"ak:did_core:web:principal.example"
+                        }},
                         "membership": membership
                     }],
                     "limited": false

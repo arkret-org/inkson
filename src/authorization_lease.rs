@@ -725,7 +725,7 @@ fn self_principal_pcr_authority_set_ref_from_events(
     let arkret_sdk::NotaryValue::SingleSigner { signer, .. } = &payload.object.notary else {
         anyhow::bail!("self principal PCR genesis does not use a single-signer notary");
     };
-    if signer.actor_id != *event.actor_id.signing_principal_id() {
+    if signer.actor_id.signing_principal_id() != event.actor_id.signing_principal_id() {
         anyhow::bail!("self principal PCR notary does not match the provision Event actor");
     }
     arkret_sdk::Hash::new(crate::canonical::canonical_sha256(&payload.object.notary)?)

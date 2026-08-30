@@ -56,7 +56,10 @@ fn test_authority(principal: &str) -> arkret_sdk::AccountId {
 fn direct_route_resolves_agent_peer_independently_of_reply_participation() {
     let contacts: Vec<crate::models::ContactListRow> = serde_json::from_value(serde_json::json!([
         {
-            "peer": {"kind": "human", "principal_id": "ak:did_core:web:example.com:users:alice"},
+            "peer": {"kind": "human", "account_id": {
+                "principal_id": "ak:did_core:web:example.com:users:alice",
+                "station_id": "ak:did_core:web:principal.example"
+            }},
             "state": "accepted",
             "next_prepare_input": {
                 "contact_round_id": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -67,8 +70,14 @@ fn direct_route_resolves_agent_peer_independently_of_reply_participation() {
             "granted_by_peer_scopes": ["direct_message"],
             "bidirectional_scopes": ["direct_message"],
             "contact_agents": [{
-                "agent_id": "ak:did_core:web:example.com:agents:aa",
-                "controller_id": "ak:did_core:web:example.com:users:alice",
+                "actor_id": {
+                    "kind": "service",
+                    "service_id": "ak:did_core:web:example.com:agents:aa"
+                },
+                "controller_account_id": {
+                    "principal_id": "ak:did_core:web:example.com:users:alice",
+                    "station_id": "ak:did_core:web:principal.example"
+                },
                 "agent_slug": "aa",
                 "direct_conversation": {
                     "realm_id": "ak:realm:AUuXpUO-yBwwyCNB7AS1IIm5_sgsxyEsG7PBmmkXdFog",

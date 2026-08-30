@@ -291,7 +291,7 @@ fn encrypted_write_blocks_complete_roster_ahead_of_local_group() {
             "member_roster_entries_limited": false,
             "member_roster_entries": [
                 {
-                    "actor_id": crate::mls_api_helpers::principal_core_id(actor).unwrap(),
+                    "actor_id": arkret_sdk::ActorId::account(test_authority(actor)),
                     "membership": "join"
                 },
                 { "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:bob.example","station_id":"ak:did_core:web:principal.example"}}, "membership": "join" }

@@ -137,7 +137,7 @@ impl LocalKanbanEvent {
 struct LocalKanbanRecord<'a, T> {
     kind: arkret_sdk::EventKind,
     operation_id: &'a str,
-    actor_id: &'a str,
+    actor_id: &'a arkret_sdk::ActorId,
     created_at: &'a str,
     write_state: &'static str,
     body: &'a T,
@@ -151,7 +151,7 @@ struct LocalKanbanRecord<'a, T> {
 
 struct LocalRecordMetadata {
     operation_id: String,
-    actor_id: String,
+    actor_id: arkret_sdk::ActorId,
     created_at: String,
     local_target_ref: Option<String>,
     local_temporary_target_ref: Option<String>,
@@ -208,7 +208,7 @@ fn kanban_operation_from_typed(event: &arkret_sdk::Event) -> Option<RawOperation
         .map(ToOwned::to_owned);
     let metadata = LocalRecordMetadata {
         operation_id: operation_id.clone(),
-        actor_id: event.actor_id.signing_principal_id().as_str().to_owned(),
+        actor_id: event.actor_id.clone(),
         created_at: arkret_sdk::canonical::format_timestamp_canonical(event.created_at),
         local_target_ref,
         local_temporary_target_ref,
@@ -265,22 +265,26 @@ pub(crate) fn sdk_events_from_values(values: &[serde_json::Value]) -> Vec<arkret
                 });
             let actor_id = value
                 .get("actor_id")
-                .and_then(serde_json::Value::as_str)
-                .and_then(|value| arkret_sdk::DidCoreId::new(value.to_owned()).ok())
+                .and_then(|value| serde_json::from_value::<arkret_sdk::ActorId>(value.clone()).ok())
                 .unwrap_or_else(|| {
-                    arkret_sdk::DidCoreId::new("ak:did_core:webvh:z6mkfixture")
-                        .expect("fixture actor id")
+                    arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+                        arkret_sdk::DidCoreId::new("ak:did_core:webvh:z6mkfixture")
+                            .expect("fixture actor principal"),
+                        arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example")
+                            .expect("fixture actor station"),
+                    ))
                 });
             let mut event = arkret_wire::test_support::raw_event(
                 kind.as_str(),
                 arkret_sdk::ScopeRef::Realm { realm_id },
-                actor_id,
-                arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").ok()?,
+                actor_id.signing_principal_id().clone(),
+                actor_id.route_service_id().clone(),
                 1,
                 arkret_sdk::Hlc::new("01970e589d21-0004-a13f9c2e").ok()?,
                 payload,
             )
             .ok()?;
+            event.actor_id = actor_id;
             if let Some(event_id) = value
                 .get("event_id")
                 .and_then(serde_json::Value::as_str)

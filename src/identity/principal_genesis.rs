@@ -117,7 +117,10 @@ pub fn build_genesis_unit(
         decode_founding_device_public_key(payload.device_public_key_did.as_str())?;
     let founding_notary =
         arkret_sdk::NotaryValue::single_signer(arkret_sdk::NotarySignerDescriptor {
-            actor_id: principal_id.clone(),
+            actor_id: arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+                principal_id.clone(),
+                station_id.clone(),
+            )),
             verification_method: arkret_sdk::DidUrl::new(format!(
                 "{}#{}",
                 principal_did, payload.device_id

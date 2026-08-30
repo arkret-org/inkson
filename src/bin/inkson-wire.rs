@@ -130,7 +130,7 @@ fn demo_realm_genesis() -> Result<Value> {
     let producer_id = arkret_wire::project_did_to_core_id(&producer_did)?;
     let notary_public_key = authority.signing_key.verifying_key().to_bytes();
     let notary = arkret_sdk::NotaryValue::single_signer(arkret_sdk::NotarySignerDescriptor {
-        actor_id: authority.service_id.clone(),
+        actor_id: arkret_sdk::ActorId::service(authority.service_id.clone()),
         verification_method: authority.verification_method.clone(),
         key_kind: arkret_sdk::NotaryKeyKind::Ed25519Raw32,
         jose_algorithm: arkret_sdk::NotaryJoseAlgorithm::Ed25519,
@@ -857,7 +857,9 @@ fn control_proposal_ack(input: Value) -> Result<Value> {
     let authority_set_ref = arkret_sdk::Hash::new(
         arkret_sdk::canonical::canonical_sha256(&arkret_sdk::NotaryValue::single_signer(
             arkret_sdk::NotarySignerDescriptor {
-                actor_id: arkret_sdk::DidCoreId::new("ak:did_core:web:server.local".to_owned())?,
+                actor_id: arkret_sdk::ActorId::service(arkret_sdk::DidCoreId::new(
+                    "ak:did_core:web:server.local".to_owned(),
+                )?),
                 verification_method: arkret_sdk::DidUrl::new(
                     "did:web:server.local#notary".to_owned(),
                 )

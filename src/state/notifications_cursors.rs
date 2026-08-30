@@ -129,7 +129,10 @@ impl LocalStateStore {
             return false;
         }
         let content = message.get("content").unwrap_or(message);
-        let Some(actor_id) = content.get("actor_id").and_then(Value::as_str) else {
+        let Some(actor_id) = content
+            .get("actor_id")
+            .and_then(|value| serde_json::from_value::<arkret_sdk::ActorId>(value.clone()).ok())
+        else {
             return false;
         };
         let Some(device_id) = content.get("device_id").and_then(Value::as_str) else {
@@ -170,7 +173,7 @@ impl LocalStateStore {
                 read_scope: read_scope.clone(),
                 position,
             },
-            actor: actor_id.to_owned(),
+            actor: actor_id.signing_principal_id().as_str().to_owned(),
             device_id: device_id.to_owned(),
             updated_at,
         };

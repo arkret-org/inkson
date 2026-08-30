@@ -975,7 +975,7 @@ fn AppBootstrap() -> Element {
                 sidebar_text_matches_query(
                     &direct_sidebar_query_value,
                     &[
-                        agent.agent_id.as_str(),
+                        agent.actor_id.signing_principal_id().as_str(),
                         agent.display_name.as_deref().unwrap_or_default(),
                         agent.agent_slug.as_deref().unwrap_or_default(),
                     ],
@@ -2407,7 +2407,7 @@ fn AppBootstrap() -> Element {
                                                     sidebar_text_matches_query(
                                                         &direct_sidebar_query_value,
                                                         &[
-                                                            agent.agent_id.as_str(),
+                                                            agent.actor_id.signing_principal_id().as_str(),
                                                             agent.display_name.as_deref().unwrap_or_default(),
                                                             agent.agent_slug.as_deref().unwrap_or_default(),
                                                         ],
@@ -2658,7 +2658,10 @@ fn AppBootstrap() -> Element {
                                                 div { class: "contact-agent-list", "data-testid": "contact-sidebar-contact-agents",
                                         for agent in contact.contact_agent_projections.iter() {
                                                     {
-                                                        let agent_id = agent.agent_id.to_string();
+                                                        let agent_id = agent
+                                                            .actor_id
+                                                            .signing_principal_id()
+                                                            .to_string();
                                                         let agent_label = agent.display_name.clone()
                                                             .or_else(|| agent.agent_slug.clone())
                                                             .unwrap_or_else(|| short_protocol_id(&agent_id));

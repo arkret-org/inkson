@@ -414,7 +414,10 @@ fn local_state_store_ingests_read_cursor_update_to_device() {
         "expires_at": "2099-06-25T00:00:00.000Z",
         "content": {
             "schema": "ak.schema.read_cursor.v1",
-            "actor_id": "ak:did_core:web:alice.example",
+            "actor_id": {"kind":"account","account_id":{
+                "principal_id":"ak:did_core:web:alice.example",
+                "station_id":"ak:did_core:web:principal.example"
+            }},
             "device_id": "ak:device:01904100-0000-7000-8000-000000000001",
             "realm_id": "ak:realm:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1",
             "read_scope": {
@@ -468,7 +471,10 @@ fn local_state_store_accepts_server_read_cursor_winner_with_lower_hlc() {
             "expires_at": "2099-06-25T00:00:00.000Z",
             "content": {
                 "schema": "ak.schema.read_cursor.v1",
-                "actor_id": "ak:did_core:web:alice.example",
+                "actor_id": {"kind":"account","account_id":{
+                    "principal_id":"ak:did_core:web:alice.example",
+                    "station_id":"ak:did_core:web:principal.example"
+                }},
                 "device_id": "ak:device:01904100-0000-7000-8000-000000000001",
                 "realm_id": "ak:realm:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1",
                 "read_scope": {

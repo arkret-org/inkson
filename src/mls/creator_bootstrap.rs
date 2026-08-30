@@ -542,7 +542,11 @@ mod tests {
     /// `owner` / `created_by` mirrors are deliberately absent — a fixture that
     /// carried them would test a fallback the client no longer has.
     fn realm_projection(creator: &str, encryption_profile: &str) -> serde_json::Value {
-        let creator = crate::mls_api_helpers::principal_core_id(creator).unwrap();
+        let principal_id = crate::mls_api_helpers::principal_core_id(creator).unwrap();
+        let creator = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+            principal_id,
+            arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap(),
+        ));
         json!({
             "__kind": "realm",
             "content_scheme": encryption_profile,
@@ -655,7 +659,10 @@ mod tests {
         // Post-P1 realm projections carry no owner/created_by mirror; the
         // creator fact lives in the projected `ak.realm.create` event.
         let mut store = temp_store("create-event-source");
-        let actor_id = crate::mls_api_helpers::principal_core_id(ACTOR).unwrap();
+        let actor_id = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+            crate::mls_api_helpers::principal_core_id(ACTOR).unwrap(),
+            arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap(),
+        ));
         store.save_realm_tree_projection(
             REALM,
             json!({

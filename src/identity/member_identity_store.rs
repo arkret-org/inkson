@@ -478,13 +478,17 @@ mod tests {
     fn encrypted_carrier_marks_decryption_pending() {
         let mut store = MemberIdentityStore::new();
         let actor = crate::mls_api_helpers::principal_core_id("did:web:alice.example").unwrap();
+        let actor_id = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+            actor.clone(),
+            arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap(),
+        ));
         let realm = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
         let event = json!({
             "event_id": "ak:event:ASyFf0qTUQ55a2qZp5fuTXRnIgf3ovKChQZ_XSkxdIPK",
             "kind": "ak.member.identity.update",
             "payload": {
                 "realm_id": realm,
-                "actor_id": actor,
+                "actor_id": actor_id,
                 "segment": "member_identity",
                 "identity_payload": {
                     "encrypted_content": {

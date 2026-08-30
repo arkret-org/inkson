@@ -24,7 +24,7 @@ pub(super) fn direct_conversation_peer_id(
                 .as_ref()
                 .is_some_and(&matches_route)
         }) {
-            return agent.agent_id.to_string();
+            return agent.actor_id.signing_principal_id().to_string();
         }
     }
     String::new()

@@ -68,9 +68,7 @@ fn decode_capability_row(grant: &CapabilityGrant, queried_realm_id: &str) -> Cap
             .unwrap_or_default(),
         issuer_id: grant.issuer_id.signing_principal_id().as_str().to_owned(),
         subject: match &grant.subject {
-            CapabilitySubject::Actor(actor) => actor
-                .canonical_key()
-                .unwrap_or_else(|_| actor.signing_principal_id().to_string()),
+            CapabilitySubject::Actor(actor) => actor.signing_principal_id().to_string(),
             CapabilitySubject::Condition(selector) => {
                 serde_json::to_string(selector).unwrap_or_else(|_| "condition".to_owned())
             }
@@ -486,13 +484,14 @@ mod tests {
     use super::*;
 
     fn sample_grant(subject: serde_json::Value) -> CapabilityGrant {
-        let principal_subject = subject.is_string();
-        let mut value = json!({
+        let value = json!({
             "id": "ak:grant:AfpU2UOijpNUdGOoAgQdaqV0xwreLXwLE3yXXHvB6n7X",
             "schema": "ak.schema.capability.v1",
             "realm_id": "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-",
-            "issuer_id": "ak:did_core:web:alice.example",
-            "issuer_station_id": "ak:did_core:web:principal.example",
+            "issuer_id": {"kind": "account", "account_id": {
+                "principal_id": "ak:did_core:web:alice.example",
+                "station_id": "ak:did_core:web:principal.example"
+            }},
             "subject": subject,
             "actions": ["ak.message.create"],
             "resources": [
@@ -512,16 +511,16 @@ mod tests {
                 "authority_generation": 0
             }]
         });
-        if principal_subject {
-            value["subject_station_id"] = json!("ak:did_core:web:principal.example");
-        }
         serde_json::from_value(value).expect("sample grant decodes as SDK CapabilityGrant")
     }
 
     #[test]
     fn maps_sdk_grant_to_capability_row() {
         let row = decode_capability_row(
-            &sample_grant(json!("ak:did_core:web:bob.example")),
+            &sample_grant(json!({"kind": "account", "account_id": {
+                "principal_id": "ak:did_core:web:bob.example",
+                "station_id": "ak:did_core:web:principal.example"
+            }})),
             "ak:realm:Afallback0000000000000000000000000000000000000",
         );
         assert_eq!(

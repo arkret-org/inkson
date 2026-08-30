@@ -11,6 +11,7 @@
 //! wire in any form.
 
 use std::sync::atomic::{AtomicU8, Ordering};
+#[cfg(not(test))]
 use std::sync::{OnceLock, RwLock};
 
 pub use arkret_sdk::events::kinds::EventKind;
@@ -128,16 +129,36 @@ impl ProofMode {
 const DEFAULT_PROOF_MODE: ProofMode = ProofMode::Production;
 
 static PROOF_MODE: AtomicU8 = AtomicU8::new(0xFF);
+#[cfg(not(test))]
 static AUTHORING_STATION_ID: OnceLock<RwLock<Option<arkret_sdk::DidCoreId>>> = OnceLock::new();
 
+#[cfg(test)]
+thread_local! {
+    static TEST_AUTHORING_STATION_ID: std::cell::RefCell<Option<arkret_sdk::DidCoreId>> =
+        const { std::cell::RefCell::new(None) };
+}
+
 pub fn set_authoring_station_id(station_id: Option<arkret_sdk::DidCoreId>) {
-    let slot = AUTHORING_STATION_ID.get_or_init(|| RwLock::new(None));
-    *slot
-        .write()
-        .unwrap_or_else(std::sync::PoisonError::into_inner) = station_id;
+    #[cfg(test)]
+    {
+        TEST_AUTHORING_STATION_ID.with(|slot| *slot.borrow_mut() = station_id);
+        return;
+    }
+    #[cfg(not(test))]
+    {
+        let slot = AUTHORING_STATION_ID.get_or_init(|| RwLock::new(None));
+        *slot
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = station_id;
+    }
 }
 
 pub(crate) fn authoring_station_id() -> anyhow::Result<arkret_sdk::DidCoreId> {
+    #[cfg(test)]
+    if let Some(station_id) = TEST_AUTHORING_STATION_ID.with(|slot| slot.borrow().clone()) {
+        return Ok(station_id);
+    }
+    #[cfg(not(test))]
     if let Some(station_id) = AUTHORING_STATION_ID.get().and_then(|slot| {
         slot.read()
             .unwrap_or_else(std::sync::PoisonError::into_inner)

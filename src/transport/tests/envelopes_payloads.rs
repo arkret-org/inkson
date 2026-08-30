@@ -72,7 +72,6 @@ fn space_bootstrap_events_use_canonical_create_and_facet_kinds() {
             "ak.realm.history_access",
             "ak.realm.discovery",
             "ak.realm.plaintext_visible_services",
-            "ak.realm.delivery_binding_policy",
             "ak.member.state",
         ]
     );
@@ -113,7 +112,10 @@ fn space_bootstrap_events_use_canonical_create_and_facet_kinds() {
     assert_eq!(create.payload["object"]["notary"]["kind"], "single_signer");
     assert_eq!(
         create.payload["object"]["notary"]["signer"]["actor_id"],
-        "ak:did_core:web:server.example"
+        json!({
+            "kind": "service",
+            "service_id": "ak:did_core:web:server.example"
+        })
     );
     // v1 has no producer `effects[]`: the genesis leaf set is what the
     // registered `ak.realm.create` contract projects.
@@ -152,7 +154,7 @@ fn space_bootstrap_events_use_canonical_create_and_facet_kinds() {
             )
         });
     }
-    for facet in &events[1..8] {
+    for facet in &events[1..7] {
         assert!(
             crate::operation::project_registered_cell_writes(
                 facet,
@@ -173,9 +175,8 @@ fn space_bootstrap_events_use_canonical_create_and_facet_kinds() {
     // signer attaches the detached JWS proof at submit time.
     assert!(create.proofs.is_empty());
 
-    // Bootstrap order: create, profile, encryption floor policy, join_rule,
-    // history_access, discovery,
-    // plaintext_visible, delivery binding policy, creator member join.
+    // Bootstrap order: create, profile, policy bundle, join_rule,
+    // history_access, discovery, plaintext_visible, creator member join.
     assert_eq!(
         events[2].payload["content_encryption_floor"],
         RECOMMENDED_REALM_ENCRYPTION_FLOOR
@@ -206,18 +207,19 @@ fn space_bootstrap_events_use_canonical_create_and_facet_kinds() {
             "inbox_preview",
         ])
     );
+    assert_eq!(events[7].payload["membership"], "join");
+    assert_eq!(events[7].preconditions.len(), 1);
+    let creator_member_id: arkret_sdk::ActorId =
+        serde_json::from_value(events[7].payload["member_id"].clone()).unwrap();
+    let creator_member_subject =
+        arkret_sdk::composite_subject(&[creator_member_id.canonical_key().unwrap().as_str()])
+            .unwrap();
     assert_eq!(
-        events[7].payload["allowed_binding_sources"],
-        json!(["realm_policy"])
+        events[7].preconditions[0].cell_id.as_str(),
+        format!("ak:cell:ak.component.member.state.v1:{creator_member_subject}")
     );
-    assert_eq!(events[8].payload["membership"], "join");
-    assert_eq!(events[8].preconditions.len(), 1);
     assert_eq!(
-        events[8].preconditions[0].cell_id.as_str(),
-        "ak:cell:ak.component.member.state.v1:ak:did_core:web:alice.example"
-    );
-    assert_eq!(
-        events[8].preconditions[0].predicate.value,
+        events[7].preconditions[0].predicate.value,
         Some(serde_json::Value::Null)
     );
     assert!(events.iter().all(|event| {
@@ -409,12 +411,20 @@ fn member_state_ban_event_uses_realm_scoped_member_cell() {
         event.payload()["realm_id"],
         "ak:realm:AVFSR4O2uTcP6zGsyewp0OdaGeDZBXQAUZ9VIEKLSXYo"
     );
-    assert_eq!(event.payload()["actor_id"], "ak:did_core:web:bob.example");
+    let member_id: arkret_sdk::ActorId =
+        serde_json::from_value(event.payload()["member_id"].clone()).unwrap();
+    assert_eq!(
+        member_id.signing_principal_id().as_str(),
+        "ak:did_core:web:bob.example"
+    );
     assert_eq!(event.payload()["membership"], "ban");
     assert_eq!(event.intent().preconditions().len(), 1);
     assert_eq!(
         event.intent().preconditions()[0].cell_id.as_str(),
-        "ak:cell:ak.component.member.state.v1:ak:did_core:web:bob.example"
+        format!(
+            "ak:cell:ak.component.member.state.v1:{}",
+            arkret_sdk::composite_subject(&[member_id.canonical_key().unwrap().as_str()]).unwrap()
+        )
     );
     assert_eq!(
         event.intent().preconditions()[0].predicate.value,
@@ -431,7 +441,10 @@ fn member_state_ban_event_uses_realm_scoped_member_cell() {
     assert_eq!(writes.len(), 1);
     assert_eq!(
         writes[0].cell_id.as_str(),
-        "ak:cell:ak.component.member.state.v1:ak:did_core:web:bob.example"
+        format!(
+            "ak:cell:ak.component.member.state.v1:{}",
+            arkret_sdk::composite_subject(&[member_id.canonical_key().unwrap().as_str()]).unwrap()
+        )
     );
     assert_eq!(
         writes[0].op,

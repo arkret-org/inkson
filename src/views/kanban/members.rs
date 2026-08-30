@@ -102,15 +102,18 @@ pub(super) fn strand_participant_ids(
         if target.as_deref() != Some(strand_id) {
             continue;
         }
-        for path in [
-            // Read canonical `actor_id` / `sender_actor_id` only; forbidden
-            // `sender` / `author` / `created_by` keys are not accepted.
-            &["body", "actor_id"][..],
-            &["body", "sender_actor_id"][..],
-            &["payload", "actor_id"][..],
-            &["actor_id"][..],
-        ] {
-            if let Some(actor_id) = json_path_string(Some(payload), path) {
+        for actor in [
+            payload.pointer("/body/actor_id"),
+            payload.pointer("/body/sender_actor_id"),
+            payload.pointer("/payload/actor_id"),
+            payload.get("actor_id"),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            if let Some(actor_id) =
+                crate::state::projection::message_ops::actor_principal_from_value(actor)
+            {
                 actor_ids.insert(actor_id);
             }
         }

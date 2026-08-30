@@ -631,8 +631,13 @@ mod tests {
         // parses the same object rather than keeping a parallel raw body.
         body.entry("payload_sequence").or_insert(json!(7));
         if kind == garth::SIGNAL_PLAINTEXT_KIND_PRESENCE {
-            body.entry("actor_id")
-                .or_insert(json!("ak:did_core:web:alice.example"));
+            body.entry("actor_id").or_insert(json!({
+                "kind": "account",
+                "account_id": {
+                    "principal_id": "ak:did_core:web:alice.example",
+                    "station_id": "ak:did_core:web:principal.example"
+                }
+            }));
             body.entry("ttl_ms").or_insert(json!(30_000));
         }
         let payload_bytes = arkret_sdk::canonical::canonical_json_bytes(&Value::Object(body))
@@ -642,8 +647,10 @@ mod tests {
         garth::SignalPlaintext {
             payload,
             kind: kind.to_owned(),
-            actor_id: crate::mls_api_helpers::local_account_actor_id("did:web:alice.example")
-                .unwrap(),
+            actor_id: arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+                arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example").unwrap(),
+                arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap(),
+            )),
             payload_sequence: 7,
             ttl_ms: Some(30_000),
             sent_at: at(0),

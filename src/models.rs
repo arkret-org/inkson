@@ -678,8 +678,14 @@ mod tests {
                     "state": "found"
                 },
                 "contact_agents": [{
-                    "agent_id": "ak:did_core:web:agents.example:bob-helper",
-                    "controller_id": "ak:did_core:web:bob.example",
+                    "actor_id": {
+                        "kind": "service",
+                        "service_id": "ak:did_core:web:agents.example:bob-helper"
+                    },
+                    "controller_account_id": {
+                        "principal_id": "ak:did_core:web:bob.example",
+                        "station_id": "ak:did_core:web:station.example"
+                    },
                     "display_name": "Bob Helper",
                     "agent_slug": "helper",
                     "avatar_blob_ref": "ak:blob:sha256:431ced6916a2a21a156e38701afe55bbd7f88969fbbfc56d7fe099d47f265460",

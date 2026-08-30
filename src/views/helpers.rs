@@ -195,14 +195,22 @@ pub fn render_actor_mention(
             degraded: true,
         };
     };
-    let Ok(station_id) = crate::operation::authoring_station_id() else {
+    let account_id = claim_set_snapshot
+        .iter()
+        .find(|claim| claim.subject_account_id.principal_id == subject)
+        .map(|claim| claim.subject_account_id.clone())
+        .or_else(|| {
+            crate::operation::authoring_station_id()
+                .ok()
+                .map(|station_id| arkret_sdk::AccountId::new(subject, station_id))
+        });
+    let Some(account_id) = account_id else {
         return RenderedMention {
             label: short_protocol_id(subject_id),
             tier_class: "mention-unresolved",
             degraded: true,
         };
     };
-    let account_id = arkret_sdk::AccountId::new(subject, station_id);
 
     let selection = PrimaryHandleSelectInput {
         account_id: &account_id,

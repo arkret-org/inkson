@@ -1483,7 +1483,10 @@ mod tests {
             signer.sign_payload(canonical_body).unwrap().into();
         let public_key = SigningKey::from_bytes(&seed).verifying_key().to_bytes();
         let descriptor = arkret_sdk::NotarySignerDescriptor {
-            actor_id: arkret_sdk::project_did_to_core_id(&principal).unwrap(),
+            actor_id: arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+                arkret_sdk::project_did_to_core_id(&principal).unwrap(),
+                arkret_sdk::project_did_to_core_id(&principal).unwrap(),
+            )),
             verification_method,
             key_kind: arkret_sdk::NotaryKeyKind::Ed25519Raw32,
             jose_algorithm: arkret_sdk::NotaryJoseAlgorithm::Ed25519,

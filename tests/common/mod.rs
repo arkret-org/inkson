@@ -19,7 +19,9 @@ pub fn test_notary(signer_did: &str) -> arkret_sdk::NotaryValue {
         arkret_sdk::project_did_to_core_id(&did).expect("test notary DID projects to a core id");
     let public_key = [7_u8; 32];
     let descriptor = arkret_sdk::NotarySignerDescriptor {
-        actor_id,
+        actor_id: arkret_sdk::ActorId::Service {
+            service_id: actor_id,
+        },
         verification_method: arkret_sdk::DidUrl::new(format!("{signer_did}#notary"))
             .expect("test notary method is canonical"),
         key_kind: arkret_sdk::NotaryKeyKind::Ed25519Raw32,

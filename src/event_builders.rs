@@ -390,7 +390,7 @@ pub(crate) fn test_single_signer_notary(
     signer_did: &str,
 ) -> anyhow::Result<arkret_sdk::NotaryValue> {
     let did = arkret_sdk::Did::new(signer_did.to_owned())?;
-    let actor_id = arkret_sdk::project_did_to_core_id(&did)?;
+    let actor_id = arkret_sdk::ActorId::service(arkret_sdk::project_did_to_core_id(&did)?);
     let public_key = [7_u8; 32];
     let descriptor = arkret_sdk::NotarySignerDescriptor {
         actor_id,
@@ -583,7 +583,7 @@ pub fn managed_agent_inception_notary(
     agent_did: &arkret_sdk::Did,
     root_public_key_multibase: &str,
 ) -> anyhow::Result<arkret_sdk::NotaryValue> {
-    let actor_id = arkret_sdk::project_did_to_core_id(agent_did)?;
+    let actor_id = arkret_sdk::ActorId::service(arkret_sdk::project_did_to_core_id(agent_did)?);
     let public_key = arkret_sdk::decode_ed25519_multibase(root_public_key_multibase)?;
     let descriptor = arkret_sdk::NotarySignerDescriptor {
         actor_id,

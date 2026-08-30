@@ -1334,8 +1334,14 @@ mod tests {
     #[test]
     fn accepted_contact_request_renders_pending_without_debug_receipt() {
         let core: RequestAcceptanceReceiptCore = serde_json::from_value(json!({
-            "holder": {"kind": "human", "principal_id": "ak:did_core:web:alice.example"},
-            "peer": {"kind": "human", "principal_id": "ak:did_core:web:bob.example"},
+            "holder": {"kind": "human", "account_id": {
+                "principal_id": "ak:did_core:web:alice.example",
+                "station_id": "ak:did_core:web:principal.example"
+            }},
+            "peer": {"kind": "human", "account_id": {
+                "principal_id": "ak:did_core:web:bob.example",
+                "station_id": "ak:did_core:web:principal.example"
+            }},
             "slot_version": 1,
             "request_event_ref": "ak:event:AffHQLS6LHEezp3Czebm6JrWc0UdDt4xsoYf_l2OnrHI",
             "source_checkpoint": "sha256:04597468570b5436fdcfe18337daf5bbf2515b148e37dc629cdeea1e63057e85",
