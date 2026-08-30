@@ -157,36 +157,10 @@ pub fn security_projection_for_scope_id<'a>(
 /// cell inputs in log order; it is not the forbidden `realm_state.owner` /
 /// membership fallback — those are projection mirrors of a different fact,
 /// and post-P1 realm projections no longer carry them at all.
-pub fn realm_authority_root_controller_from_events(events: &[Value]) -> Option<String> {
-    let controller_principal = |value: &Value| {
-        serde_json::from_value::<arkret_sdk::ActorId>(value.clone())
-            .ok()
-            .map(|actor| actor.signing_principal_id().as_str().to_owned())
-    };
-    let mut controller: Option<String> = None;
-    for event in events {
-        let Some(kind) = event
-            .get("kind")
-            .or_else(|| event.get("event_kind"))
-            .and_then(Value::as_str)
-        else {
-            continue;
-        };
-        if kind == arkret_sdk::EventKind::RealmCreate.as_str() {
-            controller = event.get("actor_id").and_then(&controller_principal);
-        } else if kind == arkret_wire::event_kind_str::REALM_OWNER_TRANSFER && controller.is_some()
-        {
-            // Only the envelope-authorized patch moves the controller; a
-            // transfer projected before any create is unanchored and ignored.
-            if let Some(next) = event
-                .pointer("/payload/patch/controller_id")
-                .and_then(&controller_principal)
-            {
-                controller = Some(next);
-            }
-        }
-    }
-    controller
+pub fn realm_authority_root_controller_from_events(
+    events: &[Value],
+) -> Option<arkret_sdk::ActorId> {
+    realm_authority_root_value_from_events(events).map(|root| root.controller_id)
 }
 
 /// Fully replayed current value of the Realm authority-root cell.
@@ -269,7 +243,7 @@ pub fn realm_authority_root_value_for_realm(
 pub fn realm_authority_root_controller_for_realm(
     projections: &BTreeMap<String, Value>,
     realm_id: &str,
-) -> Option<String> {
+) -> Option<arkret_sdk::ActorId> {
     let events = projections
         .get(realm_id.trim())?
         .get("state")?
@@ -383,8 +357,8 @@ mod tests {
             }
         }]);
         assert_eq!(
-            realm_authority_root_controller_from_events(events.as_array().unwrap()).as_deref(),
-            Some("ak:did_core:webvh:z6mkcreator")
+            realm_authority_root_controller_from_events(events.as_array().unwrap()),
+            Some(serde_json::from_value(events[0]["actor_id"].clone()).unwrap())
         );
     }
 
@@ -444,8 +418,8 @@ mod tests {
         assert_eq!(root.authority_generation, 1);
         // The presentation-grade controller helper follows the same transfer.
         assert_eq!(
-            realm_authority_root_controller_from_events(events).as_deref(),
-            Some("ak:did_core:web:successor.example")
+            realm_authority_root_controller_from_events(events),
+            Some(root.controller_id)
         );
     }
 
@@ -482,8 +456,8 @@ mod tests {
         );
         assert_eq!(root.controller_epoch, 1);
         assert_eq!(
-            realm_authority_root_controller_from_events(events).as_deref(),
-            Some("ak:did_core:web:successor.example")
+            realm_authority_root_controller_from_events(events),
+            Some(root.controller_id)
         );
     }
 

@@ -218,9 +218,7 @@ pub fn RealmAdminPanel(
     // Resolve the authority root from the locally replayed projection. Every
     // governance authoring path below binds these exact coordinates; no UI
     // state or Realm identifier is treated as an authority assertion.
-    let actor_core_id = crate::mls_api_helpers::principal_core_id(&principal_id)
-        .map(|id| id.as_str().to_owned())
-        .unwrap_or_default();
+    let account_actor = crate::mls_api_helpers::local_account_actor_id(&principal_id).ok();
     let (authority_root, is_root_controller) = {
         let store = state_store.read();
         let state = store.load();
@@ -233,12 +231,17 @@ pub fn RealmAdminPanel(
             &selected_realm_id,
         );
         let is_controller = controller
-            .is_some_and(|controller| !actor_core_id.is_empty() && controller == actor_core_id);
+            .zip(account_actor.as_ref())
+            .is_some_and(|(controller, actor)| &controller == actor);
         (root, is_controller)
     };
     let gov_transfer_candidates: Vec<String> = projected_members
         .iter()
-        .filter(|member| member.as_str() != actor_core_id)
+        .filter(|member| {
+            serde_json::from_str::<arkret_sdk::ActorId>(member)
+                .ok()
+                .is_some_and(|candidate| Some(&candidate) != account_actor.as_ref())
+        })
         .cloned()
         .collect();
     let issuer_root_basis =
@@ -632,7 +635,7 @@ pub fn RealmAdminPanel(
                     }
                     if let Some(root) = authority_root.clone() {
                         {
-                            let controller_full = root.controller_id.signing_principal_id().as_str().to_owned();
+                            let controller_full = root.controller_id.to_string();
                             let controller_label = short_protocol_id(&controller_full);
                             rsx! {
                                 div { class: "security-owner-summary",
@@ -2396,7 +2399,9 @@ fn build_owner_transfer_payload(
         realm_id: arkret_sdk::RealmId::new(realm_id.trim().to_owned())?,
         expected_state_digest: expected_authority_root_digest(root)?,
         patch: arkret_sdk::RealmOwnerTransferPatch {
-            controller_id: crate::mls_api_helpers::local_account_actor_id(successor)?,
+            controller_id: serde_json::from_str(successor).map_err(|error| {
+                anyhow::anyhow!("successor must be a complete ActorId: {error}")
+            })?,
         },
         successor_acceptance: arkret_sdk::SignatureMaterial::NonEmptyString(
             arkret_sdk::NonEmptyString::new(successor_acceptance.trim().to_owned())
@@ -2463,13 +2468,14 @@ mod governance_tests {
 
     #[test]
     fn owner_transfer_payload_pins_digest_and_new_controller() {
+        let successor = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+            "ak:did_core:web:bob.example".parse().unwrap(),
+            "ak:did_core:web:remote-station.example".parse().unwrap(),
+        ));
         let payload =
-            build_owner_transfer_payload(REALM, &root(), "did:web:bob.example", "detached-proof")
+            build_owner_transfer_payload(REALM, &root(), &successor.to_string(), "detached-proof")
                 .unwrap();
-        assert_eq!(
-            payload.patch.controller_id.signing_principal_id().as_str(),
-            "ak:did_core:web:bob.example"
-        );
+        assert_eq!(payload.patch.controller_id, successor);
         assert_eq!(
             payload.expected_state_digest.as_str(),
             crate::canonical::canonical_sha256(&root()).unwrap()
@@ -2489,7 +2495,25 @@ mod governance_tests {
 
     #[test]
     fn owner_transfer_payload_rejects_an_empty_acceptance_proof() {
-        assert!(build_owner_transfer_payload(REALM, &root(), "did:web:bob.example", "  ").is_err());
+        let successor = root().controller_id.to_string();
+        assert!(build_owner_transfer_payload(REALM, &root(), &successor, "  ").is_err());
+    }
+
+    #[test]
+    fn owner_transfer_does_not_infer_a_station_from_a_principal() {
+        assert!(
+            build_owner_transfer_payload(
+                REALM,
+                &root(),
+                "ak:did_core:web:bob.example",
+                "detached-proof"
+            )
+            .is_err()
+        );
+        assert!(
+            build_owner_transfer_payload(REALM, &root(), "did:web:bob.example", "detached-proof")
+                .is_err()
+        );
     }
 
     #[test]

@@ -42,15 +42,13 @@ pub(crate) fn projected_realm_creator_matches_actor(
     realm_id: &str,
     actor_id: &str,
 ) -> bool {
-    let Ok(actor_core_id) = crate::mls_api_helpers::principal_core_id(actor_id) else {
+    let Ok(actor) = crate::mls_api_helpers::local_account_actor_id(actor_id) else {
         return false;
     };
     crate::security_state::realm_authority_root_controller_for_realm(
         realm_tree_projections,
         realm_id,
-    )
-    .as_deref()
-        == Some(actor_core_id.as_str())
+    ) == Some(actor)
 }
 
 pub(crate) fn circle_effective_scope(
@@ -63,6 +61,39 @@ pub(crate) fn circle_effective_scope(
         circle_id: arkret_sdk::CircleId::new(circle_id.to_owned())
             .map_err(|err| format!("invalid Circle scope Circle id: {err:?}"))?,
     })
+}
+
+#[cfg(test)]
+mod creator_authority_tests {
+    use super::*;
+
+    #[test]
+    fn creator_gate_binds_station_and_actor_kind() {
+        let principal = "ak:did_core:web:creator.example";
+        let local = crate::mls_api_helpers::local_account_actor_id(principal).unwrap();
+        let mut remote = local.as_account_id().unwrap().clone();
+        remote.station_id = "ak:did_core:web:remote-station.example".parse().unwrap();
+        let hosted = arkret_sdk::ActorId::hosted_principal(
+            local.signing_principal_id().clone(),
+            local.route_service_id().clone(),
+        );
+        for (controller, expected) in [
+            (local, true),
+            (arkret_sdk::ActorId::account(remote), false),
+            (hosted, false),
+        ] {
+            let projections = std::collections::BTreeMap::from([(
+                "realm".to_owned(),
+                serde_json::json!({
+                    "state": {"events": [{"kind": "ak.realm.create", "actor_id": controller}]}
+                }),
+            )]);
+            assert_eq!(
+                projected_realm_creator_matches_actor(&projections, "realm", principal),
+                expected
+            );
+        }
+    }
 }
 
 /// Build the `ak.mls.genesis` SDK event for a creator group that has a
