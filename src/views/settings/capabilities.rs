@@ -47,8 +47,15 @@ struct CapabilityRow {
     scope: String,
     issuer_id: String,
     subject: String,
+    subject_actor: Option<arkret_sdk::ActorId>,
     expires_at: String,
     issuer_authority_refs: Vec<String>,
+}
+
+impl CapabilityRow {
+    fn can_relinquish(&self, actor: Option<&arkret_sdk::ActorId>) -> bool {
+        actor.is_some() && self.subject_actor.as_ref() == actor
+    }
 }
 
 /// Map one authoritative SDK [`CapabilityGrant`] onto a display row.
@@ -72,6 +79,10 @@ fn decode_capability_row(grant: &CapabilityGrant, queried_realm_id: &str) -> Cap
             CapabilitySubject::Condition(selector) => {
                 serde_json::to_string(selector).unwrap_or_else(|_| "condition".to_owned())
             }
+        },
+        subject_actor: match &grant.subject {
+            CapabilitySubject::Actor(actor) => Some(actor.clone()),
+            CapabilitySubject::Condition(_) => None,
         },
         expires_at: grant
             .constraints
@@ -120,10 +131,8 @@ pub fn CapabilitiesSettingsCard(principal_id: Signal<String>, token: Signal<Stri
     // revoke authority is required or attached).
     let mut relinquish_for = use_signal(|| Option::<String>::None);
     let mut relinquish_reason = use_signal(String::new);
-    // Grants where this core id is the subject get the relinquish control.
-    let my_core_id = crate::mls_api_helpers::principal_core_id(&principal_id())
-        .map(|id| id.as_str().to_owned())
-        .unwrap_or_default();
+    // Relinquish belongs to the complete account, not just its signing principal.
+    let my_actor = active_account().map(|account| arkret_sdk::ActorId::account(account.authority));
 
     // Fire a single effective-grants probe per token change.
     use_effect(move || {
@@ -133,32 +142,20 @@ pub fn CapabilitiesSettingsCard(principal_id: Signal<String>, token: Signal<Stri
         if tok.trim().is_empty() || did.trim().is_empty() {
             return;
         }
-        let subject = match crate::mls_api_helpers::principal_core_id(&did) {
-            Ok(value) => value,
-            Err(error) => {
-                status.set(format!("Failed to load capabilities: {error}"));
-                return;
-            }
-        };
-        let station_id = match crate::operation::authoring_station_id() {
-            Ok(value) => value,
-            Err(error) => {
-                status.set(format!("Failed to load capabilities: {error}"));
-                return;
-            }
+        let Some(subject) =
+            active_account().map(|account| arkret_sdk::ActorId::account(account.authority))
+        else {
+            status.set("Failed to load capabilities: no authenticated account".to_owned());
+            return;
         };
         let realm_ids = state_store.read().known_realm_ids();
         spawn(async move {
             match with_authed_sdk_client(&base, tok, |http| async move {
                 let mut grants = Vec::new();
                 for realm_id in realm_ids {
-                    let response = crate::transport::realm_read::effective_grants(
-                        &http,
-                        &realm_id,
-                        &subject,
-                        &station_id,
-                    )
-                    .await?;
+                    let response =
+                        crate::transport::realm_read::effective_grants(&http, &realm_id, &subject)
+                            .await?;
                     grants.extend(
                         response
                             .grants
@@ -245,7 +242,7 @@ pub fn CapabilitiesSettingsCard(principal_id: Signal<String>, token: Signal<Stri
                                         // Subject-only self-service: any member
                                         // may drop a grant they hold, with no
                                         // revoke authority involved.
-                                        if !my_core_id.is_empty() && row.subject == my_core_id {
+                                        if row.can_relinquish(my_actor.as_ref()) {
                                             Button {
                                                 variant: ButtonVariant::Destructive,
                                                 "data-testid": "capability-relinquish-button",
@@ -549,6 +546,32 @@ mod tests {
             "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-",
         );
         assert!(row.subject.contains("condition"));
+    }
+
+    #[test]
+    fn relinquish_requires_same_actor_kind_and_station() {
+        let principal = arkret_sdk::DidCoreId::new("ak:did_core:web:bob.example").unwrap();
+        let station = arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap();
+        let subject = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+            principal.clone(),
+            station.clone(),
+        ));
+        let row = decode_capability_row(
+            &sample_grant(serde_json::to_value(&subject).unwrap()),
+            "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-",
+        );
+        assert!(row.can_relinquish(Some(&subject)));
+        assert!(!row.can_relinquish(None));
+        let foreign = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+            principal.clone(),
+            arkret_sdk::DidCoreId::new("ak:did_core:web:other.example").unwrap(),
+        ));
+        assert!(!row.can_relinquish(Some(&foreign)));
+        assert!(
+            !row.can_relinquish(Some(&arkret_sdk::ActorId::hosted_principal(
+                principal, station
+            )))
+        );
     }
 
     #[test]

@@ -26,7 +26,7 @@ pub async fn add_circle_member(
     realm_id: &str,
     actor: &str,
     circle_id: &str,
-    target_actor: &str,
+    target_actor: &arkret_sdk::ActorId,
     membership: arkret_sdk::CircleMembership,
 ) -> anyhow::Result<arkret_sdk::CircleMembershipOutcome> {
     let event = crate::operation::ak_ops::circle_member_state(
@@ -58,7 +58,7 @@ pub async fn remove_circle_member(
     realm_id: &str,
     actor: &str,
     circle_id: &str,
-    target_actor: &str,
+    target_actor: &arkret_sdk::ActorId,
 ) -> anyhow::Result<arkret_sdk::CircleMembershipOutcome> {
     let event = crate::operation::ak_ops::circle_member_state_with_expected(
         realm_id,
