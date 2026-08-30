@@ -177,7 +177,7 @@ pub(super) fn RouteSurface(state: RouteSurfaceState) -> Element {
                 .await;
                 let default_strand_id = match result {
                     Ok(strands) => strands
-                        .projection_strand_rows
+                        .strands
                         .iter()
                         .find(|strand| strand.is_default)
                         .map(|strand| strand.strand_id.to_string()),

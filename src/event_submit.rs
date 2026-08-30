@@ -2272,7 +2272,7 @@ impl EventSubmitter {
             event_id = %signed.event_id,
             status = ?response.status,
             accepted = response.accepted.len(),
-            rejected = response.events_submit_rejected_rows.len(),
+            rejected = response.rejections.len(),
             quarantine = response.quarantine.len(),
             "events.submit response received"
         );

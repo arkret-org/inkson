@@ -632,9 +632,8 @@ mod tests {
             "pending_delivery_count": 0,
             "accepted": ["ak:event:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-"],
             "duplicate": [],
-            "events_submit_rejected_rows": [],
-            "realm_actor_frontier_views": [],
-            "realm_frontiers": [],
+            "rejections": [],
+            "frontiers": [],
             "cursor": "sx:cursor-1",
         });
         let outcome: super::SubmitEventResult = serde_json::from_value(value).unwrap();
@@ -649,7 +648,7 @@ mod tests {
     #[test]
     fn contact_list_sidebar_fixture_decodes_direct_chat_targets() {
         let value = serde_json::json!({
-            "contact_list_rows": [{
+            "contacts": [{
                 "peer": {"kind": "human", "principal_id": "ak:did_core:web:bob.example"},
                 "state": "accepted",
                 "next_prepare_input": {
@@ -685,11 +684,8 @@ mod tests {
             "has_more": false
         });
         let decoded: arkret_sdk::ContactList = serde_json::from_value(value).unwrap();
-        assert_eq!(decoded.contact_list_rows.len(), 1);
-        assert_eq!(
-            decoded.contact_list_rows[0].contact_agent_projections.len(),
-            1
-        );
+        assert_eq!(decoded.contacts.len(), 1);
+        assert_eq!(decoded.contacts[0].contact_agent_projections.len(), 1);
     }
 
     #[test]

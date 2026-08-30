@@ -383,7 +383,7 @@ pub fn DirectoryPanel(
                                     {
                                         Ok(result) => {
                                             let summary = result
-                                                .contact_list_rows
+                                                .contacts
                                                 .iter()
                                                 .map(|contact| {
                                                     format!(
@@ -396,7 +396,7 @@ pub fn DirectoryPanel(
                                                 .join(", ");
                                             contact_state.set(format!(
                                                 "contacts {} {}",
-                                                result.contact_list_rows.len(),
+                                                result.contacts.len(),
                                                 summary
                                             ));
                                         }

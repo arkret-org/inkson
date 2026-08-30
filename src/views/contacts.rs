@@ -776,11 +776,11 @@ pub fn ContactsPanel(token: Signal<String>) -> Element {
                 .await
                 {
                     Ok(response) => {
-                        let count = response.contact_list_rows.len();
+                        let count = response.contacts.len();
                         state_store
                             .write()
-                            .replace_accepted_human_contacts(&response.contact_list_rows);
-                        contacts.set(response.contact_list_rows);
+                            .replace_accepted_human_contacts(&response.contacts);
+                        contacts.set(response.contacts);
                         status.set(format!("contacts {count}"));
                     }
                     Err(err) => {

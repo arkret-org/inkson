@@ -83,7 +83,7 @@ pub(crate) fn validate_outgoing_registered_event_payload<T: Serialize>(
 pub(crate) fn ensure_events_submit_accepted(
     response: &arkret_sdk::EventsSubmitOutcome,
 ) -> anyhow::Result<()> {
-    if response.events_submit_rejected_rows.is_empty()
+    if response.rejections.is_empty()
         && matches!(
             response.status,
             arkret_sdk::EventsSubmitStatus::Accepted | arkret_sdk::EventsSubmitStatus::Duplicate
@@ -94,7 +94,7 @@ pub(crate) fn ensure_events_submit_accepted(
 
     Err(EventsSubmitRejectedError {
         status: response.status,
-        rejected: response.events_submit_rejected_rows.clone(),
+        rejected: response.rejections.clone(),
     }
     .into())
 }

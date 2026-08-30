@@ -311,9 +311,8 @@ fn inkson_accepts_server_contract_payloads() {
         "pending_delivery_count": 0,
         "accepted": ["ak:event:AVH7487ydDzo_3WXy2IlHWvtBeElcucZHd5d5hYKcjZl"],
         "duplicate": [],
-        "events_submit_rejected_rows": [],
-        "realm_actor_frontier_views": [],
-        "realm_frontiers": [],
+        "rejections": [],
+        "frontiers": [],
         "cursor": "sx:1760000000000"
     }))
     .unwrap();

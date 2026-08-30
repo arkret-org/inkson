@@ -566,14 +566,18 @@ pub fn LoginPanel(
         let principal = base_url();
         let ui_locale = i18n.read().0.code().to_owned();
         let loaded_config = config_store.read().load();
+        // The returning-principal assertion is a resolvable DID, so it comes
+        // from the account's accepted resolution. `principal_id()` is the
+        // projected `ak:did_core:` core id, which is deliberately not
+        // repairable into resolution material and would fail closed here.
         let live_actor = active_account()
-            .map(|account| account.principal_id().to_string())
+            .map(|account| account.did().to_string())
             .unwrap_or_default();
         let persisted_actor = if live_actor.trim().is_empty() {
             loaded_config
                 .active_account
                 .as_ref()
-                .map(|account| account.principal_id().to_string())
+                .map(|account| account.did().to_string())
                 .unwrap_or_default()
         } else {
             live_actor

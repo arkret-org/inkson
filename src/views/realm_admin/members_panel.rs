@@ -2547,7 +2547,7 @@ pub fn RealmMembersPanel(
                 {
                     Ok(response) => {
                         let accepted: Vec<crate::models::ContactListRow> = response
-                            .contact_list_rows
+                            .contacts
                             .into_iter()
                             .filter(|c| c.state == arkret_sdk::ContactState::Accepted)
                             .collect();

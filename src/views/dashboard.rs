@@ -146,9 +146,7 @@ pub fn DashboardPanel(
                 .await
                 {
                     Ok(response) => {
-                        contacts_summary.set(Some(dashboard_contacts_summary(
-                            &response.contact_list_rows,
-                        )));
+                        contacts_summary.set(Some(dashboard_contacts_summary(&response.contacts)));
                         contacts_status.set(String::new());
                     }
                     Err(_) => {

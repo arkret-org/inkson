@@ -167,8 +167,8 @@ pub(super) fn load_direct_contacts_and_agents_for_sidebar(
                     Ok(response) => {
                         state_store
                             .write()
-                            .replace_accepted_human_contacts(&response.contact_list_rows);
-                        direct_contact_rows.set(response.contact_list_rows);
+                            .replace_accepted_human_contacts(&response.contacts);
+                        direct_contact_rows.set(response.contacts);
                     }
                     Err(err) => {
                         direct_contacts_loaded.set(false);
@@ -228,8 +228,8 @@ pub(super) fn load_direct_contacts_for_sidebar(
             Ok(response) => {
                 state_store
                     .write()
-                    .replace_accepted_human_contacts(&response.contact_list_rows);
-                direct_contact_rows.set(response.contact_list_rows);
+                    .replace_accepted_human_contacts(&response.contacts);
+                direct_contact_rows.set(response.contacts);
             }
             Err(err) => {
                 direct_contacts_loaded.set(false);

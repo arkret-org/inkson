@@ -293,7 +293,7 @@ pub async fn respond_contact(
     let requester_core_id = crate::mls_api_helpers::principal_core_id(requester)?;
     let contacts = http.contacts_list().await?;
     let row = contacts
-        .contact_list_rows
+        .contacts
         .into_iter()
         .find(|row| {
             row.state == arkret_sdk::ContactState::PendingIncoming
@@ -319,7 +319,7 @@ pub async fn respond_contact_with_request_id(
     let requester_core_id = crate::mls_api_helpers::principal_core_id(requester)?;
     let contacts = http.contacts_list().await?;
     let row = contacts
-        .contact_list_rows
+        .contacts
         .into_iter()
         .find(|row| {
             row.state == arkret_sdk::ContactState::PendingIncoming
@@ -1082,7 +1082,7 @@ pub async fn tombstone_contact(
 
     let contacts = http.contacts_list().await?;
     let row = contacts
-        .contact_list_rows
+        .contacts
         .into_iter()
         .find(|row| {
             row.state == arkret_sdk::ContactState::Accepted
