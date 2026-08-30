@@ -372,8 +372,16 @@ pub fn verify_proof_value_for_signer_result_with_digest_suite(
     if !verification_method_controller_matches_signer(&proof.verification_method, signer_id) {
         return Err("Event proof verification-method controller differs from signer".to_owned());
     }
-    let actor_id = arkret_sdk::DidCoreId::new(binding_actor_id.to_owned())
-        .map_err(|error| format!("invalid Event binding actor core_id: {error}"))?;
+    let actor_id = serde_json::from_value::<arkret_sdk::ActorId>(
+        envelope_without_proof
+            .get("actor_id")
+            .cloned()
+            .ok_or_else(|| "Event binding omits actor_id".to_owned())?,
+    )
+    .map_err(|error| format!("invalid Event binding actor_id: {error}"))?;
+    if actor_id.signing_principal_id().as_str() != binding_actor_id {
+        return Err("Event binding actor differs from requested actor".to_owned());
+    }
     let canonical_bytes = crate::canonical::canonical_json_bytes(envelope_without_proof)
         .map_err(|error| format!("canonicalize Event proof envelope: {error}"))?;
     arkret_sdk::signatures::verify_ed25519_detached_jws_proof_with_digest_suite(

@@ -14,9 +14,7 @@ pub(super) fn display_handles_from_directory_response(
         push_handle(primary.canonical().to_owned());
     }
     for claim in &res.claims {
-        if let Some(handle) = claim.handle.as_ref() {
-            push_handle(handle.canonical().to_owned());
-        }
+        push_handle(claim.handle.canonical().to_owned());
     }
     handles
 }

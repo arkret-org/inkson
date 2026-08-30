@@ -208,7 +208,7 @@ fn kanban_operation_from_typed(event: &arkret_sdk::Event) -> Option<RawOperation
         .map(ToOwned::to_owned);
     let metadata = LocalRecordMetadata {
         operation_id: operation_id.clone(),
-        actor_id: event.actor_id.as_str().to_owned(),
+        actor_id: event.actor_id.signing_principal_id().as_str().to_owned(),
         created_at: arkret_sdk::canonical::format_timestamp_canonical(event.created_at),
         local_target_ref,
         local_temporary_target_ref,

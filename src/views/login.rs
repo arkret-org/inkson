@@ -2057,7 +2057,7 @@ pub(crate) async fn issue_bound_handoff_session(
         .current_state()
         .ok_or_else(|| "Account Authority handoff session issue did not yield state.".to_owned())?;
     correlation.session_grant_id = Some(session_grant.grant_id.as_str().to_owned());
-    if session_grant.principal_id != principal_id
+    if session_grant.account_id.principal_id != principal_id
         || session_grant.device_id.as_ref() != Some(&device_id)
     {
         return Err(ReturningSessionExchangeError::Fatal(
@@ -2138,8 +2138,7 @@ fn persisted_session_grant_from_state(
         session_private_key_pem: session_private_key_pem.to_owned(),
         grant_id: grant.grant_id.as_str().to_owned(),
         audience_id: grant.audience_id.clone(),
-        principal_id: grant.principal_id.clone(),
-        service_account_id: grant.service_account_id.clone(),
+        account_id: grant.account_id.clone(),
         device_id,
         station_url,
         grant_expires_at: Some(grant.expires_at),
@@ -2228,9 +2227,10 @@ mod tests {
             session_private_key_pem: "PEM".to_owned(),
             grant_id: "grant-1".to_owned(),
             audience_id: arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap(),
-            principal_id: crate::mls_api_helpers::principal_core_id("did:web:alice.example")
-                .unwrap(),
-            service_account_id: arkret_sdk::ServiceAccountId::new("account-1").unwrap(),
+            account_id: arkret_sdk::AccountId::new(
+                crate::mls_api_helpers::principal_core_id("did:web:alice.example").unwrap(),
+                arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap(),
+            ),
             device_id: arkret_sdk::DeviceId::new(
                 "ak:device:01904100-0000-7000-8000-000000000001".to_owned(),
             )
@@ -2658,7 +2658,7 @@ mod tests {
             "fallible secure preparation must not switch the public account"
         );
         let mut grant = dummy_grant();
-        grant.principal_id = account.authority.principal_id.clone();
+        grant.account_id = account.authority.clone();
         grant.device_id = account.device_id.clone();
         promote_completed_login_state(
             &mut store,

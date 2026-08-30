@@ -387,7 +387,6 @@ pub(crate) async fn ensure_local_mls_key_package_inventory(
     base_url: String,
     session_credential: String,
     authority: arkret_sdk::AccountId,
-    service_account_id: arkret_sdk::ServiceAccountId,
     device_id: arkret_sdk::DeviceId,
 ) -> Result<Option<String>, String> {
     let base_scope = server_key(&base_url);
@@ -398,7 +397,6 @@ pub(crate) async fn ensure_local_mls_key_package_inventory(
         &base_url,
         &session_credential,
         &authority,
-        &service_account_id,
         &device_id,
     )
     .await?
@@ -409,7 +407,6 @@ pub(crate) async fn manual_refill_local_mls_key_packages(
     base_url: String,
     session_credential: String,
     authority: arkret_sdk::AccountId,
-    service_account_id: arkret_sdk::ServiceAccountId,
     device_id: arkret_sdk::DeviceId,
 ) -> Result<usize, String> {
     let base_scope = server_key(&base_url);
@@ -420,7 +417,6 @@ pub(crate) async fn manual_refill_local_mls_key_packages(
         &base_url,
         &session_credential,
         &authority,
-        &service_account_id,
         &device_id,
     )
     .await?
@@ -436,7 +432,6 @@ async fn maintain_local_mls_key_packages(
     base_url: &str,
     session_credential: &str,
     authority: &arkret_sdk::AccountId,
-    service_account_id: &arkret_sdk::ServiceAccountId,
     device_id: &arkret_sdk::DeviceId,
 ) -> Result<LocalMlsKeyPackageMaintenanceOutcome, String> {
     let Some(lease) = crate::keypackage_maintenance::acquire(base_url, authority, device_id)
@@ -464,7 +459,6 @@ async fn maintain_local_mls_key_packages(
         base_url,
         session_credential,
         authority,
-        service_account_id,
         device_id,
     )
     .await;
@@ -483,7 +477,6 @@ async fn run_local_mls_key_package_maintenance_cycle(
     base_url: &str,
     session_credential: &str,
     authority: &arkret_sdk::AccountId,
-    service_account_id: &arkret_sdk::ServiceAccountId,
     device_id: &arkret_sdk::DeviceId,
 ) -> Result<LocalMlsKeyPackageMaintenanceOutcome, String> {
     const KEYPACKAGE_MIN_AVAILABLE: usize = 8;
@@ -530,7 +523,6 @@ async fn run_local_mls_key_package_maintenance_cycle(
     revoke_refs.dedup();
     if !revoke_refs.is_empty() {
         let revoke_device_id = device_id.clone();
-        let revoke_account_id = service_account_id.clone();
         let outcome = crate::transport::auth::with_endpoint_clients(
             base_url,
             session_credential.to_owned(),
@@ -538,7 +530,7 @@ async fn run_local_mls_key_package_maintenance_cycle(
             |clients| async move {
                 clients
                     .mls()
-                    .revoke_key_packages(&revoke_account_id, &revoke_device_id, revoke_refs)
+                    .revoke_key_packages(&revoke_device_id, revoke_refs)
                     .await
             },
         )
@@ -1423,14 +1415,6 @@ pub(crate) async fn bootstrap_mls_welcome_for_realm(
             )
         });
         if consumed_device {
-            let service_account_id = state_store
-                .read()
-                .session_grant()
-                .map(|grant| grant.service_account_id)
-                .ok_or_else(|| {
-                    "cannot replenish claimed KeyPackages without exact service_account_id"
-                        .to_owned()
-                })?;
             let consumed = welcome_outcome
                 .consumable_claims
                 .iter()
@@ -1463,7 +1447,6 @@ pub(crate) async fn bootstrap_mls_welcome_for_realm(
                 base_url.clone(),
                 session_credential.clone(),
                 authority.clone(),
-                service_account_id,
                 device_id.clone(),
             )
             .await?;

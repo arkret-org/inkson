@@ -32,7 +32,7 @@ pub(crate) fn relation_create_payload(
             fields: Default::default(),
             state: None,
             state_changed_at: None,
-            created_by: actor_core_id(actor)?,
+            created_by: crate::mls_api_helpers::local_account_actor_id(actor)?,
             created_at: chrono::Utc::now(),
             updated_by: None,
             updated_at: None,

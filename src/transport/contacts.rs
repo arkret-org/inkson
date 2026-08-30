@@ -19,7 +19,7 @@ pub(crate) async fn prepare_principal_successor_seal(
         .ok_or_else(|| anyhow::anyhow!("active device signer is required for principal commit"))?;
     let principal = arkret_sdk::Did::new(signer.signer_did().to_owned())?;
     let actor_id = arkret_sdk::project_did_to_core_id(&principal)?;
-    if contact_event.actor_id != actor_id {
+    if contact_event.actor_id.signing_principal_id() != &actor_id {
         anyhow::bail!("prepared principal Event actor does not match the active signer");
     }
     let control_realm = contact_event.realm_id.clone();
@@ -199,7 +199,7 @@ impl crate::transport::TransportClient {
             operation_id: operation_id.clone(),
             idempotency_key: idempotency_key.clone(),
             peer: ContactPeer::Human {
-                principal_id: addressing.target,
+                account_id: addressing.target,
             },
             granted_to_peer_scopes,
             introduction_evidence: addressing.introduction_evidence,

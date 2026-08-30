@@ -1471,7 +1471,11 @@ pub(super) fn validate_welcome_claim_receipt_context(
             } => recipient_pairwise_actor_id,
         };
     if receipt.claim_request_id != request.claim_request_id
-        || request.requester_id != welcome.claim_envelope.requester_actor_id
+        || &request.requester_id
+            != welcome
+                .claim_envelope
+                .requester_actor_id
+                .signing_principal_id()
         || request.intended_realm_id != welcome.claim_envelope.intended_realm_id
         || request.intended_realm_id.as_str() != welcome.governance_binding.realm_id().as_str()
         || request.mls_group_id.as_str() != welcome.mls_group_id.as_str()
@@ -1581,12 +1585,12 @@ pub(super) fn verify_welcome_claim_envelope_signer(
     } = &envelope.trust_binding
     {
         let endpoint = arkret_sdk::MlsEndpointIdentity::minimal_metadata_pairwise(
-            envelope.requester_actor_id.clone(),
+            envelope.requester_actor_id.signing_principal_id().clone(),
             requester_pairwise_verification_method.clone(),
         )
         .map_err(|error| format!("claim_envelope pairwise requester is invalid: {error}"))?;
         if envelope.signature.kid.as_str() != requester_pairwise_verification_method.as_str()
-            || endpoint.actor_id() != &envelope.requester_actor_id
+            || endpoint.actor_id() != envelope.requester_actor_id.signing_principal_id()
         {
             return Err(
                 "claim_envelope pairwise signature key differs from the exact requester endpoint"
@@ -1641,7 +1645,7 @@ pub(super) fn verify_welcome_claim_envelope_signer(
             let projected = arkret_sdk::project_did_to_core_id(&did).map_err(|error| {
                 format!("claim_envelope requester DidCoreId projection: {error}")
             })?;
-            if projected != envelope.requester_actor_id {
+            if &projected != envelope.requester_actor_id.signing_principal_id() {
                 return Err(
                     "claim_envelope signature controller does not project to requester core id"
                         .to_owned(),

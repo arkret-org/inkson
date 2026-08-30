@@ -51,7 +51,7 @@ fn local_control_proposal_acks()
 
 fn lease_key(lease: &AuthorizationLease) -> anyhow::Result<LeaseKey> {
     Ok((
-        lease.actor_id.as_str().to_owned(),
+        lease.actor_id.signing_principal_id().as_str().to_owned(),
         lease.device_id.as_str().to_owned(),
         serde_json::to_string(&lease.scope_ref)?,
         lease.action.clone(),
@@ -118,7 +118,7 @@ pub fn lease_for_event(
     now: chrono::DateTime<chrono::Utc>,
 ) -> Result<AuthorizationLease, AuthorizationLeaseUnavailable> {
     let missing = || AuthorizationLeaseUnavailable::Missing {
-        actor_id: event.actor_id.as_str().to_owned(),
+        actor_id: event.actor_id.signing_principal_id().as_str().to_owned(),
     };
     let scope = serde_json::to_string(&event.scope_ref).map_err(|_| missing())?;
     let expected_basis = if let Some(seal_ref) = &event.seal_ref {
@@ -134,7 +134,7 @@ pub fn lease_for_event(
     let mut matching = held
         .iter()
         .filter(|((actor_id, _, lease_scope, action, basis, _), lease)| {
-            actor_id == event.actor_id.as_str()
+            actor_id == event.actor_id.signing_principal_id().as_str()
                 && lease_scope == &scope
                 && (expected_basis.is_empty() || basis == &expected_basis)
                 && lease_covers_event_kind(action, event.kind.as_str())
@@ -154,7 +154,7 @@ pub fn lease_for_event(
         .ok_or_else(missing)?;
     if lease.expires_at <= now {
         return Err(AuthorizationLeaseUnavailable::Expired {
-            actor_id: event.actor_id.as_str().to_owned(),
+            actor_id: event.actor_id.signing_principal_id().as_str().to_owned(),
             expires_at: arkret_sdk::canonical::format_timestamp_canonical(lease.expires_at),
         });
     }
@@ -549,7 +549,7 @@ fn is_managed_agent_pcr_control(event: &arkret_sdk::Event) -> bool {
     arkret_sdk::Did::new(controller.to_owned())
         .ok()
         .and_then(|did| arkret_sdk::project_did_to_core_id(&did).ok())
-        .is_some_and(|core_id| core_id == event.actor_id)
+        .is_some_and(|core_id| core_id == *event.actor_id.signing_principal_id())
 }
 
 pub(crate) fn is_managed_agent_pcr_genesis(event: &arkret_sdk::Event) -> bool {
@@ -680,7 +680,7 @@ async fn resolve_proposal_authority_route(
             Ok(ProposalAuthorityRoute::LocalPrincipal(
                 LocalAccountAuthority {
                     authority_set_ref,
-                    signer_actor_id: signer_principal,
+                    signer_actor_id: signer_principal.signing_principal_id().clone(),
                 },
             ))
         }
@@ -725,7 +725,7 @@ fn self_principal_pcr_authority_set_ref_from_events(
     let arkret_sdk::NotaryValue::SingleSigner { signer, .. } = &payload.object.notary else {
         anyhow::bail!("self principal PCR genesis does not use a single-signer notary");
     };
-    if signer.actor_id != event.actor_id {
+    if signer.actor_id != *event.actor_id.signing_principal_id() {
         anyhow::bail!("self principal PCR notary does not match the provision Event actor");
     }
     arkret_sdk::Hash::new(crate::canonical::canonical_sha256(&payload.object.notary)?)

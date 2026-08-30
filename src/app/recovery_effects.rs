@@ -189,7 +189,7 @@ pub(super) fn AccountRecoveryEffects(
                     let policy = api.get_recovery_policy().await?;
                     let gate_verification = match recovery_material_evidence.as_ref() {
                         Some(evidence)
-                            if evidence.principal_id == gate_actor
+                            if evidence.account_id.principal_id == gate_actor
                                 && evidence.device_id.as_str() == gate_device =>
                         {
                             Some(

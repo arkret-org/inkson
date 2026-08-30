@@ -314,7 +314,7 @@ fn accepted_direct_message_final(
         .as_str();
     let (controller, device) = method.rsplit_once('#')?;
     let controller = crate::mls_api_helpers::principal_core_id(controller).ok()?;
-    if controller != event.actor_id {
+    if &controller != event.actor_id.signing_principal_id() {
         return None;
     }
     let device = arkret_sdk::DeviceId::new(device.to_owned()).ok()?;

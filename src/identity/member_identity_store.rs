@@ -148,7 +148,7 @@ impl MemberIdentityStore {
                 // Filter by (realm, actor, segment) per the helper's
                 // contract.
                 if stored_event.payload.realm_id != sdk_realm_id
-                    || stored_event.payload.actor_id != sdk_actor_id
+                    || stored_event.payload.actor_id.signing_principal_id() != &sdk_actor_id
                     || !matches!(
                         stored_event.payload.segment,
                         MemberIdentitySegment::MemberIdentity
@@ -270,7 +270,7 @@ fn verify_member_identity_proof(identity: &MemberIdentity) -> bool {
     }
 
     // The verification_method controller MUST be the asserting actor.
-    let actor_id = identity.actor_id.as_str();
+    let actor_id = identity.actor_id.signing_principal_id().as_str();
     let (controller, fragment) = match proof.verification_method.split_once('#') {
         Some((controller, fragment)) => (
             controller
@@ -288,7 +288,7 @@ fn verify_member_identity_proof(identity: &MemberIdentity) -> bool {
     let Ok(controller_core_id) = arkret_sdk::project_did_to_core_id(&controller_did) else {
         return false;
     };
-    if controller_core_id != identity.actor_id {
+    if &controller_core_id != identity.actor_id.signing_principal_id() {
         return false;
     }
     let device_id = fragment.trim();

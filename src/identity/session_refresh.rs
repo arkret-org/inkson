@@ -378,7 +378,7 @@ fn load_active_session_grant(
     let grant = crate::state::load_session_grant_from_user_secure_store(&user_store, secure_store)?
         .filter(|grant| grant_matches_station(grant, station_url))
         .context("no session grant is available for the active Station")?;
-    if grant.principal_id != scope.authority.principal_id || grant.device_id != scope.device_id {
+    if grant.account_id != scope.authority || grant.device_id != scope.device_id {
         anyhow::bail!("session grant does not match the active authority/device scope");
     }
     Ok(grant)
@@ -612,8 +612,7 @@ fn persisted_session_grant_from_state(
         session_private_key_pem: session_private_key_pem.to_string(),
         grant_id: state.grant_id.as_str().to_owned(),
         audience_id: state.audience_id.clone(),
-        principal_id: state.principal_id.clone(),
-        service_account_id: state.service_account_id.clone(),
+        account_id: state.account_id.clone(),
         device_id: device_id.clone(),
         station_url: station_url.clone(),
         grant_expires_at: Some(state.expires_at),
@@ -630,8 +629,7 @@ fn session_grant_state_from_persisted(
         .grant_expires_at
         .unwrap_or_else(|| now + chrono::Duration::seconds(REFRESH_SKEW_SECS));
     Ok(SessionGrantState {
-        principal_id: persisted_grant_principal_id(grant)?,
-        service_account_id: grant.service_account_id.clone(),
+        account_id: grant.account_id.clone(),
         device_id: Some(grant.device_id.clone()),
         grant_id: arkret_wire::SessionGrantId::new(grant.grant_id.trim().to_owned())
             .map_err(|error| anyhow::anyhow!("invalid refresh grant_id: {error}"))?,
@@ -656,7 +654,7 @@ fn session_grant_state_from_persisted(
 pub(crate) fn persisted_grant_principal_id(
     grant: &PersistedSessionGrant,
 ) -> anyhow::Result<arkret_sdk::DidCoreId> {
-    Ok(grant.principal_id.clone())
+    Ok(grant.account_id.principal_id.clone())
 }
 
 pub(crate) fn grant_matches_principal_did(
@@ -770,12 +768,16 @@ mod tests {
     }
 
     fn test_grant_state() -> SessionGrantState {
+        let principal_id = arkret_sdk::DidCoreId::new(
+            "ak:did_core:webvh:z6mkfixture:alice.example".to_owned(),
+        )
+        .unwrap();
+        let station_id = arkret_sdk::DidCoreId::new(
+            "ak:did_core:webvh:z6mkfixture:soland.example".to_owned(),
+        )
+        .unwrap();
         SessionGrantState {
-            principal_id: arkret_sdk::DidCoreId::new(
-                "ak:did_core:webvh:z6mkfixture:alice.example".to_owned(),
-            )
-            .unwrap(),
-            service_account_id: arkret_sdk::ServiceAccountId::new("account-1").unwrap(),
+            account_id: arkret_sdk::AccountId::new(principal_id, station_id),
             device_id: Some(
                 arkret_sdk::DeviceId::new(
                     "ak:device:01964137-0000-7000-8000-000000000001".to_owned(),
@@ -805,8 +807,13 @@ mod tests {
             grant_id: "ak:session_grant:AY6DJbBwavsGTQuBZZiqqw9MVcqPZ8QX8invQ3i2kpi7".to_owned(),
             audience_id: arkret_sdk::DidCoreId::new("ak:did_core:webvh:z6mkfixture:soland.example")
                 .unwrap(),
-            principal_id: arkret_sdk::DidCoreId::new(principal_id.to_owned()).unwrap(),
-            service_account_id: arkret_sdk::ServiceAccountId::new("account-1").unwrap(),
+            account_id: arkret_sdk::AccountId::new(
+                arkret_sdk::DidCoreId::new(principal_id.to_owned()).unwrap(),
+                arkret_sdk::DidCoreId::new(
+                    "ak:did_core:webvh:z6mkfixture:soland.example".to_owned(),
+                )
+                .unwrap(),
+            ),
             device_id: arkret_sdk::DeviceId::new(
                 "ak:device:01964137-0000-7000-8000-000000000001".to_owned(),
             )
@@ -843,7 +850,7 @@ mod tests {
 
         assert!(grant_matches_principal_did(&grant, &did));
         assert!(grant_matches_principal_id(&grant, &core_id));
-        assert_ne!(grant.principal_id.as_str(), did.as_str());
+        assert_ne!(grant.account_id.principal_id.as_str(), did.as_str());
     }
 
     /// A persisted grant that stores anything other than a `DidCoreId` is an
@@ -856,7 +863,7 @@ mod tests {
             "ak:did_core:webvh:z6mkfixture:alice.example",
         ))
         .unwrap();
-        persisted["principal_id"] = serde_json::Value::String(did.to_string());
+        persisted["account_id"]["principal_id"] = serde_json::Value::String(did.to_string());
 
         assert!(serde_json::from_value::<PersistedSessionGrant>(persisted).is_err());
     }
@@ -865,7 +872,7 @@ mod tests {
     fn production_grant_restore_reads_the_active_secure_scope() {
         let grant = test_persisted_grant("ak:did_core:webvh:z6mkfixture:alice.example");
         let authority = arkret_sdk::AccountId::new(
-            grant.principal_id.clone(),
+            grant.account_id.principal_id.clone(),
             arkret_sdk::DidCoreId::new("ak:did_core:webvh:z6mkfixture:soland.example".to_owned())
                 .unwrap(),
         );
@@ -888,7 +895,7 @@ mod tests {
         let restored = load_active_session_grant("https://soland.example", &secure_store).unwrap();
 
         assert_eq!(restored.grant_id, grant.grant_id);
-        assert_eq!(restored.principal_id, grant.principal_id);
+        assert_eq!(restored.account_id, grant.account_id);
         assert_eq!(restored.device_id, grant.device_id);
     }
 

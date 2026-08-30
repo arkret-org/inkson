@@ -774,8 +774,10 @@ fn clear_account_scoped_preserves_device_level_and_session_grant_state() {
         session_private_key_pem: "pem".to_owned(),
         grant_id: "g-alice".to_owned(),
         audience_id: arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap(),
-        principal_id: crate::mls_api_helpers::principal_core_id("did:web:alice.example").unwrap(),
-        service_account_id: arkret_sdk::ServiceAccountId::new("account-1").unwrap(),
+        account_id: arkret_sdk::AccountId::new(
+            crate::mls_api_helpers::principal_core_id("did:web:alice.example").unwrap(),
+            arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap(),
+        ),
         device_id: arkret_sdk::DeviceId::new(
             "ak:device:01904100-0000-7000-8000-000000000001".to_owned(),
         )
@@ -822,9 +824,10 @@ fn production_persist_policy_strips_session_credentials_from_account_state() {
             session_private_key_pem: "secret-session-private-key".to_owned(),
             grant_id: "grant-id".to_owned(),
             audience_id: arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap(),
-            principal_id: crate::mls_api_helpers::principal_core_id("did:web:alice.example")
-                .unwrap(),
-            service_account_id: arkret_sdk::ServiceAccountId::new("account-1").unwrap(),
+            account_id: arkret_sdk::AccountId::new(
+                crate::mls_api_helpers::principal_core_id("did:web:alice.example").unwrap(),
+                arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap(),
+            ),
             device_id: arkret_sdk::DeviceId::new(
                 "ak:device:01904100-0000-7000-8000-000000000001".to_owned(),
             )
@@ -865,8 +868,10 @@ fn account_switch_isolates_authority_namespaces() {
         session_private_key_pem: "pem".to_owned(),
         grant_id: "g-alice".to_owned(),
         audience_id: arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap(),
-        principal_id: crate::mls_api_helpers::principal_core_id("did:web:alice.example").unwrap(),
-        service_account_id: arkret_sdk::ServiceAccountId::new("account-1").unwrap(),
+        account_id: arkret_sdk::AccountId::new(
+            crate::mls_api_helpers::principal_core_id("did:web:alice.example").unwrap(),
+            arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap(),
+        ),
         device_id: arkret_sdk::DeviceId::new(
             "ak:device:01904100-0000-7000-8000-000000000001".to_owned(),
         )

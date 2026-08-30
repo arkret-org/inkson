@@ -134,7 +134,7 @@ impl From<arkret_sdk::ProjectionAssignedToRelation> for AssignedToRelationProjec
     fn from(relation: arkret_sdk::ProjectionAssignedToRelation) -> Self {
         Self {
             relation_id: relation.relation_id.as_str().to_owned(),
-            actor_id: relation.actor_id.as_str().to_owned(),
+            actor_id: relation.actor_id.signing_principal_id().as_str().to_owned(),
         }
     }
 }
@@ -177,11 +177,15 @@ impl From<arkret_sdk::ProjectionStrandRow> for StrandProjectionView {
                 .collect(),
             fields: serde_json::Map::new(),
             state: row.state,
-            created_by: row.created_by.map(|did| did.as_str().to_owned()),
+            created_by: row
+                .created_by
+                .map(|actor| actor.signing_principal_id().as_str().to_owned()),
             created_at: row
                 .created_at
                 .map(arkret_sdk::canonical::format_timestamp_canonical),
-            updated_by: row.updated_by.map(|did| did.as_str().to_owned()),
+            updated_by: row
+                .updated_by
+                .map(|actor| actor.signing_principal_id().as_str().to_owned()),
             updated_at: row
                 .updated_at
                 .map(arkret_sdk::canonical::format_timestamp_canonical),

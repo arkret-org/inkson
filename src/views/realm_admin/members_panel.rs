@@ -3328,14 +3328,12 @@ pub fn RealmMembersPanel(
                                                         let invitee_label = invitee
                                                             .handle
                                                             .clone()
-                                                            .unwrap_or_else(|| invitee.principal_id.to_string());
-                                                        let invitee_id = invitee.principal_id.to_string();
+                                                            .unwrap_or_else(|| invitee.account_id.principal_id.to_string());
                                                         let op = match ak_ops::invite_create_structured(
                                                             &realm,
                                                             &actor,
-                                                            &invitee_id,
+                                                            invitee.account_id.clone(),
                                                             None,
-                                                            invitee.invite_delivery_target.clone(),
                                                             &invitee.introduction_evidence_digest,
                                                         ) {
                                                             Ok(builder) => builder
@@ -3397,9 +3395,9 @@ pub fn RealmMembersPanel(
                                                                         op_id.clone(),
                                                                         Some(realm.clone()),
                                                                         json!({
-                                                                            "kind": event_kind_str::INVITE_CREATE,
-                                                                            "invite_id": invite_id.clone(),
-                                                                            "invitee_id": invitee_id.clone(),
+                                                                    "kind": event_kind_str::INVITE_CREATE,
+                                                                    "invite_id": invite_id.clone(),
+                                                                    "invitee_account_id": invitee.account_id.clone(),
                                                                             "invitee_label": invitee_label.clone(),
                                                                             "state": "pending",
                                                                             "event_id": submitted.event_id,
@@ -3410,7 +3408,7 @@ pub fn RealmMembersPanel(
                                                                 let mut next_members = members.read().clone();
                                                                 upsert_pending_invite_profile(
                                                                     &mut next_members,
-                                                                    &invitee_id,
+                                                                    invitee.account_id.principal_id.as_str(),
                                                                     Some(&invitee_label),
                                                                     Some(&invite_id),
                                                                 );

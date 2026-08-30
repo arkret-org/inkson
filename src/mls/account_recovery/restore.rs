@@ -366,7 +366,9 @@ async fn fetch_authoritative_active_series(
             serde_json::to_value(&event.payload)?,
         )
         .map_err(|error| anyhow!("accepted active-series Event is invalid: {error}"))?;
-        if record.actor_id != actor || event.actor_id != actor {
+        if record.actor_id.signing_principal_id() != &actor
+            || event.actor_id.signing_principal_id() != &actor
+        {
             return Err(anyhow!(
                 "accepted active-series Event actor does not match its principal control realm"
             ));
@@ -456,7 +458,9 @@ async fn verify_active_series_range_completeness(
             }
         };
         let issuer_actor = payload.issuer_id.clone();
-        if issuer_actor != describe.service_id || attestation_event.actor_id != issuer_actor {
+        if issuer_actor != describe.service_id
+            || attestation_event.actor_id.signing_principal_id() != &issuer_actor
+        {
             first_error.get_or_insert_with(|| {
                 "active-series completeness issuer does not match the described service".to_owned()
             });
@@ -627,9 +631,9 @@ fn verify_active_series_record_signature(
     .map_err(|error| anyhow!("parse active-series signature: {error}"))?;
     let devices = keys
         .device_keys
-        .get(&record.actor_id)
+        .get(record.actor_id.signing_principal_id())
         .ok_or_else(|| anyhow!("active-series key query omitted its actor"))?;
-    let generation = keys.device_generations.get(&record.actor_id);
+    let generation = keys.device_generations.get(record.actor_id.signing_principal_id());
     let Some(generation) = generation else {
         return Err(anyhow!("active-series device generation is absent"));
     };
@@ -644,7 +648,7 @@ fn verify_active_series_record_signature(
         };
         if !active_series_verification_method_matches(
             record.auth_data.verification_method.as_str(),
-            record.actor_id.as_str(),
+            record.actor_id.signing_principal_id().as_str(),
             device_id.as_str(),
             did_key,
             multikey,

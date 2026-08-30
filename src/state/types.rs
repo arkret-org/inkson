@@ -738,9 +738,8 @@ pub struct PendingIdentityAbandonment {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct RecoveryMaterialEvidence {
-    pub principal_id: arkret_sdk::DidCoreId,
-    /// Exact service-local account identity bound into the signed grant.
-    pub service_account_id: arkret_sdk::ServiceAccountId,
+    /// Complete Station-bound account identity proven by the signed grant.
+    pub account_id: arkret_sdk::AccountId,
     pub principal_did: arkret_sdk::Did,
     pub device_id: arkret_sdk::DeviceId,
     pub principal_control_realm_id: arkret_sdk::RealmId,
@@ -1462,14 +1461,8 @@ pub struct PersistedSessionGrant {
     pub grant_id: String,
     /// Stable service identity the grant is bound to.
     pub audience_id: arkret_sdk::DidCoreId,
-    /// Stable core principal ID (`DidCoreId`) the grant authorizes. A record
-    /// holding anything else is invalid and the session is unusable; it is
-    /// never repaired by back-projecting a DID.
-    pub principal_id: arkret_sdk::DidCoreId,
-    /// Exact service-local account identity bound into the signed grant.
-    /// This value is inherited byte-for-byte across refreshes and must never
-    /// be synthesized from `principal_id`.
-    pub service_account_id: arkret_sdk::ServiceAccountId,
+    /// Complete Station-bound account identity authorized by the grant.
+    pub account_id: arkret_sdk::AccountId,
     /// Device id bound to the grant.
     pub device_id: arkret_sdk::DeviceId,
     /// Station base URL whose `/_arkret/self/*` surface accepts this grant.

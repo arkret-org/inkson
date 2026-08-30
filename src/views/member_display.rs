@@ -128,7 +128,9 @@ pub(crate) fn member_lookup_subject(
         .as_deref()
         .and_then(principal_core_subject)
         .or_else(|| {
-            identity.and_then(|identity| principal_core_subject(identity.subject_id.as_str()))
+            identity.and_then(|identity| {
+                principal_core_subject(identity.subject_actor_id.signing_principal_id().as_str())
+            })
         })
 }
 
@@ -220,7 +222,7 @@ pub(crate) async fn fetch_and_cache_member_handle(
     })
     .await;
     match result {
-        Ok(response) if response.subject_id.as_str() == request.subject_id => {
+        Ok(response) if response.account_id.principal_id.as_str() == request.subject_id => {
             let primary = response
                 .primary_handle
                 .as_ref()
@@ -232,7 +234,7 @@ pub(crate) async fn fetch_and_cache_member_handle(
                 .filter_map(|claim| claim.expires_at.as_ref().cloned())
                 .min();
             state_store.write().save_member_handle_lookup(
-                response.subject_id.as_str().to_owned(),
+                response.account_id.principal_id.as_str().to_owned(),
                 Some(request.realm_id),
                 request.member_display_state_digest,
                 primary,
@@ -286,7 +288,10 @@ pub(crate) fn resolve_member_display(
             )
             .and_then(|entry| entry.primary_handle)
     });
-    let primary_handle = [subject_id.as_deref(), Some(row.actor_id.as_str())]
+    let primary_handle = [
+        subject_id.as_deref(),
+        Some(row.actor_id.as_str()),
+    ]
         .into_iter()
         .flatten()
         .find_map(|principal_id| store.primary_handle_for_principal_id(principal_id))

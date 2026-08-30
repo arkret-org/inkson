@@ -49,7 +49,7 @@ pub fn build_calendar_rsvp_event(
             arkret_sdk::ScopeRef::Realm {
                 realm_id: arkret_sdk::RealmId::new(realm_id.to_owned())?,
             },
-            crate::mls_api_helpers::principal_core_id(actor_id)?,
+            crate::mls_api_helpers::local_account_actor_id(actor_id)?,
             crate::clock::now_utc_millis(),
             schedule_basis_refs,
         )?,

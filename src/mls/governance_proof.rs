@@ -728,7 +728,11 @@ pub(crate) fn leaf_authority_hints_from_welcome(
             requester_device_authorize_event_id,
         } => MlsLeafAuthorityHint {
             endpoint: arkret_sdk::MlsEndpointIdentity::human_device(
-                welcome.claim_envelope.requester_actor_id.clone(),
+                welcome
+                    .claim_envelope
+                    .requester_actor_id
+                    .signing_principal_id()
+                    .clone(),
                 requester_device_id.clone(),
             ),
             device_authorize_event_id: Some(requester_device_authorize_event_id.clone()),
@@ -750,7 +754,11 @@ pub(crate) fn leaf_authority_hints_from_welcome(
             requester_pairwise_verification_method,
         } => MlsLeafAuthorityHint {
             endpoint: arkret_sdk::MlsEndpointIdentity::minimal_metadata_pairwise(
-                welcome.claim_envelope.requester_actor_id.clone(),
+                welcome
+                    .claim_envelope
+                    .requester_actor_id
+                    .signing_principal_id()
+                    .clone(),
                 requester_pairwise_verification_method.clone(),
             )
             .map_err(|error| format!("invalid requester pairwise authority: {error}"))?,
@@ -973,7 +981,10 @@ pub(crate) fn reconstruct_transition_security_frontier(
     if genesis_matches.next().is_some() {
         return Err("MLS transition replay has multiple accepted Genesis Events".to_owned());
     }
-    let mut principals = BTreeMap::from([(0_u32, genesis.actor_id.clone())]);
+    let mut principals = BTreeMap::from([(
+        0_u32,
+        genesis.actor_id.signing_principal_id().clone(),
+    )]);
 
     let mut commits = checkpoint
         .accepted_events

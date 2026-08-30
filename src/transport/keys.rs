@@ -92,7 +92,7 @@ pub async fn send_device_message_with_id<K: arkret_sdk::DeviceMessageSpec>(
     expires_at: &str,
     content: K::Content,
 ) -> anyhow::Result<DeviceMessagesSendOutcome> {
-    let target_actor = crate::mls_api_helpers::principal_core_id(target_actor)?;
+    let target_actor = crate::mls_api_helpers::local_account_actor_id(target_actor)?;
     let target_device_id = arkret_sdk::DeviceId::new(target_device_id.to_owned())?;
     let expires_at = chrono::DateTime::parse_from_rfc3339(expires_at)?.with_timezone(&chrono::Utc);
     let payload = arkret_sdk::TypedDeviceMessageTarget::<K>::new(message_id, expires_at, content)?

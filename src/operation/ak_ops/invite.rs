@@ -7,23 +7,19 @@ use super::TypedOperationBuilder;
 pub fn invite_create_structured(
     realm_id: &str,
     actor: &str,
-    invitee: &str,
+    invitee_account_id: arkret_sdk::AccountId,
     role: Option<&str>,
-    invite_delivery_target: arkret_sdk::InviteDeliveryTarget,
     introduction_evidence_digest: &str,
 ) -> anyhow::Result<TypedOperationBuilder> {
     // Strong `invite_payload` (directed-create anyOf branch). The id /
     // digest strings are parsed into SDK newtypes so malformed wire is a
     // build-time error, and `x_role` is carried via the typed extension
     // map (re-prefixed on serialize).
-    let invitee_id = arkret_sdk::DidCoreId::new(invitee.to_owned())
-        .map_err(|err| anyhow::anyhow!("invitee not a core_id {invitee:?}: {err}"))?;
     let digest = arkret_sdk::Hash::new(introduction_evidence_digest.to_owned())
         .map_err(|err| anyhow::anyhow!("introduction_evidence_digest invalid: {err}"))?;
     let mut payload =
         arkret_models_collaboration::governance::membership_invite::InviteCreatePayload::new(
-            invitee_id,
-            invite_delivery_target,
+            invitee_account_id,
             digest,
             chrono::Utc::now() + chrono::Duration::days(7),
         );
@@ -46,8 +42,6 @@ pub fn invite_accept(
         .map_err(|err| anyhow::anyhow!("invite_id not canonical {invite_id:?}: {err}"))?;
     let payload = arkret_sdk::InviteAcceptPayload {
         invite_id: invite_id_typed,
-        delivery_status: arkret_sdk::DeliveryStatus::Unroutable,
-        delivery_binding: None,
         extensions: Default::default(),
     };
     payload.validate()?;
@@ -75,7 +69,13 @@ pub fn invite_cancel(
     target_state: &str,
     reason: Option<&str>,
 ) -> anyhow::Result<TypedOperationBuilder> {
-    let (payload, invite_id_ref) = invite_cancel_payload(invite_id, invitee, target_state, reason)?;
+    let (payload, invite_id_ref) = invite_cancel_payload(
+        invite_id,
+        invitee,
+        crate::operation::authoring_station_id()?,
+        target_state,
+        reason,
+    )?;
     Ok(
         TypedOperationBuilder::new::<arkret_sdk::event_spec::InviteCancel>(
             realm_id, actor, payload,
@@ -87,6 +87,7 @@ pub fn invite_cancel(
 fn invite_cancel_payload(
     invite_id: &str,
     invitee: &str,
+    station_id: arkret_sdk::DidCoreId,
     target_state: &str,
     reason: Option<&str>,
 ) -> anyhow::Result<(arkret_sdk::InviteCancelPayload, String)> {
@@ -105,7 +106,11 @@ fn invite_cancel_payload(
         "revoked" => arkret_sdk::InviteCancelTargetState::Revoked,
         _ => unreachable!("validated invite cancel target state"),
     };
-    let mut payload = arkret_sdk::InviteCancelPayload::new(invite_id, invitee, target_state);
+    let mut payload = arkret_sdk::InviteCancelPayload::new(
+        invite_id,
+        arkret_sdk::AccountId::new(invitee, station_id),
+        target_state,
+    );
     if let Some(reason) = reason {
         payload = payload.with_reason(reason);
     }
@@ -121,7 +126,8 @@ pub fn invite_cancel_for_station(
     target_state: &str,
     reason: Option<&str>,
 ) -> anyhow::Result<TypedOperationBuilder> {
-    let (payload, invite_id_ref) = invite_cancel_payload(invite_id, invitee, target_state, reason)?;
+    let (payload, invite_id_ref) =
+        invite_cancel_payload(invite_id, invitee, station_id.clone(), target_state, reason)?;
     Ok(
         TypedOperationBuilder::new_for_station::<arkret_sdk::event_spec::InviteCancel>(
             realm_id, actor, station_id, payload,
@@ -157,10 +163,15 @@ pub fn invite_revoke(
     let invite_id = arkret_sdk::InviteId::new(invite_id.to_owned())
         .map_err(|err| anyhow::anyhow!("invite_id not canonical: {err}"))?;
     let invite_id_ref = invite_id.to_string();
-    let invitee = invitee
+    let invitee_account_id = invitee
         .map(|value| arkret_sdk::DidCoreId::new(value.to_owned()))
         .transpose()
-        .map_err(|err| anyhow::anyhow!("invitee is not a core_id: {err}"))?;
+        .map_err(|err| anyhow::anyhow!("invitee is not a core_id: {err}"))?
+        .map(|principal_id| {
+            crate::operation::authoring_station_id()
+                .map(|station_id| arkret_sdk::AccountId::new(principal_id, station_id))
+        })
+        .transpose()?;
     let target_state = match target_state {
         "revoked" => arkret_sdk::InviteRevokeTargetState::Revoked,
         "expired" => arkret_sdk::InviteRevokeTargetState::Expired,
@@ -173,7 +184,7 @@ pub fn invite_revoke(
     };
     let payload = arkret_sdk::InviteRevokePayload {
         invite_id,
-        invitee_id: invitee,
+        invitee_account_id,
         target_state,
         reason: Some(reason_code.to_owned()),
     };

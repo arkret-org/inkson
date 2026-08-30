@@ -240,10 +240,7 @@ pub fn circle_error_to_toast(kind: CircleErrorKind) -> Toast {
 }
 
 pub fn maybe_dispatch_circle_error(code: &str, reason: Option<&str>) -> bool {
-    if let Some(kind) = CircleErrorKind::from_error_code(code) {
-        enqueue_toast(circle_error_to_toast(kind));
-        return true;
-    }
+    let _ = code;
     if let Some(reason) = reason
         && let Some(kind) = CircleErrorKind::from_reason_code(reason)
     {

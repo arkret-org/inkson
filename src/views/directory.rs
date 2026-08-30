@@ -1181,8 +1181,8 @@ pub fn DirectoryPanel(
                         // (if any) for the resolved stable principal id, with
                         // the canonical id kept verbatim in `title`.
                         let resolved_display =
-                            actor_display_label(&state_store.read(), resolved.principal_id.as_str());
-                        let resolved_principal_id_attr = resolved.principal_id.clone();
+                            actor_display_label(&state_store.read(), resolved.account_id.principal_id.as_str());
+                        let resolved_principal_id_attr = resolved.account_id.principal_id.clone();
                         rsx! {
                             div { class: "event", "data-testid": "handle-result",
                                 div { class: "event-head",

@@ -23,7 +23,6 @@ const DEFAULT_ACCOUNT_DID = "did:web:alice.example";
 const DEFAULT_ACCOUNT_CORE_ID = "ak:did_core:web:alice.example";
 const DEFAULT_DEVICE_ID = "ak:device:01964137-0000-7000-8000-0000000000a1";
 const DEFAULT_SESSION_CREDENTIAL = "sx:e2e-token";
-const DEFAULT_SERVICE_ACCOUNT_ID = "account-1";
 const TEST_SESSION_INJECTION_KEY = "inkson.test.session_injection.v1";
 const DEFAULT_DPOP_SEED_B64URL = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 const DEFAULT_EVENT_SIGNING_SEED_B64URL =
@@ -290,7 +289,7 @@ function sessionInjectionRecord(
     grant_jwt: string;
     grant_id: string;
     audience: string;
-    service_account_id: string;
+    account_id: { principal_id: string; station_id: string };
     dpop_seed_b64url: string;
     local_recovery_state: Record<string, unknown>;
     mls_recovery_backup_state: Record<string, unknown>;
@@ -301,8 +300,10 @@ function sessionInjectionRecord(
     grant_jwt: DEFAULT_SESSION_CREDENTIAL,
     grant_id: "ak:session_grant:AY6DJbBwavsGTQuBZZiqqw9MVcqPZ8QX8invQ3i2kpi7",
     audience: DEFAULT_SERVER_AUDIENCE,
-    service_account_id: DEFAULT_SERVICE_ACCOUNT_ID,
-    principal_id: DEFAULT_ACCOUNT_CORE_ID,
+    account_id: {
+      principal_id: DEFAULT_ACCOUNT_CORE_ID,
+      station_id: CURRENT_STATION_ID,
+    },
     dpop_seed_b64url: DEFAULT_DPOP_SEED_B64URL,
     event_signing_seed_b64url: DEFAULT_EVENT_SIGNING_SEED_B64URL,
     ...overrides,
@@ -315,7 +316,7 @@ export async function addSessionGrantInjection(
     grant_jwt: string;
     grant_id: string;
     audience: string;
-    service_account_id: string;
+    account_id: { principal_id: string; station_id: string };
     dpop_seed_b64url: string;
     local_recovery_state: Record<string, unknown>;
     mls_recovery_backup_state: Record<string, unknown>;
@@ -342,7 +343,7 @@ export async function writeSessionGrantInjection(
     grant_jwt: string;
     grant_id: string;
     audience: string;
-    service_account_id: string;
+    account_id: { principal_id: string; station_id: string };
     dpop_seed_b64url: string;
   }> = {},
 ) {

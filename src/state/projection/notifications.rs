@@ -70,7 +70,7 @@ impl JoinedRealmIds {
                             members.iter().any(|member| {
                                 serde_json::from_value::<MemberRosterEntry>(member.clone())
                                     .is_ok_and(|member| {
-                                        member.actor_id == actor_id
+                                        member.actor_id.signing_principal_id() == &actor_id
                                             && member.membership == MembershipState::Join
                                     })
                             })
@@ -104,7 +104,10 @@ pub(crate) fn actor_is_joined_member(entry: &RealmSyncEntry, actor_id: &str) -> 
         roster
             .entries
             .iter()
-            .any(|member| member.actor_id == actor_id && member.membership == MembershipState::Join)
+            .any(|member| {
+                member.actor_id.signing_principal_id() == &actor_id
+                    && member.membership == MembershipState::Join
+            })
     })
 }
 

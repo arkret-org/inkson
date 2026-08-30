@@ -58,7 +58,10 @@ pub fn circle_member_state_with_expected(
 ) -> anyhow::Result<TypedOperationBuilder> {
     let payload = arkret_sdk::CircleMemberStatePayload {
         circle_id: circle_id_value(circle_id)?,
-        actor_id: did_id(target_actor)?,
+        member_id: arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+            did_id(target_actor)?,
+            crate::operation::authoring_station_id()?,
+        )),
         membership,
         reason: None,
         effective_at: None,
@@ -141,7 +144,7 @@ pub fn circle_create(
         realm_id_value(&trim_realm_id(realm_id))?,
         options.title.trim(),
         options.display,
-        did_id(actor)?,
+        crate::mls_api_helpers::local_account_actor_id(actor)?,
     );
     circle.summary = options
         .summary

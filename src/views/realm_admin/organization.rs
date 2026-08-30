@@ -120,7 +120,6 @@ fn control_scope_from_slug(slug: &str) -> Option<RealmOrganizationControlScope> 
         "official_badge" => Some(RealmOrganizationControlScope::OfficialBadge),
         "realm_admin" => Some(RealmOrganizationControlScope::RealmAdmin),
         "notary_control" => Some(RealmOrganizationControlScope::NotaryControl),
-        "delivery_binding_policy" => Some(RealmOrganizationControlScope::DeliveryBindingPolicy),
         "durability_policy" => Some(RealmOrganizationControlScope::DurabilityPolicy),
         "moderation_policy" => Some(RealmOrganizationControlScope::ModerationPolicy),
         "retention_policy" => Some(RealmOrganizationControlScope::RetentionPolicy),

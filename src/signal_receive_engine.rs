@@ -469,7 +469,7 @@ fn live_body_value(plaintext: &garth::SignalPlaintext) -> garth::Result<Value> {
     };
     body.insert(
         "actor_id".to_owned(),
-        Value::String(plaintext.actor_id.as_str().to_owned()),
+        Value::String(plaintext.actor_id.signing_principal_id().as_str().to_owned()),
     );
     body.insert(
         "device_id".to_owned(),

@@ -41,6 +41,14 @@ pub(crate) fn principal_core_id(principal_id: &str) -> anyhow::Result<arkret_sdk
     arkret_sdk::project_did_to_core_id(&did).map_err(anyhow::Error::msg)
 }
 
+/// Complete account actor for a principal authored at the selected Station.
+pub(crate) fn local_account_actor_id(value: &str) -> anyhow::Result<arkret_sdk::ActorId> {
+    Ok(arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+        principal_core_id(value)?,
+        crate::operation::authoring_station_id()?,
+    )))
+}
+
 #[cfg(test)]
 mod principal_id_tests {
     use super::*;

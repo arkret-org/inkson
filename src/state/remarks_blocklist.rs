@@ -71,8 +71,8 @@ impl LocalStateStore {
             .iter()
             .filter(|contact| contact.state == arkret_sdk::ContactState::Accepted)
             .filter_map(|contact| match &contact.peer {
-                arkret_sdk::contact_operations::ContactPeer::Human { principal_id } => {
-                    Some(principal_id.to_string())
+                arkret_sdk::contact_operations::ContactPeer::Human { account_id } => {
+                    Some(account_id.principal_id.to_string())
                 }
                 arkret_sdk::contact_operations::ContactPeer::Agent { .. } => None,
             })

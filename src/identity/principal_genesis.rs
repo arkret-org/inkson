@@ -171,7 +171,6 @@ pub fn build_genesis_unit(
     // The PCR Realm exists only after the signed create draft has a stable
     // Event id. The authorize slot must use that exact event-derived id.
     let realm_id = create.realm_id.clone();
-    let station_id = create.station_id.clone();
     let authorize_hlc = crate::signing_stamp::issue_protocol_hlc_with_secret(
         principal_did.as_str(),
         device_signer
@@ -184,8 +183,7 @@ pub fn build_genesis_unit(
     let mut authorize =
         arkret_sdk::TypedEventDraft::<arkret_sdk::event_spec::DeviceAuthorize>::new(
             arkret_sdk::ScopeRef::Realm { realm_id },
-            principal_id,
-            station_id,
+            create.actor_id.clone(),
             payload,
         )?
         .with_prev_refs(vec![create.event_id().clone()])

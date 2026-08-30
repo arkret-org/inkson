@@ -516,7 +516,7 @@ fn validate_native_prepared_sidecar_binding(
     let controller_actor = arkret_sdk::project_did_to_core_id(controller_did)?;
     if let Some(create) = create_event
         && (create.kind != arkret_sdk::EventKind::SidecarCreate
-            || create.actor_id != controller_actor
+            || create.actor_id.signing_principal_id() != &controller_actor
             || create.realm_id != *source_realm_id
             || create.scope_ref
                 != (arkret_sdk::ScopeRef::Realm {
@@ -533,7 +533,7 @@ fn validate_native_prepared_sidecar_binding(
         anyhow::bail!("native Sidecar create draft differs from its reservation");
     }
     if context_attach_event.kind != arkret_sdk::EventKind::SidecarContextAttach
-        || context_attach_event.actor_id != controller_actor
+        || context_attach_event.actor_id.signing_principal_id() != &controller_actor
         || context_attach_event.realm_id != *source_realm_id
         || context_attach_event.scope_ref
             != (arkret_sdk::ScopeRef::Sidecar {
@@ -618,7 +618,7 @@ fn sign_prepared_sidecar_event(
     if event.digest_suite() != digest_suite
         || event.kind.as_str() != expected_kind
         || event.realm_id != *source_realm_id
-        || event.actor_id != controller_actor
+        || event.actor_id.signing_principal_id() != &controller_actor
         || digest != draft.event_digest
         || !event.proofs.is_empty()
         || !event.unsigned.is_empty()

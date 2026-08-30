@@ -579,7 +579,7 @@ pub(crate) fn notification_eval_context(value: &StoredNotification) -> Notificat
         strand_track: preview_string(value, &["strand_track", "track_name"]),
         sender: match value {
             StoredNotification::Event { notification } => {
-                Some(notification.actor_id.as_str().to_owned())
+                Some(notification.actor_id.signing_principal_id().as_str().to_owned())
             }
             StoredNotification::AgentRuntimeApproval { .. } | StoredNotification::Invite { .. } => {
                 None

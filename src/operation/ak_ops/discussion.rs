@@ -32,7 +32,7 @@ pub fn discussion_strand_create(
 ) -> anyhow::Result<TypedOperationBuilder> {
     let typed_realm_id = arkret_sdk::RealmId::new(trim_realm_id(realm_id))
         .map_err(|e| anyhow::anyhow!("invalid realm_id: {e:?}"))?;
-    let actor_id = crate::mls_api_helpers::principal_core_id(actor)
+    let actor_id = crate::mls_api_helpers::local_account_actor_id(actor)
         .map_err(|e| anyhow::anyhow!("invalid actor DID: {e:?}"))?;
     // No caller-supplied Strand id: the object is derived from this create
     // Event, so the payload omits it and the projection keys the optimistic row
@@ -77,7 +77,7 @@ pub fn initial_default_discussion_strand_create(
 ) -> anyhow::Result<TypedOperationBuilder> {
     let typed_realm_id = arkret_sdk::RealmId::new(trim_realm_id(realm_id))
         .map_err(|e| anyhow::anyhow!("invalid realm_id: {e:?}"))?;
-    let actor_id = crate::mls_api_helpers::principal_core_id(actor)
+    let actor_id = crate::mls_api_helpers::local_account_actor_id(actor)
         .map_err(|e| anyhow::anyhow!("invalid actor DID: {e:?}"))?;
     let strand = arkret_sdk::StrandCreateObject::new(typed_realm_id, actor_id)
         .with_track("discussion", arkret_sdk::StrandTrack::discussion_primary());
@@ -122,7 +122,7 @@ pub fn discussion_circle_create(
         realm_id_value(&trim_realm_id(realm_id))?,
         title.trim(),
         display,
-        did_id(actor)?,
+        crate::mls_api_helpers::local_account_actor_id(actor)?,
     );
     Ok(TypedOperationBuilder::new::<
         arkret_sdk::event_spec::CircleCreate,
@@ -143,7 +143,7 @@ pub fn scoped_discussion_strand_create(
 ) -> anyhow::Result<TypedOperationBuilder> {
     let typed_realm_id = arkret_sdk::RealmId::new(trim_realm_id(realm_id))
         .map_err(|e| anyhow::anyhow!("invalid realm_id: {e:?}"))?;
-    let actor_id = crate::mls_api_helpers::principal_core_id(actor)
+    let actor_id = crate::mls_api_helpers::local_account_actor_id(actor)
         .map_err(|e| anyhow::anyhow!("invalid actor DID: {e:?}"))?;
     let mut strand = arkret_sdk::StrandCreateObject::new(typed_realm_id, actor_id)
         .with_metadata_title(title)

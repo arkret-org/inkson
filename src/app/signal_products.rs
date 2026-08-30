@@ -124,7 +124,7 @@ impl AppSignalProductSink {
     ) -> bool {
         let key = format!(
             "{realm_id}|{}|{}|{action}",
-            plaintext.actor_id.as_str(),
+            plaintext.actor_id.signing_principal_id().as_str(),
             plaintext.seal_ref.as_str()
         );
         if let Some(allowed) = self.cached_verdict(&key) {
@@ -139,7 +139,7 @@ impl AppSignalProductSink {
         let allowed = match api.sdk_http_client() {
             Ok(http) => crate::transport::realm_read::authz_check_resource(
                 &http,
-                plaintext.actor_id.as_str(),
+                plaintext.actor_id.signing_principal_id().as_str(),
                 action,
                 Some(arkret_sdk::WireResourceSelector::realm(resource_realm_id)),
             )

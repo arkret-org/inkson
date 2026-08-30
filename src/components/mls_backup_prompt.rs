@@ -205,7 +205,9 @@ pub(crate) fn schedule_mls_private_plaintext_backup_after_encrypted_write(
         let Some(evidence) = store.recovery_material_evidence() else {
             return;
         };
-        if evidence.principal_id.as_str() != actor_id || evidence.device_id.as_str() != device_id {
+        if evidence.account_id.principal_id.as_str() != actor_id
+            || evidence.device_id.as_str() != device_id
+        {
             return;
         }
         (
@@ -460,7 +462,7 @@ async fn maybe_backup_or_flag_mls_backup_after_encrypted_write(
         let recovery_public_key =
             crate::views::recovery::local_recovery_public_key(&store, &authority.principal_id)?;
         let recovery_material_evidence = store.recovery_material_evidence()?;
-        if recovery_material_evidence.principal_id.as_str() != actor_id
+        if recovery_material_evidence.account_id.principal_id.as_str() != actor_id
             || recovery_material_evidence.device_id.as_str() != device_id
         {
             return None;
@@ -641,7 +643,7 @@ fn upload_mls_backup_with_recovery_key(
         try_set_status(status, "Frozen PCR authority evidence is required");
         return;
     };
-    if recovery_material_evidence.principal_id.as_str() != actor
+    if recovery_material_evidence.account_id.principal_id.as_str() != actor
         || recovery_material_evidence.device_id.as_str() != device
     {
         try_set_status(

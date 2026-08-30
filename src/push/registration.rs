@@ -274,7 +274,7 @@ fn resolve_chime_session_grant(
         });
     }
     if ctx.principal_id.is_none() {
-        ctx.principal_id = Some(grant.principal_id.clone());
+        ctx.principal_id = Some(grant.account_id.principal_id.clone());
     }
 
     let signing_key = session_grant_signing_key_from_pem(&grant.session_private_key_pem)
@@ -481,9 +481,10 @@ mod tests {
             session_private_key_pem: pem,
             grant_id: "ak:grant:push-local".to_owned(),
             audience_id: arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap(),
-            principal_id: crate::mls_api_helpers::principal_core_id("did:web:alice.example")
-                .unwrap(),
-            service_account_id: arkret_sdk::ServiceAccountId::new("account-1").unwrap(),
+            account_id: arkret_sdk::AccountId::new(
+                crate::mls_api_helpers::principal_core_id("did:web:alice.example").unwrap(),
+                arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap(),
+            ),
             device_id: arkret_sdk::DeviceId::new(device.to_owned()).unwrap(),
             station_url: url::Url::parse("https://principal.example/").unwrap(),
             grant_expires_at: Some(Utc::now() + Duration::hours(1)),

@@ -907,7 +907,6 @@ fn invite_helpers_emit_canonical_kinds() {
     assert!(!create.payload().contains_key("target"));
     assert!(!create.payload().contains_key("role"));
     assert!(!create.payload().contains_key("state"));
-    assert!(!create.payload().contains_key("x_member_delivery_binding"));
     assert_registered_payload_valid(&create);
     // `validate_registered_cell_writes` also runs the CBA plane check, and
     // `ak.invite.create` is control-plane: its `seal_basis` is attached by the

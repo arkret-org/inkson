@@ -506,11 +506,6 @@ pub fn chinese_translations() -> TranslationDict {
         "error.circle.encryption_below_realm_floor",
         "该 Realm 要求 E2EE，Circle 必须保持 MLS 加密。",
     );
-    dict.set(
-        "error.circle.delivery_binding_handed_over",
-        "Circle 的投递绑定已切换到新设备集，请重试。",
-    );
-
     // CircleScopePicker 的默认 scope 选项与帮助文案。
     dict.set("circle.scope.realm_everyone", "Realm（所有人）");
     dict.set(

@@ -815,8 +815,8 @@ pub fn prepare_agent_key_authorize_pairing(
     let intent = arkret_event_draft::build_agent_key_authorize_intent(
         &payload,
         arkret_sdk::ScopeRef::Realm { realm_id },
-        request.agent_id.clone(),
-        controller_actor_id,
+        arkret_sdk::ActorId::service(request.agent_id.clone()),
+        crate::mls_api_helpers::local_account_actor_id(controller_actor_id.as_str())?,
         authorization_ref,
         crate::clock::now_utc_millis(),
     )?;

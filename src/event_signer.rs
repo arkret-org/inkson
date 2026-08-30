@@ -84,7 +84,9 @@ impl PrincipalControlHistory {
         let rows = http.events_read_all_pages_for_actor(actor_id).await?.events;
         let mut events = crate::models::require_complete_event_rows(&rows, purpose)?
             .into_iter()
-            .filter(|event| event.actor_id == *actor_id && event.realm_id == *realm_id)
+            .filter(|event| {
+                event.actor_id.signing_principal_id() == actor_id && event.realm_id == *realm_id
+            })
             .collect::<Vec<_>>();
         events.sort_by(|left, right| {
             left.actor_seq
@@ -361,12 +363,12 @@ impl std::fmt::Debug for InksonEventSigner {
 }
 
 impl InksonEventSigner {
-    fn did_for_actor(&self, actor_id: &arkret_sdk::DidCoreId) -> Result<Did, EventSignerError> {
+    fn did_for_actor(&self, actor_id: &arkret_sdk::ActorId) -> Result<Did, EventSignerError> {
         let did = Did::new(self.signer_did.clone())
             .map_err(|error| EventSignerError::Encoding(error.to_string()))?;
         let projected = arkret_sdk::project_did_to_core_id(&did)
             .map_err(|error| EventSignerError::Encoding(error.to_string()))?;
-        if &projected != actor_id {
+        if &projected != actor_id.signing_principal_id() {
             return Err(EventSignerError::Encoding(
                 "active signer did does not project to Event actor_id".to_owned(),
             ));

@@ -142,12 +142,17 @@ pub fn capability_grant_actions_with_resources(
         temporal.expires_at = Some(expires_at);
         constraints_typed.push(temporal);
     }
+    let station_id = crate::operation::authoring_station_id()?;
     let grant = arkret_sdk::CapabilityGrantCreateBody {
         schema: arkret_wire::SchemaId::CAPABILITY_V1.to_owned(),
         realm_id: Some(realm_typed.clone()),
-        issuer_id: actor_typed,
-        subject: arkret_sdk::CapabilitySubject::CoreDid(subject_typed),
-        subject_station_id: Some(crate::operation::authoring_station_id()?),
+        issuer_id: arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+            actor_typed,
+            station_id.clone(),
+        )),
+        subject: arkret_sdk::CapabilitySubject::Actor(arkret_sdk::ActorId::account(
+            arkret_sdk::AccountId::new(subject_typed, station_id),
+        )),
         actions: actions.iter().map(|action| (*action).to_owned()).collect(),
         resources,
         constraints: constraints_typed,

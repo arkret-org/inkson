@@ -18,7 +18,7 @@ impl HostClock for InksonClock {
 /// id, which this stamp's HLC feeds into — so genesis authoring gets its own
 /// fixed local scope instead of borrowing a placeholder that looks like a Realm.
 pub(crate) async fn issue_event_stamp_for(
-    actor_id: &arkret_sdk::DidCoreId,
+    actor_id: &arkret_sdk::ActorId,
     realm_id: Option<&arkret_sdk::RealmId>,
 ) -> anyhow::Result<SigningStamp> {
     let signer = crate::event_signer::active_signer().context("no active event signer")?;
@@ -36,7 +36,7 @@ pub(crate) async fn issue_event_stamp_for(
     let local_node_secret = [0x49; 32];
     let scope = StampScope {
         service_id: None,
-        actor_id: actor_id.clone(),
+        actor_id: actor_id.signing_principal_id().clone(),
         device_id: arkret_sdk::DeviceId::new(device_id.to_owned())?,
         realm_id: match realm_id {
             Some(realm_id) => realm_id.clone(),

@@ -317,7 +317,13 @@ impl LocalOperation {
 
     /// Record the principal that executes this write on the actor's behalf.
     pub fn with_executed_by(mut self, executed_by: arkret_sdk::DidCoreId) -> Self {
-        self.intent = self.intent.with_executed_by(executed_by);
+        let account_id = arkret_sdk::AccountId::new(
+            executed_by,
+            self.intent.actor_id().route_service_id().clone(),
+        );
+        self.intent = self
+            .intent
+            .with_executed_by(arkret_sdk::ActorId::account(account_id));
         self
     }
 
@@ -362,7 +368,7 @@ impl LocalOperation {
         Value::Object(self.intent.payload().clone().into_iter().collect())
     }
 
-    pub fn actor_id(&self) -> &arkret_sdk::DidCoreId {
+    pub fn actor_id(&self) -> &arkret_sdk::ActorId {
         self.intent.actor_id()
     }
 
@@ -447,9 +453,13 @@ impl TypedOperationBuilder {
         } else {
             ScopeRef::Realm { realm_id }
         };
-        let actor_id = crate::mls_api_helpers::principal_core_id(&actor.into())
+        let principal_id = crate::mls_api_helpers::principal_core_id(&actor.into())
             .map_err(|err| anyhow::anyhow!("invalid actor_id core_id: {err}"))?;
-        arkret_sdk::TypedEventDraft::<K>::new(scope_ref, actor_id, station_id, payload)
+        let actor_id = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+            principal_id,
+            station_id,
+        ));
+        arkret_sdk::TypedEventDraft::<K>::new(scope_ref, actor_id, payload)
             .map_err(|err| anyhow::anyhow!("typed Event draft construction failed: {err}"))?
             .into_intent(crate::clock::now_utc_millis())
             .map_err(|err| anyhow::anyhow!("typed Event intent erasure failed: {err}"))
@@ -480,10 +490,13 @@ impl TypedOperationBuilder {
     pub fn executed_by(self, executed_by: impl Into<String>) -> Self {
         self.map_intent(|intent| {
             let executed_by = executed_by.into();
-            Ok(intent.with_executed_by(
-                crate::mls_api_helpers::principal_core_id(&executed_by)
-                    .map_err(|err| anyhow::anyhow!("invalid executed_by core_id: {err}"))?,
-            ))
+            let principal_id = crate::mls_api_helpers::principal_core_id(&executed_by)
+                .map_err(|err| anyhow::anyhow!("invalid executed_by core_id: {err}"))?;
+            let account_id = arkret_sdk::AccountId::new(
+                principal_id,
+                intent.actor_id().route_service_id().clone(),
+            );
+            Ok(intent.with_executed_by(arkret_sdk::ActorId::account(account_id)))
         })
     }
 

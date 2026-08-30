@@ -195,9 +195,17 @@ pub fn render_actor_mention(
             degraded: true,
         };
     };
+    let Ok(station_id) = crate::operation::authoring_station_id() else {
+        return RenderedMention {
+            label: short_protocol_id(subject_id),
+            tier_class: "mention-unresolved",
+            degraded: true,
+        };
+    };
+    let account_id = arkret_sdk::AccountId::new(subject, station_id);
 
     let selection = PrimaryHandleSelectInput {
-        subject_id: subject.as_str(),
+        account_id: &account_id,
         context,
         claim_set_snapshot,
         handle_issuer_policies: handle_issuer_policy,
@@ -208,7 +216,7 @@ pub fn render_actor_mention(
         resolution_as_of: chrono::Utc::now(),
     };
 
-    match render_mention(&subject, &selection, cached_handle, display_name_at_time) {
+    match render_mention(&selection, cached_handle, display_name_at_time) {
         MentionRender::Verified { handle } => RenderedMention {
             label: format!("@{}", handle.canonical()),
             tier_class: "mention-verified",
@@ -224,8 +232,10 @@ pub fn render_actor_mention(
             tier_class: "mention-name-only",
             degraded: true,
         },
-        MentionRender::Unresolved { truncated_did } => RenderedMention {
-            label: truncated_did,
+        MentionRender::Unresolved {
+            truncated_account_id,
+        } => RenderedMention {
+            label: truncated_account_id,
             tier_class: "mention-unresolved",
             degraded: true,
         },
@@ -259,24 +269,13 @@ pub fn handle_claim_rows(
     res.claims
         .iter()
         .map(|claim| {
-            let handle = claim
-                .handle
-                .as_ref()
-                .map(|h| h.canonical().to_owned())
-                .unwrap_or_default();
+            let handle = claim.handle.canonical().to_owned();
             let digest = arkret_sdk::identity::claim_digest(claim).unwrap_or_default();
             HandleClaimRow {
                 is_primary: primary.as_deref() == Some(handle.as_str()) && !handle.is_empty(),
                 handle,
-                issuer: claim
-                    .issuer_id
-                    .as_ref()
-                    .map(ToString::to_string)
-                    .unwrap_or_else(|| "(unknown)".to_owned()),
-                binding_state: claim
-                    .binding_state
-                    .map(|s| format!("{s:?}").to_lowercase())
-                    .unwrap_or_else(|| "(unset)".to_owned()),
+                issuer: claim.issuer_id.to_string(),
+                binding_state: format!("{:?}", claim.binding_state).to_lowercase(),
                 created_at: arkret_sdk::canonical::format_timestamp_canonical(claim.created_at),
                 expires_at: claim
                     .expires_at
@@ -473,23 +472,22 @@ mod tests {
         let now = chrono::Utc::now();
         let claim = HandleClaim {
             schema: HandleClaim::SCHEMA.to_owned(),
-            handle: Some(Handle::parse("alice:acme.example").unwrap()),
+            handle: Handle::parse("alice:acme.example").unwrap(),
             handle_aliases: Vec::new(),
-            subject_id: Some(
+            subject_account_id: arkret_sdk::AccountId::new(
                 crate::mls_api_helpers::principal_core_id("did:web:acme.example:principals:alice")
                     .unwrap(),
+                arkret_sdk::DidCoreId::new("ak:did_core:web:station.acme.example").unwrap(),
             ),
-            issuer_id: Some(
-                crate::mls_api_helpers::principal_core_id("did:web:issuer.acme.example").unwrap(),
-            ),
+            issuer_id: crate::mls_api_helpers::principal_core_id("did:web:issuer.acme.example")
+                .unwrap(),
             vouching_id: None,
-            binding_state: Some(HandleBindingState::Verified),
+            binding_state: HandleBindingState::Verified,
             claim_kind: None,
             visibility: None,
             audience: None,
             challenge: None,
             claim_scope: Default::default(),
-            member_delivery_binding: None,
             claims: Vec::new(),
             created_at: now - chrono::Duration::hours(1),
             expires_at: Some(now + chrono::Duration::days(30)),
@@ -557,20 +555,21 @@ mod tests {
                 .unwrap();
         let claim = HandleClaim {
             schema: HandleClaim::SCHEMA.to_owned(),
-            handle: Some(Handle::parse("alice:acme.example").unwrap()),
+            handle: Handle::parse("alice:acme.example").unwrap(),
             handle_aliases: Vec::new(),
-            subject_id: Some(subject.clone()),
-            issuer_id: Some(
-                crate::mls_api_helpers::principal_core_id("did:web:issuer.acme.example").unwrap(),
+            subject_account_id: arkret_sdk::AccountId::new(
+                subject.clone(),
+                arkret_sdk::DidCoreId::new("ak:did_core:web:station.acme.example").unwrap(),
             ),
+            issuer_id: crate::mls_api_helpers::principal_core_id("did:web:issuer.acme.example")
+                .unwrap(),
             vouching_id: None,
-            binding_state: Some(HandleBindingState::Verified),
+            binding_state: HandleBindingState::Verified,
             claim_kind: None,
             visibility: None,
             audience: None,
             challenge: None,
             claim_scope: Default::default(),
-            member_delivery_binding: None,
             claims: Vec::new(),
             created_at: now,
             expires_at: Some(now + chrono::Duration::days(30)),
@@ -579,7 +578,10 @@ mod tests {
             proofs: Vec::new(),
         };
         let res = DirectorySubjectHandleList {
-            subject_id: subject,
+            account_id: arkret_sdk::AccountId::new(
+                subject,
+                arkret_sdk::DidCoreId::new("ak:did_core:web:station.acme.example").unwrap(),
+            ),
             claims: vec![claim],
             primary_handle: Some(Handle::parse("alice:acme.example").unwrap()),
             as_of: now,

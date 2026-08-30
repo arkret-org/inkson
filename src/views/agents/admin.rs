@@ -773,8 +773,18 @@ fn spawn_set_agent_enabled(
         }
         let id_for_status = id.clone();
         let status_changed_at = crate::clock::now_utc_millis();
-        let agent_actor_id = key_state.agent_id.clone();
-        let controller_actor_id = key_state.controller_id.clone();
+        let station_id = match crate::operation::authoring_station_id() {
+            Ok(station_id) => station_id,
+            Err(error) => {
+                last_op_status.set(format!("Station route is unavailable: {error}"));
+                return;
+            }
+        };
+        let agent_actor_id = arkret_sdk::ActorId::service(key_state.agent_id.clone());
+        let controller_actor_id = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+            key_state.controller_id.clone(),
+            station_id,
+        ));
         let intent = if enabled {
             arkret_event_draft::build_agent_resume_intent(
                 agent_actor_id.clone(),
@@ -834,7 +844,7 @@ fn spawn_set_agent_enabled(
                 signer.as_ref(),
                 account.did(),
                 device_id.as_str(),
-                &agent_actor_id,
+                agent_actor_id.signing_principal_id(),
                 key_state.principal_control_realm_id.as_str(),
                 state_store,
             )
@@ -876,7 +886,7 @@ fn spawn_set_agent_enabled(
                 signer.as_ref(),
                 account.did(),
                 device_id.as_str(),
-                &agent_actor_id,
+                agent_actor_id.signing_principal_id(),
                 key_state.principal_control_realm_id.as_str(),
                 state_store,
             )
@@ -955,8 +965,18 @@ fn spawn_deactivate_agent(
             }
         };
         let changed_at = crate::clock::now_utc_millis();
-        let agent_actor_id = key_state.agent_id.clone();
-        let controller_actor_id = key_state.controller_id.clone();
+        let station_id = match crate::operation::authoring_station_id() {
+            Ok(station_id) => station_id,
+            Err(error) => {
+                last_op_status.set(format!("Station route is unavailable: {error}"));
+                return;
+            }
+        };
+        let agent_actor_id = arkret_sdk::ActorId::service(key_state.agent_id.clone());
+        let controller_actor_id = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+            key_state.controller_id.clone(),
+            station_id,
+        ));
         let operation = match arkret_event_draft::build_agent_deactivate_intent(
             agent_actor_id,
             controller_actor_id,

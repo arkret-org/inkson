@@ -8,7 +8,7 @@ use crate::models::ResolveHandleView;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct InviteeResolution {
-    pub principal_id: arkret_sdk::DidCoreId,
+    pub account_id: arkret_sdk::AccountId,
     pub handle: Option<String>,
     pub invite_delivery_target: arkret_sdk::InviteDeliveryTarget,
     pub introduction_evidence: arkret_sdk::IntroductionEvidence,
@@ -18,7 +18,7 @@ pub struct InviteeResolution {
 impl InviteeResolution {
     fn invite_address(&self) -> arkret_sdk::InviteAddress {
         arkret_sdk::InviteAddress {
-            subject_id: self.principal_id.clone(),
+            subject_id: self.account_id.principal_id.clone(),
             recipient_id: self.invite_delivery_target.recipient_id.clone(),
             service_resolution: self.invite_delivery_target.service_resolution.clone(),
             route_assistance: None,
@@ -28,7 +28,7 @@ impl InviteeResolution {
 }
 
 pub(crate) struct ContactRequestAddressing {
-    pub(crate) target: arkret_sdk::DidCoreId,
+    pub(crate) target: arkret_sdk::AccountId,
     pub(crate) introduction_evidence: arkret_sdk::ContactIntroductionEvidence,
 }
 
@@ -40,7 +40,10 @@ fn invitee_resolution(
     invite_address
         .validate()
         .map_err(|err| anyhow::anyhow!("invalid invite_address: {err}"))?;
-    let principal_id = invite_address.subject_id.clone();
+    let account_id = arkret_sdk::AccountId::new(
+        invite_address.subject_id.clone(),
+        invite_address.recipient_id.clone(),
+    );
     let invite_delivery_target =
         arkret_sdk::InviteDeliveryTarget::from_invite_address(&invite_address);
     invite_delivery_target
@@ -50,7 +53,7 @@ fn invitee_resolution(
     let introduction_evidence_digest =
         crate::canonical::canonical_sha256(&introduction_evidence_value)?;
     Ok(InviteeResolution {
-        principal_id,
+        account_id,
         handle,
         invite_delivery_target,
         introduction_evidence,
@@ -221,7 +224,7 @@ fn parse_explicit_invite_target(target: &str) -> anyhow::Result<Option<InviteeRe
 fn resolved_handle_claim(
     resolved: &ResolveHandleView,
 ) -> anyhow::Result<Option<arkret_models_identity::HandleClaim>> {
-    let Some(claim) = resolved.handle_claim.clone() else {
+    let Some(claim) = resolved.claims.as_ref().and_then(|claims| claims.first()).cloned() else {
         return Ok(None);
     };
     claim
@@ -230,25 +233,33 @@ fn resolved_handle_claim(
     Ok(Some(claim))
 }
 
-fn resolved_member_delivery_binding(
-    resolved: &ResolveHandleView,
-) -> anyhow::Result<Option<arkret_models_identity::DeliveryBindingHint>> {
-    Ok(resolved.member_delivery_binding_ref().cloned())
-}
-
-fn resolved_by_service_id(resolved: &ResolveHandleView) -> Option<arkret_sdk::DidCoreId> {
-    resolved
-        .via_services
-        .iter()
-        .find_map(|service_id| arkret_sdk::DidCoreId::new(service_id.clone()).ok())
-}
-
-fn resolved_at(resolved: &ResolveHandleView) -> Option<chrono::DateTime<chrono::Utc>> {
-    resolved
-        .as_of
-        .as_deref()
-        .and_then(|ts| chrono::DateTime::parse_from_rfc3339(ts).ok())
-        .map(|ts| ts.with_timezone(&chrono::Utc))
+fn resolved_account_delivery_target(
+    account_id: &arkret_sdk::AccountId,
+) -> anyhow::Result<arkret_sdk::InviteDeliveryTarget> {
+    let host = account_id
+        .station_id
+        .as_str()
+        .strip_prefix("ak:did_core:web:")
+        .and_then(|rest| rest.split(':').next())
+        .filter(|host| !host.is_empty())
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "handle result Station has no derivable HTTPS origin; use a principal locator"
+            )
+        })?;
+    let current_record_url = format!(
+        "https://{host}{}",
+        arkret_sdk::canonical_service_current_record_path(&account_id.station_id)
+    );
+    let target = arkret_sdk::InviteDeliveryTarget::station(
+        account_id.station_id.clone(),
+        arkret_sdk::ServiceResolutionCarrier::CurrentRecordUrl {
+            current_record_url,
+            pinned_record_digest: None,
+        },
+    );
+    target.validate()?;
+    Ok(target)
 }
 
 impl crate::transport::TransportClient {
@@ -350,25 +361,22 @@ impl crate::transport::TransportClient {
                 },
             )
             .await?;
-        let subject = resolved.subject_id();
-        let recipient_service = resolved_member_delivery_binding(&resolved)?
-            .map(|binding| binding.recipient_id)
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "directory handle result did not include a recipient service; use DID + server"
-                )
-            })?;
-        let address = invite_address(subject.as_str(), recipient_service.as_str())?;
+        let target = resolved_account_delivery_target(&resolved.account_id)?;
+        let address = arkret_sdk::InviteAddress {
+            subject_id: resolved.account_id.principal_id.clone(),
+            recipient_id: resolved.account_id.station_id.clone(),
+            service_resolution: target.service_resolution,
+            route_assistance: None,
+            recipient_kind: target.recipient_kind,
+        };
         let handle = arkret_models_identity::Handle::parse(&resolved.handle)
             .map_err(|err| anyhow::anyhow!("directory returned invalid handle: {err}"))?;
-        let resolved_by = resolved_by_service_id(&resolved);
         let evidence = match resolved_handle_claim(&resolved)? {
             Some(handle_claim) => arkret_sdk::IntroductionEvidence::HandleClaim {
                 handle: handle.clone(),
                 handle_claim: Box::new(handle_claim),
-                member_delivery_binding_candidate: None,
-                resolved_by,
-                resolved_at: resolved_at(&resolved),
+                resolved_by: None,
+                resolved_at: None,
             },
             None => arkret_sdk::IntroductionEvidence::ExplicitAddress,
         };
@@ -401,25 +409,27 @@ impl crate::transport::TransportClient {
             let target_id = resolved.subject_id().clone();
             let handle = arkret_models_identity::Handle::parse(&resolved.handle)
                 .map_err(|err| anyhow::anyhow!("directory returned invalid handle: {err}"))?;
-            let resolved_by = resolved_by_service_id(&resolved);
             let introduction_evidence = match resolved_handle_claim(&resolved)? {
                 Some(handle_claim) => arkret_sdk::ContactIntroductionEvidence::HandleClaim {
                     handle,
                     handle_claim: Box::new(handle_claim),
-                    resolved_by,
-                    resolved_at: resolved_at(&resolved),
+                    resolved_by: None,
+                    resolved_at: None,
                 },
                 None => arkret_sdk::ContactIntroductionEvidence::ExplicitAddress,
             };
             return Ok(ContactRequestAddressing {
-                target: target_id,
+                target: resolved.account_id,
                 introduction_evidence,
             });
         }
         let target_id = crate::mls_api_helpers::principal_core_id(target)
             .map_err(|err| anyhow::anyhow!("invalid contact target DID `{target}`: {err}"))?;
         Ok(ContactRequestAddressing {
-            target: target_id,
+            target: arkret_sdk::AccountId::new(
+                target_id,
+                crate::operation::authoring_station_id()?,
+            ),
             introduction_evidence: arkret_sdk::ContactIntroductionEvidence::ExplicitAddress,
         })
     }

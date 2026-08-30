@@ -302,15 +302,17 @@ pub(super) const TEST_SESSION_CREDENTIAL_INJECTION_KEY: &str =
     test,
     all(target_arch = "wasm32", feature = "wasm-localstorage-secrets-test")
 ))]
-fn parse_test_service_account_id(
+fn parse_test_account_id(
     fixture: &Value,
-) -> Result<arkret_sdk::ServiceAccountId, &'static str> {
+) -> Result<arkret_sdk::AccountId, &'static str> {
     let value = fixture
-        .get("service_account_id")
-        .ok_or("service_account_id is missing")?
-        .as_str()
-        .ok_or("service_account_id is not a string")?;
-    arkret_sdk::ServiceAccountId::new(value.to_owned()).map_err(|_| "service_account_id is invalid")
+        .get("account_id")
+        .ok_or("account_id is missing")?
+        .clone();
+    let account_id: arkret_sdk::AccountId =
+        serde_json::from_value(value).map_err(|_| "account_id is invalid")?;
+    account_id.validate().map_err(|_| "account_id is invalid")?;
+    Ok(account_id)
 }
 
 /// Dev-only bearer injection for cotest scenarios that intentionally exercise
@@ -393,12 +395,12 @@ pub(super) async fn inject_test_session_grant(
             return None;
         }
     };
-    let service_account_id = match parse_test_service_account_id(&parsed) {
-        Ok(service_account_id) => service_account_id,
+    let fixture_account_id = match parse_test_account_id(&parsed) {
+        Ok(account_id) => account_id,
         Err(error) => {
             tracing::warn!(
                 error,
-                "test session injection skipped: invalid service_account_id fixture"
+                "test session injection skipped: invalid account_id fixture"
             );
             return None;
         }
@@ -409,6 +411,10 @@ pub(super) async fn inject_test_session_grant(
     };
     let principal_did = expected_account.did().clone();
     let account_key = expected_account.principal_id().clone();
+    if fixture_account_id != expected_account.authority {
+        tracing::warn!("test session injection skipped: account_id does not match active account");
+        return None;
+    }
     // The browser fixture starts with the account DID already present in the
     // config signals, but a fresh LocalStateStore can still be scoped to the
     // anonymous namespace. Defensively select the fixture account before
@@ -633,8 +639,7 @@ pub(super) async fn inject_test_session_grant(
         session_private_key_pem: String::new(),
         grant_id,
         audience_id: arkret_sdk::DidCoreId::new(audience.clone()).ok()?,
-        principal_id: account_key.clone(),
-        service_account_id,
+        account_id: fixture_account_id,
         device_id: arkret_sdk::DeviceId::new(device_id.to_owned()).ok()?,
         // MUST match the active server so the bootstrap does not discard the
         // grant as stale (see `grant_matches_station`).
@@ -642,9 +647,8 @@ pub(super) async fn inject_test_session_grant(
         grant_expires_at: Some(now + chrono::Duration::hours(8)),
         stored_at: now,
     };
-    let station_id = arkret_sdk::DidCoreId::new(audience.clone()).ok()?;
     let user_store = match crate::secure_key_store::UserLocalStore::new(
-        arkret_sdk::AccountId::new(grant.principal_id.clone(), station_id),
+        grant.account_id.clone(),
         grant.device_id.clone(),
     ) {
         Ok(user_store) => user_store,
@@ -715,25 +719,23 @@ mod test_session_injection_tests {
     use super::*;
 
     #[test]
-    fn service_account_id_is_required_and_typed() {
-        let parsed = serde_json::json!({ "service_account_id": "alice-session-grant" });
-        let service_account_id =
-            parse_test_service_account_id(&parsed).expect("valid service account id");
-        assert_eq!(service_account_id.as_str(), "alice-session-grant");
+    fn account_id_is_required_and_typed() {
+        let parsed = serde_json::json!({
+            "account_id": {
+                "principal_id": "ak:did_core:web:alice.example",
+                "station_id": "ak:did_core:web:station.example"
+            }
+        });
+        let account_id = parse_test_account_id(&parsed).expect("valid account id");
+        assert_eq!(account_id.principal_id.as_str(), "ak:did_core:web:alice.example");
 
         assert_eq!(
-            parse_test_service_account_id(&serde_json::json!({})),
-            Err("service_account_id is missing")
+            parse_test_account_id(&serde_json::json!({})),
+            Err("account_id is missing")
         );
         assert_eq!(
-            parse_test_service_account_id(&serde_json::json!({ "service_account_id": 42 })),
-            Err("service_account_id is not a string")
-        );
-        assert_eq!(
-            parse_test_service_account_id(
-                &serde_json::json!({ "service_account_id": "ak:account:invalid" })
-            ),
-            Err("service_account_id is invalid")
+            parse_test_account_id(&serde_json::json!({ "account_id": 42 })),
+            Err("account_id is invalid")
         );
     }
 }

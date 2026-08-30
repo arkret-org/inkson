@@ -618,11 +618,13 @@ mod tests {
             grant_id: "ak:session_grant:AY6DJbBwavsGTQuBZZiqqw9MVcqPZ8QX8invQ3i2kpi7".to_owned(),
             audience_id: arkret_sdk::DidCoreId::new("ak:did_core:webvh:z6mkfixture:soland.example")
                 .unwrap(),
-            principal_id: arkret_sdk::DidCoreId::new(
-                "ak:did_core:webvh:z6mkfixture:alice.example".to_owned(),
-            )
-            .unwrap(),
-            service_account_id: arkret_sdk::ServiceAccountId::new("account-1").unwrap(),
+            account_id: arkret_sdk::AccountId::new(
+                arkret_sdk::DidCoreId::new(
+                    "ak:did_core:webvh:z6mkfixture:alice.example".to_owned(),
+                )
+                .unwrap(),
+                arkret_sdk::DidCoreId::new("ak:did_core:web:soland.example").unwrap(),
+            ),
             device_id: arkret_sdk::DeviceId::new(
                 "ak:device:01964137-0000-7000-8000-000000000001".to_owned(),
             )

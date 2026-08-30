@@ -2476,30 +2476,15 @@ export async function mockArkretApi(
         body.realm_id ??
         body.requester ??
         CURRENT_STATION_ID;
-      const memberDeliveryBinding = {
-        recipient_id: CURRENT_STATION_ID,
-        recipient_kind: "station",
-        binding_source: "explicit",
-        delivery_modes: ["events", "sync", "to_device", "push", "keypackages"],
-      };
       return json(route, {
-        did: "did:web:alice.example",
-        subject: "did:web:alice.example",
+        account_id: {
+          principal_id: accountPrincipalId,
+          station_id: CURRENT_STATION_ID,
+        },
         handle: body.handle,
-        audience,
-        member_delivery_binding: memberDeliveryBinding,
-        handle_claim: {
-          subject: "did:web:alice.example",
-          handle: body.handle,
-          issuer: CURRENT_STATION_ID,
-          audience,
-          created_at: "2026-04-28T12:00:00.000Z",
-          member_delivery_binding: memberDeliveryBinding,
-        },
-        did_document: {
-          id: "did:web:alice.example",
-          alsoKnownAs: [`acct:${body.handle}`],
-        },
+        verified: true,
+        claims: [],
+        source_refs: [audience],
       });
     }
 

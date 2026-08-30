@@ -129,12 +129,6 @@ impl CircleSummary {
 /// AKP-0007 reason / error codes surfaced to the user via the Toast
 /// layer. Maps from the wire `reason_code` (a `failed_precondition` /
 /// `schema_violation` sub-code) to a typed enum the UI can translate.
-///
-/// One Circle-adjacent code is the top-level
-/// [`arkret_sdk::error_codes_codes::ErrorCode::DELIVERY_BINDING_HANDED_OVER`]
-/// already registered in AKP-0006; we surface it through the same
-/// pipeline so a single Toast component handles all Circle-adjacent
-/// failures.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CircleErrorKind {
     /// `circle_realm_mismatch` — object's `scope_circle_id` references
@@ -158,9 +152,6 @@ pub enum CircleErrorKind {
     /// `circle_encryption_below_realm_floor` — attempted to create a
     /// plaintext Circle where the parent Realm requires E2EE.
     EncryptionBelowRealmFloor,
-    /// `delivery_binding_handed_over` — the Circle's delivery binding
-    /// moved to another epoch / device set; the caller must re-fetch.
-    DeliveryBindingHandedOver,
 }
 
 impl CircleErrorKind {
@@ -183,17 +174,6 @@ impl CircleErrorKind {
         }
     }
 
-    /// Match an `ErrorEnvelope.code` against Circle-adjacent wire codes
-    /// that may be emitted directly as the envelope code.
-    pub fn from_error_code(code: &str) -> Option<Self> {
-        match arkret_sdk::ErrorCode::from_wire(code) {
-            Some(arkret_sdk::ErrorCode::DeliveryBindingHandedOver) => {
-                Some(Self::DeliveryBindingHandedOver)
-            }
-            _ => None,
-        }
-    }
-
     /// English-key for the i18n dictionary
     /// (`error.circle.<kind>` family). Localized strings live in
     /// [`crate::i18n::english_translations`].
@@ -206,7 +186,6 @@ impl CircleErrorKind {
             Self::ScopeRebindForbidden => "error.circle.scope_rebind_forbidden",
             Self::MetadataFloorViolated => "error.circle.metadata_floor",
             Self::EncryptionBelowRealmFloor => "error.circle.encryption_below_realm_floor",
-            Self::DeliveryBindingHandedOver => "error.circle.delivery_binding_handed_over",
         }
     }
 
@@ -233,9 +212,6 @@ impl CircleErrorKind {
             }
             Self::EncryptionBelowRealmFloor => {
                 "This Realm requires E2EE, so the Circle must stay MLS-backed."
-            }
-            Self::DeliveryBindingHandedOver => {
-                "The Circle's delivery binding moved to a newer set of devices — please retry."
             }
         }
     }
@@ -311,15 +287,6 @@ mod tests {
     }
 
     #[test]
-    fn direct_circle_errors_use_error_code() {
-        assert_eq!(
-            CircleErrorKind::from_error_code(arkret_sdk::ErrorCode::DELIVERY_BINDING_HANDED_OVER),
-            Some(CircleErrorKind::DeliveryBindingHandedOver)
-        );
-        assert_eq!(CircleErrorKind::from_error_code("param_invalid"), None);
-    }
-
-    #[test]
     fn summary_into_scope_round_trips() {
         let summary = CircleSummary {
             id: "ak:circle:opsroom".to_owned(),
@@ -347,7 +314,6 @@ mod tests {
             CircleErrorKind::ScopeRebindForbidden.i18n_key(),
             CircleErrorKind::MetadataFloorViolated.i18n_key(),
             CircleErrorKind::EncryptionBelowRealmFloor.i18n_key(),
-            CircleErrorKind::DeliveryBindingHandedOver.i18n_key(),
         ];
         let unique: std::collections::HashSet<_> = keys.iter().copied().collect();
         assert_eq!(unique.len(), keys.len(), "i18n keys must be distinct");

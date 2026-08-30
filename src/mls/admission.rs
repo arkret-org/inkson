@@ -584,6 +584,15 @@ fn build_mls_welcome_payload_with_requester(
     let capabilities_digest =
         arkret_sdk::Hash::new(arkret_sdk::canonical::sha256_digest(&capabilities_bytes))
             .map_err(|err| format!("invalid claimed KeyPackage capabilities digest: {err}"))?;
+    let requester_actor_id = match &trust_binding {
+        arkret_sdk::MlsRequesterTrustBinding::RequesterDevice { .. } =>
+            crate::mls_api_helpers::local_account_actor_id(requester_did.as_str())
+                .map_err(|error| format!("invalid requester AccountId: {error}"))?,
+        arkret_sdk::MlsRequesterTrustBinding::RequesterMinimalMetadataPairwise { .. } =>
+            arkret_sdk::ActorId::service(requester_did.clone()),
+        arkret_sdk::MlsRequesterTrustBinding::RequesterNativeAgent { .. } =>
+            arkret_sdk::ActorId::service(requester_did.clone()),
+    };
     let envelope = arkret_sdk::UnsignedMlsWelcomeClaimEnvelope::new(
         arkret_sdk::MlsWelcomeClaimEnvelopeSigningInput {
             keypackage_ref: claim.keypackage_ref.clone(),
@@ -591,7 +600,7 @@ fn build_mls_welcome_payload_with_requester(
             intended_realm_id,
             claim_id: arkret_sdk::NonEmptyString::new(claim.claim_id.clone())
                 .map_err(|err| format!("invalid MLS Welcome claim id: {err}"))?,
-            requester_actor_id: requester_did,
+            requester_actor_id,
             trust_binding,
             welcome_digest: welcome.welcome_hash.clone(),
             created_at: crate::clock::now_utc_canonical(),
@@ -607,7 +616,7 @@ fn build_mls_welcome_payload_with_requester(
             .ok_or_else(|| "device Welcome requester is missing its sender device id".to_owned())?;
         let requester_actor_id = envelope.signing_input().requester_actor_id.clone();
         sign_welcome_claim_envelope(
-            requester_actor_id.as_str(),
+            requester_actor_id.signing_principal_id().as_str(),
             sender_device_id.as_str(),
             envelope,
         )?

@@ -605,7 +605,8 @@ pub async fn join_call_media(
     let mut token_request: CallMediaTokenExchangeRequestBody = call_media_token_exchange(
         ids.realm_id.clone(),
         ids.call_id.clone(),
-        ids.actor_id.clone(),
+        crate::mls_api_helpers::local_account_actor_id(ids.actor_id.as_str())
+            .map_err(|_| RtcClientError::ParticipantBindingInvalid)?,
         ids.device_id.clone(),
         request.focus_id.clone(),
     );
@@ -647,7 +648,8 @@ pub async fn join_call_media(
     let ice_request = MediaIceConfigRequestBody {
         realm_id: ids.realm_id.clone(),
         call_id: request.call_id.clone(),
-        actor_id: ids.actor_id.clone(),
+        actor_id: crate::mls_api_helpers::local_account_actor_id(ids.actor_id.as_str())
+            .map_err(|_| RtcClientError::ParticipantBindingInvalid)?,
         device_id: ids.device_id.clone(),
         mode: MediaIceMode::Sfu,
     };

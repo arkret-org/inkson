@@ -198,8 +198,7 @@ pub(crate) async fn prepare_pcr_policy_recovery(
     }
     let mut reanchor = arkret_sdk::TypedEventDraft::<arkret_sdk::event_spec::DeviceReanchor>::new(
         scope_ref.clone(),
-        verified_session.account_id.principal_id.clone(),
-        station_id.clone(),
+        arkret_sdk::ActorId::account(verified_session.account_id.clone()),
         reanchor_payload,
     )?
     .with_prev_refs(frontier.frontier_event_ids)
@@ -237,8 +236,7 @@ pub(crate) async fn prepare_pcr_policy_recovery(
     let mut authorize =
         arkret_sdk::TypedEventDraft::<arkret_sdk::event_spec::DeviceAuthorize>::new(
             scope_ref,
-            verified_session.account_id.principal_id.clone(),
-            station_id,
+            arkret_sdk::ActorId::account(verified_session.account_id.clone()),
             authorize_payload,
         )?
         .with_prev_refs(vec![reanchor_event_id.clone()])

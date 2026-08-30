@@ -653,37 +653,6 @@ fn build_plaintext_visible_services_event_matches_event_schema() {
     assert_envelope_matches_schema("build_plaintext_visible_services_event", &envelope);
 }
 
-/// The genesis `ak.realm.delivery_binding_policy` value is authored through
-/// the SDK `DeliveryBindingPolicyPayload` strong type; this gate pins the
-/// emitted body against the closed
-/// `event-payload.schema.json#/$defs/realm_delivery_binding_policy_payload`.
-#[test]
-fn realm_bootstrap_delivery_binding_policy_matches_payload_schema() {
-    let events = authored_realm_bootstrap(&[], None);
-
-    let mut policy = events
-        .iter()
-        .find(|event| event.kind == EventKind::RealmDeliveryBindingPolicy)
-        .cloned()
-        .expect("bootstrap chain emits ak.realm.delivery_binding_policy");
-    assert_eq!(
-        policy.payload["allowed_recipient_ids"],
-        serde_json::json!(["ak:did_core:web:server.example"]),
-        "the recipient-service allow-list must stay a closed DID list, never the \
-         [\"*\"] unrestricted sentinel"
-    );
-    sign_authored(&mut policy);
-    assert_envelope_matches_schema(
-        "build_realm_bootstrap_events[delivery_binding_policy]",
-        &policy,
-    );
-    assert_matches_payload_def(
-        "build_realm_bootstrap_events[delivery_binding_policy]",
-        "realm_delivery_binding_policy_payload",
-        &serde_json::to_value(&policy.payload).expect("payload serializes"),
-    );
-}
-
 /// The alias carrier landed with spec finding
 /// `2026-07-30-realm-object-closed-schema-missing-carriers` gap 1, so the
 /// builder no longer refuses an alias — it emits `ak.realm.alias`, and the

@@ -1285,7 +1285,7 @@ async fn run_circle_scope_rotate_pass(
                 let active_members: BTreeSet<String> = circle
                     .member_ids
                     .iter()
-                    .map(arkret_sdk::DidCoreId::to_string)
+                    .map(ToString::to_string)
                     .collect();
                 let removals = ctx.state_store.read(|store| {
                     circle_mls_removal_candidates(
@@ -1340,7 +1340,7 @@ async fn run_circle_scope_rotate_pass(
                     && circle
                         .member_ids
                         .iter()
-                        .any(|member| member == &authority.principal_id)
+                        .any(|member| member.signing_principal_id() == &authority.principal_id)
             }) {
                 tracing::debug!(
                     %realm_id,
@@ -2599,7 +2599,7 @@ fn accepted_human_event_signing_device(event: &arkret_sdk::Event) -> Option<arkr
     let (controller, fragment) = proof.verification_method.as_str().split_once('#')?;
     let controller = arkret_sdk::Did::new(controller.to_owned()).ok()?;
     let controller = arkret_sdk::project_did_to_core_id(&controller).ok()?;
-    if controller != event.actor_id {
+    if &controller != event.actor_id.signing_principal_id() {
         return None;
     }
     arkret_sdk::DeviceId::new(fragment.to_owned()).ok()
@@ -2611,7 +2611,7 @@ fn membership_operation_from_event(event: &arkret_sdk::Event) -> Option<RawOpera
     let metadata = LocalMembershipMetadata {
         operation_id: operation_id.clone(),
         event_id: operation_id.clone(),
-        actor_id: event.actor_id.as_str().to_owned(),
+        actor_id: event.actor_id.signing_principal_id().as_str().to_owned(),
         signing_device_id: accepted_human_event_signing_device(event),
         created_at: arkret_sdk::canonical::format_timestamp_canonical(event.created_at),
     };
@@ -2657,7 +2657,7 @@ fn membership_operation_from_client_event(
     let metadata = LocalMembershipMetadata {
         operation_id: operation_id.clone(),
         event_id: event.event_id.as_str().to_owned(),
-        actor_id: event.actor_id.as_str().to_owned(),
+        actor_id: event.actor_id.signing_principal_id().as_str().to_owned(),
         signing_device_id: accepted_human_event_signing_device(event),
         created_at: arkret_sdk::canonical::format_timestamp_canonical(event.created_at),
     };

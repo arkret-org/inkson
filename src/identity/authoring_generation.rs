@@ -86,8 +86,8 @@ pub(crate) fn cached_principal_authoring_generation(
 /// Event to be authored early just to answer this question.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct EventAuthorityFacts<'a> {
-    actor_id: &'a arkret_sdk::DidCoreId,
-    executed_by: Option<&'a arkret_sdk::DidCoreId>,
+    actor_id: &'a arkret_sdk::ActorId,
+    executed_by: Option<&'a arkret_sdk::ActorId>,
     authorization_ref: Option<&'a arkret_sdk::AuthorizationRef>,
 }
 
@@ -102,7 +102,10 @@ impl<'a> EventAuthorityFacts<'a> {
 
     /// The principal whose device generation authorizes this write.
     fn authority_principal(&self) -> &str {
-        self.executed_by.unwrap_or(self.actor_id).as_str()
+        self.executed_by
+            .unwrap_or(self.actor_id)
+            .signing_principal_id()
+            .as_str()
     }
 
     /// True when a managed Agent authors on a controller's behalf.

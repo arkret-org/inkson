@@ -1023,6 +1023,7 @@ fn recovery_gate_cache_key(intent: &EventIntent) -> Option<String> {
     let authority_principal = intent
         .executed_by()
         .unwrap_or_else(|| intent.actor_id())
+        .signing_principal_id()
         .as_str();
     let signer = crate::event_signer::active_signer()?;
     let device_id = signer.device_id()?;
@@ -1047,7 +1048,7 @@ fn actor_chain_basis_from_frontier(
     actor_id: &str,
     frontier: arkret_sdk::RealmActorFrontierView,
 ) -> anyhow::Result<(u64, Vec<arkret_sdk::EventId>)> {
-    if frontier.actor_id.as_str() != actor_id || &frontier.realm_id != realm_id {
+    if frontier.actor_id.signing_principal_id().as_str() != actor_id || &frontier.realm_id != realm_id {
         anyhow::bail!(
             "realm actor frontier mismatch: intent scope ({realm_id}, {actor_id}) but frontier scope ({}, {})",
             frontier.realm_id,
@@ -1900,10 +1901,10 @@ impl EventSubmitter {
 
     async fn verify_origin_station(&self, intent: &EventIntent) -> anyhow::Result<()> {
         let origin = self.describe_cached().await?.service_id.clone();
-        if intent.station_id() != &origin {
+        if intent.actor_id().route_service_id() != &origin {
             anyhow::bail!(
                 "Event-declared origin {} does not match this Station {}",
-                intent.station_id(),
+                intent.actor_id().route_service_id(),
                 origin
             );
         }
@@ -2164,7 +2165,10 @@ impl EventSubmitter {
         realm_id: &str,
     ) -> anyhow::Result<arkret_sdk::RealmActorFrontierView> {
         let selector = arkret_sdk::EventsFrontierSelector::RealmActor {
-            actor_id: crate::mls_api_helpers::principal_core_id(actor_id)?,
+            actor_id: arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+                crate::mls_api_helpers::principal_core_id(actor_id)?,
+                self.describe_cached().await?.service_id.clone(),
+            )),
             realm_id: arkret_sdk::RealmId::new(realm_id.to_owned())?,
         };
         let state = self
@@ -2975,7 +2979,7 @@ impl EventSubmitter {
             authority, &device_id, realm_id,
         )
         .map_err(anyhow::Error::msg)?;
-        if intent.actor_id() != &material.actor_id {
+        if intent.actor_id().signing_principal_id() != &material.actor_id {
             return Err(anyhow::anyhow!(
                 "minimal-metadata queued intent actor does not equal the Realm pairwise actor"
             ));
@@ -3196,7 +3200,7 @@ impl EventSubmitter {
         if intent.kind() == &arkret_sdk::EventKind::InviteAccept && intent.seal_basis().is_some() {
             return Ok((0, Vec::new()));
         }
-        let actor_id = intent.actor_id().as_str().to_owned();
+        let actor_id = intent.actor_id().signing_principal_id().as_str().to_owned();
         match self
             .events_frontier_actor(&actor_id, realm_id.as_str())
             .await
@@ -3597,7 +3601,7 @@ fn cba_exempt_reducer_kind(kind: &arkret_sdk::events::kinds::EventKind) -> bool 
 /// genesis apart from an invisible Realm and must not be consulted at all.
 #[derive(Default)]
 struct UnitAuthoringChain {
-    frontiers: BTreeMap<(arkret_sdk::RealmId, arkret_sdk::DidCoreId), (u64, arkret_sdk::EventId)>,
+    frontiers: BTreeMap<(arkret_sdk::RealmId, arkret_sdk::ActorId), (u64, arkret_sdk::EventId)>,
     genesis_digest_suite: Option<arkret_sdk::canonical::DigestSuite>,
 }
 

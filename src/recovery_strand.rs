@@ -198,8 +198,10 @@ pub async fn verify_recovery_authority_evidence(
     evidence: &crate::state::RecoveryMaterialEvidence,
 ) -> anyhow::Result<()> {
     evidence.pcr_genesis_unit.validate_ordered_envelopes()?;
-    if arkret_sdk::project_did_to_core_id(&evidence.principal_did)? != evidence.principal_id
-        || evidence.pcr_genesis_unit.create().actor_id != evidence.principal_id
+    if arkret_sdk::project_did_to_core_id(&evidence.principal_did)?
+        != evidence.account_id.principal_id
+        || evidence.pcr_genesis_unit.create().actor_id
+            != arkret_sdk::ActorId::account(evidence.account_id.clone())
         || evidence.pcr_genesis_unit.create().realm_id != evidence.principal_control_realm_id
         || evidence.pcr_genesis_unit.founding_authorize().realm_id
             != evidence.principal_control_realm_id
@@ -639,8 +641,8 @@ async fn submit_first_recovery_policy_seal(
     let http = api.sdk_http_client()?;
     let create = accepted_pcr_genesis_unit.create();
     let authorize = accepted_pcr_genesis_unit.founding_authorize();
-    if create.actor_id != *principal_id
-        || authorize.actor_id != *principal_id
+    if create.actor_id.signing_principal_id() != principal_id
+        || authorize.actor_id.signing_principal_id() != principal_id
         || create.realm_id != policy_event.realm_id
         || authorize.realm_id != policy_event.realm_id
     {

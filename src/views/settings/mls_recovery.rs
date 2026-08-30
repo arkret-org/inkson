@@ -112,7 +112,7 @@ fn start_recovery_key_generation(
         action_status.set("Frozen PCR authority evidence is required".to_owned());
         return;
     };
-    if recovery_material_evidence.principal_id != *account.principal_id()
+    if recovery_material_evidence.account_id != account.authority
         || recovery_material_evidence.principal_did != *account.did()
         || recovery_material_evidence.device_id != account.device_id
     {
@@ -334,25 +334,21 @@ pub fn SettingsMlsRecoveryPanel(
         let session = token();
         let authority = account_for_refill.authority.clone();
         let device = account_for_refill.device_id.clone();
-        let service_account_id = state_store
-            .read()
-            .session_grant()
-            .map(|grant| grant.service_account_id);
+        let has_session = state_store.read().session_grant().is_some();
         refill_busy.set(true);
         refill_status.set(crate::i18n::tr("settings.mls_keypackages.refill_busy"));
         spawn(async move {
-            let result = match service_account_id {
-                Some(service_account_id) => {
+            let result = match has_session {
+                true => {
                     crate::app::manual_refill_local_mls_key_packages(
                         base,
                         session,
                         authority,
-                        service_account_id,
                         device,
                     )
                     .await
                 }
-                None => Err("active session omits service_account_id".to_owned()),
+                false => Err("active session is missing".to_owned()),
             };
             match result {
                 Ok(count) => refill_status.set(format!(

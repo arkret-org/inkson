@@ -391,7 +391,6 @@ test("realm admin page handles metadata, modal member invite, epoch rotation and
     }),
   );
   expect(inviteBody.payload.introduction_evidence_digest).toMatch(/^sha256:/);
-  expect(inviteBody.payload.x_member_delivery_binding).toBeUndefined();
   await expect(page.getByTestId("realm-members-status")).toContainText(
     "invited ak:did_core:web:carol.example",
   );

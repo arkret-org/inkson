@@ -304,7 +304,7 @@ fn request_trust_bases(
 fn verify_authorization_incarnation_is_retained_join(
     checkpoint: &arkret_sdk::MlsGovernanceVerificationCheckpoint,
     scope: &arkret_sdk::HistoryEffectiveScope,
-    actor_id: &arkret_sdk::DidCoreId,
+    actor_id: &arkret_sdk::ActorId,
     incarnation: &arkret_sdk::AuthorizationIncarnation,
 ) -> anyhow::Result<u64> {
     let group_id =
@@ -385,22 +385,23 @@ pub async fn author_and_create_ordinary_human_request(
     device_id: &arkret_sdk::DeviceId,
     plan: OrdinaryHumanHistoryRequestPlan,
 ) -> anyhow::Result<(arkret_sdk::HistoryKeyRequestCreateOutcome, u64)> {
-    let requester_actor_id = arkret_sdk::project_did_to_core_id(requester_did)?;
-    if requester_actor_id != authority.principal_id {
+    let requester_principal_id = arkret_sdk::project_did_to_core_id(requester_did)?;
+    if requester_principal_id != authority.principal_id {
         anyhow::bail!("history request actor differs from the explicit account authority");
     }
     let (_, _, checkpoint) = request_trust_bases(state_store, &plan.effective_scope)?;
     let join_epoch = verify_authorization_incarnation_is_retained_join(
         &checkpoint,
         &plan.effective_scope,
-        &requester_actor_id,
+        &arkret_sdk::ActorId::account(authority.clone()),
         &plan.requester_authorization_incarnation,
     )?;
     if let Ok(durable) = runtime(state_store).durable_request(&plan.request_id) {
         if durable.request.effective_scope != plan.effective_scope
             || durable.request.requested_ranges != plan.requested_ranges
             || durable.request.expires_at != plan.expires_at
-            || durable.request.requester_actor_id != requester_actor_id
+            || durable.request.requester_actor_id
+                != arkret_sdk::ActorId::account(authority.clone())
             || durable.request.requester_authorization_incarnation
                 != plan.requester_authorization_incarnation
         {
@@ -432,7 +433,7 @@ pub async fn author_and_create_ordinary_human_request(
             request_id: plan.request_id.clone(),
             kind: arkret_sdk::HistoryKeyRequestKind::Value,
             effective_scope: plan.effective_scope.clone(),
-            requester_actor_id: requester_actor_id.clone(),
+            requester_actor_id: arkret_sdk::ActorId::account(authority.clone()),
             requester_sender_domain: device_id.as_str().to_owned(),
             requester_author_profile: arkret_sdk::AuthorProfile::OrdinaryHuman,
             requester_endpoint_authorization: endpoint_authorization.clone(),
@@ -470,7 +471,7 @@ pub async fn author_and_create_native_agent_request(
     let join_epoch = verify_authorization_incarnation_is_retained_join(
         &checkpoint,
         &plan.effective_scope,
-        &plan.requester_agent_id,
+        &arkret_sdk::ActorId::service(plan.requester_agent_id.clone()),
         &plan.requester_authorization_incarnation,
     )?;
     if let Ok(durable) = runtime(state_store).durable_request(&plan.request_id) {
@@ -489,7 +490,8 @@ pub async fn author_and_create_native_agent_request(
         if durable.request.effective_scope != plan.effective_scope
             || durable.request.requested_ranges != plan.requested_ranges
             || durable.request.expires_at != plan.expires_at
-            || durable.request.requester_actor_id != plan.requester_agent_id
+            || durable.request.requester_actor_id
+                != arkret_sdk::ActorId::service(plan.requester_agent_id.clone())
             || durable.request.requester_authorization_incarnation
                 != plan.requester_authorization_incarnation
             || !expected_endpoint
@@ -551,7 +553,7 @@ pub async fn author_and_create_native_agent_request(
             request_id: plan.request_id.clone(),
             kind: arkret_sdk::HistoryKeyRequestKind::Value,
             effective_scope: plan.effective_scope.clone(),
-            requester_actor_id: plan.requester_agent_id.clone(),
+            requester_actor_id: arkret_sdk::ActorId::service(plan.requester_agent_id.clone()),
             requester_sender_domain: plan.requester_agent_id.as_str().to_owned(),
             requester_author_profile: arkret_sdk::AuthorProfile::NativeAgent,
             requester_endpoint_authorization:
@@ -686,7 +688,9 @@ fn principal_signer_evidence_coordinates_from_event(
     let Ok(event) = serde_json::from_value::<arkret_sdk::Event>(value.clone()) else {
         return Ok(None);
     };
-    if event.actor_id != *actor_id || event.scope_ref.realm_id_opt() != Some(realm_id) {
+    if event.actor_id.signing_principal_id() != actor_id
+        || event.scope_ref.realm_id_opt() != Some(realm_id)
+    {
         return Ok(None);
     }
     for proof in &event.proofs {
@@ -798,6 +802,7 @@ fn build_signed_member_response(
 ) -> anyhow::Result<arkret_sdk::HistoryKeyResponseSendRequest> {
     let request_digest = request_record.request.request_digest()?;
     let request_receipt_digest = request_record.request_receipt.request_receipt_digest()?;
+    let source_actor_id = crate::mls_api_helpers::local_account_actor_id(source_actor_id.as_str())?;
     Ok(
         arkret_sdk::HistoryKeyResponseSendRequest::build_signed_proof(
             verification_method.clone(),
@@ -949,7 +954,9 @@ async fn build_member_source_attempt(
             manifest_admission_digest: admission.manifest_admission_digest.clone(),
             chunk_response_id: response_id.clone(),
             chunk_index: descriptor.chunk_index,
-            source_actor_id: source_actor_id.clone(),
+            source_actor_id: crate::mls_api_helpers::local_account_actor_id(
+                source_actor_id.as_str(),
+            )?,
             source_sender_domain: source_device_id.as_str().to_owned(),
         };
         let plaintext = arkret_sdk::HistoryChunkPlaintext {
@@ -1162,7 +1169,11 @@ pub async fn converge_member_history_recovery(
             .into_iter()
             .find(|durable| {
                 durable.request.effective_scope == scope
-                    && durable.request.requester_actor_id == actor_id
+                    && durable.request.requester_actor_id
+                        == arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+                            actor_id.clone(),
+                            authority.station_id.clone(),
+                        ))
                     && durable.request.requester_authorization_incarnation == incarnation
                     && ranges_cover(&durable.request.requested_ranges, &requested_ranges)
                     && durable.request.expires_at > now + chrono::Duration::minutes(1)
@@ -1564,14 +1575,17 @@ where
             arkret_sdk::HistoryKeyResponseContent::Chunk(chunk) => runtime
                 .verified_manifest(request_id, &chunk.manifest_digest)
                 .map_err(|error| anyhow::anyhow!(error.to_string()))?
-                .map(|manifest| arkret_sdk::VerifiedHistoryManifest {
+                .map(|manifest| -> anyhow::Result<_> { Ok(arkret_sdk::VerifiedHistoryManifest {
                     response_id: manifest.response_id,
-                    source_actor_id: manifest.source_actor_id,
+                    source_actor_id: crate::mls_api_helpers::local_account_actor_id(
+                        manifest.source_actor_id.as_str(),
+                    )?,
                     source_sender_domain: manifest.source_sender_domain,
                     manifest_digest: manifest.manifest_digest,
                     manifest_admission_digest: manifest.manifest_admission_digest,
                     chunks: manifest.chunks,
-                }),
+                }) })
+                .transpose()?,
             arkret_sdk::HistoryKeyResponseContent::Manifest(_) => None,
         };
         let verified = match arkret_sdk::verify_history_response_record(
@@ -1614,7 +1628,10 @@ where
                         request_id,
                         garth::DurableVerifiedHistoryManifest {
                             response_id: manifest.response_id,
-                            source_actor_id: manifest.source_actor_id,
+                            source_actor_id: manifest
+                                .source_actor_id
+                                .signing_principal_id()
+                                .clone(),
                             source_sender_domain: manifest.source_sender_domain,
                             manifest_digest: manifest.manifest_digest,
                             manifest_admission_digest: manifest.manifest_admission_digest,

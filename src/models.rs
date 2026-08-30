@@ -62,7 +62,7 @@ pub fn direct_conversation_binding_state_wire(
 }
 
 pub fn contact_peer_id(contact: &ContactListRow) -> arkret_sdk::DidCoreId {
-    contact.peer.contact_actor_id()
+    contact.peer.contact_actor_id().signing_principal_id().clone()
 }
 
 pub fn contact_scope_wire(scope: ContactScope) -> &'static str {
@@ -898,74 +898,33 @@ pub use arkret_models_integration::models_push::PushRegisterDeviceOutcome;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ResolveHandleView {
-    pub principal_id: arkret_sdk::DidCoreId,
+    pub account_id: arkret_sdk::AccountId,
     pub handle: String,
     #[serde(default)]
     pub verified: bool,
     #[serde(default)]
     pub claims: Option<Vec<arkret_models_identity::HandleClaim>>,
-    /// Audience the directory bound the response claim to. Spec 0a5ab85:
-    /// the client MUST reject claims whose audience doesn't match the
-    /// invocation context (e.g. the Space the user is about to join).
-    #[serde(default)]
-    pub audience: Option<String>,
-    /// Membership-builder routing evidence for `intent=member_add|invite`.
-    /// Some directory implementations expose this top-level; others carry
-    /// the same object inside `handle_claim.member_delivery_binding`.
-    #[serde(default)]
-    pub member_delivery_binding: Option<arkret_models_identity::DeliveryBindingHint>,
-    /// Typed handle claim envelope when the directory issued one.
-    #[serde(default)]
-    pub handle_claim: Option<arkret_models_identity::HandleClaim>,
-    /// §9.1 common resolve metadata.
-    #[serde(default)]
-    pub as_of: Option<String>,
     #[serde(default)]
     pub source_refs: Vec<String>,
     #[serde(default)]
-    pub policy_revision: Option<String>,
-    #[serde(default)]
-    pub stale: bool,
-    #[serde(default)]
-    pub divergent: bool,
-    #[serde(default)]
-    pub via_services: Vec<String>,
+    pub expires_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 impl ResolveHandleView {
     pub fn subject_id(&self) -> &arkret_sdk::DidCoreId {
-        &self.principal_id
-    }
-
-    pub fn member_delivery_binding_ref(
-        &self,
-    ) -> Option<&arkret_models_identity::DeliveryBindingHint> {
-        self.member_delivery_binding.as_ref().or_else(|| {
-            self.handle_claim
-                .as_ref()
-                .and_then(|claim| claim.member_delivery_binding.as_ref())
-        })
+        &self.account_id.principal_id
     }
 }
 
 impl From<arkret_models_discovery::DirectoryHandleResolutionOutcome> for ResolveHandleView {
     fn from(outcome: arkret_models_discovery::DirectoryHandleResolutionOutcome) -> Self {
         Self {
-            principal_id: outcome.principal_id,
+            account_id: outcome.account_id,
             handle: outcome.handle,
             verified: outcome.verified,
             claims: outcome.claims,
-            audience: outcome.audience,
-            member_delivery_binding: outcome.member_delivery_binding,
-            handle_claim: outcome.handle_claim,
-            as_of: outcome
-                .as_of
-                .map(arkret_sdk::canonical::format_timestamp_canonical),
             source_refs: outcome.source_refs,
-            policy_revision: outcome.policy_revision,
-            stale: outcome.stale,
-            divergent: outcome.divergent,
-            via_services: outcome.via_services,
+            expires_at: outcome.expires_at,
         }
     }
 }

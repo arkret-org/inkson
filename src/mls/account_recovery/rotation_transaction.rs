@@ -705,7 +705,7 @@ pub(super) fn build_active_series_event(
         BackupRotationKind::MlsHistory => BackupKind::MlsHistory,
     };
     let unsigned = arkret_sdk::UnsignedKeyBackupActiveSeries::new(
-        principal.clone(),
+        crate::mls_api_helpers::local_account_actor_id(principal.as_str())?,
         backup_kind,
         BackupSeriesId::new(series_id.to_owned())?,
         pointer_version,

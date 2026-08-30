@@ -806,8 +806,12 @@ fn verify_lifecycle_reducer(
 ) -> Result<(), AgentEvidenceRejectedReason> {
     let snapshot = authority_snapshot(&entry.evidence);
     let event = &witness.accepted_status_event;
-    if witness.agent_id != event.actor_id
-        || event.executed_by.as_ref() != Some(&witness.controller_id)
+    if &witness.agent_id != event.actor_id.signing_principal_id()
+        || event
+            .executed_by
+            .as_ref()
+            .map(arkret_sdk::ActorId::signing_principal_id)
+            != Some(&witness.controller_id)
         || event.realm_id != snapshot.core.principal_control_realm_id
         || arkret_sdk::signed_event_digest_claim(event)
             .ok()
@@ -1197,7 +1201,7 @@ fn event_agent_identity(envelope: &Value) -> Option<(arkret_sdk::Event, DidCoreI
     if event.actor_kind != Some(arkret_sdk::EnvelopeActorKind::Agent) || event.applet_id.is_some() {
         return None;
     }
-    let agent_id = event.executed_by.clone()?;
+    let agent_id = event.executed_by.as_ref()?.signing_principal_id().clone();
     let verification_method = event
         .proofs
         .iter()

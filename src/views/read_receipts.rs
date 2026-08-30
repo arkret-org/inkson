@@ -192,7 +192,7 @@ fn read_receipt_is_displayable(
         return false;
     }
     if policy.visibility == arkret_sdk::ReadReceiptVisibility::Private
-        && receipt.actor_id.as_str() != local_actor_id
+        && receipt.actor_id.signing_principal_id().as_str() != local_actor_id
     {
         return false;
     }
@@ -222,7 +222,7 @@ fn strand_read_position(
         ReadPositionKey {
             realm_id: plaintext.scope_ref.realm_id().as_str().to_owned(),
             scope_ref: scope_ref.to_owned(),
-            actor_id: receipt.actor_id.as_str().to_owned(),
+            actor_id: receipt.actor_id.signing_principal_id().as_str().to_owned(),
         },
         arkret_sdk::MessageId::from_event_id(&receipt.event_id)
             .as_str()

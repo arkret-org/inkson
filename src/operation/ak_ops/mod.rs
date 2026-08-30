@@ -58,8 +58,8 @@ pub(super) fn did_id(value: &str) -> anyhow::Result<arkret_sdk::DidCoreId> {
         .map_err(|err| anyhow::anyhow!("invalid DID {value:?}: {err:?}"))
 }
 
-pub(super) fn actor_id(value: &str) -> anyhow::Result<arkret_sdk::DidCoreId> {
-    crate::mls_api_helpers::principal_core_id(value)
+pub(super) fn actor_id(value: &str) -> anyhow::Result<arkret_sdk::ActorId> {
+    crate::mls_api_helpers::local_account_actor_id(value)
         .map_err(|err| anyhow::anyhow!("invalid actor core_id {value:?}: {err:?}"))
 }
 

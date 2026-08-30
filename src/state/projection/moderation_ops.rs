@@ -217,7 +217,7 @@ fn moderation_operation_from_event(event: &arkret_sdk::Event) -> Option<RawOpera
     let metadata = LocalModerationMetadata {
         operation_id: event_id.clone(),
         event_id: event_id.clone(),
-        actor_id: event.actor_id.as_str().to_owned(),
+        actor_id: event.actor_id.signing_principal_id().as_str().to_owned(),
         created_at: arkret_sdk::canonical::format_timestamp_canonical(event.created_at),
     };
     let payload = local_event.record_value(&metadata)?;

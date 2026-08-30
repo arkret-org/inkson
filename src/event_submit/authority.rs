@@ -26,7 +26,7 @@ pub(super) fn realm_create_authority_from_events(
         if event.realm_id.as_str() != realm_id || event.kind != arkret_sdk::EventKind::RealmCreate {
             return None;
         }
-        let controller_id = event.actor_id.as_str().trim();
+        let controller_id = event.actor_id.signing_principal_id().as_str().trim();
         if controller_id.is_empty() {
             return None;
         }
@@ -56,7 +56,7 @@ pub(super) fn realm_authority_root_claim(
     }
     match authority? {
         RealmCreateAuthority::Root { controller_id }
-            if controller_id == intent.actor_id().as_str() =>
+            if controller_id == intent.actor_id().signing_principal_id().as_str() =>
         {
             Some(
                 arkret_sdk::AuthorizationRef::new(arkret_wire::REALM_AUTHORITY_ROOT_CELL)
@@ -119,7 +119,7 @@ pub(super) fn data_event_auth_context(
     let signer = crate::event_signer::active_signer()
         .ok_or_else(|| anyhow::anyhow!("active signer is required for AuthContext"))?;
     let did = arkret_sdk::Did::new(signer.signer_did().to_owned())?;
-    if arkret_sdk::project_did_to_core_id(&did)? != *actor_id {
+    if arkret_sdk::project_did_to_core_id(&did)? != *actor_id.signing_principal_id() {
         anyhow::bail!("active signer did does not project to AuthContext actor");
     }
     Ok(arkret_sdk::AuthContext {
@@ -132,8 +132,8 @@ pub(super) fn data_event_auth_context(
 fn data_event_key_id_for(intent: &EventIntent) -> arkret_sdk::OpaqueLocalId {
     let controller = intent
         .executed_by()
-        .map(|did| did.as_str())
-        .unwrap_or_else(|| intent.actor_id().as_str());
+        .map(|actor| actor.signing_principal_id().as_str())
+        .unwrap_or_else(|| intent.actor_id().signing_principal_id().as_str());
     let Some(signer) = crate::event_signer::active_signer() else {
         return fallback_key_id();
     };

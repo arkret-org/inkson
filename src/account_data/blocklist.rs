@@ -106,7 +106,14 @@ fn target_from_ui(
             };
             Ok(AccountBlocklistTarget::Did(AccountBlocklistDidTarget {
                 kind,
-                actor_id: arkret_sdk::DidCoreId::new(value).map_err(|error| error.to_string())?,
+                actor_id: match kind {
+                    AccountBlocklistDidTargetKind::Actor => crate::mls_api_helpers::local_account_actor_id(&value)
+                        .map_err(|error| error.to_string())?,
+                    AccountBlocklistDidTargetKind::Service
+                    | AccountBlocklistDidTargetKind::Organization => arkret_sdk::ActorId::service(
+                        arkret_sdk::DidCoreId::new(value).map_err(|error| error.to_string())?,
+                    ),
+                },
             }))
         }
         BlocklistUiTargetKind::Domain => {
@@ -138,7 +145,7 @@ pub fn blocklist_target_kind_label(target: &AccountBlocklistTarget) -> &'static 
 
 pub fn blocklist_target_value(target: &AccountBlocklistTarget) -> &str {
     match target {
-        AccountBlocklistTarget::Did(target) => target.actor_id.as_str(),
+        AccountBlocklistTarget::Did(target) => target.actor_id.signing_principal_id().as_str(),
         AccountBlocklistTarget::DeviceId(target) => target.object_ref.as_str(),
         AccountBlocklistTarget::DeviceVerificationMethod(target) => target.value.as_str(),
         AccountBlocklistTarget::Applet(target) => target.object_ref.as_str(),

@@ -129,12 +129,13 @@ pub async fn update_profile(
 
     let viewer = account_viewer(submitter.http()).await?;
     let principal_id = viewer.principal_id.clone();
-    let evidence_principal_id = authority_evidence.principal_id.clone();
+    let evidence_principal_id = authority_evidence.account_id.principal_id.clone();
     authority_evidence
         .pcr_genesis_unit
         .validate_ordered_envelopes()?;
     if evidence_principal_id != principal_id
-        || authority_evidence.pcr_genesis_unit.create().actor_id != principal_id
+        || authority_evidence.pcr_genesis_unit.create().actor_id
+            != arkret_sdk::ActorId::account(authority_evidence.account_id.clone())
         || authority_evidence.pcr_genesis_unit.create().realm_id
             != authority_evidence.principal_control_realm_id
         || authority_evidence
@@ -244,7 +245,7 @@ pub async fn update_profile(
         profile_event,
     };
     body.validate_authoring_context(
-        &principal_id,
+        &authority_evidence.account_id,
         &authority_evidence.principal_control_realm_id,
         accepted_basis.as_ref(),
         signed.digest_suite(),
@@ -732,11 +733,17 @@ fn direct_conversation_peer_descriptor(
 ) -> anyhow::Result<arkret_sdk::contact_operations::ContactPeer> {
     Ok(match peer_controller {
         Some(controller_id) => arkret_sdk::contact_operations::ContactPeer::Agent {
-            agent_id: did_for_request_field("peer.agent_id", peer)?,
-            controller_id: did_for_request_field("peer.controller_id", controller_id)?,
+            actor_id: arkret_sdk::ActorId::service(did_for_request_field("peer.agent_id", peer)?),
+            controller_account_id: arkret_sdk::AccountId::new(
+                did_for_request_field("peer.controller_id", controller_id)?,
+                crate::operation::authoring_station_id()?,
+            ),
         },
         None => arkret_sdk::contact_operations::ContactPeer::Human {
-            principal_id: did_for_request_field("peer", peer)?,
+            account_id: arkret_sdk::AccountId::new(
+                did_for_request_field("peer", peer)?,
+                crate::operation::authoring_station_id()?,
+            ),
         },
     })
 }
@@ -1043,10 +1050,10 @@ pub(crate) fn primary_handle_from_viewer(
         .primary_handle_claim
         .as_ref()
         .filter(|claim| {
-            claim.subject_id.as_ref() == Some(&viewer.principal_id)
-                && claim.binding_state == Some(arkret_models_identity::HandleBindingState::Verified)
+            claim.subject_account_id.principal_id == viewer.principal_id
+                && claim.binding_state == arkret_models_identity::HandleBindingState::Verified
         })
-        .and_then(|claim| claim.handle.as_ref())
+        .map(|claim| &claim.handle)
         .map(|handle| handle.canonical().trim())
         .filter(|handle| !handle.is_empty())
         .unwrap_or_default()
@@ -1541,7 +1548,7 @@ pub async fn submit_read_cursor_advance(
     let payload = arkret_sdk::ReadCursor {
         id: arkret_sdk::ReadCursorId::new(marker.body.id.clone())?,
         schema: marker.body.schema.clone(),
-        actor_id: crate::mls_api_helpers::principal_core_id(&marker.actor)?,
+        actor_id: crate::mls_api_helpers::local_account_actor_id(&marker.actor)?,
         device_id: arkret_sdk::DeviceId::new(marker.device_id.clone())?,
         realm_id: arkret_sdk::RealmId::new(marker.body.realm_id.clone())?,
         read_scope: marker.body.read_scope.clone(),

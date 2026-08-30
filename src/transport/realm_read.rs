@@ -24,7 +24,7 @@ pub async fn authz_check_resource(
     resource: Option<arkret_sdk::WireResourceSelector>,
 ) -> anyhow::Result<AuthzCheckOutcome> {
     let body = arkret_models_collaboration::governance::authorization::AuthzCheckRequestBody {
-        actor_id: crate::mls_api_helpers::principal_core_id(actor)?,
+        actor_id: crate::mls_api_helpers::local_account_actor_id(actor)?,
         action: action.trim().to_owned(),
         resource,
         context: None,

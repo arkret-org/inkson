@@ -2047,11 +2047,6 @@ fn add_circle_error_keys(dict: &mut TranslationDict) {
         "error.circle.encryption_below_realm_floor",
         "This Realm requires E2EE, so the Circle must stay MLS-backed.",
     );
-    dict.set(
-        "error.circle.delivery_binding_handed_over",
-        "The Circle's delivery binding moved to a newer set of devices — please retry the request.",
-    );
-
     // CircleScopePicker — default scope option + help text (render site
     // localizes; `CircleScope::label()` stays a static str).
     dict.set("circle.scope.realm_everyone", "Realm (everyone)");

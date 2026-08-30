@@ -2145,7 +2145,7 @@ fn AppBootstrap() -> Element {
                                             state_store
                                                 .read()
                                                 .session_grant()
-                                                .map(|grant| grant.principal_id.to_string())
+                                                .map(|grant| grant.account_id.principal_id.to_string())
                                                 .unwrap_or_default()
                                         } else {
                                             configured

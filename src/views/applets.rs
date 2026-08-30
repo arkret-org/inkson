@@ -248,9 +248,13 @@ fn build_formal_applet_install_events(
         let grant = arkret_sdk::CapabilityGrantCreateBody {
             schema: arkret_wire::SchemaId::CAPABILITY_V1.to_owned(),
             realm_id: Some(realm_id.clone()),
-            issuer_id: actor.clone(),
-            subject: arkret_sdk::CapabilitySubject::CoreDid(package.service_id.clone()),
-            subject_station_id: Some(target_station_id.clone()),
+            issuer_id: arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+                actor.clone(),
+                target_station_id.clone(),
+            )),
+            subject: arkret_sdk::CapabilitySubject::Actor(arkret_sdk::ActorId::service(
+                package.service_id.clone(),
+            )),
             actions: vec![action.to_owned()],
             resources: vec![resource.clone()],
             constraints: vec![constraint.clone()],

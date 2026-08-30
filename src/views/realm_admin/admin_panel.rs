@@ -632,7 +632,7 @@ pub fn RealmAdminPanel(
                     }
                     if let Some(root) = authority_root.clone() {
                         {
-                            let controller_full = root.controller_id.as_str().to_owned();
+                            let controller_full = root.controller_id.signing_principal_id().as_str().to_owned();
                             let controller_label = short_protocol_id(&controller_full);
                             rsx! {
                                 div { class: "security-owner-summary",
@@ -2396,7 +2396,7 @@ fn build_owner_transfer_payload(
         realm_id: arkret_sdk::RealmId::new(realm_id.trim().to_owned())?,
         expected_state_digest: expected_authority_root_digest(root)?,
         patch: arkret_sdk::RealmOwnerTransferPatch {
-            controller_id: crate::mls_api_helpers::principal_core_id(successor)?,
+            controller_id: crate::mls_api_helpers::local_account_actor_id(successor)?,
         },
         successor_acceptance: arkret_sdk::SignatureMaterial::NonEmptyString(
             arkret_sdk::NonEmptyString::new(successor_acceptance.trim().to_owned())

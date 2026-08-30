@@ -218,12 +218,10 @@ pub fn realm_authority_root_value_from_events(
         };
         if kind == arkret_sdk::EventKind::RealmCreate.as_str() {
             root = (|| {
-                let controller = event
-                    .get("actor_id")
-                    .and_then(Value::as_str)
-                    .map(str::trim)
-                    .filter(|actor_id| !actor_id.is_empty())?;
-                let controller_id = arkret_sdk::DidCoreId::new(controller.to_owned()).ok()?;
+                let controller_id = serde_json::from_value::<arkret_sdk::ActorId>(
+                    event.get("actor_id")?.clone(),
+                )
+                .ok()?;
                 Some(RealmAuthorityRootValue::genesis(controller_id))
             })();
             continue;
@@ -237,8 +235,8 @@ pub fn realm_authority_root_value_from_events(
             arkret_wire::event_kind_str::REALM_OWNER_TRANSFER => {
                 if let Some(controller) = event
                     .pointer("/payload/patch/controller_id")
-                    .and_then(Value::as_str)
-                    .and_then(|next| arkret_sdk::DidCoreId::new(next.to_owned()).ok())
+                    .cloned()
+                    .and_then(|next| serde_json::from_value::<arkret_sdk::ActorId>(next).ok())
                 {
                     let epoch = current.controller_epoch.checked_add(1)?;
                     current.controller_id = controller;

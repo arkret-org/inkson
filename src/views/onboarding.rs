@@ -1314,7 +1314,7 @@ async fn issue_recovery_session_transport(
         .iter()
         .map(|operation| (*operation).to_owned())
         .collect::<Vec<_>>();
-    if outcome.principal_id != *principal_id
+    if outcome.account_id.principal_id != *principal_id
         || outcome.device_id.as_ref().map(arkret_sdk::DeviceId::as_str)
             != Some(handoff.device_id.as_str())
         || outcome.audience_id != handoff.audience_id
@@ -1439,7 +1439,7 @@ async fn issue_recovery_completion_grant(
         .bound_principal_did
         .clone()
         .ok_or_else(|| anyhow::anyhow!("account handoff omits its bound principal DID"))?;
-    if session.principal_id != principal_id {
+    if session.account_id.principal_id != principal_id {
         anyhow::bail!("recovery session grant principal does not match the account handoff");
     }
     let persisted = crate::state::PersistedSessionGrant {
@@ -1447,8 +1447,7 @@ async fn issue_recovery_completion_grant(
         session_private_key_pem: holder.session_signing_key_pkcs8_pem()?.to_string(),
         grant_id: session.grant_id.to_string(),
         audience_id: session.audience_id.clone(),
-        principal_id: session.principal_id.clone(),
-        service_account_id: session.service_account_id.clone(),
+        account_id: session.account_id.clone(),
         device_id: arkret_sdk::DeviceId::new(handoff.device_id.clone())?,
         station_url: url::Url::parse(&handoff.station_url)?,
         grant_expires_at: Some(session.expires_at),
@@ -3113,7 +3112,7 @@ async fn create_and_bind_identity(
             };
         let principal_did = checkpoint.did.clone();
         let principal_core_id = arkret_sdk::project_did_to_core_id(&principal_did)?;
-        if completion.session_grant.principal_id != principal_core_id {
+        if completion.session_grant.account_id.principal_id != principal_core_id {
             anyhow::bail!("initial session grant principal does not match the registered identity");
         }
         let grant_jwt = completion.session_grant.grant_jwt.clone();
@@ -3129,8 +3128,7 @@ async fn create_and_bind_identity(
             session_private_key_pem: completion.session_private_key_pem,
             grant_id: completion.session_grant.grant_id.to_string(),
             audience_id: completion.session_grant.audience_id.clone(),
-            principal_id: completion.session_grant.principal_id.clone(),
-            service_account_id: completion.session_grant.service_account_id.clone(),
+            account_id: completion.session_grant.account_id.clone(),
             device_id: arkret_sdk::DeviceId::new(device.to_owned())?,
             station_url: url::Url::parse(&handoff.station_url)?,
             grant_expires_at: Some(completion.session_grant.expires_at),
@@ -3574,7 +3572,7 @@ fn validate_completed_recovery_material(
         .context("completed recovery checkpoint omits its PCR genesis receipt")?;
     let expected_authority =
         arkret_sdk::AccountId::new(account.principal_id().clone(), receipt.issuer_id.clone());
-    if evidence.principal_id != *account.principal_id()
+    if evidence.account_id != account.authority
         || evidence.principal_did != *account.did()
         || evidence.device_id != account.device_id
         || evidence.pcr_genesis_unit != *unit
@@ -3707,8 +3705,7 @@ async fn finish_principal_setup(
         .clone();
     let controller_authority = arkret_sdk::AccountId::new(principal_id.clone(), station_id);
     let recovery_material_evidence = crate::state::RecoveryMaterialEvidence {
-        principal_id,
-        service_account_id: completed.persisted_grant.service_account_id.clone(),
+        account_id: completed.persisted_grant.account_id.clone(),
         principal_did: account.did().clone(),
         device_id: arkret_sdk::DeviceId::new(device.to_owned())?,
         principal_control_realm_id: bootstrap_seal.realm_id.clone(),
@@ -4037,8 +4034,7 @@ mod tests {
             session_private_key_pem: String::new(),
             grant_id: "ak:session_grant:Af0GheZX08ev4L1fQoFdngIpe5c_9Lk7SQqfN4jztzDW".to_owned(),
             audience_id: account.authority.station_id.clone(),
-            principal_id: account.authority.principal_id.clone(),
-            service_account_id: arkret_sdk::ServiceAccountId::new("account-1").unwrap(),
+            account_id: account.authority.clone(),
             device_id: account.device_id.clone(),
             station_url: account.server_url.clone(),
             grant_expires_at: Some(chrono::Utc::now() + chrono::Duration::hours(1)),

@@ -1026,8 +1026,9 @@ fn event_actor_id(event: &arkret_sdk::Event) -> Option<arkret_sdk::DidCoreId> {
         let proof = proof.as_producer()?;
         let controller = proof.verification_method.as_str().split_once('#')?.0;
         let did = arkret_sdk::Did::new(controller.to_owned()).ok()?;
-        (arkret_sdk::project_did_to_core_id(&did).ok().as_ref() == Some(&event.actor_id))
-            .then(|| event.actor_id.clone())
+        (arkret_sdk::project_did_to_core_id(&did).ok().as_ref()
+            == Some(event.actor_id.signing_principal_id()))
+            .then(|| event.actor_id.signing_principal_id().clone())
     })
 }
 
@@ -1371,7 +1372,7 @@ fn refold_sidecar_exchanges_with_decrypt_report(
                 // canonical digest, actor_seq, and top-level HLC. The authoring
                 // device may be unable to decrypt its own metadata, so upgrade
                 // its durable request fact before the decrypt path.
-                if event.actor_id == controller_core_id
+                if event.actor_id.signing_principal_id() == &controller_core_id
                     && let Some(index) = stored_index_by_request_event_id
                         .get(event.event_id.as_str())
                         .copied()
@@ -1424,7 +1425,7 @@ fn refold_sidecar_exchanges_with_decrypt_report(
                 let exchange_key = (strand_id.clone(), binding.exchange_id.as_str().to_owned());
                 match binding.role {
                     arkret_sdk::AgentSidecarExchangeBindingRole::Request => {
-                        if event.actor_id != controller_core_id {
+                        if event.actor_id.signing_principal_id() != &controller_core_id {
                             continue;
                         }
                         let Some(context) = binding.request_context.clone() else {

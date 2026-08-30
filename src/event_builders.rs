@@ -2,8 +2,6 @@
 //!
 //! These helpers are transport-neutral and independent of the API transport.
 
-use std::collections::BTreeSet;
-
 use arkret_wire::SchemaId;
 use serde_json::Value;
 
@@ -202,16 +200,7 @@ pub fn build_realm_bootstrap_steps_for_station(
         let create = authored
             .first()
             .ok_or_else(|| anyhow::anyhow!("creator membership needs the create Event"))?;
-        let policy_event_id = authored
-            .last()
-            .ok_or_else(|| anyhow::anyhow!("creator membership needs the delivery policy Event"))?
-            .event_id()
-            .clone();
-        build_realm_bootstrap_membership_intent(
-            &membership_facets,
-            create.realm_id.as_str(),
-            policy_event_id,
-        )
+        build_realm_bootstrap_membership_intent(&membership_facets, create.realm_id.as_str())
         .map(|intent| vec![intent])
     });
     Ok(vec![create_step, facets_step, membership_step])
@@ -365,103 +354,23 @@ pub fn build_realm_bootstrap_facet_intents(
         events.push(event.into_intent());
     }
 
-    // Authored last in this stage so the creator membership, which names it, can
-    // read its final id off the authored prefix.
-    let delivery_binding_policy =
-        build_realm_delivery_binding_policy(realm_id, &facets.notary_did)?;
-    events.push(
-        build_realm_state_event_for_station::<arkret_sdk::event_spec::RealmDeliveryBindingPolicy>(
-            facets.station_id.clone(),
-            realm_id,
-            actor_id,
-            digest_suite,
-            delivery_binding_policy,
-        )?
-        .into_intent(),
-    );
     Ok(events)
 }
 
-/// The creator membership, bound to the accepted delivery-binding policy Event.
+/// The creator membership. The complete ActorId carries its Station route.
 fn build_realm_bootstrap_membership_intent(
     facets: &RealmBootstrapFacets,
     realm_id: &str,
-    policy_event_id: arkret_sdk::EventId,
 ) -> anyhow::Result<crate::operation::EventIntent> {
-    use arkret_sdk::{
-        BindingScope, BindingSource, DeliveryMode, MemberDeliveryBinding, RecipientServiceKind,
-        ServiceResolutionCarrier,
-    };
-
     let actor_id = facets.actor_id.as_str();
-    let recipient_id = arkret_sdk::project_did_to_core_id(
-        &arkret_sdk::Did::new(facets.notary_did.clone())
-            .map_err(|err| anyhow::anyhow!("invalid creator service DID: {err}"))?,
-    )?;
-    let mut service_origin = url::Url::parse(&facets.notary_service_origin)
-        .map_err(|err| anyhow::anyhow!("invalid creator service origin: {err}"))?;
-    if service_origin.scheme() == "http"
-        && service_origin.host_str().is_some_and(|host| {
-            host == "localhost"
-                || host
-                    .parse::<std::net::IpAddr>()
-                    .is_ok_and(|ip| ip.is_loopback())
-        })
-    {
-        service_origin
-            .set_scheme("https")
-            .map_err(|()| anyhow::anyhow!("cannot normalize loopback creator service origin"))?;
-    }
-    if service_origin.scheme() != "https"
-        || service_origin.host_str().is_none()
-        || !service_origin.username().is_empty()
-        || service_origin.password().is_some()
-        || service_origin.query().is_some()
-        || service_origin.fragment().is_some()
-    {
-        anyhow::bail!("creator service origin must be an absolute HTTPS origin");
-    }
-    let current_record_url = format!(
-        "{}{}",
-        service_origin.origin().ascii_serialization(),
-        arkret_sdk::canonical_service_current_record_path(&recipient_id)
-    );
-    let service_resolution = ServiceResolutionCarrier::CurrentRecordUrl {
-        current_record_url,
-        pinned_record_digest: None,
-    };
-    service_resolution.validate_shape(&recipient_id)?;
-    let creator_delivery_binding = MemberDeliveryBinding {
-        recipient_id,
-        recipient_kind: RecipientServiceKind::Station,
-        binding_scope: BindingScope::Realm,
-        binding_source: BindingSource::RealmPolicy,
-        delivery_modes: [
-            DeliveryMode::Events,
-            DeliveryMode::Sync,
-            DeliveryMode::ToDevice,
-            DeliveryMode::Push,
-            DeliveryMode::KeyPackages,
-        ]
-        .into_iter()
-        .collect(),
-        service_resolution,
-        document_digest: None,
-        resolved_at: event_timestamp(),
-        service_acceptance_ref: None,
-        holder_proof_ref: None,
-        policy_event_ref: Some(policy_event_id),
-        expires_at: None,
-    };
-    Ok(build_member_state_transition_event_with_binding(
+    Ok(build_member_state_transition_event_for_station(
         Some(&facets.station_id),
         realm_id,
         actor_id,
         actor_id,
         None,
         "join",
-        "creator_delivery_binding",
-        Some(creator_delivery_binding),
+        "creator_membership",
     )?
     .into_intent())
 }
@@ -773,8 +682,15 @@ pub fn build_direct_conversation_founding_steps(
     _input: &arkret_sdk::DirectConversationFoundingInput,
 ) -> anyhow::Result<Vec<crate::event_submit::EventUnitStep>> {
     let created_at = event_timestamp();
-    let founder_actor = arkret_sdk::project_did_to_core_id(founder_did)?;
-    let peer_actor = arkret_sdk::project_did_to_core_id(peer_did)?;
+    let station_id = crate::operation::authoring_station_id()?;
+    let founder_actor = arkret_sdk::AccountId::new(
+        arkret_sdk::project_did_to_core_id(founder_did)?,
+        station_id.clone(),
+    );
+    let peer_actor = arkret_sdk::AccountId::new(
+        arkret_sdk::project_did_to_core_id(peer_did)?,
+        station_id,
+    );
     let create_payload = arkret_sdk::direct_conversation_realm_create_payload(
         arkret_sdk::GenesisSalt::generate()?,
         trust_domain,
@@ -785,7 +701,6 @@ pub fn build_direct_conversation_founding_steps(
     let create_precondition = head_eq_precondition(&create_cell, Value::Null)?;
 
     let founder = founder_did.clone();
-    let peer = peer_did.clone();
     let create_step: crate::event_submit::EventUnitStep = {
         let founder = founder.clone();
         Box::new(move |_authored| {
@@ -809,7 +724,6 @@ pub fn build_direct_conversation_founding_steps(
 
     let member_step: crate::event_submit::EventUnitStep = {
         let founder = founder.clone();
-        let peer_full = peer.clone();
         let founder_actor = founder_actor.clone();
         let peer_actor = peer_actor.clone();
         Box::new(move |authored| {
@@ -818,16 +732,19 @@ pub fn build_direct_conversation_founding_steps(
                 create.realm_id.clone(),
                 &founder_actor,
                 [founder_actor.clone(), peer_actor.clone()],
-                arkret_sdk::DeliveryStatus::Unroutable,
             )?;
-            let member_cell = format!("ak:cell:ak.component.member.state.v1:{peer_actor}");
+            let peer_actor_id = arkret_sdk::ActorId::account(peer_actor.clone());
+            let member_cell = format!(
+                "ak:cell:ak.component.member.state.v1:{}",
+                peer_actor_id.canonical_key()?
+            );
             Ok(vec![
                 TypedOperationBuilder::new::<arkret_sdk::event_spec::MemberState>(
                     create.realm_id.to_string(),
                     founder.as_str(),
                     membership,
                 )
-                .target_ref(peer_full.as_str())
+                .target_ref(peer_actor_id.canonical_key()?)
                 .preconditions(vec![head_eq_precondition(&member_cell, Value::Null)?])
                 .created_at(created_at)
                 .build_sdk_event("inkson")?
@@ -838,11 +755,12 @@ pub fn build_direct_conversation_founding_steps(
 
     let strand_step: crate::event_submit::EventUnitStep = {
         let founder = founder.clone();
+        let founder_actor = founder_actor.clone();
         Box::new(move |authored| {
             let create = &authored[0];
             let strand_payload = arkret_sdk::direct_conversation_main_strand_create_payload(
                 create.realm_id.clone(),
-                arkret_sdk::project_did_to_core_id(&founder)?,
+                arkret_sdk::ActorId::account(founder_actor.clone()),
                 created_at,
             );
             Ok(vec![
@@ -866,17 +784,19 @@ pub fn build_direct_conversation_founding_steps(
             let founder_membership = arkret_sdk::direct_conversation_member_join_payload(
                 create.realm_id.clone(),
                 founder_actor.clone(),
-                arkret_sdk::DeliveryStatus::Unroutable,
             );
-            let founder_member_cell =
-                format!("ak:cell:ak.component.member.state.v1:{founder_actor}");
+            let founder_actor_id = arkret_sdk::ActorId::account(founder_actor.clone());
+            let founder_member_cell = format!(
+                "ak:cell:ak.component.member.state.v1:{}",
+                founder_actor_id.canonical_key()?
+            );
             Ok(vec![
                 TypedOperationBuilder::new::<arkret_sdk::event_spec::MemberState>(
                     create.realm_id.to_string(),
                     founder.as_str(),
                     founder_membership,
                 )
-                .target_ref(founder_actor.as_str())
+                .target_ref(founder_actor_id.canonical_key()?)
                 .preconditions(vec![head_eq_precondition(
                     &founder_member_cell,
                     Value::Null,
@@ -940,39 +860,6 @@ pub fn validate_realm_history_content_scheme_for_profile(
     Ok(())
 }
 
-/// Genesis `ak.realm.delivery_binding_policy` value: the creator's own
-/// Station is the sole admissible recipient service, and the only
-/// admissible binding source is the Realm policy this Event establishes.
-/// Authored through the SDK strong type
-/// (`event-payload.schema.json#/$defs/realm_delivery_binding_policy_payload`,
-/// `additionalProperties:false`).
-fn build_realm_delivery_binding_policy(
-    realm_id: &str,
-    notary_did: &str,
-) -> anyhow::Result<arkret_sdk::RealmDeliveryBindingPolicyPayload> {
-    let realm_id = arkret_sdk::RealmId::new(trim_realm_id(realm_id))
-        .map_err(|err| anyhow::anyhow!("invalid realm_id for delivery_binding_policy: {err:?}"))?;
-    let recipient_service = crate::mls_api_helpers::principal_core_id(notary_did)
-        .map_err(|err| anyhow::anyhow!("invalid delivery binding recipient service DID: {err}"))?;
-    Ok(arkret_sdk::RealmDeliveryBindingPolicyPayload {
-        realm_id: Some(realm_id),
-        allowed_binding_sources: Some(
-            [arkret_sdk::BindingSource::RealmPolicy]
-                .into_iter()
-                .collect(),
-        ),
-        did_document_default_allowed: Some(false),
-        allowed_recipient_ids: Some(arkret_sdk::AllowedRecipientServices::Allowlist(vec![
-            recipient_service,
-        ])),
-        required_endorser_ids: Some(BTreeSet::new()),
-        unroutable_membership_allowed: Some(true),
-        rebind_authorization: Some(arkret_sdk::RebindAuthorization::Member),
-        handover_grace_seconds: None,
-        expires_after_seconds: None,
-    })
-}
-
 /// Genesis `ak.realm.policy_bundle` payload.
 ///
 /// `content_scheme` is deliberately absent: realm-and-space.md §2.3 freezes it
@@ -1022,8 +909,16 @@ pub fn build_space_create_event(
         .map_err(|e| anyhow::anyhow!("invalid realm_id for space.create: {e:?}"))?;
     let space_created_by = crate::mls_api_helpers::principal_core_id(actor_id)
         .map_err(|e| anyhow::anyhow!("invalid created_by core_id for space.create: {e:?}"))?;
-    let mut space_object =
-        arkret_sdk::Space::create_object(space_realm_id, kind, title, space_created_by);
+    let space_created_by = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+        space_created_by,
+        crate::operation::authoring_station_id()?,
+    ));
+    let mut space_object = arkret_sdk::Space::create_object(
+        space_realm_id,
+        kind,
+        title,
+        space_created_by,
+    );
     space_object.state = Some(arkret_sdk::SpaceState::Active);
     if let Some(summary) = summary
         && !summary.trim().is_empty()
@@ -1305,13 +1200,16 @@ pub fn build_realm_destroy_event(
 fn realm_authority_builder_context(
     realm_id: &arkret_sdk::RealmId,
     actor_id: &str,
-) -> anyhow::Result<(arkret_sdk::ScopeRef, arkret_sdk::DidCoreId)> {
+) -> anyhow::Result<(arkret_sdk::ScopeRef, arkret_sdk::ActorId)> {
     Ok((
         arkret_sdk::ScopeRef::Realm {
             realm_id: realm_id.clone(),
         },
-        crate::mls_api_helpers::principal_core_id(actor_id)
-            .map_err(|error| anyhow::anyhow!("invalid Realm authority actor DID: {error}"))?,
+        arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+            crate::mls_api_helpers::principal_core_id(actor_id)
+                .map_err(|error| anyhow::anyhow!("invalid Realm authority actor DID: {error}"))?,
+            crate::operation::authoring_station_id()?,
+        )),
     ))
 }
 
@@ -1576,7 +1474,7 @@ pub fn build_member_state_transition_event(
     to_state: &str,
     reason: &str,
 ) -> anyhow::Result<crate::operation::LocalOperation> {
-    build_member_state_transition_event_with_binding(
+    build_member_state_transition_event_for_station(
         None,
         realm_id,
         actor_id,
@@ -1584,11 +1482,10 @@ pub fn build_member_state_transition_event(
         from_state,
         to_state,
         reason,
-        None,
     )
 }
 
-fn build_member_state_transition_event_with_binding(
+fn build_member_state_transition_event_for_station(
     station_id: Option<&arkret_sdk::DidCoreId>,
     realm_id: &str,
     actor_id: &str,
@@ -1596,24 +1493,28 @@ fn build_member_state_transition_event_with_binding(
     from_state: Option<&str>,
     to_state: &str,
     reason: &str,
-    delivery_binding: Option<arkret_sdk::MemberDeliveryBinding>,
 ) -> anyhow::Result<crate::operation::LocalOperation> {
     use arkret_models_collaboration::governance::membership_invite::{
         MembershipPayload, MembershipPayloadState,
     };
-    use arkret_models_identity::DeliveryStatus;
     let realm_id_wire = trim_realm_id(realm_id);
     let membership = match to_state {
         "join" => MembershipPayloadState::Join,
-        "invite" => MembershipPayloadState::Invite,
         "knock" => MembershipPayloadState::Knock,
         "leave" => MembershipPayloadState::Leave,
         "ban" => MembershipPayloadState::Ban,
         other => return Err(anyhow::anyhow!("unknown membership state {other}")),
     };
-    let member_id = crate::mls_api_helpers::principal_core_id(member_actor_id)
+    let member_principal_id = crate::mls_api_helpers::principal_core_id(member_actor_id)
         .map_err(|err| anyhow::anyhow!("member actor_id not a valid core_id: {err}"))?;
-    let member_cell_subject = member_id.as_str().to_owned();
+    let station_id = station_id
+        .cloned()
+        .unwrap_or(crate::operation::authoring_station_id()?);
+    let member_id = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+        member_principal_id,
+        station_id.clone(),
+    ));
+    let member_cell_subject = member_id.canonical_key()?;
     // Strong `membership_payload` (`event-payload.schema.json`). The schema's
     // `allOf` if/then makes `realm_id` + `actor_id` + `delivery_status`
     // REQUIRED whenever `membership == "join"`; we carry `realm_id` for every
@@ -1628,19 +1529,11 @@ fn build_member_state_transition_event_with_binding(
     // dropped accordingly (spec is the source of truth).
     let realm_value = arkret_sdk::RealmId::new(realm_id_wire.clone())
         .map_err(|err| anyhow::anyhow!("realm_id not canonical: {err}"))?;
-    let mut membership_payload = if membership == MembershipPayloadState::Join {
-        let delivery_status = if delivery_binding.is_some() {
-            DeliveryStatus::Routable
-        } else {
-            DeliveryStatus::Unroutable
-        };
-        MembershipPayload::join(realm_value, member_id, delivery_status, reason)
+    let membership_payload = if membership == MembershipPayloadState::Join {
+        MembershipPayload::join(realm_value, member_id, reason)
     } else {
         MembershipPayload::transition(membership, member_id, reason).with_realm_id(realm_value)
     };
-    if let Some(delivery_binding) = delivery_binding {
-        membership_payload = membership_payload.with_delivery_binding(delivery_binding);
-    }
     let cell = format!("ak:cell:ak.component.member.state.v1:{member_cell_subject}");
     let preconditions = if let Some(prior) = from_state {
         vec![head_eq_precondition(
@@ -1650,16 +1543,12 @@ fn build_member_state_transition_event_with_binding(
     } else {
         vec![head_eq_precondition(&cell, Value::Null)?]
     };
-    let builder = match station_id {
-        Some(station_id) => TypedOperationBuilder::new_for_station::<
-            arkret_sdk::event_spec::MemberState,
-        >(realm_id, actor_id, station_id.clone(), membership_payload),
-        None => TypedOperationBuilder::new::<arkret_sdk::event_spec::MemberState>(
-            realm_id,
-            actor_id,
-            membership_payload,
-        ),
-    };
+    let builder = TypedOperationBuilder::new_for_station::<arkret_sdk::event_spec::MemberState>(
+        realm_id,
+        actor_id,
+        station_id,
+        membership_payload,
+    );
     builder
         .target_ref(member_cell_subject)
         .preconditions(preconditions)

@@ -381,7 +381,7 @@ impl SignalPayload {
                     })?;
                 let mut payload = arkret_sdk::PresencePlaintext::new(
                     sequence.get(),
-                    actor_id.clone(),
+                    crate::mls_api_helpers::local_account_actor_id(actor_id.as_str())?,
                     state,
                     self.ttl_ms()?,
                 )
@@ -414,7 +414,7 @@ impl SignalPayload {
                 // schema rejects the field outright.
                 let receipt = arkret_sdk::ReadReceipt::new(
                     sequence.get(),
-                    actor_id.clone(),
+                    crate::mls_api_helpers::local_account_actor_id(actor_id.as_str())?,
                     event_id.clone(),
                     arkret_sdk::ReadReceiptScope::strand(
                         strand_id.as_str().to_owned(),

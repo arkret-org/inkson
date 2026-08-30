@@ -288,7 +288,7 @@ fn inkson_accepts_server_contract_payloads() {
             "encryption_profile": "mls_rfc9420",
             "digest_algorithm": "sha256",
             "priority": 0,
-            "source": "member_delivery_binding",
+            "source": "station_route",
             "seal_basis": {
                 "leaves": ["ak:seal:sha256:1111111111111111111111111111111111111111111111111111111111111111"]
             },

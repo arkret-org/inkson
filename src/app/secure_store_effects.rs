@@ -519,8 +519,10 @@ mod account_signer_boot_tests {
             session_private_key_pem: String::new(),
             grant_id: "grant-boot-test".to_owned(),
             audience_id: arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap(),
-            principal_id: arkret_sdk::DidCoreId::new(principal_id).unwrap(),
-            service_account_id: arkret_sdk::ServiceAccountId::new("account-1").unwrap(),
+            account_id: arkret_sdk::AccountId::new(
+                arkret_sdk::DidCoreId::new(principal_id).unwrap(),
+                arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap(),
+            ),
             device_id: arkret_sdk::DeviceId::new(device_id.to_owned()).unwrap(),
             station_url: url::Url::parse("https://principal.example").unwrap(),
             grant_expires_at: Some(chrono::Utc::now() + chrono::Duration::hours(1)),
