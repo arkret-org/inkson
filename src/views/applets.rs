@@ -616,7 +616,7 @@ pub fn AppletsPanel(token: Signal<String>, selected_realm_id: String) -> Element
                                             return;
                                         };
                                         let actor_id = account.principal_id().clone();
-                                        let install_actor_id = account.principal_id().clone();
+                                        let install_actor_id = arkret_sdk::ActorId::account(account.authority.clone());
                                         let circle = install_circle_id();
                                         let approve_actions = parse_applet_approval_actions(
                                             &install_approve_actions(),
