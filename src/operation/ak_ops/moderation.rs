@@ -107,7 +107,6 @@ pub fn moderation_decision(
         action: None,
         reason_code: Some(reason_code.to_owned()),
         reason: None,
-        policy_decision_ref: None,
         modify_decision_ref: None,
         effective_at: None,
         expires_at: None,
