@@ -130,6 +130,13 @@ fn actor_preview_value(preview: arkret_models_discovery::ActorPreview) -> Value 
     serde_json::to_value(preview).unwrap_or(Value::Null)
 }
 
+fn actor_preview_identity(value: &Value) -> Option<arkret_wire::ActorId> {
+    value
+        .get("actor_id")
+        .cloned()
+        .and_then(|actor| serde_json::from_value(actor).ok())
+}
+
 #[component]
 pub fn DirectoryPanel(
     selected_realm_id: Signal<String>,
@@ -1008,20 +1015,17 @@ pub fn DirectoryPanel(
 
             // Actors tab results
             if active_tab() == DirectoryTab::Actors {
-                for actor in actor_results() {
+                for (actor, actor_id) in actor_results().into_iter().filter_map(|actor| {
+                    actor_preview_identity(&actor).map(|identity| (actor, identity.to_string()))
+                }) {
                     div {
-                        // Stable list key: the actor's did (falls back to the "-" placeholder).
-                        key: "{actor.get(\"did\").and_then(|v| v.as_str()).unwrap_or(\"-\")}",
+                        // Preserve the Station in identity keys and action targets.
+                        key: "{actor_id}",
                         class: "event",
                         "data-testid": "actor-result",
                         div { class: "event-head",
                             span { "actor" }
                             {
-                                let actor_id = actor
-                                    .get("did")
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or("-")
-                                    .to_owned();
                                 let actor_id_label =
                                     actor_display_label(&state_store.read(), &actor_id);
                                 rsx! {
@@ -1037,15 +1041,11 @@ pub fn DirectoryPanel(
                                     .get("avatar_blob_ref")
                                     .and_then(|v| v.as_str())
                                     .unwrap_or("");
-                                let actor_id = actor
-                                    .get("did")
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or("-");
                                 let actor_label = actor
                                     .get("display_name")
                                     .and_then(|v| v.as_str())
                                     .filter(|value| !value.trim().is_empty())
-                                    .unwrap_or(actor_id);
+                                    .unwrap_or(actor_id.as_str());
                                 rsx! {
                                     crate::components::IdentityAvatar {
                                         seed: actor_id.to_owned(),
@@ -1074,11 +1074,6 @@ pub fn DirectoryPanel(
                             // `ak.account.blocklist`; today the click is just
                             // a shortcut into `/settings/blocklist`.
                             {
-                                let actor_id = actor
-                                    .get("actor_id")
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or("")
-                                    .to_owned();
                                 rsx! {
                                     Link {
                                         class: "secondary",
@@ -1093,11 +1088,6 @@ pub fn DirectoryPanel(
                                 }
                             }
                             {
-                                let actor_id = actor
-                                    .get("actor_id")
-                                    .and_then(|v| v.as_str())
-                                    .unwrap_or("")
-                                    .to_owned();
                                 let actor_id_label =
                                     actor_display_label(&state_store.read(), &actor_id);
                                 rsx! {
@@ -1373,9 +1363,13 @@ mod tests {
     }
 
     #[test]
-    fn actor_preview_maps_canonical_actor_id_to_rendered_did() {
+    fn actor_preview_preserves_station_bound_identity_for_rendering() {
+        let actor_id = arkret_wire::ActorId::account(arkret_wire::AccountId::new(
+            crate::mls_api_helpers::principal_core_id("did:web:alice.example").unwrap(),
+            crate::mls_api_helpers::principal_core_id("did:web:station-a.example").unwrap(),
+        ));
         let preview = arkret_models_discovery::ActorPreview {
-            actor_id: crate::mls_api_helpers::principal_core_id("did:web:alice.example").unwrap(),
+            actor_id: actor_id.clone(),
             handle: Some("alice:example.com".to_owned()),
             display_name: Some("Alice".to_owned()),
             organization_principal_id: None,
@@ -1388,8 +1382,20 @@ mod tests {
         };
 
         let rendered = actor_preview_value(preview);
-        assert_eq!(rendered["actor_id"], "ak:did_core:web:alice.example");
+        assert_eq!(actor_preview_identity(&rendered), Some(actor_id.clone()));
         assert!(rendered.get("did").is_none());
+        let other_station_actor = arkret_wire::ActorId::account(arkret_wire::AccountId::new(
+            actor_id.signing_principal_id().clone(),
+            crate::mls_api_helpers::principal_core_id("did:web:station-b.example").unwrap(),
+        ));
+        assert_ne!(actor_id.to_string(), other_station_actor.to_string());
+        assert_ne!(
+            actor_preview_identity(&json!({"actor_id": other_station_actor})),
+            Some(actor_id)
+        );
+        assert!(
+            actor_preview_identity(&json!({"actor_id": "ak:did_core:web:alice.example"})).is_none()
+        );
     }
 
     #[test]
