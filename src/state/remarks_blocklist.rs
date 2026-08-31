@@ -443,8 +443,6 @@ mod tests {
                         "ak:seal:sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
                     )
                     .unwrap(),
-                    seal_digest: arkret_sdk::Hash::new(format!("sha256:{}", "22".repeat(32)))
-                        .unwrap(),
                 }],
                 seal_predecessor_edges: Vec::new(),
                 event_ids: Vec::new(),

@@ -1217,10 +1217,7 @@ pub(crate) fn seed_test_governance_proof(
             }],
         },
         proof_material: arkret_sdk::MlsGovernanceTypedProofMaterial {
-            seal_descriptors: vec![arkret_sdk::MlsGovernanceSealDescriptor {
-                seal_ref: anchor,
-                seal_digest: root.clone(),
-            }],
+            seal_descriptors: vec![arkret_sdk::MlsGovernanceSealDescriptor { seal_ref: anchor }],
             seal_predecessor_edges: Vec::new(),
             event_ids: Vec::new(),
         },
