@@ -174,8 +174,7 @@ async fn accepted_account_context(
         .unwrap_or_else(|| format!("ak:profile:{}", crate::operation::uuid_v7()));
 
     // A missing/mismatched accepted context is repaired through the canonical
-    // full-history verifier. This path fetches and authenticates the Principal
-    // Server resolution itself; it never treats a cache miss as proof that the
+    // full-history verifier. This path fetches and authenticates the Station resolution itself; it never treats a cache miss as proof that the
     // user's session is invalid.
     crate::transport::account::resolve_active_account_context(
         &authed.sdk_http_client()?,
