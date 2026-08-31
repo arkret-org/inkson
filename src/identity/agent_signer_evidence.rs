@@ -680,7 +680,7 @@ fn signal_evidence_query(
 ) -> Option<AgentSignerEvidenceQueryRequestBody> {
     if !matches!(
         envelope.sender_actor_id,
-        arkret_sdk::ActorId::HostedPrincipal { .. }
+        arkret_sdk::ActorId::Account { .. }
     ) {
         return None;
     }
@@ -719,7 +719,7 @@ pub(crate) fn resolve_cached_signal_key(
 ) -> Option<PublicKeyMaterial> {
     if !matches!(
         envelope.sender_actor_id,
-        arkret_sdk::ActorId::HostedPrincipal { .. }
+        arkret_sdk::ActorId::Account { .. }
     ) {
         return None;
     }

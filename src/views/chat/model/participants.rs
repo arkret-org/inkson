@@ -52,10 +52,10 @@ fn participant_membership_identity_and_self_badge_are_station_scoped() {
 #[test]
 fn owned_agent_inventory_does_not_classify_another_stations_member() {
     let principal = "ak:did_core:web:agent-inventory-isolation.example";
-    let remote = arkret_sdk::ActorId::hosted_principal(
+    let remote = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
         arkret_sdk::DidCoreId::new(principal).unwrap(),
         arkret_sdk::DidCoreId::new("ak:did_core:web:remote-station.example").unwrap(),
-    );
+    ));
     let mut participants = Vec::new();
     upsert_participant(
         &mut participants,

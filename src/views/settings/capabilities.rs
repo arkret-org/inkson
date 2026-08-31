@@ -567,11 +567,7 @@ mod tests {
             arkret_sdk::DidCoreId::new("ak:did_core:web:other.example").unwrap(),
         ));
         assert!(!row.can_relinquish(Some(&foreign)));
-        assert!(
-            !row.can_relinquish(Some(&arkret_sdk::ActorId::hosted_principal(
-                principal, station
-            )))
-        );
+        assert!(!row.can_relinquish(Some(&arkret_sdk::ActorId::service(principal))));
     }
 
     #[test]

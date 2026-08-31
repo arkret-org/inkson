@@ -428,7 +428,10 @@ pub(crate) fn owned_agent_slug<'a>(
     row: &RealmMemberRow,
     owned_agent_slugs: &'a BTreeMap<String, String>,
 ) -> Option<&'a str> {
-    let arkret_sdk::ActorId::HostedPrincipal { station_id, .. } = &row.actor_id else {
+    let arkret_sdk::ActorId::Account {
+        account_id: arkret_sdk::AccountId { station_id, .. },
+    } = &row.actor_id
+    else {
         return None;
     };
     if !crate::operation::authoring_station_id().is_ok_and(|local| local == *station_id) {

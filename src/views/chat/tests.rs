@@ -3686,15 +3686,15 @@ fn participant_roster_rows_groups_agents_under_visible_controller() {
 #[test]
 fn direct_agent_peer_visibility_does_not_require_reply_participation() {
     let principal = arkret_sdk::DidCoreId::new("ak:did_core:web:example.com:agents:aa").unwrap();
-    let agent = arkret_sdk::ActorId::hosted_principal(
+    let agent = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
         principal.clone(),
         arkret_sdk::DidCoreId::new("ak:did_core:web:station-a.example").unwrap(),
-    )
+    ))
     .to_string();
-    let other_station = arkret_sdk::ActorId::hosted_principal(
+    let other_station = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
         principal,
         arkret_sdk::DidCoreId::new("ak:did_core:web:station-b.example").unwrap(),
-    )
+    ))
     .to_string();
     let projected_members = std::collections::BTreeSet::from([agent.clone()]);
     assert!(direct_agent_is_conversation_peer(

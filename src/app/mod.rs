@@ -2259,7 +2259,7 @@ fn AppBootstrap() -> Element {
                                                                                         crate::transport::account::direct_conversation_resolve(
                                                                                             &api,
                                                                                             state_store,
-                                                                                            &arkret_sdk::ActorId::hosted_principal(crate::mls_api_helpers::principal_core_id(&agent_id)?, api.event_submitter()?.authority()?.station_id.clone()).to_string(),
+                                                                                            &arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(crate::mls_api_helpers::principal_core_id(&agent_id)?, api.event_submitter()?.authority()?.station_id.clone())).to_string(),
                                                                                             Some(&serde_json::to_string(api.event_submitter()?.authority()?)?),
                                                                                             true,
                                                                                         ).await

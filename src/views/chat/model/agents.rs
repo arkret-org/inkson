@@ -149,9 +149,9 @@ pub(crate) fn upsert_agent_participants(
 fn owned_agent_inventory_matches(participant: &SpaceParticipant) -> bool {
     match participant.actor_id.as_ref() {
         None => true, // Inventory-only display row, never a membership identity.
-        Some(arkret_sdk::ActorId::HostedPrincipal { station_id, .. }) => {
-            crate::operation::authoring_station_id().is_ok_and(|local| local == *station_id)
-        }
+        Some(arkret_sdk::ActorId::Account {
+            account_id: arkret_sdk::AccountId { station_id, .. },
+        }) => crate::operation::authoring_station_id().is_ok_and(|local| local == *station_id),
         Some(_) => false,
     }
 }

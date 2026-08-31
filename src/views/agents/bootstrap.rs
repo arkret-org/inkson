@@ -300,10 +300,10 @@ pub(crate) async fn seal_managed_agent_pcr_current(
     )?;
     let submitter = api.event_submitter()?;
     let http = api.sdk_http_client()?;
-    let agent_actor_id = arkret_sdk::ActorId::hosted_principal(
+    let agent_actor_id = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
         agent_id.clone(),
         account.authority.station_id.clone(),
-    );
+    ));
     let (_, seal) = ensure_managed_agent_pcr_seal_current(
         &submitter,
         &http,
@@ -339,10 +339,10 @@ pub(crate) async fn bootstrap_provisioned_agent(
     )?;
     let submitter = api.event_submitter()?;
     let http = api.sdk_http_client()?;
-    let agent_actor_id = arkret_sdk::ActorId::hosted_principal(
+    let agent_actor_id = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
         agent_id.clone(),
         account.authority.station_id.clone(),
-    );
+    ));
     let accepted_events = crate::event_signer::PrincipalControlHistory::load(
         &http,
         &agent_actor_id,

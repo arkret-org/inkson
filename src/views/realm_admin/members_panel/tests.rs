@@ -4,7 +4,7 @@ fn actor_key(id: &str) -> String {
     let principal = arkret_sdk::DidCoreId::new(id).unwrap();
     let station = arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap();
     if id.contains("agent") {
-        arkret_sdk::ActorId::hosted_principal(principal, station).to_string()
+        arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(principal, station)).to_string()
     } else {
         arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(principal, station)).to_string()
     }

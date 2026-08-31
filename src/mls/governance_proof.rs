@@ -661,10 +661,10 @@ pub(crate) fn claimed_actor_id(
     if claim.pairwise_verification_method.is_some() {
         Ok(arkret_sdk::ActorId::service(claim.principal_id.clone()))
     } else if claim.agent_id.is_some() {
-        Ok(arkret_sdk::ActorId::hosted_principal(
+        Ok(arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
             claim.principal_id.clone(),
             receipt.destination_id.clone(),
-        ))
+        )))
     } else {
         Ok(arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
             claim.principal_id.clone(),
@@ -1217,10 +1217,7 @@ pub(crate) fn seed_test_governance_proof(
             }],
         },
         proof_material: arkret_sdk::MlsGovernanceTypedProofMaterial {
-            seal_descriptors: vec![arkret_sdk::MlsGovernanceSealDescriptor {
-                seal_ref: anchor,
-                seal_digest: root.clone(),
-            }],
+            seal_descriptors: vec![arkret_sdk::MlsGovernanceSealDescriptor { seal_ref: anchor }],
             seal_predecessor_edges: Vec::new(),
             event_ids: Vec::new(),
         },

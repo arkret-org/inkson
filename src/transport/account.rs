@@ -1789,7 +1789,6 @@ mod tests {
                     "binding_event_ref": "ak:event:AZ6GqZWWvnQ2KFwbBD-MenomzWNz-31MUAuKzBXIP0zv"
                 },
                 "group_state_ref": "ak:event:AfR_M7E56E86OkxTne77vQ9fmdFkzpnxO_TBqB4ymjKV",
-                "group_state_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                 "send_blockers": []
             }))
             .expect("found Direct Conversation outcome");
@@ -1835,7 +1834,7 @@ mod tests {
 
     #[test]
     fn owned_agent_direct_peer_keeps_its_controller_binding() {
-        let actor = json!({"kind":"hosted_principal", "principal_id":"ak:did_core:web:agents.example:assistant", "station_id":"ak:did_core:web:remote-station.example"});
+        let actor = json!({"kind": "account", "account_id": { "principal_id":"ak:did_core:web:agents.example:assistant", "station_id":"ak:did_core:web:remote-station.example"}});
         let controller = json!({"principal_id":"ak:did_core:web:alice.example", "station_id":"ak:did_core:web:remote-station.example"});
         let peer =
             direct_conversation_peer_descriptor(&actor.to_string(), Some(&controller.to_string()))

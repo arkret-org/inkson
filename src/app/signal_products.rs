@@ -161,7 +161,7 @@ impl AppSignalProductSink {
         };
         // Admission already authenticated the full sender Actor. Reconstructing
         // an account from its principal and our Station would query a different
-        // participant, and would also collapse HostedPrincipal into Account.
+        // participant, losing the verified account's Station binding.
         let request = signal_authorization_request(&plaintext.actor_id, action, resource_realm_id);
         let allowed = match api.sdk_http_client() {
             Ok(http) => http
@@ -351,7 +351,7 @@ mod tests {
                 station_a.clone(),
             )),
             arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(principal.clone(), station_b)),
-            arkret_sdk::ActorId::hosted_principal(principal, station_a),
+            arkret_sdk::ActorId::service(principal),
         ];
         let realm =
             arkret_sdk::RealmId::new("ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19")
