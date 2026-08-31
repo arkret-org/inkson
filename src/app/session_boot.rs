@@ -161,6 +161,7 @@ pub(super) fn rehydrated_session_credential_for_active_config(
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum AuthSurface {
     AppShell,
+    Onboarding,
     Login,
     Register,
     Callback,
@@ -186,7 +187,7 @@ pub(super) fn auth_surface_for_route(
         // check must precede the generic Restoring guard because onboarding
         // deliberately pauses ConnectionEffects and therefore does not rely on
         // that effect to reclassify the session boot state.
-        AuthSurface::AppShell
+        AuthSurface::Onboarding
     } else if !has_session && boot_state == SessionBootState::Restoring {
         AuthSurface::Restoring
     } else if has_session {

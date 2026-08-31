@@ -417,6 +417,9 @@ pub async fn upload_mls_account_secret_backup_with_recovery_public_key(
     device_id: &str,
     recovery_public_key: &[u8],
 ) -> Result<String> {
+    if crate::mls_api_helpers::principal_core_id(actor_id)? != authority.principal_id {
+        return Err(anyhow!("backup signer does not match the supplied account"));
+    }
     if recovery_public_key.is_empty() {
         return Err(anyhow!("recovery public key is required"));
     }
@@ -458,7 +461,7 @@ pub async fn upload_mls_account_secret_backup_with_recovery_public_key(
     };
     let account_body = build_mls_account_secret_recovery_public_key_backup_in_series(
         &account_backup_id,
-        actor_id,
+        authority,
         device_id,
         recovery_public_key,
         &recovery_key_ref,

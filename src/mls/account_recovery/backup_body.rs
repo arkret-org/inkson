@@ -318,7 +318,10 @@ pub fn build_mls_account_secret_recovery_public_key_backup(
 ) -> Result<KeyBackup> {
     build_mls_account_secret_recovery_public_key_backup_in_series(
         backup_id,
-        actor_id,
+        &arkret_sdk::AccountId::new(
+            crate::mls_api_helpers::principal_core_id(actor_id)?,
+            crate::operation::authoring_station_id()?,
+        ),
         device_id,
         recovery_public_key,
         recovery_key_ref,
@@ -338,7 +341,7 @@ pub fn build_mls_account_secret_recovery_public_key_backup(
 #[allow(clippy::too_many_arguments)]
 pub fn build_mls_account_secret_recovery_public_key_backup_in_series(
     backup_id: &str,
-    actor_id: &str,
+    authority: &arkret_sdk::AccountId,
     device_id: &str,
     recovery_public_key: &[u8],
     recovery_key_ref: &str,
@@ -350,7 +353,7 @@ pub fn build_mls_account_secret_recovery_public_key_backup_in_series(
 ) -> Result<KeyBackup> {
     crate::key_backup::build_recovery_public_key_backup_body_in_series(
         backup_id,
-        actor_id,
+        &arkret_sdk::ActorId::account(authority.clone()),
         device_id,
         recovery_public_key,
         recovery_key_ref,

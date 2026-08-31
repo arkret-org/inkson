@@ -120,6 +120,11 @@ fn classify_returning_session_exchange_error(error: garth::Error) -> ReturningSe
             ReturningSessionExchangeError::DeviceSetupRequired(message)
         }
         garth::Error::Api { error, .. } => match error.error.error_code() {
+            Some(arkret_sdk::error_codes::ErrorCode::PrincipalUnknown) => {
+                ReturningSessionExchangeError::Fatal(format!(
+                    "{message}. No new identity was created. Use recovery or diagnostics to inspect this bound account."
+                ))
+            }
             Some(arkret_sdk::error_codes::ErrorCode::DeviceRevocationPending) => {
                 ReturningSessionExchangeError::Blocked(
                     ReturningDeviceBlockReason::RevocationPending,
@@ -2440,6 +2445,15 @@ mod tests {
                 arkret_sdk::error_codes::ErrorCode::DEVICE_GENERATION_FENCED,
             )),
             ReturningSessionExchangeError::Blocked(ReturningDeviceBlockReason::GenerationFenced, _)
+        ));
+        assert!(matches!(
+            classify_returning_session_exchange_error(api_exchange_error(
+                404,
+                arkret_sdk::error_codes::ErrorCode::PRINCIPAL_UNKNOWN,
+            )),
+            ReturningSessionExchangeError::Fatal(message)
+                if message.contains("No new identity was created")
+                    && message.contains("recovery or diagnostics")
         ));
         assert!(matches!(
             classify_returning_session_exchange_error(api_exchange_error(

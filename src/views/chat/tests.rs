@@ -2460,7 +2460,8 @@ fn moderation_appeal_prompts_fold_decision_and_current_appellant_state() {
             "realm_id": realm_id,
             "body": {
                 "target_ref": "ak:message:AXh0mpVGb536xVxbSPfM4Wc_1WuXAxTYgmtXEncKM9T0",
-                "decision_ref": "ak:event:AfqXI4jyBJWA5HRhSr3SdFP5Qb_2V210Q00mFqUjA7_z"
+                "decision_ref": "ak:event:AfqXI4jyBJWA5HRhSr3SdFP5Qb_2V210Q00mFqUjA7_z",
+                "observed_dot_ids": ["ak:event:AfqXI4jyBJWA5HRhSr3SdFP5Qb_2V210Q00mFqUjA7_z:0"]
             }
         }),
     ];

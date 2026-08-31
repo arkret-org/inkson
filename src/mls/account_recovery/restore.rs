@@ -352,7 +352,6 @@ async fn fetch_authoritative_active_series(
         &active_events,
     )
     .await?;
-    let verification_method_prefix = format!("{actor}#");
     let mut device_ids = active_events
         .iter()
         .filter_map(|event| {
@@ -362,8 +361,7 @@ async fn fetch_authoritative_active_series(
                 .and_then(Value::as_object)
                 .and_then(|auth| auth.get("verification_method"))
                 .and_then(Value::as_str)
-                .and_then(|method| method.strip_prefix(&verification_method_prefix))
-                .and_then(|device_id| arkret_sdk::DeviceId::new(device_id.to_owned()).ok())
+                .and_then(|method| active_series_principal_device(method, &actor))
         })
         .collect::<Vec<_>>();
     device_ids.sort();
@@ -634,19 +632,36 @@ async fn verify_active_series_range_completeness(
 /// and MUST carry a `#fragment`; a bare DID is never one. Exactly three shapes
 /// are accepted:
 ///
-/// - `<actor_id>#<device_id>` — the actor-scoped device reference;
+/// - `<principal_did>#<device_id>` — the principal-bound device reference;
 /// - `<device_signing_key>#<multikey>` — the self-describing `did:key` form;
 /// - `<device_signing_key>#device` — the same key with the conventional fragment.
 fn active_series_verification_method_matches(
     verification_method: &str,
-    actor_id: &str,
+    principal_id: &arkret_sdk::DidCoreId,
     device_id: &str,
     device_signing_key: &str,
     multikey: &str,
 ) -> bool {
-    verification_method == format!("{actor_id}#{device_id}")
+    active_series_principal_device(verification_method, principal_id)
+        .is_some_and(|device| device.as_str() == device_id)
         || verification_method == format!("{device_signing_key}#{multikey}")
         || verification_method == format!("{device_signing_key}#device")
+}
+
+fn active_series_principal_device(
+    verification_method: &str,
+    principal_id: &arkret_sdk::DidCoreId,
+) -> Option<arkret_sdk::DeviceId> {
+    let method = arkret_sdk::DidUrl::new(verification_method).ok()?;
+    let did = arkret_sdk::verification_method_did(method.as_str()).ok()?;
+    if arkret_sdk::project_did_to_core_id(&did).ok().as_ref() != Some(principal_id) {
+        return None;
+    }
+    let (controller, fragment) = method.as_str().split_once('#')?;
+    if controller != did.as_str() {
+        return None;
+    }
+    arkret_sdk::DeviceId::new(fragment).ok()
 }
 
 fn verify_active_series_record_signature(
@@ -694,7 +709,7 @@ fn verify_active_series_record_signature(
         };
         if !active_series_verification_method_matches(
             record.auth_data.verification_method.as_str(),
-            record.actor_id.signing_principal_id().as_str(),
+            record.actor_id.signing_principal_id(),
             device_id.as_str(),
             did_key,
             multikey,
@@ -1300,12 +1315,33 @@ pub fn mls_backup_prompt_required(
 
 #[cfg(test)]
 mod verification_method_shape_tests {
-    use super::active_series_verification_method_matches;
+    use super::{active_series_principal_device, active_series_verification_method_matches};
 
     const ACTOR: &str = "did:webvh:z6mkfixture:alice.example";
     const DEVICE: &str = "ak:device:01904100-0000-7000-8000-000000000001";
     const DID_KEY: &str = "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK";
     const MULTIKEY: &str = "z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK";
+
+    fn principal() -> arkret_sdk::DidCoreId {
+        arkret_sdk::project_did_to_core_id(&arkret_sdk::Did::new(ACTOR).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn resolves_full_did_url_against_stable_principal_without_inventing_a_did() {
+        assert_eq!(
+            active_series_principal_device(&format!("{ACTOR}#{DEVICE}"), &principal())
+                .unwrap()
+                .as_str(),
+            DEVICE
+        );
+        for method in [
+            format!("{}#{DEVICE}", principal()),
+            format!("did:webvh:zOther:alice.example#{DEVICE}"),
+            format!("{ACTOR}?versionId=old#{DEVICE}"),
+        ] {
+            assert!(active_series_principal_device(&method, &principal()).is_none());
+        }
+    }
 
     #[test]
     fn accepts_the_three_fragment_bearing_shapes() {
@@ -1316,7 +1352,11 @@ mod verification_method_shape_tests {
         ] {
             assert!(
                 active_series_verification_method_matches(
-                    &candidate, ACTOR, DEVICE, DID_KEY, MULTIKEY
+                    &candidate,
+                    &principal(),
+                    DEVICE,
+                    DID_KEY,
+                    MULTIKEY
                 ),
                 "{candidate} must be accepted"
             );
@@ -1329,7 +1369,11 @@ mod verification_method_shape_tests {
     #[test]
     fn rejects_the_bare_device_signing_key() {
         assert!(!active_series_verification_method_matches(
-            DID_KEY, ACTOR, DEVICE, DID_KEY, MULTIKEY
+            DID_KEY,
+            &principal(),
+            DEVICE,
+            DID_KEY,
+            MULTIKEY
         ));
     }
 
@@ -1343,7 +1387,11 @@ mod verification_method_shape_tests {
         ] {
             assert!(
                 !active_series_verification_method_matches(
-                    &candidate, ACTOR, DEVICE, DID_KEY, MULTIKEY
+                    &candidate,
+                    &principal(),
+                    DEVICE,
+                    DID_KEY,
+                    MULTIKEY
                 ),
                 "{candidate} must be rejected"
             );

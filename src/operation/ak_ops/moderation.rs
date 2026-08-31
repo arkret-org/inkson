@@ -130,12 +130,18 @@ pub fn moderation_decision_lift(
     actor: &str,
     target_ref: &str,
     decision_ref: &str,
+    observed_dot_ids: &[String],
     reason_code: &str,
 ) -> anyhow::Result<TypedOperationBuilder> {
+    anyhow::ensure!(
+        !observed_dot_ids.is_empty(),
+        "moderation lift requires observed add dots"
+    );
     let realm = trim_realm_id(realm_id);
     let payload = arkret_sdk::ModerationDecisionLiftPayload {
         target_ref: target_ref.to_owned(),
         decision_ref: arkret_sdk::EventId::new(decision_ref.to_owned())?,
+        observed_dot_ids: observed_dot_ids.to_vec(),
         reason_code: Some(reason_code.to_owned()),
         reason: None,
         effective_at: None,

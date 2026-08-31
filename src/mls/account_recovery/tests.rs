@@ -574,21 +574,28 @@ fn recovery_public_key_successor_is_sealed_with_final_series_metadata() {
     let (recovery_sk, recovery_pk) = crate::hpke_backup::generate_recovery_keypair().unwrap();
     let recovery_key_ref = "did:web:alice.example#recovery";
     let recovery_policy_ref = ("ak:policy:01964137-0000-7000-8000-0000000000a1", 3);
-    let genesis = build_mls_account_secret_recovery_public_key_backup(
+    let account = authority();
+    let genesis = build_mls_account_secret_recovery_public_key_backup_in_series(
         "ak:backup:01964137-0000-7000-8000-00000000c101",
-        ACTOR,
+        &account,
         DEVICE,
         &recovery_pk,
         recovery_key_ref,
         ACCOUNT_SECRET,
         1,
         recovery_policy_ref,
+        None,
+        None,
     )
     .unwrap();
+    assert_eq!(
+        genesis.actor_id,
+        arkret_sdk::ActorId::account(account.clone())
+    );
     let genesis_wire = key_backup_wire(&genesis);
     let successor = build_mls_account_secret_recovery_public_key_backup_in_series(
         "ak:backup:01964137-0000-7000-8000-00000000c102",
-        ACTOR,
+        &account,
         DEVICE,
         &recovery_pk,
         recovery_key_ref,

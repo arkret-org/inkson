@@ -937,8 +937,8 @@ fn onboarding_mounts_after_secure_store_even_when_connection_bootstrap_is_paused
     );
     assert_eq!(
         auth_surface_for_route(&Route::Onboarding, false, SessionBootState::Restoring, true,),
-        AuthSurface::AppShell,
-        "onboarding owns its pre-session flow once secure storage is ready"
+        AuthSurface::Onboarding,
+        "onboarding owns its pre-session flow without mounting the authenticated shell"
     );
 }
 

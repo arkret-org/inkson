@@ -242,6 +242,26 @@ pub(super) fn RouteSurface(state: RouteSurfaceState) -> Element {
         });
     }
 
+    // An authenticated AccountHandoff can precede the first principal binding.
+    // Onboarding reconciles that holder-bound handoff with the Account Authority;
+    // requiring an active Account here would make identity creation unreachable.
+    if matches!(content_route, Route::Onboarding) {
+        return rsx! {
+            div { class: "realm-body",
+                crate::views::onboarding::OnboardingPanel {
+                    secure_store_ready: secure_store_bootstrap_ready(),
+                    token,
+                    principal_id: principal_id_signal,
+                    device_id,
+                    config_store,
+                    account_primary_handle,
+                    needs_device_authorization,
+                    device_authorization_check_complete,
+                }
+            }
+        };
+    }
+
     let Some(principal_core_id) = SessionContext::get()
         .active_account()
         .map(|account| account.principal_id().clone())
@@ -609,17 +629,8 @@ pub(super) fn RouteSurface(state: RouteSurfaceState) -> Element {
                             }
                         }
                     },
-                    Route::Onboarding => rsx! {
-                        crate::views::onboarding::OnboardingPanel {
-                            secure_store_ready: secure_store_bootstrap_ready(),
-                            token,
-                            principal_id: principal_id_signal,
-                            device_id,
-                            config_store,
-                            account_primary_handle,
-                            needs_device_authorization,
-                            device_authorization_check_complete,
-                        }
+                    Route::Onboarding => {
+                        unreachable!("onboarding is rendered before the active Account gate")
                     },
                     Route::Quarantine => rsx! {
                         crate::views::quarantine::QuarantinePanel {}

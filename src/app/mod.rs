@@ -1156,6 +1156,9 @@ fn AppBootstrap() -> Element {
                                 },
                             }
                         },
+                        AuthSurface::Onboarding => rsx! {
+                            Outlet::<Route> {}
+                        },
                         AuthSurface::Register => rsx! {
                             crate::views::register::RegistrationPanel {}
                         },

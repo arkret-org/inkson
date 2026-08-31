@@ -172,7 +172,7 @@ pub fn build_recovery_public_key_backup_body(
 ) -> anyhow::Result<KeyBackup> {
     build_recovery_public_key_backup_body_in_series(
         backup_id,
-        actor_id,
+        &crate::mls_api_helpers::local_account_actor_id(actor_id)?,
         device_id,
         recovery_public_key,
         recovery_key_ref,
@@ -193,7 +193,7 @@ pub fn build_recovery_public_key_backup_body(
 #[allow(clippy::too_many_arguments)]
 pub fn build_recovery_public_key_backup_body_in_series(
     backup_id: &str,
-    actor_id: &str,
+    actor_id: &arkret_sdk::ActorId,
     device_id: &str,
     recovery_public_key: &[u8],
     recovery_key_ref: &str,
@@ -227,7 +227,7 @@ pub fn build_recovery_public_key_backup_body_in_series(
 #[allow(clippy::too_many_arguments)]
 pub fn build_recovery_public_key_backup_body_for_items_in_series(
     backup_id: &str,
-    actor_id: &str,
+    actor_id: &arkret_sdk::ActorId,
     device_id: &str,
     recovery_public_key: &[u8],
     recovery_key_ref: &str,
@@ -300,7 +300,7 @@ pub fn build_recovery_public_key_history_backup_body_in_series(
     )];
     build_recovery_public_key_backup_body_for_keybag_in_series(
         backup_id,
-        actor_id,
+        &crate::mls_api_helpers::local_account_actor_id(actor_id)?,
         device_id,
         recovery_public_key,
         recovery_key_ref,
@@ -318,7 +318,7 @@ pub fn build_recovery_public_key_history_backup_body_in_series(
 #[allow(clippy::too_many_arguments)]
 fn build_recovery_public_key_backup_body_for_keybag_in_series(
     backup_id: &str,
-    actor_id: &str,
+    actor_id: &arkret_sdk::ActorId,
     device_id: &str,
     recovery_public_key: &[u8],
     recovery_key_ref: &str,
@@ -334,7 +334,6 @@ fn build_recovery_public_key_backup_body_for_keybag_in_series(
     if keybag.backup_kind() != class || keybag.item_count() == 0 {
         anyhow::bail!("key backup keybag does not match its envelope class");
     }
-    let actor_id = crate::mls_api_helpers::local_account_actor_id(actor_id)?;
     let device_id = arkret_sdk::DeviceId::new(device_id.to_owned()).ok();
     let created_at = crate::clock::now_utc_canonical();
     let mut body = KeyBackup {

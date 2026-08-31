@@ -291,7 +291,7 @@ pub fn DirectoryPanel(
                     Input {
                         "data-testid": "contact-requester-did-input",
                         value: "{contact_requester_did}",
-                        placeholder: "Requester DID",
+                        placeholder: "Requester ActorId (JSON)",
                         oninput: move |event: FormEvent| contact_requester_did.set(event.value())
                     }
                     div {
