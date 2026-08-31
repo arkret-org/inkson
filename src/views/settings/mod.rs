@@ -1722,13 +1722,13 @@ pub fn SettingsPanel(
                                 move |_| {
                                     let base = base_url();
                                     let api_token = token();
-                                    let actor = principal_id();
+                                    let actor = arkret_sdk::ActorId::account(account_authority());
                                     let device = device_id();
                                     spawn(async move {
                                         match with_authed_sdk_client(&base, api_token, |http| async move {
                                             let plaintext = br#"{"source_format":"text/markdown;variant=GFM-MIMI","body":"MIMI interop test from inkson","mimi_room_uri":"mimi://mimi.example.com/rooms/01JSMIMI"}"#;
                                             let request = arkret_sdk::MimiSubmitMessageRequestBody {
-                                                sender_actor_id: crate::mls_api_helpers::principal_core_id(&actor)?,
+                                                sender_actor_id: actor,
                                                 device_id: arkret_sdk::DeviceId::new(device.trim().to_owned())?,
                                                 ciphertext: arkret_sdk::MimiCiphertext {
                                                     content_type: arkret_sdk::NonEmptyString::new("application/json")
