@@ -455,6 +455,7 @@ impl InksonEventSigner {
         Ok(signature.to_bytes().to_vec())
     }
 
+    #[cfg(not(test))]
     pub(crate) fn clone_raw_signing_key(&self) -> Result<SigningKey, EventSignerError> {
         self.raw_signing_key
             .clone()

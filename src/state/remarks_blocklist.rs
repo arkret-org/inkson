@@ -252,6 +252,14 @@ impl LocalStateStore {
         >,
         expires_at: Option<chrono::DateTime<chrono::Utc>>,
     ) -> bool {
+        let actor = if kind == crate::account_data::BlocklistUiTargetKind::Actor {
+            let Ok(actor) = serde_json::from_str::<arkret_sdk::ActorId>(value.as_ref()) else {
+                return false;
+            };
+            Some(actor)
+        } else {
+            None
+        };
         self.ensure_cached_loaded();
         let changed = crate::account_data::block_target_in(
             &mut self.cached.client_blocklist,
@@ -263,9 +271,7 @@ impl LocalStateStore {
             chrono::Utc::now(),
         );
         if changed {
-            if kind == crate::account_data::BlocklistUiTargetKind::Actor {
-                let actor = serde_json::from_str::<arkret_sdk::ActorId>(value.as_ref())
-                    .expect("accepted actor block target must contain an ActorId");
+            if let Some(actor) = actor {
                 self.cached
                     .pending_personal_block_sagas
                     .insert(actor.to_string());

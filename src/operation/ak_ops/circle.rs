@@ -69,44 +69,6 @@ pub fn circle_member_state_with_expected(
     >(realm_id, actor, payload))
 }
 
-#[cfg(test)]
-mod member_actor_tests {
-    use super::*;
-
-    #[test]
-    fn circle_membership_preserves_remote_actor_kind_and_station() {
-        let principal = arkret_sdk::DidCoreId::new("ak:did_core:web:bob.example").unwrap();
-        let station = arkret_sdk::DidCoreId::new("ak:did_core:web:remote.example").unwrap();
-        for target in [
-            arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
-                principal.clone(),
-                station.clone(),
-            )),
-            arkret_sdk::ActorId::hosted_principal(principal.clone(), station),
-            arkret_sdk::ActorId::service(principal),
-        ] {
-            for membership in [
-                arkret_sdk::CircleMembership::Invite,
-                arkret_sdk::CircleMembership::Leave,
-            ] {
-                let builder = circle_member_state_with_expected(
-                    "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-",
-                    "ak:did_core:web:alice.example",
-                    "ak:circle:AcsXlJSItqSzy43Swu0nFz2ijj4Yaf0RgjmoTeivRt8M",
-                    &target,
-                    membership,
-                    arkret_wire::WirePresence::Value(arkret_sdk::CircleMembership::Join),
-                )
-                .unwrap();
-                assert_eq!(
-                    builder.intent().unwrap().payload().get("member_id"),
-                    Some(&serde_json::to_value(&target).unwrap())
-                );
-            }
-        }
-    }
-}
-
 /// Build one of the three canonical Circle lifecycle Control Moves.
 ///
 /// `object_lifecycle_payload` single-sources the target by `target_ref`, so the
@@ -229,4 +191,42 @@ pub fn circle_create(
         actor,
         arkret_sdk::CircleCreatePayload { object: circle },
     ))
+}
+
+#[cfg(test)]
+mod member_actor_tests {
+    use super::*;
+
+    #[test]
+    fn circle_membership_preserves_remote_actor_kind_and_station() {
+        let principal = arkret_sdk::DidCoreId::new("ak:did_core:web:bob.example").unwrap();
+        let station = arkret_sdk::DidCoreId::new("ak:did_core:web:remote.example").unwrap();
+        for target in [
+            arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+                principal.clone(),
+                station.clone(),
+            )),
+            arkret_sdk::ActorId::hosted_principal(principal.clone(), station),
+            arkret_sdk::ActorId::service(principal),
+        ] {
+            for membership in [
+                arkret_sdk::CircleMembership::Invite,
+                arkret_sdk::CircleMembership::Leave,
+            ] {
+                let builder = circle_member_state_with_expected(
+                    "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-",
+                    "ak:did_core:web:alice.example",
+                    "ak:circle:AcsXlJSItqSzy43Swu0nFz2ijj4Yaf0RgjmoTeivRt8M",
+                    &target,
+                    membership,
+                    arkret_wire::WirePresence::Value(arkret_sdk::CircleMembership::Join),
+                )
+                .unwrap();
+                assert_eq!(
+                    builder.intent().unwrap().payload().get("member_id"),
+                    Some(&serde_json::to_value(&target).unwrap())
+                );
+            }
+        }
+    }
 }

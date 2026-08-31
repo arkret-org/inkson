@@ -9,8 +9,8 @@ pub(crate) fn ordinary_mls_identity(
 ) -> Result<arkret_sdk::ArkretMlsIdentity, String> {
     #[cfg(test)]
     {
-        return arkret_sdk::ArkretMlsIdentity::new_test_human_device(principal_id, device_id)
-            .map_err(|error| error.to_string());
+        arkret_sdk::ArkretMlsIdentity::new_test_human_device(principal_id, device_id)
+            .map_err(|error| error.to_string())
     }
     #[cfg(not(test))]
     {

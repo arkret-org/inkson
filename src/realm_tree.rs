@@ -401,18 +401,18 @@ pub(crate) fn replace_realm_projection_mls_genesis(
     if !state.is_object() {
         *state = serde_json::json!({"events": []});
     }
-    let state_object = state
-        .as_object_mut()
-        .expect("state was replaced with a JSON object");
+    let Value::Object(state_object) = state else {
+        return false;
+    };
     let events = state_object
         .entry("events")
         .or_insert_with(|| Value::Array(Vec::new()));
     if !events.is_array() {
         *events = Value::Array(Vec::new());
     }
-    let events = events
-        .as_array_mut()
-        .expect("events was replaced with a JSON array");
+    let Value::Array(events) = events else {
+        return false;
+    };
     events.push(accepted_genesis);
     *body != before
 }

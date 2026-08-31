@@ -165,34 +165,6 @@ fn event_schema_validator() -> &'static jsonschema::Validator {
     })
 }
 
-/// Validate a value against one `event-payload.schema.json#/$defs/<def_name>`.
-///
-/// Used where the *payload* has a dedicated closed def that the envelope
-/// schema's per-kind `allOf` does not point at; validating the envelope alone
-/// would then silently skip the closed check.
-fn assert_matches_payload_def(label: &str, def_name: &str, value: &Value) {
-    let reference = Value::String(format!(
-        "{}#/$defs/{def_name}",
-        spec_schema_id("event-payload.schema.json")
-    ));
-    let schema = Value::Object([("$ref".to_owned(), reference)].into_iter().collect());
-    let validator = jsonschema::options()
-        .with_registry(spec_schema_registry())
-        .build(&schema)
-        .unwrap_or_else(|err| panic!("{def_name} compiles: {err}"));
-    if !validator.is_valid(value) {
-        let errors: Vec<String> = validator
-            .iter_errors(value)
-            .map(|err| format!("  - {} (at {})", err, err.instance_path()))
-            .collect();
-        panic!(
-            "{label}: value failed {def_name} validation:\n{}\nvalue was:\n{}",
-            errors.join("\n"),
-            serde_json::to_string_pretty(value).unwrap_or_default()
-        );
-    }
-}
-
 /// Validate a value against a whole spec schema file, or against one `$defs`
 /// entry inside it when `def_name` is set.
 ///
