@@ -84,8 +84,9 @@ pub struct SignalReceiveEngineContext {
 /// two are separate state domains, and `seal_ref` selects only the Realm/scope
 /// one. Device authorization is principal-control state that a target-Realm
 /// Seal does not locate, and `keys_query_request_body` deliberately has no
-/// as-of basis. soland's `verify_signal_device_proof` resolves the same way, so
-/// every verifying role applies one rule.
+/// as-of basis. The source Station performs its own admission; destination
+/// relay authenticates that Station, not this device. This independent client
+/// check therefore remains mandatory even for a successfully relayed Signal.
 pub struct DirectorySenderKeyResolver;
 
 impl garth::SignalSenderKeyResolver for DirectorySenderKeyResolver {
@@ -93,7 +94,7 @@ impl garth::SignalSenderKeyResolver for DirectorySenderKeyResolver {
         &self,
         envelope: &arkret_wire::SignalEnvelope,
     ) -> Option<garth::VerifiedSignalSenderKey> {
-        let (public_key, authority) =
+        let (public_key, authority, device_authorize_event_id) =
             crate::identity::device_directory::cached_signal_sender_evidence(
                 &envelope.sender_actor_id.to_string(),
                 envelope.sender_device_id.as_str(),
@@ -104,6 +105,7 @@ impl garth::SignalSenderKeyResolver for DirectorySenderKeyResolver {
             envelope.sender_device_id.clone(),
             envelope.proof.verification_method.clone(),
             authority,
+            device_authorize_event_id,
         )
         .ok()
     }
@@ -143,22 +145,35 @@ impl MlsSignalDecryptor {
 }
 
 impl garth::SignalDecryptor for MlsSignalDecryptor {
-    fn open(&self, envelope: &arkret_wire::SignalEnvelope) -> garth::Result<Vec<u8>> {
+    fn open(
+        &self,
+        envelope: &arkret_wire::SignalEnvelope,
+        verified_sender: &garth::VerifiedSignalSenderKey,
+    ) -> garth::Result<Vec<u8>> {
         // The MLS exporter only evaluates the group's current epoch
         // (`crates/mls/src/signal.rs::signal_suite_for`), so the shared restore
         // helper's epoch gate drops a Signal naming any other epoch rather than
         // routing around it. No decryption queue, no downgrade, no backfill.
-        let session = self
+        let (session, accepted_group_state_ref) = self
             .state_store
             .read(|store| {
-                crate::signal::restore_signal_mls_session(
+                validate_signal_governance(store, envelope)?;
+                let session = crate::signal::restore_signal_mls_session(
                     store,
                     self.secure_store.as_ref(),
                     &envelope.scope_ref,
                     &self.authority,
                     &self.device_id,
                     envelope.encrypted_payload.epoch,
-                )
+                )?;
+                let accepted_group_state_ref = store
+                    .mls_group_state_ref_for_scope(
+                        &envelope.scope_ref,
+                        &session.group.group_id(),
+                        session.group.epoch(),
+                    )
+                    .map_err(anyhow::Error::msg)?;
+                Ok::<_, anyhow::Error>((session, accepted_group_state_ref))
             })
             .map_err(|error| garth::Error::Protocol(error.to_string()))?;
         let group = session.group;
@@ -166,9 +181,93 @@ impl garth::SignalDecryptor for MlsSignalDecryptor {
             garth::Error::Protocol(format!("signal replay tracker poisoned: {error}"))
         })?;
         group
-            .open_signal_envelope(envelope, &mut replay)
+            .open_signal_envelope(
+                envelope,
+                session.content_scheme,
+                verified_sender.public_key(),
+                verified_sender.device_authorize_event_id(),
+                accepted_group_state_ref.as_str(),
+                &mut replay,
+            )
             .map_err(|error| garth::Error::Protocol(error.to_string()))
     }
+}
+
+fn validate_signal_governance(
+    store: &crate::state::LocalStateStore,
+    envelope: &arkret_wire::SignalEnvelope,
+) -> anyhow::Result<()> {
+    let realm = envelope.realm_id.as_str();
+    if store.realm_has_pending_mls_binding(realm)
+        || store
+            .mls_coverage_stale_reason(realm, envelope.scope_ref.circle_id().map(|id| id.as_str()))
+            .is_some()
+    {
+        anyhow::bail!("Signal scope has pending or stale MLS governance coverage");
+    }
+    let checkpoint = store
+        .trusted_mls_governance_checkpoint(realm)
+        .ok_or_else(|| anyhow::anyhow!("Signal requires a verified governance checkpoint"))?;
+    let observed = store.seal_view_for_realm(realm);
+    let verified_frontier = checkpoint
+        .basis
+        .leaves
+        .iter()
+        .map(|id| id.as_str())
+        .collect::<std::collections::BTreeSet<_>>();
+    if !observed.bottom_cells.is_empty()
+        || (!observed.frontier.is_empty()
+            && observed
+                .frontier
+                .iter()
+                .map(String::as_str)
+                .collect::<std::collections::BTreeSet<_>>()
+                != verified_frontier)
+    {
+        anyhow::bail!("Signal governance is conflicted or newer than the verified checkpoint");
+    }
+    let actor = envelope.sender_actor_id.canonical_key()?;
+    let member_subject = arkret_wire::cell::composite_subject(&[Value::String(actor.clone())])?;
+    let mut cells = vec![arkret_sdk::CellRef::new(arkret_wire::cell::subject_cell(
+        arkret_wire::CellFamilyId::MEMBER_STATE_V1,
+        &member_subject,
+    ))?];
+    if let arkret_sdk::ScopeRef::Circle { circle_id, .. } = &envelope.scope_ref {
+        let subject = arkret_wire::cell::composite_subject(&[
+            Value::String(circle_id.to_string()),
+            Value::String(actor),
+        ])?;
+        cells.push(arkret_sdk::CellRef::new(arkret_wire::cell::subject_cell(
+            arkret_wire::CellFamilyId::CIRCLE_MEMBER_V1,
+            &subject,
+        ))?);
+    }
+    let registry =
+        arkret_sdk::lattice_registry::try_build_sdk_cell_registry().map_err(anyhow::Error::msg)?;
+    let audits =
+        arkret_schema::CapabilityAuthorityAuditIndex::from_events(&checkpoint.accepted_events);
+    let historical = arkret_sdk::SealBasis {
+        leaves: vec![envelope.seal_ref.clone()],
+    };
+    for basis in [&checkpoint.basis, &historical] {
+        for cell in &cells {
+            let value = arkret_state::mls_governance_proof::materialize_registered_cell_value_at_basis_from_verified_checkpoint(
+                &checkpoint, basis, cell, &registry,
+                |event, digest_suite| arkret_schema::project_registered_cell_writes_with_authority_resolver(
+                    event, digest_suite, &|grant_id| audits.resolve(grant_id),
+                ).map_err(|error| error.to_string()),
+            )?;
+            if value.as_str() != Some("join") {
+                anyhow::bail!(
+                    "Signal sender is not joined at both current and declared Seal bases"
+                );
+            }
+        }
+    }
+    if envelope.signal_class == arkret_wire::SignalClass::Moderation {
+        anyhow::bail!("Signal moderation requires independently verified call.moderate authority");
+    }
+    Ok(())
 }
 
 /// One live presence/typing body plus the sequence it arrived with.

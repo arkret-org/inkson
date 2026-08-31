@@ -585,6 +585,7 @@ pub struct SignalRailUnavailable {
 /// away from.
 pub struct SignalMlsSession {
     pub group: arkret_sdk::ArkretMlsGroup,
+    pub content_scheme: arkret_sdk::EncryptedPayloadScheme,
     pub snapshot: crate::mls::persistence::MlsSnapshotEnvelope,
     pub snapshot_secret: String,
 }
@@ -607,6 +608,21 @@ pub fn restore_signal_mls_session(
     expected_epoch: u64,
 ) -> anyhow::Result<SignalMlsSession> {
     let realm_id = scope_ref.realm_id().as_str();
+    if state_store.realm_projection_is_minimal_metadata(realm_id) {
+        anyhow::bail!("minimal-metadata endpoints have no registered Signal device carrier");
+    }
+    let content_scheme = match scope_ref {
+        arkret_sdk::ScopeRef::Realm { .. } => state_store.realm_content_scheme(realm_id),
+        arkret_sdk::ScopeRef::Circle { circle_id, .. } => {
+            state_store.circle_content_scheme(realm_id, circle_id.as_str())
+        }
+        _ => None,
+    };
+    let content_scheme = match content_scheme.as_deref() {
+        Some("mls_exporter_aead_v1") => arkret_sdk::EncryptedPayloadScheme::MlsExporterAeadV1,
+        Some("mls_rfc9420") => arkret_sdk::EncryptedPayloadScheme::MlsRfc9420,
+        _ => anyhow::bail!("Signal requires the scope's accepted content encryption policy"),
+    };
     let circle_id = scope_ref.circle_id().map(arkret_sdk::CircleId::as_str);
     let snapshot = state_store
         .mls_snapshot_for_effective_scope(realm_id, circle_id)
@@ -625,6 +641,7 @@ pub fn restore_signal_mls_session(
             .map_err(|error| anyhow::anyhow!("restore Signal MLS snapshot: {error}"))?;
     Ok(SignalMlsSession {
         group,
+        content_scheme,
         snapshot,
         snapshot_secret,
     })
@@ -646,6 +663,7 @@ pub fn encrypt_signal_payload_with_store(
         .map(arkret_sdk::CircleId::as_str);
     let SignalMlsSession {
         mut group,
+        content_scheme,
         snapshot,
         snapshot_secret,
     } = restore_signal_mls_session(
@@ -656,6 +674,12 @@ pub fn encrypt_signal_payload_with_store(
         &header.sender_device_id,
         material.epoch,
     )?;
+    let accepted_group_state_ref = state_store
+        .mls_group_state_ref_for_scope(&header.scope_ref, &group.group_id(), group.epoch())
+        .map_err(anyhow::Error::msg)?;
+    if material.group_state_ref != accepted_group_state_ref.as_str() {
+        anyhow::bail!("Signal sender material does not name the accepted winning group state");
+    }
     let key_ref = arkret_wire::SignalKeyRef {
         algorithm: "MLS-EXPORTER-AEAD".to_owned(),
         group_state_ref: material.group_state_ref.clone(),
@@ -676,7 +700,7 @@ pub fn encrypt_signal_payload_with_store(
         epoch: material.epoch,
     };
     let sealed = group
-        .seal_signal_payload(&binding, plaintext)
+        .seal_signal_payload(&binding, content_scheme, plaintext)
         .map_err(|error| anyhow::anyhow!("seal Signal payload: {error}"))?;
 
     // Persist before the HTTP submit. A failed or uncertain request may skip a

@@ -449,104 +449,6 @@ async fn materialize_verified_cache_entry(
     Some(entry)
 }
 
-/// Query and cache the current Agent signing evidence needed to admit
-/// a live Signal. The request context is generated locally and retained with
-/// the cache entry, so an evidence object cannot supply its own verifier,
-/// audience, request digest or challenge and then be trusted by reflection.
-pub(crate) async fn prefetch_for_signal(
-    http: &arkret_sdk::http_client::Client,
-    envelope: &arkret_wire::SignalEnvelope,
-    state_store: &crate::runtime::input::StateStoreHandle,
-    did_cache: crate::runtime::input::ValueCell<arkret_sdk::identity::DidResolutionCache>,
-) -> bool {
-    if state_store.read(|store| resolve_cached_signal_key(store, envelope).is_some()) {
-        return true;
-    }
-    let Ok(service_id) = http.describe().await.map(|view| view.service_id) else {
-        return false;
-    };
-    let Some(context) = current_signal_context(envelope, service_id) else {
-        return false;
-    };
-    let Some(request) = signal_evidence_query(envelope, &context) else {
-        return false;
-    };
-    let outcome = match http.agent_signer_evidence_query(&request).await {
-        Ok(outcome) => outcome,
-        Err(error) => {
-            tracing::warn!(
-                target_realm_id = %envelope.realm_id,
-                agent_id = %envelope.sender_actor_id,
-                verification_method = %envelope.proof.verification_method,
-                %error,
-                "live Signal Agent signer evidence query failed",
-            );
-            return false;
-        }
-    };
-    if outcome.evidence_items.is_empty() {
-        tracing::warn!(
-            target_realm_id = %envelope.realm_id,
-            agent_id = %envelope.sender_actor_id,
-            verification_method = %envelope.proof.verification_method,
-            failures = ?outcome.failures,
-            "live Signal Agent signer evidence query returned no evidence",
-        );
-    }
-    let anchor = crate::identity::did_resolver::ResolverDidAnchor::from_profile(
-        crate::identity::did_resolver::DeploymentProfile::PersonalNode,
-        did_cache.get(),
-    );
-    for root in outcome.evidence_items {
-        let arkret_sdk::AuthenticatedSignerResolutionEvidence::Agent {
-            agent_signer_evidence: evidence,
-            ..
-        } = root
-        else {
-            continue;
-        };
-        let binding = signing_key_binding(&evidence);
-        let sender_actor_id = envelope.sender_actor_id.signing_principal_id().clone();
-        if binding.agent_id != sender_actor_id
-            || binding.verification_method != envelope.proof.verification_method
-            || !current_evidence_matches_context(&evidence, &context)
-        {
-            continue;
-        }
-        let Some(entry) =
-            materialize_verified_cache_entry(http, &anchor, *evidence, context.clone()).await
-        else {
-            tracing::warn!(
-                target_realm_id = %envelope.realm_id,
-                agent_id = %envelope.sender_actor_id,
-                verification_method = %envelope.proof.verification_method,
-                "live Signal Agent signer evidence failed cryptographic materialization",
-            );
-            continue;
-        };
-        if validate_cached_current(&entry, envelope).is_none() {
-            continue;
-        }
-        match state_store.write(|store| store.store_verified_agent_signer_evidence(entry)) {
-            Ok(()) => {
-                did_cache.set(anchor.into_cache());
-                return true;
-            }
-            Err(error) => {
-                tracing::debug!(
-                    target_realm_id = %envelope.realm_id,
-                    agent_id = %envelope.sender_actor_id,
-                    verification_method = %envelope.proof.verification_method,
-                    %error,
-                    "live Signal Agent signer evidence cache write failed",
-                );
-            }
-        }
-    }
-    did_cache.set(anchor.into_cache());
-    false
-}
-
 pub(crate) async fn resolve_current_history_request_authorization(
     http: &arkret_sdk::http_client::Client,
     realm_id: &RealmId,
@@ -630,23 +532,6 @@ pub(crate) async fn resolve_current_history_request_authorization(
     None
 }
 
-fn current_signal_context(
-    envelope: &arkret_wire::SignalEnvelope,
-    service_id: DidCoreId,
-) -> Option<CachedAgentSignerEvidenceContext> {
-    let mut random = [0_u8; 24];
-    getrandom::fill(&mut random).ok()?;
-    let nonce = URL_SAFE_NO_PAD.encode(random);
-    Some(CachedAgentSignerEvidenceContext::CurrentSignal {
-        operation_id: ProtocolOperationId::new(format!("ak:operation:signal-evidence-{nonce}"))
-            .ok()?,
-        request_digest: envelope.envelope_digest().ok()?,
-        verifier_id: service_id.clone(),
-        audience: service_id,
-        challenge: NonEmptyString::new(format!("ak.challenge:{nonce}")).ok()?,
-    })
-}
-
 fn current_evidence_matches_context(
     evidence: &AgentSignerEvidence,
     context: &CachedAgentSignerEvidenceContext,
@@ -672,77 +557,6 @@ fn current_evidence_matches_context(
         && current_observation.verifier_id == *verifier_id
         && current_observation.audience_id == *audience
         && current_observation.challenge == *challenge
-}
-
-fn signal_evidence_query(
-    envelope: &arkret_wire::SignalEnvelope,
-    context: &CachedAgentSignerEvidenceContext,
-) -> Option<AgentSignerEvidenceQueryRequestBody> {
-    if !matches!(
-        envelope.sender_actor_id,
-        arkret_sdk::ActorId::Account { .. }
-    ) {
-        return None;
-    }
-    let CachedAgentSignerEvidenceContext::CurrentSignal {
-        operation_id,
-        request_digest,
-        verifier_id,
-        audience,
-        challenge,
-    } = context
-    else {
-        unreachable!("Signal evidence query requires current Signal context")
-    };
-    Some(AgentSignerEvidenceQueryRequestBody {
-        realm_id: envelope.realm_id.clone(),
-        queries: vec![AgentSignerEvidenceQuerySelector::CurrentAdmission {
-            agent_id: envelope.sender_actor_id.signing_principal_id().clone(),
-            verification_method: envelope.proof.verification_method.clone(),
-            operation_id: operation_id.clone(),
-            request_digest: request_digest.clone(),
-            verifier_id: verifier_id.clone(),
-            audience: audience.clone(),
-            challenge: challenge.clone(),
-        }],
-    })
-}
-
-/// Resolve a live Signal signer through the same verified Agent
-/// evidence used for durable Events. Signals have no server-stamped Event
-/// admission object, so the evidence's current accepted authorization basis is
-/// used directly; stale, revoked, superseded, conflicted, or cryptographically
-/// invalid evidence fails closed.
-pub(crate) fn resolve_cached_signal_key(
-    store: &LocalStateStore,
-    envelope: &arkret_wire::SignalEnvelope,
-) -> Option<PublicKeyMaterial> {
-    if !matches!(
-        envelope.sender_actor_id,
-        arkret_sdk::ActorId::Account { .. }
-    ) {
-        return None;
-    }
-    for entry in store.cached_agent_signer_evidence(
-        envelope.sender_actor_id.signing_principal_id(),
-        &envelope.proof.verification_method,
-    ) {
-        let CachedAgentSignerEvidenceContext::CurrentSignal { request_digest, .. } =
-            &entry.verification_context
-        else {
-            continue;
-        };
-        if envelope.envelope_digest().ok().as_ref() != Some(request_digest)
-            || !current_evidence_matches_context(&entry.evidence, &entry.verification_context)
-        {
-            continue;
-        }
-        let key = validate_cached_current(&entry, envelope)?;
-        return Some(PublicKeyMaterial::Ed25519Raw {
-            bytes: key.to_vec(),
-        });
-    }
-    None
 }
 
 fn verify_seal_signature(
@@ -970,17 +784,6 @@ fn common_validation_context<'a>(
         transparency_verified: false,
         now: crate::clock::now_utc(),
     })
-}
-
-fn validate_cached_current(
-    entry: &CachedAgentSignerEvidence,
-    envelope: &arkret_wire::SignalEnvelope,
-) -> Option<[u8; 32]> {
-    validate_current_entry(
-        entry,
-        envelope.sender_actor_id.signing_principal_id(),
-        &envelope.proof.verification_method,
-    )
 }
 
 fn validate_current_entry(
@@ -1346,28 +1149,3 @@ impl PartialEq for EventAgentSelector {
 }
 
 impl Eq for EventAgentSelector {}
-
-#[cfg(test)]
-mod signal_query_tests {
-    use super::*;
-
-    #[test]
-    fn live_signal_selector_is_structurally_current_only() {
-        let selector: AgentSignerEvidenceQuerySelector =
-            serde_json::from_value(serde_json::json!({
-                "verification_mode": "current_admission",
-                "agent_id": "ak:did_core:webvh:z6mkfixture:agent.example",
-                "verification_method": "did:webvh:z6mkfixture:agent.example#agent-runtime",
-                "operation_id": "ak:operation:signal-evidence-test",
-                "request_digest": format!("sha256:{}", "1".repeat(64)),
-                "verifier_id": "ak:did_core:webvh:z6mkfixture:receiver.example",
-                "audience": "ak:did_core:webvh:z6mkfixture:receiver.example",
-                "challenge": "0123456789abcdef"
-            }))
-            .unwrap();
-        assert!(matches!(
-            selector,
-            AgentSignerEvidenceQuerySelector::CurrentAdmission { .. }
-        ));
-    }
-}

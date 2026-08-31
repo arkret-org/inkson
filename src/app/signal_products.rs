@@ -46,13 +46,8 @@ fn signal_authorization_request(
     }
 }
 
-fn agent_prefetch_needed_for_directory_lookup(
-    lookup: &crate::identity::device_directory::CacheLookup,
-) -> bool {
-    !matches!(
-        lookup,
-        crate::identity::device_directory::CacheLookup::Hit(_)
-    )
+fn directory_prefetch_needed(lookup: &crate::identity::device_directory::CacheLookup) -> bool {
+    matches!(lookup, crate::identity::device_directory::CacheLookup::Miss)
 }
 
 #[derive(Clone, Copy)]
@@ -69,7 +64,6 @@ pub(super) struct AppSignalProductSink {
     token: Signal<String>,
     principal_id: Signal<Option<arkret_sdk::DidCoreId>>,
     did_cache: Signal<arkret_sdk::identity::DidResolutionCache>,
-    state_store: crate::runtime::input::StateStoreHandle,
     authz_verdicts: RefCell<BTreeMap<String, CachedVerdict>>,
 }
 
@@ -82,7 +76,6 @@ impl AppSignalProductSink {
         token: Signal<String>,
         principal_id: Signal<Option<arkret_sdk::DidCoreId>>,
         did_cache: Signal<arkret_sdk::identity::DidResolutionCache>,
-        state_store: crate::runtime::input::StateStoreHandle,
     ) -> Self {
         Self {
             call_hub,
@@ -92,7 +85,6 @@ impl AppSignalProductSink {
             token,
             principal_id,
             did_cache,
-            state_store,
             authz_verdicts: RefCell::new(BTreeMap::new()),
         }
     }
@@ -183,71 +175,30 @@ impl SignalProductSink for AppSignalProductSink {
         envelope: &'a arkret_wire::SignalEnvelope,
     ) -> LocalBoxFuture<'a> {
         Box::pin(async move {
-            let actor_selector = envelope.sender_actor_id.to_string();
-            let actor = actor_selector.as_str();
+            let actor = envelope.sender_actor_id.to_string();
             let device = envelope.sender_device_id.as_str();
-            let directory_lookup =
-                crate::identity::device_directory::cached_device_signing_key(actor, device);
-            if !agent_prefetch_needed_for_directory_lookup(&directory_lookup) {
+            // The registered carrier is account-device only. A missing or
+            // revoked directory key is never a hint to classify this as Agent.
+            if envelope.sender_actor_id.as_account_id().is_none()
+                || !directory_prefetch_needed(
+                    &crate::identity::device_directory::cached_device_signing_key(&actor, device),
+                )
+            {
                 return;
             }
             let Some(api) = self.authenticated_api() else {
-                tracing::debug!(
-                    %actor,
-                    %device,
-                    "Signal sender-key prefetch skipped because no authenticated API is available",
-                );
                 return;
-            };
-            let http = match api.sdk_http_client() {
-                Ok(http) => http,
-                Err(error) => {
-                    tracing::debug!(
-                        %actor,
-                        %device,
-                        %error,
-                        "Signal sender-key prefetch could not construct the SDK HTTP client",
-                    );
-                    return;
-                }
             };
             let anchor = crate::identity::did_resolver::ResolverDidAnchor::from_profile(
                 crate::identity::did_resolver::DeploymentProfile::PersonalNode,
                 self.did_cache.peek().clone(),
             );
-            if matches!(
-                directory_lookup,
-                crate::identity::device_directory::CacheLookup::Miss
-            ) && crate::identity::device_directory::resolve_device_signing_key(
-                &api, &anchor, actor, device,
-            )
-            .await
-            .ok()
-            .flatten()
-            .is_some()
-            {
-                let mut did_cache = self.did_cache;
-                did_cache.set(anchor.into_cache());
-                return;
-            }
-            let mut did_cache = self.did_cache;
-            did_cache.set(anchor.into_cache());
-            let resolved = crate::identity::agent_signer_evidence::prefetch_for_signal(
-                &http,
-                envelope,
-                &self.state_store,
-                crate::app::runtime_adapter::value_cell(self.did_cache),
+            let _ = crate::identity::device_directory::resolve_device_signing_key(
+                &api, &anchor, &actor, device,
             )
             .await;
-            if !resolved {
-                tracing::debug!(
-                    target_realm_id = %envelope.realm_id,
-                    %actor,
-                    %device,
-                    verification_method = %envelope.proof.verification_method,
-                    "Signal sender key remained unresolved after Agent evidence prefetch",
-                );
-            }
+            let mut did_cache = self.did_cache;
+            did_cache.set(anchor.into_cache());
         })
     }
 
@@ -371,11 +322,11 @@ mod tests {
     }
 
     #[test]
-    fn negative_device_directory_verdict_still_allows_agent_evidence_prefetch() {
-        assert!(agent_prefetch_needed_for_directory_lookup(
+    fn negative_device_directory_verdict_does_not_trigger_agent_fallback() {
+        assert!(!directory_prefetch_needed(
             &crate::identity::device_directory::CacheLookup::NegativeHit
         ));
-        assert!(agent_prefetch_needed_for_directory_lookup(
+        assert!(directory_prefetch_needed(
             &crate::identity::device_directory::CacheLookup::Miss
         ));
     }

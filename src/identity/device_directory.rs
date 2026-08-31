@@ -122,14 +122,22 @@ pub fn cached_device_authorize_event_id(actor: &str, device: &str) -> Option<ark
 pub fn cached_signal_sender_evidence(
     actor: &str,
     device: &str,
-) -> Option<(PublicKeyMaterial, arkret_sdk::AccountId)> {
+) -> Option<(
+    PublicKeyMaterial,
+    arkret_sdk::AccountId,
+    arkret_sdk::EventId,
+)> {
     let now = crate::clock::now_unix_ms();
     let mut guard = CACHE.write().unwrap_or_else(|poison| poison.into_inner());
     let cache_key = cache_key(actor, device)?;
     match guard.get_mut(&cache_key) {
         Some(entry) if entry.expires_at_ms > now => {
             entry.last_accessed_ms = now;
-            Some((entry.key.clone()?, entry.authority.clone()?))
+            Some((
+                entry.key.clone()?,
+                entry.authority.clone()?,
+                entry.authorize_event_id.clone()?,
+            ))
         }
         Some(_) => None,
         None => None,
@@ -654,7 +662,10 @@ pub(crate) fn seed_signal_sender_for_test(
         &authority.to_string(),
         device,
         Some(key),
-        None,
+        Some(arkret_sdk::EventId::from_digest(
+            arkret_sdk::canonical::DigestSuite::Sha256,
+            [0x42; 32],
+        )),
         Some(authority),
         None,
         None,
