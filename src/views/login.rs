@@ -1477,7 +1477,8 @@ pub(crate) async fn prepare_oidc_authorization(
     expected_device_id: Option<&arkret_sdk::DeviceId>,
     ui_locale: &str,
 ) -> Result<PreparedOidcAuthorization, String> {
-    // T1.Y1 — discover the Account Authority + auth methods from the Station's root `/_arkret/describe` (service-surface §2.5.1).
+    // T1.Y1 — discover the Account Authority + auth methods from the Station's root
+    // `/_arkret/describe` (service-surface §2.5.1).
     let principal = TransportClient::unauthenticated(station_url)
         .map_err(|error| format!("Invalid Station URL: {error}"))?;
     let description = principal

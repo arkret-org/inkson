@@ -89,7 +89,8 @@ pub fn is_auth_expired_error(error: &anyhow::Error) -> bool {
     })
 }
 
-/// True when the authenticated account-viewer read proves that the Station has no account projection for the session subject.
+/// True when the authenticated account-viewer read proves that the Station has no account
+/// projection for the session subject.
 ///
 /// This predicate is intentionally only used at the account-viewer bootstrap
 /// call site. A structured 404 there cannot be repaired by continuing with the
