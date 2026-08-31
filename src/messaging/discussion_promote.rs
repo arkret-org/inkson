@@ -246,7 +246,7 @@ mod tests {
             "ak:strand:AV624IkuHj3HmxAYE6uyYmBa4Est3gGGdnOsjn71z5L2"
         );
         for event in &ops {
-            arkret_sdk::schema::event_payload_validator_catalog()
+            arkret_schema_conformance::event_payload_validator_catalog()
                 .unwrap()
                 .validate_payload(
                     event.kind.as_str(),

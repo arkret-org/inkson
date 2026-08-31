@@ -18,7 +18,7 @@ fn message_builder(realm_id: &str, actor_id: &str, body: &str) -> TypedOperation
 }
 
 fn assert_registered_payload_valid(operation: &LocalOperation) {
-    let catalog = arkret_sdk::schema::event_payload_validator_catalog().unwrap();
+    let catalog = arkret_schema_conformance::event_payload_validator_catalog().unwrap();
     let payload = serde_json::to_value(operation.payload()).unwrap();
     catalog
         .validate_payload(operation.kind().as_str(), &payload)

@@ -553,6 +553,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "arkret-schema-conformance"
+version = "0.3.0"
+dependencies = [
+ "arkret-schema",
+ "arkret-wire",
+ "serde",
+ "serde_json",
+ "tracing",
+]
+
+[[package]]
 name = "arkret-signatures"
 version = "0.3.0"
 dependencies = [
@@ -4210,6 +4221,7 @@ dependencies = [
  "arkret-policy",
  "arkret-retry",
  "arkret-schema",
+ "arkret-schema-conformance",
  "arkret-signatures",
  "arkret-state",
  "arkret-wire",

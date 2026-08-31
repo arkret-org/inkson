@@ -65,19 +65,13 @@ pub(crate) fn validate_outgoing_registered_event_payload<T: Serialize>(
     payload: &T,
 ) -> anyhow::Result<()> {
     let payload = serde_json::to_value(payload)?;
-    let catalog = arkret_sdk::schema::event_payload_validator_catalog()?;
-    if !catalog
-        .missing_payload_validators_for(std::iter::once(kind))
-        .is_empty()
-    {
-        return Ok(());
-    }
-
-    catalog.validate_payload(kind, &payload).map_err(|err| {
-        anyhow::anyhow!(
-            "outgoing event kind '{kind}' payload violates registered payload schema: {err}"
-        )
-    })
+    arkret_sdk::validate_event_payload(&arkret_sdk::EventKind::from(kind), &payload).map_err(
+        |err| {
+            anyhow::anyhow!(
+                "outgoing event kind '{kind}' payload violates its typed contract: {err}"
+            )
+        },
+    )
 }
 
 pub(crate) fn ensure_events_submit_accepted(

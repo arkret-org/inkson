@@ -264,7 +264,7 @@ mod tests {
         );
         assert!(!op.payload().contains_key("appeal_id"));
         assert!(!op.payload().contains_key("schema"));
-        let registry = arkret_sdk::schema::schema_registry_from_default_spec_artifacts()
+        let registry = arkret_schema_conformance::schema_registry_from_default_spec_artifacts()
             .unwrap()
             .unwrap();
         registry

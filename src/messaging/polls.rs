@@ -518,7 +518,7 @@ mod tests {
         let authored = crate::operation::author_for_test(&op);
         let message_ref = poll_message_ref(op.kind(), authored.event_id.as_str()).unwrap();
         assert!(message_ref.starts_with("ak:message:"));
-        arkret_sdk::schema::event_payload_validator_catalog()
+        arkret_schema_conformance::event_payload_validator_catalog()
             .unwrap()
             .validate_payload(
                 op.kind().as_str(),
@@ -546,7 +546,7 @@ mod tests {
             "ak:message:AUg3kgXpMvW4kMuGtTepFkRVooX03jTSKInIfDj4dDvu"
         );
         assert_eq!(block["poll_response"]["selections"], json!(["opt-1"]));
-        arkret_sdk::schema::event_payload_validator_catalog()
+        arkret_schema_conformance::event_payload_validator_catalog()
             .unwrap()
             .validate_payload(
                 op.kind().as_str(),

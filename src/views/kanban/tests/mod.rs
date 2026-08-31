@@ -58,7 +58,7 @@ impl TestEventPayloadView for crate::operation::LocalOperation {
 #[cfg(not(target_arch = "wasm32"))]
 pub(super) fn assert_registered_payload_valid(event: &impl TestEventPayloadView) {
     let payload = event.payload_for_schema();
-    arkret_sdk::schema::event_payload_validator_catalog()
+    arkret_schema_conformance::event_payload_validator_catalog()
         .unwrap()
         .validate_payload(event.kind_for_schema(), &payload)
         .unwrap_or_else(|err| {

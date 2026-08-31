@@ -87,6 +87,7 @@ default = []
 # hidden from the local 1.0 UI unless explicitly opted in.
 experimental-discussion-promote = []
 experimental-applets = []
+spec-conformance = ["dep:arkret-schema-conformance"]
 # Test-only wasm escape hatch for Playwright/cotest fixtures that must inject a
 # real session grant and grant-binding seed before IndexedDB is ready. Production
 # builds must not enable this feature.
@@ -107,6 +108,11 @@ wasm-localstorage-secrets-test = []
 #     `--features mobile-android,mobile-ios` to cross-compile-check.
 mobile-android = []
 mobile-ios = []
+
+[[bin]]
+name = "inkson-wire"
+path = "src/bin/inkson-wire.rs"
+required-features = ["spec-conformance"]
 
 [dependencies]
 # Feature-unification alias: `getrandom@0.2` is pulled in transitively by the
@@ -162,7 +168,8 @@ arkret-models-identity = { version = "0.3.0", path = "../arkret-rust-sdk/crates/
 arkret-models-integration = { version = "0.3.0", path = "../arkret-rust-sdk/crates/models-integration", default-features = false }
 arkret-policy = { version = "0.3.0", path = "../arkret-rust-sdk/crates/policy", default-features = false }
 arkret-retry = { workspace = true }
-arkret-schema = { version = "0.3.0", path = "../arkret-rust-sdk/crates/schema", default-features = false, features = ["embedded-artifacts"] }
+arkret-schema = { version = "0.3.0", path = "../arkret-rust-sdk/crates/schema", default-features = false }
+arkret-schema-conformance = { version = "0.3.0", path = "../arkret-rust-sdk/crates/schema-conformance", default-features = false, optional = true }
 arkret-signatures = { workspace = true }
 arkret-state = { version = "0.3.0", path = "../arkret-rust-sdk/crates/state", default-features = false }
 arkret-wire = { version = "0.3.0", path = "../arkret-rust-sdk/crates/wire", default-features = false }
@@ -334,6 +341,7 @@ web-sys = { workspace = true, features = [
 chrono = { workspace = true }
 
 [dev-dependencies]
+arkret-schema-conformance = { version = "0.3.0", path = "../arkret-rust-sdk/crates/schema-conformance", default-features = false }
 arkret-sdk = { workspace = true, features = ["mls-test-utils"] }
 arkret-wire = { version = "0.3.0", path = "../arkret-rust-sdk/crates/wire", default-features = false, features = ["test-support"] }
 

@@ -2,7 +2,7 @@
 """Generate and check the Inkson E2E mock operation inventory.
 
 Operation identifiers and response schemas are resolved exclusively from the
-SDK's embedded OpenAPI and registry artifacts.  The mock source is only used
+checked-out spec OpenAPI and registry artifacts.  The mock source is only used
 to retain auditable route evidence; it never supplies protocol identifiers.
 """
 
@@ -21,14 +21,15 @@ import yaml
 
 
 REPO = Path(__file__).resolve().parents[1]
-SDK_SCHEMA = Path(
+SPEC_ARTIFACTS = Path(
     os.environ.get(
-        "ARKRET_SDK_SCHEMA_DIR",
-        REPO.parent / "arkret-rust-sdk" / "crates" / "schema" / "src",
+        "ARKRET_SPEC_ARTIFACTS",
+        REPO.parent / "arkret-spec" / "spec" / "v1" / "artifacts",
     )
 )
-OPENAPI_PATH = SDK_SCHEMA / "embedded_openapi.yaml"
-ARTIFACTS_PATH = SDK_SCHEMA / "embedded_artifacts.json"
+OPENAPI_PATH = SPEC_ARTIFACTS / "openapi" / "arkret-service-api.openapi.yaml"
+OPERATION_REGISTRY_PATH = SPEC_ARTIFACTS / "registry" / "operation-registry.json"
+SCHEMA_REGISTRY_PATH = SPEC_ARTIFACTS / "registry" / "schema-registry.json"
 OUTPUT_PATH = REPO / "tests" / "e2e" / "mock-operation-inventory.json"
 MOCK_SOURCES = (REPO / "tests" / "e2e" / "mockArkretApi.ts",)
 HTTP_METHODS = {"get", "post", "put", "patch", "delete", "query", "head"}
@@ -123,12 +124,12 @@ def route_evidence() -> list[dict[str, Any]]:
 
 def generate() -> dict[str, Any]:
     openapi_bytes = OPENAPI_PATH.read_bytes()
-    artifact_bytes = ARTIFACTS_PATH.read_bytes()
+    operation_registry_bytes = OPERATION_REGISTRY_PATH.read_bytes()
+    schema_registry_bytes = SCHEMA_REGISTRY_PATH.read_bytes()
     openapi = yaml.safe_load(openapi_bytes)
-    artifacts = json.loads(artifact_bytes.decode("utf-8"))
-    operation_rows = artifacts["registry/operation-registry.json"]["operations"]
+    operation_rows = json.loads(operation_registry_bytes)["operations"]
     registered_operations = {row["operation_id"] for row in operation_rows}
-    schema_rows = artifacts["registry/schema-registry.json"]["schemas"]
+    schema_rows = json.loads(schema_registry_bytes)["schemas"]
     schema_ids: dict[str, str] = {}
     for row in schema_rows:
         reference = row["file"] + row.get("fragment", "")
@@ -164,7 +165,8 @@ def generate() -> dict[str, Any]:
         "format_version": 1,
         "generated_from": {
             "openapi_sha256": hashlib.sha256(openapi_bytes).hexdigest(),
-            "artifacts_sha256": hashlib.sha256(artifact_bytes).hexdigest(),
+            "operation_registry_sha256": hashlib.sha256(operation_registry_bytes).hexdigest(),
+            "schema_registry_sha256": hashlib.sha256(schema_registry_bytes).hexdigest(),
         },
         "operations": operations,
         "mock_route_evidence": route_evidence(),

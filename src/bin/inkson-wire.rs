@@ -598,9 +598,9 @@ fn validate_mock_response(input: Value) -> Result<Value> {
         .map_or((input.schema_ref.as_str(), None), |(path, fragment)| {
             (path, Some(format!("#{fragment}")))
         });
-    let schema = arkret_schema::embedded_json_artifact(artifact_path)
+    let schema = arkret_schema_conformance::spec_json_artifact(artifact_path)
         .with_context(|| format!("load embedded response schema {artifact_path}"))?;
-    let mut registry = arkret_schema::schema_registry_from_embedded_spec_artifacts()
+    let mut registry = arkret_schema_conformance::schema_registry_from_configured_spec_artifacts()
         .context("load embedded protocol schema registry")?;
     if let Some(fragment) = fragment {
         registry
@@ -1008,7 +1008,7 @@ mod tests {
 
     #[test]
     fn realm_actor_frontier_command_matches_the_spec_vector() {
-        let fixture = arkret_schema::embedded_json_artifact("fixtures/sync-fixture.json")
+        let fixture = arkret_schema_conformance::spec_json_artifact("fixtures/sync-fixture.json")
             .expect("embedded sync fixture");
         let instance = &fixture["schema_validation_cases"]
             .as_array()

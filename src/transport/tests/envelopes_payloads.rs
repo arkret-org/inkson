@@ -501,7 +501,7 @@ fn space_create_payload_matches_spec_schema() {
         event.payload()["object"]["created_at"],
         serde_json::to_value(event.created_at()).unwrap()
     );
-    let catalog = arkret_sdk::schema::event_payload_validator_catalog().unwrap();
+    let catalog = arkret_schema_conformance::event_payload_validator_catalog().unwrap();
     if catalog
         .missing_payload_validators_for(std::iter::once(event.kind().as_str()))
         .is_empty()
@@ -519,7 +519,7 @@ fn space_create_payload_matches_spec_schema() {
 
 /// Contract test: every event produced by `build_realm_bootstrap_events`
 /// MUST satisfy the spec payload-schema rule for its event kind, using
-/// the same `arkret_sdk::schema::event_payload_validator_catalog` that
+/// the same `arkret_schema_conformance::event_payload_validator_catalog` that
 /// soland runs on the wire. Catches schema drift (missing required
 /// fields, wrong patterns) at `cargo test` rather than user runtime.
 #[test]
@@ -553,7 +553,7 @@ fn realm_bootstrap_payloads_match_spec_schema() {
     )
     .expect("the Realm bootstrap unit authors");
 
-    let catalog = arkret_sdk::schema::event_payload_validator_catalog().unwrap();
+    let catalog = arkret_schema_conformance::event_payload_validator_catalog().unwrap();
     for event in &events {
         crate::event_submit::validate_capability_grant_payload(
             &crate::operation::EventIntent::from_authored(event),
