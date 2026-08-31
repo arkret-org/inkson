@@ -142,7 +142,6 @@ pub fn set_authoring_station_id(station_id: Option<arkret_sdk::DidCoreId>) {
     #[cfg(test)]
     {
         TEST_AUTHORING_STATION_ID.with(|slot| *slot.borrow_mut() = station_id);
-        return;
     }
     #[cfg(not(test))]
     {
