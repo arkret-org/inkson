@@ -454,16 +454,12 @@ pub async fn verify_authorized_pairing_event(
     if event.realm_id != pcr {
         anyhow::bail!("authorized pairing Event is outside the principal control Realm");
     }
-    crate::event_submit::verify_event_is_covered_by_accepted_seal(
-        http,
-        &event,
-        |_, _, _, _| {
-            Err(arkret_sdk::WireError::Protocol(
-                "pairing bootstrap cannot trust Native Agent evidence without a pinned external authority"
-                    .to_owned(),
-            ))
-        },
-    )
+    crate::event_submit::verify_event_is_covered_by_accepted_seal(http, &event, |_, _, _, _| {
+        Err(arkret_sdk::WireError::Protocol(
+            "pairing bootstrap cannot trust Agent evidence without a pinned external authority"
+                .to_owned(),
+        ))
+    })
     .await?;
     let payload: arkret_sdk::DeviceAuthorizePayload =
         serde_json::from_value(serde_json::to_value(&event.payload)?)?;

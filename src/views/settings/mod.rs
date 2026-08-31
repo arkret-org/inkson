@@ -1452,9 +1452,9 @@ pub fn SettingsPanel(
                         }
                     }
 
-                    // ── My Agents (AKP-0008 native personal agents) ──────
+                    // ── My Agents (AKP-0008 Agents) ──────
                     if active_section == SettingsSection::Agents {
-                        crate::views::agents::PersonalAgentAdminPanel {
+                        crate::views::agents::AgentAdminPanel {
                             token,
                             controller_id: active_principal.clone(),
                         }

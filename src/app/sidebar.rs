@@ -126,7 +126,7 @@ pub(super) fn load_own_agents_for_sidebar(
             Ok(response) => own_agent_rows.set(active_agents_only(response.agent_projections)),
             Err(err) => {
                 tracing::warn!(
-                    "failed to reload personal agents for Contacts sidebar: {}",
+                    "failed to reload Agents for Contacts sidebar: {}",
                     err.display_diagnostic()
                 );
             }
@@ -185,7 +185,7 @@ pub(super) fn load_direct_contacts_and_agents_for_sidebar(
                     }
                     Err(err) => {
                         own_agents_loaded.set(false);
-                        tracing::warn!(error = %err, "failed to load personal agents for Contacts sidebar");
+                        tracing::warn!(error = %err, "failed to load Agents for Contacts sidebar");
                     }
                 }
             }

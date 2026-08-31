@@ -465,7 +465,7 @@ export function registerStrandsBeforeEach() {
         ? null
         : undefined,
       personalAgentPairingExpiresAt: testInfo.title.startsWith(
-        "expired personal agent pairing",
+        "expired Agent pairing",
       )
         ? "2000-01-01T00:00:00.000Z"
         : undefined,

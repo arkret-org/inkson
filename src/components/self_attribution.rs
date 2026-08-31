@@ -67,7 +67,7 @@ pub fn ActorIdentityLabel(
                 span {
                     class: "badge member-badge member-badge-agent actor-identity-agent-badge",
                     "data-testid": "{agent_badge_test_id}",
-                    title: "Personal agent",
+                    title: "Agent",
                     "Agent"
                 }
             }

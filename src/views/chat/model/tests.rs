@@ -295,7 +295,7 @@ mod device_identity_proof_tests {
     }
 
     #[test]
-    fn ordinary_native_agent_without_evidence_remains_unresolved() {
+    fn ordinary_agent_without_evidence_remains_unresolved() {
         let agent = "did:web:chat-agent.example";
         let signer = crate::event_signer::build_ed25519_signer_with_verification_method(
             [59u8; 32],

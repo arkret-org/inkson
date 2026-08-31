@@ -1887,7 +1887,7 @@ fn proof_bearing_sender_device(
     // in `actor_id`, while `executed_by` identifies the runtime that actually
     // signed the envelope. Keep this selector byte-aligned with the chat proof
     // verifier when that signer is a real directory-backed device. Independent
-    // Native Agent MLS endpoints use their authenticated LeafNode key instead
+    // Agent MLS endpoints use their authenticated LeafNode key instead
     // and deliberately do not form a device-directory lookup here.
     let proof_subject = object
         .get("executed_by")

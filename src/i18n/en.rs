@@ -966,7 +966,7 @@ pub fn english_translations() -> TranslationDict {
     dict.set("chat.message.private_sidecar.label", "Private sidecar");
     dict.set(
         "chat.message.private_sidecar.tooltip",
-        "Only you and the eligible personal agents in this sidecar can see this message.",
+        "Only you and the eligible Agents in this sidecar can see this message.",
     );
     // Offline send outbox.
     dict.set(

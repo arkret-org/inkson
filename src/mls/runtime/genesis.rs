@@ -248,7 +248,7 @@ fn create_creator_mls_snapshot_for_effective_scope_with_binding(
                 )
             })?,
         ),
-        arkret_sdk::MlsEndpointIdentity::NativeAgentRuntime { .. }
+        arkret_sdk::MlsEndpointIdentity::AgentRuntime { .. }
         | arkret_sdk::MlsEndpointIdentity::MinimalMetadataPairwise { .. } => None,
     };
     let creator_actor = match &group.identity().endpoint {

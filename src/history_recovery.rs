@@ -191,7 +191,7 @@ impl garth::ReceiptBoundHistoryTraversal for ReceiptTraversal<'_> {
             &existing,
             base_basis,
             |event, digest_suite, evidence, dependencies| {
-                crate::mls::governance_proof::verify_native_agent_history_key(
+                crate::mls::governance_proof::verify_agent_history_key(
                     &self.state_store,
                     event,
                     digest_suite,
@@ -213,7 +213,7 @@ impl garth::ReceiptBoundHistoryTraversal for ReceiptTraversal<'_> {
             &cut.events,
             &cut.dependencies,
             |event, digest_suite, evidence, dependencies| {
-                crate::mls::governance_proof::verify_native_agent_history_key(
+                crate::mls::governance_proof::verify_agent_history_key(
                     &self.state_store,
                     event,
                     digest_suite,
@@ -256,7 +256,7 @@ pub struct OrdinaryHumanHistoryRequestPlan {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct NativeAgentHistoryRequestPlan {
+pub struct AgentHistoryRequestPlan {
     pub request_id: arkret_sdk::HistoryRequestId,
     pub effective_scope: arkret_sdk::HistoryEffectiveScope,
     pub requester_agent_id: arkret_sdk::DidCoreId,
@@ -454,15 +454,15 @@ pub async fn author_and_create_ordinary_human_request(
     Ok((accepted, join_epoch))
 }
 
-/// Author a Native Agent history request from a freshly verified current
+/// Author an Agent history request from a freshly verified current
 /// Agent signer evidence query. The Agent id, runtime method and exact
 /// agent-key-authorize Event are taken from that closed verification result;
 /// no account session or device default participates.
-pub async fn author_and_create_native_agent_request(
+pub async fn author_and_create_agent_request(
     state_store: SyncSignal<LocalStateStore>,
     api: &crate::transport::TransportClient,
     secure_store: &dyn SecureKeyStore,
-    plan: NativeAgentHistoryRequestPlan,
+    plan: AgentHistoryRequestPlan,
 ) -> anyhow::Result<(arkret_sdk::HistoryKeyRequestCreateOutcome, u64)> {
     let (_, _, checkpoint) = request_trust_bases(state_store, &plan.effective_scope)?;
     let join_epoch = verify_authorization_incarnation_is_retained_join(
@@ -473,7 +473,7 @@ pub async fn author_and_create_native_agent_request(
     )?;
     if let Ok(durable) = runtime(state_store).durable_request(&plan.request_id) {
         let expected_endpoint = match &durable.request.requester_endpoint_authorization {
-            arkret_sdk::RequesterEndpointAuthorization::NativeAgent {
+            arkret_sdk::RequesterEndpointAuthorization::Agent {
                 requester_agent_id,
                 requester_agent_verification_method,
                 ..
@@ -552,14 +552,13 @@ pub async fn author_and_create_native_agent_request(
             effective_scope: plan.effective_scope.clone(),
             requester_actor_id: arkret_sdk::ActorId::service(plan.requester_agent_id.clone()),
             requester_sender_domain: plan.requester_agent_id.as_str().to_owned(),
-            requester_author_profile: arkret_sdk::AuthorProfile::NativeAgent,
-            requester_endpoint_authorization:
-                arkret_sdk::RequesterEndpointAuthorization::NativeAgent {
-                    requester_agent_id: plan.requester_agent_id.clone(),
-                    requester_agent_verification_method: verification_method.clone(),
-                    requester_agent_key_authorize_event_id: requester_agent_key_authorize_event_id
-                        .clone(),
-                },
+            requester_author_profile: arkret_sdk::AuthorProfile::Agent,
+            requester_endpoint_authorization: arkret_sdk::RequesterEndpointAuthorization::Agent {
+                requester_agent_id: plan.requester_agent_id.clone(),
+                requester_agent_verification_method: verification_method.clone(),
+                requester_agent_key_authorize_event_id: requester_agent_key_authorize_event_id
+                    .clone(),
+            },
             requester_authorization_incarnation: plan.requester_authorization_incarnation.clone(),
             trusted_history_base_basis: trusted_history_base_basis.clone(),
             trusted_current_basis: trusted_current_basis.clone(),
@@ -1428,7 +1427,7 @@ pub async fn acquire_response_page(
 /// Verify and install one durable response_stream page into the external candidate
 /// ledger. Public DID/service keys are verified entirely by the SDK from the
 /// retained dependency closure. The external callback is restricted to the
-/// Native Agent and minimal-metadata MLS branches with explicit typed state
+/// Agent and minimal-metadata MLS branches with explicit typed state
 /// anchors.
 pub async fn verify_and_install_response_page<VerifyExternalSourceKey>(
     mut state_store: SyncSignal<LocalStateStore>,
@@ -1789,19 +1788,16 @@ fn verify_history_external_source_key(
     request: arkret_sdk::HistorySourceProofExternalVerificationRequest<'_>,
 ) -> Result<arkret_sdk::signatures::proof::PublicKeyMaterial, arkret_sdk::WireError> {
     match request {
-        arkret_sdk::HistorySourceProofExternalVerificationRequest::NativeAgent {
+        arkret_sdk::HistorySourceProofExternalVerificationRequest::Agent {
             source_record,
             signer_evidence,
             dependencies,
-        } => arkret_sdk::verify_native_agent_history_source_key(
+        } => arkret_sdk::verify_agent_history_source_key(
             source_record,
             signer_evidence,
             dependencies,
             |request| {
-                crate::mls::governance_proof::verify_native_agent_external_trust(
-                    &state_store,
-                    request,
-                )
+                crate::mls::governance_proof::verify_agent_external_trust(&state_store, request)
             },
         ),
         arkret_sdk::HistorySourceProofExternalVerificationRequest::MinimalMetadata {
@@ -1891,7 +1887,7 @@ fn verify_history_external_source_key(
 }
 
 /// Production response stream installer with the only supported external trust
-/// boundary wired to Inkson's durable Native Agent and MLS state.
+/// boundary wired to Inkson's durable Agent and MLS state.
 #[allow(clippy::too_many_arguments)]
 pub async fn verify_and_install_response_page_from_local_state(
     state_store: SyncSignal<LocalStateStore>,

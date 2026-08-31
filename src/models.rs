@@ -1073,7 +1073,7 @@ pub use arkret_models_collaboration::objects::media::{
 // mirrors were removed (YOU-01-002).
 
 // ─────────────────────────────────────────────────────────────────────
-// AKP-0008 / AKP-0009 — Personal Agent HTTP wire types.
+// AKP-0008 / AKP-0009 — Agent HTTP wire types.
 //
 // YOU-01-005: the former hand-rolled `Agent*ReqBody` / `Agent*ResBody`
 // mirrors drifted from `agent-operations.schema.json` (extra required

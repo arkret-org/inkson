@@ -33,11 +33,11 @@ pub(crate) fn controller_signer_device_id(
     Ok(device_id)
 }
 
-fn managed_agent_initial_seal_required(error: &anyhow::Error) -> bool {
+fn agent_initial_seal_required(error: &anyhow::Error) -> bool {
     crate::api_error::is_realm_seal_frontier_pending_error(error)
 }
 
-fn has_managed_agent_pcr_create(events: &[arkret_sdk::Event]) -> bool {
+fn has_agent_pcr_create(events: &[arkret_sdk::Event]) -> bool {
     events.iter().any(|event| {
         event.kind == arkret_sdk::EventKind::RealmCreate
             && event.executed_by.is_some()
@@ -51,7 +51,7 @@ fn has_managed_agent_pcr_create(events: &[arkret_sdk::Event]) -> bool {
     })
 }
 
-async fn submit_managed_agent_pcr_seal(
+async fn submit_agent_pcr_seal(
     http: &arkret_sdk::http_client::Client,
     signer: &crate::event_signer::InksonEventSigner,
     controller_did: &arkret_sdk::Did,
@@ -78,7 +78,7 @@ async fn submit_managed_agent_pcr_seal(
         None => None,
     };
     let seal = signer
-        .sign_managed_agent_pcr_event_seal(
+        .sign_agent_pcr_event_seal(
             controller_did,
             events,
             predecessor,
@@ -95,7 +95,7 @@ async fn submit_managed_agent_pcr_seal(
         || outcome.accepted_event_digests != expected_digests
         || outcome.post_state_root != seal.state_root
     {
-        anyhow::bail!("Station returned a mismatched managed Agent PCR Seal outcome");
+        anyhow::bail!("Station returned a mismatched Agent PCR Seal outcome");
     }
     Ok(seal)
 }
@@ -104,10 +104,10 @@ async fn submit_managed_agent_pcr_seal(
 // establishes it a few lines earlier. Rewriting them as `?` would add
 // error paths no caller can reach.
 #[allow(clippy::expect_used)]
-/// Close all currently accepted managed Agent PCR Events into a Seal signed by
+/// Close all currently accepted Agent PCR Events into a Seal signed by
 /// the active controller device. The accepted head returned by frontier can
 /// lag the Event log and is the predecessor for the successor authored here.
-pub(crate) async fn ensure_managed_agent_pcr_seal_current<
+pub(crate) async fn ensure_agent_pcr_seal_current<
     S: crate::mls::governance_proof::GovernanceProofStateStore,
 >(
     submitter: &crate::event_submit::EventSubmitter,
@@ -120,11 +120,11 @@ pub(crate) async fn ensure_managed_agent_pcr_seal_current<
     state_store: S,
 ) -> anyhow::Result<(arkret_sdk::RealmSealFrontierView, arkret_sdk::Seal)> {
     let current = submitter
-        .seals_frontier_managed_agent_head(realm_id, controller_did, state_store.clone())
+        .seals_frontier_agent_head(realm_id, controller_did, state_store.clone())
         .await;
     if current
         .as_ref()
-        .is_err_and(managed_agent_seal_head_receipt_unavailable)
+        .is_err_and(agent_seal_head_receipt_unavailable)
     {
         return Err(current.expect_err("checked managed PCR signed-head receipt error"));
     }
@@ -133,28 +133,25 @@ pub(crate) async fn ensure_managed_agent_pcr_seal_current<
         http,
         agent_id,
         &realm_id_typed,
-        "managed Agent PCR Seal materialization",
+        "Agent PCR Seal materialization",
     )
     .await?
     .into_events();
-    let material =
-        arkret_bootstrap::materialize_managed_agent_pcr_control(&accepted_events, &|event| {
-            crate::operation::cell_write_projector(event, arkret_sdk::DigestSuite::Sha256)
-        })
-        .map_err(|error| anyhow::anyhow!("managed Agent PCR materialization failed: {error}"))?;
+    let material = arkret_bootstrap::materialize_agent_pcr_control(&accepted_events, &|event| {
+        crate::operation::cell_write_projector(event, arkret_sdk::DigestSuite::Sha256)
+    })
+    .map_err(|error| anyhow::anyhow!("Agent PCR materialization failed: {error}"))?;
 
     let submitted = match current {
         Ok((view, head)) => {
             if head.covered_event_digests == material.covered_event_digests {
                 if head.state_root != material.state_root {
-                    anyhow::bail!(
-                        "accepted managed Agent PCR Seal state differs from accepted Events"
-                    );
+                    anyhow::bail!("accepted Agent PCR Seal state differs from accepted Events");
                 }
                 return Ok((view, head));
             }
             Some(
-                submit_managed_agent_pcr_seal(
+                submit_agent_pcr_seal(
                     http,
                     signer,
                     controller_did,
@@ -166,7 +163,7 @@ pub(crate) async fn ensure_managed_agent_pcr_seal_current<
                 .await?,
             )
         }
-        Err(error) if managed_agent_initial_seal_required(&error) => Some({
+        Err(error) if agent_initial_seal_required(&error) => Some({
             // Re-publish the exact genesis before the first Seal. New
             // servers return the stored duplicate receipt; servers
             // upgraded from the pre-receipt managed-PCR path use this
@@ -181,9 +178,7 @@ pub(crate) async fn ensure_managed_agent_pcr_seal_current<
                 })
                 .collect::<Vec<_>>();
             let [create] = creates.as_slice() else {
-                anyhow::bail!(
-                    "managed Agent PCR initial Seal requires exactly one accepted create Event"
-                );
+                anyhow::bail!("Agent PCR initial Seal requires exactly one accepted create Event");
             };
             let submission = crate::authorization_lease::standard_initial_submission(
                 http,
@@ -192,7 +187,7 @@ pub(crate) async fn ensure_managed_agent_pcr_seal_current<
             )
             .await?;
             http.events_submit(&submission).await?;
-            submit_managed_agent_pcr_seal(
+            submit_agent_pcr_seal(
                 http,
                 signer,
                 controller_did,
@@ -208,21 +203,21 @@ pub(crate) async fn ensure_managed_agent_pcr_seal_current<
 
     let expected = submitted.expect("managed PCR Seal submission branch always returns a Seal");
     let (view, head) = submitter
-        .seals_frontier_managed_agent_head(realm_id, controller_did, state_store)
+        .seals_frontier_agent_head(realm_id, controller_did, state_store)
         .await?;
     if head.id != expected.id
         || head.state_root != expected.state_root
         || head.covered_event_digests != material.covered_event_digests
     {
-        anyhow::bail!("accepted managed Agent PCR Seal differs from the submitted successor");
+        anyhow::bail!("accepted Agent PCR Seal differs from the submitted successor");
     }
     Ok((view, head))
 }
 
-pub(crate) fn managed_agent_seal_head_receipt_unavailable(error: &anyhow::Error) -> bool {
+pub(crate) fn agent_seal_head_receipt_unavailable(error: &anyhow::Error) -> bool {
     error
         .to_string()
-        .contains("seals/frontier omitted the accepted managed Agent PCR Seal head")
+        .contains("seals/frontier omitted the accepted Agent PCR Seal head")
 }
 
 /// Seal one newly accepted controller self-PCR Event with the active
@@ -281,8 +276,8 @@ pub(crate) async fn seal_self_principal_event_current(
 }
 
 /// Publish the controller-authored successor Seal required to turn durable
-/// managed Agent-PCR Events into accepted authorization state.
-pub(crate) async fn seal_managed_agent_pcr_current(
+/// Agent-PCR Events into accepted authorization state.
+pub(crate) async fn seal_agent_pcr_current(
     api: &crate::transport::TransportClient,
     state_store: SyncSignal<LocalStateStore>,
     account: &crate::config::ActiveAccountContext,
@@ -304,7 +299,7 @@ pub(crate) async fn seal_managed_agent_pcr_current(
         agent_id.clone(),
         account.authority.station_id.clone(),
     ));
-    let (_, seal) = ensure_managed_agent_pcr_seal_current(
+    let (_, seal) = ensure_agent_pcr_seal_current(
         &submitter,
         &http,
         signer.as_ref(),
@@ -318,7 +313,7 @@ pub(crate) async fn seal_managed_agent_pcr_current(
     Ok(seal)
 }
 
-/// Seal the accepted managed Agent PCR before returning pairing material.
+/// Seal the accepted Agent PCR before returning pairing material.
 /// Agent active MLS state belongs to its runtime endpoint, never the controller
 /// device. Pairing depends on accepted control authority, not an MLS snapshot.
 pub(crate) async fn bootstrap_provisioned_agent(
@@ -347,19 +342,19 @@ pub(crate) async fn bootstrap_provisioned_agent(
         &http,
         &agent_actor_id,
         realm_id,
-        "managed Agent PCR bootstrap",
+        "Agent PCR bootstrap",
     )
     .await?
     .into_events();
     let realm_id = realm_id.as_str();
 
-    if !has_managed_agent_pcr_create(&accepted_events) {
+    if !has_agent_pcr_create(&accepted_events) {
         anyhow::bail!(
-            "managed Agent PCR genesis is not accepted; provisioning must submit the exact locally frozen create Event before recovery bootstrap"
+            "Agent PCR genesis is not accepted; provisioning must submit the exact locally frozen create Event before recovery bootstrap"
         );
     }
 
-    let (_, initial_frontier_seal) = ensure_managed_agent_pcr_seal_current(
+    let (_, initial_frontier_seal) = ensure_agent_pcr_seal_current(
         &submitter,
         &http,
         signer.as_ref(),
@@ -413,24 +408,21 @@ mod tests {
     }
 
     #[test]
-    fn managed_agent_initial_seal_accepts_missing_frontier_states() {
-        assert!(managed_agent_initial_seal_required(&api_error(
-            404,
-            "not_found"
-        )));
-        assert!(managed_agent_initial_seal_required(&api_error(
+    fn agent_initial_seal_accepts_missing_frontier_states() {
+        assert!(agent_initial_seal_required(&api_error(404, "not_found")));
+        assert!(agent_initial_seal_required(&api_error(
             503,
             "frontier_unavailable"
         )));
     }
 
     #[test]
-    fn managed_agent_initial_seal_does_not_hide_other_api_failures() {
-        assert!(!managed_agent_initial_seal_required(&api_error(
+    fn agent_initial_seal_does_not_hide_other_api_failures() {
+        assert!(!agent_initial_seal_required(&api_error(
             503,
             "service_unavailable"
         )));
-        assert!(!managed_agent_initial_seal_required(&api_error(
+        assert!(!agent_initial_seal_required(&api_error(
             403,
             "capability_denied"
         )));

@@ -1,5 +1,5 @@
 #[cfg(test)]
-mod personal_agent_tests {
+mod agent_tests {
 
     use super::super::*;
     use crate::views::agents::model::{
@@ -65,11 +65,14 @@ mod personal_agent_tests {
     }
 
     #[test]
-    fn actor_kind_label_maps_four_canonical_variants() {
-        assert_eq!(actor_kind_label(Some("native")), Some("Native"));
-        assert_eq!(actor_kind_label(Some("ghost")), Some("Ghost Actor"));
+    fn actor_kind_label_maps_canonical_variants() {
+        assert_eq!(actor_kind_label(Some("user")), Some("User"));
+        assert_eq!(actor_kind_label(Some("organization")), Some("Organization"));
+        assert_eq!(actor_kind_label(Some("team")), Some("Team"));
+        assert_eq!(actor_kind_label(Some("bot")), Some("Bot"));
         assert_eq!(actor_kind_label(Some("service")), Some("Service"));
-        assert_eq!(actor_kind_label(Some("agent")), Some("Personal Agent"));
+        assert_eq!(actor_kind_label(Some("agent")), Some("Agent"));
+        assert_eq!(actor_kind_label(Some("integration")), Some("Integration"));
     }
 
     #[test]
@@ -80,11 +83,11 @@ mod personal_agent_tests {
     }
 
     #[test]
-    fn actor_kind_badge_class_distinguishes_ghost_and_native() {
-        assert_eq!(actor_kind_badge_class(Some("native")), "badge");
+    fn actor_kind_badge_class_distinguishes_bot_and_user() {
+        assert_eq!(actor_kind_badge_class(Some("user")), "badge");
         assert_ne!(
-            actor_kind_badge_class(Some("ghost")),
-            actor_kind_badge_class(Some("native"))
+            actor_kind_badge_class(Some("bot")),
+            actor_kind_badge_class(Some("user"))
         );
         assert_ne!(
             actor_kind_badge_class(Some("agent")),

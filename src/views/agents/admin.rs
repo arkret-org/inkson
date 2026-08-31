@@ -1,4 +1,4 @@
-//! Personal agent settings panel.
+//! Agent settings panel.
 //!
 //! This view is deliberately limited to settings backed by live server
 //! calls: the agent directory row, runtime pairing/key state, lifecycle,
@@ -838,7 +838,7 @@ fn spawn_set_agent_enabled(
                 signer.as_ref(),
                 signer_account_scope.as_ref(),
             )?;
-            super::bootstrap::ensure_managed_agent_pcr_seal_current(
+            super::bootstrap::ensure_agent_pcr_seal_current(
                 &submitter,
                 submitter.http(),
                 signer.as_ref(),
@@ -880,7 +880,7 @@ fn spawn_set_agent_enabled(
                     .await
                     .map_err(anyhow::Error::from)?
             };
-            let post_seal_warning = super::bootstrap::ensure_managed_agent_pcr_seal_current(
+            let post_seal_warning = super::bootstrap::ensure_agent_pcr_seal_current(
                 &submitter,
                 submitter.http(),
                 signer.as_ref(),
@@ -1140,18 +1140,17 @@ fn spawn_provision_agent(
                 return;
             }
         };
-        let (agent_inception, agent_did_keys) =
-            match crate::managed_agent_identity::prepare_inception(
-                &base,
-                &agent_did_local_id,
-                &controller_id,
-            ) {
-                Ok(value) => value,
-                Err(error) => {
-                    last_op_status.set(format!("Create failed: Agent DID inception: {error}"));
-                    return;
-                }
-            };
+        let (agent_inception, agent_did_keys) = match crate::agent_identity::prepare_inception(
+            &base,
+            &agent_did_local_id,
+            &controller_id,
+        ) {
+            Ok(value) => value,
+            Err(error) => {
+                last_op_status.set(format!("Create failed: Agent DID inception: {error}"));
+                return;
+            }
+        };
         let did = match arkret_sdk::Did::new(agent_inception.did.clone()) {
             Ok(value) => value,
             Err(error) => {
@@ -1160,7 +1159,7 @@ fn spawn_provision_agent(
             }
         };
         let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-        if let Err(error) = crate::managed_agent_identity::store_keys_durable(
+        if let Err(error) = crate::agent_identity::store_keys_durable(
             secure_store.as_ref(),
             did.as_str(),
             &agent_did_keys,
@@ -1357,7 +1356,7 @@ fn spawn_provision_agent(
             ));
             return;
         }
-        let agent_notary = match crate::event_builders::managed_agent_inception_notary(
+        let agent_notary = match crate::event_builders::agent_inception_notary(
             &did,
             &agent_inception.root_public_key_multibase,
         ) {
@@ -1367,7 +1366,7 @@ fn spawn_provision_agent(
                 return;
             }
         };
-        // Freeze and sign the exact managed-Agent PCR create before authoring
+        // Freeze and sign the exact Agent PCR create before authoring
         // the provision Event.  Its content-derived EventId is the only source
         // of the PCR Realm id carried by that provision declaration.
         let frozen_genesis = match with_event_submitter(&base, api_token.clone(), {
@@ -1378,7 +1377,7 @@ fn spawn_provision_agent(
             let controller_authorization_ref = controller_authorization_ref.clone();
             move |submitter| async move {
                 let describe = submitter.events_describe().await?;
-                let draft = crate::event_builders::build_managed_agent_pcr_create_event(
+                let draft = crate::event_builders::build_agent_pcr_create_event(
                     agent_id.as_str(),
                     initial_resolution,
                     agent_notary,
@@ -1386,7 +1385,7 @@ fn spawn_provision_agent(
                     controller_authorization_ref.as_str(),
                     describe.trust_domain.as_str(),
                 )?;
-                // A managed-Agent PCR genesis is a one-Event unit: the create
+                // A Agent PCR genesis is a one-Event unit: the create
                 // names the Realm, so it is authored as a unit and its shape is
                 // proven on the authored result.
                 let intent = draft.into_intent();
@@ -1395,7 +1394,7 @@ fn spawn_provision_agent(
                     .await?
                     .into_iter()
                     .next()
-                    .ok_or_else(|| anyhow::anyhow!("prepared managed Agent PCR genesis is missing"))
+                    .ok_or_else(|| anyhow::anyhow!("prepared Agent PCR genesis is missing"))
             }
         })
         .await
@@ -1403,7 +1402,7 @@ fn spawn_provision_agent(
             Ok(value) => value,
             Err(error) => {
                 last_op_status.set(format!(
-                    "Create failed: freeze managed Agent PCR genesis: {}",
+                    "Create failed: freeze Agent PCR genesis: {}",
                     error.display()
                 ));
                 return;
@@ -1569,7 +1568,7 @@ fn spawn_provision_agent(
         let state_store_for_seal = state_store;
         let account_for_seal = account.clone();
         if let Err(error) = with_authed_api(&base, api_token.clone(), move |api| async move {
-            super::bootstrap::seal_managed_agent_pcr_current(
+            super::bootstrap::seal_agent_pcr_current(
                 &api,
                 state_store_for_seal,
                 &account_for_seal,
@@ -1645,7 +1644,7 @@ fn spawn_provision_agent(
                     return;
                 }
             };
-        let binding_update = match crate::managed_agent_identity::prepare_binding_update(
+        let binding_update = match crate::agent_identity::prepare_binding_update(
             &agent_inception,
             &agent_did_keys,
             &controller_id,
@@ -1756,10 +1755,7 @@ fn spawn_provision_agent(
 // error paths no caller can reach.
 #[allow(clippy::expect_used)]
 #[component]
-pub fn PersonalAgentAdminPanel(
-    token: Signal<String>,
-    controller_id: arkret_sdk::DidCoreId,
-) -> Element {
+pub fn AgentAdminPanel(token: Signal<String>, controller_id: arkret_sdk::DidCoreId) -> Element {
     // A4 — base_url from session context instead of a prop.
     let base_url = crate::app::SessionContext::base_url_string();
     let navigator = use_navigator();
@@ -2022,7 +2018,7 @@ pub fn PersonalAgentAdminPanel(
     });
 
     rsx! {
-        div { class: "agent-admin-page", "data-testid": "personal-agent-admin",
+        div { class: "agent-admin-page", "data-testid": "agent-admin",
             if !last_op_status_message.is_empty() {
                 div { class: "agent-admin-status", "data-testid": "agent-admin-last-op", "{last_op_status_message}" }
             }
@@ -2853,7 +2849,7 @@ pub fn PersonalAgentAdminPanel(
                                                         };
                                                         let repaired_agent_id = agent_id.clone();
                                                         let result = with_authed_api(&base, api_token, move |api| async move {
-                                                            let _seal = super::bootstrap::seal_managed_agent_pcr_current(
+                                                            let _seal = super::bootstrap::seal_agent_pcr_current(
                                                                 &api,
                                                                 state_store,
                                                                 &account,

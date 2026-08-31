@@ -1,16 +1,16 @@
-//! Personal-agent administration, approval, and lifecycle surfaces.
+//! Agent administration, approval, and lifecycle surfaces.
 
 mod admin;
 mod bootstrap;
 mod components;
 pub(crate) mod model;
 
-pub(crate) use bootstrap::{bootstrap_provisioned_agent, seal_managed_agent_pcr_current};
+pub(crate) use bootstrap::{bootstrap_provisioned_agent, seal_agent_pcr_current};
 
 #[cfg(test)]
 mod tests;
 
-pub use admin::PersonalAgentAdminPanel;
+pub use admin::AgentAdminPanel;
 pub use components::{ActionApproveDialog, ActorKindBadge, DraftApprovalPanel};
 pub(crate) use model::mentionable_owned_agent_slugs;
 pub use model::{

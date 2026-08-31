@@ -66,7 +66,7 @@ fn account_authority_client_allows_only_insecure_loopback() {
 }
 
 #[test]
-fn managed_agent_pcr_genesis_does_not_bypass_control_proposal_ack_authoring() {
+fn agent_pcr_genesis_does_not_bypass_control_proposal_ack_authoring() {
     let mut managed = realm_create_sdk_event(
         "ak:event:Af2HCFbsrVezIXsZGcgB3mjkpqGK-C4DmteWaG3H0Xbh",
         "did:web:agent.example",
@@ -78,9 +78,7 @@ fn managed_agent_pcr_genesis_does_not_bypass_control_proposal_ack_authoring() {
         arkret_sdk::AuthorizationRef::new("did:web:agent.example#managed-controller").unwrap(),
     );
 
-    assert!(crate::authorization_lease::is_managed_agent_pcr_genesis(
-        &managed
-    ));
+    assert!(crate::authorization_lease::is_agent_pcr_genesis(&managed));
     assert!(!uses_bare_online_anchor_submission(true, &managed));
 
     let ordinary = realm_create_sdk_event(

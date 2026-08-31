@@ -90,7 +90,7 @@ mod signing_stamp;
 // HYG-03: the former empty `oidc` placeholder module was removed — OIDC
 // sign-in lives in `crate::identity::account_auth` + `crate::views::login`; the module
 // carried only a doc comment and no code.
-pub(crate) mod managed_agent_identity;
+pub(crate) mod agent_identity;
 pub mod operation;
 pub mod organization;
 mod outbound_store;

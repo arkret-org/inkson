@@ -159,8 +159,8 @@ impl MlsEndpoints<'_> {
             arkret_sdk::MlsEndpointIdentity::HumanDevice { .. } => {
                 anyhow::bail!("KeyPackage endpoint device differs from upload signer device")
             }
-            arkret_sdk::MlsEndpointIdentity::NativeAgentRuntime { .. } => {
-                anyhow::bail!("Native Agent KeyPackage requires the agent-authorized upload flow")
+            arkret_sdk::MlsEndpointIdentity::AgentRuntime { .. } => {
+                anyhow::bail!("Agent KeyPackage requires the agent-authorized upload flow")
             }
             arkret_sdk::MlsEndpointIdentity::MinimalMetadataPairwise { .. } => anyhow::bail!(
                 "minimal-metadata KeyPackage upload requires publish_pairwise_key_package"

@@ -139,7 +139,7 @@ pub(crate) fn keypackage_claim_record_to_mls_record(
         anyhow::bail!("device KeyPackage claim is missing its authorization event");
     }
     if claim.agent_id.is_some() && claim.device_authorize_event_id.is_some() {
-        anyhow::bail!("Native Agent KeyPackage claim has mixed authorization evidence");
+        anyhow::bail!("Agent KeyPackage claim has mixed authorization evidence");
     }
     let endpoint = match (
         &claim.device_id,
@@ -153,9 +153,9 @@ pub(crate) fn keypackage_claim_record_to_mls_record(
         ),
         (None, Some(agent_id), Some(method), Some(authorization_ref)) => {
             if agent_id != &claim.principal_id {
-                anyhow::bail!("Native Agent KeyPackage claim endpoint binding mismatch");
+                anyhow::bail!("Agent KeyPackage claim endpoint binding mismatch");
             }
-            arkret_sdk::MlsEndpointIdentity::native_agent_runtime(
+            arkret_sdk::MlsEndpointIdentity::agent_runtime(
                 agent_id.clone(),
                 method.clone(),
                 authorization_ref.clone(),
@@ -390,7 +390,7 @@ fn build_mls_keypackage_claim_request_with_requester(
         arkret_sdk::PeerKeyPackageRequesterAuthorization::Device {
             signature: proof, ..
         }
-        | arkret_sdk::PeerKeyPackageRequesterAuthorization::NativeAgent {
+        | arkret_sdk::PeerKeyPackageRequesterAuthorization::Agent {
             signature: proof, ..
         }
         | arkret_sdk::PeerKeyPackageRequesterAuthorization::MinimalMetadataPairwise {
@@ -457,7 +457,7 @@ mod tests {
                 principal_id,
                 device_id,
             } => (principal_id.clone(), device_id.clone()),
-            arkret_sdk::MlsEndpointIdentity::NativeAgentRuntime { .. }
+            arkret_sdk::MlsEndpointIdentity::AgentRuntime { .. }
             | arkret_sdk::MlsEndpointIdentity::MinimalMetadataPairwise { .. } => {
                 panic!("test fixture requires a human-device record")
             }
@@ -554,7 +554,7 @@ mod tests {
     }
 
     #[test]
-    fn native_agent_claim_is_preserved_as_a_native_agent_endpoint() {
+    fn agent_claim_is_preserved_as_a_agent_endpoint() {
         let principal = principal_core_id("did:web:agent.example").unwrap();
         let device =
             arkret_sdk::DeviceId::new("ak:device:01964137-0000-7000-8000-000000000002".to_owned())
@@ -577,7 +577,7 @@ mod tests {
         let converted = keypackage_claim_record_to_mls_record(&claim).unwrap();
         assert_eq!(
             converted.endpoint,
-            arkret_sdk::MlsEndpointIdentity::NativeAgentRuntime {
+            arkret_sdk::MlsEndpointIdentity::AgentRuntime {
                 agent_id: principal,
                 verification_method: method,
                 agent_key_authorize_event_id: authorization_ref,

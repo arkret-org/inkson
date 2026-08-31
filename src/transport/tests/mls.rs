@@ -92,7 +92,7 @@ fn keypackage_claim_request_carries_required_capabilities() {
                 &requester_device_authorize_event_id
             );
         }
-        arkret_sdk::PeerKeyPackageRequesterAuthorization::NativeAgent { .. } => {
+        arkret_sdk::PeerKeyPackageRequesterAuthorization::Agent { .. } => {
             panic!("human caller must author device authorization")
         }
         arkret_sdk::PeerKeyPackageRequesterAuthorization::MinimalMetadataPairwise { .. } => {

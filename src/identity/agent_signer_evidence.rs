@@ -130,7 +130,7 @@ pub(crate) async fn prefetch_from_realm_projections(
             match http.agent_signer_evidence_query(&request).await {
                 Ok(outcome) => {
                     for root in outcome.evidence_items {
-                        let arkret_sdk::AuthenticatedSignerResolutionEvidence::NativeAgent {
+                        let arkret_sdk::AuthenticatedSignerResolutionEvidence::Agent {
                             agent_signer_evidence: evidence,
                             ..
                         } = root
@@ -449,7 +449,7 @@ async fn materialize_verified_cache_entry(
     Some(entry)
 }
 
-/// Query and cache the current Native Agent signing evidence needed to admit
+/// Query and cache the current Agent signing evidence needed to admit
 /// a live Signal. The request context is generated locally and retained with
 /// the cache entry, so an evidence object cannot supply its own verifier,
 /// audience, request digest or challenge and then be trusted by reflection.
@@ -498,7 +498,7 @@ pub(crate) async fn prefetch_for_signal(
         did_cache.get(),
     );
     for root in outcome.evidence_items {
-        let arkret_sdk::AuthenticatedSignerResolutionEvidence::NativeAgent {
+        let arkret_sdk::AuthenticatedSignerResolutionEvidence::Agent {
             agent_signer_evidence: evidence,
             ..
         } = root
@@ -597,7 +597,7 @@ pub(crate) async fn resolve_current_history_request_authorization(
         arkret_sdk::identity::DidResolutionCache::default(),
     );
     for root in outcome.evidence_items {
-        let arkret_sdk::AuthenticatedSignerResolutionEvidence::NativeAgent {
+        let arkret_sdk::AuthenticatedSignerResolutionEvidence::Agent {
             signer_id,
             verification_method: resolved_method,
             agent_signer_evidence,
@@ -708,7 +708,7 @@ fn signal_evidence_query(
     })
 }
 
-/// Resolve a live Signal signer through the same verified Native Agent
+/// Resolve a live Signal signer through the same verified Agent
 /// evidence used for durable Events. Signals have no server-stamped Event
 /// admission object, so the evidence's current accepted authorization basis is
 /// used directly; stale, revoked, superseded, conflicted, or cryptographically

@@ -134,7 +134,7 @@ pub async fn ensure_principal_bootstrap_governance_checkpoint(
         &resolved.events,
         &resolved.dependencies,
         |event, digest_suite, evidence, dependencies| {
-            crate::mls::governance_proof::verify_native_agent_history_key(
+            crate::mls::governance_proof::verify_agent_history_key(
                 state_store,
                 event,
                 digest_suite,

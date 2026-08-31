@@ -82,7 +82,7 @@ impl MentionPickerState {
     /// Filter `candidates` down to those whose `display_name` or `subject_id`
     /// matches the current query (case-insensitive substring). The popover is
     /// scroll-bounded by CSS, so the model keeps every match available; this
-    /// matters for controllers with more than a handful of personal agents.
+    /// matters for controllers with more than a handful of Agents.
     pub fn filter<'a>(&self, candidates: &'a [MentionCandidate]) -> Vec<&'a MentionCandidate> {
         let q = self.query.trim().to_ascii_lowercase();
         let inserted: std::collections::BTreeSet<&str> = self

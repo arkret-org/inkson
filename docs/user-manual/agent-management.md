@@ -1,7 +1,7 @@
 # inkson — Agent Management
 
-> How to register, govern, and revoke automated members (bots / personal
-> agents / services). Spec source: `arkret-spec/spec/v1/zh/extensions/agent-integration.md`.
+> How to provision and govern Agents, and how they differ from Applet Bots,
+> services, Devices, and Ghost Actor provenance.
 
 Agents are first-class principals. They get their own DID + signing key
 and act under explicit capability proofs — never your personal device key.
@@ -14,10 +14,11 @@ The agent surface lives under **Settings → Agents**.
 
 | Concept | What it is |
 | --- | --- |
-| **Native** actor | A real device (yours). Stamped by the reducer as `actor_kind="native"`. |
-| **Ghost** actor | An applet-bound bot. Tagged `actor_kind="ghost"` (amber badge). |
+| **Device** | A principal endpoint. It is not an Actor and has no `actor_kind`. |
+| **Ghost Actor** | Provenance for an external principal mirrored through an Applet; not an `actor_kind`. |
 | **Service** actor | A first-party service principal (blue badge). |
-| **Personal Agent** | A user-owned automation actor (green badge). |
+| **Agent** | A controller-provisioned Agent with its own DID/PCR and Agent Runtime (green badge). |
+| **Bot** | Applet-created or Applet-hosted automation with `actor_kind="bot"` (amber badge). |
 | **Private Sidecar** | A controller-private, Realm-scoped AI object hosted inside the current Strand. Eligible owned Agents derive its access; its backing MLS scope is not a user-visible Circle. |
 | **Capability proof** | A signed grant that lets the agent invoke specific operations. 14 capability actions land in v1. |
 
@@ -25,12 +26,12 @@ The agent surface lives under **Settings → Agents**.
 
 ---
 
-## 2. Provision a personal agent
+## 2. Provision an Agent
 
-The richer path. Use `PersonalAgentAdminPanel` for a real personal agent
+Use `AgentAdminPanel` for an Agent
 with a Private Sidecar.
 
-1. Click **+ Provision personal agent**.
+1. Click **+ Provision Agent**.
 2. Walk through the provision wizard:
    - **Identity** — agent DID + handle.
    - **Controller** — confirm the owning controller account.
@@ -40,7 +41,7 @@ with a Private Sidecar.
 3. Confirm via the **DangerousActionDialog**. Type `DEACTIVATE` to enable
    later destructive paths.
 
-<!-- TODO(screenshot): personal-agent-provision-wizard.png -->
+<!-- TODO(screenshot): agent-provision-wizard.png -->
 
 ---
 
@@ -54,7 +55,7 @@ Each agent row exposes:
 - **Sidecar ensure** — reconcile the Realm-private Sidecar and its eligible Agent access.
 - **Deactivate** — permanent revocation. Type `DEACTIVATE` to confirm.
 
-<!-- TODO(screenshot): personal-agent-admin-actions.png -->
+<!-- TODO(screenshot): agent-admin-actions.png -->
 
 ---
 
@@ -90,7 +91,7 @@ trace execution back to its controller grant.
 1. Click **Deactivate** on the agent row.
 2. Type `DEACTIVATE` in the confirmation field.
 3. Click **Confirm — destructive**.
-4. inkson publishes the canonical personal-agent deactivate operation. The agent
+4. inkson publishes the canonical agent deactivate operation. The agent
    can no longer be summoned by any controller.
 
 <!-- TODO(screenshot): agent-deactivate-confirm.png -->

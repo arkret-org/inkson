@@ -840,8 +840,7 @@ fn mls_governance_proof(input: Value) -> Result<Value> {
         &input.local_mls_leaves,
         |_event, _digest_suite, _evidence, _dependencies| {
             Err(arkret_sdk::WireError::Protocol(
-                "the inkson-wire fixture does not provide Native Agent historical authority"
-                    .to_owned(),
+                "the inkson-wire fixture does not provide Agent historical authority".to_owned(),
             ))
         },
     )

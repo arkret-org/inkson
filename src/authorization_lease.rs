@@ -321,7 +321,7 @@ pub async fn standard_initial_submission(
     digest_suite: arkret_sdk::DigestSuite,
 ) -> anyhow::Result<arkret_wire::EventInitialSubmission> {
     let mut submission = arkret_wire::EventInitialSubmission::online(event.clone());
-    let managed_genesis = is_managed_agent_pcr_genesis(event);
+    let managed_genesis = is_agent_pcr_genesis(event);
     if event.kind.is_control_plane() {
         let authority_ack = match resolve_proposal_authority_route(http, event).await? {
             ProposalAuthorityRoute::AuthorityAuthoredSelfPrincipal => None,
@@ -389,7 +389,7 @@ pub async fn delayed_initial_submission(
     digest_suite: arkret_sdk::DigestSuite,
 ) -> anyhow::Result<arkret_wire::EventInitialSubmission> {
     let mut submission = initial_submission(event)?;
-    let managed_genesis = is_managed_agent_pcr_genesis(event);
+    let managed_genesis = is_agent_pcr_genesis(event);
     if event.kind.is_control_plane() {
         let authority_ack = match resolve_proposal_authority_route(http, event).await? {
             ProposalAuthorityRoute::AuthorityAuthoredSelfPrincipal => None,
@@ -461,7 +461,7 @@ pub fn delayed_authority_authored_self_principal_submission(
 /// Who signs a Control Move's Control Proposal Ack.
 ///
 /// This is the single place in Inkson that answers the question. Every caller —
-/// standard publication, managed Agent PCR writes, and fresh-device recovery —
+/// standard publication, Agent PCR writes, and fresh-device recovery —
 /// resolves a route here instead of re-deriving an authority digest or picking a
 /// signer from a Realm id, a `#fragment`, or an Event kind. A route can only be
 /// built from accepted authority evidence, so a future policy or signer-binding
@@ -532,7 +532,7 @@ impl LocalAccountAuthority {
     }
 }
 
-fn is_managed_agent_pcr_control(event: &arkret_sdk::Event) -> bool {
+fn is_agent_pcr_control(event: &arkret_sdk::Event) -> bool {
     let Some(executor) = event.executed_by.as_ref() else {
         return false;
     };
@@ -552,8 +552,8 @@ fn is_managed_agent_pcr_control(event: &arkret_sdk::Event) -> bool {
         .is_some_and(|core_id| core_id == *event.actor_id.signing_principal_id())
 }
 
-pub(crate) fn is_managed_agent_pcr_genesis(event: &arkret_sdk::Event) -> bool {
-    event.kind == arkret_sdk::EventKind::RealmCreate && is_managed_agent_pcr_control(event)
+pub(crate) fn is_agent_pcr_genesis(event: &arkret_sdk::Event) -> bool {
+    event.kind == arkret_sdk::EventKind::RealmCreate && is_agent_pcr_control(event)
 }
 
 /// The two authority routes a Control Move can take, decided from the Event
@@ -568,8 +568,8 @@ pub(crate) enum ProposalAuthorityRouteKind {
     /// An ordinary Realm is admitted by the already-authenticated receiving
     /// Station. This is not a human current-DID/PCR lookup.
     StationAdmission,
-    /// A managed Agent's Control Realm, written by its delegated controller.
-    ManagedAgentPcr,
+    /// A Agent's Control Realm, written by its delegated controller.
+    AgentPcr,
     /// A controller's own principal-control Realm.  Agent provisioning is a
     /// self-PCR Control Move, so the controller device signs its proposal Ack
     /// under the immutable notary declared by that Realm's accepted genesis.
@@ -595,11 +595,11 @@ fn classify_proposal_authority_route(
     }
     // The managed-delegation shape is checked first: it names both a different
     // executor and the Agent's `#managed-controller` delegation, so it can only
-    // ever be satisfied by a managed Agent PCR write. Deciding it before the
+    // ever be satisfied by a Agent PCR write. Deciding it before the
     // Realm-id comparison keeps the authority digest and the signer choice from
     // ever coming from two different answers.
-    if is_managed_agent_pcr_control(event) {
-        return Ok(ProposalAuthorityRouteKind::ManagedAgentPcr);
+    if is_agent_pcr_control(event) {
+        return Ok(ProposalAuthorityRouteKind::AgentPcr);
     }
     let recovery_policy_set = if event.kind == arkret_sdk::EventKind::PolicySet {
         let payload = event
@@ -637,28 +637,20 @@ async fn resolve_proposal_authority_route(
                 Err(_) => Ok(ProposalAuthorityRoute::StationAdmission),
             }
         }
-        ProposalAuthorityRouteKind::ManagedAgentPcr => {
+        ProposalAuthorityRouteKind::AgentPcr => {
             // The single-Event managed PCR genesis is a caller-proven closed
             // anchor unit. Its founding notary material is completely derived
             // from that signed create, so the delegated controller can issue
             // the Control Proposal Ack before the Event is durable. Successors
             // continue to resolve the same immutable authority from accepted
             // genesis history.
-            let authority_set_ref = if is_managed_agent_pcr_genesis(event) {
-                arkret_bootstrap::ManagedAgentPcrGenesisAuthority::from_delegated_create(
-                    event,
-                    &|event| {
-                        crate::operation::cell_write_projector(
-                            event,
-                            arkret_sdk::DigestSuite::Sha256,
-                        )
-                    },
-                )
+            let authority_set_ref = if is_agent_pcr_genesis(event) {
+                arkret_bootstrap::AgentPcrGenesisAuthority::from_delegated_create(event, &|event| {
+                    crate::operation::cell_write_projector(event, arkret_sdk::DigestSuite::Sha256)
+                })
                 .map(|authority| authority.authority_set_ref().clone())
                 .map_err(|error| {
-                    anyhow::anyhow!(
-                        "managed Agent PCR candidate genesis authority is unavailable: {error}"
-                    )
+                    anyhow::anyhow!("Agent PCR candidate genesis authority is unavailable: {error}")
                 })?
             } else {
                 let accepted = http
@@ -667,16 +659,17 @@ async fn resolve_proposal_authority_route(
                     .map_err(anyhow::Error::from)?;
                 let accepted_events = crate::models::require_complete_event_rows(
                     &accepted.events,
-                    "managed Agent PCR authority resolution",
+                    "Agent PCR authority resolution",
                 )?;
-                managed_agent_pcr_authority_set_ref_from_events(event, &accepted_events)?
+                agent_pcr_authority_set_ref_from_events(event, &accepted_events)?
             };
-            // A managed Agent PCR write is executed by the delegated
+            // A Agent PCR write is executed by the delegated
             // controller, so the controller's device key — not the Agent's —
             // signs under the founding notary profile.
-            let signer_principal = event.executed_by.clone().ok_or_else(|| {
-                anyhow::anyhow!("managed Agent PCR controls always carry executed_by")
-            })?;
+            let signer_principal = event
+                .executed_by
+                .clone()
+                .ok_or_else(|| anyhow::anyhow!("Agent PCR controls always carry executed_by"))?;
             Ok(ProposalAuthorityRoute::LocalPrincipal(
                 LocalAccountAuthority {
                     authority_set_ref,
@@ -732,7 +725,7 @@ fn self_principal_pcr_authority_set_ref_from_events(
         .map_err(anyhow::Error::from)
 }
 
-fn managed_agent_pcr_authority_set_ref_from_events(
+fn agent_pcr_authority_set_ref_from_events(
     event: &arkret_sdk::Event,
     accepted_events: &[arkret_sdk::Event],
 ) -> anyhow::Result<arkret_sdk::Hash> {
@@ -745,19 +738,19 @@ fn managed_agent_pcr_authority_set_ref_from_events(
     });
     let create = creates
         .next()
-        .ok_or_else(|| anyhow::anyhow!("managed Agent PCR create Event is unavailable"))?;
+        .ok_or_else(|| anyhow::anyhow!("Agent PCR create Event is unavailable"))?;
     if creates.next().is_some() {
-        anyhow::bail!("managed Agent PCR has multiple matching create Events");
+        anyhow::bail!("Agent PCR has multiple matching create Events");
     }
     // The proposal authority is immutable genesis material. The SDK's genesis
     // type accepts only the accepted create, so a later transition that needs
     // frozen pre-state (for example `ak.agent.key.revoke`) can never be dragged
     // into an authoring query.
-    arkret_bootstrap::ManagedAgentPcrGenesisAuthority::from_accepted_create(create, &|event| {
+    arkret_bootstrap::AgentPcrGenesisAuthority::from_accepted_create(create, &|event| {
         crate::operation::cell_write_projector(event, arkret_sdk::DigestSuite::Sha256)
     })
     .map(|authority| authority.authority_set_ref().clone())
-    .map_err(|error| anyhow::anyhow!("managed Agent PCR genesis authority is unavailable: {error}"))
+    .map_err(|error| anyhow::anyhow!("Agent PCR genesis authority is unavailable: {error}"))
 }
 
 /// Lease / ingress receipt fixtures for tests in other modules.
@@ -945,7 +938,7 @@ mod tests {
     /// signer. Every near miss stays on the Agent's own authority, so a stray
     /// `#fragment` can never redirect who signs a receipt.
     #[test]
-    fn managed_agent_pcr_control_uses_the_delegated_local_authority() {
+    fn agent_pcr_control_uses_the_delegated_local_authority() {
         let mut managed = event();
         managed.actor_id = arkret_sdk::ActorId::service(
             arkret_sdk::DidCoreId::new("ak:did_core:web:agent.example").unwrap(),
@@ -962,18 +955,18 @@ mod tests {
         managed.authorization_ref = Some(
             arkret_sdk::AuthorizationRef::new("did:web:agent.example#managed-controller").unwrap(),
         );
-        assert!(is_managed_agent_pcr_control(&managed));
+        assert!(is_agent_pcr_control(&managed));
 
         managed.authorization_ref = Some(
             arkret_sdk::AuthorizationRef::new("did:web:agent.example#other-delegation").unwrap(),
         );
-        assert!(!is_managed_agent_pcr_control(&managed));
+        assert!(!is_agent_pcr_control(&managed));
 
         managed.authorization_ref = Some(
             arkret_sdk::AuthorizationRef::new("did:web:agent.example#managed-controller").unwrap(),
         );
         managed.executed_by = Some(managed.actor_id.clone());
-        assert!(!is_managed_agent_pcr_control(&managed));
+        assert!(!is_agent_pcr_control(&managed));
     }
 
     /// Each authority route is selected by the Event alone, and
@@ -1008,7 +1001,7 @@ mod tests {
         );
         assert_eq!(
             classify_proposal_authority_route(&managed).unwrap(),
-            ProposalAuthorityRouteKind::ManagedAgentPcr
+            ProposalAuthorityRouteKind::AgentPcr
         );
 
         // A delegation fragment that is not the managed-controller binding is
@@ -1055,7 +1048,7 @@ mod tests {
 
     fn self_pcr_create_for_submission(provision: &arkret_sdk::Event) -> arkret_sdk::Event {
         let did = arkret_sdk::Did::new("did:web:alice.example").unwrap();
-        let notary = crate::event_builders::managed_agent_inception_notary(
+        let notary = crate::event_builders::agent_inception_notary(
             &did,
             &arkret_sdk::ed25519_pubkey_to_did_key_multibase(&[7_u8; 32]),
         )
@@ -1161,16 +1154,16 @@ mod tests {
     }
 
     #[test]
-    fn managed_agent_pcr_create_is_frozen_before_provision_commit() {
+    fn agent_pcr_create_is_frozen_before_provision_commit() {
         let events = crate::event_submit::author_event_unit_for_test(
-            crate::event_builders::build_managed_agent_pcr_bootstrap_steps(
+            crate::event_builders::build_agent_pcr_bootstrap_steps(
                 "did:web:agent.example",
                 arkret_sdk::ResolutionCommitment {
                     did: arkret_sdk::Did::new("did:web:agent.example").unwrap(),
                     method_history_head: format!("sha256:{}", "8".repeat(64)),
                     version_id: "1-Qmfixture".to_owned(),
                 },
-                crate::event_builders::managed_agent_inception_notary(
+                crate::event_builders::agent_inception_notary(
                     &arkret_sdk::Did::new("did:web:agent.example").unwrap(),
                     &arkret_sdk::ed25519_pubkey_to_did_key_multibase(&[7_u8; 32]),
                 )

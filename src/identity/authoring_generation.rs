@@ -4,7 +4,7 @@
 //! authored it. Before every replay the current keys projection is fetched
 //! again and compared exactly. Recovery therefore cannot accidentally revive
 //! queued work signed by an old device generation or a controller generation that no longer
-//! authorizes a managed Agent write.
+//! authorizes a Agent write.
 
 use std::collections::BTreeMap;
 use std::sync::{Mutex, OnceLock, PoisonError};
@@ -119,7 +119,7 @@ impl<'a> EventAuthorityFacts<'a> {
             .as_str()
     }
 
-    /// True when a managed Agent authors on a controller's behalf.
+    /// True when a Agent authors on a controller's behalf.
     fn is_delegated(&self) -> bool {
         self.executed_by
             .is_some_and(|executed_by| executed_by != self.actor_id)
@@ -153,7 +153,7 @@ pub(crate) fn cached_event_authoring_generation(
     };
 
     if facts.is_delegated() {
-        return AuthoringGeneration::managed_agent(
+        return AuthoringGeneration::agent(
             authority_principal,
             &controller_generation,
             facts.authorization_ref_str(),
@@ -201,7 +201,7 @@ pub(crate) async fn resolve_current_event_authoring_generation(
     cache_verified_principal_generation(account_id, device_id, &controller_generation);
 
     if facts.is_delegated() {
-        return AuthoringGeneration::managed_agent(
+        return AuthoringGeneration::agent(
             authority_principal,
             &controller_generation,
             facts.authorization_ref_str(),
@@ -440,19 +440,19 @@ mod tests {
             .unwrap(),
             generation_ref: "2-QmCurrent".to_owned(),
         };
-        let first = AuthoringGeneration::managed_agent(
+        let first = AuthoringGeneration::agent(
             "ak:did_core:webvh:example",
             &controller,
             "did:webvh:example:agent#controller",
         )
         .unwrap();
-        let second = AuthoringGeneration::managed_agent(
+        let second = AuthoringGeneration::agent(
             "ak:did_core:webvh:example",
             &controller,
             "did:webvh:example:agent#different-controller",
         )
         .unwrap();
-        assert_eq!(first.authority_model, AuthoringAuthorityModel::ManagedAgent);
+        assert_eq!(first.authority_model, AuthoringAuthorityModel::Agent);
         assert_ne!(first.generation_ref, second.generation_ref);
     }
 }

@@ -2504,7 +2504,7 @@ pub fn ChatPanel(
                             h1 { "{selected_channel_name}" }
                         }
                         if sidecar_mode {
-                            span { class: "muted sidecar-subtitle", "Private AI sidecar · you and eligible personal agents in this Realm" }
+                            span { class: "muted sidecar-subtitle", "Private AI sidecar · you and eligible Agents in this Realm" }
                         }
                     }
                     if !embedded {
@@ -3026,7 +3026,7 @@ pub fn ChatPanel(
                                 }
                             }
                             div { class: "event info",
-                                "Sidecar access is derived from your eligible personal Agents. The badge marks the Agent addressed by the current message."
+                                "Sidecar access is derived from your eligible Agents. The badge marks the Agent addressed by the current message."
                             }
                             div { class: "discussion-subhead", span { "Encryption" } }
                             div { class: "detail-row", span { "Profile" } strong { {sidecar_security_label.unwrap_or("Opening")} } }

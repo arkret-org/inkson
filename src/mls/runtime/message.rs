@@ -1085,10 +1085,9 @@ fn build_welcome_consume_request(
                 device_verification_method: method,
             }
         }
-        arkret_sdk::MlsWelcomeRecipient::NativeAgent { .. } => {
+        arkret_sdk::MlsWelcomeRecipient::Agent { .. } => {
             return Err(
-                "Inkson cannot sign a Native Agent durable receipt with a human client key"
-                    .to_owned(),
+                "Inkson cannot sign an Agent durable receipt with a human client key".to_owned(),
             );
         }
         arkret_sdk::MlsWelcomeRecipient::MinimalMetadataPairwise {
@@ -1109,7 +1108,7 @@ fn build_welcome_consume_request(
             device_verification_method,
             ..
         } => device_verification_method.as_str(),
-        arkret_sdk::RecipientMlsDurableSigner::NativeAgent { .. } => unreachable!(),
+        arkret_sdk::RecipientMlsDurableSigner::Agent { .. } => unreachable!(),
         arkret_sdk::RecipientMlsDurableSigner::MinimalMetadataPairwise {
             recipient_pairwise_verification_method,
         } => recipient_pairwise_verification_method.as_str(),
@@ -1204,7 +1203,7 @@ fn validate_cached_welcome_consume_request(
         ) => {
             expected_actor == &candidate.recipient_principal_id && expected_method == actual_method
         }
-        (arkret_sdk::MlsWelcomeRecipient::NativeAgent { .. }, _) => false,
+        (arkret_sdk::MlsWelcomeRecipient::Agent { .. }, _) => false,
         _ => false,
     };
     if !same_binding || !same_recipient {
@@ -1477,7 +1476,7 @@ pub(super) fn validate_welcome_claim_receipt_context(
                 .recipient_principal_id
                 .as_ref()
                 .ok_or_else(|| "device Welcome omits recipient_principal_id".to_owned())?,
-            arkret_sdk::MlsWelcomeRecipient::NativeAgent {
+            arkret_sdk::MlsWelcomeRecipient::Agent {
                 recipient_agent_id, ..
             } => recipient_agent_id,
             arkret_sdk::MlsWelcomeRecipient::MinimalMetadataPairwise {
@@ -1535,22 +1534,22 @@ pub(super) fn welcome_recipient_endpoint(
                 recipient_device_id,
             ))
         }
-        arkret_sdk::MlsWelcomeRecipient::NativeAgent {
+        arkret_sdk::MlsWelcomeRecipient::Agent {
             recipient_agent_id,
             recipient_agent_verification_method,
             agent_key_authorize_event_id,
         } => {
             if recipient_principal_id.as_ref() != Some(&recipient_agent_id) {
                 return Err(
-                    "Native Agent Welcome recipient differs from recipient_principal_id".to_owned(),
+                    "Agent Welcome recipient differs from recipient_principal_id".to_owned(),
                 );
             }
-            Ok(arkret_sdk::MlsEndpointIdentity::native_agent_runtime(
+            Ok(arkret_sdk::MlsEndpointIdentity::agent_runtime(
                 recipient_agent_id,
                 recipient_agent_verification_method,
                 agent_key_authorize_event_id,
             )
-            .map_err(|error| format!("Native Agent Welcome endpoint is invalid: {error}"))?)
+            .map_err(|error| format!("Agent Welcome endpoint is invalid: {error}"))?)
         }
         arkret_sdk::MlsWelcomeRecipient::MinimalMetadataPairwise {
             recipient_pairwise_actor_id,
@@ -1672,9 +1671,9 @@ pub(super) fn verify_welcome_claim_envelope_signer(
                 requester_device_authorize_event_id,
             )
         }
-        arkret_sdk::MlsRequesterTrustBinding::RequesterNativeAgent { .. } => {
+        arkret_sdk::MlsRequesterTrustBinding::RequesterAgent { .. } => {
             return Err(
-                    "Native Agent claim_envelope verification is unavailable until its authorization Event is normatively bound to this Welcome"
+                    "Agent claim_envelope verification is unavailable until its authorization Event is normatively bound to this Welcome"
                         .to_owned(),
                 );
         }
@@ -2635,7 +2634,7 @@ mod endpoint_tests {
     use super::welcome_recipient_endpoint;
 
     #[test]
-    fn native_agent_welcome_recipient_keeps_the_runtime_authority_tuple() {
+    fn agent_welcome_recipient_keeps_the_runtime_authority_tuple() {
         let agent_id = crate::mls_api_helpers::principal_core_id("did:web:agent.example").unwrap();
         let method =
             arkret_sdk::DidUrl::new("did:web:agent.example#runtime-key".to_owned()).unwrap();
@@ -2644,7 +2643,7 @@ mod endpoint_tests {
                 .unwrap();
         let endpoint = welcome_recipient_endpoint(
             &Some(agent_id.clone()),
-            arkret_sdk::MlsWelcomeRecipient::NativeAgent {
+            arkret_sdk::MlsWelcomeRecipient::Agent {
                 recipient_agent_id: agent_id.clone(),
                 recipient_agent_verification_method: method.clone(),
                 agent_key_authorize_event_id: authorization_ref.clone(),
@@ -2654,7 +2653,7 @@ mod endpoint_tests {
 
         assert_eq!(
             endpoint,
-            arkret_sdk::MlsEndpointIdentity::NativeAgentRuntime {
+            arkret_sdk::MlsEndpointIdentity::AgentRuntime {
                 agent_id,
                 verification_method: method,
                 agent_key_authorize_event_id: authorization_ref,

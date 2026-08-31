@@ -305,8 +305,7 @@ pub(crate) fn realm_projection_control_purpose(body: &Value) -> Option<&str> {
                 .pointer("/payload/object")
                 .or_else(|| event.pointer("/content/object"))?;
             let purpose = object.get("purpose").and_then(Value::as_str)?;
-            let is_control_purpose =
-                matches!(purpose, "principal_control" | "managed_agent_control");
+            let is_control_purpose = matches!(purpose, "principal_control" | "agent_control");
             let has_control_profile = object
                 .get("schema_refs")
                 .and_then(Value::as_array)

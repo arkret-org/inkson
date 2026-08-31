@@ -1219,7 +1219,7 @@ export async function mockArkretApi(
                 ok: false,
                 error: {
                   code: "not_found",
-                  message: "managed Agent PCR has no accepted Seal yet",
+                  message: "Agent PCR has no accepted Seal yet",
                 },
               },
               404,
@@ -1241,7 +1241,7 @@ export async function mockArkretApi(
             },
             receipts: [
               {
-                kind: "ak.managed_agent_pcr.seal_head.v1",
+                kind: "ak.agent_pcr.seal_head.v1",
                 seal,
               },
             ],
@@ -1311,7 +1311,7 @@ export async function mockArkretApi(
             ok: false,
             error: {
               code: "schema_violation",
-              message: "invalid managed Agent PCR Seal",
+              message: "invalid Agent PCR Seal",
             },
           },
           400,
@@ -1351,7 +1351,7 @@ export async function mockArkretApi(
             ok: false,
             error: {
               code: "frontier_unavailable",
-              message: "managed Agent PCR Seal is unavailable",
+              message: "Agent PCR Seal is unavailable",
             },
           },
           503,

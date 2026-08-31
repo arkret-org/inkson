@@ -223,7 +223,7 @@ pub fn build_recovery_public_key_backup_body_in_series(
 }
 
 /// Multi-item HPKE envelope variant used by a controller-owned active series
-/// whose tail folds every currently managed Agent PCR binding.
+/// whose tail folds every currently Agent PCR binding.
 #[allow(clippy::too_many_arguments)]
 pub fn build_recovery_public_key_backup_body_for_items_in_series(
     backup_id: &str,

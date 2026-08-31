@@ -203,7 +203,7 @@ fn build_add_proposal_event(
     ) {
         (Some(_), None, None, None) => {}
         (None, Some(agent_id), Some(_), Some(_)) if agent_id == &claim.principal_id => {}
-        _ => return Err("MLS admission claim has an invalid Human/Native Agent branch".to_owned()),
+        _ => return Err("MLS admission claim has an invalid Human/Agent branch".to_owned()),
     }
     let payload = arkret_sdk::MlsProposalPayload {
         mls_group_id: arkret_sdk::MlsGroupId::new(proposal.group_id.clone())
@@ -595,7 +595,7 @@ fn build_mls_welcome_payload_with_requester(
         arkret_sdk::MlsRequesterTrustBinding::RequesterMinimalMetadataPairwise { .. } => {
             arkret_sdk::ActorId::service(requester_did.clone())
         }
-        arkret_sdk::MlsRequesterTrustBinding::RequesterNativeAgent { .. } => {
+        arkret_sdk::MlsRequesterTrustBinding::RequesterAgent { .. } => {
             arkret_sdk::ActorId::service(requester_did.clone())
         }
     };
@@ -667,7 +667,7 @@ fn build_mls_welcome_payload_with_requester(
             recipient_device_id: device_id.clone(),
         },
         (None, Some(agent_id), Some(method), Some(authorize_event_id)) => {
-            arkret_sdk::MlsWelcomeRecipient::NativeAgent {
+            arkret_sdk::MlsWelcomeRecipient::Agent {
                 recipient_agent_id: agent_id.clone(),
                 recipient_agent_verification_method: method.clone(),
                 agent_key_authorize_event_id: authorize_event_id.clone(),
@@ -689,16 +689,16 @@ fn build_mls_welcome_payload_with_requester(
             claim.principal_id.clone(),
             recipient_device_id.clone(),
         ),
-        arkret_sdk::MlsWelcomeRecipient::NativeAgent {
+        arkret_sdk::MlsWelcomeRecipient::Agent {
             recipient_agent_id,
             recipient_agent_verification_method,
             agent_key_authorize_event_id,
-        } => arkret_sdk::MlsEndpointIdentity::native_agent_runtime(
+        } => arkret_sdk::MlsEndpointIdentity::agent_runtime(
             recipient_agent_id.clone(),
             recipient_agent_verification_method.clone(),
             agent_key_authorize_event_id.clone(),
         )
-        .map_err(|error| format!("invalid Native Agent Welcome endpoint: {error}"))?,
+        .map_err(|error| format!("invalid Agent Welcome endpoint: {error}"))?,
         arkret_sdk::MlsWelcomeRecipient::MinimalMetadataPairwise {
             recipient_pairwise_actor_id,
             recipient_pairwise_verification_method,
@@ -826,7 +826,7 @@ mod tests {
                 principal_id,
                 device_id,
             } => (principal_id.clone(), device_id.clone()),
-            arkret_sdk::MlsEndpointIdentity::NativeAgentRuntime { .. }
+            arkret_sdk::MlsEndpointIdentity::AgentRuntime { .. }
             | arkret_sdk::MlsEndpointIdentity::MinimalMetadataPairwise { .. } => {
                 panic!("test fixture requires a human-device record")
             }
@@ -996,7 +996,7 @@ mod tests {
     }
 
     #[test]
-    fn human_and_native_agent_adds_bind_the_exact_authorization_incarnation() {
+    fn human_and_agent_adds_bind_the_exact_authorization_incarnation() {
         let realm = "ak:realm:Aa8_CTduEn4HY_7QtwQ1Ct3QH2pg-9mfHGxJfGOYYHxx";
         let bob = arkret_sdk::ArkretMlsIdentity::new_test_human_device(
             crate::mls_api_helpers::principal_core_id("did:web:bob.example").unwrap(),

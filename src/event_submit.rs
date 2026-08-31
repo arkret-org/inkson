@@ -51,12 +51,12 @@ pub struct EventSubmitter {
 }
 
 /// Ordinary Realm and self-principal bootstrap units intentionally publish
-/// without per-Event Control Proposal Acks. A managed Agent PCR create is also an
+/// without per-Event Control Proposal Acks. A Agent PCR create is also an
 /// anchor unit, but its delegated controller is the founding proposal
 /// authority, so it must pass through `standard_initial_submission` to attach
 /// that controller's Control Proposal Ack.
 fn uses_bare_online_anchor_submission(anchor_unit: bool, event: &arkret_sdk::Event) -> bool {
-    anchor_unit && !crate::authorization_lease::is_managed_agent_pcr_genesis(event)
+    anchor_unit && !crate::authorization_lease::is_agent_pcr_genesis(event)
 }
 
 /// The write is safely persisted and will be retried.
@@ -280,11 +280,11 @@ impl EventOutboundSubmitter<'_> {
             |event, digest_suite, evidence, dependencies| {
                 let state_store = state_store.ok_or_else(|| {
                     arkret_sdk::WireError::Protocol(
-                        "Native Agent Event verification requires a durable governance trust store"
+                        "Agent Event verification requires a durable governance trust store"
                             .to_owned(),
                     )
                 })?;
-                crate::mls::governance_proof::verify_native_agent_history_key(
+                crate::mls::governance_proof::verify_agent_history_key(
                     state_store,
                     event,
                     digest_suite,
@@ -629,13 +629,13 @@ impl EventOutboundSubmitter<'_> {
     }
 }
 
-pub(crate) async fn verify_event_is_covered_by_accepted_seal<VerifyNativeAgentHistoryKey>(
+pub(crate) async fn verify_event_is_covered_by_accepted_seal<VerifyAgentHistoryKey>(
     http: &arkret_sdk::http_client::Client,
     event: &arkret_sdk::Event,
-    verify_native_agent_history_key: VerifyNativeAgentHistoryKey,
+    verify_agent_history_key: VerifyAgentHistoryKey,
 ) -> anyhow::Result<arkret_sdk::DigestSuite>
 where
-    VerifyNativeAgentHistoryKey: Fn(
+    VerifyAgentHistoryKey: Fn(
             &arkret_sdk::Event,
             arkret_sdk::DigestSuite,
             &arkret_sdk::AuthenticatedSignerResolutionEvidence,
@@ -657,7 +657,7 @@ where
         &resolved.seals,
         &resolved.events,
         &resolved.dependencies,
-        verify_native_agent_history_key,
+        verify_agent_history_key,
     )?;
     let digest = arkret_sdk::signed_event_digest_claim(event)?;
     let digest_suite = verified
@@ -1856,7 +1856,7 @@ impl EventSubmitter {
                         .and_then(Value::as_object)
                         .and_then(|object| object.get("purpose"))
                         .and_then(Value::as_str),
-                    Some("principal_control" | "managed_agent_control")
+                    Some("principal_control" | "agent_control")
                 )
         }
 
@@ -2108,7 +2108,7 @@ impl EventSubmitter {
         realm_id: &str,
     ) -> anyhow::Result<(
         arkret_sdk::RealmSealFrontierView,
-        Vec<arkret_sdk::ManagedAgentPcrSealHeadReceipt>,
+        Vec<arkret_sdk::AgentPcrSealHeadReceipt>,
     )> {
         let state = self
             .http
@@ -2125,10 +2125,10 @@ impl EventSubmitter {
         Ok((view, state.receipts))
     }
 
-    /// Return the accepted head needed to author the next managed Agent PCR
+    /// Return the accepted head needed to author the next Agent PCR
     /// Seal. The head can intentionally lag accepted Events. It is accepted
     /// only when its exact bytes occur in the locally replayed checkpoint.
-    pub(crate) async fn seals_frontier_managed_agent_head<
+    pub(crate) async fn seals_frontier_agent_head<
         S: crate::mls::governance_proof::GovernanceProofStateStore,
     >(
         &self,
@@ -2138,28 +2138,24 @@ impl EventSubmitter {
     ) -> anyhow::Result<(arkret_sdk::RealmSealFrontierView, arkret_sdk::Seal)> {
         let (view, receipts) = self.seals_frontier_realm_state(realm_id).await?;
         let receipt = receipts.first().ok_or_else(|| {
-            anyhow::anyhow!("seals/frontier omitted the accepted managed Agent PCR Seal head")
+            anyhow::anyhow!("seals/frontier omitted the accepted Agent PCR Seal head")
         })?;
         let seal = receipt.seal.clone();
         let checkpoint = state_store
             .with_read(|store| store.trusted_mls_governance_checkpoint(realm_id))
-            .ok_or_else(|| {
-                anyhow::anyhow!("managed Agent PCR has no verified governance checkpoint")
-            })?;
+            .ok_or_else(|| anyhow::anyhow!("Agent PCR has no verified governance checkpoint"))?;
         if !checkpoint
             .accepted_seals
             .iter()
             .any(|accepted| accepted == &seal)
         {
-            anyhow::bail!(
-                "managed Agent PCR Seal head is not byte-exact in the verified checkpoint"
-            );
+            anyhow::bail!("Agent PCR Seal head is not byte-exact in the verified checkpoint");
         }
         // The frontier view carries no service-derived roots: the resolved
         // Seal's own signed roots are the only authority, so only identity is
         // cross-checked here.
         if seal.realm_id != view.realm_id || Some(&seal.id) != view.sole_leaf().ok() {
-            anyhow::bail!("managed Agent PCR Seal head differs from its frontier view");
+            anyhow::bail!("Agent PCR Seal head differs from its frontier view");
         }
         Ok((view, seal))
     }
@@ -2570,7 +2566,7 @@ impl EventSubmitter {
             accepted_candidate.actor_kind = Some(if accepted_candidate.executed_by.is_some() {
                 arkret_sdk::EnvelopeActorKind::Agent
             } else {
-                arkret_sdk::EnvelopeActorKind::Native
+                arkret_sdk::EnvelopeActorKind::User
             });
             let accepted_bytes = arkret_sdk::canonical::canonical_json_bytes(&accepted_candidate)?;
             if accepted_bytes.len() > arkret_sdk::MAX_EVENT_ENVELOPE_BYTES {
@@ -3430,7 +3426,7 @@ impl EventSubmitter {
             .map_err(|error| anyhow::anyhow!("prepared self-principal PCR unit: {error}"));
         }
         if events.len() == 1
-            && arkret_bootstrap::materialize_managed_agent_pcr_control(&events, &|event| {
+            && arkret_bootstrap::materialize_agent_pcr_control(&events, &|event| {
                 crate::operation::cell_write_projector(event, arkret_sdk::DigestSuite::Sha256)
             })
             .is_ok()

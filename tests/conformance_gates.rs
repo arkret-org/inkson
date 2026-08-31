@@ -739,24 +739,24 @@ fn realm_bootstrap_carries_alias_as_a_facet_event_not_on_the_closed_realm_object
 /// The controller freezes the exact PCR create locally and derives the Realm
 /// id from it before authoring the provision declaration.
 #[test]
-fn managed_agent_pcr_prepare_builds_an_exact_ref_free_create() {
+fn agent_pcr_prepare_builds_an_exact_ref_free_create() {
     select_authoring_station();
     let agent_did = arkret_sdk::Did::new("did:web:agent.example").unwrap();
     let root_public_key = arkret_sdk::ed25519_pubkey_to_did_key_multibase(&[7_u8; 32]);
     let events = common::author_unit(
-        event_builders::build_managed_agent_pcr_bootstrap_steps(
+        event_builders::build_agent_pcr_bootstrap_steps(
             agent_did.as_str(),
             arkret_sdk::ResolutionCommitment {
                 did: agent_did.clone(),
                 method_history_head: format!("sha256:{}", "8".repeat(64)),
                 version_id: "1-Qmfixture".to_owned(),
             },
-            event_builders::managed_agent_inception_notary(&agent_did, &root_public_key).unwrap(),
+            event_builders::agent_inception_notary(&agent_did, &root_public_key).unwrap(),
             TEST_ACTOR_ID,
             "did:web:alice.example#delegation-0",
             "ak:trust_domain:server.example",
         )
-        .expect("managed Agent provision can freeze an event-derived PCR create"),
+        .expect("Agent provision can freeze an event-derived PCR create"),
     );
     assert_eq!(events.len(), 1);
     assert!(events[0].refs.is_empty());

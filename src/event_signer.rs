@@ -692,10 +692,10 @@ impl InksonEventSigner {
         .map_err(|error| EventSignerError::Backend(error.to_string()))
     }
 
-    /// Sign a managed Agent PCR Seal as the controller device named by the
+    /// Sign a Agent PCR Seal as the controller device named by the
     /// Agent DID's accepted delegation. The wire signer is rebound to the
     /// controller DID and the authenticated `<controller>#<device_id>` method.
-    pub fn sign_managed_agent_pcr_event_seal(
+    pub fn sign_agent_pcr_event_seal(
         &self,
         controller_did: &arkret_sdk::Did,
         events: &[arkret_sdk::Event],
@@ -704,9 +704,7 @@ impl InksonEventSigner {
         hlc: arkret_sdk::Hlc,
     ) -> Result<arkret_sdk::Seal, EventSignerError> {
         let device_id = self.device_id.as_deref().ok_or_else(|| {
-            EventSignerError::Encoding(
-                "managed Agent PCR Seal requires a bound device_id".to_owned(),
-            )
+            EventSignerError::Encoding("Agent PCR Seal requires a bound device_id".to_owned())
         })?;
         let signer = InksonSealSignerAdapter {
             owner: self,
@@ -714,7 +712,7 @@ impl InksonEventSigner {
             verification_method: DidUrl::new(format!("{controller_did}#{device_id}"))
                 .map_err(|error| EventSignerError::Encoding(error.to_string()))?,
         };
-        arkret_bootstrap::build_managed_agent_pcr_event_seal(
+        arkret_bootstrap::build_agent_pcr_event_seal(
             events,
             predecessor,
             availability,

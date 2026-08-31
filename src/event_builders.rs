@@ -579,10 +579,10 @@ fn build_realm_create_event_for_station(
 }
 
 /// Build the create-locked Principal Control Realm genesis for a managed
-/// Native Personal Agent. The control facts belong to `agent_id`; the active
+/// Agent. The control facts belong to `agent_id`; the active
 /// controller only executes the Event under the DID delegation returned by
 /// provisioning.
-pub fn managed_agent_inception_notary(
+pub fn agent_inception_notary(
     agent_did: &arkret_sdk::Did,
     root_public_key_multibase: &str,
 ) -> anyhow::Result<arkret_sdk::NotaryValue> {
@@ -607,7 +607,7 @@ pub fn managed_agent_inception_notary(
     Ok(notary)
 }
 
-pub fn build_managed_agent_pcr_create_event(
+pub fn build_agent_pcr_create_event(
     agent_id: &str,
     initial_resolution: arkret_sdk::ResolutionCommitment,
     notary: arkret_sdk::NotaryValue,
@@ -616,8 +616,8 @@ pub fn build_managed_agent_pcr_create_event(
     trust_domain: &str,
 ) -> anyhow::Result<crate::operation::LocalOperation> {
     let created_at = event_timestamp();
-    let payload = arkret_bootstrap::build_managed_agent_pcr_create_payload(
-        arkret_bootstrap::ManagedAgentPcrCreatePayloadInput {
+    let payload = arkret_bootstrap::build_agent_pcr_create_payload(
+        arkret_bootstrap::AgentPcrCreatePayloadInput {
             agent_id: crate::mls_api_helpers::principal_core_id(agent_id)?,
             initial_resolution,
             controller_id: crate::mls_api_helpers::principal_core_id(controller_id)?,
@@ -643,11 +643,11 @@ pub fn build_managed_agent_pcr_create_event(
     .build_sdk_event("inkson")
 }
 
-/// The managed-Agent PCR genesis unit: exactly one create Event.
+/// The Agent PCR genesis unit: exactly one create Event.
 ///
 /// The unit shape is proven on the authored result, because
-/// `materialize_managed_agent_pcr_control` reads the Realm the create derives.
-pub fn build_managed_agent_pcr_bootstrap_steps(
+/// `materialize_agent_pcr_control` reads the Realm the create derives.
+pub fn build_agent_pcr_bootstrap_steps(
     agent_id: &str,
     initial_resolution: arkret_sdk::ResolutionCommitment,
     notary: arkret_sdk::NotaryValue,
@@ -655,7 +655,7 @@ pub fn build_managed_agent_pcr_bootstrap_steps(
     controller_authorization_ref: &str,
     trust_domain: &str,
 ) -> anyhow::Result<Vec<crate::event_submit::EventUnitStep>> {
-    let create = build_managed_agent_pcr_create_event(
+    let create = build_agent_pcr_create_event(
         agent_id,
         initial_resolution,
         notary,
@@ -1735,12 +1735,12 @@ mod notary_derivation_tests {
     fn agent_notary() -> arkret_sdk::NotaryValue {
         let did = arkret_sdk::Did::new("did:web:agent.example").unwrap();
         let root = arkret_sdk::ed25519_pubkey_to_did_key_multibase(&[7_u8; 32]);
-        managed_agent_inception_notary(&did, &root).unwrap()
+        agent_inception_notary(&did, &root).unwrap()
     }
 
     #[test]
-    fn managed_agent_pcr_prepare_freezes_an_exact_create_draft() {
-        let event = build_managed_agent_pcr_create_event(
+    fn agent_pcr_prepare_freezes_an_exact_create_draft() {
+        let event = build_agent_pcr_create_event(
             "did:web:agent.example",
             agent_resolution(),
             agent_notary(),
@@ -1754,9 +1754,9 @@ mod notary_derivation_tests {
     }
 
     #[test]
-    fn managed_agent_pcr_bootstrap_contains_only_the_ref_free_create() {
+    fn agent_pcr_bootstrap_contains_only_the_ref_free_create() {
         let events = crate::event_submit::author_event_unit_for_test(
-            build_managed_agent_pcr_bootstrap_steps(
+            build_agent_pcr_bootstrap_steps(
                 "did:web:agent.example",
                 agent_resolution(),
                 agent_notary(),
@@ -1915,8 +1915,8 @@ mod notary_derivation_tests {
     }
 
     #[test]
-    fn managed_agent_pcr_create_candidate_is_event_derived_and_ref_free() {
-        let event = build_managed_agent_pcr_create_event(
+    fn agent_pcr_create_candidate_is_event_derived_and_ref_free() {
+        let event = build_agent_pcr_create_event(
             "did:web:agent.example",
             agent_resolution(),
             agent_notary(),
@@ -1924,7 +1924,7 @@ mod notary_derivation_tests {
             "did:web:agent.example#managed-controller",
             "ak:trust_domain:did.web.example",
         )
-        .expect("managed Agent create is authorable from closed protocol inputs");
+        .expect("Agent create is authorable from closed protocol inputs");
         // A PCR Realm is named by its own create Event, so the binding only
         // exists once that Event is finalized.
         let authored = crate::operation::author_for_test(&event);

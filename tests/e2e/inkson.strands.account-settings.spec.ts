@@ -269,7 +269,7 @@ test("settings MIMI facade discovers drafts and runs interop actions", async ({ 
   );
 });
 
-test("account settings split account/server info and surface personal agents", async ({ page }) => {
+test("account settings split account/server info and surface Agents", async ({ page }) => {
   await writeSessionGrantInjection(page);
   await seedLocalRecoveryKeyMetadata(page);
   await dismissBlockingRecoveryModal(page);
@@ -323,7 +323,7 @@ test("account settings split account/server info and surface personal agents", a
   });
   await page.getByTestId("settings-nav-item-agents").click();
   await expect(page).toHaveURL(/\/settings\/agents\?filter=$/);
-  await expect(page.getByTestId("personal-agent-admin")).toBeVisible();
+  await expect(page.getByTestId("agent-admin")).toBeVisible();
   await expect(page.getByTestId("agent-admin-list").getByText(/\d+ shown/)).toHaveCount(0);
   await expect(page.getByTestId("agent-admin-toggle-inactive-button")).toHaveCount(0);
   await expect(page.getByTestId("agent-admin-filter-all")).toHaveAttribute(
@@ -463,12 +463,12 @@ test("agent deactivation fails closed without a durable governance checkpoint", 
   await expect(page.getByTestId("agent-admin-deactivate-button")).toBeVisible();
 });
 
-test("deactivated personal agents are available only through the audit deep link", async ({
+test("deactivated Agents are available only through the audit deep link", async ({
   page,
 }) => {
   await gotoAndDismissRecovery(page, "/settings/agents?filter=deactivated");
   await expect(page).toHaveURL(/\/settings\/agents\?filter=deactivated$/);
-  await expect(page.getByTestId("personal-agent-admin")).toBeVisible();
+  await expect(page.getByTestId("agent-admin")).toBeVisible();
   await expect(page.getByTestId("agent-admin-filter-deactivated")).toHaveCount(0);
   await expect(page.getByTestId("agent-admin-row")).toHaveCount(1);
   await expect(page.getByTestId("agent-admin-row")).toContainText("deactivated");
@@ -478,13 +478,13 @@ test("deactivated personal agents are available only through the audit deep link
   await expect(page.getByTestId("agent-admin-deactivated-terminal-note")).toBeVisible();
 });
 
-test("active personal agents never expose stale pairing credentials", async ({ page }) => {
+test("active Agents never expose stale pairing credentials", async ({ page }) => {
   await writeSessionGrantInjection(page);
   await page.reload({ waitUntil: "domcontentloaded" });
   await dismissBlockingRecoveryModal(page);
 
   await gotoAndDismissRecovery(page, "/settings/agents");
-  await expect(page.getByTestId("personal-agent-admin")).toBeVisible();
+  await expect(page.getByTestId("agent-admin")).toBeVisible();
 
   await page.getByTestId("agent-admin-row").filter({ hasText: "assistant" }).click();
   await expect(page.getByTestId("agent-admin-enabled-switch")).toBeVisible();
@@ -522,13 +522,13 @@ test("active personal agents never expose stale pairing credentials", async ({ p
   await expect(page.getByTestId("agent-admin-enabled-switch")).toBeEnabled();
 });
 
-test("expired personal agent pairing renews in place with a fresh handle", async ({ page }) => {
+test("expired Agent pairing renews in place with a fresh handle", async ({ page }) => {
   await writeSessionGrantInjection(page);
   await page.reload({ waitUntil: "domcontentloaded" });
   await dismissBlockingRecoveryModal(page);
 
   await gotoAndDismissRecovery(page, "/settings/agents");
-  await expect(page.getByTestId("personal-agent-admin")).toBeVisible();
+  await expect(page.getByTestId("agent-admin")).toBeVisible();
   await page.getByTestId("agent-admin-row").filter({ hasText: "summary" }).click();
   await expect(page.getByTestId("agent-admin-pairing-card")).toBeVisible();
   await expect(page.getByTestId("agent-admin-pairing-card")).toContainText("Expired");

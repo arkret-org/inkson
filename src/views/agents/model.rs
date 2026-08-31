@@ -1,7 +1,7 @@
-//! Personal-agent data types, presets, and lifecycle helpers.
+//! Agent data types, presets, and lifecycle helpers.
 //!
 //! These items carry no RSX; they are the unit-testable core behind the
-//! personal-agent administration surfaces.
+//! Agent administration surfaces.
 
 use arkret_models_collaboration::agent_operations::{
     AgentLifecycleState, AgentProjection, AgentReadinessBlocker, AgentReadinessState,
@@ -55,37 +55,34 @@ pub fn build_agent_provision_intent(
 }
 
 // ─────────────────────────────────────────────────────────────────────
-// AKP-0008 / AKP-0009 — Envelope `actor_kind` reducer-stamped
-// projection. SDK 4d5a1af exposes `EnvelopeActorKind { Native, Ghost,
-// Service, Agent }`. The UI labels below MUST stay user-facing
-// readable: actor lists, sidecar disclosure cards, and the personal-
-// agent admin all want a stable mapping.
+// Envelope `actor_kind` is the reducer-stamped Actor Profile classification.
+// Device and Ghost are not actor kinds; Applet automation is Bot.
 // ─────────────────────────────────────────────────────────────────────
 
 /// Returns a short, user-facing label for an envelope-level
 /// `actor_kind`. Returns `None` when the value is missing or not one
-/// of the four canonical variants (the reducer is the only writer; an
+/// of the canonical variants (the reducer is the only writer; an
 /// unrecognized value means the envelope is from a future reducer
 /// version and the UI should fall back to a neutral "actor" label).
 pub fn actor_kind_label(actor_kind: Option<&str>) -> Option<&'static str> {
     match actor_kind? {
-        "native" => Some("Native"),
-        "ghost" => Some("Ghost Actor"),
+        "user" => Some("User"),
+        "organization" => Some("Organization"),
+        "team" => Some("Team"),
+        "bot" => Some("Bot"),
         "service" => Some("Service"),
-        "agent" => Some("Personal Agent"),
+        "agent" => Some("Agent"),
+        "integration" => Some("Integration"),
         _ => None,
     }
 }
 
-/// Maps an envelope-level `actor_kind` to the badge CSS class. Native
-/// devices get the neutral chip; ghost actors (applet-bound) get the
-/// amber chip so users can tell at a glance the message did not
-/// originate from a real device; agents and services get distinct
-/// tints.
+/// Maps an envelope-level `actor_kind` to the badge CSS class.
 pub fn actor_kind_badge_class(actor_kind: Option<&str>) -> &'static str {
     match actor_kind {
-        Some("native") => "badge",
-        Some("ghost") => "badge amber",
+        Some("user") => "badge",
+        Some("organization") | Some("team") => "badge blue",
+        Some("bot") | Some("integration") => "badge amber",
         Some("service") => "badge blue",
         Some("agent") => "badge green",
         _ => "badge",
@@ -247,12 +244,15 @@ impl AgentServiceScopePreset {
 
     pub fn actions(self) -> &'static [&'static str] {
         match self {
-            // The interactive runtime floor is injected from the canonical
-            // agent-runtime-scope registry by `service_actions_for_presets`.
-            // Presets only list optional additions here; keeping a second
-            // copy of the mandatory floor caused the Seal-frontier omission.
-            Self::SubscribeEvents | Self::ScanCatchUp => &[],
-            Self::SubmitEvents => &[ServiceOperationId::SELF_AUTHORIZATION_LEASES_COMMAND_ISSUE_V1],
+            // Each preset declares only the operation it directly authors.
+            // The canonical registry selects capabilities from this draft and
+            // `service_actions_for_presets` completes the atomic runtime floor.
+            Self::SubscribeEvents => &[ServiceOperationId::SELF_EVENTS_STREAM_SUBSCRIBE_V1],
+            Self::ScanCatchUp => &[ServiceOperationId::SELF_EVENTS_READ_SCAN_V1],
+            Self::SubmitEvents => &[
+                ServiceOperationId::SELF_EVENTS_COMMAND_SUBMIT_V1,
+                ServiceOperationId::SELF_AUTHORIZATION_LEASES_COMMAND_ISSUE_V1,
+            ],
             Self::SecureMessaging => &[
                 ServiceOperationId::SELF_KEYS_KEYPACKAGES_COMMAND_CONSUME_V1,
                 // Standard KeyPackage lifecycle is upload|claim|consume|revoke
@@ -300,37 +300,16 @@ pub fn content_actions_for_presets(presets: &[AgentGrantPreset]) -> Vec<String> 
     actions
 }
 
-pub fn service_actions_for_presets(presets: &[AgentServiceScopePreset]) -> Vec<String> {
-    let mut capabilities = Vec::new();
-    if presets.iter().any(|preset| {
-        matches!(
-            preset,
-            AgentServiceScopePreset::SubscribeEvents
-                | AgentServiceScopePreset::ScanCatchUp
-                | AgentServiceScopePreset::SubmitEvents
-                | AgentServiceScopePreset::SecureMessaging
-        )
-    }) {
-        capabilities
-            .push(arkret_schema::agent_runtime_scope::AgentRuntimeCapability::InteractiveChat);
-    }
-    if presets.contains(&AgentServiceScopePreset::SecureMessaging) {
-        capabilities.push(arkret_schema::agent_runtime_scope::AgentRuntimeCapability::E2ee);
-    }
-    let mut actions =
-        match arkret_schema::agent_runtime_scope::required_agent_runtime_operations(capabilities) {
-            Ok(actions) => actions,
-            Err(error) => {
-                tracing::error!(%error, "embedded Agent runtime scope registry is invalid");
-                Vec::new()
-            }
-        };
+pub fn service_actions_for_presets(
+    presets: &[AgentServiceScopePreset],
+) -> Result<Vec<String>, arkret_schema::agent_runtime_scope::AgentRuntimeScopeError> {
+    let mut actions = Vec::new();
     for preset in presets {
         for action in preset.actions() {
             push_unique_action(&mut actions, action);
         }
     }
-    actions
+    arkret_schema::agent_runtime_scope::complete_agent_runtime_scope(actions)
 }
 
 /// Build the `requested_scope` (`AgentKeyScope`, the spec object
@@ -344,7 +323,13 @@ pub fn requested_scope_for_presets(
     service_presets: &[AgentServiceScopePreset],
 ) -> Option<AgentKeyScope> {
     let content_actions = content_actions_for_presets(content_presets);
-    let service_actions = service_actions_for_presets(service_presets);
+    let service_actions = match service_actions_for_presets(service_presets) {
+        Ok(actions) => actions,
+        Err(error) => {
+            tracing::error!(%error, "embedded Agent runtime scope registry is invalid");
+            return None;
+        }
+    };
     if service_actions.is_empty() {
         return None;
     }

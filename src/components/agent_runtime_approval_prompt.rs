@@ -10,8 +10,8 @@ use crate::ui::dialog::Dialog;
 use crate::views::agents::{
     bootstrap_provisioned_agent, build_agent_key_authorization_for_pairing,
     build_requested_scope_disclosure_for_pairing, into_agent_key_pair_request,
-    parse_runtime_key_approval_request, runtime_key_pairing_error_message,
-    seal_managed_agent_pcr_current, summarize_runtime_key_approval_request,
+    parse_runtime_key_approval_request, runtime_key_pairing_error_message, seal_agent_pcr_current,
+    summarize_runtime_key_approval_request,
 };
 use crate::views::helpers::short_protocol_id;
 
@@ -412,7 +412,7 @@ pub fn AgentRuntimeApprovalPrompt(
                                         let mut outcome =
                                             submitter.agent_key_pair(&pair_request).await?;
                                         if !outcome.is_active() {
-                                            seal_managed_agent_pcr_current(
+                                            seal_agent_pcr_current(
                                                 &api,
                                                 state_store,
                                                 &account,

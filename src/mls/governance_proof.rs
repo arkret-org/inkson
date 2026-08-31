@@ -311,13 +311,7 @@ async fn fetch_verify_and_cache_proof_internal<S: GovernanceProofStateStore>(
         &group_genesis_binding,
         leaves,
         |event, digest_suite, evidence, dependencies| {
-            verify_native_agent_history_key(
-                &state_store,
-                event,
-                digest_suite,
-                evidence,
-                dependencies,
-            )
+            verify_agent_history_key(&state_store, event, digest_suite, evidence, dependencies)
         },
     )
     .map_err(|error| format!("verify MLS governance frontier: {error}"))?;
@@ -350,29 +344,29 @@ async fn fetch_verify_and_cache_proof_internal<S: GovernanceProofStateStore>(
     Ok((resolved.bundle, binding))
 }
 
-pub(crate) fn verify_native_agent_history_key<S: GovernanceProofStateStore>(
+pub(crate) fn verify_agent_history_key<S: GovernanceProofStateStore>(
     state_store: &S,
     event: &arkret_sdk::Event,
     _digest_suite: arkret_sdk::DigestSuite,
     evidence: &arkret_sdk::AuthenticatedSignerResolutionEvidence,
     dependencies: &[arkret_sdk::GovernanceDependency],
 ) -> Result<arkret_sdk::signatures::PublicKeyMaterial, arkret_sdk::WireError> {
-    arkret_sdk::verify_native_agent_historical_event_key(event, evidence, dependencies, |request| {
-        verify_native_agent_external_trust(state_store, request)
+    arkret_sdk::verify_agent_historical_event_key(event, evidence, dependencies, |request| {
+        verify_agent_external_trust(state_store, request)
     })
 }
 
-pub(crate) fn verify_native_agent_external_trust<S: GovernanceProofStateStore>(
+pub(crate) fn verify_agent_external_trust<S: GovernanceProofStateStore>(
     state_store: &S,
-    request: arkret_sdk::NativeAgentHistoricalTrustRequest<'_>,
+    request: arkret_sdk::AgentHistoricalTrustRequest<'_>,
 ) -> Result<(), arkret_sdk::WireError> {
     match request {
-        arkret_sdk::NativeAgentHistoricalTrustRequest::PcrSeal(seal) => {
+        arkret_sdk::AgentHistoricalTrustRequest::PcrSeal(seal) => {
             let checkpoint = state_store
                 .with_read(|store| store.trusted_mls_governance_checkpoint(seal.realm_id.as_str()))
                 .ok_or_else(|| {
                     arkret_sdk::WireError::Protocol(
-                        "Native Agent PCR has no locally verified governance checkpoint".to_owned(),
+                        "Agent PCR has no locally verified governance checkpoint".to_owned(),
                     )
                 })?;
             checkpoint
@@ -382,20 +376,18 @@ pub(crate) fn verify_native_agent_external_trust<S: GovernanceProofStateStore>(
                 .then_some(())
                 .ok_or_else(|| {
                     arkret_sdk::WireError::Protocol(
-                        "Native Agent PCR Seal is not byte-exact in the verified checkpoint"
-                            .to_owned(),
+                        "Agent PCR Seal is not byte-exact in the verified checkpoint".to_owned(),
                     )
                 })
         }
-        arkret_sdk::NativeAgentHistoricalTrustRequest::LifecycleWitness(witness) => {
+        arkret_sdk::AgentHistoricalTrustRequest::LifecycleWitness(witness) => {
             let checkpoint = state_store
                 .with_read(|store| {
                     store.trusted_mls_governance_checkpoint(witness.seal.realm_id.as_str())
                 })
                 .ok_or_else(|| {
                     arkret_sdk::WireError::Protocol(
-                        "Native Agent lifecycle has no locally verified governance checkpoint"
-                            .to_owned(),
+                        "Agent lifecycle has no locally verified governance checkpoint".to_owned(),
                     )
                 })?;
             let seal_is_accepted = checkpoint
@@ -407,18 +399,17 @@ pub(crate) fn verify_native_agent_external_trust<S: GovernanceProofStateStore>(
                 .iter()
                 .any(|accepted| accepted == &witness.accepted_status_event);
             (seal_is_accepted && event_is_accepted)
-                    .then_some(())
-                    .ok_or_else(|| {
-                        arkret_sdk::WireError::Protocol(
-                            "Native Agent lifecycle witness is not byte-exact in the verified checkpoint"
-                                .to_owned(),
-                        )
-                    })
+                .then_some(())
+                .ok_or_else(|| {
+                    arkret_sdk::WireError::Protocol(
+                        "Agent lifecycle witness is not byte-exact in the verified checkpoint"
+                            .to_owned(),
+                    )
+                })
         }
-        arkret_sdk::NativeAgentHistoricalTrustRequest::Transparency(_) => {
+        arkret_sdk::AgentHistoricalTrustRequest::Transparency(_) => {
             Err(arkret_sdk::WireError::Protocol(
-                "Native Agent transparency has no independently pinned local witness policy"
-                    .to_owned(),
+                "Agent transparency has no independently pinned local witness policy".to_owned(),
             ))
         }
     }
@@ -538,13 +529,7 @@ async fn verify_governance_checkpoint_candidate_with_http<S: GovernanceProofStat
         &resolved.events,
         &resolved.dependencies,
         |event, digest_suite, evidence, dependencies| {
-            verify_native_agent_history_key(
-                state_store,
-                event,
-                digest_suite,
-                evidence,
-                dependencies,
-            )
+            verify_agent_history_key(state_store, event, digest_suite, evidence, dependencies)
         },
     )
     .map_err(|error| format!("verify initial MLS governance checkpoint: {error}"))?
@@ -703,13 +688,13 @@ pub(crate) fn leaf_authority_hints_from_welcome(
         }
         (
             Some(principal_id),
-            arkret_sdk::MlsWelcomeRecipient::NativeAgent {
+            arkret_sdk::MlsWelcomeRecipient::Agent {
                 recipient_agent_id,
                 recipient_agent_verification_method,
                 agent_key_authorize_event_id,
             },
         ) if principal_id == recipient_agent_id => MlsLeafAuthorityHint {
-            endpoint: arkret_sdk::MlsEndpointIdentity::native_agent_runtime(
+            endpoint: arkret_sdk::MlsEndpointIdentity::agent_runtime(
                 recipient_agent_id.clone(),
                 recipient_agent_verification_method.clone(),
                 agent_key_authorize_event_id.clone(),
@@ -749,12 +734,12 @@ pub(crate) fn leaf_authority_hints_from_welcome(
             ),
             device_authorize_event_id: Some(requester_device_authorize_event_id.clone()),
         },
-        arkret_sdk::MlsRequesterTrustBinding::RequesterNativeAgent {
+        arkret_sdk::MlsRequesterTrustBinding::RequesterAgent {
             requester_agent_id,
             requester_agent_verification_method,
             requester_agent_key_authorize_event_id,
         } => MlsLeafAuthorityHint {
-            endpoint: arkret_sdk::MlsEndpointIdentity::native_agent_runtime(
+            endpoint: arkret_sdk::MlsEndpointIdentity::agent_runtime(
                 requester_agent_id.clone(),
                 requester_agent_verification_method.clone(),
                 requester_agent_key_authorize_event_id.clone(),
@@ -938,20 +923,20 @@ pub(crate) fn install_cached_transition_leaf_bindings_with_hints(
             )
         } else {
             if frontier_leaf.actor_id.signing_principal_id().as_str() != credential {
-                return Err("Native Agent MLS credential differs from its principal".to_owned());
+                return Err("Agent MLS credential differs from its principal".to_owned());
             }
             let mut hints = authority_hints.iter().filter(|hint| {
                 matches!(
                     &hint.endpoint,
-                    arkret_sdk::MlsEndpointIdentity::NativeAgentRuntime { agent_id, .. }
+                    arkret_sdk::MlsEndpointIdentity::AgentRuntime { agent_id, .. }
                         if agent_id == frontier_leaf.actor_id.signing_principal_id()
                 )
             });
-            let hint = hints.next().ok_or_else(|| {
-                "Native Agent MLS leaf has no verified authority hint at T3".to_owned()
-            })?;
+            let hint = hints
+                .next()
+                .ok_or_else(|| "Agent MLS leaf has no verified authority hint at T3".to_owned())?;
             if hints.next().is_some() {
-                return Err("Native Agent MLS leaf has duplicate authority hints at T3".to_owned());
+                return Err("Agent MLS leaf has duplicate authority hints at T3".to_owned());
             }
             (hint.endpoint.clone(), None)
         };
