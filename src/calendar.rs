@@ -17,7 +17,7 @@ pub fn schedule_revision_heads(
 #[allow(clippy::too_many_arguments)]
 pub fn build_calendar_rsvp_event(
     realm_id: &str,
-    actor_id: &str,
+    actor_id: &arkret_sdk::ActorId,
     strand_id: &str,
     status: &str,
     occurrence: Option<&str>,
@@ -49,9 +49,44 @@ pub fn build_calendar_rsvp_event(
             arkret_sdk::ScopeRef::Realm {
                 realm_id: arkret_sdk::RealmId::new(realm_id.to_owned())?,
             },
-            crate::mls_api_helpers::local_account_actor_id(actor_id)?,
+            actor_id.clone(),
             crate::clock::now_utc_millis(),
             schedule_basis_refs,
         )?,
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rsvp_authoring_preserves_explicit_station_without_global_session() {
+        let fields: arkret_sdk::CalendarEventFields = serde_json::from_value(serde_json::json!({
+            "start": "2026-08-31T09:00:00", "end": "2026-08-31T10:00:00",
+            "timezone": "UTC", "tzdb_version": "2025b", "all_day": false,
+            "status": "confirmed"
+        }))
+        .unwrap();
+        for station in [
+            "ak:did_core:web:station-a.example",
+            "ak:did_core:web:station-b.example",
+        ] {
+            let actor = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+                arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example").unwrap(),
+                arkret_sdk::DidCoreId::new(station).unwrap(),
+            ));
+            let operation = build_calendar_rsvp_event(
+                "ak:realm:AV0aa7N4-6SpEMTq2vRgjNbMjn0vCIqfM5PxnJ-qQpPP",
+                &actor,
+                "ak:strand:AeJsr0sf3TZ_Cuzj2uLddhd-O-Cywvdj8ypnqpVG8zim",
+                "accepted",
+                None,
+                &fields,
+                vec![arkret_sdk::Hash::new(format!("sha256:{}", "11".repeat(32))).unwrap()],
+            )
+            .unwrap();
+            assert_eq!(operation.actor_id(), &actor);
+        }
+    }
 }

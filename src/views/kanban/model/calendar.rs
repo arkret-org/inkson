@@ -420,7 +420,7 @@ pub(crate) fn calendar_rsvp_operation(
     let calendar_fields = calendar_event_fields_from_draft(calendar).map_err(anyhow::Error::msg)?;
     crate::calendar::build_calendar_rsvp_event(
         realm_id,
-        actor_id,
+        &crate::mls_api_helpers::local_account_actor_id(actor_id)?,
         strand_id,
         status,
         (!occurrence.trim().is_empty() && !calendar.recurrence_frequency.trim().is_empty())
