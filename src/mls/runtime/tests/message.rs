@@ -1522,8 +1522,10 @@ fn durable_welcome_projection_context_is_removed_without_hiding_unknown_payload_
 }
 
 fn embedded_pairwise_welcome_value() -> serde_json::Value {
-    arkret_schema_conformance::spec_json_artifact("fixtures/keypackage-pairwise-welcome-fixture.json").unwrap()
-        ["schema_validation_cases"][0]["instance"]
+    arkret_schema_conformance::spec_json_artifact(
+        "fixtures/keypackage-pairwise-welcome-fixture.json",
+    )
+    .unwrap()["schema_validation_cases"][0]["instance"]
         .clone()
 }
 

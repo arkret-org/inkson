@@ -2021,9 +2021,10 @@ mod tests {
 
     #[test]
     fn rrk_holder_traversal_uses_the_exact_list_replica_digest() {
-        let fixture =
-            arkret_schema_conformance::spec_json_artifact("fixtures/history-key-recovery-fixture.json")
-                .unwrap();
+        let fixture = arkret_schema_conformance::spec_json_artifact(
+            "fixtures/history-key-recovery-fixture.json",
+        )
+        .unwrap();
         let outcome: arkret_sdk::OrganizationRecoveryArchiveListOutcome =
             serde_json::from_value(
                 fixture["organization_recovery_archive_durable_before_gc_kat"]
