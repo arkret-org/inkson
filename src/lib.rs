@@ -163,6 +163,5 @@ pub use yoface::ui;
 pub mod views;
 pub mod webrtc;
 pub mod websocket_rail_engine;
-pub mod workflows;
 
 pub use app::App;

@@ -642,6 +642,12 @@ const AUTHORITY_GENESIS_EVENT: &str = "ak:event:ASgi2U7PbVyNs4UpiQAoXKoHv84g07gp
 const AUTHORITY_REALM: &str = "ak:realm:ATOz4l-vKJUCGZDmS_knGS9TjZ64pkOzx-HNGAgY5RGJ";
 const AUTHORITY_CONTROLLER: &str = "did:web:alice.example";
 const AUTHORITY_CONTROLLER_CORE: &str = "ak:did_core:web:alice.example";
+fn authority_controller_actor() -> arkret_sdk::ActorId {
+    arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+        arkret_sdk::DidCoreId::new(AUTHORITY_CONTROLLER_CORE).unwrap(),
+        arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap(),
+    ))
+}
 #[test]
 fn realm_create_authority_resolves_the_root_controller() {
     let events = [realm_create_sdk_event(
@@ -652,7 +658,7 @@ fn realm_create_authority_resolves_the_root_controller() {
     assert_eq!(
         realm_create_authority_from_events(&events, &realm_id),
         Some(RealmCreateAuthority::Root {
-            controller_id: AUTHORITY_CONTROLLER_CORE.to_owned()
+            controller: authority_controller_actor()
         })
     );
 }
@@ -696,7 +702,7 @@ fn realm_owner_coverage_gates_the_root_claim() {
 #[test]
 fn realm_authority_root_claim_stamps_only_the_matching_controller() {
     let root = RealmCreateAuthority::Root {
-        controller_id: AUTHORITY_CONTROLLER_CORE.to_owned(),
+        controller: authority_controller_actor(),
     };
     let event = |actor: &str| sdk_intent_with_kind(AUTHORITY_REALM, "ak.strand.create", actor);
 
@@ -708,6 +714,24 @@ fn realm_authority_root_claim_stamps_only_the_matching_controller() {
         realm_authority_root_claim(&event("did:web:bob.example"), Some(&root)),
         None
     );
+    let wrong_station: EventIntent = serde_json::from_value(json!({
+        "kind": "ak.strand.create",
+        "scope_ref": {"kind": "realm", "realm_id": AUTHORITY_REALM},
+        "actor_id": {
+            "kind": "account",
+            "account_id": {
+                "principal_id": AUTHORITY_CONTROLLER_CORE,
+                "station_id": "ak:did_core:web:other-station.example"
+            }
+        },
+        "created_at": "2026-08-31T00:00:00.000Z",
+        "payload": {}
+    }))
+    .unwrap();
+    assert_eq!(
+        realm_authority_root_claim(&wrong_station, Some(&root)),
+        None
+    );
     assert_eq!(
         realm_authority_root_claim(&event(AUTHORITY_CONTROLLER), None),
         None
@@ -717,7 +741,7 @@ fn realm_authority_root_claim_stamps_only_the_matching_controller() {
 #[test]
 fn realm_authority_root_claim_defers_to_producer_chosen_authorization() {
     let root = RealmCreateAuthority::Root {
-        controller_id: AUTHORITY_CONTROLLER_CORE.to_owned(),
+        controller: authority_controller_actor(),
     };
     let with_grant =
         sdk_intent_with_kind(AUTHORITY_REALM, "ak.strand.create", AUTHORITY_CONTROLLER)
@@ -768,7 +792,7 @@ async fn stamp_realm_authority_root_claim_stamps_from_cached_create_facts() {
         .insert(
             realm.to_owned(),
             RealmCreateAuthority::Root {
-                controller_id: AUTHORITY_CONTROLLER_CORE.to_owned(),
+                controller: authority_controller_actor(),
             },
         );
     let intent = dead_endpoint_submitter()
@@ -803,7 +827,7 @@ async fn frozen_intent_replay_must_not_upgrade_the_authorization_claim() {
         .insert(
             realm.to_owned(),
             RealmCreateAuthority::Root {
-                controller_id: AUTHORITY_CONTROLLER_CORE.to_owned(),
+                controller: authority_controller_actor(),
             },
         );
     // Outage-era intent: owner-authored kind, but no claim was resolvable
@@ -862,7 +886,7 @@ fn stamped_intent_round_trips_through_authoring_without_semantic_drift() {
         .insert(
             realm.to_owned(),
             RealmCreateAuthority::Root {
-                controller_id: AUTHORITY_CONTROLLER_CORE.to_owned(),
+                controller: authority_controller_actor(),
             },
         );
     let operation = crate::operation::ak_ops::kanban_card_strand_create(
@@ -883,7 +907,7 @@ fn stamped_intent_round_trips_through_authoring_without_semantic_drift() {
         realm_authority_root_claim(
             &sdk_intent_with_kind(realm, "ak.strand.create", AUTHORITY_CONTROLLER),
             Some(&RealmCreateAuthority::Root {
-                controller_id: AUTHORITY_CONTROLLER_CORE.to_owned(),
+                controller: authority_controller_actor(),
             }),
         )
         .expect("claim must stamp"),

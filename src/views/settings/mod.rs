@@ -48,7 +48,6 @@ use crate::ui::label::Label;
 use crate::ui::select::{Select, SelectOption};
 use crate::ui::slider::Slider;
 use crate::views::helpers::{actor_display_label, short_protocol_id};
-use crate::workflows::blocked_release_workflows;
 
 /// Resolve the relative expiry picker choice into a typed UTC `clears_at`
 /// (profiles-presence.md §3.6). `never` (and anything unrecognized) means no
@@ -622,7 +621,6 @@ pub fn SettingsPanel(
     let mut avatar_refresh_nonce = use_signal(|| 0_u64);
     let mut mimi_directory = use_signal(|| "Not loaded".to_owned());
     let mut mimi_receipt = use_signal(|| "No MIMI action receipt".to_owned());
-    let blocked_count = blocked_release_workflows().len();
     let realm_watch_overrides = state_store.read().realm_watch_levels();
     let known_realms = known_realm_options(&state_store.read());
     let active_locale = locale();
@@ -3021,17 +3019,6 @@ pub fn SettingsPanel(
                     // ── CI / Release gate status ─────────────────────────
                     if active_section == SettingsSection::Release {
                         div { class: "settings-content-stack",
-                            div { class: "event", "data-testid": "release-moved-banner",
-                                div { class: "event-head",
-                                    span { "Diagnostics" }
-                                    span { "{blocked_count} tracked blockers" }
-                                    HelpTip { text: "Developer diagnostics stay under Advanced so normal settings remain focused. Release blockers, sync posture, and investigations are summarized here." }
-                                }
-                                div { class: "actions",
-                                    span { class: "badge amber", "{blocked_count} blockers" }
-                                    span { class: "badge blue", "advanced diagnostics" }
-                                }
-                            }
                             div { class: "event", "data-testid": "settings-session-diagnostics",
                                 div { class: "event-head",
                                     span { "Session diagnostics" }

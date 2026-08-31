@@ -5,7 +5,7 @@ use super::*;
 /// Authority facts pinned by a Realm's accepted `ak.realm.create`.
 #[derive(Clone, Debug, PartialEq)]
 pub(super) enum RealmCreateAuthority {
-    Root { controller_id: String },
+    Root { controller: arkret_sdk::ActorId },
 }
 
 pub(super) fn realm_create_authority_cache()
@@ -26,12 +26,8 @@ pub(super) fn realm_create_authority_from_events(
         if event.realm_id.as_str() != realm_id || event.kind != arkret_sdk::EventKind::RealmCreate {
             return None;
         }
-        let controller_id = event.actor_id.signing_principal_id().as_str().trim();
-        if controller_id.is_empty() {
-            return None;
-        }
         Some(RealmCreateAuthority::Root {
-            controller_id: controller_id.to_owned(),
+            controller: event.actor_id.clone(),
         })
     })
 }
@@ -55,14 +51,10 @@ pub(super) fn realm_authority_root_claim(
         return None;
     }
     match authority? {
-        RealmCreateAuthority::Root { controller_id }
-            if controller_id == intent.actor_id().signing_principal_id().as_str() =>
-        {
-            Some(
-                arkret_sdk::AuthorizationRef::new(arkret_wire::REALM_AUTHORITY_ROOT_CELL)
-                    .expect("realm authority-root constant must be valid"),
-            )
-        }
+        RealmCreateAuthority::Root { controller } if controller == intent.actor_id() => Some(
+            arkret_sdk::AuthorizationRef::new(arkret_wire::REALM_AUTHORITY_ROOT_CELL)
+                .expect("realm authority-root constant must be valid"),
+        ),
         _ => None,
     }
 }
