@@ -415,7 +415,7 @@ pub fn CallPanel(
                                 call_seq.set(1);
                                 let expected = expected_participant_set(
                                     &known_participant_identities,
-                                    &session.participant_identity,
+                                    &session.participant_id,
                                 );
                                 // MEDIA-2: seed the durable participant roster so
                                 // the LiveKit `ParticipantConnected` callback can
@@ -855,7 +855,7 @@ pub fn CallPanel(
                                                     }
                                                     let expected = expected_participant_set(
                                                         &known_participant_identities,
-                                                        &session.participant_identity,
+                                                        &session.participant_id,
                                                     );
                                                     shared
                                                         .borrow_mut()

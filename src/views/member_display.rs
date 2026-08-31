@@ -86,6 +86,9 @@ pub(crate) fn realm_member_roster(projection: Option<&Value>) -> Vec<RealmMember
                 .and_then(Value::as_bool)
                 .unwrap_or(false),
         };
+        if !matches!(row.membership.as_deref(), Some("join" | "knock")) {
+            continue;
+        }
         // `actor_id` is the roster key. Retain the first duplicate exactly as
         // required by the sync contract.
         rows.entry(row.actor_id.clone()).or_insert(row);
@@ -465,7 +468,7 @@ mod petname_tests {
         let second = actor("ak:did_core:web:station-b.example");
         let projection = serde_json::json!({"member_roster_entries": [
             {"actor_id": first, "membership": "join"},
-            {"actor_id": second, "membership": "invite"},
+            {"actor_id": second, "membership": "knock"},
             {"actor_id": first, "membership": "leave"},
             {"actor_id": principal, "membership": "join"}
         ]});
@@ -485,7 +488,7 @@ mod petname_tests {
                 .unwrap()
                 .membership
                 .as_deref(),
-            Some("invite")
+            Some("knock")
         );
     }
 

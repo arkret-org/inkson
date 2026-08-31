@@ -108,22 +108,19 @@ pub trait MediaTransport {
 
     /// Install the local sender's MLS-exporter-derived SFrame frame key into
     /// the transport's E2EE keyprovider, bound to the local
-    /// `participant_identity` (`media-service-binding.md` §8.1: the frame key is
+    /// `participant_id` (`media-service-binding.md` §8.1: the frame key is
     /// sender-bound, so it is installed under the sender's own identity, never a
     /// room-wide slot). MUST reject any 0-length / non-32-byte key (the only
     /// valid source is [`crate::media::rtc::join_call_media`]). Failing to
     /// install MUST fail closed — the call MUST NOT reach `Connected`.
-    fn install_frame_key(
-        &mut self,
-        participant_identity: &str,
-        key: &[u8],
-    ) -> Result<(), RtcClientError>;
+    fn install_frame_key(&mut self, participant_id: &str, key: &[u8])
+    -> Result<(), RtcClientError>;
 
     /// Provide the per-sender remote frame-key deriver plus the
-    /// `participant_identity → device_id` map read from the verified
+    /// `participant_id → device_id` map read from the verified
     /// `ak.component.call.roster.v1` effective OR-Set. When a remote sender connects, the
     /// transport derives that sender's frame key (same MLS group exporter, same
-    /// epoch, the remote's own `(participant_identity, device_id)` context) and
+    /// epoch, the remote's own `(participant_id, device_id)` context) and
     /// installs it under the remote's identity — which is the only way the
     /// receiver can decrypt that sender's frames. Default no-op: the 1:1 P2P
     /// path has a single shared peer and does not use SFU per-sender keys.

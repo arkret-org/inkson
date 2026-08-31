@@ -1893,7 +1893,7 @@ fn add_r3_error_keys(dict: &mut TranslationDict) {
         "A participant's call credentials did not pass validation, so they can't join.",
     );
     dict.set(
-        "error.call.participant_identity_unrecognised",
+        "error.call.participant_id_unrecognised",
         "The server reported a participant who isn't in this call. The connection was refused to stay safe.",
     );
     dict.set(

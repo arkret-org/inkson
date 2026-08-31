@@ -164,6 +164,19 @@ pub(crate) fn proof_request_for_scope(
                 })?,
         )
     };
+    let genesis = previous_epoch == 0 && next_epoch == 0;
+    let accepted_genesis_exists = genesis
+        && state_store
+            .mls_group_state_ref_for_scope(&effective_scope, mls_group_id.as_str(), 0)
+            .is_ok();
+    let proposed_group_genesis_binding = if genesis && !accepted_genesis_exists {
+        Some(proposed_group_genesis_binding(
+            state_store,
+            &effective_scope,
+        )?)
+    } else {
+        None
+    };
     let request = arkret_sdk::MlsGovernanceProofRequestBody {
         profile: arkret_sdk::MlsGovernanceProofProfile::GroupSecurityFrontier,
         effective_scope,
@@ -174,6 +187,7 @@ pub(crate) fn proof_request_for_scope(
         byte_limit: arkret_sdk::MLS_GOVERNANCE_PROOF_MAX_BYTES,
         frontier_purpose: arkret_sdk::MlsGovernanceFrontierPurpose::GroupBinding,
         base_group_state_ref,
+        proposed_group_genesis_binding,
         previous_epoch,
         next_epoch,
         binding_profile: arkret_sdk::MlsGovernanceBindingProfile::AkSecurityFrontierV1,
@@ -182,6 +196,63 @@ pub(crate) fn proof_request_for_scope(
         .validate()
         .map_err(|error| format!("invalid MLS governance proof request: {error}"))?;
     Ok(request)
+}
+
+fn proposed_group_genesis_binding(
+    state_store: &crate::state::LocalStateStore,
+    effective_scope: &arkret_sdk::ScopeRef,
+) -> Result<arkret_sdk::ProposedMlsGroupGenesisBinding, String> {
+    let realm_id = effective_scope
+        .realm_id_opt()
+        .ok_or_else(|| "MLS governance scope has no Realm".to_owned())?;
+    let (content_scheme, durability_policy) = match effective_scope {
+        arkret_sdk::ScopeRef::Realm { .. } => {
+            let state = state_store.load();
+            let projection = state
+                .realm_tree_projections
+                .get(realm_id.as_str())
+                .ok_or_else(|| {
+                    "pre-Genesis MLS proposal requires the accepted Realm projection".to_owned()
+                })?;
+            let scheme = crate::realm_tree::realm_projection_content_scheme(projection)
+                .ok_or_else(|| {
+                    "pre-Genesis MLS proposal requires an explicit content scheme".to_owned()
+                })?;
+            let durability = projection
+                .get("durability_policy")
+                .or_else(|| projection.pointer("/summary/durability_policy"))
+                .filter(|value| !value.is_null())
+                .map(|value| {
+                    serde_json::from_value::<arkret_wire::DurabilityPolicy>(value.clone())
+                        .map_err(|error| format!("invalid proposed durability policy: {error}"))
+                })
+                .transpose()?;
+            (scheme, durability)
+        }
+        arkret_sdk::ScopeRef::Circle { circle_id, .. } => (
+            state_store
+                .circle_content_scheme(realm_id.as_str(), circle_id.as_str())
+                .ok_or_else(|| {
+                    "pre-Genesis Circle proposal requires the accepted Circle content scheme"
+                        .to_owned()
+                })?,
+            state_store.circle_durability_policy(realm_id.as_str(), circle_id.as_str()),
+        ),
+        _ => return Err("unsupported MLS governance effective scope".to_owned()),
+    };
+    let content_scheme = match content_scheme.as_str() {
+        "mls_rfc9420" => arkret_wire::ContentScheme::MlsRfc9420,
+        "mls_exporter_aead_v1" => arkret_wire::ContentScheme::MlsExporterAeadV1,
+        value => return Err(format!("unregistered proposed MLS content scheme {value}")),
+    };
+    let proposal = arkret_sdk::ProposedMlsGroupGenesisBinding {
+        content_scheme,
+        durability_policy,
+    };
+    proposal
+        .validate()
+        .map_err(|error| format!("invalid proposed MLS Genesis binding: {error}"))?;
+    Ok(proposal)
 }
 
 fn group_genesis_binding(
@@ -298,8 +369,13 @@ async fn fetch_verify_and_cache_proof_internal<S: GovernanceProofStateStore>(
         &base_checkpoint,
     )
     .await?;
-    let group_genesis_binding =
-        state_store.with_read(|store| group_genesis_binding(store, &request.effective_scope))?;
+    let group_genesis_binding = match &request.proposed_group_genesis_binding {
+        Some(proposal) => arkret_sdk::MlsGroupGenesisBinding::from_proposal(proposal)
+            .map_err(|error| format!("invalid proposed MLS Genesis binding: {error}"))?,
+        None => {
+            state_store.with_read(|store| group_genesis_binding(store, &request.effective_scope))?
+        }
+    };
     let verified = arkret_sdk::verify_mls_governance_frontier(
         request,
         &resolved.bundle,
@@ -1172,6 +1248,7 @@ pub(crate) fn seed_test_governance_proof(
         byte_limit: arkret_sdk::MLS_GOVERNANCE_PROOF_MAX_BYTES,
         frontier_purpose: arkret_sdk::MlsGovernanceFrontierPurpose::GroupBinding,
         base_group_state_ref,
+        proposed_group_genesis_binding: None,
         previous_epoch,
         next_epoch,
         binding_profile: arkret_sdk::MlsGovernanceBindingProfile::AkSecurityFrontierV1,

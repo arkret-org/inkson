@@ -118,6 +118,7 @@ struct MemberProfile {
     remark_note: Option<String>,
     confusable_contact_warning: bool,
     membership: Option<String>,
+    pending_invite: bool,
     member_display_state_digest: Option<String>,
     is_owner: bool,
     is_admin: bool,
@@ -137,6 +138,7 @@ impl MemberProfile {
             remark_note: None,
             confusable_contact_warning: false,
             membership: None,
+            pending_invite: false,
             member_display_state_digest: None,
             is_owner: false,
             is_admin: false,
@@ -178,10 +180,7 @@ impl MemberProfile {
     }
 
     fn is_pending_invite(&self) -> bool {
-        matches!(
-            self.normalized_membership(),
-            Some("invite" | "pending" | "pending_invite")
-        )
+        self.pending_invite
     }
 
     fn is_governance_principal(&self) -> bool {
@@ -731,9 +730,7 @@ fn upsert_pending_invite_profile(
         .iter_mut()
         .find(|profile| profile.actor_id.trim() == actor_id)
     {
-        if existing.normalized_membership() != Some("join") {
-            existing.membership = Some("invite".to_owned());
-        }
+        existing.pending_invite = existing.normalized_membership() != Some("join");
         if existing.invite_id.is_none() {
             existing.invite_id = invite_id
                 .map(str::trim)
@@ -747,7 +744,7 @@ fn upsert_pending_invite_profile(
         return;
     }
     let mut profile = MemberProfile::bare(actor_id.to_owned());
-    profile.membership = Some("invite".to_owned());
+    profile.pending_invite = true;
     profile.invite_id = invite_id
         .map(str::trim)
         .filter(|value| !value.is_empty())
@@ -790,7 +787,7 @@ fn local_pending_invite_profile_from_raw_operation(
         })
         .or_else(|| invite_id.as_ref().map(|id| format!("invite:{id}")))?;
     let mut profile = MemberProfile::bare(actor_id.clone());
-    profile.membership = Some("invite".to_owned());
+    profile.pending_invite = true;
     profile.invite_id = invite_id;
     profile.invite_is_direct = Some(direct_invitee.is_some());
     if let Some(label) = trimmed_string(

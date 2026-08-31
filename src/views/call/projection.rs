@@ -286,7 +286,7 @@ pub(super) fn call_state_participant_identities(
     call_roster_participants(state, realm_id, call_id)
         .filter_map(|participant| {
             participant
-                .get("participant_identity")
+                .get("participant_id")
                 .and_then(Value::as_str)
                 .filter(|identity| !identity.trim().is_empty())
                 .map(ToOwned::to_owned)
@@ -349,10 +349,10 @@ fn call_roster_participants<'a>(
     participants.into_values()
 }
 
-/// Read the `participant_identity → device_id` map from the durable
+/// Read the `participant_id → device_id` map from the durable
 /// call roster OR-Set projection for this call. Used to build a
 /// remote sender's SFrame [`FrameKeyContext`] (`media-service-binding.md` §8.1
-/// binds the sender's own `(participant_identity, device_id)`): when a remote
+/// binds the sender's own `(participant_id, device_id)`): when a remote
 /// connects, its `device_id` is looked up here so the receiver can recompute
 /// that sender's frame key from the shared MLS exporter. Entries missing either
 /// field are skipped (the remote's key cannot be derived → fail-closed for that
@@ -365,7 +365,7 @@ pub(super) fn call_state_participant_device_map(
     let mut map = BTreeMap::new();
     for participant in call_roster_participants(state, realm_id, call_id) {
         let identity = participant
-            .get("participant_identity")
+            .get("participant_id")
             .and_then(|v| v.as_str())
             .unwrap_or_default();
         let device_id = participant
@@ -409,11 +409,11 @@ pub(super) fn call_state_participant_actor_device_map(
 /// loop has replayed our own write.
 pub(super) fn expected_participant_set(
     durable_identities: &BTreeSet<String>,
-    local_participant_identity: &str,
+    local_participant_id: &str,
 ) -> BTreeSet<String> {
     let mut expected = durable_identities.clone();
-    if !local_participant_identity.trim().is_empty() {
-        expected.insert(local_participant_identity.to_owned());
+    if !local_participant_id.trim().is_empty() {
+        expected.insert(local_participant_id.to_owned());
     }
     expected
 }
@@ -557,7 +557,7 @@ mod tests {
                         "op": "join",
                         "participant": {
                             "actor_id": "ak:did_core:web:alice.example",
-                            "participant_identity": "ak:rtc_participant:alice"
+                            "participant_id": "ak:rtc_participant:alice"
                         }
                     }
                 }
@@ -589,7 +589,7 @@ mod tests {
                         "participant": {
                             "actor_id": "ak:did_core:web:alice.example",
                             "device_id": "ak:device:01904100-0000-7000-8000-00000000000a",
-                            "participant_identity": "ak:rtc_participant:alice"
+                            "participant_id": "ak:rtc_participant:alice"
                         }
                     }
                 }
@@ -623,7 +623,7 @@ mod tests {
                         "participant": {
                             "actor_id": "ak:did_core:web:alice.example",
                             "device_id": "ak:device:01904100-0000-7000-8000-00000000000a",
-                            "participant_identity": "ak:rtc_participant:alice"
+                            "participant_id": "ak:rtc_participant:alice"
                         }
                     }
                 }
@@ -711,7 +711,7 @@ mod tests {
                         "participant": {
                             "actor_id": "ak:did_core:web:alice.example",
                             "device_id": "ak:device:019a7360-0000-7000-8000-000000000008",
-                            "participant_identity": "ak:rtc_participant:alice"
+                            "participant_id": "ak:rtc_participant:alice"
                         }
                     }
                 }
@@ -751,7 +751,7 @@ mod tests {
                         "participant": {
                             "actor_id": "ak:did_core:web:alice.example",
                             "device_id": "ak:device:019a7360-0000-7000-8000-000000000008",
-                            "participant_identity": "ak:rtc_participant:alice"
+                            "participant_id": "ak:rtc_participant:alice"
                         }
                     }
                 }

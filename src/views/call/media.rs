@@ -106,7 +106,7 @@ pub(super) fn install_and_capture(
 ) -> Result<(), RtcClientError> {
     let mut t = transport.borrow_mut();
     // §8.1: the local key is sender-bound, installed under our own identity.
-    t.install_frame_key(&session.participant_identity, &session.frame_key)?;
+    t.install_frame_key(&session.participant_id, &session.frame_key)?;
     let _ = t.start_local_capture();
     Ok(())
 }
@@ -152,7 +152,7 @@ pub(super) async fn submit_call_state_participant(
             device_id: device.to_owned(),
             joined_at: None,
             foci_preferred: Some(vec![session.focus_id.clone()]),
-            participant_id: session.participant_identity.clone(),
+            participant_id: session.participant_id.clone(),
             participant_binding,
             media: Some(arkret_sdk::CallParticipantMedia {
                 audio: Some(session.desired_media.audio),

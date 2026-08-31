@@ -67,7 +67,7 @@ pub enum RtcClientError {
     ParticipantBindingInvalid,
     /// SFU reported a `ParticipantConnected` whose identity is not in the
     /// effective `ak.component.call.roster.v1` OR-Set. Receiver MUST fail closed.
-    ParticipantIdentityUnrecognised,
+    ParticipantIdUnrecognised,
     /// Frame key source was not the MLS Exporter. Any backend-supplied
     /// key (e.g. LiveKit-side key vault) is rejected.
     E2eeKeySourceUnauthorised,
@@ -103,7 +103,7 @@ impl RtcClientError {
             Self::UnknownFocusType => "unknown_focus_type",
             Self::TokenIssuerUnauthorised => "token_issuer_unauthorised",
             Self::ParticipantBindingInvalid => "participant_binding_invalid",
-            Self::ParticipantIdentityUnrecognised => "participant_identity_unrecognised",
+            Self::ParticipantIdUnrecognised => "participant_id_unrecognised",
             Self::E2eeKeySourceUnauthorised => "e2ee_key_source_unauthorised",
             Self::RecordingArtifactPipelineBypassed => "recording_artifact_pipeline_bypassed",
             Self::TranscriptionArtifactPipelineBypassed => {
@@ -124,7 +124,7 @@ impl RtcClientError {
             Self::UnknownFocusType => "error.call.unknown_focus_type",
             Self::TokenIssuerUnauthorised => "error.call.token_issuer_unauthorised",
             Self::ParticipantBindingInvalid => "error.call.participant_binding_invalid",
-            Self::ParticipantIdentityUnrecognised => "error.call.participant_identity_unrecognised",
+            Self::ParticipantIdUnrecognised => "error.call.participant_id_unrecognised",
             Self::E2eeKeySourceUnauthorised => "error.call.e2ee_key_source_unauthorised",
             Self::RecordingArtifactPipelineBypassed => {
                 "error.call.recording_artifact_pipeline_bypassed"
@@ -151,7 +151,7 @@ impl RtcClientError {
             "unknown_focus_type" => Self::UnknownFocusType,
             "token_issuer_unauthorised" => Self::TokenIssuerUnauthorised,
             "participant_binding_invalid" => Self::ParticipantBindingInvalid,
-            "participant_identity_unrecognised" => Self::ParticipantIdentityUnrecognised,
+            "participant_id_unrecognised" => Self::ParticipantIdUnrecognised,
             "e2ee_key_source_unauthorised" => Self::E2eeKeySourceUnauthorised,
             "recording_artifact_pipeline_bypassed" => Self::RecordingArtifactPipelineBypassed,
             "transcription_artifact_pipeline_bypassed" => {
@@ -482,7 +482,7 @@ pub struct JoinedMediaSession {
     pub backend_token: String,
     /// SFU-local participant identity, cross-checked against the effective
     /// `ak.component.call.roster.v1` OR-Set on `ParticipantConnected`.
-    pub participant_identity: String,
+    pub participant_id: String,
     /// Token issuer's signed tuple for the local participant. The call
     /// controller joins this into `ak.component.call.roster.v1` before
     /// connecting the SFU so remote streams have a durable roster to check.
@@ -502,7 +502,7 @@ pub struct JoinedMediaSession {
     /// Static SFrame context fields shared by every sender in this call leg:
     /// `realm_id`, `call_id`, `focus_id`, and the MLS `epoch_id`. A remote
     /// sender's key is the same MLS group exporter (same epoch) evaluated over
-    /// the remote sender's `(participant_identity, device_id)`.
+    /// the remote sender's `(participant_id, device_id)`.
     pub realm_id: String,
     pub call_id: String,
     pub epoch_id: u64,
@@ -514,7 +514,7 @@ pub struct JoinedMediaSession {
 /// given epoch, so any member can reproduce *another* sender's frame key by
 /// evaluating the exporter over that sender's
 /// `Context = canonical_json({realm_id, call_id, focus_id, epoch_id,
-/// participant_identity, device_id})` (`media-service-binding.md` §8.1). This
+/// participant_id, device_id})` (`media-service-binding.md` §8.1). This
 /// is what lets the receiver install the remote sender's key and decrypt its
 /// frames — without it, two members each only know their own key and can never
 /// decrypt each other.
@@ -558,7 +558,7 @@ impl PerSenderFrameKeys {
     }
 
     /// Derive the SFrame frame key for one *remote* sender, identified by its
-    /// `(participant_identity, device_id)` from the verified effective
+    /// `(participant_id, device_id)` from the verified effective
     /// `ak.component.call.roster.v1` OR-Set.
     ///
     /// Fail-closed (`Err`) when the ids are malformed or the exporter rejects
@@ -568,7 +568,7 @@ impl PerSenderFrameKeys {
     /// to what the remote sender derived for itself.
     pub fn derive_remote_key(
         &self,
-        participant_identity: &str,
+        participant_id: &str,
         device_id: &str,
     ) -> Result<zeroize::Zeroizing<Vec<u8>>, RtcClientError> {
         let realm_id = self.realm_id.clone();
@@ -580,7 +580,7 @@ impl PerSenderFrameKeys {
             call_id,
             focus_id: self.focus_id.clone(),
             epoch_id: self.epoch_id,
-            participant_identity: participant_identity.to_owned(),
+            participant_id: participant_id.to_owned(),
             device_id,
         };
         derive_frame_key(&self.exporter, &context)
@@ -665,14 +665,14 @@ pub async fn join_call_media(
         .map_err(|err| classify_protocol_error(&err))?;
 
     // MEDIA-1 — SFrame frame key from the live MLS exporter. The
-    // participant_identity is the verified SFU-local handle from the
+    // participant_id is the verified SFU-local handle from the
     // token binding, so the key is sender-bound per §8.1.
     let frame_context = FrameKeyContext {
         realm_id: ids.realm_id.clone(),
         call_id: ids.call_id.clone(),
         focus_id: request.focus_id.clone(),
         epoch_id: request.epoch_id,
-        participant_identity: verification.participant_id.clone(),
+        participant_id: verification.participant_id.clone(),
         device_id: ids.device_id.clone(),
     };
     let frame_key = derive_frame_key(mls_exporter, &frame_context)
@@ -684,7 +684,7 @@ pub async fn join_call_media(
         connect_url: outcome.connect_url,
         backend_token,
         participant_binding: outcome.participant_binding,
-        participant_identity: verification.participant_id,
+        participant_id: verification.participant_id,
         ice_config,
         frame_key,
         desired_media: request.desired_media,
@@ -698,14 +698,14 @@ pub async fn join_call_media(
 /// MEDIA-2 — cross-check an SFU-reported `ParticipantConnected` identity
 /// against the effective `ak.component.call.roster.v1` projection. A mismatch is
 /// fail-closed; the transport MUST drop the connection.
-pub fn cross_check_participant_identity(
+pub fn cross_check_participant_id(
     reported_identity: &str,
     expected_identities: &std::collections::BTreeSet<String>,
 ) -> Result<(), RtcClientError> {
     if expected_identities.contains(reported_identity) {
         Ok(())
     } else {
-        Err(RtcClientError::ParticipantIdentityUnrecognised)
+        Err(RtcClientError::ParticipantIdUnrecognised)
     }
 }
 
@@ -806,7 +806,7 @@ fn classify_protocol_error(err: &arkret_signatures::Error) -> RtcClientError {
     const CODES: &[RtcClientError] = &[
         RtcClientError::TokenIssuerUnauthorised,
         RtcClientError::E2eeKeySourceUnauthorised,
-        RtcClientError::ParticipantIdentityUnrecognised,
+        RtcClientError::ParticipantIdUnrecognised,
         RtcClientError::FocusUnavailableForClient,
         RtcClientError::FocusMismatch,
         RtcClientError::UnknownFocusType,
@@ -838,19 +838,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn participant_identity_cross_check_fails_closed_on_unknown() {
+    fn participant_id_cross_check_fails_closed_on_unknown() {
         let mut known = BTreeSet::new();
         known.insert("ak:rtc_participant:00000000-0000-0000-0000-000000000001".to_owned());
         assert!(
-            cross_check_participant_identity(
+            cross_check_participant_id(
                 "ak:rtc_participant:00000000-0000-0000-0000-000000000001",
                 &known
             )
             .is_ok()
         );
         assert_eq!(
-            cross_check_participant_identity("ak:rtc_participant:unknown", &known),
-            Err(RtcClientError::ParticipantIdentityUnrecognised)
+            cross_check_participant_id("ak:rtc_participant:unknown", &known),
+            Err(RtcClientError::ParticipantIdUnrecognised)
         );
     }
 
@@ -862,7 +862,7 @@ mod tests {
             RtcClientError::UnknownFocusType,
             RtcClientError::TokenIssuerUnauthorised,
             RtcClientError::ParticipantBindingInvalid,
-            RtcClientError::ParticipantIdentityUnrecognised,
+            RtcClientError::ParticipantIdUnrecognised,
             RtcClientError::E2eeKeySourceUnauthorised,
             RtcClientError::RecordingArtifactPipelineBypassed,
             RtcClientError::TranscriptionArtifactPipelineBypassed,
@@ -1163,8 +1163,7 @@ mod tests {
                 .unwrap(),
             focus_id: "fra-1".to_owned(),
             epoch_id: exporter.epoch(),
-            participant_identity: "ak:rtc_participant:00000000-0000-0000-0000-000000000001"
-                .to_owned(),
+            participant_id: "ak:rtc_participant:00000000-0000-0000-0000-000000000001".to_owned(),
             device_id: arkret_sdk::DeviceId::new(EXPORTER_DEVICE.to_owned()).unwrap(),
         };
         let key = derive_frame_key(&exporter, &ctx).expect("frame key derivation");
@@ -1229,9 +1228,9 @@ mod tests {
     // are sender-bound, but every member of the same MLS group shares the epoch
     // exporter secret, so any member can recompute *another* sender's key by
     // evaluating the exporter over that sender's
-    // `Context = {realm_id, call_id, focus_id, epoch_id, participant_identity,
+    // `Context = {realm_id, call_id, focus_id, epoch_id, participant_id,
     // device_id}`. This test builds a REAL two-member MLS group (Alice + Bob,
-    // distinct participant_identity + device_id), and proves Bob — using the
+    // distinct participant_id + device_id), and proves Bob — using the
     // production `PerSenderFrameKeys::derive_remote_key` path — recomputes the
     // exact bytes Alice derived for herself. Unlike the single-exporter
     // determinism tests, this is a genuine *cross-member* recomputation: two
@@ -1323,13 +1322,13 @@ mod tests {
         let focus_id = "fra-1".to_owned();
 
         // Alice derives HER OWN sender frame key (the local install path) using
-        // her own (participant_identity, device_id).
+        // her own (participant_id, device_id).
         let alice_self_ctx = FrameKeyContext {
             realm_id: realm_id.clone(),
             call_id: call_id.clone(),
             focus_id: focus_id.clone(),
             epoch_id: epoch,
-            participant_identity: ALICE_IDENTITY.to_owned(),
+            participant_id: ALICE_IDENTITY.to_owned(),
             device_id: DeviceId::new(ALICE_DEVICE.to_owned()).unwrap(),
         };
         let key_alice_self = derive_frame_key(&alice_exporter, &alice_self_ctx).unwrap();
@@ -1338,7 +1337,7 @@ mod tests {
 
         // THE FIX: Bob (the RECEIVER, a different member) recomputes ALICE's
         // sender key via the production `PerSenderFrameKeys::derive_remote_key`,
-        // using ALICE's (participant_identity, device_id) over Bob's own
+        // using ALICE's (participant_id, device_id) over Bob's own
         // exporter at the same epoch.
         let bob_per_sender = PerSenderFrameKeys::new(
             bob_exporter,
@@ -1364,7 +1363,7 @@ mod tests {
             call_id: call_id.clone(),
             focus_id: focus_id.clone(),
             epoch_id: epoch,
-            participant_identity: BOB_IDENTITY.to_owned(),
+            participant_id: BOB_IDENTITY.to_owned(),
             device_id: DeviceId::new(BOB_DEVICE.to_owned()).unwrap(),
         };
         let key_bob_self = derive_frame_key(&bob_per_sender.exporter, &bob_self_ctx).unwrap();

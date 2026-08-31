@@ -61,14 +61,14 @@ extern "C" {
     pub fn set_muted(handle: &str, kind: &str, muted: bool) -> Result<js_sys::Promise, JsValue>;
 
     /// Inject a sender-bound MLS-exporter-derived frame key into the LiveKit
-    /// `ExternalE2EEKeyProvider` under `participant_identity` and enable room
-    /// E2EE. `participant_identity` is the sender the key belongs to (the local
+    /// `ExternalE2EEKeyProvider` under `participant_id` and enable room
+    /// E2EE. `participant_id` is the sender the key belongs to (the local
     /// participant for our own publish, or a remote participant whose key we
     /// recomputed from the shared MLS exporter so we can decrypt its frames).
     #[wasm_bindgen(js_name = arkretLivekitSetE2EEKey, catch)]
     pub fn set_e2ee_key(
         handle: &str,
-        participant_identity: &str,
+        participant_id: &str,
         key_bytes: &[u8],
         key_index: u32,
     ) -> Result<js_sys::Promise, JsValue>;

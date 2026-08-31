@@ -210,7 +210,7 @@ mod member_actor_tests {
             arkret_sdk::ActorId::service(principal),
         ] {
             for membership in [
-                arkret_sdk::CircleMembership::Invite,
+                arkret_sdk::CircleMembership::Knock,
                 arkret_sdk::CircleMembership::Leave,
             ] {
                 let builder = circle_member_state_with_expected(

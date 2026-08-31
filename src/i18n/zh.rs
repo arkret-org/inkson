@@ -52,7 +52,7 @@ fn add_r3_error_keys_zh(dict: &mut TranslationDict) {
         "某位参与者的通话凭证未通过校验,无法加入。",
     );
     dict.set(
-        "error.call.participant_identity_unrecognised",
+        "error.call.participant_id_unrecognised",
         "服务器上报了一位不在此通话中的参与者。出于安全考虑,已拒绝连接。",
     );
     dict.set(

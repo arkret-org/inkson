@@ -74,7 +74,7 @@ fn realm_member_roster_reads_r32_wire_shape() {
             },
             {
                 "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:webvh:zQmPr8","station_id":"ak:did_core:web:principal.example"}},
-                "membership": "invite"
+                "membership": "knock"
             }
         ]
     });
@@ -111,7 +111,7 @@ fn realm_member_roster_reads_r32_wire_shape() {
                 .starts_with("ak:did_core:webvh:")
         })
         .unwrap();
-    assert_eq!(webvh.membership.as_deref(), Some("invite"));
+    assert_eq!(webvh.membership.as_deref(), Some("knock"));
     assert!(webvh.identity_event_ids.is_empty());
     assert!(webvh.member_display_state_digest.is_none());
     // subject_id not disclosed for the invite row.
@@ -182,7 +182,7 @@ fn realm_member_roster_keeps_first_duplicate_actor_entry() {
     let projection = json!({
         "member_roster_entries": [
             { "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:alice.example","station_id":"ak:did_core:web:principal.example"}}, "membership": "join" },
-            { "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:alice.example","station_id":"ak:did_core:web:principal.example"}}, "membership": "invite" }
+            { "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:alice.example","station_id":"ak:did_core:web:principal.example"}}, "membership": "knock" }
         ]
     });
 

@@ -49,7 +49,7 @@ use super::{
     ensure_valid_frame_key,
 };
 use crate::media::rtc::{
-    JoinedMediaSession, PerSenderFrameKeys, RtcClientError, cross_check_participant_identity,
+    JoinedMediaSession, PerSenderFrameKeys, RtcClientError, cross_check_participant_id,
 };
 
 /// The desktop LiveKit driver, run in the webview over the eval bridge. The
@@ -96,7 +96,7 @@ pub struct NativeRtcTransport {
     /// install (`media-service-binding.md` §8.1: keys are sender-bound).
     local_identity: String,
     /// Per-sender remote frame-key deriver (retains the live MLS exporter) plus
-    /// the `participant_identity → device_id` map from the verified
+    /// the `participant_id → device_id` map from the verified
     /// `ak.component.call.roster.v1` effective OR-Set. Moved into the driver event loop
     /// so each remote sender's recomputed key is injected into the webview
     /// LiveKit provider under the remote identity.
@@ -124,7 +124,7 @@ impl NativeRtcTransport {
             backend_token: session.backend_token.clone(),
             frame_key: Vec::new(),
             frame_key_installed: false,
-            local_identity: session.participant_identity.clone(),
+            local_identity: session.participant_id.clone(),
             remote_keys: None,
             identity_to_device: BTreeMap::new(),
             local: LocalMediaState::default(),
@@ -196,7 +196,7 @@ impl MediaTransport for NativeRtcTransport {
 
     fn install_frame_key(
         &mut self,
-        participant_identity: &str,
+        participant_id: &str,
         key: &[u8],
     ) -> Result<(), RtcClientError> {
         ensure_valid_frame_key(key)?;
@@ -204,8 +204,8 @@ impl MediaTransport for NativeRtcTransport {
         // identity it is bound to so `connect_sfu` can inject it into the
         // LiveKit ExternalE2EEKeyProvider under that identity in the webview.
         self.frame_key = key.to_vec();
-        if !participant_identity.trim().is_empty() {
-            self.local_identity = participant_identity.to_owned();
+        if !participant_id.trim().is_empty() {
+            self.local_identity = participant_id.to_owned();
         }
         self.frame_key_installed = true;
         Ok(())
@@ -294,13 +294,12 @@ impl MediaTransport for NativeRtcTransport {
                     DriverEvent::Participant { identity } => {
                         // MEDIA-2: drop any SFU identity not in the durable
                         // roster instead of trusting it.
-                        if cross_check_participant_identity(&identity, &expected.borrow()).is_err()
-                        {
+                        if cross_check_participant_id(&identity, &expected.borrow()).is_err() {
                             continue;
                         }
                         // §8.1 receiver side: recompute THIS remote sender's
                         // frame key from the same MLS group exporter at the same
-                        // epoch (the remote's own (participant_identity,
+                        // epoch (the remote's own (participant_id,
                         // device_id) context) and inject it into the webview
                         // LiveKit provider under the remote identity so its
                         // frames decrypt. Fail-closed: unknown device_id or a
@@ -351,7 +350,7 @@ impl MediaTransport for NativeRtcTransport {
         identity: &str,
         expected: &BTreeSet<String>,
     ) -> Result<(), RtcClientError> {
-        cross_check_participant_identity(identity, expected)?;
+        cross_check_participant_id(identity, expected)?;
         let mut roster = self.remotes.borrow_mut();
         if !roster.iter().any(|r| r.identity == identity) {
             roster.push(RemoteParticipant {
@@ -427,7 +426,7 @@ mod tests {
             focus_id: "fra-1".to_owned(),
             connect_url: "wss://livekit.example".to_owned(),
             backend_token: "jwt".to_owned(),
-            participant_identity: "ak:rtc_participant:self".to_owned(),
+            participant_id: "ak:rtc_participant:self".to_owned(),
             participant_binding: arkret_sdk::CallMediaParticipantBinding {
                 scheme: arkret_sdk::ParticipantBinding::SCHEMA.to_owned(),
                 sig: "sig".to_owned(),

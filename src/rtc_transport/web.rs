@@ -42,7 +42,7 @@ use super::{
     ensure_valid_frame_key, livekit_shim,
 };
 use crate::media::rtc::{
-    JoinedMediaSession, PerSenderFrameKeys, RtcClientError, cross_check_participant_identity,
+    JoinedMediaSession, PerSenderFrameKeys, RtcClientError, cross_check_participant_id,
 };
 
 type SignalQueue = Rc<RefCell<Vec<LocalSignal>>>;
@@ -77,7 +77,7 @@ pub struct WebRtcTransport {
     /// install (`media-service-binding.md` §8.1: keys are sender-bound).
     local_identity: String,
     /// Per-sender remote frame-key deriver (retains the live MLS exporter) plus
-    /// the `participant_identity → device_id` map from the verified
+    /// the `participant_id → device_id` map from the verified
     /// `ak.component.call.roster.v1` OR-Set. Shared into the LiveKit
     /// `ParticipantConnected` callback so each remote sender's key is derived
     /// (same group exporter + epoch, the remote's own context) and installed.
@@ -112,7 +112,7 @@ impl WebRtcTransport {
             frame_key: Vec::new(),
             remotes: Rc::new(RefCell::new(Vec::new())),
             expected_participants: Rc::new(RefCell::new(BTreeSet::new())),
-            local_identity: session.participant_identity.clone(),
+            local_identity: session.participant_id.clone(),
             remote_keys: Rc::new(RefCell::new(None)),
             identity_to_device: Rc::new(RefCell::new(BTreeMap::new())),
             room: Rc::new(RefCell::new(None)),
@@ -267,7 +267,7 @@ impl MediaTransport for WebRtcTransport {
 
     fn install_frame_key(
         &mut self,
-        participant_identity: &str,
+        participant_id: &str,
         key: &[u8],
     ) -> Result<(), RtcClientError> {
         ensure_valid_frame_key(key)?;
@@ -276,8 +276,8 @@ impl MediaTransport for WebRtcTransport {
         // LiveKit ExternalE2EEKeyProvider under that identity once the room
         // exists. The P2P path only needs the installed flag as an offer gate.
         self.frame_key = key.to_vec();
-        if !participant_identity.trim().is_empty() {
-            self.local_identity = participant_identity.to_owned();
+        if !participant_id.trim().is_empty() {
+            self.local_identity = participant_id.to_owned();
         }
         self.frame_key_installed = true;
         Ok(())
@@ -397,12 +397,12 @@ impl MediaTransport for WebRtcTransport {
             let key_room = handle.clone();
             let cb = Closure::wrap(Box::new(move |identity: JsValue| {
                 let identity = identity.as_string().unwrap_or_default();
-                if cross_check_participant_identity(&identity, &expected_cb.borrow()).is_err() {
+                if cross_check_participant_id(&identity, &expected_cb.borrow()).is_err() {
                     return;
                 }
                 // §8.1 receiver side: derive THIS remote sender's frame key from
                 // the same MLS group exporter at the same epoch, using the
-                // remote's own (participant_identity, device_id) context, and
+                // remote's own (participant_id, device_id) context, and
                 // install it under the remote identity so its frames decrypt.
                 // Fail-closed: if the device_id is unknown or derivation fails,
                 // skip this one remote (its frames stay undecryptable) without
@@ -445,7 +445,7 @@ impl MediaTransport for WebRtcTransport {
         identity: &str,
         expected: &BTreeSet<String>,
     ) -> Result<(), RtcClientError> {
-        cross_check_participant_identity(identity, expected)?;
+        cross_check_participant_id(identity, expected)?;
         let mut roster = self.remotes.borrow_mut();
         if !roster.iter().any(|r| r.identity == identity) {
             roster.push(RemoteParticipant {

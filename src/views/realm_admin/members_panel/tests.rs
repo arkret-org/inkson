@@ -113,7 +113,7 @@ fn splits_pending_invites_out_of_active_members() {
     let mut alice = member("ak:did_core:web:alice.example");
     alice.membership = Some("join".to_owned());
     let mut bob = member("ak:did_core:web:bob.example");
-    bob.membership = Some("invite".to_owned());
+    bob.pending_invite = true;
 
     let (active, pending) = split_member_profiles(vec![alice, bob]);
 
@@ -160,7 +160,8 @@ fn optimistic_pending_invite_records_display_handle() {
     );
 
     assert_eq!(rows.len(), 1);
-    assert_eq!(rows[0].membership.as_deref(), Some("invite"));
+    assert!(rows[0].membership.is_none());
+    assert!(rows[0].is_pending_invite());
     assert_eq!(rows[0].handles, vec!["bob:example.com"]);
 }
 
@@ -333,7 +334,7 @@ fn projected_member_profiles_classify_authority_root_controller_as_owner() {
 }
 
 #[test]
-fn projected_member_profiles_preserve_pending_invite_membership() {
+fn projected_member_profiles_reject_invite_as_roster_membership() {
     let realm_id = "ak:realm:AKOOF3y2qB7XA-na-H-ZVZqMxf852TBtYhWuYm5iO_yw";
     let mut store = temp_store("pending-membership");
     store.save_realm_tree_projection(
@@ -360,12 +361,7 @@ fn projected_member_profiles_preserve_pending_invite_membership() {
         active[0].actor_id,
         actor_key("ak:did_core:web:alice.example")
     );
-    assert_eq!(pending.len(), 1);
-    assert_eq!(
-        pending[0].actor_id,
-        actor_key("ak:did_core:web:bob.example")
-    );
-    assert_eq!(pending[0].membership.as_deref(), Some("invite"));
+    assert!(pending.is_empty());
 }
 
 #[test]
@@ -383,9 +379,8 @@ fn joined_member_signature_lists_only_joined_members_sorted() {
         }),
     );
 
-    // Only `join` members, deduped and sorted — `bob` (invite) is excluded
-    // because local intent never grants membership. Admission scheduling is
-    // deliberately independent and still reads canonical accepted history.
+    // Only `join` members, deduped and sorted — the invalid legacy `invite`
+    // roster row is rejected. Invite lifecycle remains a separate projection.
     assert_eq!(
         joined_member_signature_for_realm(&store, realm_id),
         [
@@ -543,7 +538,7 @@ fn pairwise_claim_selector_never_reuses_a_human_device_coordinate() {
 }
 
 #[test]
-fn projected_duplicate_member_keeps_first_roster_entry() {
+fn projected_duplicate_member_skips_invalid_invite_and_keeps_join() {
     let realm_id = "ak:realm:AKOOF3y2qB7XA-na-H-ZVZqMxf852TBtYhWuYm5iO_yw";
     let mut store = temp_store("pending-then-joined-membership");
     store.save_realm_tree_projection(
@@ -565,13 +560,10 @@ fn projected_duplicate_member_keeps_first_roster_entry() {
     let profiles = projected_member_profiles_for_realm(&store, realm_id);
     let (active, pending) = split_member_profiles(profiles);
 
-    assert!(active.is_empty());
-    assert_eq!(pending.len(), 1);
-    assert_eq!(
-        pending[0].actor_id,
-        actor_key("ak:did_core:web:bob.example")
-    );
-    assert_eq!(pending[0].membership.as_deref(), Some("invite"));
+    assert_eq!(active.len(), 1);
+    assert_eq!(active[0].actor_id, actor_key("ak:did_core:web:bob.example"));
+    assert_eq!(active[0].membership.as_deref(), Some("join"));
+    assert!(pending.is_empty());
 }
 
 #[test]
@@ -722,7 +714,8 @@ fn queued_invite_accept_does_not_promote_join_but_realm_remains_reconcilable() {
     );
     assert!(pending.iter().any(|profile| {
         profile.actor_id == actor_key("ak:did_core:web:bob.example")
-            && profile.membership.as_deref() == Some("invite")
+            && profile.membership.is_none()
+            && profile.is_pending_invite()
     }));
     let candidates = mls_admission_candidate_realms_for_actor(&store, "did:web:alice.example");
     assert_eq!(candidates.len(), 1);

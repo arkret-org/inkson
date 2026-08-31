@@ -16,7 +16,6 @@ fn lifecycle_label(state: arkret_sdk::CircleState) -> &'static str {
 fn membership_label(state: Option<arkret_sdk::CircleMembership>) -> &'static str {
     match state {
         Some(arkret_sdk::CircleMembership::Join) => "Member",
-        Some(arkret_sdk::CircleMembership::Invite) => "Invited",
         Some(arkret_sdk::CircleMembership::Knock) => "Requested",
         Some(arkret_sdk::CircleMembership::Leave) => "Left",
         Some(arkret_sdk::CircleMembership::Ban) => "Banned",
@@ -282,7 +281,7 @@ pub fn CirclesPanel(
                                                 "knock" => arkret_sdk::CircleMembership::Knock,
                                                 "leave" => arkret_sdk::CircleMembership::Leave,
                                                 "ban" => arkret_sdk::CircleMembership::Ban,
-                                                _ => arkret_sdk::CircleMembership::Invite,
+                                                _ => arkret_sdk::CircleMembership::Knock,
                                             };
                                             busy.set(true);
                                             let base = base.clone();

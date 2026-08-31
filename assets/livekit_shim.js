@@ -127,7 +127,7 @@ export async function arkretLivekitSetMuted(handle, kind, muted) {
 // it into a fresh buffer so the provider keeps an owned copy.
 //
 // SFrame frame keys are sender-bound (media-service-binding.md §8.1): the
-// Context binds the sender's own (participant_identity, device_id). Each sender
+// Context binds the sender's own (participant_id, device_id). Each sender
 // derives its key from the shared MLS exporter, and every other member
 // recomputes that same sender's key from the same exporter (same epoch) and
 // installs it under that sender's identity here — which is how the receiver
