@@ -11,8 +11,6 @@ pub use arkret_sdk::{
 use arkret_wire::{AEAD_PROFILE_XCHACHA20_POLY1305_V1, SchemaId};
 use base64::Engine as _;
 use base64::engine::general_purpose::{STANDARD as BASE64_STANDARD, URL_SAFE_NO_PAD};
-use chacha20poly1305::aead::{Aead, KeyInit, Payload};
-use chacha20poly1305::{XChaCha20Poly1305, XNonce};
 use hkdf::Hkdf;
 use serde_json::Value;
 #[cfg(test)]
@@ -78,9 +76,7 @@ struct PreparedFileTransfer {
     plaintext_size_bytes: u64,
     media_type: String,
     filename: Option<String>,
-    content_key: [u8; CONTENT_KEY_LEN],
-    nonce: [u8; XCHACHA_NONCE_LEN],
-    aad: FileTransferAad,
+    encryption: FileTransferEncryption,
     origin_device_id: String,
     created_at: String,
     updated_hlc: String,
@@ -247,22 +243,11 @@ fn decrypt_file_transfer_ciphertext_with_key(
     ciphertext: &[u8],
     content_key: &[u8; CONTENT_KEY_LEN],
 ) -> anyhow::Result<Vec<u8>> {
-    let nonce = decode_fixed::<XCHACHA_NONCE_LEN>(&record.encryption.nonce)?;
-    let aad_bytes = crate::canonical::canonical_json_bytes(&record.encryption.aad)?;
-    let cipher = XChaCha20Poly1305::new(content_key.into());
-    let plaintext = cipher
-        .decrypt(
-            XNonce::from_slice(&nonce),
-            Payload {
-                msg: ciphertext,
-                aad: &aad_bytes,
-            },
-        )
-        .map_err(|error| anyhow::anyhow!("file-transfer decrypt failed: {error}"))?;
-    if plaintext.len() as u64 != record.plaintext_size_bytes {
-        anyhow::bail!("file-transfer plaintext size mismatch");
-    }
-    Ok(plaintext)
+    Ok(arkret_sdk::crypto::file_transfer_aead::decrypt(
+        record,
+        ciphertext,
+        content_key,
+    )?)
 }
 
 pub fn file_transfer_items_from_account_data(
@@ -346,17 +331,30 @@ fn prepare_actor_private_file(
         origin_device_id: device_id.trim().to_owned(),
         created_at: created_at.clone(),
     };
-    let aad_bytes = crate::canonical::canonical_json_bytes(&aad)?;
-    let cipher = XChaCha20Poly1305::new((&content_key).into());
-    let ciphertext = cipher
-        .encrypt(
-            XNonce::from_slice(&nonce),
-            Payload {
-                msg: plaintext.as_slice(),
-                aad: &aad_bytes,
-            },
-        )
-        .map_err(|error| anyhow::anyhow!("file-transfer encrypt failed: {error}"))?;
+    let streaming = plaintext.len() > 262_144;
+    let encryption = FileTransferEncryption {
+        scheme: if streaming {
+            arkret_sdk::BLOB_SCHEME_STREAM_AEAD_V1
+        } else {
+            FILE_TRANSFER_BLOB_SCHEME
+        }
+        .to_owned(),
+        aead_profile: AEAD_PROFILE_XCHACHA20_POLY1305_V1.to_owned(),
+        nonce: (!streaming).then(|| URL_SAFE_NO_PAD.encode(nonce)),
+        nonce_prefix: streaming.then(|| URL_SAFE_NO_PAD.encode(&nonce[..19])),
+        segment_bytes: streaming.then_some(262_144),
+        aad,
+        key_delivery: FileTransferKeyDelivery::AccountDataWrappedKey {
+            content_key: URL_SAFE_NO_PAD.encode(content_key),
+        },
+    };
+    let media_type = normalize_media_type(media_type);
+    let ciphertext = arkret_sdk::crypto::file_transfer_aead::encrypt(
+        &encryption,
+        &media_type,
+        &plaintext,
+        &content_key,
+    )?;
     let content_digest = crate::canonical::sha256_digest(&ciphertext);
     Ok(PreparedFileTransfer {
         account_data_key,
@@ -364,11 +362,9 @@ fn prepare_actor_private_file(
         ciphertext,
         content_digest,
         plaintext_size_bytes: plaintext.len() as u64,
-        media_type: normalize_media_type(media_type),
+        media_type,
         filename: filename.and_then(sanitize_filename),
-        content_key,
-        nonce,
-        aad,
+        encryption,
         origin_device_id: device_id.trim().to_owned(),
         created_at,
         updated_hlc: updated_hlc.to_string(),
@@ -395,15 +391,7 @@ impl PreparedFileTransfer {
                 visibility: FileTransferAccessVisibility::ActorPrivate,
                 recipient_device_ids: Vec::new(),
             },
-            encryption: FileTransferEncryption {
-                scheme: FILE_TRANSFER_BLOB_SCHEME.to_owned(),
-                aead_profile: AEAD_PROFILE_XCHACHA20_POLY1305_V1.to_owned(),
-                nonce: URL_SAFE_NO_PAD.encode(self.nonce),
-                aad: self.aad,
-                key_delivery: FileTransferKeyDelivery::AccountDataWrappedKey {
-                    content_key: URL_SAFE_NO_PAD.encode(self.content_key),
-                },
-            },
+            encryption: self.encryption,
             origin_device_id: self.origin_device_id,
             created_at: self.created_at,
             updated_hlc: self.updated_hlc,
@@ -538,9 +526,6 @@ fn validate_ciphertext_blob_binding(
     verify_content_addressed_blob_ref(&record.blob_ref, &digest)?;
     if record.blob_size_bytes != ciphertext.len() as u64 {
         anyhow::bail!("file-transfer blob size mismatch");
-    }
-    if record.encryption.scheme != FILE_TRANSFER_BLOB_SCHEME {
-        anyhow::bail!("file-transfer encryption scheme mismatch");
     }
     if record.encryption.aead_profile != AEAD_PROFILE_XCHACHA20_POLY1305_V1 {
         anyhow::bail!("file-transfer AEAD profile mismatch");
