@@ -444,7 +444,7 @@ fn parses_message_event_with_nested_envelope_payload_shape() {
 }
 
 #[test]
-fn long_text_projection_preserves_its_declared_markdown_format() {
+fn long_text_projection_derives_markdown_from_media_type() {
     let mut event = json!({
         "event_id": "ak:event:A3YyTPegfva2k0jRQeI4iVcOhvxyHN1MeQ2dpTfPOF0l",
         "kind": "ak.message.create",
@@ -455,7 +455,6 @@ fn long_text_projection_preserves_its_declared_markdown_format() {
             "content": {
                 "kind": "ak.content.long_text",
                 "body": "# fallback",
-                "format": "markdown",
                 "body_kind": "prefix",
                 "blob_ref": format!("ak:blob:sha256:{}", "a".repeat(64)),
                 "size_bytes": 262_145,
@@ -475,6 +474,32 @@ fn long_text_projection_preserves_its_declared_markdown_format() {
         Some(arkret_sdk::TextFormat::Markdown)
     );
     assert!(message.body.starts_with('\u{1e}'));
+}
+
+#[test]
+fn long_text_projection_reads_encrypted_attachment_media_type() {
+    for (media_type, expected) in [
+        ("text/plain", Some(arkret_sdk::TextFormat::Plain)),
+        ("text/markdown", Some(arkret_sdk::TextFormat::Markdown)),
+        ("text/html", None),
+        ("text/markdown; charset=utf-8", None),
+    ] {
+        let content = json!({
+            "kind": "ak.content.long_text",
+            "body": "authenticated fallback",
+            "body_kind": "summary",
+            "attachment": {"media_type": media_type}
+        });
+        assert_eq!(content_format_from_value(&content), expected);
+    }
+    let missing = json!({
+        "kind": "ak.content.long_text",
+        "body": "fallback",
+        "body_kind": "summary",
+        "attachment": {},
+        "format": "markdown"
+    });
+    assert_eq!(content_format_from_value(&missing), None);
 }
 
 #[test]

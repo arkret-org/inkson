@@ -771,7 +771,11 @@ fn long_text_marker_from_value(value: &Value) -> Option<String> {
         return crate::content::encode_long_text_marker(
             value.get("blob_ref")?.as_str()?,
             value.get("body")?.as_str()?,
-            value.get("format")?.as_str()?,
+            arkret_sdk::ContentBlock::from_value(value.clone())
+                .ok()?
+                .long_text_media_type()?
+                .text_format()
+                .as_str(),
         );
     }
     value
@@ -797,15 +801,12 @@ pub(crate) fn content_format_from_value(value: &Value) -> Option<arkret_sdk::Tex
             .get("format")
             .and_then(Value::as_str)
             .and_then(arkret_sdk::TextFormat::parse),
-        Some(arkret_sdk::CONTENT_KIND_LONG_TEXT) => match value
-            .get("format")
-            .and_then(Value::as_str)
-            .and_then(arkret_sdk::LongTextFormat::parse)
-        {
-            Some(arkret_sdk::LongTextFormat::Plain) => Some(arkret_sdk::TextFormat::Plain),
-            Some(arkret_sdk::LongTextFormat::Markdown) => Some(arkret_sdk::TextFormat::Markdown),
-            None => None,
-        },
+        Some(arkret_sdk::CONTENT_KIND_LONG_TEXT) => {
+            arkret_sdk::ContentBlock::from_value(value.clone())
+                .ok()?
+                .long_text_media_type()
+                .map(arkret_sdk::LongTextMediaType::text_format)
+        }
         _ => value
             .get("parts")
             .and_then(Value::as_array)

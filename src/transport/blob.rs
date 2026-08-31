@@ -88,7 +88,7 @@ impl<'a> BlobEndpoints<'a> {
     pub async fn upload_plaintext_long_text(
         &self,
         body: &str,
-        format: arkret_sdk::LongTextFormat,
+        media_type: arkret_sdk::LongTextMediaType,
         realm_id: &str,
     ) -> anyhow::Result<arkret_sdk::ContentBlock> {
         let normalized = arkret_sdk::normalize_long_text(body)
@@ -100,7 +100,7 @@ impl<'a> BlobEndpoints<'a> {
         let expected_blob_ref = format!("ak:blob:{digest}");
         let metadata = Self::upload_metadata(
             normalized.len(),
-            format.media_type(),
+            media_type.as_str(),
             Some(realm_id),
             Some(&digest),
             None,
@@ -122,7 +122,7 @@ impl<'a> BlobEndpoints<'a> {
         }
         arkret_sdk::ContentBlock::plaintext_long_text(
             &normalized,
-            format,
+            media_type,
             expected_blob_ref,
             arkret_sdk::LongTextBodyKind::Prefix,
             None,

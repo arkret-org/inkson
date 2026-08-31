@@ -362,7 +362,11 @@ pub(crate) async fn chat_content_block_for_body_with_upload(
     let clients = crate::transport::EndpointClients::from_http(api.sdk_http_client()?);
     clients
         .blob()
-        .upload_plaintext_long_text(&normalized, arkret_sdk::LongTextFormat::Markdown, realm_id)
+        .upload_plaintext_long_text(
+            &normalized,
+            arkret_sdk::LongTextMediaType::Markdown,
+            realm_id,
+        )
         .await
 }
 
