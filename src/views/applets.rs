@@ -235,7 +235,7 @@ fn build_formal_applet_install_events(
     }
     let constraint = arkret_sdk::GrantConstraint::applet_authority(
         package.applet_id.clone(),
-        package.service_id.clone(),
+        arkret_sdk::ActorId::service(package.service_id.clone()),
         package.registration_epoch.clone(),
     );
     let resource = applet_install_resource(effective_scope)?;
