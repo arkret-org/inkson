@@ -381,7 +381,7 @@ fn is_local_account_actor(actor_key: &str, principal: &str) -> bool {
 fn owned_agent_actor_key(principal: &str) -> Option<String> {
     let station = crate::operation::authoring_station_id().ok()?;
     let principal = crate::mls_api_helpers::principal_core_id(principal).ok()?;
-    Some(arkret_sdk::ActorId::hosted_principal(principal, station).to_string())
+    Some(arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(principal, station)).to_string())
 }
 
 fn push_unique(out: &mut Vec<String>, value: impl Into<String>) {

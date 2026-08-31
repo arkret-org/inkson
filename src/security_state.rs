@@ -345,9 +345,11 @@ mod tests {
         let events = json!([{
             "kind": "ak.realm.create",
             "actor_id": {
-                "kind": "hosted_principal",
-                "principal_id": "ak:did_core:webvh:z6mkcreator",
-                "station_id": "ak:did_core:web:station.example"
+                "kind": "account",
+                "account_id": {
+                    "principal_id": "ak:did_core:webvh:z6mkcreator",
+                    "station_id": "ak:did_core:web:station.example"
+                }
             },
             "payload": {
                 "object": {
@@ -368,9 +370,11 @@ mod tests {
             {
                 "kind": "ak.realm.create",
                 "actor_id": {
-                    "kind": "hosted_principal",
-                    "principal_id": "ak:did_core:webvh:z6mkcreator",
-                    "station_id": "ak:did_core:web:station.example"
+                    "kind": "account",
+                    "account_id": {
+                        "principal_id": "ak:did_core:webvh:z6mkcreator",
+                        "station_id": "ak:did_core:web:station.example"
+                    }
                 },
                 "payload": {
                     "object": {
@@ -382,16 +386,20 @@ mod tests {
             {
                 "kind": "ak.realm.owner.transfer",
                 "actor_id": {
-                    "kind": "hosted_principal",
-                    "principal_id": "ak:did_core:webvh:z6mkcreator",
-                    "station_id": "ak:did_core:web:station.example"
+                    "kind": "account",
+                    "account_id": {
+                        "principal_id": "ak:did_core:webvh:z6mkcreator",
+                        "station_id": "ak:did_core:web:station.example"
+                    }
                 },
                 "payload": {
                     "patch": {
                         "controller_id": {
-                            "kind": "hosted_principal",
-                            "principal_id": "ak:did_core:web:successor.example",
-                            "station_id": "ak:did_core:web:station.example"
+                            "kind": "account",
+                            "account_id": {
+                                "principal_id": "ak:did_core:web:successor.example",
+                                "station_id": "ak:did_core:web:station.example"
+                            }
                         }
                     }
                 }
@@ -399,9 +407,11 @@ mod tests {
             {
                 "kind": "ak.realm.authority.reset",
                 "actor_id": {
-                    "kind": "hosted_principal",
-                    "principal_id": "ak:did_core:web:successor.example",
-                    "station_id": "ak:did_core:web:station.example"
+                    "kind": "account",
+                    "account_id": {
+                        "principal_id": "ak:did_core:web:successor.example",
+                        "station_id": "ak:did_core:web:station.example"
+                    }
                 },
                 "payload": {
                     "destructive_confirmation": "ak.realm.authority.reset"
@@ -429,9 +439,11 @@ mod tests {
             {
                 "kind": "ak.realm.create",
                 "actor_id": {
-                    "kind": "hosted_principal",
-                    "principal_id": "ak:did_core:webvh:z6mkcreator",
-                    "station_id": "ak:did_core:web:station.example"
+                    "kind": "account",
+                    "account_id": {
+                        "principal_id": "ak:did_core:webvh:z6mkcreator",
+                        "station_id": "ak:did_core:web:station.example"
+                    }
                 },
                 "payload": { "object": { "schema": "ak.schema.realm_genesis.v1" } }
             },
@@ -440,9 +452,11 @@ mod tests {
                 "payload": {
                     "patch": {
                         "controller_id": {
-                            "kind": "hosted_principal",
-                            "principal_id": "ak:did_core:web:successor.example",
-                            "station_id": "ak:did_core:web:station.example"
+                            "kind": "account",
+                            "account_id": {
+                                "principal_id": "ak:did_core:web:successor.example",
+                                "station_id": "ak:did_core:web:station.example"
+                            }
                         }
                     }
                 }

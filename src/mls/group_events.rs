@@ -73,14 +73,11 @@ mod creator_authority_tests {
         let local = crate::mls_api_helpers::local_account_actor_id(principal).unwrap();
         let mut remote = local.as_account_id().unwrap().clone();
         remote.station_id = "ak:did_core:web:remote-station.example".parse().unwrap();
-        let hosted = arkret_sdk::ActorId::hosted_principal(
-            local.signing_principal_id().clone(),
-            local.route_service_id().clone(),
-        );
+        let service = arkret_sdk::ActorId::service(local.signing_principal_id().clone());
         for (controller, expected) in [
             (local, true),
             (arkret_sdk::ActorId::account(remote), false),
-            (hosted, false),
+            (service, false),
         ] {
             let projections = std::collections::BTreeMap::from([(
                 "realm".to_owned(),

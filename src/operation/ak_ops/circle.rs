@@ -206,7 +206,7 @@ mod member_actor_tests {
                 principal.clone(),
                 station.clone(),
             )),
-            arkret_sdk::ActorId::hosted_principal(principal.clone(), station),
+            arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(principal.clone(), station)),
             arkret_sdk::ActorId::service(principal),
         ] {
             for membership in [

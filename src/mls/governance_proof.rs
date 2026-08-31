@@ -661,10 +661,10 @@ pub(crate) fn claimed_actor_id(
     if claim.pairwise_verification_method.is_some() {
         Ok(arkret_sdk::ActorId::service(claim.principal_id.clone()))
     } else if claim.agent_id.is_some() {
-        Ok(arkret_sdk::ActorId::hosted_principal(
+        Ok(arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
             claim.principal_id.clone(),
             receipt.destination_id.clone(),
-        ))
+        )))
     } else {
         Ok(arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
             claim.principal_id.clone(),

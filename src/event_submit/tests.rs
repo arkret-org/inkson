@@ -182,9 +182,11 @@ fn scheduled_dispatch_crash_retry_preserves_exact_signed_event_bytes() {
             "realm_id": "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19"
         },
         "actor_id": {
-            "kind": "hosted_principal",
-            "principal_id": "ak:did_core:web:alice.example",
-            "station_id": "ak:did_core:web:principal.example"
+            "kind": "account",
+            "account_id": {
+                "principal_id": "ak:did_core:web:alice.example",
+                "station_id": "ak:did_core:web:principal.example"
+            }
         },
         "actor_seq": 7,
         "created_at": "2026-08-07T00:00:00.000Z",
@@ -1020,9 +1022,11 @@ fn queued_mls_admission_round_trips_exact_welcome_material() {
         "kind": "ak.mls.commit",
         "scope_ref": {"kind": "realm", "realm_id": realm_id},
         "actor_id": {
-            "kind": "hosted_principal",
-            "principal_id": "ak:did_core:web:alice.example",
-            "station_id": "ak:did_core:web:principal.example"
+            "kind": "account",
+            "account_id": {
+                "principal_id": "ak:did_core:web:alice.example",
+                "station_id": "ak:did_core:web:principal.example"
+            }
         },
         "created_at": "2026-05-19T00:00:00.000Z",
         "payload": {"proposal_refs": [proposal.event_id()]}
@@ -1034,9 +1038,11 @@ fn queued_mls_admission_round_trips_exact_welcome_material() {
             "kind": "ak.mls.welcome",
             "scope_ref": {"kind": "realm", "realm_id": realm_id},
             "actor_id": {
-                "kind": "hosted_principal",
-                "principal_id": "ak:did_core:web:alice.example",
-                "station_id": "ak:did_core:web:principal.example"
+                "kind": "account",
+                "account_id": {
+                    "principal_id": "ak:did_core:web:alice.example",
+                    "station_id": "ak:did_core:web:principal.example"
+                }
             },
             "created_at": "2026-05-19T00:00:00.000Z",
             "payload": {

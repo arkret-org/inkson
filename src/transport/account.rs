@@ -1834,7 +1834,7 @@ mod tests {
 
     #[test]
     fn owned_agent_direct_peer_keeps_its_controller_binding() {
-        let actor = json!({"kind":"hosted_principal", "principal_id":"ak:did_core:web:agents.example:assistant", "station_id":"ak:did_core:web:remote-station.example"});
+        let actor = json!({"kind": "account", "account_id": { "principal_id":"ak:did_core:web:agents.example:assistant", "station_id":"ak:did_core:web:remote-station.example"}});
         let controller = json!({"principal_id":"ak:did_core:web:alice.example", "station_id":"ak:did_core:web:remote-station.example"});
         let peer =
             direct_conversation_peer_descriptor(&actor.to_string(), Some(&controller.to_string()))

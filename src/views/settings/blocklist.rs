@@ -131,7 +131,7 @@ pub fn BlocklistSettingsCard(principal_id: Signal<String>, token: Signal<String>
         "blocklist-id blocklist-id-invalid"
     };
     let invalid_hint = if kind_now == crate::account_data::BlocklistUiTargetKind::Actor {
-        "Enter a complete ActorId JSON object, including the target Station for an account or hosted principal."
+        "Enter a complete ActorId JSON object, including the target Station for an account."
     } else if is_identity_kind {
         "Enter a valid stable identity id (e.g. ak:did_core:webvh:<scid>)."
     } else {

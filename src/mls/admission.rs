@@ -1057,10 +1057,10 @@ mod tests {
             None,
             "did:web:alice.example",
             &claim,
-            &arkret_sdk::ActorId::hosted_principal(
+            &arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
                 claim.principal_id.clone(),
                 crate::operation::authoring_station_id().unwrap(),
-            ),
+            )),
             &proposal,
             incarnation.clone(),
             binding,
@@ -1071,10 +1071,10 @@ mod tests {
         assert_eq!(native.target_authorization_incarnation, Some(incarnation));
         assert_eq!(
             native.target_actor_id,
-            Some(arkret_sdk::ActorId::hosted_principal(
+            Some(arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
                 claim.principal_id,
                 crate::operation::authoring_station_id().unwrap()
-            ))
+            )))
         );
     }
 
