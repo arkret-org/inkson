@@ -17,11 +17,8 @@
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
-use arkret_wire::CapabilityActionId;
 use dioxus::prelude::*;
 use serde_json::Value;
-
-use crate::transport::TransportClient;
 
 /// Inbound invite presented to the user as a ring. Set on the hub when an
 /// `invite` arrives for a call the local client has no active session for.
@@ -185,15 +182,16 @@ pub fn decode_call_signal(
 /// `local_actor` is this device's account DID; signals this client itself
 /// emitted (echoed back through sync) are skipped so we never self-drive.
 ///
-/// Envelope admission belongs exclusively to [`garth::SignalReceiver`]. This
-/// product layer performs only call-specific authorization (moderation) and UI
-/// routing; repeating directory resolution or proof verification here would
-/// create a second admission implementation that can drift from garth.
+/// Envelope admission belongs exclusively to [`garth::SignalReceiver`] and
+/// Inkson's verified-governance receive gate. In particular, moderation has
+/// already been evaluated independently at both the declared and current Seal
+/// bases before this product adapter is reached. A current server authz query
+/// here would be a second, weaker authority source and could disagree with the
+/// exact accepted bases that admitted the plaintext.
 pub async fn route_decrypted_call_signals(
     hub: &mut CallSignalHub,
     signals: &[(arkret_wire::SignalEnvelope, Value)],
     local_actor: &str,
-    api: Option<&TransportClient>,
 ) {
     for (envelope, plaintext) in signals {
         let Some(decoded) = decode_call_signal(envelope, plaintext) else {
@@ -204,90 +202,8 @@ pub async fn route_decrypted_call_signals(
         if !local_actor.is_empty() && decoded.sender_actor == local_actor {
             continue;
         }
-        if moderator_signal_authorized(&decoded, api).await {
-            route_verified_decoded_signal(hub, decoded, local_actor);
-        }
+        route_verified_decoded_signal(hub, decoded, local_actor);
     }
-}
-
-async fn moderator_signal_authorized(
-    decoded: &DecodedCallSignal,
-    api: Option<&TransportClient>,
-) -> bool {
-    if !requires_call_moderate(decoded) {
-        return true;
-    }
-    let Some(api) = api else {
-        tracing::warn!(
-            realm_id = %decoded.realm_id,
-            call_id = %decoded.call_id,
-            sender = %decoded.sender_actor,
-            signal_kind = ?decoded.signal.kind(),
-            "dropping moderator call signal without authz client"
-        );
-        return false;
-    };
-    match async {
-        crate::transport::realm_read::authz_check_resource(
-            &api.sdk_http_client()?,
-            &decoded.sender_actor,
-            CapabilityActionId::CALL_MODERATE,
-            Some(arkret_sdk::WireResourceSelector::realm(
-                arkret_sdk::RealmId::new(decoded.realm_id.clone())?,
-            )),
-        )
-        .await
-    }
-    .await
-    {
-        Ok(outcome) if authz_check_allows_moderation(&outcome) => true,
-        Ok(outcome) => {
-            tracing::warn!(
-                realm_id = %decoded.realm_id,
-                call_id = %decoded.call_id,
-                sender = %decoded.sender_actor,
-                signal_kind = ?decoded.signal.kind(),
-                ?outcome,
-                "dropping unauthorised moderator call signal"
-            );
-            false
-        }
-        Err(error) => {
-            tracing::warn!(
-                realm_id = %decoded.realm_id,
-                call_id = %decoded.call_id,
-                sender = %decoded.sender_actor,
-                signal_kind = ?decoded.signal.kind(),
-                ?error,
-                "dropping moderator call signal after authz check failure"
-            );
-            false
-        }
-    }
-}
-
-fn requires_call_moderate(decoded: &DecodedCallSignal) -> bool {
-    matches!(&decoded.signal, arkret_sdk::CallSignalData::Moderation(_))
-        || matches!(
-            &decoded.signal,
-            arkret_sdk::CallSignalData::MuteState(data)
-                if data.changed_by == arkret_sdk::MuteChangedBy::Moderator
-        )
-}
-
-fn authz_check_allows_moderation(outcome: &crate::models::AuthzCheckOutcome) -> bool {
-    if !crate::transport::realm_read::authz_allowed(outcome) {
-        return false;
-    }
-    let freshness_acceptable = matches!(
-        outcome.freshness_state,
-        None | Some(arkret_sdk::FreshnessState::Fresh)
-    );
-    let notary_acceptable = matches!(
-        outcome.notary_status,
-        None | Some(arkret_sdk::NotaryStatus::Fresh)
-    );
-    freshness_acceptable && notary_acceptable
 }
 
 /// Current ring/active snapshot a routing decision is taken against. Pulled
@@ -649,63 +565,6 @@ mod tests {
             }
             other => panic!("expected Enqueue, got {other:?}"),
         }
-    }
-
-    #[test]
-    fn moderator_signals_require_authz() {
-        let kick = decoded(
-            arkret_sdk::CallSignalData::Moderation(arkret_sdk::CallModerationSignalData {
-                action: arkret_sdk::CallModerationAction::Kick,
-                target_actor_id: Some(
-                    crate::mls_api_helpers::principal_core_id("did:web:carol").unwrap(),
-                ),
-                target_device_id: Some(
-                    arkret_sdk::DeviceId::new("ak:device:01904100-0000-7000-8000-00000000000c")
-                        .unwrap(),
-                ),
-                reason: None,
-            }),
-            3,
-        );
-        assert!(requires_call_moderate(&kick));
-        let force_mute = decoded(
-            arkret_sdk::CallSignalData::MuteState(arkret_sdk::CallMuteStateSignalData {
-                audio_muted: true,
-                video_muted: false,
-                changed_by: arkret_sdk::MuteChangedBy::Moderator,
-                target_actor_id: Some(
-                    crate::mls_api_helpers::principal_core_id("did:web:carol").unwrap(),
-                ),
-                target_device_id: Some(
-                    arkret_sdk::DeviceId::new("ak:device:01904100-0000-7000-8000-00000000000c")
-                        .unwrap(),
-                ),
-            }),
-            5,
-        );
-        assert!(requires_call_moderate(&force_mute));
-    }
-
-    #[test]
-    fn moderator_authz_requires_allow_and_freshness() {
-        let outcome = |value| serde_json::from_value(value).unwrap();
-        assert!(authz_check_allows_moderation(&outcome(json!({
-            "decision": "allow",
-            "freshness_state": "fresh",
-            "notary_status": "fresh"
-        }))));
-        assert!(!authz_check_allows_moderation(&outcome(json!({
-            "decision": "hard_deny",
-            "freshness_state": "fresh"
-        }))));
-        assert!(!authz_check_allows_moderation(&outcome(json!({
-            "decision": "allow",
-            "freshness_state": "unknown"
-        }))));
-        assert!(!authz_check_allows_moderation(&outcome(json!({
-            "decision": "allow",
-            "notary_status": "unreachable"
-        }))));
     }
 
     #[test]

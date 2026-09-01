@@ -123,10 +123,10 @@ pub fn sign_terminal_receipt_continue(
             trust_domain: observation.trust_domain,
             new_device_id: binding.replacement_device_id.clone(),
             identity_model: arkret_sdk::RecoveryIdentityModel::PcrPolicy,
+            recovery_authority_kind: arkret_sdk::RecoveryAuthorityKind::PcrPolicy,
             previous_model_generation_ref: plan.previous_model_generation_ref,
             result_model_generation_ref: plan.result_model_generation_ref,
             authorization_event_id: binding.authorize_event_id.clone(),
-            device_list_update_event_id: None,
             reanchor_event_id: Some(binding.reanchor_event_id.clone()),
             reanchor_batch_receipt_id: Some(arkret_sdk::ReceiptId::new(
                 batch_receipt.output_ref.clone(),

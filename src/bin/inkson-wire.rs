@@ -385,7 +385,7 @@ fn realm_genesis_seal(input: Value) -> Result<Value> {
         &covered,
         digest_suite,
     )?;
-    let seal = arkret_sdk::Seal::sign_single_kind_with_roots(
+    let seal = arkret_sdk::Seal::sign_single_with_roots(
         input.realm_id,
         Vec::new(),
         delta,
@@ -393,7 +393,6 @@ fn realm_genesis_seal(input: Value) -> Result<Value> {
         completeness_root,
         state_root,
         hlc,
-        arkret_sdk::SealKind::Normal,
         digest_suite,
         &signer,
     )?;
@@ -436,8 +435,8 @@ fn mock_service_authority() -> Result<MockServiceAuthority> {
     let verification_method =
         DidUrl::new(format!("{did}#{key_material}")).map_err(|error| anyhow::anyhow!(error))?;
     let document = DidKeyResolver::new().resolve_did(&did)?.document;
-    let document_digest =
-        arkret_sdk::Hash::new(arkret_sdk::canonical::canonical_sha256(&document)?)?;
+    let document_digest = arkret_sdk::identity::document_canonical_digest(&document)
+        .map_err(|error| anyhow::anyhow!(error))?;
     let did_digest = arkret_sdk::canonical::sha256_digest(did.as_str().as_bytes());
     let history_position = format!("synthetic-did-{did_digest}");
     let commitment = ResolutionCommitment {

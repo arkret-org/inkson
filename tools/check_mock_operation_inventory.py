@@ -33,10 +33,86 @@ SCHEMA_REGISTRY_PATH = SPEC_ARTIFACTS / "registry" / "schema-registry.json"
 OUTPUT_PATH = REPO / "tests" / "e2e" / "mock-operation-inventory.json"
 MOCK_SOURCES = (REPO / "tests" / "e2e" / "mockArkretApi.ts",)
 HTTP_METHODS = {"get", "post", "put", "patch", "delete", "query", "head"}
+RETIRED_MOCK_FIELDS = {"registry_mode", "supported_receipts"}
+RETIRED_NESTED_MOCK_FIELDS = {"auth_metadata": "mode", "method_evidence": "mode"}
 
 
 def load_json(path: Path) -> Any:
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def typescript_tokens(source: str) -> list[str]:
+    """Return the identifier/punctuation tokens needed by the fixture guard."""
+    tokens: list[str] = []
+    index = 0
+    while index < len(source):
+        char = source[index]
+        following = source[index + 1] if index + 1 < len(source) else ""
+        if char == "/" and following == "/":
+            index = source.find("\n", index + 2)
+            if index < 0:
+                break
+            continue
+        if char == "/" and following == "*":
+            end = source.find("*/", index + 2)
+            index = len(source) if end < 0 else end + 2
+            continue
+        if char in {'"', "'", "`"}:
+            quote = char
+            index += 1
+            while index < len(source):
+                if source[index] == "\\":
+                    index += 2
+                    continue
+                if source[index] == quote:
+                    index += 1
+                    break
+                index += 1
+            continue
+        if char.isalpha() or char in {"_", "$"}:
+            end = index + 1
+            while end < len(source) and (
+                source[end].isalnum() or source[end] in {"_", "$"}
+            ):
+                end += 1
+            tokens.append(source[index:end])
+            index = end
+            continue
+        if char in "{}:":
+            tokens.append(char)
+        index += 1
+    return tokens
+
+
+def check_retired_mock_fields() -> None:
+    for path in MOCK_SOURCES:
+        tokens = typescript_tokens(path.read_text(encoding="utf-8"))
+        for index, token in enumerate(tokens[:-1]):
+            if token in RETIRED_MOCK_FIELDS and tokens[index + 1] == ":":
+                raise ValueError(
+                    f"retired positive mock fixture field {token} in {path.name}"
+                )
+            nested_field = RETIRED_NESTED_MOCK_FIELDS.get(token)
+            if nested_field is None or tokens[index + 1 : index + 3] != [":", "{"]:
+                continue
+            depth = 1
+            cursor = index + 3
+            while cursor < len(tokens) and depth:
+                current = tokens[cursor]
+                if current == "{":
+                    depth += 1
+                elif current == "}":
+                    depth -= 1
+                elif (
+                    depth == 1
+                    and current == nested_field
+                    and cursor + 1 < len(tokens)
+                    and tokens[cursor + 1] == ":"
+                ):
+                    raise ValueError(
+                        f"retired positive mock fixture field {token}.{nested_field} in {path.name}"
+                    )
+                cursor += 1
 
 
 def json_pointer(document: Any, pointer: str) -> Any:
@@ -123,6 +199,7 @@ def route_evidence() -> list[dict[str, Any]]:
 
 
 def generate() -> dict[str, Any]:
+    check_retired_mock_fields()
     openapi_bytes = OPENAPI_PATH.read_bytes()
     operation_registry_bytes = OPERATION_REGISTRY_PATH.read_bytes()
     schema_registry_bytes = SCHEMA_REGISTRY_PATH.read_bytes()

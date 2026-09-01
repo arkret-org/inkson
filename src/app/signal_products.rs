@@ -264,12 +264,10 @@ impl SignalProductSink for AppSignalProductSink {
         Box::pin(async move {
             let mut hub = self.call_hub;
             let local_actor = self.principal_id.peek().clone();
-            let api = self.authenticated_api();
             crate::views::call_signals::route_decrypted_call_signals(
                 &mut hub,
                 std::slice::from_ref(&(envelope.clone(), body)),
                 crate::app::principal_id_text(&local_actor),
-                api.as_ref(),
             )
             .await;
         })

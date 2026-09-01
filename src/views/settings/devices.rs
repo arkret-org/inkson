@@ -303,25 +303,38 @@ fn build_pairing_verification_content(
         .transpose()?;
     if let Some(key) = request_payload.get("new_device_pubkey") {
         content.new_device_pubkey = Some(arkret_sdk::KeyVerificationContentNewDevicePubkey {
-            kid: key
-                .get("kid")
+            kty: arkret_sdk::NonEmptyString::new(
+                key.get("kty")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| anyhow::anyhow!("new_device_pubkey.kty is required"))?
+                    .to_owned(),
+            )
+            .map_err(anyhow::Error::msg)?,
+            kid: arkret_sdk::DeviceId::new(
+                key.get("kid")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| anyhow::anyhow!("new_device_pubkey.kid is required"))?
+                    .to_owned(),
+            )?,
+            algorithm: arkret_sdk::NonEmptyString::new(
+                key.get("algorithm")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| anyhow::anyhow!("new_device_pubkey.algorithm is required"))?
+                    .to_owned(),
+            )
+            .map_err(anyhow::Error::msg)?,
+            key: arkret_sdk::Base64UrlString::new(
+                key.get("key")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| anyhow::anyhow!("new_device_pubkey.key is required"))?
+                    .to_owned(),
+            )
+            .map_err(anyhow::Error::msg)?,
+            key_digest: key
+                .get("key_digest")
                 .and_then(Value::as_str)
-                .map(|value| arkret_sdk::DeviceId::new(value.to_owned()))
+                .map(|value| arkret_sdk::Hash::new(value.to_owned()))
                 .transpose()?,
-            algorithm: key
-                .get("algorithm")
-                .and_then(Value::as_str)
-                .map(|value| arkret_sdk::NonEmptyString::new(value.to_owned()))
-                .transpose()
-                .map_err(anyhow::Error::msg)?,
-            public_key: key
-                .get("public_key")
-                .or_else(|| key.get("key"))
-                .and_then(Value::as_str)
-                .map(|value| arkret_sdk::NonEmptyString::new(value.to_owned()))
-                .transpose()
-                .map_err(anyhow::Error::msg)?,
-            extra: std::collections::BTreeMap::new(),
         });
     }
     content.gate_audience_uri = Some(

@@ -224,7 +224,9 @@ dioxus = { workspace = true, features = ["desktop", "web"] }
 fs2 = "0.4.3"
 garth = { path = "../garth", default-features = false, features = ["native"] }
 reqwest = { workspace = true, default-features = false, features = ["json", "multipart", "rustls", "stream", "form"] }
+rfd = "0.17.2"
 sentry = { workspace = true, default-features = false, features = ["backtrace", "contexts", "panic", "reqwest", "rustls"] }
+tempfile = "3.27.0"
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "sync", "time"] }
 # `ak.profile.binding.websocket.v1` native socket. garth owns the protocol;
 # tungstenite only reassembles messages and enforces the byte ceiling.

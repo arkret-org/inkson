@@ -2226,13 +2226,7 @@ pub(super) fn connect(
                     Err(error) => Err(error),
                 };
                 match events_result {
-                    Ok(events) => {
-                        // Spec `ServiceDescribe.frontier` is a typed
-                        // EventId list; surface the first head.
-                        if let Some(frontier) = events.frontier.first() {
-                            frontier_state.set(frontier.to_string());
-                        }
-                    }
+                    Ok(_events) => {}
                     Err(error) if is_terminal_session_grant_error(&error) => {
                         tracing::warn!(target: "session_boot", ?error, "connect: events_describe returned terminal session-grant error; invalidating current session");
                         invalidate_bootstrap_session(

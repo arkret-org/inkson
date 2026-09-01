@@ -1589,7 +1589,15 @@ fn add_contacts_keys_zh(dict: &mut TranslationDict) {
     dict.set("contacts.scope.invite", "可邀请我入群");
     dict.set("contacts.scope.voice_call", "语音通话");
     dict.set("contacts.scope.video_call", "视频通话");
+    dict.set("contacts.scope.presence", "在线状态");
     dict.set("contacts.shared_scopes", "共享权限:");
+    dict.set("contacts.scope_update.label", "你授予此联系人的权限");
+    dict.set("contacts.scope_update.save", "保存权限");
+    dict.set("contacts.scope_update.saving", "正在保存权限…");
+    dict.set(
+        "contacts.scope_update.empty_hint",
+        "保存空权限集会暂停此联系人关系，但不会移除联系人。",
+    );
 
     // ── ContactRow ────────────────────────────────────────────────────
     dict.set("contacts.state.pending_incoming", "等待你处理");

@@ -1078,6 +1078,131 @@ pub(crate) fn primary_handle_from_viewer(
         .to_owned()
 }
 
+fn contact_scope_update_prepare(
+    row: arkret_sdk::ContactListRow,
+    mut granted_to_peer_scopes: Vec<arkret_sdk::contact_operations::ContactScope>,
+    operation_id: arkret_sdk::ProtocolOperationId,
+    idempotency_key: arkret_sdk::IdempotencyKey,
+) -> anyhow::Result<arkret_sdk::contact_operations::ContactScopeUpdateRequestBody> {
+    use arkret_sdk::contact_operations::{
+        ContactPreparePhase, ContactScopeUpdatePrepareRequestBody, ContactScopeUpdateRequestBody,
+    };
+
+    if row.state != arkret_sdk::ContactState::Accepted {
+        anyhow::bail!("Contact scope update requires an accepted Contact row");
+    }
+    let next = row.next_prepare_input.ok_or_else(|| {
+        anyhow::anyhow!("accepted Contact row omitted its exact next_prepare_input")
+    })?;
+    next.validate_shape()?;
+    granted_to_peer_scopes.sort();
+    granted_to_peer_scopes.dedup();
+    Ok(ContactScopeUpdateRequestBody::Prepare(
+        ContactScopeUpdatePrepareRequestBody {
+            phase: ContactPreparePhase::Prepare,
+            operation_id,
+            idempotency_key,
+            peer: row.peer,
+            contact_round_id: next.contact_round_id,
+            version: next.version,
+            predecessor_event_ref: next.predecessor_event_ref,
+            granted_to_peer_scopes,
+        },
+    ))
+}
+
+/// Replace the holder-signed directional scope set for one accepted Contact.
+///
+/// The fresh list projection is the only source of the lineage CAS cursor. An
+/// empty scope set is intentional and suspends the round without tombstoning
+/// it; callers must therefore pass the complete desired set, not a delta.
+pub async fn update_contact_scopes(
+    http: &arkret_sdk::http_client::Client,
+    peer: &str,
+    granted_to_peer_scopes: Vec<arkret_sdk::contact_operations::ContactScope>,
+) -> anyhow::Result<()> {
+    use arkret_sdk::contact_operations::{
+        ContactCommitPhase, ContactCommitRequestBody, ContactOperationOutcome,
+        ContactPreparedOutcome, ContactScopeUpdateRequestBody,
+    };
+
+    let peer_actor: arkret_sdk::ActorId = serde_json::from_str(peer)?;
+    let contacts = http.contacts_list().await?;
+    let row = contacts
+        .contacts
+        .into_iter()
+        .find(|row| {
+            row.state == arkret_sdk::ContactState::Accepted
+                && row.peer.contact_actor_id() == peer_actor
+        })
+        .ok_or_else(|| {
+            anyhow::anyhow!("Contact scope update for `{peer}` requires a fresh accepted list row")
+        })?;
+    let nonce = crate::operation::uuid_v7();
+    let operation_id =
+        arkret_sdk::ProtocolOperationId::new(format!("ak:operation:contact.scope_update.{nonce}"))
+            .map_err(anyhow::Error::msg)?;
+    let idempotency_key = arkret_sdk::IdempotencyKey::new(nonce).map_err(anyhow::Error::msg)?;
+    let prepare = contact_scope_update_prepare(
+        row,
+        granted_to_peer_scopes,
+        operation_id.clone(),
+        idempotency_key.clone(),
+    )?;
+    let prepared: ContactOperationOutcome = http
+        .post("/_arkret/self/contacts/scope-update", &prepare)
+        .await?;
+    let (returned_operation_id, reservation_handle, event_draft) = match prepared {
+        ContactOperationOutcome::Prepared {
+            outcome:
+                ContactPreparedOutcome::ScopeUpdate {
+                    operation_id,
+                    reservation_handle,
+                    event_draft,
+                    ..
+                },
+        } => (operation_id, reservation_handle, event_draft),
+        ContactOperationOutcome::Failed { outcome } => {
+            anyhow::bail!("Contact scope update prepare failed: {:?}", outcome.reason)
+        }
+        _ => anyhow::bail!("Contact scope update prepare returned the wrong result kind"),
+    };
+    if returned_operation_id != operation_id {
+        anyhow::bail!("Contact scope update prepare changed operation_id");
+    }
+    let signed_event = crate::transport::contacts::sign_prepared_contact_event(
+        &event_draft,
+        arkret_wire::event_kind_str::CONTACT_SCOPE_UPDATE,
+    )?;
+    let seal_context =
+        crate::transport::contacts::prepare_principal_successor_seal(http, &signed_event).await?;
+    let commit = ContactScopeUpdateRequestBody::Commit(ContactCommitRequestBody {
+        phase: ContactCommitPhase::Commit,
+        operation_id,
+        idempotency_key,
+        reservation_handle,
+        signed_event: signed_event.event().clone(),
+        control_proposal_ack: None,
+    });
+    let committed: ContactOperationOutcome = http
+        .post("/_arkret/self/contacts/scope-update", &commit)
+        .await?;
+    match committed {
+        ContactOperationOutcome::Accepted { .. } => {
+            crate::transport::contacts::submit_principal_successor_seal(
+                http,
+                seal_context,
+                &signed_event,
+            )
+            .await
+        }
+        ContactOperationOutcome::Failed { outcome } => {
+            anyhow::bail!("Contact scope update commit failed: {:?}", outcome.reason)
+        }
+        _ => anyhow::bail!("Contact scope update commit returned the wrong result kind"),
+    }
+}
+
 /// Tombstone a contact relationship via `contacts/tombstone`. When
 /// `block_peer` is true the protocol additionally records a block so the
 /// peer can no longer re-request; this is the block path (U5).
@@ -1602,6 +1727,88 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    fn accepted_contact_row_for_scope_update() -> arkret_sdk::ContactListRow {
+        serde_json::from_value(json!({
+            "peer": {"kind": "human", "account_id": {
+                "principal_id": "ak:did_core:web:bob.example",
+                "station_id": "ak:did_core:web:station.example"
+            }},
+            "state": "accepted",
+            "next_prepare_input": {
+                "contact_round_id": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                "version": 7,
+                "predecessor_event_ref": "ak:event:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19"
+            },
+            "granted_to_peer_scopes": ["direct_message"],
+            "granted_by_peer_scopes": ["direct_message"],
+            "bidirectional_scopes": ["direct_message"]
+        }))
+        .expect("accepted Contact row")
+    }
+
+    #[test]
+    fn scope_update_prepare_copies_fresh_lineage_cursor_and_full_set() {
+        let request = contact_scope_update_prepare(
+            accepted_contact_row_for_scope_update(),
+            vec![
+                arkret_sdk::contact_operations::ContactScope::Presence,
+                arkret_sdk::contact_operations::ContactScope::Invite,
+                arkret_sdk::contact_operations::ContactScope::Presence,
+            ],
+            arkret_sdk::ProtocolOperationId::new(
+                "ak:operation:contact.scope_update.0198f254-30c1-7f32-a1ab-4e52f4e14d9d",
+            )
+            .expect("operation id"),
+            arkret_sdk::IdempotencyKey::new("0198f254-30c1-7f32-a1ab-4e52f4e14d9d")
+                .expect("idempotency key"),
+        )
+        .expect("scope-update prepare");
+
+        let arkret_sdk::contact_operations::ContactScopeUpdateRequestBody::Prepare(prepare) =
+            request
+        else {
+            panic!("builder must return the prepare branch");
+        };
+        assert_eq!(prepare.version, 7);
+        assert_eq!(
+            prepare.contact_round_id.as_str(),
+            "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        );
+        assert_eq!(
+            prepare.predecessor_event_ref.as_str(),
+            "ak:event:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19"
+        );
+        assert_eq!(
+            prepare.granted_to_peer_scopes,
+            vec![
+                arkret_sdk::contact_operations::ContactScope::Invite,
+                arkret_sdk::contact_operations::ContactScope::Presence,
+            ]
+        );
+    }
+
+    #[test]
+    fn scope_update_prepare_allows_explicit_empty_replacement() {
+        let request = contact_scope_update_prepare(
+            accepted_contact_row_for_scope_update(),
+            Vec::new(),
+            arkret_sdk::ProtocolOperationId::new(
+                "ak:operation:contact.scope_update.0198f254-30c1-7f32-a1ab-4e52f4e14d9e",
+            )
+            .expect("operation id"),
+            arkret_sdk::IdempotencyKey::new("0198f254-30c1-7f32-a1ab-4e52f4e14d9e")
+                .expect("idempotency key"),
+        )
+        .expect("empty scope-update prepare");
+
+        let arkret_sdk::contact_operations::ContactScopeUpdateRequestBody::Prepare(prepare) =
+            request
+        else {
+            panic!("builder must return the prepare branch");
+        };
+        assert!(prepare.granted_to_peer_scopes.is_empty());
+    }
 
     #[test]
     fn account_data_cas_conflict_uses_authoritative_current_entry() {

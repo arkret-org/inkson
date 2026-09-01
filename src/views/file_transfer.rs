@@ -1,12 +1,11 @@
-use std::collections::BTreeMap;
-
 use dioxus::prelude::*;
 
 use crate::components::UiIcon;
 use crate::file_transfer::{
-    FileTransferItem, data_url_for_download, decrypt_file_transfer_item, display_filename,
+    FileTransferItem, abort_file_transfer_save, begin_file_transfer_save, display_filename,
     file_transfer_items_from_account_data, format_size, load_file_transfer_crypto_context,
-    load_or_create_file_transfer_crypto_context, upload_actor_private_file,
+    load_or_create_file_transfer_crypto_context, save_file_transfer_item,
+    upload_actor_private_file,
 };
 
 #[component]
@@ -28,7 +27,6 @@ pub fn FileTransferPanel(
     let mut status = use_signal(|| "Ready".to_owned());
     let refreshing = use_signal(|| false);
     let mut uploading = use_signal(|| false);
-    let download_urls = use_signal(BTreeMap::<String, String>::new);
     let backup_trigger_signal = crate::components::try_needs_mls_backup_signal();
 
     {
@@ -233,7 +231,6 @@ pub fn FileTransferPanel(
                             item,
                             api_token: token(),
                             status,
-                            download_urls,
                         }
                     }
                 }
@@ -247,14 +244,11 @@ fn FileTransferRow(
     item: FileTransferItem,
     api_token: String,
     mut status: Signal<String>,
-    mut download_urls: Signal<BTreeMap<String, String>>,
 ) -> Element {
     // A4 — base_url from session context instead of a prop.
     let base_url = crate::app::SessionContext::base_url_string();
-    let transfer_id = item.record.transfer_id.clone();
     let filename = display_filename(&item.record);
     let digest_tail = digest_tail(&item.record.content_digest);
-    let download_ready = download_urls.read().get(&transfer_id).cloned();
 
     rsx! {
         article { class: "file-transfer-row event", "data-testid": "file-transfer-row",
@@ -279,18 +273,23 @@ fn FileTransferRow(
             div { class: "file-transfer-actions",
                 button {
                     class: "btn sm secondary",
-                    "data-testid": "file-transfer-prepare-download",
+                    "data-testid": "file-transfer-save",
                     r#type: "button",
                     onclick: {
                         let item = item.clone();
                         let base_url = base_url.clone();
                         let api_token = api_token.clone();
-                        let transfer_id = transfer_id.clone();
                         move |_| {
                             let item = item.clone();
                             let base_url = base_url.clone();
                             let api_token = api_token.clone();
-                            let transfer_id = transfer_id.clone();
+                            let save_request = match begin_file_transfer_save(&item) {
+                                Ok(request) => request,
+                                Err(error) => {
+                                    status.set(format!("Download failed: {error}"));
+                                    return;
+                                }
+                            };
                             status.set("Preparing download".to_owned());
                             spawn(async move {
                                 let api = match crate::transport::auth::with_authed_api(
@@ -302,35 +301,22 @@ fn FileTransferRow(
                                 {
                                     Ok(api) => api,
                                     Err(error) => {
+                                        if let Err(abort_error) = abort_file_transfer_save(save_request).await {
+                                            tracing::warn!(%abort_error, "failed to abort unopened file-transfer save target");
+                                        }
                                         status.set(error.display());
                                         return;
                                     }
                                 };
-                                match decrypt_file_transfer_item(&api, &item).await {
-                                    Ok(bytes) => {
-                                        let data_url = data_url_for_download(&bytes, &item.record.media_type);
-                                        let mut next = download_urls();
-                                        next.insert(transfer_id.clone(), data_url);
-                                        download_urls.set(next);
-                                        status.set("Download ready".to_owned());
-                                    }
+                                match save_file_transfer_item(&api, &item, save_request).await {
+                                    Ok(()) => status.set("Download saved".to_owned()),
                                     Err(error) => status.set(format!("Download failed: {error}")),
                                 }
                             });
                         }
                     },
                     UiIcon { name: "download" }
-                    span { "Prepare" }
-                }
-                if let Some(url) = download_ready {
-                    a {
-                        class: "btn sm primary",
-                        "data-testid": "file-transfer-download-link",
-                        href: "{url}",
-                        download: "{filename}",
-                        UiIcon { name: "download" }
-                        span { "Save" }
-                    }
+                    span { "Save" }
                 }
             }
         }

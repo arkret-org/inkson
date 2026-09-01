@@ -10,12 +10,17 @@ pub use arkret_sdk::{
 };
 use arkret_wire::{AEAD_PROFILE_XCHACHA20_POLY1305_V1, SchemaId};
 use base64::Engine as _;
-use base64::engine::general_purpose::{STANDARD as BASE64_STANDARD, URL_SAFE_NO_PAD};
+#[cfg(target_arch = "wasm32")]
+use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use futures_util::StreamExt as _;
 use hkdf::Hkdf;
+#[cfg(target_arch = "wasm32")]
+use serde::Deserialize;
 use serde_json::Value;
 #[cfg(test)]
 use serde_json::json;
-use sha2::Sha256;
+use sha2::{Digest as _, Sha256};
 
 use crate::transport::TransportClient;
 
@@ -27,6 +32,7 @@ pub const FILE_TRANSFER_RETENTION_DAYS: i64 = 7;
 const CONTENT_KEY_LEN: usize = 32;
 const XCHACHA_NONCE_LEN: usize = 24;
 const NAMESPACE_KEY_INFO: &[u8] = b"arkret-file-transfer-account-data-key-v1";
+const MAX_WHOLE_FILE_DOWNLOAD_BYTES: u64 = 262_144 + 16;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FileTransferCryptoContext {
@@ -65,6 +71,27 @@ pub struct FileTransferItem {
 pub struct FileTransferUploadResult {
     pub item: FileTransferItem,
     pub server_response: Value,
+}
+
+/// User-selected transactional output for one file-transfer download.
+///
+/// Browser callers must create this directly in the click handler so the File
+/// System Access picker retains transient user activation. No network request
+/// or plaintext write occurs until [`save_file_transfer_item`] consumes it.
+pub struct FileTransferSaveRequest {
+    #[cfg(not(target_arch = "wasm32"))]
+    filename: String,
+    #[cfg(target_arch = "wasm32")]
+    eval: Option<dioxus::document::Eval>,
+}
+
+#[cfg(target_arch = "wasm32")]
+impl Drop for FileTransferSaveRequest {
+    fn drop(&mut self) {
+        if let Some(eval) = self.eval.take() {
+            let _ = eval.send(serde_json::json!({"kind": "abort"}));
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -120,7 +147,7 @@ pub async fn upload_actor_private_file(
     let actor = arkret_sdk::Did::new(actor_id.trim().to_owned())?;
     let principal_control_realm_id =
         crate::identity::principal_control::resolve_accepted(&http, &actor).await?;
-    let prepared = prepare_actor_private_file(
+    let mut prepared = prepare_actor_private_file(
         crypto,
         &principal_control_realm_id,
         actor_id,
@@ -130,6 +157,9 @@ pub async fn upload_actor_private_file(
         plaintext,
     )?;
     let account_data_key = prepared.account_data_key.clone();
+    let ciphertext_len = prepared.ciphertext.len();
+    let content_digest = prepared.content_digest.clone();
+    let ciphertext = std::mem::take(&mut prepared.ciphertext);
     // Auto-dispatch: large ciphertexts take the resumable (tus) binding
     // when the server advertises it in /_arkret/describe, with automatic
     // fallback to the canonical single-shot upload. Outcome shape and
@@ -137,11 +167,18 @@ pub async fn upload_actor_private_file(
     let clients = crate::transport::EndpointClients::from_http(api.sdk_http_client()?);
     let upload = clients
         .blob()
-        .upload_file_transfer_ciphertext_auto(prepared.ciphertext.clone(), &prepared.content_digest)
+        .upload_file_transfer_ciphertext_auto(
+            ciphertext,
+            &content_digest,
+            principal_control_realm_id.as_str(),
+        )
         .await?;
     let uploaded_digest = upload.content_digest.to_string();
     if uploaded_digest != prepared.content_digest {
         anyhow::bail!("file-transfer blob upload digest mismatch");
+    }
+    if upload.size_bytes != ciphertext_len as u64 {
+        anyhow::bail!("file-transfer blob upload size mismatch");
     }
     let blob_ref = upload.blob_ref.to_string();
     verify_content_addressed_blob_ref(&blob_ref, &prepared.content_digest)?;
@@ -211,16 +248,399 @@ fn merge_file_transfer_account_data(
     }
 }
 
-pub async fn decrypt_file_transfer_item(
+pub fn begin_file_transfer_save(
+    item: &FileTransferItem,
+) -> anyhow::Result<FileTransferSaveRequest> {
+    let filename = display_filename(&item.record);
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        Ok(FileTransferSaveRequest { filename })
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        let filename = serde_json::to_string(&filename)?;
+        let script = format!(
+            r#"
+            let writable = null;
+            try {{
+                if (typeof window.showSaveFilePicker !== "function") {{
+                    dioxus.send({{ kind: "error", error: "streaming save is unavailable in this browser" }});
+                    return;
+                }}
+                const handle = await window.showSaveFilePicker({{
+                    suggestedName: {filename}
+                }});
+                writable = await handle.createWritable();
+                dioxus.send({{ kind: "ready" }});
+                while (true) {{
+                    const message = await dioxus.recv();
+                    if (message.kind === "chunk") {{
+                        const raw = atob(message.bytes_b64);
+                        const bytes = new Uint8Array(raw.length);
+                        for (let index = 0; index < raw.length; index += 1) {{
+                            bytes[index] = raw.charCodeAt(index);
+                        }}
+                        await writable.write(bytes);
+                        dioxus.send({{ kind: "written" }});
+                    }} else if (message.kind === "commit") {{
+                        await writable.close();
+                        dioxus.send({{ kind: "committed" }});
+                        return;
+                    }} else if (message.kind === "abort") {{
+                        await writable.abort();
+                        dioxus.send({{ kind: "aborted" }});
+                        return;
+                    }} else {{
+                        await writable.abort();
+                        dioxus.send({{ kind: "error", error: "invalid streaming save command" }});
+                        return;
+                    }}
+                }}
+            }} catch (error) {{
+                if (writable !== null) {{
+                    try {{ await writable.abort(); }} catch (_) {{}}
+                }}
+                dioxus.send({{ kind: "error", error: String(error) }});
+            }}
+            "#,
+        );
+        Ok(FileTransferSaveRequest {
+            eval: Some(dioxus::document::eval(&script)),
+        })
+    }
+}
+
+pub async fn save_file_transfer_item(
     api: &TransportClient,
     item: &FileTransferItem,
+    request: FileTransferSaveRequest,
+) -> anyhow::Result<()> {
+    let mut sink = TransactionalDownloadSink::from_request(request).await?;
+    match decrypt_file_transfer_item_to_sink(api, item, &mut sink).await {
+        Ok(()) => sink.commit().await,
+        Err(error) => {
+            if let Err(abort_error) = sink.abort().await {
+                tracing::warn!(%abort_error, "failed to abort file-transfer download sink");
+            }
+            Err(error)
+        }
+    }
+}
+
+pub async fn abort_file_transfer_save(request: FileTransferSaveRequest) -> anyhow::Result<()> {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let _ = request;
+        Ok(())
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        let mut sink = TransactionalDownloadSink::from_request(request).await?;
+        sink.abort().await
+    }
+}
+
+async fn decrypt_file_transfer_item_to_sink<S: FileTransferPlaintextSink>(
+    api: &TransportClient,
+    item: &FileTransferItem,
+    sink: &mut S,
+) -> anyhow::Result<()> {
+    let record = &item.record;
+    let content_key = validate_download_record(record)?;
+    let count = arkret_sdk::crypto::file_transfer_aead::segment_count(record)?;
+    if record.encryption.segment_bytes.is_none()
+        && record.blob_size_bytes > MAX_WHOLE_FILE_DOWNLOAD_BYTES
+    {
+        anyhow::bail!("whole-file file transfer exceeds Inkson's bounded-memory download limit");
+    }
+
+    let blob_ref = arkret_sdk::BlobRef::new(
+        crate::wire_helpers::canonical_blob_ref(&record.blob_ref).to_owned(),
+    )?;
+    let http = api.sdk_http_client()?;
+    let request_options = api.context().request_options();
+    let mut ciphertext_digest = Sha256::new();
+    let mut plaintext_bytes = 0u64;
+
+    for index in 0..count {
+        let plan = arkret_sdk::crypto::file_transfer_aead::segment(record, index)?;
+        let range = format!("bytes={}-{}", plan.ciphertext_start, plan.ciphertext_end);
+        let options = arkret_sdk::http_client::BlobDownloadOptions::new()
+            .purpose(FILE_TRANSFER_PURPOSE)
+            .range(range)
+            .max_bytes(plan.ciphertext_len);
+        let response = http
+            .blob_download_response_with_options(&blob_ref, &options, &request_options)
+            .await?;
+        let ciphertext =
+            read_exact_segment_response(response, &plan, record.blob_size_bytes).await?;
+        ciphertext_digest.update(&ciphertext);
+        let plaintext = arkret_sdk::crypto::file_transfer_aead::decrypt_segment(
+            record,
+            index,
+            &ciphertext,
+            &content_key,
+        )?;
+        plaintext_bytes = plaintext_bytes
+            .checked_add(plaintext.len() as u64)
+            .ok_or_else(|| anyhow::anyhow!("file-transfer plaintext length overflow"))?;
+        sink.write_segment(&plaintext).await?;
+    }
+
+    if plaintext_bytes != record.plaintext_size_bytes {
+        anyhow::bail!("file-transfer plaintext size mismatch");
+    }
+    let actual_digest = format!("sha256:{}", hex::encode(ciphertext_digest.finalize()));
+    if actual_digest != record.content_digest {
+        anyhow::bail!("file-transfer ciphertext digest mismatch");
+    }
+    verify_content_addressed_blob_ref(&record.blob_ref, &actual_digest)?;
+    Ok(())
+}
+
+fn validate_download_record(record: &FileTransferRecord) -> anyhow::Result<[u8; CONTENT_KEY_LEN]> {
+    record
+        .validate()
+        .map_err(|error| anyhow::anyhow!("file-transfer record invalid: {error}"))?;
+    verify_content_addressed_blob_ref(&record.blob_ref, &record.content_digest)?;
+    if record.encryption.aead_profile != AEAD_PROFILE_XCHACHA20_POLY1305_V1 {
+        anyhow::bail!("file-transfer AEAD profile mismatch");
+    }
+    validate_content_aad(record)?;
+    if record.access.visibility != FileTransferAccessVisibility::ActorPrivate {
+        anyhow::bail!("file-transfer access visibility unsupported");
+    }
+    let content_key = match &record.encryption.key_delivery {
+        FileTransferKeyDelivery::AccountDataWrappedKey { content_key } => content_key,
+        FileTransferKeyDelivery::ToDeviceWrappedKey { .. } => {
+            anyhow::bail!("file-transfer device_bound requires a to-device key message");
+        }
+    };
+    decode_fixed::<CONTENT_KEY_LEN>(content_key)
+}
+
+async fn read_exact_segment_response(
+    response: reqwest::Response,
+    plan: &arkret_sdk::crypto::file_transfer_aead::FileTransferSegment,
+    blob_size_bytes: u64,
 ) -> anyhow::Result<Vec<u8>> {
-    let clients = crate::transport::EndpointClients::from_http(api.sdk_http_client()?);
-    let ciphertext = clients
-        .blob()
-        .get_file_transfer_bytes(&item.record.blob_ref)
-        .await?;
-    decrypt_file_transfer_ciphertext(&item.record, &ciphertext)
+    if response.status() != reqwest::StatusCode::PARTIAL_CONTENT {
+        anyhow::bail!("file-transfer Range request did not return HTTP 206");
+    }
+    if response
+        .headers()
+        .get(reqwest::header::CONTENT_ENCODING)
+        .is_some_and(|value| {
+            value
+                .to_str()
+                .map_or(true, |value| !value.eq_ignore_ascii_case("identity"))
+        })
+    {
+        anyhow::bail!("file-transfer Range response must not use content encoding");
+    }
+    let content_range = response
+        .headers()
+        .get(reqwest::header::CONTENT_RANGE)
+        .and_then(|value| value.to_str().ok())
+        .ok_or_else(|| anyhow::anyhow!("file-transfer Range response missing Content-Range"))?;
+    validate_content_range(content_range, plan, blob_size_bytes)?;
+    if let Some(content_length) = response.content_length()
+        && content_length != plan.ciphertext_len as u64
+    {
+        anyhow::bail!("file-transfer Range response Content-Length mismatch");
+    }
+
+    let mut body = Vec::with_capacity(plan.ciphertext_len);
+    let mut stream = response.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk?;
+        if body.len().saturating_add(chunk.len()) > plan.ciphertext_len {
+            anyhow::bail!("file-transfer Range response exceeded the requested segment");
+        }
+        body.extend_from_slice(&chunk);
+    }
+    if body.len() != plan.ciphertext_len {
+        anyhow::bail!("file-transfer Range response was truncated");
+    }
+    Ok(body)
+}
+
+fn validate_content_range(
+    value: &str,
+    plan: &arkret_sdk::crypto::file_transfer_aead::FileTransferSegment,
+    blob_size_bytes: u64,
+) -> anyhow::Result<()> {
+    let value = value
+        .strip_prefix("bytes ")
+        .ok_or_else(|| anyhow::anyhow!("file-transfer Content-Range unit mismatch"))?;
+    let (range, total) = value
+        .split_once('/')
+        .ok_or_else(|| anyhow::anyhow!("file-transfer Content-Range is malformed"))?;
+    let (start, end) = range
+        .split_once('-')
+        .ok_or_else(|| anyhow::anyhow!("file-transfer Content-Range is malformed"))?;
+    let start = start.parse::<u64>()?;
+    let end = end.parse::<u64>()?;
+    let total = total.parse::<u64>()?;
+    if start != plan.ciphertext_start || end != plan.ciphertext_end || total != blob_size_bytes {
+        anyhow::bail!("file-transfer Content-Range does not match the authenticated record");
+    }
+    Ok(())
+}
+
+trait FileTransferPlaintextSink {
+    async fn write_segment(&mut self, plaintext: &[u8]) -> anyhow::Result<()>;
+    async fn commit(&mut self) -> anyhow::Result<()>;
+    async fn abort(&mut self) -> anyhow::Result<()>;
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+struct TransactionalDownloadSink {
+    destination: std::path::PathBuf,
+    temporary: Option<tempfile::NamedTempFile>,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl TransactionalDownloadSink {
+    async fn from_request(request: FileTransferSaveRequest) -> anyhow::Result<Self> {
+        let handle = rfd::AsyncFileDialog::new()
+            .set_file_name(request.filename)
+            .save_file()
+            .await
+            .ok_or_else(|| anyhow::anyhow!("file-transfer download cancelled"))?;
+        let destination = handle.path().to_owned();
+        let parent = destination
+            .parent()
+            .ok_or_else(|| anyhow::anyhow!("file-transfer destination has no parent directory"))?;
+        let temporary = tempfile::Builder::new()
+            .prefix(".inkson-file-transfer-")
+            .tempfile_in(parent)?;
+        Ok(Self {
+            destination,
+            temporary: Some(temporary),
+        })
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl FileTransferPlaintextSink for TransactionalDownloadSink {
+    async fn write_segment(&mut self, plaintext: &[u8]) -> anyhow::Result<()> {
+        use std::io::Write as _;
+
+        self.temporary
+            .as_mut()
+            .ok_or_else(|| anyhow::anyhow!("file-transfer sink is closed"))?
+            .write_all(plaintext)?;
+        Ok(())
+    }
+
+    async fn commit(&mut self) -> anyhow::Result<()> {
+        use std::io::Write as _;
+
+        let mut temporary = self
+            .temporary
+            .take()
+            .ok_or_else(|| anyhow::anyhow!("file-transfer sink is closed"))?;
+        temporary.flush()?;
+        temporary.as_file().sync_all()?;
+        temporary
+            .persist(&self.destination)
+            .map_err(|error| anyhow::anyhow!("persist file-transfer download: {}", error.error))?;
+        Ok(())
+    }
+
+    async fn abort(&mut self) -> anyhow::Result<()> {
+        self.temporary.take();
+        Ok(())
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+struct TransactionalDownloadSink {
+    eval: dioxus::document::Eval,
+    open: bool,
+}
+
+#[cfg(target_arch = "wasm32")]
+impl Drop for TransactionalDownloadSink {
+    fn drop(&mut self) {
+        if self.open {
+            let _ = self.eval.send(serde_json::json!({"kind": "abort"}));
+        }
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+#[derive(Deserialize)]
+struct BrowserSinkEvent {
+    kind: String,
+    #[serde(default)]
+    error: String,
+}
+
+#[cfg(target_arch = "wasm32")]
+impl TransactionalDownloadSink {
+    async fn from_request(mut request: FileTransferSaveRequest) -> anyhow::Result<Self> {
+        let mut eval = request
+            .eval
+            .take()
+            .ok_or_else(|| anyhow::anyhow!("file-transfer save target is closed"))?;
+        expect_browser_sink_event(&mut eval, "ready").await?;
+        Ok(Self { eval, open: true })
+    }
+
+    async fn command(&mut self, value: Value, expected: &str) -> anyhow::Result<()> {
+        self.eval.send(value)?;
+        expect_browser_sink_event(&mut self.eval, expected).await
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+async fn expect_browser_sink_event(
+    eval: &mut dioxus::document::Eval,
+    expected: &str,
+) -> anyhow::Result<()> {
+    let event: BrowserSinkEvent = eval.recv().await?;
+    if event.kind == expected {
+        return Ok(());
+    }
+    if event.kind == "error" {
+        anyhow::bail!("file-transfer streaming save failed: {}", event.error);
+    }
+    anyhow::bail!(
+        "file-transfer streaming save returned unexpected state `{}`",
+        event.kind
+    )
+}
+
+#[cfg(target_arch = "wasm32")]
+impl FileTransferPlaintextSink for TransactionalDownloadSink {
+    async fn write_segment(&mut self, plaintext: &[u8]) -> anyhow::Result<()> {
+        self.command(
+            serde_json::json!({
+                "kind": "chunk",
+                "bytes_b64": BASE64_STANDARD.encode(plaintext),
+            }),
+            "written",
+        )
+        .await
+    }
+
+    async fn commit(&mut self) -> anyhow::Result<()> {
+        let result = self
+            .command(serde_json::json!({"kind": "commit"}), "committed")
+            .await;
+        self.open = false;
+        result
+    }
+
+    async fn abort(&mut self) -> anyhow::Result<()> {
+        let result = self
+            .command(serde_json::json!({"kind": "abort"}), "aborted")
+            .await;
+        self.open = false;
+        result
+    }
 }
 
 pub fn decrypt_file_transfer_ciphertext(
@@ -267,11 +687,6 @@ pub fn file_transfer_items_from_account_data(
             .then_with(|| right.account_data_key.cmp(&left.account_data_key))
     });
     items
-}
-
-pub fn data_url_for_download(bytes: &[u8], media_type: &str) -> String {
-    let media_type = normalize_media_type(media_type);
-    format!("data:{media_type};base64,{}", BASE64_STANDARD.encode(bytes))
 }
 
 pub fn format_size(bytes: u64) -> String {
@@ -651,6 +1066,31 @@ fn valid_mime_token(value: &str) -> bool {
 mod tests {
     use super::*;
 
+    #[cfg(not(target_arch = "wasm32"))]
+    struct DigestSink {
+        digest: Sha256,
+        total: usize,
+        max_segment: usize,
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    impl FileTransferPlaintextSink for DigestSink {
+        async fn write_segment(&mut self, plaintext: &[u8]) -> anyhow::Result<()> {
+            self.digest.update(plaintext);
+            self.total += plaintext.len();
+            self.max_segment = self.max_segment.max(plaintext.len());
+            Ok(())
+        }
+
+        async fn commit(&mut self) -> anyhow::Result<()> {
+            Ok(())
+        }
+
+        async fn abort(&mut self) -> anyhow::Result<()> {
+            Ok(())
+        }
+    }
+
     fn test_authority() -> arkret_sdk::AccountId {
         arkret_sdk::AccountId::new(
             crate::mls_api_helpers::principal_core_id(ACTOR).unwrap(),
@@ -882,5 +1322,161 @@ mod tests {
         record.transfer_id = "0123456789abcdef012345".to_owned();
 
         assert!(decrypt_file_transfer_ciphertext(&record, &ciphertext).is_err());
+    }
+
+    #[test]
+    fn content_range_must_match_authenticated_segment_geometry() {
+        let crypto = FileTransferCryptoContext::from_account_secret(
+            &test_authority(),
+            &test_account_secret(),
+        )
+        .unwrap();
+        let prepared = prepare_actor_private_file(
+            &crypto,
+            &test_pcr(),
+            ACTOR,
+            DEVICE,
+            Some("range.bin"),
+            "application/octet-stream",
+            vec![9; 262_145],
+        )
+        .unwrap();
+        let ciphertext = prepared.ciphertext.clone();
+        let blob_ref = format!(
+            "ak:blob:sha256:{}",
+            prepared.content_digest.trim_start_matches("sha256:")
+        );
+        let record = prepared
+            .into_record(blob_ref, ciphertext.len() as u64)
+            .unwrap();
+        let first = arkret_sdk::crypto::file_transfer_aead::segment(&record, 0).unwrap();
+        let exact = format!(
+            "bytes {}-{}/{}",
+            first.ciphertext_start, first.ciphertext_end, record.blob_size_bytes
+        );
+        assert!(validate_content_range(&exact, &first, record.blob_size_bytes).is_ok());
+        assert!(
+            validate_content_range(
+                &format!(
+                    "bytes {}-{}/{}",
+                    first.ciphertext_start,
+                    first.ciphertext_end + 1,
+                    record.blob_size_bytes
+                ),
+                &first,
+                record.blob_size_bytes,
+            )
+            .is_err()
+        );
+        assert!(validate_content_range(&exact, &first, record.blob_size_bytes + 1).is_err());
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[tokio::test]
+    async fn production_range_pipeline_decrypts_into_a_bounded_sink() {
+        use std::io::{BufRead as _, BufReader, Write as _};
+        use std::net::TcpListener;
+        use std::sync::Arc;
+
+        let crypto = FileTransferCryptoContext::from_account_secret(
+            &test_authority(),
+            &test_account_secret(),
+        )
+        .unwrap();
+        let plaintext = (0..(262_144 * 2 + 17))
+            .map(|index| (index % 251) as u8)
+            .collect::<Vec<_>>();
+        let prepared = prepare_actor_private_file(
+            &crypto,
+            &test_pcr(),
+            ACTOR,
+            DEVICE,
+            Some("range.bin"),
+            "application/octet-stream",
+            plaintext.clone(),
+        )
+        .unwrap();
+        let ciphertext = Arc::new(prepared.ciphertext.clone());
+        let blob_ref = format!(
+            "ak:blob:sha256:{}",
+            prepared.content_digest.trim_start_matches("sha256:")
+        );
+        let record = prepared
+            .into_record(blob_ref, ciphertext.len() as u64)
+            .unwrap();
+        let segment_count = arkret_sdk::crypto::file_transfer_aead::segment_count(&record).unwrap();
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let server_ciphertext = Arc::clone(&ciphertext);
+        let server = std::thread::spawn(move || {
+            for _ in 0..segment_count {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                let mut request_line = String::new();
+                reader.read_line(&mut request_line).unwrap();
+                assert!(request_line.starts_with("GET /_arkret/self/blob/get?"));
+                let mut requested_range = None;
+                loop {
+                    let mut line = String::new();
+                    reader.read_line(&mut line).unwrap();
+                    if line == "\r\n" || line.is_empty() {
+                        break;
+                    }
+                    if let Some(value) = line
+                        .strip_prefix("range:")
+                        .or_else(|| line.strip_prefix("Range:"))
+                    {
+                        requested_range = Some(value.trim().to_owned());
+                    }
+                }
+                let requested_range = requested_range.unwrap();
+                let (start, end) = requested_range
+                    .strip_prefix("bytes=")
+                    .unwrap()
+                    .split_once('-')
+                    .unwrap();
+                let start = start.parse::<usize>().unwrap();
+                let end = end.parse::<usize>().unwrap();
+                let body = &server_ciphertext[start..=end];
+                write!(
+                    stream,
+                    "HTTP/1.1 206 Partial Content\r\nContent-Length: {}\r\nContent-Range: bytes {}-{}/{}\r\nCache-Control: private, no-store\r\nContent-Type: application/octet-stream\r\nContent-Disposition: attachment\r\nConnection: close\r\n\r\n",
+                    body.len(),
+                    start,
+                    end,
+                    server_ciphertext.len()
+                )
+                .unwrap();
+                stream.write_all(body).unwrap();
+            }
+        });
+
+        let api = TransportClient::new(
+            &format!("http://{address}/"),
+            crate::transport::RequestContext::new("test-grant"),
+        )
+        .unwrap();
+        let item = FileTransferItem {
+            account_data_key: "ak.file_transfer.v1:test".to_owned(),
+            record,
+            updated_at: None,
+        };
+        let mut sink = DigestSink {
+            digest: Sha256::new(),
+            total: 0,
+            max_segment: 0,
+        };
+        decrypt_file_transfer_item_to_sink(&api, &item, &mut sink)
+            .await
+            .unwrap();
+        server.join().unwrap();
+
+        assert_eq!(sink.total, plaintext.len());
+        assert!(sink.max_segment <= 262_144);
+        assert_eq!(
+            hex::encode(sink.digest.finalize()),
+            crate::canonical::sha256_hex(&plaintext)
+        );
     }
 }

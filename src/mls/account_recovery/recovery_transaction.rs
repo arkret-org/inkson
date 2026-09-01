@@ -7,8 +7,9 @@
 
 use arkret_models_collaboration::events_payloads::device_identity::{
     DeviceAuthorizationBindingKind, DeviceOrPrincipalRef, DeviceReanchorPayload,
-    RecoveryAuthorityKind, UnsignedDeviceAuthorizePayload, device_authorize_payload_digest,
+    UnsignedDeviceAuthorizePayload, device_authorize_payload_digest,
 };
+use arkret_models_crypto::RecoveryAuthorityKind;
 use arkret_wire::{
     EventInitialSubmission, EventRef, EventsSubmitBatchRequestBody, Hash, NonEmptyString,
     PcrPolicyRecoveryBinding, PcrPolicyRecoveryPlan, PreparedEventUnit, ReceiptId,

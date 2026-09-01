@@ -207,6 +207,26 @@ fn ContactRow(
     let mut row_status = use_signal(String::new);
     let mut busy = use_signal(|| false);
     let mut confirm_block = use_signal(|| false);
+    let grants_invite = contact
+        .granted_to_peer_scopes
+        .contains(&ContactScope::Invite);
+    let grants_direct_message = contact
+        .granted_to_peer_scopes
+        .contains(&ContactScope::DirectMessage);
+    let grants_voice_call = contact
+        .granted_to_peer_scopes
+        .contains(&ContactScope::VoiceCall);
+    let grants_video_call = contact
+        .granted_to_peer_scopes
+        .contains(&ContactScope::VideoCall);
+    let grants_presence = contact
+        .granted_to_peer_scopes
+        .contains(&ContactScope::Presence);
+    let mut scope_invite = use_signal(move || grants_invite);
+    let mut scope_direct_message = use_signal(move || grants_direct_message);
+    let mut scope_voice_call = use_signal(move || grants_voice_call);
+    let mut scope_video_call = use_signal(move || grants_video_call);
+    let mut scope_presence = use_signal(move || grants_presence);
 
     let peer_principal = crate::models::contact_peer_id(&contact).to_string();
     let peer = contact.peer.contact_actor_id().to_string();
@@ -232,6 +252,20 @@ fn ContactRow(
         arkret_sdk::ContactState::Rejected | arkret_sdk::ContactState::Tombstoned
     );
     let state_wire = crate::models::contact_state_wire(state);
+    let selected_scopes = [
+        (ContactScope::Invite, scope_invite()),
+        (ContactScope::DirectMessage, scope_direct_message()),
+        (ContactScope::VoiceCall, scope_voice_call()),
+        (ContactScope::VideoCall, scope_video_call()),
+        (ContactScope::Presence, scope_presence()),
+    ]
+    .into_iter()
+    .filter_map(|(scope, selected)| selected.then_some(scope))
+    .collect::<Vec<_>>();
+    let mut current_grants = contact.granted_to_peer_scopes.clone();
+    current_grants.sort();
+    current_grants.dedup();
+    let scope_changed = selected_scopes != current_grants;
 
     // Human-readable state label.
     let state_label = match state {
@@ -268,6 +302,85 @@ fn ContactRow(
                 div { class: "muted",
                     {tr("contacts.shared_scopes")}
                     {contact.bidirectional_scopes.iter().map(scope_label).collect::<Vec<_>>().join("、")}
+                }
+            }
+            if is_accepted {
+                div {
+                    class: "contact-scope-editor",
+                    "data-testid": "contact-scope-editor-{peer}",
+                    div { class: "muted", {tr("contacts.scope_update.label")} }
+                    div { class: "settings-list",
+                        label { class: "metric",
+                            Checkbox {
+                                "data-testid": "contact-grant-direct_message-{peer}",
+                                checked: if scope_direct_message() { CheckboxState::Checked } else { CheckboxState::Unchecked },
+                                on_checked_change: move |state: CheckboxState| scope_direct_message.set(bool::from(state)),
+                            }
+                            span { {scope_label(&ContactScope::DirectMessage)} }
+                        }
+                        label { class: "metric",
+                            Checkbox {
+                                "data-testid": "contact-grant-invite-{peer}",
+                                checked: if scope_invite() { CheckboxState::Checked } else { CheckboxState::Unchecked },
+                                on_checked_change: move |state: CheckboxState| scope_invite.set(bool::from(state)),
+                            }
+                            span { {scope_label(&ContactScope::Invite)} }
+                        }
+                        label { class: "metric",
+                            Checkbox {
+                                "data-testid": "contact-grant-voice_call-{peer}",
+                                checked: if scope_voice_call() { CheckboxState::Checked } else { CheckboxState::Unchecked },
+                                on_checked_change: move |state: CheckboxState| scope_voice_call.set(bool::from(state)),
+                            }
+                            span { {scope_label(&ContactScope::VoiceCall)} }
+                        }
+                        label { class: "metric",
+                            Checkbox {
+                                "data-testid": "contact-grant-video_call-{peer}",
+                                checked: if scope_video_call() { CheckboxState::Checked } else { CheckboxState::Unchecked },
+                                on_checked_change: move |state: CheckboxState| scope_video_call.set(bool::from(state)),
+                            }
+                            span { {scope_label(&ContactScope::VideoCall)} }
+                        }
+                        label { class: "metric",
+                            Checkbox {
+                                "data-testid": "contact-grant-presence-{peer}",
+                                checked: if scope_presence() { CheckboxState::Checked } else { CheckboxState::Unchecked },
+                                on_checked_change: move |state: CheckboxState| scope_presence.set(bool::from(state)),
+                            }
+                            span { {scope_label(&ContactScope::Presence)} }
+                        }
+                    }
+                    div { class: "actions",
+                        Button {
+                            variant: ButtonVariant::Secondary,
+                            "data-testid": "contact-scope-save-{peer}",
+                            disabled: busy() || !scope_changed,
+                            onclick: {
+                                let base = base_url.clone();
+                                let peer = peer.clone();
+                                let scopes = selected_scopes.clone();
+                                move |_| {
+                                    run_contact_action(
+                                        base.clone(),
+                                        token(),
+                                        ContactRowAction::ScopeUpdate {
+                                            peer: peer.clone(),
+                                            scopes: scopes.clone(),
+                                        },
+                                        tr("contacts.scope_update.saving"),
+                                        busy,
+                                        row_status,
+                                        on_changed,
+                                    );
+                                }
+                            },
+                            {tr("contacts.scope_update.save")}
+                        }
+                    }
+                    if selected_scopes.is_empty() {
+                        div { class: "muted", {tr("contacts.scope_update.empty_hint")} }
+                    }
                 }
             }
             if let Some(summary) = &contact.direct_conversation {
@@ -683,11 +796,15 @@ enum ContactRowAction {
         peer: String,
         block: bool,
     },
+    ScopeUpdate {
+        peer: String,
+        scopes: Vec<ContactScope>,
+    },
 }
 
-/// Run a respond/tombstone call for a contact row, then refresh the parent list
-/// on success. Signals are `Copy`, so this is a free function the per-row
-/// onclick handlers can call without fighting closure-capture rules.
+/// Run a Contact write for a row, then refresh the parent list on success.
+/// Signals are `Copy`, so this is a free function the per-row onclick handlers
+/// can call without fighting closure-capture rules.
 fn run_contact_action(
     base: String,
     api_token: String,
@@ -726,6 +843,13 @@ fn run_contact_action(
             ContactRowAction::Tombstone { peer, block } => {
                 with_authed_sdk_client(&base, api_token, |http| async move {
                     crate::transport::account::tombstone_contact(&http, &peer, block).await
+                })
+                .await
+                .map(|_| ())
+            }
+            ContactRowAction::ScopeUpdate { peer, scopes } => {
+                with_authed_sdk_client(&base, api_token, |http| async move {
+                    crate::transport::account::update_contact_scopes(&http, &peer, scopes).await
                 })
                 .await
                 .map(|_| ())

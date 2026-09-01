@@ -143,6 +143,12 @@ type MockOperationInventoryRow = {
   responses: Record<string, { schema_ref: string | null }>;
 };
 
+type StaticMockResponseFixture = {
+  operation_id: string;
+  status: number;
+  value: unknown;
+};
+
 type RealmGenesisSealFixture = {
   realm_id?: string;
   seal: Record<string, unknown> & { id: string; realm_id: string };
@@ -231,7 +237,16 @@ function inksonWire<T>(command: InksonWireCommand, input: unknown): T {
     binary ?? "cargo",
     binary
       ? [command]
-      : ["run", "--quiet", "--bin", "inkson-wire", "--", command],
+      : [
+          "run",
+          "--quiet",
+          "--features",
+          "spec-conformance",
+          "--bin",
+          "inkson-wire",
+          "--",
+          command,
+        ],
     {
       cwd: inksonRepoRoot,
       encoding: "utf8",
@@ -266,7 +281,14 @@ function validateMockResponse(route: Route, status: number, value?: unknown) {
       `mock route ${method} ${pathname} resolves to ${matches.length} embedded OpenAPI operations`,
     );
   }
-  const operation = matches[0];
+  validateMockResponseForOperation(matches[0], status, value);
+}
+
+function validateMockResponseForOperation(
+  operation: (typeof mockOperationInventory)[number],
+  status: number,
+  value?: unknown,
+) {
   const response =
     operation.responses[String(status)] ?? operation.responses.default;
   if (!response) {
@@ -287,7 +309,55 @@ function validateMockResponse(route: Route, status: number, value?: unknown) {
       `mock route ${operation.operation_id} status ${status} requires a JSON body`,
     );
   }
+  assertNoRetiredMockFields(value);
   validateMockSchema(response.schema_ref, value);
+}
+
+function preflightStaticMockResponses(fixtures: StaticMockResponseFixture[]) {
+  for (const fixture of fixtures) {
+    const matches = mockOperationInventory.filter(
+      (operation) => operation.operation_id === fixture.operation_id,
+    );
+    if (matches.length !== 1) {
+      throw new Error(
+        `static mock fixture ${fixture.operation_id} resolves to ${matches.length} embedded OpenAPI operations`,
+      );
+    }
+    validateMockResponseForOperation(matches[0], fixture.status, fixture.value);
+  }
+}
+
+export function assertNoRetiredMockFields(value: unknown, path = "$"): void {
+  if (value === null || typeof value !== "object") {
+    return;
+  }
+  if (Array.isArray(value)) {
+    value.forEach((item, index) =>
+      assertNoRetiredMockFields(item, `${path}[${index}]`),
+    );
+    return;
+  }
+
+  const object = value as Record<string, unknown>;
+  for (const key of ["registry_mode", "supported_receipts"]) {
+    if (Object.hasOwn(object, key)) {
+      throw new Error(`retired mock response field ${path}.${key}`);
+    }
+  }
+  for (const key of ["auth_metadata", "method_evidence"]) {
+    const nested = object[key];
+    if (
+      nested !== null &&
+      typeof nested === "object" &&
+      !Array.isArray(nested) &&
+      Object.hasOwn(nested, "mode")
+    ) {
+      throw new Error(`retired mock response field ${path}.${key}.mode`);
+    }
+  }
+  for (const [key, nested] of Object.entries(object)) {
+    assertNoRetiredMockFields(nested, `${path}.${key}`);
+  }
 }
 
 function validateMockSchema(schemaRef: string, value: unknown) {
@@ -463,6 +533,9 @@ export async function mockArkretApi(
   }
   let serverDidDocument: Record<string, unknown> =
     currentPrincipalServiceResolution.normalized_did_document;
+  preflightStaticMockResponses(
+    staticMockResponseFixtures(serverDidDocument),
+  );
   let sidecarAgentIds = ["ak:did_core:web:agents.example:assistant"];
   const circleStates = new Map<string, MockCircleState>([
     [DEMO_CIRCLE, "active"],
@@ -1511,11 +1584,7 @@ export async function mockArkretApi(
       url.pathname === "/_arkret/self/events/describe" &&
       route.request().method() === "QUERY"
     ) {
-      return json(route, {
-        ...principalServiceDescribe(),
-        supported_profiles: ["ak.profile.core_event_store.v1"],
-        supported_features: ["ak.feature.events_query_range_completeness.v1"],
-      });
+      return json(route, eventsServiceDescribe());
     }
 
     if (
@@ -2537,53 +2606,14 @@ export async function mockArkretApi(
       url.pathname === "/_arkret/find/directory/resolve-realm" &&
       route.request().method() === "POST"
     ) {
-      return json(route, {
-        realm_preview: realmPreview(),
-        stripped_state: [],
-        join_rule: "public",
-        join_candidates: [joinCandidate()],
-      });
+      return json(route, directoryRealmResolution());
     }
 
     if (
       url.pathname === "/_arkret/find/directory/describe" &&
       route.request().method() === "GET"
     ) {
-      return json(route, {
-        service_id: CURRENT_STATION_ID,
-        service_resolution: {
-          did: CURRENT_STATION_DID,
-          method_history_head: "development-unverified",
-          version_id: "development-unverified",
-        },
-        trust_domain: "ak:trust_domain:server.local",
-        service_kind: "directory_service",
-        protocol_version: "1.0",
-        supported_profiles: [],
-        ...currentHttpDescribeCapabilities(
-          [DIRECTORY_DESCRIBE_BUNDLE, DIRECTORY_HTTP_CORE_BUNDLE],
-          "https://server.local/_arkret/find/directory",
-        ),
-        supported_features: [],
-        auth_metadata: {},
-        limits: {},
-        plaintext_visibility: {},
-        rate_limit_policy: {},
-        claimed_profiles: [],
-        verified_profiles: [],
-        interop_surfaces: [],
-        development_mode: false,
-        resource_kinds: ["realm", "organization", "actor"],
-        restricted_query_proof: false,
-        ingest_modes: ["push"],
-        accept_policy_kind: "open",
-        default_ttl_seconds: 86400,
-        max_ttl_seconds: 604800,
-        revalidation_grace_seconds: 3600,
-        accepted_resource_kinds: ["realm", "organization", "actor"],
-        accepted_did_methods: ["did:web"],
-        rate_limits: {},
-      });
+      return json(route, directoryServiceDescribe());
     }
 
     if (
@@ -2777,16 +2807,10 @@ export async function mockArkretApi(
       route.request().method() === "POST"
     ) {
       const body = await route.request().postDataJSON();
-      return json(route, {
-        did_document:
-          body.did === CURRENT_STATION_DID
-            ? serverDidDocument
-            : { id: body.did },
-        key_log_head: null,
-        seq: 0,
-        receipts: [],
-        method_evidence: { mode: "development_local" },
-      });
+      return json(
+        route,
+        identityResolveOutcome(String(body.did), serverDidDocument),
+      );
     }
 
     if (
@@ -4179,6 +4203,52 @@ function realmPreview() {
   };
 }
 
+function directoryRealmResolution() {
+  return {
+    realm_preview: realmPreview(),
+    join_rule: "public",
+    join_candidates: [joinCandidate()],
+  };
+}
+
+function directoryServiceDescribe() {
+  return {
+    service_id: CURRENT_STATION_ID,
+    service_resolution: {
+      did: CURRENT_STATION_DID,
+      method_history_head: "development-unverified",
+      version_id: "development-unverified",
+    },
+    trust_domain: "ak:trust_domain:server.local",
+    service_kind: "directory_service",
+    protocol_version: "1.0",
+    supported_profiles: [],
+    ...currentHttpDescribeCapabilities(
+      [DIRECTORY_DESCRIBE_BUNDLE, DIRECTORY_HTTP_CORE_BUNDLE],
+      "https://server.local/_arkret/find/directory",
+    ),
+    supported_features: [],
+    auth_metadata: {},
+    limits: {},
+    plaintext_visibility: {},
+    rate_limit_policy: {},
+    claimed_profiles: [],
+    verified_profiles: [],
+    interop_surfaces: [],
+    development_mode: false,
+    resource_kinds: ["realm", "organization", "actor"],
+    restricted_query_proof: false,
+    ingest_modes: ["push"],
+    accept_policy_kind: "open",
+    default_ttl_seconds: 86400,
+    max_ttl_seconds: 604800,
+    revalidation_grace_seconds: 3600,
+    accepted_resource_kinds: ["realm", "organization", "actor"],
+    accepted_did_methods: ["did:web"],
+    rate_limits: {},
+  };
+}
+
 function principalServiceDescribe() {
   return {
     service_id: CURRENT_STATION_ID,
@@ -4215,8 +4285,8 @@ function principalServiceDescribe() {
       methods: [
         {
           method: "oidc",
-          issuer: "https://auth.local.host/",
-          openid_configuration:
+          issuer_uri: "https://auth.local.host/",
+          openid_configuration_url:
             "https://auth.local.host/.well-known/openid-configuration",
           client_id: "01GFWR28C4KNE04WG3HKXB7C9R",
           scopes: ["openid", "profile"],
@@ -4229,7 +4299,7 @@ function principalServiceDescribe() {
       policy_version: "1",
       entries: [
         {
-          endpoint: "*",
+          endpoint: "/_arkret",
           rate_limit_scope: "service",
           window_seconds: 60,
           max_requests: 120,
@@ -4244,6 +4314,14 @@ function principalServiceDescribe() {
     verified_profiles: [],
     interop_surfaces: [],
     development_mode: true,
+  };
+}
+
+function eventsServiceDescribe() {
+  return {
+    ...principalServiceDescribe(),
+    supported_profiles: ["ak.profile.core_event_store.v1"],
+    supported_features: ["ak.feature.events_query_range_completeness.v1"],
   };
 }
 
@@ -4270,30 +4348,84 @@ function identityRegistryServiceDescribe() {
   };
 }
 
+function identityResolveOutcome(
+  did: string,
+  serverDidDocument: Record<string, unknown>,
+) {
+  return {
+    did_document:
+      did === CURRENT_STATION_DID ? serverDidDocument : { id: did },
+    seq: 0,
+    receipts: [],
+  };
+}
+
+function staticMockResponseFixtures(
+  serverDidDocument: Record<string, unknown>,
+): StaticMockResponseFixture[] {
+  return [
+    {
+      operation_id: "ak.server.read.describe.v1",
+      status: 200,
+      value: principalServiceDescribe(),
+    },
+    {
+      operation_id: "ak.self.events.read.describe.v1",
+      status: 200,
+      value: eventsServiceDescribe(),
+    },
+    {
+      operation_id: "ak.open.mimi.read.provider_directory.v1",
+      status: 200,
+      value: mimiProviderDirectory(),
+    },
+    {
+      operation_id: "ak.find.directory.read.resolve_realm.v1",
+      status: 200,
+      value: directoryRealmResolution(),
+    },
+    {
+      operation_id: "ak.find.directory.read.describe.v1",
+      status: 200,
+      value: directoryServiceDescribe(),
+    },
+    {
+      operation_id: "ak.root.identity.registry.read.describe.v1",
+      status: 200,
+      value: identityRegistryServiceDescribe(),
+    },
+    {
+      operation_id: "ak.root.identity.read.resolve.v1",
+      status: 200,
+      value: identityResolveOutcome(CURRENT_STATION_DID, serverDidDocument),
+    },
+    {
+      operation_id: "ak.self.account.read.describe.v1",
+      status: 200,
+      value: principalServiceDescribe(),
+    },
+  ];
+}
+
 function joinCandidate() {
   return {
     realm_id: DEMO_REALM,
     service_id: CURRENT_STATION_ID,
+    service_resolution: {
+      current_record_url: currentPrincipalServiceRecord.current_record_url,
+    },
     service_kind: "station",
-    role: "primary",
-    endpoint: null,
-    operations: ["ak.self.events.command.submit.v1"],
+    role: "joined_member_station",
+    operations: ["ak.peer.events.command.submit.v1"],
     join_methods: ["invite_accept", "member_join"],
+    encryption_profile: "mls_rfc9420",
+    digest_algorithm: "sha256",
     priority: 0,
-    source: "directory_ingest",
+    source: "joined_member_account",
     seal_basis: {
       leaves: [
         "ak:seal:sha256:1111111111111111111111111111111111111111111111111111111111111111",
       ],
-      control_event_set_root:
-        "sha256:2222222222222222222222222222222222222222222222222222222222222222",
-      state_root:
-        "sha256:3333333333333333333333333333333333333333333333333333333333333333",
-      governance_health: {
-        status: "healthy",
-        pending_proposals: [],
-        retained_faults: [],
-      },
     },
     as_of: "2026-05-30T00:00:00.000Z",
     expires_at: "2099-01-01T00:00:00.000Z",
@@ -4306,7 +4438,6 @@ function mimiProviderDirectory() {
     "room_update",
     "notify",
     "submit_message",
-    "group_info",
     "consent",
     "identifier_query",
     "report_abuse",

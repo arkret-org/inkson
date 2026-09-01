@@ -139,11 +139,6 @@ impl<'a> BlobEndpoints<'a> {
         .await
     }
 
-    pub async fn get_file_transfer_bytes(&self, blob_ref: &str) -> anyhow::Result<Vec<u8>> {
-        self.download_bytes(blob_ref, "file_transfer", DEFAULT_BLOB_DOWNLOAD_MAX_BYTES)
-            .await
-    }
-
     async fn download_bytes(
         &self,
         blob_ref: &str,
@@ -179,14 +174,16 @@ impl<'a> BlobEndpoints<'a> {
         &self,
         ciphertext: Vec<u8>,
         content_digest: &str,
+        principal_control_realm_id: &str,
     ) -> anyhow::Result<crate::models::BlobUploadOutcome> {
         if ciphertext.len() >= RESUMABLE_UPLOAD_THRESHOLD_BYTES
             && let Some(base_url) = self.resumable_upload_base_url().await
         {
-            let options = arkret_sdk::http_client::BlobResumableUploadOptions::new()
-                .metadata("purpose", "file_transfer")
-                .metadata("encrypted", "true")
-                .metadata("content_digest", content_digest);
+            // Private/E2EE resumable uploads intentionally omit Upload-Metadata.
+            // Upload-Length carries the byte count, and the authenticated
+            // service binds ownership without exposing transfer descriptors in
+            // a transport header (media-and-blob.md section 2.1).
+            let options = arkret_sdk::http_client::BlobResumableUploadOptions::new();
             match self
                 .transport
                 .http()
@@ -205,7 +202,7 @@ impl<'a> BlobEndpoints<'a> {
         let metadata = Self::upload_metadata(
             ciphertext.len(),
             crate::blob::CIPHERTEXT_MEDIA_TYPE,
-            None,
+            Some(principal_control_realm_id),
             Some(content_digest),
             None,
             Some("file_transfer"),

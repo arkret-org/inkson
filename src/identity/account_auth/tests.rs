@@ -445,6 +445,7 @@ fn resolve_gate_account_base_url_prefers_account_authority() {
     metadata.account_authority = Some(arkret_sdk::AccountAuthority {
         origin: arkret_sdk::WebOrigin::new("https://aa.example").unwrap(),
         gate_account_base_url: "https://aa.example/_arkret/gate/account".to_owned(),
+        extra: Default::default(),
     });
     let base = resolve_gate_account_base_url("https://principal.example", &metadata).unwrap();
     assert_eq!(base, "https://aa.example/_arkret/gate/account");
@@ -456,6 +457,7 @@ fn resolve_gate_account_base_url_derives_from_account_authority_origin() {
     metadata.account_authority = Some(arkret_sdk::AccountAuthority {
         origin: arkret_sdk::WebOrigin::new("https://aa.example").unwrap(),
         gate_account_base_url: String::new(),
+        extra: Default::default(),
     });
     let base = resolve_gate_account_base_url("https://principal.example", &metadata).unwrap();
     assert_eq!(base, "https://aa.example/_arkret/gate/account");
@@ -489,6 +491,7 @@ fn principal_description() -> arkret_sdk::ServiceDescribe {
     description.auth_metadata.account_authority = Some(arkret_sdk::AccountAuthority {
         origin: arkret_sdk::WebOrigin::new("https://auth.example").unwrap(),
         gate_account_base_url: "https://auth.example/_arkret/gate/account".to_owned(),
+        extra: Default::default(),
     });
     description
 }

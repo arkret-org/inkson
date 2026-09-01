@@ -295,7 +295,12 @@ impl SignalPayload {
                 arkret_wire::SignalClass::Setup
             }
             Self::CallSignal { signal, .. }
-                if signal.kind() == arkret_sdk::CallSignalKind::Moderation =>
+                if signal.kind() == arkret_sdk::CallSignalKind::Moderation
+                    || matches!(
+                        signal,
+                        arkret_sdk::CallSignalData::MuteState(data)
+                            if data.changed_by == arkret_sdk::MuteChangedBy::Moderator
+                    ) =>
             {
                 arkret_wire::SignalClass::Moderation
             }
@@ -1086,6 +1091,27 @@ mod tests {
             arkret_wire::SignalClass::Moderation
         );
         assert_eq!(moderation.signal_class().max_ttl().num_seconds(), 60);
+
+        let moderator_mute = SignalPayload::CallSignal {
+            call_id: call_id.clone(),
+            seq: 6,
+            signal: arkret_sdk::CallSignalData::MuteState(arkret_sdk::CallMuteStateSignalData {
+                audio_muted: true,
+                video_muted: false,
+                changed_by: arkret_sdk::MuteChangedBy::Moderator,
+                target_actor_id: Some(
+                    arkret_sdk::DidCoreId::new("ak:did_core:web:target.example").unwrap(),
+                ),
+                target_device_id: Some(
+                    arkret_sdk::DeviceId::new("ak:device:01904100-0000-7000-8000-000000000099")
+                        .unwrap(),
+                ),
+            }),
+        };
+        assert_eq!(
+            moderator_mute.signal_class(),
+            arkret_wire::SignalClass::Moderation
+        );
 
         let candidate = SignalPayload::CallSignal {
             call_id,

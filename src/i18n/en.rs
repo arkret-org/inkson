@@ -1706,7 +1706,18 @@ fn add_contacts_keys(dict: &mut TranslationDict) {
     dict.set("contacts.scope.invite", "Can invite me to groups");
     dict.set("contacts.scope.voice_call", "Voice calls");
     dict.set("contacts.scope.video_call", "Video calls");
+    dict.set("contacts.scope.presence", "Presence");
     dict.set("contacts.shared_scopes", "Shared permissions: ");
+    dict.set(
+        "contacts.scope_update.label",
+        "Permissions you grant this contact",
+    );
+    dict.set("contacts.scope_update.save", "Save permissions");
+    dict.set("contacts.scope_update.saving", "Saving permissions…");
+    dict.set(
+        "contacts.scope_update.empty_hint",
+        "Saving an empty set suspends this contact without removing it.",
+    );
 
     // ── ContactRow ────────────────────────────────────────────────────
     dict.set("contacts.state.pending_incoming", "Waiting on you");
