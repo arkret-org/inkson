@@ -17,6 +17,7 @@ use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::dialog::Dialog;
 use crate::ui::label::Label;
 use crate::ui::textarea::Textarea;
+use crate::ui_signal::try_set_signal;
 
 const MLS_RECOVERY_BACKUP_STATE_KEY: &str = "mls.recovery_backup.v1";
 const MLS_PRIVATE_PLAINTEXT_BACKUP_DEBOUNCE: Duration = Duration::from_millis(1500);
@@ -47,13 +48,6 @@ static MLS_PRIVATE_PLAINTEXT_BACKUP_SCHEDULER: BackupJobScheduler<
     "mls_private_plaintext_backup",
     MLS_PRIVATE_PLAINTEXT_BACKUP_CONFIG,
 );
-
-// Recovery tasks can finish after the prompt scope is gone; dropped signals panic on `set()`.
-fn try_set_signal<T: 'static>(mut signal: Signal<T>, value: T) {
-    if let Ok(mut slot) = signal.try_write() {
-        *slot = value;
-    }
-}
 
 fn try_set_status(mut status: Signal<String>, value: impl Into<String>) {
     if let Ok(mut slot) = status.try_write() {

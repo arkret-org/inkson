@@ -11,15 +11,9 @@ use crate::transport::auth::{ApiCallError, with_authed_api};
 use crate::ui::button::{Button, ButtonSize, ButtonVariant};
 use crate::ui::dialog::Dialog;
 use crate::ui::input::Input;
+use crate::ui_signal::try_set_signal;
 
 const MLS_UNLOCK_FETCH_TIMEOUT: Duration = Duration::from_secs(20);
-
-// Recovery tasks can finish after the prompt scope is gone; dropped signals panic on `set()`.
-fn try_set_signal<T: 'static>(mut signal: Signal<T>, value: T) {
-    if let Ok(mut slot) = signal.try_write() {
-        *slot = value;
-    }
-}
 
 fn try_set_status(mut status: Signal<String>, value: impl Into<String>) {
     if let Ok(mut slot) = status.try_write() {

@@ -1,4 +1,5 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::sync::{Arc, Mutex, OnceLock, Weak};
 
 #[cfg(test)]
 use arkret_models_collaboration::governance::agent_participation::ParticipationNextReplaceInput;
@@ -358,16 +359,9 @@ fn trimmed_string(value: Option<&Value>) -> Option<String> {
 }
 
 fn principal_core_key(value: &str) -> Option<String> {
-    let value = value.trim();
-    arkret_sdk::DidCoreId::new(value.to_owned())
+    crate::mls_api_helpers::principal_core_id(value)
         .ok()
         .map(|id| id.as_str().to_owned())
-        .or_else(|| {
-            arkret_sdk::Did::new(value.to_owned())
-                .ok()
-                .and_then(|id| arkret_sdk::project_did_to_core_id(&id).ok())
-                .map(|id| id.as_str().to_owned())
-        })
 }
 
 fn is_local_account_actor(actor_key: &str, principal: &str) -> bool {
@@ -1645,9 +1639,19 @@ async fn retain_current_history_secret_durable(
     Ok(Some((epoch, secret)))
 }
 
-fn mls_admission_authoring_lock() -> &'static tokio::sync::Mutex<()> {
-    static LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
-    LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
+fn mls_admission_authoring_lock(realm_id: &str) -> Arc<tokio::sync::Mutex<()>> {
+    static LOCKS: OnceLock<Mutex<HashMap<String, Weak<tokio::sync::Mutex<()>>>>> = OnceLock::new();
+    let mut locks = LOCKS
+        .get_or_init(|| Mutex::new(HashMap::new()))
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    locks.retain(|_, lock| lock.strong_count() > 0);
+    if let Some(lock) = locks.get(realm_id).and_then(Weak::upgrade) {
+        return lock;
+    }
+    let lock = Arc::new(tokio::sync::Mutex::new(()));
+    locks.insert(realm_id.to_owned(), Arc::downgrade(&lock));
+    lock
 }
 
 pub(crate) async fn submit_mls_admission_for_invitee(
@@ -1658,7 +1662,8 @@ pub(crate) async fn submit_mls_admission_for_invitee(
     device_id: String,
     invitee_id: String,
 ) -> anyhow::Result<Option<u64>> {
-    let _authoring_guard = mls_admission_authoring_lock().lock().await;
+    let authoring_lock = mls_admission_authoring_lock(&realm_id);
+    let _authoring_guard = authoring_lock.lock().await;
     let invitee_actor: arkret_sdk::ActorId = serde_json::from_str(&invitee_id)?;
     let invitee_principal = invitee_actor.signing_principal_id().as_str();
     let account = crate::app::SessionContext::get()

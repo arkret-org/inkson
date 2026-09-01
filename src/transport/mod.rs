@@ -4,6 +4,7 @@ mod blob;
 pub mod circle;
 mod contacts;
 mod context;
+pub(crate) mod describe_cache;
 pub mod directory;
 mod endpoints;
 mod invite;

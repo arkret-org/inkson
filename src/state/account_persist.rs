@@ -11,7 +11,7 @@
 //!
 //!   * [`merge_persisted_into_live`] — the boot-time reconciliation between the previous session's
 //!     stored blob and any live in-memory writes made before the IndexedDB tier finished
-//!     initialising. Live values win; stored values fill gaps ("现场优先、已存补缺").
+//!     initialising. Live values win; stored values only fill gaps.
 //!   * [`AccountPersistQueueState`] — the per-account single-writer commit-queue state machine.
 //!     Each enqueue freezes the target account key and takes a monotonic sequence number; a single
 //!     drain per account coalesces to the latest not-yet-started snapshot so an older async write
@@ -85,7 +85,7 @@ fn json_merge_live_priority(live: Value, stored: Value) -> Value {
 ///   * `live` is structurally default → adopt `stored` wholesale (the ordinary reload: nothing
 ///     wrote main state before hydration).
 ///   * `stored` is default → keep `live` (an empty durable tier catches the writes made before it
-///     initialised — "空安全库也会接住现场值").
+///     initialised, including when the secure store starts empty).
 ///
 /// Otherwise both are non-default (a real live write raced hydration) and the
 /// field-wise [`json_merge_live_priority`] union runs.

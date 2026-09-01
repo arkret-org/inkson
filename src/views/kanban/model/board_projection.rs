@@ -1,8 +1,9 @@
 //! Event-sourced kanban board projection.
 //!
 //! The board is a CLIENT-SIDE derived projection over the realm event log, per
-//! `service-surface.md` §("View projection 是派生结果、不是真相源；客户端应基于
-//! 已同步、已授权、已解密的 Event 集合自维护本地投影"). This module folds the
+//! `service-surface.md` requires a client to derive its own local view projection
+//! from synchronized, authorized and decrypted Events; the projection is not an
+//! authoritative source. This module folds the
 //! realm's kanban events — `ak.space.create`, `ak.strand.create`,
 //! `ak.strand.update`, `ak.strand.move` / `ak.strand.reorder`,
 //! `ak.strand.archive` / `ak.strand.restore`, `ak.relation.*` — into the same

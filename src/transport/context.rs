@@ -147,10 +147,7 @@ impl TransportClient {
     }
 
     pub async fn describe(&self) -> anyhow::Result<crate::models::ServiceDescribe> {
-        self.http
-            .describe()
-            .await
-            .map_err(|error| anyhow::anyhow!("server describe: {error}"))
+        super::describe_cache::fetch_service_describe(&self.http).await
     }
 
     pub fn context(&self) -> &RequestContext {
@@ -158,14 +155,7 @@ impl TransportClient {
     }
 
     pub async fn describe_cached(&self) -> anyhow::Result<&crate::models::ServiceDescribe> {
-        self.describe_cache
-            .get_or_try_init(|| async {
-                self.http
-                    .describe()
-                    .await
-                    .map_err(|error| anyhow::anyhow!("server describe: {error}"))
-            })
-            .await
+        super::describe_cache::cached_service_describe(&self.http, &self.describe_cache).await
     }
 }
 

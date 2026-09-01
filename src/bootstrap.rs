@@ -905,42 +905,6 @@ fn should_ack_mls_welcome_batch(
         && persist_error.is_none()
 }
 
-fn to_device_envelope_dedup_key(message: &Value) -> Result<(String, String, String), String> {
-    let required = |field: &str| {
-        message
-            .get(field)
-            .and_then(Value::as_str)
-            .filter(|value| !value.trim().is_empty())
-            .ok_or_else(|| format!("durable to-device envelope omits {field}"))
-    };
-    let sender = if let Some(account_id) = message.get("sender_account_id") {
-        let principal_id = account_id
-            .get("principal_id")
-            .and_then(Value::as_str)
-            .ok_or_else(|| "durable to-device envelope has invalid sender_account_id".to_owned())?;
-        let station_id = account_id
-            .get("station_id")
-            .and_then(Value::as_str)
-            .ok_or_else(|| "durable to-device envelope has invalid sender_account_id".to_owned())?;
-        format!("account:{principal_id}:{station_id}")
-    } else if let Some(agent_id) = message.get("sender_agent_id").and_then(Value::as_str) {
-        format!("agent:{agent_id}")
-    } else {
-        format!("service:{}", required("sender_id")?)
-    };
-    let endpoint = message
-        .get("sender_device_id")
-        .or_else(|| message.get("sender_agent_id"))
-        .or_else(|| message.get("sender_id"))
-        .and_then(Value::as_str)
-        .ok_or_else(|| "durable to-device envelope omits sender endpoint".to_owned())?;
-    Ok((
-        sender,
-        endpoint.to_owned(),
-        required("device_message_id")?.to_owned(),
-    ))
-}
-
 fn merge_durable_local_mls_welcomes_for_realm(
     messages_value: &mut Value,
     local_inbox: &[Value],
@@ -962,15 +926,15 @@ fn merge_durable_local_mls_welcomes_for_realm(
         if crate::state::to_device_message_expired(&local, now) {
             continue;
         }
-        let local_key = to_device_envelope_dedup_key(&local)?;
+        let local_key = crate::state::to_device_message_dedup_key(&local)?;
         let duplicate = messages.iter().find(|message| {
-            to_device_envelope_dedup_key(message).is_ok_and(|message_key| message_key == local_key)
+            crate::state::to_device_message_dedup_key(message)
+                .is_ok_and(|message_key| message_key == local_key)
         });
         if let Some(existing) = duplicate {
             if existing != &local {
                 return Err(format!(
-                    "device_message_conflict: envelope changed for {}|{}|{}",
-                    local_key.0, local_key.1, local_key.2
+                    "device_message_conflict: envelope changed for {local_key}"
                 ));
             }
             continue;

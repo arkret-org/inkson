@@ -1795,13 +1795,6 @@ impl EventSubmitter {
         }
     }
 
-    async fn describe(&self) -> anyhow::Result<ServiceDescribe> {
-        self.http
-            .describe()
-            .await
-            .map_err(|error| anyhow::anyhow!("server describe: {error}"))
-    }
-
     async fn ensure_recovery_material_ready(
         &self,
         intent: &EventIntent,
@@ -1896,8 +1889,7 @@ impl EventSubmitter {
     /// Lazily fetch + cache the service describe for this submitter. Only the
     /// signing path calls this, so a submitter that never signs never fetches.
     async fn describe_cached(&self) -> anyhow::Result<&ServiceDescribe> {
-        self.describe_cache
-            .get_or_try_init(|| async { self.describe().await })
+        crate::transport::describe_cache::cached_service_describe(&self.http, &self.describe_cache)
             .await
     }
 

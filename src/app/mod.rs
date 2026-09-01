@@ -29,6 +29,7 @@ use crate::state::{ClientLocalState, LocalStateStore, PersistedSessionGrant};
 use crate::transport::TransportClient;
 use crate::ui::button::{Button, ButtonSize, ButtonVariant};
 use crate::ui::input::Input;
+use crate::ui_signal::try_set_signal;
 use crate::views::ConnectionState;
 use crate::views::helpers::{actor_display_label, persist_config, short_protocol_id};
 
@@ -94,6 +95,7 @@ mod recovery_effects;
 mod recovery_reminder_effects;
 mod route_surface;
 mod secure_store_effects;
+mod security_signals;
 mod session_boot;
 mod session_context;
 mod session_shell;
@@ -121,6 +123,7 @@ use recovery_effects::AccountRecoveryEffects;
 use recovery_reminder_effects::{RecoveryReminderEffectState, RecoveryReminderEffects};
 use route_surface::{RouteSurface, RouteSurfaceState};
 use secure_store_effects::{SecureStoreEffectState, SecureStoreEffects};
+use security_signals::{SecurityRuntimeSignals, use_security_runtime_signals};
 pub(crate) use session_boot::*;
 use session_context::AppStateStore;
 pub(crate) use session_context::SessionContext;
@@ -135,12 +138,6 @@ const SIDEBAR_WIDTH_PREFERENCE_KEY: &str = "layout.sidebar.width";
 const DEFAULT_SIDEBAR_WIDTH: f64 = 320.0;
 const MIN_SIDEBAR_WIDTH: f64 = 280.0;
 const MAX_SIDEBAR_WIDTH: f64 = 420.0;
-
-fn try_set_signal<T: 'static>(mut signal: Signal<T>, value: T) {
-    if let Ok(mut slot) = signal.try_write() {
-        *slot = value;
-    }
-}
 
 /// Cursor the account-sync signal boots with.
 ///
@@ -574,50 +571,25 @@ fn AppBootstrap() -> Element {
     // `ensure_sidebar_row_perms`) so we never probe authz for Realms whose
     // menu the user never touches.
     let sidebar_row_perms = use_signal(BTreeMap::<String, SidebarRowRealmPerms>::new);
-    let mls_key_package_publish_key_seen = use_signal(|| Option::<String>::None);
-    let mls_welcome_bootstrap_key_seen = use_signal(|| Option::<String>::None);
-    // Admin-side counterpart of the Welcome bootstrap: serialize admission
-    // reconciliation so durable-change and backoff retries cannot overlap.
-    let mls_admission_reconcile_in_flight = use_signal(|| false);
-    let mls_admission_reconcile_pending = use_signal(|| false);
-    // Throttle key for the admission pre-filter diagnostic: only emit a WARN
-    // when the (realm, blocking-reason) pair changes, so a genuinely stuck
-    // admin gets one visible line per cause.
-    let mls_admission_diag_last = use_signal(String::new);
-    // Step 3 of the account-MLS-secret auto-unlock strand: set by the bootstrap
-    // effect when this device has no local account secret yet but the server
-    // holds an `mls_account_secret` backup; consumed by `MlsUnlockPrompt`.
-    let needs_mls_unlock = use_signal(|| false);
-    // Mirror of `needs_mls_unlock` (task X3): set by the detection effects when
-    // this account has used encryption (a local account MLS secret exists) but
-    // the server holds NO `mls_account_secret` backup yet — so a fresh browser
-    // would lose history. Consumed by `MlsBackupPrompt`. Mutually exclusive
-    // with `needs_mls_unlock`: restore (unlock) always wins.
-    let needs_mls_backup = use_signal(|| false);
-    // Fresh-device diagnostic: encrypted Realm/history exists, but the server
-    // has no passphrase-backed account-secret backup to unlock. This is
-    // distinct from `needs_mls_unlock`: there is nothing this browser can
-    // decrypt until an existing device creates the recovery backup.
-    let needs_mls_recovery_setup = use_signal(|| false);
-    let needs_device_authorization = use_signal(|| false);
-    let device_authorization_check_complete = use_signal(|| false);
-    let account_has_other_devices = use_signal(|| false);
-    let mut recovery_key_setup_prompt = use_signal(|| false);
-    // Session-scoped acknowledgement flag for the recommended-encryption-floor
-    // auto-apply effect. `active_prompt == RecommendedEncryptionFloor` is
-    // re-resolved every render; during Realm creation the prompt can churn away
-    // and back as sync flushes new state, remounting `EncryptionFloorPrompt`.
-    // Hoisting the flag prevents repeat auto-apply work in the same session.
-    let encryption_floor_prompt_dismissed = use_signal(|| false);
-    // In-memory "already auto-prompted recovery setup this session" guard. The
-    // persisted localStorage flag handles across-session suppression, but a
-    // session guard makes the one-time auto-open robust against the user
-    // dismissing the modal and against sync re-flushing local state, so the
-    // proactive nudge can never re-pop within a session.
-    let recovery_auto_prompt_fired = use_signal(|| false);
-    let mut account_recovery_configured = use_signal(|| Option::<bool>::None);
-    let mut account_recovery_detection_key_seen = use_signal(|| Option::<String>::None);
-    let account_recovery_retry_attempt = use_signal(|| 0_u8);
+    let SecurityRuntimeSignals {
+        mls_key_package_publish_key_seen,
+        mls_welcome_bootstrap_key_seen,
+        mls_admission_reconcile_in_flight,
+        mls_admission_reconcile_pending,
+        mls_admission_diag_last,
+        needs_mls_unlock,
+        needs_mls_backup,
+        needs_mls_recovery_setup,
+        needs_device_authorization,
+        device_authorization_check_complete,
+        account_has_other_devices,
+        mut recovery_key_setup_prompt,
+        encryption_floor_prompt_dismissed,
+        recovery_auto_prompt_fired,
+        mut account_recovery_configured,
+        mut account_recovery_detection_key_seen,
+        account_recovery_retry_attempt,
+    } = use_security_runtime_signals();
     // X11.2 — expose `needs_mls_backup` via context so deep encrypted-write
     // success paths (kanban card detail update, chat secure send) can flip the
     // backup prompt on directly, WITHOUT relying on the fragile boot-time
@@ -1260,6 +1232,42 @@ fn AppBootstrap() -> Element {
     let encryption_floor_prompt_acknowledged = principal_id().as_ref().is_some_and(|actor_id| {
         crate::app::encryption_floor_prompt_acknowledged(&state_store.read(), actor_id)
     });
+    macro_rules! app_connect_context {
+        ($session:expr) => {
+            ConnectContext {
+                session: $session,
+                connection_status,
+                sync_cursor,
+                token,
+                principal_id,
+                selected_realm_id,
+                realm_tree_nodes,
+                projection_events,
+                device_queue,
+                frontier_state,
+                crypto_state,
+                config_store,
+                state_store,
+                network_state,
+                last_error,
+                server_description,
+                server_probe_status,
+                account_primary_handle,
+                personal_handles,
+                personal_handles_status,
+                theme,
+                sync_generation,
+                needs_device_authorization,
+                device_authorization_check_complete,
+                account_has_other_devices,
+                sync_bootstrap_complete,
+                session_boot_state,
+                bootstrap_pending,
+                did_cache,
+                did_resolution_health,
+            }
+        };
+    }
     let mobile_connect_session = runtime_services.session.clone();
     let server_connect_session = runtime_services.session.clone();
     let manual_refresh_session = runtime_services.session.clone();
@@ -1279,38 +1287,7 @@ fn AppBootstrap() -> Element {
                         base_url(),
                         principal_id(),
                         device_id(),
-                        ConnectContext {
-                            session: mobile_connect_session.clone(),
-                            connection_status,
-                            sync_cursor,
-                            token,
-                            principal_id,
-                            selected_realm_id,
-                            realm_tree_nodes,
-                            projection_events,
-                            device_queue,
-                            frontier_state,
-                            crypto_state,
-                            config_store,
-                            state_store,
-                            network_state,
-                            last_error,
-                            server_description,
-                            server_probe_status,
-                            account_primary_handle,
-                            personal_handles,
-                            personal_handles_status,
-                            theme,
-                            sync_generation,
-                            needs_device_authorization,
-                            device_authorization_check_complete,
-                            account_has_other_devices,
-                            sync_bootstrap_complete,
-                            session_boot_state,
-                            bootstrap_pending,
-                            did_cache,
-                            did_resolution_health,
-                        },
+                        app_connect_context!(mobile_connect_session.clone()),
                     )
                 },
                 "Refresh"
@@ -1912,38 +1889,7 @@ fn AppBootstrap() -> Element {
                                                         next_url,
                                                         principal_id(),
                                                         device_id(),
-                    ConnectContext {
-                        session: server_connect_session.clone(),
-                                                            connection_status,
-                                                            sync_cursor,
-                                                            token,
-                                                            principal_id,
-                                                            selected_realm_id,
-                                                            realm_tree_nodes,
-                                                            projection_events,
-                                                            device_queue,
-                                                            frontier_state,
-                                                            crypto_state,
-                                                            config_store,
-                                                            state_store,
-                                                            network_state,
-                                                            last_error,
-                                                            server_description,
-                                                            server_probe_status,
-                                                            account_primary_handle,
-                                                            personal_handles,
-                                                            personal_handles_status,
-                                                            theme,
-                                                            sync_generation,
-                                                            needs_device_authorization,
-                                                            device_authorization_check_complete,
-                                                            account_has_other_devices,
-                                                            sync_bootstrap_complete,
-                                                            session_boot_state,
-                                                            bootstrap_pending,
-                                                                                did_cache,
-                                                            did_resolution_health,
-                                                        },
+                                                        app_connect_context!(server_connect_session.clone()),
                                                     );
                                                 }
                                             },

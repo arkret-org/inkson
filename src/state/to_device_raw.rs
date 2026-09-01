@@ -431,8 +431,8 @@ impl LocalStateStore {
             .retain(|_, receipt| receipt.expires_at > now);
         let pruned_receipts = receipts_before_retain != self.cached.to_device_receipts.len();
         for persisted in &self.cached.to_device_inbox {
-            let key = to_device_message_dedup_key(persisted);
-            if let (Ok(digest), Some(expires_at)) = (
+            if let (Ok(key), Ok(digest), Some(expires_at)) = (
+                to_device_message_dedup_key(persisted),
                 arkret_sdk::canonical::canonical_sha256(persisted),
                 to_device_message_expiry(persisted),
             ) {
@@ -450,13 +450,13 @@ impl LocalStateStore {
         let mut invite_delivery_updated = false;
         let mut conflict = None;
         for message in messages {
+            let key = to_device_envelope_dedup_key(message);
             let Ok(message) = serde_json::to_value(message) else {
                 continue;
             };
             if to_device_message_expired(&message, now) {
                 continue;
             }
-            let key = to_device_message_dedup_key(&message);
             let Some(expires_at) = to_device_message_expiry(&message) else {
                 conflict = Some(format!("device_message_conflict: invalid expiry for {key}"));
                 break;

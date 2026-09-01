@@ -1119,15 +1119,6 @@ pub fn english_translations() -> TranslationDict {
     dict.set("verify_device.generate_qr", "Generate QR Data");
     dict.set("verify_device.start_sas", "Start emoji verification");
     dict.set("verify_device.short_auth_string", "Comparison code");
-    dict.set(
-        "verify_device.sas_demo_warning",
-        "Key exchange is not complete yet. The sequence below is a placeholder and must not be used for verification.",
-    );
-    dict.set(
-        "verify_device.sas_match_disabled_hint",
-        "The secure connection between the devices is not ready yet, so these cannot be confirmed as a match. Wait for it to finish.",
-    );
-
     // SAS strand — plain-language rewrite: no SAS / X25519 jargon in
     // user-facing copy. This panel has no "technical details" affordance,
     // so the jargon is dropped rather than tucked behind one.

@@ -908,3 +908,13 @@ fn mention_state_uses_realm_participation_entry() {
     assert_eq!(policy, AgentMentionPolicy::Allowed);
     assert!(selection.accept_third_party_mention);
 }
+
+#[test]
+fn mls_admission_authoring_locks_are_scoped_per_realm() {
+    let realm_a = mls_admission_authoring_lock("ak:realm:a");
+    let realm_a_again = mls_admission_authoring_lock("ak:realm:a");
+    let realm_b = mls_admission_authoring_lock("ak:realm:b");
+
+    assert!(Arc::ptr_eq(&realm_a, &realm_a_again));
+    assert!(!Arc::ptr_eq(&realm_a, &realm_b));
+}

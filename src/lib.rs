@@ -142,6 +142,7 @@ pub mod sync_engine;
 pub mod sync_parse;
 pub mod telemetry;
 pub(crate) mod transport;
+pub(crate) mod ui_signal;
 pub use transport::realm_write::{
     relinquish_capability, reset_realm_authority, transfer_realm_owner,
 };

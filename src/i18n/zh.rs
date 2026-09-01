@@ -1146,15 +1146,6 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("verify_device.generate_qr", "生成二维码");
     dict.set("verify_device.start_sas", "开始表情符号验证");
     dict.set("verify_device.short_auth_string", "比对码");
-    dict.set(
-        "verify_device.sas_demo_warning",
-        "尚未完成密钥交换，下方序列仅为演示占位，不能用于验证。",
-    );
-    dict.set(
-        "verify_device.sas_match_disabled_hint",
-        "设备之间的安全连接尚未就绪,暂时无法确认两者是否匹配。请等待连接完成。",
-    );
-
     // 表情符号比对照料——面向用户的文案不再出现 SAS / X25519 术语；
     // 面板没有“技术详情”折叠区，术语直接去掉而不是藏起来。
     dict.set("verify_device.key_exchange_title", "密钥交换");

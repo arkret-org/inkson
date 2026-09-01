@@ -61,6 +61,12 @@ mod principal_id_tests {
             principal_core_id("did:web:alice.example").unwrap().as_str(),
             core
         );
+        assert_eq!(
+            principal_core_id("  did:web:alice.example  ")
+                .unwrap()
+                .as_str(),
+            core
+        );
     }
 }
 pub(crate) fn sign_keypackage_upload_batch_with_signer(

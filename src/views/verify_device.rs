@@ -624,71 +624,47 @@ pub fn VerifyDevicePanel(
                                 // identical emoji + digits - the
                                 // contract verify-device relies on.
                                 //
-                                // Fallback: when peer key is not yet
-                                // pasted (or ECDH fails on an invalid
-                                // peer key), keep the demo
-                                // `(target_device_did, sas_code)` info
-                                // hash so the panel still renders
-                                // something the user can see. That
-                                // placeholder MUST NOT be confirmable:
-                                // `sas_is_real` is false in both demo
-                                // branches, which shows a warning
-                                // callout and disables "They Match"
-                                // until a real shared secret exists.
                                 let target = target_device();
                                 let info = format!("{target}|{}", sas_code());
-                                let (sas, sas_source, sas_is_real) = match (
+                                let (secure_sas, unavailable_message) = match (
                                     ephemeral_keypair(),
                                     if peer_public_b64().is_empty() { None } else { Some(peer_public_b64()) },
                                 ) {
                                     (Some(pair), Some(peer_pub)) => {
                                         match pair.compute_shared_secret(&peer_pub) {
                                             Ok(shared) => (
-                                                arkret_crypto::key_verification::derive_sas_bytes(
-                                                    shared.as_ref(),
-                                                    info.as_bytes(),
-                                                ),
-                                                crate::i18n::tr("verify_device.source_secure"),
-                                                true,
+                                                Some((
+                                                    arkret_crypto::key_verification::derive_sas_bytes(
+                                                        shared.as_ref(),
+                                                        info.as_bytes(),
+                                                    ),
+                                                    crate::i18n::tr("verify_device.source_secure"),
+                                                )),
+                                                String::new(),
                                             ),
                                             Err(_) => (
-                                                arkret_crypto::key_verification::derive_sas_bytes(
-                                                    target.as_bytes(),
-                                                    info.as_bytes(),
+                                                None,
+                                                crate::i18n::tr(
+                                                    "verify_device.source_demo_invalid",
                                                 ),
-                                                crate::i18n::tr("verify_device.source_demo_invalid"),
-                                                false,
                                             ),
                                         }
                                     }
                                     _ => (
-                                        arkret_crypto::key_verification::derive_sas_bytes(
-                                            target.as_bytes(),
-                                            info.as_bytes(),
-                                        ),
+                                        None,
                                         crate::i18n::tr("verify_device.source_demo_waiting"),
-                                        false,
                                     ),
                                 };
-                                let emoji_pairs = sas.emoji_pairs();
-                                let digits_text = format!(
-                                    "{:04} {:04} — {:04}",
-                                    sas.decimal_digits[0],
-                                    sas.decimal_digits[1],
-                                    sas.decimal_digits[2],
-                                );
-                                rsx! {
+                                if let Some((sas, sas_source)) = secure_sas {
+                                    let emoji_pairs = sas.emoji_pairs();
+                                    let digits_text = format!(
+                                        "{:04} {:04} — {:04}",
+                                        sas.decimal_digits[0],
+                                        sas.decimal_digits[1],
+                                        sas.decimal_digits[2],
+                                    );
+                                    rsx! {
                             div { class: "event", "data-testid": "sas-display",
-                                // Security gate: the placeholder SAS derived
-                                // from public inputs must never be confirmed
-                                // as a match — make that explicit up front.
-                                if !sas_is_real {
-                                    div { class: "callout warn", "data-testid": "sas-demo-warning",
-                                        div { class: "body",
-                                            {crate::i18n::tr("verify_device.sas_demo_warning")}
-                                        }
-                                    }
-                                }
                                 div { class: "entity-title", {crate::i18n::tr("verify_device.short_auth_string")} }
                                 div { class: "muted", {crate::i18n::tr("verify_device.compare_hint")} }
                                 div { class: "muted", "data-testid": "sas-source", "{sas_source}" }
@@ -704,16 +680,6 @@ pub fn VerifyDevicePanel(
                                     Button {
                                         variant: ButtonVariant::Primary,
                                         "data-testid": "sas-match-button",
-                                        // Confirming a match is only meaningful when the
-                                        // displayed SAS was derived from the real X25519
-                                        // shared secret; the demo placeholder is derived
-                                        // from public inputs and proves nothing.
-                                        disabled: !sas_is_real,
-                                        title: if sas_is_real {
-                                            String::new()
-                                        } else {
-                                            crate::i18n::tr("verify_device.sas_match_disabled_hint")
-                                        },
                                         onclick: {
                                             let actor = principal_id.clone();
                                             let from_device = device_id.clone();
@@ -826,7 +792,14 @@ pub fn VerifyDevicePanel(
                                     }
                                 }
                             }
-                            }  // close rsx!
+                                    }  // close secure SAS rsx!
+                                } else {
+                                    rsx! {
+                                        div { class: "callout warn", "data-testid": "sas-unavailable",
+                                            div { class: "body", "{unavailable_message}" }
+                                        }
+                                    }
+                                }
                             }  // close outer let-block
                         }
                     }

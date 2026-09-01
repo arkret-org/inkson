@@ -10,10 +10,8 @@ use arkret_sdk::signatures::agent_evidence::{
 use arkret_sdk::signatures::{Ed25519DetachedJwsVerifier, PublicKeyMaterial};
 use arkret_sdk::{
     AgentSignerEvidence, AgentSignerEvidenceQueryRequestBody, AgentSignerEvidenceQuerySelector,
-    Did, DidCoreId, DidUrl, Hash, NonEmptyString, NotarySig, ProtocolOperationId, RealmId,
+    Did, DidCoreId, DidUrl, Hash, NotarySig, RealmId,
 };
-use base64::Engine as _;
-use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use serde_json::Value;
 
 use crate::identity::device_directory::DidAnchor as _;
