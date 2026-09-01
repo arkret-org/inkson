@@ -586,6 +586,53 @@ fn avatar_blob_ref_round_trips_through_client_ui() {
 }
 
 #[test]
+fn client_ui_patches_preserve_unrelated_fields() {
+    let mut body = json!({
+        "theme": "light",
+        "language": "en",
+        "avatar_blob_ref": "ak:blob:sha256:old",
+        "recent_realms": ["ak:realm:one"],
+        "sidebar_collapsed": true,
+        "per_realm_view": {"ak:realm:one": "kanban"},
+        "future_field": {"owned_by": "another-client"}
+    });
+
+    apply_client_ui_state_patches(&mut body, &[ClientUiStatePatch::Theme("night".to_owned())]);
+
+    assert_eq!(body["theme"], "night");
+    assert_eq!(body["language"], "en");
+    assert_eq!(body["avatar_blob_ref"], "ak:blob:sha256:old");
+    assert_eq!(body["recent_realms"], json!(["ak:realm:one"]));
+    assert_eq!(body["sidebar_collapsed"], true);
+    assert_eq!(body["per_realm_view"]["ak:realm:one"], "kanban");
+    assert_eq!(body["future_field"]["owned_by"], "another-client");
+}
+
+#[test]
+fn client_ui_avatar_tombstone_and_language_patch_preserve_other_preferences() {
+    let mut body = json!({
+        "theme": "system",
+        "language": "en",
+        "avatar_blob_ref": "ak:blob:sha256:old",
+        "recent_realms": ["ak:realm:one"]
+    });
+
+    apply_client_ui_state_patches(
+        &mut body,
+        &[
+            ClientUiStatePatch::AvatarBlobRef("   ".to_owned()),
+            ClientUiStatePatch::Language(crate::i18n::UiLocale::Zh),
+        ],
+    );
+
+    assert_eq!(body["avatar_blob_ref"], "");
+    assert!(avatar_blob_ref_tombstoned_from_client_ui(&body));
+    assert_eq!(body["language"], "zh");
+    assert_eq!(body["theme"], "system");
+    assert_eq!(body["recent_realms"], json!(["ak:realm:one"]));
+}
+
+#[test]
 fn theme_from_client_ui_only_accepts_known_themes() {
     assert_eq!(
         theme_from_client_ui(&json!({"theme": "light"})),

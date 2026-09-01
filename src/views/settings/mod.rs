@@ -78,7 +78,11 @@ pub(crate) fn push_client_ui_account_data(
     api_token: String,
     local_theme: String,
 ) {
-    push_client_ui_account_data_with_avatar(base_url, api_token, local_theme, None);
+    push_client_ui_account_data_patches(
+        base_url,
+        api_token,
+        vec![crate::account_data::ClientUiStatePatch::Theme(local_theme)],
+    );
 }
 
 /// A locale's name written in that locale, so a user who cannot read the
@@ -133,6 +137,21 @@ pub(crate) fn push_client_language_account_data(
     api_token: String,
     locale: UiLocale,
 ) {
+    push_client_ui_account_data_patches(
+        base_url,
+        api_token,
+        vec![crate::account_data::ClientUiStatePatch::Language(locale)],
+    );
+}
+
+/// Best-effort field-level update of the encrypted `ak.client.ui_state` cell.
+/// All writers share the account-data CAS read/merge/write loop so retries
+/// always reapply the patch to the latest server snapshot.
+fn push_client_ui_account_data_patches(
+    base_url: String,
+    api_token: String,
+    patches: Vec<crate::account_data::ClientUiStatePatch>,
+) {
     if api_token.trim().is_empty() {
         return;
     }
@@ -155,7 +174,7 @@ pub(crate) fn push_client_language_account_data(
                         )?,
                         None => serde_json::json!({}),
                     };
-                    crate::account_data::set_client_ui_language(&mut plaintext, locale);
+                    crate::account_data::apply_client_ui_state_patches(&mut plaintext, &patches);
                     crate::account_data::encrypt_account_data_value(
                         &authority,
                         AccountDataKey::CLIENT_UI_STATE,
@@ -168,7 +187,7 @@ pub(crate) fn push_client_language_account_data(
         .await
         {
             tracing::warn!(
-                "ak.account_data.set for ak.client.ui_state language failed: {}",
+                "ak.account_data.set for ak.client.ui_state failed: {}",
                 err.display()
             );
         }
@@ -191,40 +210,13 @@ pub(crate) fn push_client_ui_account_data_with_avatar(
     local_theme: String,
     avatar_blob_ref: Option<String>,
 ) {
-    if api_token.trim().is_empty() {
-        // No active session — nothing to sync; the next login will pick
-        // up the local value once the user signs in.
-        return;
+    let mut patches = vec![crate::account_data::ClientUiStatePatch::Theme(local_theme)];
+    if let Some(avatar_blob_ref) = avatar_blob_ref {
+        patches.push(crate::account_data::ClientUiStatePatch::AvatarBlobRef(
+            avatar_blob_ref,
+        ));
     }
-    let body = crate::account_data::build_client_ui_body(
-        Some(local_theme.as_str()),
-        None,
-        &std::collections::BTreeMap::new(),
-        avatar_blob_ref.as_deref(),
-    );
-    let body = match encrypted_account_data_value(AccountDataKey::CLIENT_UI_STATE, &body) {
-        Ok(body) => body,
-        Err(error) => {
-            tracing::warn!(%error, "ak.client.ui_state encryption failed");
-            return;
-        }
-    };
-    spawn(async move {
-        match with_event_submitter(&base_url, api_token, |sub| async move {
-            crate::transport::account::set_account_data(&sub, AccountDataKey::CLIENT_UI_STATE, body)
-                .await
-        })
-        .await
-        {
-            Ok(_) => {}
-            Err(err) => {
-                tracing::warn!(
-                    "ak.account_data.set for ak.client.ui_state failed: {}",
-                    err.display()
-                );
-            }
-        }
-    });
+    push_client_ui_account_data_patches(base_url, api_token, patches);
 }
 
 /// Build the canonical `content` body for a read-receipt preferences
@@ -475,8 +467,6 @@ pub(crate) fn push_contact_remark_account_data(
 #[allow(clippy::expect_used)]
 #[component]
 pub fn SettingsPanel(
-    principal_id: Signal<Option<arkret_sdk::DidCoreId>>,
-    device_id: Signal<String>,
     token: Signal<String>,
     account_primary_handle: String,
     personal_handles: Vec<String>,

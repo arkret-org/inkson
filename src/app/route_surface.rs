@@ -464,8 +464,6 @@ pub(super) fn RouteSurface(state: RouteSurfaceState) -> Element {
                     | Route::Audit
                     | Route::Developer => rsx! {
                         crate::views::settings::SettingsPanel {
-                            principal_id: principal_id_signal,
-                            device_id,
                             token,
                             account_primary_handle: account_primary_handle(),
                             personal_handles: personal_handles(),
@@ -517,9 +515,7 @@ pub(super) fn RouteSurface(state: RouteSurfaceState) -> Element {
                         if full_ready {
                             rsx! {
                                 crate::views::realm_admin::RealmMembersPanel {
-                                    active_service_id: active_service_id.clone(),
                                     principal_id: principal_id.clone(),
-                                    device_id: device_id(),
                                     token,
                                     selected_realm_id: active_realm_id.clone(),
                                     sync_cursor,

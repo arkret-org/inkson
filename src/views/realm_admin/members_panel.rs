@@ -34,6 +34,85 @@ const MEMBER_PAGE_SIZE: usize = 50;
 /// shown. Below it, scanning the list by eye is faster than typing.
 const MEMBER_SEARCH_THRESHOLD: usize = 8;
 
+const MEMBER_PERMISSION_ACTIONS: [&str; 4] = [
+    CapabilityActionId::INVITE_CREATE,
+    CapabilityActionId::INVITE_CANCEL,
+    CapabilityActionId::INVITE_REVOKE,
+    CapabilityActionId::REALM_ADMIN,
+];
+
+struct RealmMemberPermissionChecks {
+    invite: anyhow::Result<bool>,
+    cancel_invite: anyhow::Result<bool>,
+    revoke_invite: anyhow::Result<bool>,
+    remove: anyhow::Result<bool>,
+}
+
+struct RealmMemberPermissionLoad {
+    capabilities: RealmMemberCapabilities,
+    all_checks_failed: bool,
+}
+
+fn aggregate_realm_member_permissions(
+    checks: &RealmMemberPermissionChecks,
+) -> RealmMemberPermissionLoad {
+    RealmMemberPermissionLoad {
+        capabilities: RealmMemberCapabilities {
+            loaded: true,
+            can_invite: checks.invite.as_ref().copied().unwrap_or(false),
+            can_cancel_invite: checks.cancel_invite.as_ref().copied().unwrap_or(false),
+            can_revoke_invite: checks.revoke_invite.as_ref().copied().unwrap_or(false),
+            can_remove: checks.remove.as_ref().copied().unwrap_or(false),
+        },
+        all_checks_failed: checks.invite.is_err()
+            && checks.cancel_invite.is_err()
+            && checks.revoke_invite.is_err()
+            && checks.remove.is_err(),
+    }
+}
+
+async fn fetch_realm_member_capability(
+    api: &crate::transport::TransportClient,
+    actor: &str,
+    action: &str,
+    realm: &str,
+) -> anyhow::Result<bool> {
+    crate::transport::realm_read::authz_check(&api.sdk_http_client()?, actor, action, realm)
+        .await
+        .map(|outcome| crate::transport::realm_read::authz_allowed(&outcome))
+}
+
+async fn fetch_realm_member_capabilities(
+    api: &crate::transport::TransportClient,
+    actor: &str,
+    realm: &str,
+) -> RealmMemberPermissionChecks {
+    // Keep these awaits sequential and in registry order. Each request has an
+    // independent fail-closed result so one unavailable action does not hide
+    // the remaining controls' decisions.
+    let [
+        invite_action,
+        cancel_invite_action,
+        revoke_invite_action,
+        remove_action,
+    ] = MEMBER_PERMISSION_ACTIONS;
+    let invite = fetch_realm_member_capability(api, actor, invite_action, realm).await;
+    let cancel_invite =
+        fetch_realm_member_capability(api, actor, cancel_invite_action, realm).await;
+    let revoke_invite =
+        fetch_realm_member_capability(api, actor, revoke_invite_action, realm).await;
+    // Member removal has no standalone capability action in v1; Realm
+    // management authority is the registered fail-closed probe.
+    let remove = fetch_realm_member_capability(api, actor, remove_action, realm).await;
+
+    RealmMemberPermissionChecks {
+        invite,
+        cancel_invite,
+        revoke_invite,
+        remove,
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum AgentMentionPolicy {
     Allowed,
@@ -2603,15 +2682,12 @@ async fn refresh_mls_governance_target_basis(
 
 #[component]
 pub fn RealmMembersPanel(
-    active_service_id: String,
     principal_id: String,
-    device_id: String,
     token: Signal<String>,
     selected_realm_id: String,
     sync_cursor: Signal<String>,
     frontier_state: Signal<String>,
 ) -> Element {
-    let _active_service_id = active_service_id;
     // A4 — base_url / state_store from session context instead of props.
     let base_url = crate::app::SessionContext::base_url_string();
     let mut state_store = crate::app::SessionContext::get().state_store;
@@ -2744,92 +2820,21 @@ pub fn RealmMembersPanel(
             let realm = realm.clone();
             spawn(async move {
                 match with_authed_api(&base, api_token, |api| async move {
-                    let invite = async {
-                        crate::transport::realm_read::authz_check(
-                            &api.sdk_http_client()?,
-                            &actor,
-                            CapabilityActionId::INVITE_CREATE,
-                            &realm,
-                        )
-                        .await
-                    }
-                    .await;
-                    let cancel_invite = async {
-                        crate::transport::realm_read::authz_check(
-                            &api.sdk_http_client()?,
-                            &actor,
-                            CapabilityActionId::INVITE_CANCEL,
-                            &realm,
-                        )
-                        .await
-                    }
-                    .await;
-                    let revoke_invite = async {
-                        crate::transport::realm_read::authz_check(
-                            &api.sdk_http_client()?,
-                            &actor,
-                            CapabilityActionId::INVITE_REVOKE,
-                            &realm,
-                        )
-                        .await
-                    }
-                    .await;
-                    // Member removal has no standalone capability action in
-                    // v1; it is governed by Realm management authority. Probe
-                    // the registered `ak.realm.admin` action (management,
-                    // high-risk) instead of the unregistered placeholder
-                    // `ak.member.remove`, which is not in
-                    // capability-action-registry.json and would be treated as
-                    // an unknown high-risk action (fail-closed) by a
-                    // spec-conformant server.
-                    let remove = async {
-                        crate::transport::realm_read::authz_check(
-                            &api.sdk_http_client()?,
-                            &actor,
-                            CapabilityActionId::REALM_ADMIN,
-                            &realm,
-                        )
-                        .await
-                    }
-                    .await;
-                    Ok::<_, anyhow::Error>((invite, cancel_invite, revoke_invite, remove))
+                    Ok::<_, anyhow::Error>(
+                        fetch_realm_member_capabilities(&api, &actor, &realm).await,
+                    )
                 })
                 .await
                 {
-                    Ok((invite, cancel_invite, revoke_invite, remove)) => {
-                        let can_invite = invite
-                            .as_ref()
-                            .map(crate::transport::realm_read::authz_allowed)
-                            .unwrap_or(false);
-                        let can_cancel_invite = cancel_invite
-                            .as_ref()
-                            .map(crate::transport::realm_read::authz_allowed)
-                            .unwrap_or(false);
-                        let can_revoke_invite = revoke_invite
-                            .as_ref()
-                            .map(crate::transport::realm_read::authz_allowed)
-                            .unwrap_or(false);
-                        let can_remove = remove
-                            .as_ref()
-                            .map(crate::transport::realm_read::authz_allowed)
-                            .unwrap_or(false);
-                        if invite.is_err()
-                            && cancel_invite.is_err()
-                            && revoke_invite.is_err()
-                            && remove.is_err()
-                        {
+                    Ok(checks) => {
+                        let load = aggregate_realm_member_permissions(&checks);
+                        if load.all_checks_failed {
                             status_msg.set(
                                 "member action permission check failed; write controls hidden"
                                     .to_owned(),
                             );
                         }
-                        permissions.set(RealmMemberCapabilities {
-                            loaded: true,
-                            can_invite,
-                            can_cancel_invite,
-                            can_revoke_invite,
-                            can_remove,
-                        });
+                        permissions.set(load.capabilities);
                     }
                     Err(error) => {
                         permissions.set(RealmMemberCapabilities {

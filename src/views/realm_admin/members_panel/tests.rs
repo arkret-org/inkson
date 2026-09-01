@@ -1,5 +1,73 @@
 use super::*;
 
+fn permission_checks(
+    invite: anyhow::Result<bool>,
+    cancel_invite: anyhow::Result<bool>,
+    revoke_invite: anyhow::Result<bool>,
+    remove: anyhow::Result<bool>,
+) -> RealmMemberPermissionChecks {
+    RealmMemberPermissionChecks {
+        invite,
+        cancel_invite,
+        revoke_invite,
+        remove,
+    }
+}
+
+#[test]
+fn member_permission_actions_preserve_protocol_probe_order() {
+    assert_eq!(
+        MEMBER_PERMISSION_ACTIONS,
+        [
+            CapabilityActionId::INVITE_CREATE,
+            CapabilityActionId::INVITE_CANCEL,
+            CapabilityActionId::INVITE_REVOKE,
+            CapabilityActionId::REALM_ADMIN,
+        ]
+    );
+}
+
+#[test]
+fn member_permission_aggregation_preserves_mixed_results_and_mapping() {
+    let load = aggregate_realm_member_permissions(&permission_checks(
+        Ok(true),
+        Err(anyhow::anyhow!("cancel unavailable")),
+        Ok(false),
+        Ok(true),
+    ));
+
+    assert_eq!(
+        load.capabilities,
+        RealmMemberCapabilities {
+            loaded: true,
+            can_invite: true,
+            can_cancel_invite: false,
+            can_revoke_invite: false,
+            can_remove: true,
+        }
+    );
+    assert!(!load.all_checks_failed);
+}
+
+#[test]
+fn member_permission_aggregation_marks_all_errors_fail_closed() {
+    let load = aggregate_realm_member_permissions(&permission_checks(
+        Err(anyhow::anyhow!("invite unavailable")),
+        Err(anyhow::anyhow!("cancel unavailable")),
+        Err(anyhow::anyhow!("revoke unavailable")),
+        Err(anyhow::anyhow!("admin unavailable")),
+    ));
+
+    assert_eq!(
+        load.capabilities,
+        RealmMemberCapabilities {
+            loaded: true,
+            ..RealmMemberCapabilities::default()
+        }
+    );
+    assert!(load.all_checks_failed);
+}
+
 fn actor_key(id: &str) -> String {
     let principal = arkret_sdk::DidCoreId::new(id).unwrap();
     let station = arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap();

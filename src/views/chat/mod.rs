@@ -35,6 +35,7 @@ mod composer;
 mod controller;
 mod effects;
 mod model;
+mod right_panel;
 mod scheduled_send_panel;
 mod timeline;
 mod timeline_surface;
@@ -112,6 +113,7 @@ pub(crate) use model::{
     confirmed_sidecar_publish_message_operation, default_discussion_strand_id,
     verified_chat_sender_domain_for_realm,
 };
+use right_panel::{DiscussionSettingsPanel, DiscussionUsersPanel, SidecarDeliveryDiagnostics};
 use timeline::*;
 use timeline_surface::{ChatTimeline, ChatTimelineContext};
 
@@ -2156,7 +2158,12 @@ pub fn ChatPanel(
             .unwrap_or(session.opened_at)
             .format("%H:%M:%S")
             .to_string();
-        (submit, fanout, receipt, last_updated)
+        SidecarDeliveryDiagnostics {
+            submit,
+            fanout,
+            receipt,
+            last_updated,
+        }
     });
     rsx! {
         div {
@@ -2954,405 +2961,45 @@ pub fn ChatPanel(
             }
 
             if active_right_panel == Some(DiscussionSidePanel::Users) {
-                aside { class: "discussion-panel discussion-details-panel", "data-testid": "discussion-users-panel",
-                    div { class: "discussion-panel-head",
-                        div { class: "discussion-title-row",
-                            h2 { {if sidecar_mode { "Access".to_owned() } else { crate::i18n::tr("chat.users_header") }} }
-                        }
-                    }
-                    // T7.5: lightweight tab bar so members and settings
-                    // share a single right panel rather than competing
-                    // for the same slot. Each tab maps to one
-                    // `DiscussionSidePanel` value the existing buttons
-                    // already toggle.
-                    div { class: "discussion-right-tabs",
-                        Button {
-                            variant: ButtonVariant::Secondary,
-                            r#type: "button",
-                            class: "discussion-right-tab active",
-                            "data-testid": "discussion-right-tab-members",
-                            onclick: move |_| right_panel.set(Some(DiscussionSidePanel::Users)),
-                            {if sidecar_mode { "Access".to_owned() } else { crate::i18n::tr("chat.tabs.members") }}
-                        }
-                        Button {
-                            variant: ButtonVariant::Secondary,
-                            r#type: "button",
-                            class: "discussion-right-tab",
-                            "data-testid": "discussion-right-tab-settings",
-                            onclick: move |_| right_panel.set(Some(DiscussionSidePanel::Settings)),
-                            {if sidecar_mode { "Connection details".to_owned() } else { crate::i18n::tr("chat.tabs.settings") }}
-                        }
-                    }
-                    if let Some(session) = sidecar_session.as_ref() {
-                        div { class: "discussion-detail-section sidecar-access-section", "data-testid": "sidecar-access-panel",
-                            div { class: "discussion-subhead", span { "Sidecar members" } }
-                            div { class: "sidecar-access-row",
-                                div {
-                                    strong {
-                                        if account_primary_handle.trim().is_empty() {
-                                            "You"
-                                        } else {
-                                            "{account_primary_handle}"
-                                        }
-                                    }
-                                    span { class: "muted", "Controller" }
-                                }
-                                span { class: "badge success", "Active" }
-                            }
-                            for agent in &sidecar_owned_agents {
-                                {
-                                    let agent_id = agent.principal_id.to_string();
-                                    let slug = agent.agent_metadata.as_ref()
-                                        .map(|metadata| metadata.agent_slug.trim().to_owned())
-                                        .filter(|slug| !slug.is_empty())
-                                        .unwrap_or_else(|| short_principal_label(&agent_id));
-                                    let selector = agent_selector_label(agent);
-                                    let addressed_now = session.addressed_agent_ids.iter()
-                                        .any(|candidate| candidate == &agent_id);
-                                    rsx! {
-                                        div { class: "sidecar-access-row", key: "{agent_id}", "data-testid": "sidecar-agent-row",
-                                            div {
-                                                strong { "{slug}" }
-                                                if let Some(selector) = selector {
-                                                    span { class: "muted", "@{selector}" }
-                                                }
-                                                span { class: "muted mono", "{agent_id}" }
-                                            }
-                                            span { class: if addressed_now { "badge accent" } else { "badge" },
-                                                if addressed_now { "Addressed now" } else { "Eligible agent" }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                            div { class: "event info",
-                                "Sidecar access is derived from your eligible Agents. The badge marks the Agent addressed by the current message."
-                            }
-                            div { class: "discussion-subhead", span { "Encryption" } }
-                            div { class: "detail-row", span { "Profile" } strong { {sidecar_security_label.unwrap_or("Opening")} } }
-                            div { class: "detail-row", span { "Membership reconciliation" } strong {
-                                if session.membership_ready() { "Complete" } else { "Pending" }
-                            } }
-                            div { class: "detail-row", span { "Pending members" } strong { "{session.pending_reconciliation_count()}" } }
-                        }
-                    }
-                    // G3.Y2 — presence list. One row per participant
-                    // with `data-presence-state` derived from soland's
-                    // live profile presence surface.
-                    div { class: "discussion-detail-section",
-                        div { class: "discussion-subhead", span { "Presence" } }
-                        div {
-                            class: "presence-list",
-                            "data-testid": "presence-list",
-                            for participant in &presence_participants {
-                                {
-                                    let principal_id_attr = participant.roster_key();
-                                    let live_labels = presence_labels();
-                                    let display = display_label_for_actor(
-                                        &state_store.read(),
-                                        &participants,
-                                        &live_labels,
-                                        participant.principal_id.as_str(),
-                                    );
-                                    let state = presence_states
-                                        .read()
-                                        .get(participant.principal_id.as_str())
-                                        .cloned()
-                                        .unwrap_or_else(|| {
-                                            if participant.is_self {
-                                                "online".to_owned()
-                                            } else {
-                                                "offline".to_owned()
-                                            }
-                                        });
-                                    let state_for_class = state.clone();
-                                    let status_message = presence_status_messages
-                                        .read()
-                                        .get(participant.principal_id.as_str())
-                                        .cloned();
-                                    rsx! {
-                                        div {
-                                            class: "presence-row presence-row-{state_for_class}",
-                                            "data-testid": "presence-row",
-                                            "data-actor-id": "{principal_id_attr}",
-                                            "data-presence-state": "{state}",
-                                            span { class: "presence-dot presence-dot-{state}" }
-                                            span { class: "presence-name", title: "{principal_id_attr",
-                                                "{display}"
-                                                if participant.is_self {
-                                                    SelfAttributionBadge {
-                                                        class: Some("participant-inline-self-badge".to_owned()),
-                                                        test_id: Some("presence-self-badge".to_owned()),
-                                                    }
-                                                }
-                                            }
-                                            span { class: "muted", " ({state})" }
-                                            if let Some(status_message) = status_message {
-                                                span {
-                                                    class: "muted presence-status-message",
-                                                    "data-testid": "presence-status-message",
-                                                    " — {status_message}"
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    div { class: "discussion-detail-section",
-                        div { class: "discussion-subhead", span { "Space users" } }
-                        for row in participant_roster_rows(&participants, &public_agent_ids) {
-                            {
-                                match row {
-                                    ParticipantRosterRow::Participant(participant) => {
-                                        let display_label = participant_roster_display_label(
-                                            &state_store.read(),
-                                            &participant,
-                                        );
-                                        rsx! {
-                                            DiscussionParticipantRow {
-                                                participant,
-                                                participants: participants_for_messages.clone(),
-                                                display_label,
-                                                nested_agent: false,
-                                                show_binding_details: true,
-                                            }
-                                        }
-                                    }
-                                    ParticipantRosterRow::ControllerWithAgents { controller, agents } => {
-                                        let controller_id = controller.principal_id.clone();
-                                        let agent_count = agents.len();
-                                        let display_label = participant_roster_display_label(
-                                            &state_store.read(),
-                                            &controller,
-                                        );
-                                        let agent_count_label = if agent_count == 1 {
-                                            "1 agent".to_owned()
-                                        } else {
-                                            format!("{agent_count} agents")
-                                        };
-                                        let group_aria_label = format!(
-                                            "Show {agent_count_label} for {display_label}"
-                                        );
-                                        rsx! {
-                                            details {
-                                                class: "participant-agent-group",
-                                                "data-testid": "participant-agent-group",
-                                                "data-controller-id": "{controller_id}",
-                                                summary {
-                                                    class: "participant-agent-group-summary",
-                                                    "aria-label": "{group_aria_label}",
-                                                    DiscussionParticipantRow {
-                                                        participant: controller,
-                                                        participants: participants_for_messages.clone(),
-                                                        display_label,
-                                                        nested_agent: false,
-                                                        show_binding_details: false,
-                                                    }
-                                                    span {
-                                                        class: "participant-agent-group-toggle muted",
-                                                        "data-testid": "participant-agent-group-toggle",
-                                                        "{agent_count_label}"
-                                                    }
-                                                }
-                                                div { class: "participant-agent-children",
-                                                    for agent in agents {
-                                                        {
-                                                            let display_label = participant_roster_display_label(
-                                                                &state_store.read(),
-                                                                &agent,
-                                                            );
-                                                            rsx! {
-                                                                DiscussionParticipantRow {
-                                                                    participant: agent,
-                                                                    participants: participants_for_messages.clone(),
-                                                                    display_label,
-                                                                    nested_agent: true,
-                                                                    show_binding_details: true,
-                                                                }
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
+                DiscussionUsersPanel {
+                    sidecar_mode,
+                    right_panel,
+                    sidecar_session: sidecar_session.clone(),
+                    account_primary_handle: account_primary_handle.clone(),
+                    sidecar_owned_agents: sidecar_owned_agents.clone(),
+                    sidecar_security_label: sidecar_security_label.map(str::to_owned),
+                    presence_participants: presence_participants.clone(),
+                    state_store,
+                    participants: participants.clone(),
+                    participants_for_messages: participants_for_messages.clone(),
+                    presence_labels,
+                    presence_states,
+                    presence_status_messages,
+                    public_agent_ids: public_agent_ids.clone(),
                 }
             }
 
             if active_right_panel == Some(DiscussionSidePanel::Settings) {
-                {
-                // F-CHAT-DEAD-UI-1: three toggles in the discussion-settings
-                // panel used to be pure decoration (no onchange, hard-coded
-                // `checked: true`). The first two are now wired to the
-                // same actor-private account_data that /settings already
-                // edits, so a change here mirrors immediately into the
-                // global view. Realm history access is governance state, so
-                // the third row is explanatory rather than a local checkbox.
-                let realm_id_for_mute = selected_realm_id.clone();
-                let strand_id_for_rr = selected_channel_value.clone();
-                let muted_realms_now = state_store.read().muted_realms();
-                let realm_is_muted = muted_realms_now.contains(&realm_id_for_mute);
-                let rr_default_send = state_store.read().read_receipt_default_send();
-                let rr_strand_override =
-                    state_store.read().read_receipt_strand_override(&strand_id_for_rr);
-                let rr_active = rr_strand_override.unwrap_or(rr_default_send);
-                let rr_default_display = state_store.read().read_receipt_default_display();
-                let rr_strand_display_override = state_store
-                    .read()
-                    .read_receipt_strand_display_override(&strand_id_for_rr);
-                let rr_display_active = rr_strand_display_override.unwrap_or(rr_default_display);
-                rsx! {
-                aside { class: "discussion-panel discussion-details-panel", "data-testid": "discussion-settings-panel",
-                    div { class: "discussion-panel-head",
-                        div { class: "discussion-title-row",
-                            h2 { {if sidecar_mode { "Connection details".to_owned() } else { crate::i18n::tr("chat.settings_header") }} }
-                        }
-                    }
-                    // T7.5: same tab bar as the users panel so the user
-                    // can switch tabs in-place without re-clicking the
-                    // topbar icons.
-                    div { class: "discussion-right-tabs",
-                        Button {
-                            variant: ButtonVariant::Secondary,
-                            r#type: "button",
-                            class: "discussion-right-tab",
-                            "data-testid": "discussion-right-tab-members",
-                            onclick: move |_| right_panel.set(Some(DiscussionSidePanel::Users)),
-                            {if sidecar_mode { "Access".to_owned() } else { crate::i18n::tr("chat.tabs.members") }}
-                        }
-                        Button {
-                            variant: ButtonVariant::Secondary,
-                            r#type: "button",
-                            class: "discussion-right-tab active",
-                            "data-testid": "discussion-right-tab-settings",
-                            onclick: move |_| right_panel.set(Some(DiscussionSidePanel::Settings)),
-                            {if sidecar_mode { "Connection details".to_owned() } else { crate::i18n::tr("chat.tabs.settings") }}
-                        }
-                    }
-                    if let (Some(session), Some((submit, fanout, receipt, last_updated))) =
-                        (sidecar_session.as_ref(), sidecar_delivery_diagnostics.as_ref())
-                    {
-                        div { class: "discussion-detail-section sidecar-diagnostics-section", "data-testid": "sidecar-connection-details",
-                            div { class: "detail-row", span { "Trace ID" } strong { class: "mono", "{session.trace_id}" } }
-                            div { class: "detail-row", span { "Ensure" } strong { "Complete" } }
-                            div { class: "detail-row", span { "Private access" } strong {
-                                if session.membership_ready() { "Complete" } else { "Reconciling" }
-                            } }
-                            div { class: "detail-row", span { "Encryption" } strong { {sidecar_security_label.unwrap_or("Opening")} } }
-                            div { class: "detail-row", span { "Message submit" } strong { "{submit}" } }
-                            div { class: "detail-row", span { "Notification fanout" } strong { "{fanout}" } }
-                            div { class: "detail-row", span { "Agent receipt" } strong { "{receipt}" } }
-                            div { class: "detail-row", span { "Last updated" } strong { "{last_updated}" } }
-                            div { class: "actions",
-                                Button {
-                                    variant: ButtonVariant::Secondary,
-                                    "data-testid": "sidecar-copy-diagnostics",
-                                    onclick: {
-                                        let summary = session.diagnostic_summary(
-                                            sidecar_security_label.unwrap_or("Opening"),
-                                            submit,
-                                            fanout,
-                                            receipt,
-                                            last_updated,
-                                        );
-                                        move |_| yoface::utils::dom::copy_text_to_clipboard(&summary)
-                                    },
-                                    "Copy diagnostic summary"
-                                }
-                                Button {
-                                    variant: ButtonVariant::Secondary,
-                                    onclick: move |_| {
-                                        navigator.push(Route::SettingsSection {
-                                            section: "agents".to_owned(),
-                                            filter: String::new(),
-                                        });
-                                    },
-                                    "Open agent settings"
-                                }
-                            }
-                        }
-                    }
-                    div { class: "discussion-detail-section",
-                        div { class: "discussion-subhead", span { "Settings" } }
-                        label { class: "settings-row",
-                            span { {crate::i18n::tr("chat.settings.mute_notifications")} }
-                            Checkbox {
-                                "data-testid": "discussion-settings-mute",
-                                checked: if realm_is_muted { CheckboxState::Checked } else { CheckboxState::Unchecked },
-                                on_checked_change: {
-                                    let realm_id = realm_id_for_mute.clone();
-                                    move |state: CheckboxState| {
-                                        let new_muted = bool::from(state);
-                                        state_store
-                                            .write()
-                                            .set_realm_muted(realm_id.clone(), new_muted);
-                                    }
-                                },
-                            }
-                        }
-                        label { class: "settings-row",
-                            span { {crate::i18n::tr("chat.settings.read_receipts")} }
-                            Checkbox {
-                                "data-testid": "discussion-settings-read-receipts",
-                                checked: if rr_active { CheckboxState::Checked } else { CheckboxState::Unchecked },
-                                on_checked_change: {
-                                    let strand_id = strand_id_for_rr.clone();
-                                    move |state: CheckboxState| {
-                                        let new_value = bool::from(state);
-                                        state_store
-                                            .write()
-                                            .set_read_receipt_strand_override(
-                                                strand_id.clone(),
-                                                Some(new_value),
-                                            );
-                                    }
-                                },
-                            }
-                        }
-                        label { class: "settings-row",
-                            span { "Show others' read receipts" }
-                            Checkbox {
-                                "data-testid": "discussion-settings-read-receipts-display",
-                                checked: if rr_display_active { CheckboxState::Checked } else { CheckboxState::Unchecked },
-                                on_checked_change: {
-                                    let strand_id = strand_id_for_rr.clone();
-                                    move |state: CheckboxState| {
-                                        let new_value = bool::from(state);
-                                        state_store
-                                            .write()
-                                            .set_read_receipt_strand_display_override(
-                                                strand_id.clone(),
-                                                Some(new_value),
-                                            );
-                                    }
-                                },
-                            }
-                        }
-                        div { class: "settings-row settings-row-readonly",
-                            "data-testid": "discussion-settings-shared-history-note",
-                            span { {crate::i18n::tr("chat.settings.shared_history")} }
-                            span { class: "muted",
-                                {crate::i18n::tr("chat.settings.shared_history_hint")}
-                            }
-                        }
-                    }
-                    div { class: "discussion-detail-section",
-                        div { class: "discussion-subhead", span { "Selected" } }
-                        div { class: "detail-row", span { "Category" } strong { "{selected_channel_category}" } }
-                        div { class: "detail-row", span { "Unread" } strong { "{selected_channel_unread}" } }
-                        div { class: "detail-row", span { "Messages" } strong { "{visible_message_count}" } }
-                    }
-                }
-                }
+                DiscussionSettingsPanel {
+                    sidecar_mode,
+                    right_panel,
+                    sidecar_session: sidecar_session.clone(),
+                    sidecar_delivery_diagnostics: sidecar_delivery_diagnostics.clone(),
+                    sidecar_security_label: sidecar_security_label.map(str::to_owned),
+                    state_store,
+                    selected_realm_id: selected_realm_id.clone(),
+                    selected_channel_id: selected_channel_value.clone(),
+                    selected_channel_category: selected_channel_category.clone(),
+                    selected_channel_unread,
+                    visible_message_count,
+                    on_open_agent_settings: move |_| {
+                        navigator.push(Route::SettingsSection {
+                            section: "agents".to_owned(),
+                            filter: String::new(),
+                        });
+                    },
                 }
             }
-
             if sidecar_publish_open() {
                 if let Some(session) = sidecar_session.as_ref() {
                     div {

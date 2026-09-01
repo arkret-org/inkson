@@ -13,6 +13,52 @@ use serde_json::Value;
 
 use crate::i18n::UiLocale;
 
+/// One field-level mutation of the encrypted `ak.client.ui_state` cell.
+///
+/// Keeping these mutations typed prevents a theme, avatar, or language write
+/// from rebuilding the whole cell and accidentally erasing preferences owned
+/// by another surface.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ClientUiStatePatch {
+    Theme(String),
+    AvatarBlobRef(String),
+    Language(UiLocale),
+}
+
+/// Apply field-level mutations while preserving every unrelated value already
+/// present in the cell. An empty avatar ref is intentional: it is the wire
+/// tombstone that tells other devices to clear their cached avatar.
+pub fn apply_client_ui_state_patches(body: &mut Value, patches: &[ClientUiStatePatch]) {
+    if !body.is_object() {
+        *body = Value::Object(serde_json::Map::new());
+    }
+    let Some(map) = body.as_object_mut() else {
+        return;
+    };
+    for patch in patches {
+        match patch {
+            ClientUiStatePatch::Theme(theme) => {
+                let theme = theme.trim();
+                if !theme.is_empty() {
+                    map.insert("theme".to_owned(), Value::String(theme.to_owned()));
+                }
+            }
+            ClientUiStatePatch::AvatarBlobRef(avatar_blob_ref) => {
+                map.insert(
+                    "avatar_blob_ref".to_owned(),
+                    Value::String(avatar_blob_ref.trim().to_owned()),
+                );
+            }
+            ClientUiStatePatch::Language(locale) => {
+                map.insert(
+                    "language".to_owned(),
+                    Value::String(locale.code().to_owned()),
+                );
+            }
+        }
+    }
+}
+
 // ─────────────────────────────────────────────────────────────────────────
 // A4a — `ak.client.ui_state` payload (theme, sidebar collapsed, per-Realm view).
 // Spec: `discovery/client-preferences.md` §2 — the `ak.client.ui_state`
@@ -113,12 +159,7 @@ pub fn theme_from_client_ui(value: &Value) -> Option<String> {
 /// region variant. A device that writes `zh` and a device that reads it agree
 /// without either needing a fallback chain.
 pub fn set_client_ui_language(body: &mut Value, locale: UiLocale) {
-    if let Value::Object(map) = body {
-        map.insert(
-            "language".to_owned(),
-            Value::String(locale.code().to_owned()),
-        );
-    }
+    apply_client_ui_state_patches(body, &[ClientUiStatePatch::Language(locale)]);
 }
 
 /// Locale recovered from the `language` field of a `ak.client.ui_state`
