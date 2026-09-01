@@ -1,3 +1,4 @@
+use super::connection_handlers::ConnectionRuntimeSignals;
 use super::*;
 
 fn should_run_connection_bootstrap(bootstrap_pending: bool, on_onboarding_route: bool) -> bool {
@@ -6,42 +7,21 @@ fn should_run_connection_bootstrap(bootstrap_pending: bool, on_onboarding_route:
 
 #[derive(Clone, Copy, PartialEq)]
 pub(super) struct ConnectionEffectState {
-    pub connection_status: Signal<String>,
-    pub sync_cursor: Signal<String>,
-    pub token: Signal<String>,
-    pub principal_id: Signal<Option<arkret_sdk::DidCoreId>>,
-    pub device_id: Signal<String>,
-    pub selected_realm_id: Signal<String>,
-    pub realm_tree_nodes: Signal<Vec<RealmTreeNode>>,
-    pub projection_events: Signal<Vec<ProjectionEvent>>,
-    pub device_queue: Signal<usize>,
-    pub frontier_state: Signal<String>,
-    pub crypto_state: Signal<String>,
-    pub config_store: Signal<LocalConfigStore>,
-    pub network_state: Signal<String>,
-    pub last_error: Signal<Option<String>>,
-    pub server_description: Signal<Option<ServiceDescribe>>,
-    pub server_probe_status: Signal<String>,
-    pub account_primary_handle: Signal<String>,
-    pub personal_handles: Signal<Vec<String>>,
-    pub personal_handles_status: Signal<String>,
-    pub theme: Signal<String>,
-    pub sync_generation: Signal<u64>,
-    pub needs_device_authorization: Signal<bool>,
-    pub device_authorization_check_complete: Signal<bool>,
-    pub account_has_other_devices: Signal<bool>,
-    pub sync_bootstrap_complete: Signal<bool>,
-    pub session_boot_state: Signal<SessionBootState>,
+    pub runtime: ConnectionRuntimeSignals,
     pub secure_store_bootstrap_ready: Signal<bool>,
     pub session_generation: Signal<u64>,
-    pub did_resolution_health: Signal<crate::components::DidResolutionHealth>,
-    pub bootstrap_pending: Signal<bool>,
     pub on_onboarding_route: bool,
 }
 
 #[component]
 pub(super) fn ConnectionEffects(state: ConnectionEffectState) -> Element {
     let ConnectionEffectState {
+        runtime,
+        secure_store_bootstrap_ready,
+        mut session_generation,
+        on_onboarding_route,
+    } = state;
+    let ConnectionRuntimeSignals {
         mut connection_status,
         mut sync_cursor,
         mut token,
@@ -51,29 +31,19 @@ pub(super) fn ConnectionEffects(state: ConnectionEffectState) -> Element {
         mut realm_tree_nodes,
         mut projection_events,
         mut device_queue,
-        frontier_state,
         mut crypto_state,
         config_store,
         mut network_state,
         mut last_error,
-        server_description,
-        server_probe_status,
-        account_primary_handle,
-        personal_handles,
-        personal_handles_status,
-        theme,
         mut sync_generation,
         mut needs_device_authorization,
         mut device_authorization_check_complete,
         mut account_has_other_devices,
         mut sync_bootstrap_complete,
         session_boot_state,
-        secure_store_bootstrap_ready,
-        mut session_generation,
-        did_resolution_health,
         mut bootstrap_pending,
-        on_onboarding_route,
-    } = state;
+        ..
+    } = runtime;
     let SessionContext {
         mut state_store,
         base_url,
@@ -289,38 +259,7 @@ pub(super) fn ConnectionEffects(state: ConnectionEffectState) -> Element {
                 base,
                 principal_id(),
                 device_id(),
-                ConnectContext {
-                    session: runtime_services.session.clone(),
-                    connection_status,
-                    sync_cursor,
-                    token,
-                    principal_id,
-                    selected_realm_id,
-                    realm_tree_nodes,
-                    projection_events,
-                    device_queue,
-                    frontier_state,
-                    crypto_state,
-                    config_store,
-                    state_store,
-                    network_state,
-                    last_error,
-                    server_description,
-                    server_probe_status,
-                    account_primary_handle,
-                    personal_handles,
-                    personal_handles_status,
-                    theme,
-                    sync_generation,
-                    needs_device_authorization,
-                    device_authorization_check_complete,
-                    account_has_other_devices,
-                    sync_bootstrap_complete,
-                    session_boot_state,
-                    bootstrap_pending,
-                    did_cache,
-                    did_resolution_health,
-                },
+                runtime.connect_context(runtime_services.session.clone(), state_store, did_cache),
             );
         } else if !base.trim().is_empty() {
             let bootstrap_state = session_boot_state_from_bootstrap_material(

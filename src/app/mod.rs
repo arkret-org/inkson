@@ -6,7 +6,6 @@ use dioxus_router::hooks::*;
 use dioxus_router::{Link, Navigator, Outlet};
 use serde_json::Value;
 
-use crate::api_error::is_auth_expired_error;
 use crate::components::{SecurityStateBadge, SelfAttributionBadge, UiIcon};
 use crate::config::{ClientConfig, LocalConfigStore, normalize_server_url};
 use crate::conformance::profile_ready;
@@ -80,6 +79,7 @@ mod clipboard;
 mod command_palette;
 mod connect;
 mod connection_effects;
+mod connection_handlers;
 mod context_bar;
 mod feature_gate;
 mod fold_evidence_effects;
@@ -109,6 +109,10 @@ pub(crate) use clipboard::*;
 pub(crate) use command_palette::*;
 use connect::*;
 use connection_effects::{ConnectionEffectState, ConnectionEffects};
+use connection_handlers::{
+    ConnectionRuntimeSignals, ManualSessionRefreshContext, ServerSwitchHandlerContext,
+    refresh_connection, refresh_current_session, switch_server_and_connect,
+};
 pub(crate) use context_bar::*;
 pub(crate) use feature_gate::*;
 use fold_evidence_effects::{SidecarFoldEvidenceEffectState, SidecarFoldEvidenceEffects};
@@ -127,7 +131,9 @@ use security_signals::{SecurityRuntimeSignals, use_security_runtime_signals};
 pub(crate) use session_boot::*;
 use session_context::AppStateStore;
 pub(crate) use session_context::SessionContext;
-use session_shell::{MobileNavDrawer, SessionShell, SessionSurface};
+use session_shell::{
+    MobileConnectionStatus, MobileNavDrawer, MobileRealmTree, SessionShell, SessionSurface,
+};
 use shell_effects::{ShellEffectState, ShellEffects};
 use sidebar::*;
 use sidebar_width::*;
@@ -330,7 +336,7 @@ fn AppBootstrap() -> Element {
     }
     let base_url = use_signal(move || initial_server_url);
     let active_account = use_signal(move || initial_active_account);
-    let mut principal_id = use_signal(move || initial_principal_id);
+    let principal_id = use_signal(move || initial_principal_id);
     let device_id = use_signal(move || initial_device_id);
     let mut token = use_signal(move || initial_session_credential);
     let session_boot_state = use_signal(move || initial_session_boot_state);
@@ -500,7 +506,7 @@ fn AppBootstrap() -> Element {
     }
     let system_theme_is_night = use_signal(browser_prefers_dark_theme);
     let mut mobile_nav_open = use_signal(|| false);
-    let mut mobile_space_query = use_signal(String::new);
+    let mobile_space_query = use_signal(String::new);
     let mut sidebar_collapsed = use_signal(|| false);
     let mut sidebar_width = use_signal(move || initial_sidebar_width);
     let mut sidebar_resizing = use_signal(|| false);
@@ -515,14 +521,14 @@ fn AppBootstrap() -> Element {
     let current_account_display_name = use_signal(String::new);
     let current_account_avatar_blob_ref = use_signal(String::new);
     let current_device_display_name = use_signal(String::new);
-    let mut account_identity_lookup_key = use_signal(String::new);
+    let account_identity_lookup_key = use_signal(String::new);
     let contact_handles_lookup_key = use_signal(String::new);
     let contact_handles_fetching = use_signal(BTreeSet::<String>::new);
     let mut global_query = use_signal(String::new);
     let mut palette_open = use_signal(|| false);
     let mut topbar_search_expanded = use_signal(|| false);
     let mut notifications_drawer_open = use_signal(|| false);
-    let mut sync_bootstrap_complete = use_signal(|| false);
+    let sync_bootstrap_complete = use_signal(|| false);
     // A6.4 — `?` keyboard shortcut help overlay state.
     let mut shortcut_help_open = use_signal(|| false);
     let mut realm_sidebar_tab = use_signal(|| "collaboration".to_owned());
@@ -1232,118 +1238,80 @@ fn AppBootstrap() -> Element {
     let encryption_floor_prompt_acknowledged = principal_id().as_ref().is_some_and(|actor_id| {
         crate::app::encryption_floor_prompt_acknowledged(&state_store.read(), actor_id)
     });
-    macro_rules! app_connect_context {
-        ($session:expr) => {
-            ConnectContext {
-                session: $session,
-                connection_status,
-                sync_cursor,
-                token,
-                principal_id,
-                selected_realm_id,
-                realm_tree_nodes,
-                projection_events,
-                device_queue,
-                frontier_state,
-                crypto_state,
-                config_store,
-                state_store,
-                network_state,
-                last_error,
-                server_description,
-                server_probe_status,
-                account_primary_handle,
-                personal_handles,
-                personal_handles_status,
-                theme,
-                sync_generation,
-                needs_device_authorization,
-                device_authorization_check_complete,
-                account_has_other_devices,
-                sync_bootstrap_complete,
-                session_boot_state,
-                bootstrap_pending,
-                did_cache,
-                did_resolution_health,
-            }
-        };
-    }
+    let connection_runtime = ConnectionRuntimeSignals {
+        connection_status,
+        sync_cursor,
+        token,
+        principal_id,
+        device_id,
+        selected_realm_id,
+        realm_tree_nodes,
+        projection_events,
+        device_queue,
+        frontier_state,
+        crypto_state,
+        config_store,
+        network_state,
+        last_error,
+        server_description,
+        server_probe_status,
+        account_primary_handle,
+        personal_handles,
+        personal_handles_status,
+        theme,
+        sync_generation,
+        needs_device_authorization,
+        device_authorization_check_complete,
+        account_has_other_devices,
+        sync_bootstrap_complete,
+        session_boot_state,
+        bootstrap_pending,
+        did_resolution_health,
+    };
     let mobile_connect_session = runtime_services.session.clone();
-    let server_connect_session = runtime_services.session.clone();
-    let manual_refresh_session = runtime_services.session.clone();
+    let server_switch_context = ServerSwitchHandlerContext {
+        runtime: connection_runtime,
+        base_url,
+        state_store,
+        did_cache,
+        personal_handles_lookup_key,
+        server_menu_open,
+        session: runtime_services.session.clone(),
+    };
+    let manual_refresh_context = ManualSessionRefreshContext {
+        session: runtime_services.session.clone(),
+        token,
+        principal_id,
+        active_account,
+        account_session_state,
+        personal_handles_lookup_key,
+        account_identity_lookup_key,
+        account_primary_handle,
+        personal_handles,
+        personal_handles_status,
+        last_error,
+        config_store,
+    };
     let mobile_status = rsx! {
-        div { class: "mobile-status", "data-testid": "mobile-connection-status",
-            span { "data-testid": "mobile-status-label", "{connection_status}" }
-            span { class: "muted mono", "data-testid": "mobile-sync-cursor", "cursor {sync_cursor}" }
-            Button {
-                variant: ButtonVariant::Primary,
-                "data-testid": "mobile-connect-button",
-                title: "Refresh server metadata and sync state",
-                "aria-label": "Refresh server metadata and sync state",
-                onclick: move |_| {
-                    sync_generation.set(sync_generation() + 1);
-                    sync_bootstrap_complete.set(false);
-                    connect(
-                        base_url(),
-                        principal_id(),
-                        device_id(),
-                        app_connect_context!(mobile_connect_session.clone()),
-                    )
-                },
-                "Refresh"
-            }
+        MobileConnectionStatus {
+            connection_status,
+            sync_cursor,
+            on_refresh: move |_| refresh_connection(
+                base_url(),
+                connection_runtime,
+                mobile_connect_session.clone(),
+                state_store,
+                did_cache,
+            ),
         }
     };
     let mobile_realm_tree = rsx! {
-        if !loaded_realm_tree_nodes.is_empty() {
-            div { class: "muted", "{crate::i18n::tr(\"command_palette.realms\")} ({realm_tree.len()})" }
-            Input {
-                class: "mobile-realm-tree-filter",
-                "data-testid": "mobile-realm-tree-filter",
-                value: "{mobile_space_query}",
-                placeholder: crate::i18n::tr("mobile.filter_realms"),
-                oninput: move |event: FormEvent| mobile_space_query.set(event.value()),
-            }
-            div { class: "mobile-realm-tree-list", "data-testid": "mobile-realm-tree-list",
-                {
-                    let q = mobile_space_query();
-                    let q_lc = q.trim().to_lowercase();
-                    let filtered: Vec<_> = realm_tree
-                        .iter()
-                        .filter(|item| {
-                            q_lc.is_empty()
-                                || item.node.title.to_lowercase().contains(&q_lc)
-                                || item.node.id.to_lowercase().contains(&q_lc)
-                        })
-                        .collect();
-                    if filtered.is_empty() {
-                        rsx! {
-                            div { class: "muted", "data-testid": "mobile-realm-tree-empty", {crate::i18n::tr("mobile.no_match")} }
-                        }
-                    } else {
-                        rsx! {
-                            for item in filtered.iter() {
-                                Link {
-                                    class: "secondary",
-                                    "data-testid": "mobile-realm-tree-nav-button",
-                                    to: Route::Realm {
-                                        realm_id: item.node.projection_realm_id().to_owned()
-                                    },
-                                    onclick: {
-                                        let id = item.node.projection_realm_id().to_owned();
-                                        move |_| {
-                                            selected_realm_id.set(id.clone());
-                                            mobile_nav_open.set(false);
-                                            mobile_space_query.set(String::new());
-                                        }
-                                    },
-                                    "{item.node.title}"
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+        MobileRealmTree {
+            has_realms: !loaded_realm_tree_nodes.is_empty(),
+            realm_tree: realm_tree.clone(),
+            mobile_space_query,
+            selected_realm_id,
+            mobile_nav_open,
         }
     };
 
@@ -1361,36 +1329,9 @@ fn AppBootstrap() -> Element {
                 system_theme_is_night,
                 ConnectionEffects {
                     state: ConnectionEffectState {
-                        connection_status,
-                        sync_cursor,
-                        token,
-                        principal_id,
-                        device_id,
-                        selected_realm_id,
-                        realm_tree_nodes,
-                        projection_events,
-                        device_queue,
-                        frontier_state,
-                        crypto_state,
-                        config_store,
-                        network_state,
-                        last_error,
-                        server_description,
-                        server_probe_status,
-                        account_primary_handle,
-                        personal_handles,
-                        personal_handles_status,
-                        theme,
-                        sync_generation,
-                        needs_device_authorization,
-                        device_authorization_check_complete,
-                        account_has_other_devices,
-                        sync_bootstrap_complete,
-                        session_boot_state,
+                        runtime: connection_runtime,
                         secure_store_bootstrap_ready,
                         session_generation,
-                        did_resolution_health,
-                        bootstrap_pending,
                         on_onboarding_route: matches!(&content_route, Route::Onboarding),
                     }
                 }
@@ -1815,95 +1756,18 @@ fn AppBootstrap() -> Element {
                         }
                     }
 
-                    div { class: "server-switch", "data-testid": "principal-context", "aria-label": "Current server context",
-                        Button {
-                            variant: ButtonVariant::Secondary,
-                            class: "server-switch-button",
-                            "data-testid": "server-switch-button",
-                            title: "Switch server",
-                            "aria-label": "Switch server",
-                            "aria-expanded": if server_menu_is_open { "true" } else { "false" },
-                            onclick: move |_| {
-                                server_menu_open.toggle();
-                                account_menu_open.set(false);
-                            },
-                            span { class: "server-switch-icon",
-                                UiIcon { name: "server" }
-                            }
-                            span { class: "server-switch-title",
-                                span { class: "v", "{active_server_label}" }
-                            }
-                            span { class: "server-switch-state",
-                                if server_menu_is_open {
-                                    UiIcon { name: "chevron-up" }
-                                } else {
-                                    UiIcon { name: "chevron-down" }
-                                }
-                            }
-                        }
-
-                        if server_menu_is_open && !sidebar_is_collapsed {
-                            div { class: "server-switch-menu", "data-testid": "server-switch-menu",
-                                div { class: "server-option-list", "aria-label": "Server choices",
-                                    for option_url in server_options.clone() {
-                                        Button {
-                                            variant: ButtonVariant::Secondary,
-                                            class: if same_server_url(&option_url, &base_url()) { "server-option active" } else { "server-option" },
-                                            "data-testid": "server-option",
-                                            title: "Switch to {option_url}",
-                                            "aria-label": "Switch to {option_url}",
-                                            onclick: {
-                                                let option_url = option_url.clone();
-                                                let server_connect_session =
-                                                    server_connect_session.clone();
-                                                move |_| {
-                                                    let next_url = normalize_server_url(&option_url);
-                                                    select_server(next_url.clone(), ServerSelectionContext {
-                                                        base_url,
-                                                        token,
-                                                        sync_cursor,
-                                                        selected_realm_id,
-                                                        realm_tree_nodes,
-                                                        projection_events,
-                                                        device_queue,
-                                                        frontier_state,
-                                                        crypto_state,
-                                                        config_store,
-                                                        state_store,
-                                                        network_state,
-                                                        last_error,
-                                                        server_description,
-                                                        server_probe_status,
-                                                        connection_status,
-                                                        principal_id,
-                                                        device_id,
-                                                        account_primary_handle,
-                                                        personal_handles,
-                                                        personal_handles_status,
-                                                        personal_handles_lookup_key,
-                                                        sync_generation,
-                                                    });
-                                                    server_menu_open.set(false);
-                                                    sync_bootstrap_complete.set(false);
-                                                    connect(
-                                                        next_url,
-                                                        principal_id(),
-                                                        device_id(),
-                                                        app_connect_context!(server_connect_session.clone()),
-                                                    );
-                                                }
-                                            },
-                                            span { class: "server-option-text",
-                                                span { class: "server-option-main mono", "{option_url}" }
-                                            }
-                                            if same_server_url(&option_url, &base_url()) {
-                                                span { class: "pill muted xs", "current" }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
+                    ServerSwitcher {
+                        server_menu_open,
+                        server_menu_is_open,
+                        account_menu_open,
+                        sidebar_collapsed: sidebar_is_collapsed,
+                        active_server_label: active_server_label.clone(),
+                        server_options: server_options.clone(),
+                        base_url,
+                        on_select: move |option_url| switch_server_and_connect(
+                            option_url,
+                            server_switch_context.clone(),
+                        ),
                     }
 
                     div { class: "sidebar-nav-group",
@@ -3589,154 +3453,11 @@ fn AppBootstrap() -> Element {
                                                 disabled: !has_session,
                                                 onclick: {
                                                     let base = base_url();
-                                                    let session = manual_refresh_session.clone();
-                                                    move |_| {
-                                                        let base = base.clone();
-                                                    let session = session.clone();
-                                                    let api_token = token();
-                                                    let actor = principal_id();
-                                                    let Some(active) = active_account.peek().clone() else {
-                                                        account_session_state.set(
-                                                            "Session identity is unavailable; sign in again."
-                                                                .to_owned(),
-                                                        );
-                                                        return;
-                                                    };
-                                                        personal_handles_lookup_key.set(String::new());
-                                                        account_identity_lookup_key.set(String::new());
-                                                        account_session_state.set("Refreshing session".to_owned());
-                                                        spawn(async move {
-                                                            match self_authed_api(&base, api_token.clone()) {
-                                                                Ok(api) => match async {
-                                                                    crate::transport::account::account_me(&api.sdk_http_client()?).await
-                                                                }
-                                                                .await
-                                                                {
-                                                                    Ok(account) => {
-                                                                        let canonical_principal = match active_account.peek().as_ref() {
-                                                                            Some(context) if context.principal_id() == &account.principal_id => Some(context.principal_id().clone()),
-                                                                            _ => {
-                                                                                last_error.set(Some("account viewer authority does not match the accepted active context".to_owned()));
-                                                                                account_session_state.set(
-                                                                                    "Session identity could not be restored; sign in again."
-                                                                                        .to_owned(),
-                                                                                );
-                                                                                return;
-                                                                            }
-                                                                        };
-                                                                        if let Some(personal_handle) =
-                                                                            personal_handle_from_account_handle(&account.handle)
-                                                                        {
-                                                                            account_primary_handle
-                                                                                .set(personal_handle.clone());
-                                                                            let handles = merge_personal_handles(
-                                                                                &personal_handles(),
-                                                                                [personal_handle],
-                                                                            );
-                                                                            personal_handles_status
-                                                                                .set(personal_handles_status_for(&handles));
-                                                                            personal_handles.set(handles);
-                                                                        } else {
-                                                                            account_primary_handle.set(String::new());
-                                                                            if personal_handles().is_empty() {
-                                                                                personal_handles_status.set("Not published".to_owned());
-                                                                            }
-                                                                        }
-                                                                        principal_id.set(canonical_principal.clone());
-                                                                        persist_config(
-                                                                            config_store,
-                                                                            active.server_url.to_string(),
-                                                                            Some(active.principal_id().clone()),
-                                                                            active.device_id.to_string(),
-                                                                            api_token,
-                                                                        );
-                                                                        account_session_state.set(format!(
-                                                                            "Session refresh ok: {}",
-                                                                            crate::app::principal_id_text(&canonical_principal)
-                                                                        ));
-                                                                    }
-                                                                    Err(error) => {
-                                                                        if is_auth_expired_error(&error) {
-                                                                            // The credential expired between background
-                                                                            // refresh ticks. Try the session-grant
-                                                                            // refresh path before declaring the session
-                                                                            // dead — clicking "Refresh session" must
-                                                                            // keep the user signed in, not bounce them to
-                                                                            // login on a routine credential rotation.
-                                                                            match session.refresh().await {
-                                                                                crate::runtime::session::CurrentSessionRefresh::Credential(fresh) => {
-                                                                                    let canonical_principal = match self_authed_api(&base, fresh) {
-                                                                                        Ok(api) => async {
-                                                                                            crate::transport::account::account_me(&api.sdk_http_client()?).await
-                                                                                        }
-                                                                                            .await
-                                                                                            .ok()
-                                                                                            .and_then(|account| {
-                                                                                                active_account.peek()
-                                                                                                    .as_ref()
-                                                                                                    .filter(|context| context.principal_id() == &account.principal_id)
-                                                                                                    ?;
-                                                                                                if let Some(personal_handle) =
-                                                                                                    personal_handle_from_account_handle(&account.handle)
-                                                                                                {
-                                                                                                    account_primary_handle
-                                                                                                        .set(personal_handle.clone());
-                                                                                                    let handles = merge_personal_handles(
-                                                                                                        &personal_handles(),
-                                                                                                        [personal_handle],
-                                                                                                    );
-                                                                                                    personal_handles_status
-                                                                                                        .set(personal_handles_status_for(&handles));
-                                                                                                    personal_handles.set(handles);
-                                                                                                } else {
-                                                                                                    account_primary_handle
-                                                                                                        .set(String::new());
-                                                                                                    if personal_handles().is_empty() {
-                                                                                                        personal_handles_status
-                                                                                                            .set("Not published".to_owned());
-                                                                                                    }
-                                                                                                }
-                                                                                                Some(active.principal_id().clone())
-                                                                                            }),
-                                                                                        Err(_) => None,
-                                                                                    }
-                                                                                    .or(actor.clone());
-                                                                                    principal_id.set(canonical_principal.clone());
-                                                                                    account_session_state.set(format!(
-                                                                                        "Session refresh ok: {}",
-                                                                                        crate::app::principal_id_text(&canonical_principal)
-                                                                                    ));
-                                                                                }
-                                                                                crate::runtime::session::CurrentSessionRefresh::SignInRequired { reason } => {
-                                                                                    last_error.set(Some(reason));
-                                                                                    account_session_state.set(
-                                                                                        "Sign in again to refresh this session.".to_owned()
-                                                                                    );
-                                                                                }
-                                                                                crate::runtime::session::CurrentSessionRefresh::LoginRequired { reason } => {
-                                                                                    last_error.set(Some(reason));
-                                                                                    account_session_state.set(
-                                                                                        "Session expired. Sign in again.".to_owned()
-                                                                                    );
-                                                                                }
-                                                                                crate::runtime::session::CurrentSessionRefresh::RetryLater { reason } => {
-                                                                                    account_session_state.set(format!(
-                                                                                        "Session refresh pending: {reason}"
-                                                                                    ));
-                                                                                }
-                                                                            }
-                                                                        } else {
-                                                                            account_session_state.set(format!(
-                                                                                "Session refresh failed: {error}"
-                                                                            ));
-                                                                        }
-                                                                    }
-                                                                },
-                                                                Err(error) => account_session_state
-                                                                    .set(format!("Invalid server URL: {error}")),
-                                                            }
-                                                        });
-                                                    }
+                                                    let refresh_context = manual_refresh_context.clone();
+                                                    move |_| refresh_current_session(
+                                                        base.clone(),
+                                                        refresh_context.clone(),
+                                                    )
                                                 },
                                                 "Refresh"
                                             }

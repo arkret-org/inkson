@@ -2,6 +2,74 @@ use arkret_wire::CapabilityActionId;
 
 use super::*;
 
+#[component]
+pub(super) fn ServerSwitcher(
+    server_menu_open: Signal<bool>,
+    server_menu_is_open: bool,
+    account_menu_open: Signal<bool>,
+    sidebar_collapsed: bool,
+    active_server_label: String,
+    server_options: Vec<String>,
+    base_url: Signal<String>,
+    on_select: EventHandler<String>,
+) -> Element {
+    rsx! {
+        div { class: "server-switch", "data-testid": "principal-context", "aria-label": "Current server context",
+            Button {
+                variant: ButtonVariant::Secondary,
+                class: "server-switch-button",
+                "data-testid": "server-switch-button",
+                title: "Switch server",
+                "aria-label": "Switch server",
+                "aria-expanded": if server_menu_is_open { "true" } else { "false" },
+                onclick: move |_| {
+                    server_menu_open.toggle();
+                    account_menu_open.set(false);
+                },
+                span { class: "server-switch-icon",
+                    UiIcon { name: "server" }
+                }
+                span { class: "server-switch-title",
+                    span { class: "v", "{active_server_label}" }
+                }
+                span { class: "server-switch-state",
+                    if server_menu_is_open {
+                        UiIcon { name: "chevron-up" }
+                    } else {
+                        UiIcon { name: "chevron-down" }
+                    }
+                }
+            }
+
+            if server_menu_is_open && !sidebar_collapsed {
+                div { class: "server-switch-menu", "data-testid": "server-switch-menu",
+                    div { class: "server-option-list", "aria-label": "Server choices",
+                        for option_url in server_options {
+                            Button {
+                                variant: ButtonVariant::Secondary,
+                                class: if same_server_url(&option_url, &base_url()) { "server-option active" } else { "server-option" },
+                                "data-testid": "server-option",
+                                title: "Switch to {option_url}",
+                                "aria-label": "Switch to {option_url}",
+                                onclick: {
+                                    let option_url = option_url.clone();
+                                    move |_| on_select.call(option_url.clone())
+                                },
+                                span { class: "server-option-text",
+                                    span { class: "server-option-main mono", "{option_url}" }
+                                }
+                                if same_server_url(&option_url, &base_url()) {
+                                    span { class: "pill muted xs", "current" }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 pub(super) fn pinned_realm_ids_from_store(store: &LocalStateStore) -> BTreeSet<String> {
     store
         .realm_remarks()
