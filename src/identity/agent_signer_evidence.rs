@@ -24,6 +24,7 @@ const MAX_SCAN_DEPTH: usize = 32;
 #[derive(Clone)]
 struct EventAgentSelector {
     realm_id: RealmId,
+    agent_actor_id: arkret_sdk::ActorId,
     agent_id: DidCoreId,
     verification_method: DidUrl,
     event_id: arkret_sdk::EventId,
@@ -269,7 +270,9 @@ pub(crate) async fn resolve_current_signal_sender_evidence(
         else {
             continue;
         };
-        let Some(key) = validate_current_entry(&entry, &agent_id, &verification_method) else {
+        let Some(key) =
+            validate_current_entry(&entry, &envelope.sender_actor_id, &verification_method)
+        else {
             continue;
         };
         verified.push((key, entry));
@@ -290,7 +293,8 @@ pub(crate) fn cached_current_signal_sender_evidence(
         return None;
     }
     let request_digest = signal_request_digest(envelope)?;
-    let agent_id = envelope.sender_actor_id.signing_principal_id();
+    let agent_actor_id = &envelope.sender_actor_id;
+    let agent_id = agent_actor_id.signing_principal_id();
     let verification_method = &envelope.proof.verification_method;
     let mut verified = Vec::new();
     for entry in store.cached_agent_signer_evidence(agent_id, verification_method) {
@@ -304,7 +308,7 @@ pub(crate) fn cached_current_signal_sender_evidence(
         if cached_digest != &request_digest {
             continue;
         }
-        let Some(key) = validate_current_entry(&entry, agent_id, verification_method) else {
+        let Some(key) = validate_current_entry(&entry, agent_actor_id, verification_method) else {
             continue;
         };
         verified.push((
@@ -358,6 +362,7 @@ pub(crate) fn verify_cached_event(
         }
         let selector = EventAgentSelector {
             realm_id: event.realm_id.clone(),
+            agent_actor_id: event.actor_id.clone(),
             agent_id: agent_id.clone(),
             verification_method: verification_method.clone(),
             event_id: event.event_id.clone(),
@@ -477,6 +482,7 @@ pub(crate) fn verified_cached_agent_event_endpoint(
         };
         let selector = EventAgentSelector {
             realm_id: event.realm_id.clone(),
+            agent_actor_id: event.actor_id.clone(),
             agent_id: agent_id.clone(),
             verification_method: verification_method.clone(),
             event_id: event.event_id.clone(),
@@ -841,6 +847,7 @@ fn verify_lifecycle_reducer(
 
 fn verified_evidence_state(
     entry: &CachedAgentSignerEvidence,
+    signer_actor_id: &arkret_sdk::ActorId,
 ) -> Option<(
     arkret_sdk::signatures::agent_evidence::VerifiedAgentEvidenceState,
     Hash,
@@ -853,6 +860,7 @@ fn verified_evidence_state(
         |witness: &arkret_sdk::AgentLifecycleWitness| verify_lifecycle_reducer(entry, witness);
     let context = AgentEvidenceStateVerificationContext {
         signer_id: &binding.agent_id,
+        signer_actor_id,
         agent_key_id: &binding.agent_key_id,
         controller_id: &binding.controller_id,
         agent_key_authorize_event_id: &binding.agent_key_authorize_event_id,
@@ -905,7 +913,7 @@ fn common_validation_context<'a>(
 
 fn validate_current_entry(
     entry: &CachedAgentSignerEvidence,
-    expected_agent_id: &DidCoreId,
+    expected_agent_actor_id: &arkret_sdk::ActorId,
     expected_verification_method: &DidUrl,
 ) -> Option<[u8; 32]> {
     let CachedAgentSignerEvidenceContext::CurrentSignal {
@@ -918,12 +926,15 @@ fn validate_current_entry(
     else {
         return None;
     };
-    if *expected_agent_id != signing_key_binding(&entry.evidence).agent_id
+    if expected_agent_actor_id.as_account_id().is_none()
+        || expected_agent_actor_id.signing_principal_id()
+            != &signing_key_binding(&entry.evidence).agent_id
         || *expected_verification_method != signing_key_binding(&entry.evidence).verification_method
     {
         return None;
     }
-    let (state, public_key_digest, binding_digest) = verified_evidence_state(entry)?;
+    let (state, public_key_digest, binding_digest) =
+        verified_evidence_state(entry, expected_agent_actor_id)?;
     let common = common_validation_context(entry, &state, &public_key_digest, &binding_digest)?;
     match validate_current_agent_signer_evidence(
         Some(&entry.evidence),
@@ -945,7 +956,8 @@ fn validate_cached_historical(
     entry: &CachedAgentSignerEvidence,
     selector: &EventAgentSelector,
 ) -> Option<[u8; 32]> {
-    let (state, public_key_digest, binding_digest) = verified_evidence_state(entry)?;
+    let (state, public_key_digest, binding_digest) =
+        verified_evidence_state(entry, &selector.agent_actor_id)?;
     let common = common_validation_context(entry, &state, &public_key_digest, &binding_digest)?;
     // The ordinary resolver only exposes the current DID/service document.
     // Until the client has ingested and validated the complete DID history,
@@ -1219,6 +1231,7 @@ fn selector_from_object(
     let admission = origin_admission(&event)?;
     Some(EventAgentSelector {
         realm_id,
+        agent_actor_id: event.actor_id.clone(),
         agent_id,
         verification_method,
         event_id: event.event_id.clone(),
@@ -1237,6 +1250,7 @@ impl Ord for EventAgentSelector {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         (
             self.realm_id.as_str(),
+            &self.agent_actor_id,
             self.agent_id.as_str(),
             self.verification_method.as_str(),
             self.event_id.as_str(),
@@ -1247,6 +1261,7 @@ impl Ord for EventAgentSelector {
         )
             .cmp(&(
                 other.realm_id.as_str(),
+                &other.agent_actor_id,
                 other.agent_id.as_str(),
                 other.verification_method.as_str(),
                 other.event_id.as_str(),
