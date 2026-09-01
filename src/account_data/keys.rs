@@ -132,16 +132,6 @@ pub fn saved_account_data_key(
         .map_err(|error| anyhow::anyhow!(error.to_string()))
 }
 
-pub fn draft_account_data_key(
-    namespace_key: &[u8],
-    kind: arkret_sdk::DraftKind,
-    target_ref: &str,
-    draft_slot: &str,
-) -> anyhow::Result<String> {
-    arkret_sdk::draft_account_data_key(namespace_key, kind, target_ref, draft_slot)
-        .map_err(|error| anyhow::anyhow!(error.to_string()))
-}
-
 pub fn search_index_manifest_account_data_key(
     namespace_key: &[u8],
     realm_id: &str,

@@ -31,23 +31,6 @@ pub struct HistoryRecoveryConvergenceOutcome {
     pub pending_errors: usize,
 }
 
-/// One holder archive whose archive-lifetime governance closure was fetched
-/// through the exact accepted replica coordinate and independently replayed.
-#[derive(Clone, Debug)]
-pub struct VerifiedOrganizationRecoveryArchive {
-    pub item: arkret_sdk::OrganizationRecoveryArchiveListItem,
-    pub traversal: garth::VerifiedHistoryTraversal,
-}
-
-/// Verified holder archive page. Pagination remains bound to the original
-/// typed list query; each item has its own independent traversal closure.
-#[derive(Clone, Debug)]
-pub struct VerifiedOrganizationRecoveryArchivePage {
-    pub items: Vec<VerifiedOrganizationRecoveryArchive>,
-    pub cursor: Option<String>,
-    pub limited: bool,
-}
-
 struct ResponseCapabilityOpener<'a> {
     secure_store: &'a dyn SecureKeyStore,
 }
@@ -255,17 +238,6 @@ pub struct OrdinaryHumanHistoryRequestPlan {
     pub expires_at: chrono::DateTime<chrono::Utc>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct AgentHistoryRequestPlan {
-    pub request_id: arkret_sdk::HistoryRequestId,
-    pub effective_scope: arkret_sdk::HistoryEffectiveScope,
-    pub requester_agent_id: arkret_sdk::DidCoreId,
-    pub requester_agent_verification_method: arkret_sdk::DidUrl,
-    pub requester_authorization_incarnation: arkret_sdk::AuthorizationIncarnation,
-    pub requested_ranges: Vec<arkret_sdk::EpochRange>,
-    pub expires_at: chrono::DateTime<chrono::Utc>,
-}
-
 fn request_trust_bases(
     state_store: SyncSignal<LocalStateStore>,
     scope: &arkret_sdk::HistoryEffectiveScope,
@@ -434,131 +406,6 @@ pub async fn author_and_create_ordinary_human_request(
             requester_sender_domain: device_id.as_str().to_owned(),
             requester_author_profile: arkret_sdk::AuthorProfile::OrdinaryHuman,
             requester_endpoint_authorization: endpoint_authorization.clone(),
-            requester_authorization_incarnation: plan.requester_authorization_incarnation.clone(),
-            trusted_history_base_basis: trusted_history_base_basis.clone(),
-            trusted_current_basis: trusted_current_basis.clone(),
-            requested_ranges: plan.requested_ranges.clone(),
-            recipient_hpke_public_key: URL_SAFE_NO_PAD.encode(&public_key),
-            expires_at: plan.expires_at,
-            requester_proof,
-        },
-        |bytes| {
-            signer
-                .detached_jws_over_payload_with_kid(verification_method.as_str(), bytes)
-                .map_err(|error| arkret_sdk::WireError::Protocol(error.to_string()))
-        },
-    )?;
-    request.validate()?;
-    let accepted =
-        create_or_resume_authored_request(state_store, api, secure_store, request).await?;
-    Ok((accepted, join_epoch))
-}
-
-/// Author an Agent history request from a freshly verified current
-/// Agent signer evidence query. The Agent id, runtime method and exact
-/// agent-key-authorize Event are taken from that closed verification result;
-/// no account session or device default participates.
-pub async fn author_and_create_agent_request(
-    state_store: SyncSignal<LocalStateStore>,
-    api: &crate::transport::TransportClient,
-    secure_store: &dyn SecureKeyStore,
-    plan: AgentHistoryRequestPlan,
-) -> anyhow::Result<(arkret_sdk::HistoryKeyRequestCreateOutcome, u64)> {
-    let (_, _, checkpoint) = request_trust_bases(state_store, &plan.effective_scope)?;
-    let join_epoch = verify_authorization_incarnation_is_retained_join(
-        &checkpoint,
-        &plan.effective_scope,
-        &arkret_sdk::ActorId::service(plan.requester_agent_id.clone()),
-        &plan.requester_authorization_incarnation,
-    )?;
-    if let Ok(durable) = runtime(state_store).durable_request(&plan.request_id) {
-        let expected_endpoint = match &durable.request.requester_endpoint_authorization {
-            arkret_sdk::RequesterEndpointAuthorization::Agent {
-                requester_agent_id,
-                requester_agent_verification_method,
-                ..
-            } => {
-                requester_agent_id == &plan.requester_agent_id
-                    && requester_agent_verification_method
-                        == &plan.requester_agent_verification_method
-            }
-            _ => false,
-        };
-        if durable.request.effective_scope != plan.effective_scope
-            || durable.request.requested_ranges != plan.requested_ranges
-            || durable.request.expires_at != plan.expires_at
-            || durable.request.requester_actor_id
-                != arkret_sdk::ActorId::service(plan.requester_agent_id.clone())
-            || durable.request.requester_authorization_incarnation
-                != plan.requester_authorization_incarnation
-            || !expected_endpoint
-        {
-            anyhow::bail!("history request id is already bound to another durable intent");
-        }
-        let accepted =
-            create_or_resume_authored_request(state_store, api, secure_store, durable.request)
-                .await?;
-        return Ok((accepted, join_epoch));
-    }
-
-    let signer = crate::event_signer::active_signer()
-        .ok_or_else(|| anyhow::anyhow!("history request has no active Agent endpoint signer"))?;
-    let signer_did = arkret_sdk::Did::new(signer.signer_did().to_owned())?;
-    if arkret_sdk::project_did_to_core_id(&signer_did)? != plan.requester_agent_id
-        || signer.verification_method() != plan.requester_agent_verification_method.as_str()
-    {
-        anyhow::bail!("history request signer differs from the explicit Agent endpoint");
-    }
-    let (trusted_history_base_basis, trusted_current_basis, _) =
-        request_trust_bases(state_store, &plan.effective_scope)?;
-    let (_, public_key) =
-        load_or_create_history_request_hpke_keypair_durable(secure_store, &plan.request_id).await?;
-    let authorization_query_digest = arkret_sdk::Hash::new(
-        arkret_sdk::canonical::canonical_sha256(&serde_json::json!({
-            "request_id": &plan.request_id,
-            "effective_scope": &plan.effective_scope,
-            "requester_agent_id": &plan.requester_agent_id,
-            "requester_agent_verification_method": &plan.requester_agent_verification_method,
-            "requester_authorization_incarnation": &plan.requester_authorization_incarnation,
-            "trusted_history_base_basis": &trusted_history_base_basis,
-            "trusted_current_basis": &trusted_current_basis,
-            "requested_ranges": &plan.requested_ranges,
-            "recipient_hpke_public_key": URL_SAFE_NO_PAD.encode(&public_key),
-            "expires_at": plan.expires_at,
-        }))?,
-    )?;
-    let http = http_client(api)?;
-    let requester_agent_key_authorize_event_id =
-        crate::identity::agent_signer_evidence::resolve_current_history_request_authorization(
-            &http,
-            plan.effective_scope.realm_id(),
-            &plan.requester_agent_id,
-            &plan.requester_agent_verification_method,
-            &authorization_query_digest,
-        )
-        .await
-        .ok_or_else(|| {
-            anyhow::anyhow!(
-                "history request Agent endpoint has no fully verified current authorization"
-            )
-        })?;
-    let verification_method = plan.requester_agent_verification_method.clone();
-    let request = arkret_sdk::HistoryKeyRequest::build_signed_proof(
-        verification_method.clone(),
-        crate::clock::now_utc(),
-        |requester_proof| arkret_sdk::HistoryKeyRequest {
-            request_id: plan.request_id.clone(),
-            kind: arkret_sdk::HistoryKeyRequestKind::Value,
-            effective_scope: plan.effective_scope.clone(),
-            requester_actor_id: arkret_sdk::ActorId::service(plan.requester_agent_id.clone()),
-            requester_sender_domain: plan.requester_agent_id.as_str().to_owned(),
-            requester_author_profile: arkret_sdk::AuthorProfile::Agent,
-            requester_endpoint_authorization: arkret_sdk::RequesterEndpointAuthorization::Agent {
-                requester_agent_id: plan.requester_agent_id.clone(),
-                requester_agent_verification_method: verification_method.clone(),
-                requester_agent_key_authorize_event_id: requester_agent_key_authorize_event_id
-                    .clone(),
-            },
             requester_authorization_incarnation: plan.requester_authorization_incarnation.clone(),
             trusted_history_base_basis: trusted_history_base_basis.clone(),
             trusted_current_basis: trusted_current_basis.clone(),
@@ -1353,63 +1200,6 @@ pub async fn converge_member_history_recovery(
     Ok(outcome)
 }
 
-/// Discover Recovery Key archives through the dedicated holder route. This is
-/// deliberately separate from member request-list discovery and its bearer
-/// response stream; the closed query carries the accepted key evidence and
-/// holder basis required by the Recovery Key protocol.
-pub async fn discover_organization_recovery_archives(
-    api: &crate::transport::TransportClient,
-    query: &arkret_sdk::OrganizationRecoveryArchiveListQuery,
-) -> anyhow::Result<arkret_sdk::OrganizationRecoveryArchiveListOutcome> {
-    let http = http_client(api)?;
-    let outcome = http
-        .organization_recovery_archive_list(query)
-        .await
-        .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-    outcome
-        .validate_for_query(query)
-        .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-    Ok(outcome)
-}
-
-pub fn organization_recovery_archive_traversal_access(
-    item: &arkret_sdk::OrganizationRecoveryArchiveListItem,
-) -> arkret_sdk::SelfHistoryTraversalAccess {
-    arkret_sdk::SelfHistoryTraversalAccess::ArchiveReplica {
-        archive_replica_digest: item.archive_replica_digest.clone(),
-    }
-}
-
-/// Discover and independently replay every RRK holder archive in one page.
-///
-/// The list item's exact `archive_replica_digest` is copied into the closed
-/// self-traversal access branch. No archive digest, intent digest or current
-/// governance coordinate is accepted as a substitute.
-pub async fn discover_and_verify_organization_recovery_archives(
-    state_store: SyncSignal<LocalStateStore>,
-    api: &crate::transport::TransportClient,
-    query: &arkret_sdk::OrganizationRecoveryArchiveListQuery,
-) -> anyhow::Result<VerifiedOrganizationRecoveryArchivePage> {
-    let outcome = discover_organization_recovery_archives(api, query).await?;
-    let mut verified = Vec::with_capacity(outcome.items.len());
-    for item in outcome.items {
-        let access = organization_recovery_archive_traversal_access(&item);
-        let traversal = garth::ReceiptBoundHistoryTraversal::acquire_and_verify(
-            &ReceiptTraversal { api, state_store },
-            &item.history_traversal_retention,
-            &access,
-        )
-        .await
-        .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-        verified.push(VerifiedOrganizationRecoveryArchive { item, traversal });
-    }
-    Ok(VerifiedOrganizationRecoveryArchivePage {
-        items: verified,
-        cursor: outcome.cursor,
-        limited: outcome.limited,
-    })
-}
-
 pub async fn acquire_response_page(
     state_store: SyncSignal<LocalStateStore>,
     api: &crate::transport::TransportClient,
@@ -2013,29 +1803,6 @@ mod tests {
             &ranges,
             10,
         ));
-    }
-
-    #[test]
-    fn rrk_holder_traversal_uses_the_exact_list_replica_digest() {
-        let fixture = arkret_schema_conformance::spec_json_artifact(
-            "fixtures/history-key-recovery-fixture.json",
-        )
-        .unwrap();
-        let outcome: arkret_sdk::OrganizationRecoveryArchiveListOutcome =
-            serde_json::from_value(
-                fixture["organization_recovery_archive_durable_before_gc_kat"]
-                    ["barrier_resolve_outcome"]
-                    .clone(),
-            )
-            .unwrap();
-        let item = &outcome.items[0];
-
-        assert_eq!(
-            organization_recovery_archive_traversal_access(item),
-            arkret_sdk::SelfHistoryTraversalAccess::ArchiveReplica {
-                archive_replica_digest: item.archive_replica_digest.clone(),
-            }
-        );
     }
 
     #[tokio::test]

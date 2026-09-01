@@ -658,13 +658,6 @@ fn productivity_account_data_keys_use_sdk_private_derivation() {
     let target_ref = "ak:strand:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
     let snooze = snooze_account_data_key(ns, target_ref).unwrap();
     let saved = saved_account_data_key(ns, "Focus", target_ref).unwrap();
-    let draft = draft_account_data_key(
-        ns,
-        arkret_sdk::DraftKind::Message,
-        target_ref,
-        DRAFT_MESSAGE_SLOT,
-    )
-    .unwrap();
     let manifest = search_index_manifest_account_data_key(
         ns,
         "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
@@ -672,7 +665,7 @@ fn productivity_account_data_keys_use_sdk_private_derivation() {
     .unwrap();
     let transfer = file_transfer_account_data_key(ns, "0123456789abcdefghijkl").unwrap();
 
-    for key in [&snooze, &saved, &draft, &manifest, &transfer] {
+    for key in [&snooze, &saved, &manifest, &transfer] {
         assert!(validate_private_account_data_key(key).is_ok());
         assert!(!key.contains("ak:strand:"));
         assert!(!key.contains("Focus"));
@@ -904,13 +897,9 @@ fn private_account_data_builders_emit_encrypted_payload() {
 
 #[test]
 fn private_account_data_builder_emits_required_revision() {
-    let key = draft_account_data_key(
-        b"inkson-account-data-test-key",
-        arkret_sdk::DraftKind::Message,
-        "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
-        DRAFT_MESSAGE_SLOT,
-    )
-    .unwrap();
+    let key =
+        scheduled_send_account_data_key("ak:scheduled_send:01904100-0000-7000-8000-000000000003")
+            .unwrap();
     let op = build_private_account_data_set(
         "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-",
         "did:web:alice",
@@ -958,98 +947,4 @@ fn build_account_data_tombstone_emits_canonical_payload() {
     assert_eq!(op.payload()["expected_revision"], 3);
     assert_eq!(op.payload()["tombstone"], true);
     assert!(op.payload()["updated_at"].is_string());
-}
-
-#[test]
-fn draft_sync_value_requires_origin_device_id_and_current_slot_shape() {
-    let missing_origin = json!({
-        "target_ref": "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
-        "kind": "message",
-        "draft_slot": "compose",
-        "content": {"body": "draft"},
-        "updated_hlc": "01970e589d21-0000-a13f9c2e",
-        "retention_expires_at": "2026-06-07T00:00:00.000Z"
-    });
-    assert!(draft_sync_value_from_account_data(&missing_origin).is_err());
-
-    let bad_slot = build_message_draft_sync_value(
-        "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
-        json!({"body": "draft"}),
-        "01970e589d21-0000-a13f9c2e",
-        "ak:device:01904100-0000-7000-8000-000000000001",
-        "2026-06-07T00:00:00.000Z",
-    )
-    .map(|mut value| {
-        match &mut value {
-            arkret_sdk::DraftSyncValue::Message { draft_slot, .. }
-            | arkret_sdk::DraftSyncValue::StrandField { draft_slot, .. } => {
-                *draft_slot = "main".to_owned();
-            }
-        }
-        value
-    })
-    .unwrap();
-    assert!(validate_draft_sync_value(&bad_slot).is_err());
-
-    let field_slot = draft_slot_for_strand_field_path(&json!("metadata.title")).unwrap();
-    assert!(field_slot.starts_with("field_"));
-    assert_eq!(field_slot.len(), "field_".len() + 64);
-    assert!(validate_draft_slot(arkret_sdk::DraftKind::StrandField, &field_slot).is_ok());
-}
-
-#[test]
-fn draft_merge_uses_hlc_then_origin_device_tiebreaker() {
-    let local = build_message_draft_sync_value(
-        "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
-        json!({"body": "local"}),
-        "01970e589d21-0000-a13f9c2e",
-        "ak:device:01904100-0000-7000-8000-000000000001",
-        "2026-06-07T00:00:00.000Z",
-    )
-    .unwrap();
-    let newer_remote = build_message_draft_sync_value(
-        "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
-        json!({"body": "remote"}),
-        "01970e589d22-0000-a13f9c2e",
-        "ak:device:01904100-0000-7000-8000-000000000002",
-        "2026-06-07T00:00:00.000Z",
-    )
-    .unwrap();
-    let merged = merge_draft_values(Some(&local), newer_remote).unwrap();
-    assert_eq!(merged.choice, AccountDataMergeChoice::Remote);
-    assert_eq!(merged.winner.content()["body"], "remote");
-    assert_eq!(merged.conflict_copy.unwrap().content()["body"], "local");
-
-    let same_hlc_higher_device = build_message_draft_sync_value(
-        "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
-        json!({"body": "device wins"}),
-        "01970e589d21-0000-a13f9c2e",
-        "ak:device:01904100-0000-7000-8000-000000000002",
-        "2026-06-07T00:00:00.000Z",
-    )
-    .unwrap();
-    let merged = merge_draft_values(Some(&local), same_hlc_higher_device).unwrap();
-    assert_eq!(merged.choice, AccountDataMergeChoice::Remote);
-    assert_eq!(merged.winner.content()["body"], "device wins");
-}
-
-#[test]
-fn draft_merge_fails_closed_for_same_hlc_and_device_with_different_content() {
-    let local = build_message_draft_sync_value(
-        "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
-        json!({"body": "a"}),
-        "01970e589d21-0000-a13f9c2e",
-        "ak:device:01904100-0000-7000-8000-000000000001",
-        "2026-06-07T00:00:00.000Z",
-    )
-    .unwrap();
-    let remote = build_message_draft_sync_value(
-        "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
-        json!({"body": "b"}),
-        "01970e589d21-0000-a13f9c2e",
-        "ak:device:01904100-0000-7000-8000-000000000001",
-        "2026-06-07T00:00:00.000Z",
-    )
-    .unwrap();
-    assert!(merge_draft_values(Some(&local), remote).is_err());
 }
