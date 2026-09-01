@@ -947,7 +947,7 @@ pub struct ClientLocalState {
     #[serde(default)]
     pub to_device_inbox: Vec<Value>,
     /// Durable canonical-envelope digest keyed by
-    /// `(sender_principal_id, sender_device_id, message_id)`.
+    /// the exact closed sender branch plus `message_id`.
     /// The receipt is written in the same state snapshot as the inbox entry,
     /// before any protocol-specific handler runs.
     #[serde(default)]

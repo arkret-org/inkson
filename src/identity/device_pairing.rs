@@ -322,7 +322,6 @@ pub async fn author_pairing_request_body(
     let created_at = chrono::Utc::now();
     let principal_actor = arkret_sdk::project_did_to_core_id(&principal)?;
     let authorize_payload = arkret_sdk::UnsignedDeviceAuthorizePayload::new(
-        principal_actor.clone(),
         attestation.device_id.clone(),
         arkret_sdk::NonEmptyString::new(attestation.device_public_key_did.as_str().to_owned())
             .map_err(anyhow::Error::msg)?,
@@ -463,8 +462,7 @@ pub async fn verify_authorized_pairing_event(
     .await?;
     let payload: arkret_sdk::DeviceAuthorizePayload =
         serde_json::from_value(serde_json::to_value(&event.payload)?)?;
-    if payload.principal_id != principal_actor
-        || payload.device_id != attestation.device_id
+    if payload.device_id != attestation.device_id
         || payload.device_public_key_did.as_str() != attestation.device_public_key_did.as_str()
         || payload.hpke_key != attestation.hpke_key
         || payload.algorithms != attestation.algorithms
@@ -507,7 +505,10 @@ mod tests {
     fn request_message() -> Value {
         json!({
             "kind": "ak.key.verification.request",
-            "sender_principal_id": "ak:did_core:web:alice",
+            "sender_account_id": {
+                "principal_id": "ak:did_core:web:alice",
+                "station_id": "ak:did_core:web:station.example"
+            },
             "sender_device_id": "ak:device:existing",
             "expires_at": "2026-06-17T12:00:00.000Z",
             "content": {

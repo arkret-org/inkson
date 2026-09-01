@@ -101,16 +101,46 @@ pub(crate) fn verified_inline_handle(row: &RealmMemberRow) -> Option<String> {
     // that disclosed binding are malformed and must not affect display.
     let subject = row.subject_id.as_deref()?;
     row.handle_claims.iter().find_map(|claim| {
-        if claim.get("subject").and_then(Value::as_str)?.trim() != subject
-            || claim.get("binding_state").and_then(Value::as_str) != Some("verified")
+        let core = claim.get("claim")?;
+        if core
+            .get("subject_account_id")
+            .and_then(|account| account.get("principal_id"))
+            .and_then(Value::as_str)?
+            .trim()
+            != subject
+            || claim.get("status").and_then(Value::as_str) != Some("verified")
+            || claim
+                .get("revocation_digest")
+                .is_some_and(|value| !value.is_null())
+            || claim
+                .get("fresh_until")
+                .and_then(Value::as_str)
+                .and_then(|value| chrono::DateTime::parse_from_rfc3339(value).ok())
+                .is_none_or(|fresh_until| fresh_until <= chrono::Utc::now())
         {
             return None;
         }
-        claim
-            .get("handle")
+        core.get("handle")
             .and_then(Value::as_str)
             .and_then(crate::identity::handle::parse_user_handle)
             .map(|handle| handle.display)
+    })
+}
+
+#[cfg(test)]
+pub(crate) fn test_inline_handle_claim(subject: &str, handle: &str, status: &str) -> Value {
+    serde_json::json!({
+        "schema": "ak.schema.handle_claim.v1",
+        "claim": {
+            "handle": handle,
+            "subject_account_id": {
+                "principal_id": subject,
+                "station_id": "ak:did_core:web:fixture-station.example"
+            }
+        },
+        "status": status,
+        "revocation_digest": null,
+        "fresh_until": "2099-01-01T00:00:00.000Z"
     })
 }
 
@@ -232,7 +262,7 @@ pub(crate) async fn fetch_and_cache_member_handle(
             let earliest_expiry = response
                 .claims
                 .iter()
-                .filter_map(|claim| claim.expires_at.as_ref().cloned())
+                .filter_map(|claim| claim.claim.expires_at.as_ref().cloned())
                 .min();
             state_store.write().save_member_handle_lookup(
                 response.account_id.principal_id.as_str().to_owned(),

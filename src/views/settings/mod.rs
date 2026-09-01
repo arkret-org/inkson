@@ -294,7 +294,6 @@ pub(crate) fn push_blocklist_account_data(
         tracing::warn!("blocklist upload skipped: active authority does not match the account");
         return;
     }
-    let principal_id = authority.principal_id.to_string();
     spawn(async move {
         match with_event_submitter(&base_url, api_token, |sub| async move {
             let outcome = crate::transport::account::update_account_data_with_merge(
@@ -302,7 +301,6 @@ pub(crate) fn push_blocklist_account_data(
                 AccountDataKey::ACCOUNT_BLOCKLIST,
                 |snapshot| {
                     let plaintext = crate::account_data::build_blocklist_account_data_body(
-                        &principal_id,
                         snapshot.revision.checked_add(1).ok_or_else(|| {
                             anyhow::anyhow!("ak.account.blocklist revision overflow")
                         })?,

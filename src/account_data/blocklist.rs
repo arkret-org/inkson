@@ -349,13 +349,10 @@ pub fn unblock_target_in(
 /// share one counter.  Callers must therefore pass the exact accepted revision
 /// they are about to create (`current + 1`); this is not a schema version.
 pub fn build_blocklist_account_data_body(
-    holder_id: &str,
     version: u64,
     entries: &[AccountBlocklistPayloadEntry],
 ) -> Result<Value, String> {
     let payload = AccountBlocklistPayload {
-        holder_id: arkret_sdk::DidCoreId::new(holder_id.trim().to_owned())
-            .map_err(|error| error.to_string())?,
         version,
         entries: entries.to_vec(),
         updated_at: Some(chrono::Utc::now()),
@@ -369,9 +366,8 @@ pub fn build_blocklist_account_data_body(
 /// installing it, so this helper only validates the closed payload itself.
 pub fn blocklist_entries_from_account_data(
     value: &Value,
-    expected_holder_id: &str,
 ) -> Result<Vec<AccountBlocklistPayloadEntry>, String> {
-    Ok(blocklist_payload_from_account_data(value, expected_holder_id)?.entries)
+    Ok(blocklist_payload_from_account_data(value)?.entries)
 }
 
 /// Decode and validate the complete blocklist payload. Sync consumers use the
@@ -379,15 +375,9 @@ pub fn blocklist_entries_from_account_data(
 /// revision before changing the local privacy projection.
 pub fn blocklist_payload_from_account_data(
     value: &Value,
-    expected_holder_id: &str,
 ) -> Result<AccountBlocklistPayload, String> {
     let payload: AccountBlocklistPayload =
         serde_json::from_value(value.clone()).map_err(|error| error.to_string())?;
     payload.validate().map_err(|error| error.to_string())?;
-    let expected_holder_id = arkret_sdk::DidCoreId::new(expected_holder_id.trim().to_owned())
-        .map_err(|error| error.to_string())?;
-    if payload.holder_id != expected_holder_id {
-        return Err("account blocklist holder_id does not match the active account".to_owned());
-    }
     Ok(payload)
 }

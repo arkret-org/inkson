@@ -383,7 +383,10 @@ fn build_signed_genesis_recovery_policy_with_raw_signer(
         DidUrl::new(verification_method.to_owned()).map_err(|error| anyhow::anyhow!(error))?;
     let policy_body = UnsignedRecoveryPolicyBody {
         policy_id: PolicyId::new(format!("ak:policy:{}", crate::operation::uuid_v7()))?,
-        principal_id: arkret_sdk::project_did_to_core_id(principal_did)?,
+        account_id: arkret_sdk::AccountId::new(
+            arkret_sdk::project_did_to_core_id(principal_did)?,
+            crate::operation::authoring_station_id()?,
+        ),
         version: 1,
         supersedes_id: None,
         trust_domain: TrustDomainId::new(trust_domain.to_owned())?,
@@ -703,12 +706,12 @@ fn validate_active_policy_key_material(
     principal_id: &arkret_sdk::DidCoreId,
     key_material: &arkret_sdk::identity_root::IdentityRecoveryKeyMaterial,
 ) -> anyhow::Result<DidUrl> {
-    if summary.principal_id != *principal_id {
-        anyhow::bail!(
-            "active recovery policy principal `{}` does not match requested principal `{}`",
-            summary.principal_id,
-            principal_id
-        );
+    let account_id = arkret_sdk::AccountId::new(
+        principal_id.clone(),
+        crate::operation::authoring_station_id()?,
+    );
+    if summary.account_id != account_id {
+        anyhow::bail!("active recovery policy account does not match requested account");
     }
     let policy = summary.policy.as_ref().ok_or_else(|| {
         anyhow::anyhow!(
@@ -717,7 +720,7 @@ fn validate_active_policy_key_material(
     })?;
     policy.validate()?;
     if policy.policy_id != summary.policy_id
-        || policy.principal_id != summary.principal_id
+        || policy.account_id != summary.account_id
         || policy.version != summary.version
     {
         anyhow::bail!("active recovery policy summary does not match its signed policy body");

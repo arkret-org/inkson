@@ -21,8 +21,7 @@ pub(crate) async fn resolve_accepted<P: std::fmt::Display + ?Sized>(
     let request = arkret_sdk::PrincipalResolutionAuditRequest::new(active.authority.clone());
     let evidence = http.principal_resolution_audit(&request).await?;
     anyhow::ensure!(
-        evidence.principal_id == active.authority.principal_id
-            && evidence.station_id == active.authority.station_id,
+        evidence.account_id == active.authority,
         "principal resolution audit changed the selected account authority"
     );
     anyhow::ensure!(

@@ -189,9 +189,19 @@ impl SignalProductSink for AppSignalProductSink {
                     crate::identity::did_resolver::DeploymentProfile::PersonalNode,
                     self.did_cache.peek().clone(),
                 );
+                let Some(recipient_principal_id) = self.principal_id.peek().clone() else {
+                    return;
+                };
+                let Ok(recipient_station_id) = http.describe().await.map(|value| value.service_id)
+                else {
+                    return;
+                };
                 if let Some(entry) =
                     crate::identity::agent_signer_evidence::resolve_current_signal_sender_evidence(
-                        &http, envelope, &anchor,
+                        &http,
+                        envelope,
+                        arkret_sdk::AccountId::new(recipient_principal_id, recipient_station_id),
+                        &anchor,
                     )
                     .await
                 {
@@ -220,15 +230,25 @@ impl SignalProductSink for AppSignalProductSink {
             let Some(api) = self.authenticated_api() else {
                 return;
             };
+            let Ok(http) = api.sdk_http_client() else {
+                return;
+            };
+            let Some(recipient_principal_id) = self.principal_id.peek().clone() else {
+                return;
+            };
+            let Ok(recipient_station_id) = http.describe().await.map(|value| value.service_id)
+            else {
+                return;
+            };
             let anchor = crate::identity::did_resolver::ResolverDidAnchor::from_profile(
                 crate::identity::did_resolver::DeploymentProfile::PersonalNode,
                 self.did_cache.peek().clone(),
             );
-            let _ = crate::identity::device_directory::resolve_device_signing_key(
-                &api,
+            let _ = crate::identity::device_directory::resolve_current_signal_device_evidence(
+                &http,
                 &anchor,
-                &actor,
-                device.as_str(),
+                envelope,
+                arkret_sdk::AccountId::new(recipient_principal_id, recipient_station_id),
             )
             .await;
             let mut did_cache = self.did_cache;

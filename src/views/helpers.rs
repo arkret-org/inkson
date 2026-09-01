@@ -197,8 +197,8 @@ pub fn render_actor_mention(
     };
     let account_id = claim_set_snapshot
         .iter()
-        .find(|claim| claim.subject_account_id.principal_id == subject)
-        .map(|claim| claim.subject_account_id.clone())
+        .find(|claim| claim.claim.subject_account_id.principal_id == subject)
+        .map(|claim| claim.claim.subject_account_id.clone())
         .or_else(|| {
             crate::operation::authoring_station_id()
                 .ok()
@@ -257,8 +257,8 @@ pub fn render_actor_mention(
 pub struct HandleClaimRow {
     pub handle: String,
     pub issuer: String,
-    pub binding_state: String,
-    pub created_at: String,
+    pub status: String,
+    pub issued_at: String,
     pub expires_at: String,
     pub claim_digest: String,
     pub is_primary: bool,
@@ -277,16 +277,19 @@ pub fn handle_claim_rows(
     res.claims
         .iter()
         .map(|claim| {
-            let handle = claim.handle.canonical().to_owned();
+            let handle = claim.claim.handle.canonical().to_owned();
             let digest = arkret_sdk::identity::claim_digest(claim).unwrap_or_default();
             HandleClaimRow {
                 is_primary: primary.as_deref() == Some(handle.as_str()) && !handle.is_empty(),
                 handle,
-                issuer: claim.issuer_id.to_string(),
-                binding_state: format!("{:?}", claim.binding_state).to_lowercase(),
-                created_at: arkret_sdk::canonical::format_timestamp_canonical(claim.created_at),
+                issuer: claim.claim.issuer_id.to_string(),
+                status: format!("{:?}", claim.status).to_lowercase(),
+                issued_at: arkret_sdk::canonical::format_timestamp_canonical(claim.claim.issued_at),
                 expires_at: claim
+                    .claim
                     .expires_at
+                    .as_ref()
+                    .cloned()
                     .map(arkret_sdk::canonical::format_timestamp_canonical)
                     .unwrap_or_default(),
                 claim_digest: digest,
@@ -298,7 +301,7 @@ pub fn handle_claim_rows(
 /// R3.2 (YG-DIR-1/2) — "Why am I seeing this handle?" transparency
 /// panel. Given a subject (principal) DID it calls the directory
 /// `ak.find.directory.read.list_handles_for_subject.v1` op and renders the visible
-/// signed handle claims (issuer / binding_state / created_at / expiry /
+/// signed handle claims (issuer / status / issued_at / expiry /
 /// claim_digest) plus the §3.2.1 primary handle. This is the user-facing
 /// disclosure surface mandated by §3.8 — handles are never authoritative
 /// roster fields, so the user gets to see the signed evidence behind a
@@ -396,10 +399,10 @@ pub fn WhyThisHandlePanel(
                                 }
                             }
                             div { class: "muted",
-                                "issuer: {row.issuer} · state: {row.binding_state}"
+                                "issuer: {row.issuer} · status: {row.status}"
                             }
                             div { class: "muted",
-                                "created: {row.created_at} · expires: {row.expires_at}"
+                                "issued: {row.issued_at} · expires: {row.expires_at}"
                             }
                             div { class: "muted handle-claim-digest", "digest: {row.claim_digest}" }
                         }
@@ -411,6 +414,70 @@ pub fn WhyThisHandlePanel(
             }
         }
     }
+}
+
+#[cfg(test)]
+pub(crate) fn verified_handle_claim(
+    handle: &str,
+    subject_account_id: arkret_sdk::AccountId,
+    issuer_id: arkret_sdk::DidCoreId,
+    issued_at: chrono::DateTime<chrono::Utc>,
+    expires_at: chrono::DateTime<chrono::Utc>,
+) -> arkret_models_identity::HandleClaim {
+    use arkret_models_identity::{
+        HandleClaim, HandleClaimCore, HandleClaimStatus, HandleClaimVariant, HandleVisibility,
+    };
+    use arkret_sdk::{Hash, PayloadProof, PayloadProofPurpose};
+
+    let method = arkret_sdk::DidUrl::new("did:web:issuer.acme.example#handle-claim").unwrap();
+    let placeholder = Hash::new(format!("sha256:{}", "0".repeat(64))).unwrap();
+    let proof = |purpose, payload_digest| PayloadProof {
+        kind: "detached_jws".to_owned(),
+        verification_method: method.clone(),
+        payload_digest,
+        created_at: issued_at,
+        domain: Some(arkret_models_identity::HANDLE_CLAIM_PROOF_DOMAIN.to_owned()),
+        audience: None,
+        proof_purpose: Some(purpose),
+        jws: "eyJhbGciOiJFZERTQSJ9..c2ln".to_owned(),
+    };
+    let mut core = HandleClaimCore {
+        schema: HandleClaimCore::SCHEMA.to_owned(),
+        handle: arkret_sdk::Handle::parse(handle).unwrap(),
+        handle_aliases: Vec::new(),
+        subject_account_id,
+        issuer_id: issuer_id.clone(),
+        claim: HandleClaimVariant::HandleBinding,
+        visibility: HandleVisibility::Public,
+        audience: None,
+        issued_at,
+        expires_at: Some(expires_at),
+        source_refs: Vec::new(),
+        proofs: [
+            proof(PayloadProofPurpose::IssuerAttestation, placeholder.clone()),
+            proof(PayloadProofPurpose::HolderAcceptance, placeholder.clone()),
+        ],
+    };
+    let digest = core.claim_digest().unwrap();
+    core.proofs[0].payload_digest = digest.clone();
+    core.proofs[1].payload_digest = digest.clone();
+    let mut claim = HandleClaim {
+        schema: HandleClaim::SCHEMA.to_owned(),
+        claim: core,
+        claim_digest: digest,
+        status: HandleClaimStatus::Verified,
+        as_of: issued_at,
+        verifier_id: issuer_id,
+        verified_at: Some(issued_at),
+        revocation: None,
+        revocation_digest: None,
+        fresh_until: issued_at + chrono::Duration::minutes(5),
+        status_proof: proof(PayloadProofPurpose::StatusAttestation, placeholder),
+    };
+    claim.status_proof.domain = Some(arkret_models_identity::HANDLE_CLAIM_STATUS_DOMAIN.to_owned());
+    claim.status_proof.payload_digest = claim.status_digest().unwrap();
+    claim.validate().unwrap();
+    claim
 }
 
 #[cfg(test)]
@@ -475,34 +542,18 @@ mod tests {
 
     #[test]
     fn render_actor_mention_runs_3_2_1_for_verified_handle() {
-        use arkret_models_identity::{HandleBindingState, HandleClaim};
-        use arkret_sdk::Handle;
         let now = chrono::Utc::now();
-        let claim = HandleClaim {
-            schema: HandleClaim::SCHEMA.to_owned(),
-            handle: Handle::parse("alice:acme.example").unwrap(),
-            handle_aliases: Vec::new(),
-            subject_account_id: arkret_sdk::AccountId::new(
+        let claim = verified_handle_claim(
+            "alice:acme.example",
+            arkret_sdk::AccountId::new(
                 crate::mls_api_helpers::principal_core_id("did:web:acme.example:principals:alice")
                     .unwrap(),
                 arkret_sdk::DidCoreId::new("ak:did_core:web:station.acme.example").unwrap(),
             ),
-            issuer_id: crate::mls_api_helpers::principal_core_id("did:web:issuer.acme.example")
-                .unwrap(),
-            vouching_id: None,
-            binding_state: HandleBindingState::Verified,
-            claim_kind: None,
-            visibility: None,
-            audience: None,
-            challenge: None,
-            claim_scope: Default::default(),
-            claims: Vec::new(),
-            created_at: now - chrono::Duration::hours(1),
-            expires_at: Some(now + chrono::Duration::days(30)),
-            verified_at: None,
-            source_refs: Vec::new(),
-            proofs: Vec::new(),
-        };
+            crate::mls_api_helpers::principal_core_id("did:web:issuer.acme.example").unwrap(),
+            now - chrono::Duration::hours(1),
+            now + chrono::Duration::days(30),
+        );
         let accepted = vec![arkret_sdk::identity::HandleIssuerPolicyEntry {
             issuer_id: arkret_sdk::DidCoreId::new("ak:did_core:web:issuer.acme.example".to_owned())
                 .unwrap(),
@@ -555,36 +606,21 @@ mod tests {
     #[test]
     fn handle_claim_rows_flags_primary_and_projects_fields() {
         use arkret_models_discovery::DirectorySubjectHandleList;
-        use arkret_models_identity::{HandleBindingState, HandleClaim};
         use arkret_sdk::Handle;
         let now = chrono::Utc::now();
         let subject =
             crate::mls_api_helpers::principal_core_id("did:web:acme.example:principals:alice")
                 .unwrap();
-        let claim = HandleClaim {
-            schema: HandleClaim::SCHEMA.to_owned(),
-            handle: Handle::parse("alice:acme.example").unwrap(),
-            handle_aliases: Vec::new(),
-            subject_account_id: arkret_sdk::AccountId::new(
+        let claim = verified_handle_claim(
+            "alice:acme.example",
+            arkret_sdk::AccountId::new(
                 subject.clone(),
                 arkret_sdk::DidCoreId::new("ak:did_core:web:station.acme.example").unwrap(),
             ),
-            issuer_id: crate::mls_api_helpers::principal_core_id("did:web:issuer.acme.example")
-                .unwrap(),
-            vouching_id: None,
-            binding_state: HandleBindingState::Verified,
-            claim_kind: None,
-            visibility: None,
-            audience: None,
-            challenge: None,
-            claim_scope: Default::default(),
-            claims: Vec::new(),
-            created_at: now,
-            expires_at: Some(now + chrono::Duration::days(30)),
-            verified_at: None,
-            source_refs: Vec::new(),
-            proofs: Vec::new(),
-        };
+            crate::mls_api_helpers::principal_core_id("did:web:issuer.acme.example").unwrap(),
+            now,
+            now + chrono::Duration::days(30),
+        );
         let res = DirectorySubjectHandleList {
             account_id: arkret_sdk::AccountId::new(
                 subject,
@@ -602,7 +638,7 @@ mod tests {
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].handle, "alice:acme.example");
         assert_eq!(rows[0].issuer, "ak:did_core:web:issuer.acme.example");
-        assert_eq!(rows[0].binding_state, "verified");
+        assert_eq!(rows[0].status, "verified");
         assert!(rows[0].is_primary);
         assert!(rows[0].claim_digest.starts_with("sha256:"));
     }

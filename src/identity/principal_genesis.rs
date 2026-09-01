@@ -34,6 +34,7 @@ fn decode_founding_device_public_key(device_public_key: &str) -> anyhow::Result<
 
 pub fn build_founding_authorize_payload(
     principal_did: arkret_sdk::Did,
+    station_id: arkret_sdk::DidCoreId,
     device_id: arkret_sdk::DeviceId,
     device_public_key: String,
     hpke_key: String,
@@ -41,8 +42,8 @@ pub fn build_founding_authorize_payload(
     signer: &crate::event_signer::InksonEventSigner,
 ) -> anyhow::Result<arkret_sdk::DeviceAuthorizePayload> {
     let principal_id = arkret_sdk::project_did_to_core_id(&principal_did)?;
+    let account_id = arkret_sdk::AccountId::new(principal_id.clone(), station_id);
     let payload = arkret_sdk::UnsignedDeviceAuthorizePayload::new(
-        principal_id.clone(),
         device_id,
         non_empty(device_public_key)?,
         non_empty(hpke_key)?,
@@ -56,7 +57,7 @@ pub fn build_founding_authorize_payload(
         None,
     )?;
     let signature = signer
-        .sign_raw(&payload.device_possession_signature_input()?)
+        .sign_raw(&payload.device_possession_signature_input(&account_id)?)
         .map_err(|error| anyhow::anyhow!(error.to_string()))?;
     payload
         .attach_signature(
@@ -86,6 +87,7 @@ pub fn build_genesis_unit(
     let principal_id = arkret_sdk::project_did_to_core_id(&principal_did)?;
     let payload = build_founding_authorize_payload(
         principal_did.clone(),
+        station_id.clone(),
         device_id,
         device_public_key,
         hpke_key,

@@ -1806,7 +1806,6 @@ pub(super) fn connect(
                                     .and_then(|content| {
                                         let payload = crate::account_data::blocklist_payload_from_account_data(
                                             &content,
-                                            crate::app::principal_id_text(&principal_id()),
                                         )
                                         .map_err(anyhow::Error::msg)?;
                                         let revision = entry

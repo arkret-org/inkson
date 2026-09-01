@@ -318,12 +318,18 @@ fn build_mls_keypackage_claim_request_with_requester(
         .collect::<Vec<_>>();
     let source_id = arkret_sdk::DidCoreId::new(source_id.trim().to_owned())?;
     let destination_id = arkret_sdk::DidCoreId::new(destination_id.trim().to_owned())?;
+    let target_core_id = principal_core_id(target_principal_id)?;
+    let target_account_id = target_pairwise_verification_method
+        .is_none()
+        .then(|| arkret_sdk::AccountId::new(target_core_id, destination_id.clone()));
+    let requester_account_id = matches!(&requester_authority, ClaimRequester::Device { .. })
+        .then(|| arkret_sdk::AccountId::new(requester.clone(), source_id.clone()));
     let signed_at = crate::clock::now_utc();
     let unsigned = arkret_sdk::PeerKeyPackagesClaimUnsignedRequest {
         claim_request_id: arkret_sdk::Base64UrlString::new(claim_request_id.trim().to_owned())
             .map_err(anyhow::Error::msg)?,
-        target_principal_id: principal_core_id(target_principal_id)?,
-        requester_id: requester,
+        target_account_id,
+        requester_account_id,
         intended_realm_id: arkret_sdk::RealmId::new(crate::operation::trim_realm_id(
             intended_realm_id,
         ))?,
@@ -400,8 +406,8 @@ fn build_mls_keypackage_claim_request_with_requester(
     }
     let body = arkret_sdk::KeyPackagesClaimRequestBody {
         claim_request_id: unsigned.claim_request_id,
-        target_principal_id: unsigned.target_principal_id,
-        requester_id: unsigned.requester_id,
+        target_account_id: unsigned.target_account_id,
+        requester_account_id: unsigned.requester_account_id,
         intended_realm_id: unsigned.intended_realm_id,
         mls_group_id: unsigned.mls_group_id,
         claim_purpose: unsigned.claim_purpose,
@@ -500,7 +506,11 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(body.requester_id, requester.actor_id);
+        assert_eq!(
+            body.unsigned_request()
+                .requester_principal_id(&body.requester_authorization),
+            Some(requester.actor_id.clone())
+        );
         assert_eq!(body.intended_realm_id, realm_id);
         match body.requester_authorization {
             arkret_sdk::PeerKeyPackageRequesterAuthorization::MinimalMetadataPairwise {

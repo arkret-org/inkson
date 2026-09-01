@@ -3195,12 +3195,11 @@ fn extracts_participant_handle_label_from_inline_handle_claims() {
             {
                 "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:bob.example","station_id":"ak:did_core:web:principal.example"}},
                 "subject_id": "ak:did_core:web:bob.example",
-                "handle_claims": [{
-                    "schema": "ak.schema.handle_claim.v1",
-                    "handle": "bob:local.host",
-                    "subject": "ak:did_core:web:bob.example",
-                    "binding_state": "verified"
-                }]
+                "handle_claims": [crate::views::member_display::test_inline_handle_claim(
+                    "ak:did_core:web:bob.example",
+                    "bob:local.host",
+                    "verified"
+                )]
             }
         ]
     });

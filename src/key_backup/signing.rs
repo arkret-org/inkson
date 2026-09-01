@@ -167,9 +167,18 @@ pub fn build_key_backup_unlock_proof(
         arkret_sdk::DidUrl::new(verification_method).map_err(anyhow::Error::msg)?,
         arkret_sdk::KeyBackupSignatureAlgorithm::Ed25519,
     )?;
+    let account_id = backup
+        .actor_id
+        .as_account_id()
+        .ok_or_else(|| anyhow::anyhow!("key backup owner is not an account actor"))?
+        .clone();
+    anyhow::ensure!(
+        account_id.principal_id == crate::mls_api_helpers::principal_core_id(principal_id)?,
+        "key backup owner does not match the requested account"
+    );
     let unsigned = arkret_sdk::UnsignedKeyBackupUnlockProof::new(
         recovery_session_id,
-        crate::mls_api_helpers::principal_core_id(principal_id)?,
+        account_id,
         arkret_sdk::DeviceId::new(requesting_device_id.to_owned())?,
         backup.backup_id.clone(),
         backup.backup_kind,

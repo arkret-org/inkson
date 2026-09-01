@@ -158,7 +158,6 @@ pub(crate) async fn prepare_pcr_policy_recovery(
         .map(|value| non_empty((*value).to_owned()))
         .collect::<anyhow::Result<Vec<_>>>()?;
     let authorize_payload = UnsignedDeviceAuthorizePayload::new(
-        verified_session.account_id.principal_id.clone(),
         verified_session.requesting_device_id.clone(),
         non_empty(device_public_key)?,
         non_empty(hpke_key)?,
@@ -171,10 +170,11 @@ pub(crate) async fn prepare_pcr_policy_recovery(
         DeviceAuthorizationBindingKind::PcrRecovery,
         Some(verified_session.recovery_session_id.clone()),
     )?;
-    let authorize_signature = arkret_sdk::Base64UrlString::new(arkret_sdk::base64url_encode(
-        device_signer.sign_raw(&authorize_payload.device_possession_signature_input()?)?,
-    ))
-    .map_err(anyhow::Error::msg)?;
+    let authorize_signature =
+        arkret_sdk::Base64UrlString::new(arkret_sdk::base64url_encode(device_signer.sign_raw(
+            &authorize_payload.device_possession_signature_input(&verified_session.account_id)?,
+        )?))
+        .map_err(anyhow::Error::msg)?;
     let authorize_payload = authorize_payload.attach_signature(authorize_signature)?;
     let digest_suite = arkret_sdk::canonical::DigestSuite::Sha256;
     let reanchor_payload = exact_device_reanchor_payload(
@@ -284,7 +284,7 @@ pub(crate) async fn prepare_pcr_policy_recovery(
     };
     let create_request = RecoveryTransactionCreateRequest::new(
         TransactionId::new(format!("ak:transaction:{}", crate::operation::uuid_v7()))?,
-        verified_session.account_id.principal_id.clone(),
+        verified_session.account_id.clone(),
         std::cmp::min(
             verified_session.expires_at,
             crate::clock::now_utc() + chrono::Duration::hours(1),

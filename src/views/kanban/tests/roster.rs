@@ -1,4 +1,5 @@
 use super::*;
+use crate::views::member_display::test_inline_handle_claim;
 
 #[test]
 fn assignment_mutations_preserve_same_principal_accounts_at_different_stations() {
@@ -65,11 +66,11 @@ fn realm_member_roster_reads_r32_wire_shape() {
                 "subject_id": "ak:did_core:web:acme.example:principals:alice",
                 "identity_event_ids": ["ak:event:ATOz4l-vKJUCGZDmS_knGS9TjZ64pkOzx-HNGAgY5RGJ"],
                 "member_display_state_digest": "sha256:abababababababababababababababababababababababababababababababab",
-                "handle_claims": [{
-                    "subject": "ak:did_core:web:acme.example:principals:alice",
-                    "handle": "alice:acme.example",
-                    "binding_state": "verified"
-                }],
+                "handle_claims": [test_inline_handle_claim(
+                    "ak:did_core:web:acme.example:principals:alice",
+                    "alice:acme.example",
+                    "verified"
+                )],
                 "handle_claims_limited": false
             },
             {
@@ -274,16 +275,8 @@ fn member_display_label_prefers_inline_verified_handle_claim() {
         ),
         subject_id: Some("did:key:z6MkPrincipal".to_owned()),
         handle_claims: vec![
-            json!({
-                "subject": "did:key:z6MkOther",
-                "handle": "other:acme.example",
-                "binding_state": "verified"
-            }),
-            json!({
-                "subject": "did:key:z6MkPrincipal",
-                "handle": "alice:acme.example",
-                "binding_state": "verified"
-            }),
+            test_inline_handle_claim("did:key:z6MkOther", "other:acme.example", "verified"),
+            test_inline_handle_claim("did:key:z6MkPrincipal", "alice:acme.example", "verified"),
         ],
         handle_claims_limited: false,
     };
@@ -303,16 +296,12 @@ fn member_display_label_rejects_unverified_or_noncanonical_handle_claims() {
         member_display_state_digest: None,
         subject_id: Some("did:key:z6MkPrincipal".to_owned()),
         handle_claims: vec![
-            json!({
-                "subject": "did:key:z6MkPrincipal",
-                "handle": "pending:acme.example",
-                "binding_state": "pending"
-            }),
-            json!({
-                "subject_id": "ak:did_core:key:z6MkPrincipal",
-                "handle": "other:acme.example",
-                "binding_state": "verified"
-            }),
+            test_inline_handle_claim("did:key:z6MkPrincipal", "pending:acme.example", "pending"),
+            test_inline_handle_claim(
+                "ak:did_core:key:z6MkPrincipal",
+                "other:acme.example",
+                "verified",
+            ),
         ],
         handle_claims_limited: false,
     };
@@ -321,11 +310,11 @@ fn member_display_label_rejects_unverified_or_noncanonical_handle_claims() {
 
     let undisclosed = RealmMemberRow {
         subject_id: None,
-        handle_claims: vec![json!({
-            "subject": "ak:did_core:webvh:zQmPairwiseActor",
-            "handle": "hidden:acme.example",
-            "binding_state": "verified"
-        })],
+        handle_claims: vec![test_inline_handle_claim(
+            "ak:did_core:webvh:zQmPairwiseActor",
+            "hidden:acme.example",
+            "verified",
+        )],
         ..row
     };
     assert!(verified_inline_handle(&undisclosed).is_none());

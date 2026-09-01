@@ -13,7 +13,7 @@
 //! accept-invite, join-official-Realm, cross-org federation, audit
 //! trail review — MUST go through here (AKP B-E §1 /
 //! identity-handles §6.1). They MUST NOT accept the server-attested
-//! `binding_state=verified` projection as authoritative; that field
+//! `HandleClaim.status=verified` projection as authoritative; that field
 //! is a cache hint only. Cache-allowed surfaces (verified badge,
 //! mention autocomplete, contact card) live in `components::verify_badges`
 //! and `views::contacts` — those are tagged `TRUST-CACHE`.
@@ -774,7 +774,7 @@ async fn fetch_did_webvh_document(
 ///
 /// TRUST-AUTHORITY: this function is still on the authority path. The cache only
 /// removes duplicate resolution work and does not change the rule that
-/// server-asserted `binding_state` is only a hint. Display-path `cached` /
+/// server-asserted HandleClaim status view is only a hint. Display-path `cached` /
 /// `stale` degradation is handled separately in `components::verify_badges` and
 /// `views::contacts` (TRUST-CACHE), without reusing this path.
 pub fn resolve_with_cache(

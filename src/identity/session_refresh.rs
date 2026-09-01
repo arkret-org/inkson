@@ -76,7 +76,7 @@ impl SessionGrantTransport for ReplaceableSessionTransport {
     fn refresh_session_grant<'a>(
         &'a self,
         request: arkret_sdk::SessionGrantRefreshRequestBody,
-    ) -> BoxSessionFuture<'a, arkret_sdk::SessionGrantRefreshOutcome> {
+    ) -> BoxSessionFuture<'a, arkret_sdk::SessionGrantOutcome> {
         let client = self.current();
         Box::pin(async move {
             client?
@@ -730,7 +730,7 @@ fn mint_session_grant_refresh_proof(
         context: arkret_wire::AcceptedDevicePossessionProofContext::V1,
         purpose: arkret_wire::AcceptedDeviceRefreshPossessionPurpose::SessionGrantRefresh,
         predecessor_session_grant_id,
-        principal_id: principal_core,
+        account_id: arkret_wire::AccountId::new(principal_core, audience.clone()),
         device_id,
         audience_id: audience,
         holder_jkt: holder_jkt.to_owned(),

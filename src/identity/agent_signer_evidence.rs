@@ -213,74 +213,47 @@ fn signal_request_digest(envelope: &arkret_wire::SignalEnvelope) -> Option<Hash>
 
 /// Resolve and verify a current Agent authority object for this exact Signal.
 ///
-/// Current observations are deliberately request-bound. The complete signed
-/// envelope is hashed into `request_digest`, while a fresh operation id and
-/// challenge prevent a response for one admission attempt from becoming a
-/// reusable Agent-directory entry. The existing self query authenticates only
-/// our local Station, so a foreign Agent remains unresolved until the owning
-/// specification registers the proxy/peer evidence binding.
+/// Current observations are deliberately request-bound and acquired through
+/// the standard self-to-peer proxy. The origin-signed response is verified
+/// before its inner Agent root can enter the exact-context cache.
 pub(crate) async fn resolve_current_signal_sender_evidence(
     http: &arkret_sdk::http_client::Client,
     envelope: &arkret_wire::SignalEnvelope,
+    recipient_account_id: arkret_sdk::AccountId,
     anchor: &crate::identity::did_resolver::ResolverDidAnchor,
 ) -> Option<CachedAgentSignerEvidence> {
     if envelope.sender_device_id.is_some() {
         return None;
     }
-    envelope.validate_structural().ok()?;
-    let account_id = envelope.sender_actor_id.as_account_id()?;
-    let service_id = http.describe().await.ok()?.service_id;
-    if account_id.station_id != service_id {
-        return None;
-    }
-    let request_digest = signal_request_digest(envelope)?;
-    let mut random = [0_u8; 24];
-    getrandom::fill(&mut random).ok()?;
-    let nonce = URL_SAFE_NO_PAD.encode(random);
+    let (request, outcome) = crate::identity::current_signer_evidence::query_for_signal(
+        http,
+        envelope,
+        recipient_account_id,
+        anchor,
+    )
+    .await?;
+    let operation_id = request.agent_observation_operation_id().ok()?;
     let context = CachedAgentSignerEvidenceContext::CurrentSignal {
-        operation_id: ProtocolOperationId::new(format!(
-            "ak:operation:signal-admission-evidence-{nonce}"
-        ))
-        .ok()?,
-        request_digest: request_digest.clone(),
-        verifier_id: service_id.clone(),
-        audience: service_id,
-        challenge: NonEmptyString::new(format!("ak.challenge:{nonce}")).ok()?,
-    };
-    let CachedAgentSignerEvidenceContext::CurrentSignal {
         operation_id,
-        verifier_id,
-        audience,
-        challenge,
-        ..
-    } = &context
-    else {
-        unreachable!("Signal admission evidence uses current context")
+        request_digest: request.request_digest.clone(),
+        verifier_id: request.recipient_account_id.station_id.clone(),
+        audience: request.recipient_account_id.principal_id.clone(),
+        challenge: request.challenge.clone(),
     };
     let agent_id = envelope.sender_actor_id.signing_principal_id().clone();
     let verification_method = envelope.proof.verification_method.clone();
-    let request = AgentSignerEvidenceQueryRequestBody {
-        realm_id: envelope.realm_id.clone(),
-        queries: vec![AgentSignerEvidenceQuerySelector::CurrentAdmission {
-            agent_id: agent_id.clone(),
-            verification_method: verification_method.clone(),
-            operation_id: operation_id.clone(),
-            request_digest,
-            verifier_id: verifier_id.clone(),
-            audience: audience.clone(),
-            challenge: challenge.clone(),
-        }],
-    };
-    let outcome = http.agent_signer_evidence_query(&request).await.ok()?;
-    outcome.validate_for_request(&request).ok()?;
     let mut verified = Vec::new();
-    for root in outcome.evidence_items {
-        let arkret_sdk::AuthenticatedSignerResolutionEvidence::Agent {
-            signer_id,
-            verification_method: resolved_method,
-            agent_signer_evidence,
+    for item in outcome.response.evidences {
+        let arkret_models_collaboration::CurrentSignerEvidenceItem::Agent {
+            authenticated_signer_evidence:
+                arkret_sdk::AuthenticatedSignerResolutionEvidence::Agent {
+                    signer_id,
+                    verification_method: resolved_method,
+                    agent_signer_evidence,
+                    ..
+                },
             ..
-        } = root
+        } = item
         else {
             continue;
         };

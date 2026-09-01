@@ -280,11 +280,11 @@ fn projected_member_profiles_use_only_verified_canonical_identity_fields() {
                 "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:alice.example","station_id":"ak:did_core:web:principal.example"}},
                 "display_name": "Alice",
                 "subject_id": "ak:did_core:web:acme.example:users:alice",
-                "handle_claims": [{
-                    "subject": "ak:did_core:web:acme.example:users:alice",
-                    "binding_state": "verified",
-                    "handle": "alice:acme.example"
-                }],
+                "handle_claims": [crate::views::member_display::test_inline_handle_claim(
+                    "ak:did_core:web:acme.example:users:alice",
+                    "alice:acme.example",
+                    "verified"
+                )],
                 "display_profile": {
                     "avatar_blob_ref": "ak:blob:sha256:01015dc8af66d01f557ea63f13538f1964848840a350c5311d1efc8ad138bb91"
                 }

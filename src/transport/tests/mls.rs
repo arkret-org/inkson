@@ -75,7 +75,14 @@ fn keypackage_claim_request_carries_required_capabilities() {
 
     let expected = mls_api_helpers::mls_keypackage_claim_required_capabilities().unwrap();
     assert_eq!(body.required_capabilities, expected);
-    assert_eq!(body.requester_id.as_str(), "ak:did_core:web:bob.example");
+    assert_eq!(
+        body.requester_account_id
+            .as_ref()
+            .expect("device requester has an exact account")
+            .principal_id
+            .as_str(),
+        "ak:did_core:web:bob.example"
+    );
     assert_eq!(
         body.service_binding.destination_id.as_str(),
         "ak:did_core:web:destination.example"

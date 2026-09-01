@@ -905,7 +905,7 @@ fn should_ack_mls_welcome_batch(
         && persist_error.is_none()
 }
 
-fn to_device_envelope_dedup_key(message: &Value) -> Result<(&str, &str, &str), String> {
+fn to_device_envelope_dedup_key(message: &Value) -> Result<(String, String, String), String> {
     let required = |field: &str| {
         message
             .get(field)
@@ -913,10 +913,31 @@ fn to_device_envelope_dedup_key(message: &Value) -> Result<(&str, &str, &str), S
             .filter(|value| !value.trim().is_empty())
             .ok_or_else(|| format!("durable to-device envelope omits {field}"))
     };
+    let sender = if let Some(account_id) = message.get("sender_account_id") {
+        let principal_id = account_id
+            .get("principal_id")
+            .and_then(Value::as_str)
+            .ok_or_else(|| "durable to-device envelope has invalid sender_account_id".to_owned())?;
+        let station_id = account_id
+            .get("station_id")
+            .and_then(Value::as_str)
+            .ok_or_else(|| "durable to-device envelope has invalid sender_account_id".to_owned())?;
+        format!("account:{principal_id}:{station_id}")
+    } else if let Some(agent_id) = message.get("sender_agent_id").and_then(Value::as_str) {
+        format!("agent:{agent_id}")
+    } else {
+        format!("service:{}", required("sender_id")?)
+    };
+    let endpoint = message
+        .get("sender_device_id")
+        .or_else(|| message.get("sender_agent_id"))
+        .or_else(|| message.get("sender_id"))
+        .and_then(Value::as_str)
+        .ok_or_else(|| "durable to-device envelope omits sender endpoint".to_owned())?;
     Ok((
-        required("sender_principal_id")?,
-        required("sender_device_id")?,
-        required("device_message_id")?,
+        sender,
+        endpoint.to_owned(),
+        required("device_message_id")?.to_owned(),
     ))
 }
 
@@ -1511,9 +1532,15 @@ mod tests {
         serde_json::json!({
             "device_message_id": device_message_id,
             "kind": "ak.mls.welcome",
-            "sender_principal_id": "ak:did_core:webvh:alice.example",
+            "sender_account_id": {
+                "principal_id": "ak:did_core:webvh:alice.example",
+                "station_id": "ak:did_core:webvh:station.example"
+            },
             "sender_device_id": "ak:device:0196419b-0000-7000-8000-000000000001",
-            "recipient_principal_id": "ak:did_core:webvh:bob.example",
+            "recipient_account_id": {
+                "principal_id": "ak:did_core:webvh:bob.example",
+                "station_id": "ak:did_core:webvh:station.example"
+            },
             "recipient_device_id": "ak:device:0196419b-0000-7000-8000-000000000002",
             "sent_at": "2099-01-01T00:00:00.000Z",
             "expires_at": "2100-01-01T00:00:00.000Z",

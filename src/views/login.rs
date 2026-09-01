@@ -1986,7 +1986,7 @@ pub(crate) async fn issue_bound_handoff_session(
                 request_id: request_id.clone(),
                 account_subject,
                 account_handoff_grant_digest,
-                principal_id: principal_id.clone(),
+                account_id: arkret_wire::AccountId::new(principal_id.clone(), audience.clone()),
                 device_id: device_id.clone(),
                 audience_id: audience.clone(),
                 holder_jkt: pending_handoff.holder_jkt.clone(),

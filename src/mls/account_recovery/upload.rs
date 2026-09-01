@@ -56,9 +56,11 @@ fn active_recovery_backup_recipient(
     recovery_public_key: &[u8],
 ) -> Result<(String, String, u64)> {
     let actor_id = crate::mls_api_helpers::principal_core_id(actor_id)?;
-    if policy.principal_id != actor_id {
+    let account_id =
+        arkret_sdk::AccountId::new(actor_id, crate::operation::authoring_station_id()?);
+    if policy.account_id != account_id {
         return Err(anyhow!(
-            "active recovery policy belongs to a different principal"
+            "active recovery policy belongs to a different account"
         ));
     }
     let body = policy
@@ -67,7 +69,7 @@ fn active_recovery_backup_recipient(
         .ok_or_else(|| anyhow!("active recovery policy omitted its signed key configuration"))?;
     body.validate()?;
     if body.policy_id != policy.policy_id
-        || body.principal_id != policy.principal_id
+        || body.account_id != policy.account_id
         || body.version != policy.version
     {
         return Err(anyhow!(

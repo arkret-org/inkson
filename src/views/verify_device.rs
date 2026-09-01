@@ -72,9 +72,15 @@ mod verification_key_poll_tests {
         json!({
             "device_message_id": "ak:device_message:0196419b-0000-7000-8000-000000000003",
             "kind": kind,
-            "sender_principal_id": "ak:did_core:webvh:z6mkfixture:alice.example",
+            "sender_account_id": {
+                "principal_id": "ak:did_core:webvh:z6mkfixture:alice.example",
+                "station_id": "ak:did_core:webvh:z6mkfixture:station.example"
+            },
             "sender_device_id": "ak:device:0196419b-0000-7000-8000-000000000001",
-            "recipient_principal_id": "ak:did_core:webvh:z6mkfixture:bob.example",
+            "recipient_account_id": {
+                "principal_id": "ak:did_core:webvh:z6mkfixture:bob.example",
+                "station_id": "ak:did_core:webvh:z6mkfixture:station.example"
+            },
             "recipient_device_id": "ak:device:0196419b-0000-7000-8000-000000000002",
             "sent_at": "2026-07-15T00:00:00.000Z",
             "expires_at": "2026-07-15T00:10:00.000Z",

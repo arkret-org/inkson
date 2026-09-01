@@ -397,11 +397,17 @@ fn kanban_write_does_not_consume_pending_welcome_without_checkpoint() {
     state.ingest_to_device_messages(&[serde_json::from_value(json!({
         "device_message_id": "ak:device_message:01904100-0000-7000-8000-0000000000e1",
         "kind": "ak.mls.welcome",
-        "sender_principal_id": crate::mls_api_helpers::principal_core_id(
-            "ak:did_core:web:alice.example"
-        ).unwrap(),
+        "sender_account_id": {
+            "principal_id": crate::mls_api_helpers::principal_core_id(
+                "ak:did_core:web:alice.example"
+            ).unwrap(),
+            "station_id": "ak:did_core:web:station.example"
+        },
         "sender_device_id": "ak:device:01904100-0000-7000-8000-0000000000a1",
-        "recipient_principal_id": bob_principal_id,
+        "recipient_account_id": {
+            "principal_id": bob_principal_id,
+            "station_id": "ak:did_core:web:station.example"
+        },
         "recipient_device_id": bob_device,
         "sent_at": arkret_sdk::canonical::format_timestamp_canonical(chrono::Utc::now()),
         "expires_at": arkret_sdk::canonical::format_timestamp_canonical(
@@ -474,11 +480,17 @@ fn kanban_write_waits_for_runtime_to_apply_pending_welcome() {
     state.ingest_to_device_messages(&[serde_json::from_value(json!({
         "device_message_id": "ak:device_message:01904100-0000-7000-8000-0000000000e2",
         "kind": "ak.mls.welcome",
-        "sender_principal_id": crate::mls_api_helpers::principal_core_id(
-            "ak:did_core:web:alice.example"
-        ).unwrap(),
+        "sender_account_id": {
+            "principal_id": crate::mls_api_helpers::principal_core_id(
+                "ak:did_core:web:alice.example"
+            ).unwrap(),
+            "station_id": "ak:did_core:web:station.example"
+        },
         "sender_device_id": "ak:device:01904100-0000-7000-8000-0000000000a1",
-        "recipient_principal_id": bob_principal_id,
+        "recipient_account_id": {
+            "principal_id": bob_principal_id,
+            "station_id": "ak:did_core:web:station.example"
+        },
         "recipient_device_id": bob_device,
         "sent_at": arkret_sdk::canonical::format_timestamp_canonical(chrono::Utc::now()),
         "expires_at": arkret_sdk::canonical::format_timestamp_canonical(

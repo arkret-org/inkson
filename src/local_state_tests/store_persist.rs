@@ -406,9 +406,15 @@ fn local_state_store_ingests_read_cursor_update_to_device() {
     store.ingest_to_device_messages(&[serde_json::from_value(serde_json::json!({
         "device_message_id": "ak:device_message:01904100-0000-7000-8000-000000000005",
         "kind": "ak.read_cursor.update",
-        "sender_principal_id": "ak:did_core:webvh:z6mkfixture:alice.example",
+        "sender_account_id": {
+            "principal_id": "ak:did_core:webvh:z6mkfixture:alice.example",
+            "station_id": "ak:did_core:webvh:z6mkfixture:station.example"
+        },
         "sender_device_id": "ak:device:01904100-0000-7000-8000-000000000001",
-        "recipient_principal_id": "ak:did_core:webvh:z6mkfixture:alice.example",
+        "recipient_account_id": {
+            "principal_id": "ak:did_core:webvh:z6mkfixture:alice.example",
+            "station_id": "ak:did_core:webvh:z6mkfixture:station.example"
+        },
         "recipient_device_id": "ak:device:01904100-0000-7000-8000-000000000001",
         "sent_at": "2026-06-24T00:00:00.000Z",
         "expires_at": "2099-06-25T00:00:00.000Z",
@@ -463,9 +469,15 @@ fn local_state_store_accepts_server_read_cursor_winner_with_lower_hlc() {
                 "ak:device_message:01904100-0000-7000-8000-{message_suffix}"
             ),
             "kind": "ak.read_cursor.update",
-            "sender_principal_id": "ak:did_core:webvh:z6mkfixture:alice.example",
+            "sender_account_id": {
+                "principal_id": "ak:did_core:webvh:z6mkfixture:alice.example",
+                "station_id": "ak:did_core:webvh:z6mkfixture:station.example"
+            },
             "sender_device_id": "ak:device:01904100-0000-7000-8000-000000000001",
-            "recipient_principal_id": "ak:did_core:webvh:z6mkfixture:alice.example",
+            "recipient_account_id": {
+                "principal_id": "ak:did_core:webvh:z6mkfixture:alice.example",
+                "station_id": "ak:did_core:webvh:z6mkfixture:station.example"
+            },
             "recipient_device_id": "ak:device:01904100-0000-7000-8000-000000000001",
             "sent_at": sent_at,
             "expires_at": "2099-06-25T00:00:00.000Z",
@@ -535,9 +547,15 @@ fn local_state_store_durably_deduplicates_device_message_envelopes() {
     let message: arkret_sdk::DeviceMessageEnvelope = serde_json::from_value(serde_json::json!({
     "device_message_id": "ak:device_message:0196419b-0000-7000-8000-000000000071",
     "kind": "ak.key.verification.request",
-    "sender_principal_id": "ak:did_core:webvh:z6mkfixture:alice.example",
+    "sender_account_id": {
+        "principal_id": "ak:did_core:webvh:z6mkfixture:alice.example",
+        "station_id": "ak:did_core:webvh:z6mkfixture:station.example"
+    },
     "sender_device_id": "ak:device:0196419b-0000-7000-8000-000000000001",
-    "recipient_principal_id": "ak:did_core:webvh:z6mkfixture:alice.example",
+    "recipient_account_id": {
+        "principal_id": "ak:did_core:webvh:z6mkfixture:alice.example",
+        "station_id": "ak:did_core:webvh:z6mkfixture:station.example"
+    },
     "recipient_device_id": "ak:device:0196419b-0000-7000-8000-000000000002",
     "sent_at": "2026-07-17T00:00:00.000Z",
     "expires_at": "2099-07-17T00:10:00.000Z",
@@ -579,9 +597,15 @@ fn local_state_store_durably_deduplicates_device_message_envelopes() {
         serde_json::from_value(serde_json::json!({
         "device_message_id": "ak:device_message:0196419b-0000-7000-8000-000000000071",
         "kind": "ak.key.verification.request",
-        "sender_principal_id": "ak:did_core:webvh:z6mkfixture:alice.example",
+        "sender_account_id": {
+            "principal_id": "ak:did_core:webvh:z6mkfixture:alice.example",
+            "station_id": "ak:did_core:webvh:z6mkfixture:station.example"
+        },
         "sender_device_id": "ak:device:0196419b-0000-7000-8000-000000000001",
-        "recipient_principal_id": "ak:did_core:webvh:z6mkfixture:alice.example",
+        "recipient_account_id": {
+            "principal_id": "ak:did_core:webvh:z6mkfixture:alice.example",
+            "station_id": "ak:did_core:webvh:z6mkfixture:station.example"
+        },
         "recipient_device_id": "ak:device:0196419b-0000-7000-8000-000000000002",
         "sent_at": "2026-07-17T00:00:00.000Z",
         "expires_at": "2099-07-17T00:10:00.000Z",

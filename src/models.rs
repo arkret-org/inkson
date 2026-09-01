@@ -97,7 +97,7 @@ pub fn contact_grants_me_invite(contact: &ContactListRow) -> bool {
 /// fail closed against the real soland handler (it deserialises
 /// `arkret_sdk::InviteReceivePolicy`, `deny_unknown_fields`, with both
 /// fields required and account authority equality enforced) and dropped
-/// the server-stored `trusted_*` / `denied_principal_ids` lists on
+/// the server-stored `trusted_*` / `denied_source_ids` lists on
 /// every round-trip. We now use the SDK authoritative type, which carries
 /// the required `schema`/`account_id`, typed enums, and the trust lists, so
 /// a GET→edit→SET cycle preserves fields the U4 form does not touch.
@@ -742,7 +742,7 @@ mod tests {
     fn invite_receive_policy_round_trips_sdk_wire_with_trust_lists() {
         // YOU-01-006 — the bare SDK wire body (schema + account_id required,
         // typed enums, trust lists) must decode and re-encode without losing
-        // the `trusted_*` / `denied_principal_ids` lists the U4 form
+        // the `trusted_*` / `denied_source_ids` lists the U4 form
         // never touches.
         let value = serde_json::json!({
             "schema": SchemaId::INVITE_RECEIVE_POLICY_V1,
@@ -751,8 +751,8 @@ mod tests {
             "explicit_address_behavior": "drop",
             "unknown_invites": "quarantine",
             "trusted_realm_ids": ["ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19"],
-            "trusted_principal_ids": ["ak:did_core:web:ps.example"],
-            "denied_subject_ids": ["ak:did_core:web:spammer.example"],
+            "trusted_source_ids": ["ak:did_core:web:ps.example"],
+            "denied_actor_ids": [{"kind":"account","account_id":{"principal_id":"ak:did_core:web:spammer.example","station_id":"ak:did_core:web:remote.example"}}],
             "disclosure": {"high_trust": "opaque", "low_trust": "opaque"},
         });
         let policy: super::InviteReceivePolicy =
@@ -763,7 +763,7 @@ mod tests {
         );
         // The trust lists survive a re-encode (no silent wipe on save).
         let re = serde_json::to_value(&policy).expect("re-encode policy");
-        assert_eq!(re["trusted_principal_ids"][0], "ak:did_core:web:ps.example");
+        assert_eq!(re["trusted_source_ids"][0], "ak:did_core:web:ps.example");
         assert_eq!(
             re["trusted_realm_ids"][0],
             "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19"

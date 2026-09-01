@@ -1066,10 +1066,12 @@ pub(crate) fn primary_handle_from_viewer(
         .primary_handle_claim
         .as_ref()
         .filter(|claim| {
-            claim.subject_account_id.principal_id == viewer.principal_id
-                && claim.binding_state == arkret_models_identity::HandleBindingState::Verified
+            claim.claim.subject_account_id.principal_id == viewer.principal_id
+                && claim.status == arkret_models_identity::HandleClaimStatus::Verified
+                && claim.revocation_digest.is_none()
+                && claim.fresh_until > chrono::Utc::now()
         })
-        .map(|claim| &claim.handle)
+        .map(|claim| &claim.claim.handle)
         .map(|handle| handle.canonical().trim())
         .filter(|handle| !handle.is_empty())
         .unwrap_or_default()
@@ -1176,15 +1178,21 @@ pub async fn tombstone_contact(
 /// `ak.self.consent.resource.get.v1`.
 pub async fn consent_cell(
     http: &arkret_sdk::http_client::Client,
-    holder: &str,
+    _holder: &str,
     peer: &str,
     scope: &str,
 ) -> anyhow::Result<arkret_sdk::ConsentCellView> {
+    let peer = arkret_sdk::ConsentPeer::Actor {
+        actor_id: arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+            crate::mls_api_helpers::principal_core_id(peer)?,
+            crate::operation::authoring_station_id()?,
+        )),
+    };
+    let peer = serde_json::to_string(&peer)?;
     let path = format!(
-        "{}/{}?peer={}&consent_scope={}",
-        arkret_wire::PATH_SELF_CONSENT_CELLS,
-        crate::wire_helpers::path_component(holder.trim()),
-        crate::wire_helpers::path_component(peer.trim()),
+        "{}/cell?peer={}&consent_scope={}",
+        arkret_wire::PATH_SELF_CONSENT,
+        crate::wire_helpers::path_component(&peer),
         crate::wire_helpers::path_component(scope.trim()),
     );
     http.get(&path).await.map_err(anyhow::Error::from)
@@ -1231,11 +1239,7 @@ pub async fn grant_consent(
                 .into_event(),
         ),
     };
-    let path = format!(
-        "{}/{}/grant",
-        arkret_wire::PATH_SELF_CONSENT_CELLS,
-        crate::wire_helpers::path_component(holder.trim()),
-    );
+    let path = format!("{}/cells/grant", arkret_wire::PATH_SELF_CONSENT);
     submitter
         .http()
         .post(&path, &body)
@@ -1275,11 +1279,7 @@ pub async fn revoke_consent(
                 .into_event(),
         ),
     };
-    let path = format!(
-        "{}/{}/revoke",
-        arkret_wire::PATH_SELF_CONSENT_CELLS,
-        crate::wire_helpers::path_component(holder.trim()),
-    );
+    let path = format!("{}/cells/revoke", arkret_wire::PATH_SELF_CONSENT);
     submitter
         .http()
         .post(&path, &body)
@@ -1296,7 +1296,10 @@ pub async fn request_consent(
     scope: &str,
 ) -> anyhow::Result<arkret_sdk::ConsentRequestOutcome> {
     let body = arkret_sdk::ConsentRequestRequestBody {
-        holder_principal_id: crate::mls_api_helpers::principal_core_id(holder)?,
+        holder_account_id: arkret_sdk::AccountId::new(
+            crate::mls_api_helpers::principal_core_id(holder)?,
+            crate::operation::authoring_station_id()?,
+        ),
         consent_scope: Some(scope.trim().parse()?),
     };
     http.post(arkret_wire::PATH_SELF_CONSENT_REQUEST, &body)
@@ -1653,22 +1656,23 @@ mod tests {
 
     #[test]
     fn account_viewer_projection_uses_signed_handle_claim() {
+        let now = chrono::Utc::now();
+        let claim = crate::views::helpers::verified_handle_claim(
+            "alice:local.host",
+            arkret_sdk::AccountId::new(
+                arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example").unwrap(),
+                arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap(),
+            ),
+            arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap(),
+            now,
+            now + chrono::Duration::days(1),
+        );
         let viewer: arkret_models_collaboration::account_lifecycle::AccountView =
             serde_json::from_value(json!({
                 "principal_id": "ak:did_core:web:alice.example",
                 "state": "active",
                 "devices": [],
-                "primary_handle_claim": {
-                    "schema": "ak.schema.handle_claim.v1",
-                    "handle": "alice:local.host",
-                    "subject_account_id": {
-                        "principal_id": "ak:did_core:web:alice.example",
-                        "station_id": "ak:did_core:web:principal.example"
-                    },
-                    "issuer_id": "ak:did_core:web:principal.example",
-                    "binding_state": "verified",
-                    "created_at": "2026-06-12T08:00:00.000Z"
-                },
+                "primary_handle_claim": claim,
                 "profile": {
                     "id": "ak:actor_profile:ASZ8VNF9qzH4Hcjd-1qOOKONYlZmfQOIRvMYdkQ0XXBH",
                     "schema": "ak.schema.actor_profile.v1",
@@ -1694,26 +1698,31 @@ mod tests {
 
     #[test]
     fn account_viewer_projection_rejects_unverified_or_foreign_handle_claim() {
-        for (subject, binding_state) in [
+        for (subject, status) in [
             ("ak:did_core:web:mallory.example", "verified"),
             ("ak:did_core:web:alice.example", "pending"),
         ] {
+            let now = chrono::Utc::now();
+            let mut claim = crate::views::helpers::verified_handle_claim(
+                "alice:auth.local.host",
+                arkret_sdk::AccountId::new(
+                    arkret_sdk::DidCoreId::new(subject).unwrap(),
+                    arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap(),
+                ),
+                arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap(),
+                now,
+                now + chrono::Duration::days(1),
+            );
+            if status == "pending" {
+                claim.status = arkret_models_identity::HandleClaimStatus::Pending;
+                claim.verified_at = None;
+            }
             let viewer: arkret_models_collaboration::account_lifecycle::AccountView =
                 serde_json::from_value(json!({
                     "principal_id": "ak:did_core:web:alice.example",
                     "state": "active",
                     "devices": [],
-                    "primary_handle_claim": {
-                        "schema": "ak.schema.handle_claim.v1",
-                        "handle": "alice:auth.local.host",
-                        "subject_account_id": {
-                            "principal_id": subject,
-                            "station_id": "ak:did_core:web:principal.example"
-                        },
-                        "issuer_id": "ak:did_core:web:principal.example",
-                        "binding_state": binding_state,
-                        "created_at": "2026-06-12T08:00:00.000Z"
-                    }
+                    "primary_handle_claim": claim
                 }))
                 .expect("account viewer shape");
 

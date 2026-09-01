@@ -106,7 +106,7 @@ pub fn sign_terminal_receipt_continue(
         .first()
         .ok_or_else(|| anyhow::anyhow!("accepted re-anchor unit is missing"))?;
     let signer_did = Did::new(signer.signer_did().to_owned())?;
-    if arkret_sdk::project_did_to_core_id(&signer_did)? != resource.principal_id {
+    if arkret_sdk::project_did_to_core_id(&signer_did)? != resource.account_id.principal_id {
         anyhow::bail!("recovery receipt signer does not control the recovered principal");
     }
     let verification_method = signer.verification_method_for_principal(&signer_did)?;
@@ -116,7 +116,7 @@ pub fn sign_terminal_receipt_continue(
             transaction_id: resource.transaction_id.clone(),
             transaction_request_digest: resource.request_digest.clone(),
             prepared_plan_digest: resource.prepared_plan_digest.clone(),
-            principal_id: resource.principal_id.clone(),
+            account_id: resource.account_id.clone(),
             recovery_session_id: binding.recovery_session_id.clone(),
             policy_id: observation.policy_id,
             policy_version: observation.policy_version,
@@ -400,7 +400,10 @@ impl SecurityRotationDraft {
         }
         SecurityRotationTransactionCreateRequest::from_prepared_rotations(
             self.transaction_id,
-            self.principal_id,
+            arkret_sdk::AccountId::new(
+                self.principal_id,
+                crate::operation::authoring_station_id()?,
+            ),
             self.expires_at,
             revoke_unit,
             self.new_secret_commitment,

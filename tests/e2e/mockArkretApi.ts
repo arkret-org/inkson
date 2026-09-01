@@ -2991,7 +2991,15 @@ export async function mockArkretApi(
         ],
         explicit_address_behavior: "quarantine",
         unknown_invites: "quarantine",
-        denied_subject_ids: ["ak:did_core:web:spammer.example"],
+        denied_actor_ids: [
+          {
+            kind: "account",
+            account_id: {
+              principal_id: "ak:did_core:web:spammer.example",
+              station_id: CURRENT_STATION_ID,
+            },
+          },
+        ],
         disclosure: { high_trust: "outcome", low_trust: "opaque" },
       });
     }

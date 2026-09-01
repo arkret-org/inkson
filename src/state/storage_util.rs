@@ -10,19 +10,40 @@
 use super::*;
 
 pub(crate) fn to_device_message_dedup_key(message: &Value) -> String {
-    let sender = message
-        .get("sender_principal_id")
-        .and_then(Value::as_str)
-        .unwrap_or("");
-    let sender_device = message
+    let sender = if let Some(account_id) = message.get("sender_account_id") {
+        format!(
+            "account:{}:{}",
+            account_id
+                .get("principal_id")
+                .and_then(Value::as_str)
+                .unwrap_or(""),
+            account_id
+                .get("station_id")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+        )
+    } else if let Some(agent_id) = message.get("sender_agent_id").and_then(Value::as_str) {
+        format!("agent:{agent_id}")
+    } else {
+        format!(
+            "service:{}",
+            message
+                .get("sender_id")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+        )
+    };
+    let sender_endpoint = message
         .get("sender_device_id")
+        .or_else(|| message.get("sender_agent_id"))
+        .or_else(|| message.get("sender_id"))
         .and_then(Value::as_str)
         .unwrap_or("");
     let device_message_id = message
         .get("device_message_id")
         .and_then(Value::as_str)
         .unwrap_or("");
-    format!("{sender}|{sender_device}|{device_message_id}")
+    format!("{sender}|{sender_endpoint}|{device_message_id}")
 }
 
 pub(crate) fn to_device_message_expired(message: &Value, now: DateTime<Utc>) -> bool {

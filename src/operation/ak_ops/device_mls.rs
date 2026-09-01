@@ -21,8 +21,6 @@ pub fn device_revoke(
     reason: &str,
 ) -> anyhow::Result<TypedOperationBuilder> {
     let payload = arkret_sdk::DeviceRevokePayload {
-        principal_id: crate::mls_api_helpers::principal_core_id(actor)
-            .map_err(|err| anyhow::anyhow!("invalid principal DID {actor:?}: {err}"))?,
         device_id: arkret_sdk::DeviceId::new(target_device_id.to_owned())
             .map_err(|err| anyhow::anyhow!("invalid target device id: {err}"))?,
         revoked_by: arkret_sdk::DeviceOrPrincipalRef::DeviceId(

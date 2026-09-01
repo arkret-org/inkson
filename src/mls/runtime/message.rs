@@ -1081,6 +1081,10 @@ fn build_welcome_consume_request(
                 );
             }
             arkret_sdk::RecipientMlsDurableSigner::Device {
+                recipient_account_id: arkret_sdk::AccountId::new(
+                    candidate.recipient_principal_id.clone(),
+                    candidate.recipient_id.clone(),
+                ),
                 recipient_device_id: recipient_device_id.clone(),
                 device_verification_method: method,
             }
@@ -1128,7 +1132,6 @@ fn build_welcome_consume_request(
         claim_request_id: candidate.claim_request_id.clone(),
         key_package_ref: arkret_sdk::NonEmptyString::new(&candidate.key_package_id)
             .map_err(|error| error.to_string())?,
-        recipient_principal_id: candidate.recipient_principal_id.clone(),
         recipient,
         recipient_id: candidate.recipient_id.clone(),
         realm_id: arkret_sdk::RealmId::new(candidate.realm_id.clone())
@@ -1169,7 +1172,7 @@ fn validate_cached_welcome_consume_request(
     let same_binding = request.claim_id.as_str() == candidate.claim_id
         && receipt.claim_request_id == candidate.claim_request_id
         && receipt.key_package_ref.as_str() == candidate.key_package_id
-        && receipt.recipient_principal_id == candidate.recipient_principal_id
+        && receipt.recipient_principal_id().as_ref() == Some(&candidate.recipient_principal_id)
         && receipt.recipient_id == candidate.recipient_id
         && receipt.realm_id == expected_realm
         && receipt.mls_group_id.as_str() == candidate.mls_group_id
@@ -1182,11 +1185,14 @@ fn validate_cached_welcome_consume_request(
                 recipient_device_id: expected,
             },
             arkret_sdk::RecipientMlsDurableSigner::Device {
+                recipient_account_id,
                 recipient_device_id: actual,
                 device_verification_method,
             },
         ) => {
-            expected == actual
+            recipient_account_id.principal_id == candidate.recipient_principal_id
+                && recipient_account_id.station_id == candidate.recipient_id
+                && expected == actual
                 && device_verification_method
                     .as_str()
                     .rsplit_once('#')
@@ -1485,15 +1491,20 @@ pub(super) fn validate_welcome_claim_receipt_context(
             } => recipient_pairwise_actor_id,
         };
     if receipt.claim_request_id != request.claim_request_id
-        || &request.requester_id
-            != welcome
-                .claim_envelope
-                .requester_actor_id
-                .signing_principal_id()
+        || request
+            .requester_account_id
+            .as_ref()
+            .is_some_and(|account| {
+                &account.principal_id
+                    != welcome
+                        .claim_envelope
+                        .requester_actor_id
+                        .signing_principal_id()
+            })
         || request.intended_realm_id != welcome.claim_envelope.intended_realm_id
         || request.intended_realm_id.as_str() != welcome.governance_binding.realm_id().as_str()
         || request.mls_group_id.as_str() != welcome.mls_group_id.as_str()
-        || &request.target_principal_id != target_principal_id
+        || request.target_principal_id().as_ref() != Some(target_principal_id)
     {
         return Err(
             "claim_receipt does not match the exact Welcome requester, Realm, MLS group, target, and claim request id"

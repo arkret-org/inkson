@@ -1,11 +1,11 @@
 // TRUST-CACHE: contact card / contact list per AKP B-E §1 — these
-// surfaces MAY consult the locally cached `binding_state` (verified
+// surfaces MAY consult the locally cached HandleClaim `status` (verified
 // badge, mention autocomplete fields). On cache miss or any
 // identity-handles.md §6.1.2 trigger the UI MUST downgrade to an
 // "unverified" badge. For authority surfaces (wallet disclosure /
 // accept invite / audit-trail review) callers MUST first-party verify
 // the DID Document via `crate::identity::did_resolver::build_default_resolver`
-// instead of relying on the cached binding state surfaced here.
+// instead of relying on the cached status view surfaced here.
 
 use arkret_sdk::contact_operations::ContactScope;
 use dioxus::prelude::*;

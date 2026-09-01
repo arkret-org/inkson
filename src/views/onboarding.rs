@@ -1321,7 +1321,6 @@ async fn issue_recovery_session_transport(
         || outcome.session_public_key != expected_session_public_key
         || outcome.expires_at > handoff.expires_at
         || outcome.granted_scope != expected_granted_scope
-        || outcome.scope_details.is_some()
     {
         anyhow::bail!("recovery SessionGrant outcome changed its frozen authority binding");
     }

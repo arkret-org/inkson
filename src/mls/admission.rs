@@ -358,8 +358,13 @@ fn validate_claim_receipt_for_admission(
         .map_err(|error| format!("invalid requester actor_id: {error}"))?;
     let expected_realm = arkret_sdk::RealmId::new(trim_realm_id(realm_id))
         .map_err(|error| format!("invalid admission realm_id: {error}"))?;
-    if receipt.request.requester_id != requester
-        || receipt.request.target_principal_id != claim.principal_id
+    if receipt
+        .request
+        .requester_account_id
+        .as_ref()
+        .map(|account| &account.principal_id)
+        != Some(&requester)
+        || receipt.request.target_principal_id().as_ref() != Some(&claim.principal_id)
         || receipt.request.intended_realm_id != expected_realm
         || receipt.request.claim_request_id.as_str() != claim_request_id
     {
@@ -860,9 +865,15 @@ mod tests {
         let request = arkret_sdk::PeerKeyPackagesClaimUnsignedRequest {
             claim_request_id: arkret_sdk::Base64UrlString::new(claim_request_id.to_owned())
                 .unwrap(),
-            target_principal_id: claim.principal_id.clone(),
+            target_account_id: Some(arkret_sdk::AccountId::new(
+                claim.principal_id.clone(),
+                arkret_sdk::DidCoreId::new("ak:did_core:web:ps.example").unwrap(),
+            )),
             intended_realm_id: arkret_sdk::RealmId::new(realm_id.to_owned()).unwrap(),
-            requester_id: crate::mls_api_helpers::principal_core_id(requester).unwrap(),
+            requester_account_id: Some(arkret_sdk::AccountId::new(
+                crate::mls_api_helpers::principal_core_id(requester).unwrap(),
+                arkret_sdk::DidCoreId::new("ak:did_core:web:ps.example").unwrap(),
+            )),
             mls_group_id: arkret_sdk::NonEmptyString::new(
                 crate::mls::runtime::mls_group_id_for_realm(realm_id)
                     .expect("test Realm scope must derive a canonical MLS group id"),
@@ -1228,8 +1239,10 @@ mod tests {
 
         let claim_request_id = "Y2xhaW0tcmVxdWVzdC0wMTIzNDU2Nzg5";
         let mut claim_receipt = self_claim_receipt(&claim, realm, alice, claim_request_id);
-        claim_receipt.request.target_principal_id =
-            crate::mls_api_helpers::principal_core_id(alice).unwrap();
+        claim_receipt.request.target_account_id = Some(arkret_sdk::AccountId::new(
+            crate::mls_api_helpers::principal_core_id(alice).unwrap(),
+            arkret_sdk::DidCoreId::new("ak:did_core:web:ps.example").unwrap(),
+        ));
         let authority = arkret_sdk::AccountId::new(
             crate::mls_api_helpers::principal_core_id(alice).unwrap(),
             arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example".to_owned()).unwrap(),

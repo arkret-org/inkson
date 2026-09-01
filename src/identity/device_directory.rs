@@ -1,6 +1,6 @@
 //! Fail-closed cache for PCR-authorized device signing keys.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::{LazyLock, RwLock};
 
 use arkret_sdk::signatures::PublicKeyMaterial;
@@ -385,6 +385,67 @@ pub async fn resolve_device_signing_key_with_http(
     })?;
     let outcome = crate::transport::keys::query_keys(sdk_http, &account_id, device).await?;
     Ok(cache_accepted_device_evidence_from_outcome(&outcome, anchor, &account_id, device).await)
+}
+
+pub(crate) async fn resolve_current_signal_device_evidence(
+    sdk_http: &arkret_sdk::http_client::Client,
+    anchor: &crate::identity::did_resolver::ResolverDidAnchor,
+    envelope: &arkret_wire::SignalEnvelope,
+    recipient_account_id: arkret_sdk::AccountId,
+) -> Option<PublicKeyMaterial> {
+    let account_id = envelope.sender_actor_id.as_account_id()?.clone();
+    let device_id = envelope.sender_device_id.as_ref()?.clone();
+    let (_, outcome) = crate::identity::current_signer_evidence::query_for_signal(
+        sdk_http,
+        envelope,
+        recipient_account_id,
+        anchor,
+    )
+    .await?;
+    for item in outcome.response.evidences {
+        let arkret_models_collaboration::CurrentSignerEvidenceItem::AccountDevice {
+            account_id: item_account_id,
+            device_id: item_device_id,
+            device_projection_attestation,
+        } = item
+        else {
+            continue;
+        };
+        if item_account_id != account_id || item_device_id != device_id {
+            continue;
+        }
+        let generation_ref = device_projection_attestation
+            .attestation
+            .authorized_generation_ref;
+        let record = arkret_models_crypto::QueryDeviceRecord {
+            algorithms: BTreeMap::new(),
+            trust_algorithms: Vec::new(),
+            device_projection_attestation,
+        };
+        let outcome = arkret_models_crypto::KeysQueryOutcome {
+            device_keys: vec![arkret_models_crypto::QueryAccountDeviceEntry {
+                account_id: account_id.clone(),
+                device_keys: BTreeMap::from([(device_id.clone(), record)]),
+            }],
+            failures: Vec::new(),
+            device_generations: vec![arkret_models_crypto::AccountDeviceGenerationEntry {
+                account_id: account_id.clone(),
+                generation_state: arkret_models_crypto::keys::DeviceGenerationState {
+                    current_device_generation_ref: generation_ref,
+                    device_generation_status:
+                        arkret_models_crypto::keys::DeviceGenerationStatus::Active,
+                },
+            }],
+        };
+        return cache_accepted_device_evidence_from_outcome(
+            &outcome,
+            anchor,
+            &account_id,
+            device_id.as_str(),
+        )
+        .await;
+    }
+    None
 }
 
 pub async fn refresh_device_keys(

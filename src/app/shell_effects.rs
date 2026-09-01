@@ -434,7 +434,7 @@ pub(super) fn ShellEffects(state: ShellEffectState) -> Element {
                             let earliest_expiry = res
                                 .claims
                                 .iter()
-                                .filter_map(|claim| claim.expires_at.as_ref().cloned())
+                                .filter_map(|claim| claim.claim.expires_at.as_ref().cloned())
                                 .min();
                             state_store_for_contact_handles
                                 .write()
