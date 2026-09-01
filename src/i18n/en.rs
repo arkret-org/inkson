@@ -294,7 +294,6 @@ pub fn english_translations() -> TranslationDict {
     dict.set("realm_admin.refresh_members", "Refresh");
     dict.set("realm_admin.kick_member", "Kick");
     dict.set("realm_admin.ban_member", "Ban");
-    dict.set("realm_admin.rotate_epoch", "Rotate Epoch");
     dict.set("realm_admin.leave_realm", "Leave");
     dict.set("realm_admin.leave_confirm_title", "Leave this Realm?");
     dict.set(
@@ -372,10 +371,6 @@ pub fn english_translations() -> TranslationDict {
     dict.set(
         "recovery.upload.backed_up",
         "Recovery key created; the recovery policy and encrypted account backup are stored. Write the 24 words down — they are the only way to restore on a new device.",
-    );
-    dict.set(
-        "recovery.upload.policy_active",
-        "Recovery key created and the recovery policy is active. Encrypted content will be backed up automatically the first time you use encryption.",
     );
     dict.set(
         "recovery.upload.device_unauthorized",
@@ -893,7 +888,6 @@ pub fn english_translations() -> TranslationDict {
         "Watch level update failed (rolled back).",
     );
     // T7.3 handle reassigned context.
-    dict.set("chat.binding_context.separator", " @ ");
     dict.set("chat.binding_context.details", "Show service binding");
     // T7.4 E2EE status indicators.
     dict.set("chat.crypto.decrypting", "Decrypting…");
@@ -1267,41 +1261,106 @@ pub fn english_translations() -> TranslationDict {
         "shortcuts.list.send_alias",
         "Send the current message (alternate binding)",
     );
-    // Personal blocklist (A5) — actor-private `ak.account.blocklist`
-    // account-data namespace. Used by the Settings → Privacy panel, the
-    // member-row context action, and the message "blocked user"
-    // placeholder row.
-    dict.set("settings.privacy.blocked_users.title", "Blocked users");
+    // Personal blocklist — every visible string in the settings card is
+    // localized; wire values remain untranslated Select values.
+    dict.set("settings.privacy.blocklist.title", "Personal blocklist");
     dict.set(
-        "settings.privacy.blocked_users.empty",
-        "No users blocked. Block someone from a member list or message row to manage entries here.",
+        "settings.privacy.blocklist.description",
+        "Blocked targets are hidden from messages and notifications on your devices. Blocks stay private and do not change what other members see.",
+    );
+    dict.set("settings.privacy.blocklist.empty_title", "Blocklist empty");
+    dict.set(
+        "settings.privacy.blocklist.empty_body",
+        "You haven't blocked anything yet.",
     );
     dict.set(
-        "settings.privacy.blocked_users.did_placeholder",
-        "DID to block",
+        "settings.privacy.blocklist.kind.service",
+        "Station or service",
+    );
+    dict.set("settings.privacy.blocklist.kind.domain", "Domain");
+    dict.set(
+        "settings.privacy.blocklist.kind.organization",
+        "Organization",
+    );
+    dict.set("settings.privacy.blocklist.kind.actor", "Person or agent");
+    dict.set(
+        "settings.privacy.blocklist.applies_summary",
+        "Applies to: {surfaces}",
     );
     dict.set(
-        "settings.privacy.blocked_users.reason_placeholder",
+        "settings.privacy.blocklist.expires_summary",
+        "Expires: {expires}",
+    );
+    dict.set(
+        "settings.privacy.blocklist.reason_summary",
+        "Reason: {reason}",
+    );
+    dict.set("settings.privacy.blocklist.unblock", "Unblock");
+    dict.set(
+        "settings.privacy.blocklist.status.unblocked",
+        "Unblocked {target}",
+    );
+    dict.set("settings.privacy.blocklist.target_type", "Target type");
+    dict.set(
+        "settings.privacy.blocklist.target.actor",
+        "Target account or agent",
+    );
+    dict.set(
+        "settings.privacy.blocklist.target.identity",
+        "Target identity",
+    );
+    dict.set("settings.privacy.blocklist.target.domain", "Target domain");
+    dict.set(
+        "settings.privacy.blocklist.invalid.actor",
+        "Enter the complete account or agent identity, including its Station.",
+    );
+    dict.set(
+        "settings.privacy.blocklist.invalid.identity",
+        "Enter a valid stable identity.",
+    );
+    dict.set(
+        "settings.privacy.blocklist.invalid.domain",
+        "Enter a valid domain, such as example.com.",
+    );
+    dict.set("settings.privacy.blocklist.applies_to", "Applies to");
+    dict.set(
+        "settings.privacy.blocklist.applies_required",
+        "Select at least one surface to block.",
+    );
+    dict.set("settings.privacy.blocklist.surface.messages", "Messages");
+    dict.set("settings.privacy.blocklist.surface.mentions", "Mentions");
+    dict.set("settings.privacy.blocklist.surface.dm", "Direct messages");
+    dict.set("settings.privacy.blocklist.surface.calls", "Calls");
+    dict.set("settings.privacy.blocklist.surface.contacts", "Contacts");
+    dict.set("settings.privacy.blocklist.surface.applets", "Apps");
+    dict.set("settings.privacy.blocklist.surface.presence", "Presence");
+    dict.set(
+        "settings.privacy.blocklist.surface.notifications",
+        "Notifications",
+    );
+    dict.set("settings.privacy.blocklist.surface.directory", "Directory");
+    dict.set(
+        "settings.privacy.blocklist.reason_optional",
         "Reason (optional)",
     );
-    dict.set("settings.privacy.blocked_users.add", "Block");
-    dict.set("settings.privacy.blocked_users.added", "Blocked");
-    dict.set("settings.privacy.blocked_users.removed", "Unblocked");
+    dict.set("settings.privacy.blocklist.no_reason", "No reason");
+    dict.set("settings.privacy.blocklist.expires", "Expires");
     dict.set(
-        "settings.privacy.blocked_users.duplicate",
-        "Already blocked",
+        "settings.privacy.blocklist.expiry.never",
+        "Never (permanent)",
+    );
+    dict.set("settings.privacy.blocklist.expiry.1d", "24 hours");
+    dict.set("settings.privacy.blocklist.expiry.7d", "7 days");
+    dict.set("settings.privacy.blocklist.expiry.30d", "30 days");
+    dict.set("settings.privacy.blocklist.block", "Block target");
+    dict.set(
+        "settings.privacy.blocklist.status.added",
+        "Blocked {target}",
     );
     dict.set(
-        "settings.privacy.blocked_users.did_required",
-        "Enter a DID first.",
+        "settings.privacy.blocklist.status.duplicate",
+        "{target} is already blocked",
     );
-    // F-BLOCKLIST-VALID-1: shown live as the user types, and as a
-    // submit-time guard when the input still doesn't look like a DID.
-    dict.set(
-        "settings.privacy.blocked_users.did_invalid",
-        "Enter an identity address starting with \"did:\".",
-    );
-    dict.set("settings.privacy.unblock", "Unblock");
     // A4b — avatar upload UI keys.
     dict.set("settings.avatar.upload", "Upload new avatar");
     dict.set("settings.avatar.clear", "Remove avatar");
@@ -1432,24 +1491,6 @@ pub fn english_translations() -> TranslationDict {
         "These details are intended for developers and operators. End users do not need to read them.",
     );
     dict.set("developer.profile.required", "Required profile id");
-
-    // Round R2/R3 (T11) — fail-closed blob presign error strings.
-    dict.set(
-        "blob.error.legal_hold_active",
-        "This file can't be downloaded right now. A legal hold is in effect; the file will remain inaccessible until the hold is lifted.",
-    );
-    dict.set(
-        "blob.error.redacted",
-        "This file was redacted by an administrator and can no longer be downloaded.",
-    );
-    dict.set(
-        "blob.error.plaintext_not_authorised",
-        "This file can't be opened by the current service because plaintext access wasn't authorised.",
-    );
-    dict.set(
-        "blob.error.not_authorised",
-        "You don't have permission to download this file.",
-    );
 
     // Round R2/R3 (T06) — moderation appeal state labels.
     dict.set("moderation.appeal.state.none", "No appeal filed");
@@ -1897,10 +1938,6 @@ fn add_r3_error_keys(dict: &mut TranslationDict) {
         "The server reported a participant who isn't in this call. The connection was refused to stay safe.",
     );
     dict.set(
-        "error.call.session_focus_already_committed",
-        "This call's connection is already set. Rejoin the call to use it.",
-    );
-    dict.set(
         "error.call.e2ee_key_source_unauthorised",
         "The call's encryption key came from an untrusted source, so it was refused. Keys may only come from the group's own encryption.",
     );
@@ -1927,20 +1964,6 @@ fn add_r3_error_keys(dict: &mut TranslationDict) {
     dict.set(
         "error.call.desktop_media_unavailable",
         "Desktop calling isn't ready in this build yet. Use the web app to place this call.",
-    );
-
-    // Handle wire-level enforce.
-    dict.set(
-        "error.handle.homograph_forbidden",
-        "This handle uses script-mixed or confusable characters and cannot be registered.",
-    );
-    dict.set(
-        "error.handle.script_mixed_warning",
-        "Warning: the handle mixes scripts (e.g. Latin + Cyrillic). Registration will be rejected.",
-    );
-    dict.set(
-        "error.handle.nfc_normalization_warning",
-        "Handle was Unicode-normalised (NFC). The normalised form will be the canonical handle.",
     );
 
     // Recovery.
@@ -2881,10 +2904,6 @@ fn prompt_copy_strings(dict: &mut TranslationDict) {
     dict.set("agent_runtime.approve", "Approve");
     dict.set("manage.realms_title", "Manage Realms");
     dict.set("manage.principal_control_button", "PCR");
-    dict.set(
-        "manage.principal_control_title",
-        "Principal Control Realm (PCR)",
-    );
     dict.set(
         "manage.principal_control_subtitle",
         "System identity and device authority. It is separate from collaboration Realms.",

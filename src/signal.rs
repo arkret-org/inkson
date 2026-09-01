@@ -1185,7 +1185,7 @@ mod tests {
                 .to_vec(),
         };
         assert!(
-            crate::identity::device_directory::verify_signal_envelope_proof(&envelope, &public_key)
+            arkret_sdk::signatures::verify_ed25519_signal_proof(&envelope, &public_key).is_ok()
         );
 
         // Rewriting any header member breaks the AAD binding, so the sealer
@@ -1193,10 +1193,7 @@ mod tests {
         let mut tampered = envelope.clone();
         tampered.signal_class = arkret_wire::SignalClass::Setup;
         assert!(
-            !crate::identity::device_directory::verify_signal_envelope_proof(
-                &tampered,
-                &public_key
-            )
+            arkret_sdk::signatures::verify_ed25519_signal_proof(&tampered, &public_key).is_err()
         );
     }
 

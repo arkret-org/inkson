@@ -245,23 +245,13 @@ impl SignalProductSink for AppSignalProductSink {
             let mut hub = self.call_hub;
             let local_actor = self.principal_id.peek().clone();
             let api = self.authenticated_api();
-            // A fresh anchor per batch keeps the resolver's ingested evidence
-            // scoped to this routing pass; the (possibly back-filled) cache is
-            // written back so the next Signal reuses the resolution.
-            let anchor = crate::identity::did_resolver::ResolverDidAnchor::from_profile(
-                crate::identity::did_resolver::DeploymentProfile::PersonalNode,
-                self.did_cache.peek().clone(),
-            );
             crate::views::call_signals::route_decrypted_call_signals(
                 &mut hub,
                 std::slice::from_ref(&(envelope.clone(), body)),
                 crate::app::principal_id_text(&local_actor),
                 api.as_ref(),
-                &anchor,
             )
             .await;
-            let mut did_cache = self.did_cache;
-            did_cache.set(anchor.into_cache());
         })
     }
 

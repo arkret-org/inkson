@@ -40,13 +40,40 @@ const BLOCK_REASON_CODES: &[&str] = &[
     "other",
 ];
 
-/// Human label for a `target.kind` value.
-fn target_kind_label(kind: crate::account_data::BlocklistUiTargetKind) -> &'static str {
+/// Translation key for a `target.kind` value.
+fn target_kind_label_key(kind: crate::account_data::BlocklistUiTargetKind) -> &'static str {
     match kind {
-        crate::account_data::BlocklistUiTargetKind::Service => "Station / service",
-        crate::account_data::BlocklistUiTargetKind::Domain => "Domain",
-        crate::account_data::BlocklistUiTargetKind::Organization => "Organization",
-        crate::account_data::BlocklistUiTargetKind::Actor => "Actor (user / agent)",
+        crate::account_data::BlocklistUiTargetKind::Service => {
+            "settings.privacy.blocklist.kind.service"
+        }
+        crate::account_data::BlocklistUiTargetKind::Domain => {
+            "settings.privacy.blocklist.kind.domain"
+        }
+        crate::account_data::BlocklistUiTargetKind::Organization => {
+            "settings.privacy.blocklist.kind.organization"
+        }
+        crate::account_data::BlocklistUiTargetKind::Actor => {
+            "settings.privacy.blocklist.kind.actor"
+        }
+    }
+}
+
+fn surface_label_key(
+    surface: arkret_models_collaboration::objects::productivity::AccountBlocklistSurface,
+) -> &'static str {
+    use arkret_models_collaboration::objects::productivity::AccountBlocklistSurface;
+    match surface {
+        AccountBlocklistSurface::Messages => "settings.privacy.blocklist.surface.messages",
+        AccountBlocklistSurface::Mentions => "settings.privacy.blocklist.surface.mentions",
+        AccountBlocklistSurface::Dm => "settings.privacy.blocklist.surface.dm",
+        AccountBlocklistSurface::Calls => "settings.privacy.blocklist.surface.calls",
+        AccountBlocklistSurface::Contacts => "settings.privacy.blocklist.surface.contacts",
+        AccountBlocklistSurface::Applets => "settings.privacy.blocklist.surface.applets",
+        AccountBlocklistSurface::Presence => "settings.privacy.blocklist.surface.presence",
+        AccountBlocklistSurface::Notifications => {
+            "settings.privacy.blocklist.surface.notifications"
+        }
+        AccountBlocklistSurface::Directory => "settings.privacy.blocklist.surface.directory",
     }
 }
 
@@ -130,37 +157,35 @@ pub fn BlocklistSettingsCard(principal_id: Signal<String>, token: Signal<String>
     } else {
         "blocklist-id blocklist-id-invalid"
     };
-    let invalid_hint = if kind_now == crate::account_data::BlocklistUiTargetKind::Actor {
-        "Enter a complete ActorId JSON object, including the target Station for an account."
+    let invalid_hint_key = if kind_now == crate::account_data::BlocklistUiTargetKind::Actor {
+        "settings.privacy.blocklist.invalid.actor"
     } else if is_identity_kind {
-        "Enter a valid stable identity id (e.g. ak:did_core:webvh:<scid>)."
+        "settings.privacy.blocklist.invalid.identity"
     } else {
-        "Enter a valid domain (e.g. example.com)."
+        "settings.privacy.blocklist.invalid.domain"
     };
-    let target_input_label = if kind_now == crate::account_data::BlocklistUiTargetKind::Actor {
-        "Target ActorId"
+    let target_input_label_key = if kind_now == crate::account_data::BlocklistUiTargetKind::Actor {
+        "settings.privacy.blocklist.target.actor"
     } else if is_identity_kind {
-        "Target stable id"
+        "settings.privacy.blocklist.target.identity"
     } else {
-        "Target domain"
+        "settings.privacy.blocklist.target.domain"
     };
-
     rsx! {
         div { class: "event", "data-testid": "blocked-users-panel",
             div { class: "event-head",
-                span { "Personal blocklist" }
+                span { {crate::i18n::tr("settings.privacy.blocklist.title")} }
             }
             div { class: "muted",
-                "Blocked targets are hidden from your messages and notifications on your devices. "
-                "Blocks are a local filter — they are not broadcast and do not change what other members see."
+                {crate::i18n::tr("settings.privacy.blocklist.description")}
             }
 
             div { class: "settings-list", "data-testid": "blocked-users-list",
                 if entries.read().is_empty() {
                     EmptyState {
-                        title: "Blocklist empty".to_owned(),
+                        title: crate::i18n::tr("settings.privacy.blocklist.empty_title"),
                         kind: EmptyStateKind::Empty,
-                        message: Some("You haven't blocked anything yet.".to_owned()),
+                        message: Some(crate::i18n::tr("settings.privacy.blocklist.empty_body")),
                         test_id: None,
                     }
                 } else {
@@ -169,10 +194,10 @@ pub fn BlocklistSettingsCard(principal_id: Signal<String>, token: Signal<String>
                             let blocked_at = entry.created_at;
                             let kind = crate::account_data::blocklist_target_kind_label(&entry.target);
                             let kind_label = match kind {
-                                "service" => target_kind_label(crate::account_data::BlocklistUiTargetKind::Service),
-                                "domain" => target_kind_label(crate::account_data::BlocklistUiTargetKind::Domain),
-                                "organization" => target_kind_label(crate::account_data::BlocklistUiTargetKind::Organization),
-                                _ => target_kind_label(crate::account_data::BlocklistUiTargetKind::Actor),
+                                "service" => crate::i18n::tr(target_kind_label_key(crate::account_data::BlocklistUiTargetKind::Service)),
+                                "domain" => crate::i18n::tr(target_kind_label_key(crate::account_data::BlocklistUiTargetKind::Domain)),
+                                "organization" => crate::i18n::tr(target_kind_label_key(crate::account_data::BlocklistUiTargetKind::Organization)),
+                                _ => crate::i18n::tr(target_kind_label_key(crate::account_data::BlocklistUiTargetKind::Actor)),
                             };
                             let entry_value = crate::account_data::blocklist_target_value(&entry.target);
                             let entry_label = if crate::account_data::target_is_actor(&entry.target) {
@@ -181,7 +206,7 @@ pub fn BlocklistSettingsCard(principal_id: Signal<String>, token: Signal<String>
                                 short_protocol_id(&entry_value)
                             };
                             let applies_summary = entry.applies_to.iter()
-                                .map(|surface| crate::account_data::blocklist_surface_label(*surface))
+                                .map(|surface| crate::i18n::tr(surface_label_key(*surface)))
                                 .collect::<Vec<_>>()
                                 .join(", ");
                             let expires_at = entry.expires_at;
@@ -197,12 +222,21 @@ pub fn BlocklistSettingsCard(principal_id: Signal<String>, token: Signal<String>
                                         span { title: "{entry_value}", "{entry_label}" }
                                         span { class: "muted", "{blocked_at}" }
                                     }
-                                    div { class: "muted", "Applies to: {applies_summary}" }
+                                    div { class: "muted", {crate::i18n::tr_args(
+                                        "settings.privacy.blocklist.applies_summary",
+                                        &[("surfaces", applies_summary)],
+                                    )} }
                                     if let Some(expires) = &expires_at {
-                                        div { class: "muted", "Expires: {expires}" }
+                                        div { class: "muted", {crate::i18n::tr_args(
+                                            "settings.privacy.blocklist.expires_summary",
+                                            &[("expires", expires.to_string())],
+                                        )} }
                                     }
                                     if let Some(reason) = &entry.reason_code {
-                                        div { class: "muted", "Reason: {reason}" }
+                                        div { class: "muted", {crate::i18n::tr_args(
+                                            "settings.privacy.blocklist.reason_summary",
+                                            &[("reason", crate::i18n::tr(&format!("moderation.report.reason.{reason}")))],
+                                        )} }
                                     }
                                     div { class: "actions",
                                         Button {
@@ -229,9 +263,9 @@ pub fn BlocklistSettingsCard(principal_id: Signal<String>, token: Signal<String>
                                                         } else {
                                                             short_protocol_id(&target_value)
                                                         };
-                                                        status.set(format!(
-                                                            "Unblocked {}",
-                                                            target_label
+                                                        status.set(crate::i18n::substitute_args(
+                                                            crate::i18n::tr("settings.privacy.blocklist.status.unblocked"),
+                                                            &[("target", target_label)],
                                                         ));
                                                         crate::views::settings::push_blocklist_account_data(
                                                             base(),
@@ -243,7 +277,7 @@ pub fn BlocklistSettingsCard(principal_id: Signal<String>, token: Signal<String>
                                                     }
                                                 }
                                             },
-                                            "Unblock"
+                                            {crate::i18n::tr("settings.privacy.blocklist.unblock")}
                                         }
                                     }
                                 }
@@ -255,7 +289,7 @@ pub fn BlocklistSettingsCard(principal_id: Signal<String>, token: Signal<String>
 
             div { class: "event",
                 div { class: "field",
-                    Label { html_for: "block-target-kind", "Target type" }
+                    Label { html_for: "block-target-kind", {crate::i18n::tr("settings.privacy.blocklist.target_type")} }
                     Select::<String> {
                         "data-testid": "block-target-kind",
                         value: Some(kind_selected.into()),
@@ -270,15 +304,15 @@ pub fn BlocklistSettingsCard(principal_id: Signal<String>, token: Signal<String>
                             SelectOption::<String> {
                                 index,
                                 value: kind.ui_value().to_owned(),
-                                text_value: kind.ui_value(),
-                                {target_kind_label(kind)}
+                                text_value: crate::i18n::tr(target_kind_label_key(kind)),
+                                {crate::i18n::tr(target_kind_label_key(kind))}
                             }
                         }
                     }
                 }
 
                 div { class: "field",
-                    Label { html_for: "block-target-input-input", "{target_input_label}" }
+                    Label { html_for: "block-target-input-input", {crate::i18n::tr(target_input_label_key)} }
                     Input {
                         id: "block-target-input-input",
                         class: "{input_class}",
@@ -292,13 +326,13 @@ pub fn BlocklistSettingsCard(principal_id: Signal<String>, token: Signal<String>
                         div {
                             class: "settings-inline-hint settings-inline-hint-invalid",
                             "data-testid": "block-target-invalid",
-                            "{invalid_hint}"
+                            {crate::i18n::tr(invalid_hint_key)}
                         }
                     }
                 }
 
                 div { class: "field",
-                    Label { html_for: "block-applies-to", "Applies to" }
+                    Label { html_for: "block-applies-to", {crate::i18n::tr("settings.privacy.blocklist.applies_to")} }
                     div { class: "blocklist-applies-grid", "data-testid": "block-applies-to",
                         for surface in crate::account_data::DEFAULT_BLOCKLIST_APPLIES_TO.iter().copied() {
                             div { class: "metric",
@@ -321,7 +355,7 @@ pub fn BlocklistSettingsCard(principal_id: Signal<String>, token: Signal<String>
                                         applies_to.set(next);
                                     },
                                 }
-                                span { {crate::account_data::blocklist_surface_label(surface)} }
+                                span { {crate::i18n::tr(surface_label_key(surface))} }
                             }
                         }
                     }
@@ -329,33 +363,38 @@ pub fn BlocklistSettingsCard(principal_id: Signal<String>, token: Signal<String>
                         div {
                             class: "settings-inline-hint settings-inline-hint-invalid",
                             "data-testid": "block-applies-empty",
-                            "Select at least one surface to block."
+                            {crate::i18n::tr("settings.privacy.blocklist.applies_required")}
                         }
                     }
                 }
 
                 div { class: "field",
-                    Label { html_for: "block-reason", "Reason (optional)" }
+                    Label { html_for: "block-reason", {crate::i18n::tr("settings.privacy.blocklist.reason_optional")} }
                     Select::<String> {
                         "data-testid": "block-reason",
                         value: Some(reason_selected.into()),
                         on_value_change: move |v: Option<String>| {
                             reason_code.set(v.unwrap_or_default());
                         },
-                        SelectOption::<String> { index: 0usize, value: String::new(), text_value: "No reason", "No reason" }
+                        SelectOption::<String> {
+                            index: 0usize,
+                            value: String::new(),
+                            text_value: crate::i18n::tr("settings.privacy.blocklist.no_reason"),
+                            {crate::i18n::tr("settings.privacy.blocklist.no_reason")}
+                        }
                         for (idx , code) in BLOCK_REASON_CODES.iter().copied().enumerate() {
                             SelectOption::<String> {
                                 index: idx + 1,
                                 value: code.to_string(),
-                                text_value: "{code}",
-                                "{code}"
+                                text_value: crate::i18n::tr(&format!("moderation.report.reason.{code}")),
+                                {crate::i18n::tr(&format!("moderation.report.reason.{code}"))}
                             }
                         }
                     }
                 }
 
                 div { class: "field",
-                    Label { html_for: "block-expiry", "Expires" }
+                    Label { html_for: "block-expiry", {crate::i18n::tr("settings.privacy.blocklist.expires")} }
                     Select::<String> {
                         "data-testid": "block-expiry",
                         value: Some(expiry_selected.into()),
@@ -364,10 +403,10 @@ pub fn BlocklistSettingsCard(principal_id: Signal<String>, token: Signal<String>
                                 expiry_choice.set(v);
                             }
                         },
-                        SelectOption::<String> { index: 0usize, value: "never".to_string(), text_value: "Never", "Never (permanent)" }
-                        SelectOption::<String> { index: 1usize, value: "1d".to_string(), text_value: "24 hours", "24 hours" }
-                        SelectOption::<String> { index: 2usize, value: "7d".to_string(), text_value: "7 days", "7 days" }
-                        SelectOption::<String> { index: 3usize, value: "30d".to_string(), text_value: "30 days", "30 days" }
+                        SelectOption::<String> { index: 0usize, value: "never".to_string(), text_value: crate::i18n::tr("settings.privacy.blocklist.expiry.never"), {crate::i18n::tr("settings.privacy.blocklist.expiry.never")} }
+                        SelectOption::<String> { index: 1usize, value: "1d".to_string(), text_value: crate::i18n::tr("settings.privacy.blocklist.expiry.1d"), {crate::i18n::tr("settings.privacy.blocklist.expiry.1d")} }
+                        SelectOption::<String> { index: 2usize, value: "7d".to_string(), text_value: crate::i18n::tr("settings.privacy.blocklist.expiry.7d"), {crate::i18n::tr("settings.privacy.blocklist.expiry.7d")} }
+                        SelectOption::<String> { index: 3usize, value: "30d".to_string(), text_value: crate::i18n::tr("settings.privacy.blocklist.expiry.30d"), {crate::i18n::tr("settings.privacy.blocklist.expiry.30d")} }
                     }
                 }
 
@@ -402,9 +441,9 @@ pub fn BlocklistSettingsCard(principal_id: Signal<String>, token: Signal<String>
                                     } else {
                                         short_protocol_id(&target)
                                     };
-                                    status.set(format!(
-                                        "blocklist updated; added {}",
-                                        target_label
+                                    status.set(crate::i18n::substitute_args(
+                                        crate::i18n::tr("settings.privacy.blocklist.status.added"),
+                                        &[("target", target_label)],
                                     ));
                                     add_input.set(String::new());
                                     crate::views::settings::push_blocklist_account_data(
@@ -420,14 +459,14 @@ pub fn BlocklistSettingsCard(principal_id: Signal<String>, token: Signal<String>
                                     } else {
                                         short_protocol_id(&target)
                                     };
-                                    status.set(format!(
-                                        "{} is already blocked",
-                                        target_label
+                                    status.set(crate::i18n::substitute_args(
+                                        crate::i18n::tr("settings.privacy.blocklist.status.duplicate"),
+                                        &[("target", target_label)],
                                     ));
                                 }
                             }
                         },
-                        "Block target"
+                        {crate::i18n::tr("settings.privacy.blocklist.block")}
                     }
                 }
                 if !status.read().is_empty() {

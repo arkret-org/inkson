@@ -151,19 +151,14 @@ pub struct DecodedCallSignal {
     pub sender_actor: String,
     pub sender_device: String,
     pub signal: arkret_sdk::CallSignalData,
-    /// The encrypted envelope this body was decrypted from, retained so the
-    /// receive path can verify the device `proof` against the sender's
-    /// directory verify key before any UI side effect. `None` only in unit-test
-    /// constructors that bypass the rail.
-    pub envelope: Option<Box<arkret_wire::SignalEnvelope>>,
 }
 
 /// Decode one already-decrypted call Signal.
 ///
 /// Returns `None` when the plaintext is not an `ak.call.signal` body or omits
-/// a required field. Proof verification is intentionally not performed here;
-/// [`route_decrypted_call_signals`] is the receive entrypoint and verifies
-/// fail-closed before any ring or inbox side effect.
+/// a required field. This product adapter is reached only from
+/// [`garth::SignalReceiver`] after the envelope's structure, current sender
+/// authority, proof, expiry, replay state and AEAD have all been admitted.
 pub fn decode_call_signal(
     envelope: &arkret_wire::SignalEnvelope,
     plaintext: &Value,
@@ -180,7 +175,6 @@ pub fn decode_call_signal(
             .to_owned(),
         sender_device: envelope.sender_device_id.as_ref()?.as_str().to_owned(),
         signal: body.signal,
-        envelope: Some(Box::new(envelope.clone())),
     })
 }
 
@@ -191,27 +185,15 @@ pub fn decode_call_signal(
 /// `local_actor` is this device's account DID; signals this client itself
 /// emitted (echoed back through sync) are skipped so we never self-drive.
 ///
-/// **Receiver proof verification (`webrtc-signaling.md` §5.1, fail-closed).**
-/// Before any signal reaches [`route_decoded_signal`] it MUST pass detached-JWS
-/// proof verification against the sender's authoritative directory verify key
-/// (resolved via [`crate::identity::device_directory`]). The sync-apply path is
-/// synchronous but the directory query is async, so this fn is `async` and
-/// takes an optional authenticated [`TransportClient`]:
-///
-/// - cache **Hit** → verify inline; pass routes, fail drops;
-/// - cache **NegativeHit** (revoked / absent / no key) → fail-closed drop;
-/// - cache **Miss** → `await` an async resolve, then verify and route on success. This covers
-///   `invite` as well as the first `answer`/`candidate` after an outbound call; one-shot signaling
-///   frames are not discarded merely because the directory cache was cold.
-///
-/// When `api` is `None` (no authenticated client yet) a cache Miss cannot be
-/// resolved and the signal is dropped fail-closed.
+/// Envelope admission belongs exclusively to [`garth::SignalReceiver`]. This
+/// product layer performs only call-specific authorization (moderation) and UI
+/// routing; repeating directory resolution or proof verification here would
+/// create a second admission implementation that can drift from garth.
 pub async fn route_decrypted_call_signals(
     hub: &mut CallSignalHub,
     signals: &[(arkret_wire::SignalEnvelope, Value)],
     local_actor: &str,
     api: Option<&TransportClient>,
-    did_anchor: &dyn crate::identity::device_directory::DidAnchor,
 ) {
     for (envelope, plaintext) in signals {
         let Some(decoded) = decode_call_signal(envelope, plaintext) else {
@@ -222,54 +204,10 @@ pub async fn route_decrypted_call_signals(
         if !local_actor.is_empty() && decoded.sender_actor == local_actor {
             continue;
         }
-        match crate::identity::device_directory::cached_device_signing_key(
-            &envelope.sender_actor_id.to_string(),
-            &decoded.sender_device,
-        ) {
-            crate::identity::device_directory::CacheLookup::Hit(key) => {
-                if verify_decoded_proof(&decoded, &key)
-                    && moderator_signal_authorized(&decoded, api).await
-                {
-                    route_verified_decoded_signal(hub, decoded, local_actor);
-                }
-                // verify failed -> fail-closed drop.
-            }
-            crate::identity::device_directory::CacheLookup::NegativeHit => {
-                // Revoked / absent / no key -> fail-closed drop.
-            }
-            crate::identity::device_directory::CacheLookup::Miss => {
-                let Some(api) = api else {
-                    // No client to resolve with -> fail-closed drop.
-                    continue;
-                };
-                if let Ok(Some(key)) =
-                    crate::identity::device_directory::resolve_device_signing_key(
-                        api,
-                        did_anchor,
-                        &envelope.sender_actor_id.to_string(),
-                        &decoded.sender_device,
-                    )
-                    .await
-                    && verify_decoded_proof(&decoded, &key)
-                    && moderator_signal_authorized(&decoded, Some(api)).await
-                {
-                    route_verified_decoded_signal(hub, decoded, local_actor);
-                }
-            }
+        if moderator_signal_authorized(&decoded, api).await {
+            route_verified_decoded_signal(hub, decoded, local_actor);
         }
     }
-}
-
-/// Verify a decoded signal's envelope `proof` against `key` using the shared
-/// receiver primitive. Pure wrapper so the routing loop reads cleanly and the
-/// gate is unit-testable.
-fn verify_decoded_proof(
-    decoded: &DecodedCallSignal,
-    key: &arkret_sdk::signatures::PublicKeyMaterial,
-) -> bool {
-    decoded.envelope.as_ref().is_some_and(|envelope| {
-        crate::identity::device_directory::verify_signal_envelope_proof(envelope, key)
-    })
 }
 
 async fn moderator_signal_authorized(
@@ -676,7 +614,6 @@ mod tests {
             sender_actor: "did:web:bob".into(),
             sender_device: "dev-b".into(),
             signal,
-            envelope: None,
         }
     }
 
@@ -807,116 +744,21 @@ mod tests {
         );
     }
 
-    // -- Receiver proof verification (device-identity Phase 2) ----------
-
-    fn pubkey_material(seed: u8) -> arkret_sdk::signatures::PublicKeyMaterial {
-        let sk = ed25519_dalek::SigningKey::from_bytes(&[seed; 32]);
-        let did = crate::identity::did_key::did_key_from_verifying_key(&sk.verifying_key());
-        crate::identity::device_directory::public_key_from_directory_value(&did).unwrap()
-    }
-
     #[test]
-    fn valid_call_proof_verifies_and_routes_to_ring() {
+    fn garth_admitted_call_routes_without_a_second_proof_gate() {
         let actor = "did:web:caller.example";
         let device = "ak:device:01904100-0000-7000-8000-ca11e1000001";
-        let seed = 71u8;
-        let (envelope, plaintext) = sealed_call_signal(seed, actor, device, 1, invite(true));
-        let key = pubkey_material(seed);
+        let (envelope, plaintext) = sealed_call_signal(71, actor, device, 1, invite(true));
 
-        assert!(crate::identity::device_directory::verify_signal_envelope_proof(&envelope, &key));
-
-        // And a verified invite produces a Ring decision.
+        // The product adapter receives only the envelope-derived identity and
+        // already-opened body. Cryptographic admission was completed by garth.
         let decoded = decode_call_signal(&envelope, &plaintext).expect("decodes");
-        assert!(verify_decoded_proof(&decoded, &key));
         match decide_route(&decoded, "did:web:me", false, &RouteState::default()) {
             RouteDecision::Ring(info) => {
                 assert_eq!(info.peer_actor, "ak:did_core:web:caller.example")
             }
             other => panic!("expected Ring, got {other:?}"),
         }
-    }
-
-    #[test]
-    fn call_proof_fails_closed_under_wrong_key() {
-        let actor = "did:web:caller.example";
-        let device = "ak:device:01904100-0000-7000-8000-ca11e1000001";
-        let (envelope, _) = sealed_call_signal(71, actor, device, 1, invite(false));
-        // A different device's key MUST NOT verify the proof.
-        let wrong_key = pubkey_material(99);
-        assert!(
-            !crate::identity::device_directory::verify_signal_envelope_proof(&envelope, &wrong_key)
-        );
-    }
-
-    #[test]
-    fn call_proof_fails_closed_under_tampered_signature() {
-        let actor = "did:web:caller.example";
-        let device = "ak:device:01904100-0000-7000-8000-ca11e1000001";
-        let seed = 71u8;
-        let (mut envelope, _) = sealed_call_signal(seed, actor, device, 1, invite(false));
-        // Flip the JWS tail -> signature no longer matches the binding object.
-        // Replace the last base64url char with a guaranteed-different one (a bare
-        // "always set to 'A'" is a no-op when the signature already ends in 'A',
-        // which flaked once the binding -- and thus the signature -- changed).
-        let jws = envelope.proof.jws.clone();
-        let last = jws.chars().next_back().unwrap();
-        let replacement = if last == 'A' { 'B' } else { 'A' };
-        envelope.proof.jws = format!("{}{}", &jws[..jws.len() - 1], replacement);
-        let key = pubkey_material(seed);
-        assert!(!crate::identity::device_directory::verify_signal_envelope_proof(&envelope, &key));
-    }
-
-    /// Restates the S-4 replay test.
-    ///
-    /// The deleted rail had its own out-of-band freshness window
-    /// (`EPHEMERAL_PROOF_MAX_AGE_SECS`) because a plaintext envelope carried no
-    /// binding lifetime. A Signal does: `signal.md` §2 caps
-    /// `expires_at - sent_at` at the class ceiling and `proof.created_at` MUST
-    /// equal `sent_at`, so the envelope's own expiry IS the replay window and
-    /// the assertion is now against a spec-normative bound rather than a
-    /// client-chosen hour.
-    #[test]
-    fn call_proof_fails_closed_when_replayed_after_the_envelope_expires() {
-        let actor = "did:web:caller.example";
-        let device = "ak:device:01904100-0000-7000-8000-ca11e1000001";
-        let seed = 71u8;
-        let (envelope, _) = sealed_call_signal(seed, actor, device, 1, invite(false));
-        let key = pubkey_material(seed);
-        // `invite` is a setup-class signal: 120 seconds, and no longer.
-        assert_eq!(
-            (envelope.expires_at - envelope.sent_at).num_seconds(),
-            120,
-            "setup class TTL ceiling"
-        );
-        assert!(
-            crate::identity::device_directory::verify_signal_envelope_proof_at(
-                &envelope,
-                &key,
-                envelope.sent_at + chrono::Duration::seconds(1)
-            )
-        );
-        // Replayed one second past expiry -> rejected before any signature work.
-        assert!(
-            !crate::identity::device_directory::verify_signal_envelope_proof_at(
-                &envelope,
-                &key,
-                envelope.expires_at + chrono::Duration::seconds(1)
-            )
-        );
-    }
-
-    #[test]
-    fn call_proof_fails_closed_when_controller_differs_from_actor() {
-        // verification_method controller != sender_actor_id -> reject, even if
-        // the signature itself is valid for the embedded method.
-        let actor = "did:web:caller.example";
-        let device = "ak:device:01904100-0000-7000-8000-ca11e1000001";
-        let seed = 71u8;
-        let (mut envelope, _) = sealed_call_signal(seed, actor, device, 1, invite(false));
-        envelope.proof.verification_method =
-            arkret_sdk::DidUrl::new("did:web:someone-else.example#device").unwrap();
-        let key = pubkey_material(seed);
-        assert!(!crate::identity::device_directory::verify_signal_envelope_proof(&envelope, &key));
     }
 
     #[test]

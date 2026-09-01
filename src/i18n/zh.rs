@@ -56,10 +56,6 @@ fn add_r3_error_keys_zh(dict: &mut TranslationDict) {
         "服务器上报了一位不在此通话中的参与者。出于安全考虑,已拒绝连接。",
     );
     dict.set(
-        "error.call.session_focus_already_committed",
-        "此通话的连接已经确定。请重新加入通话。",
-    );
-    dict.set(
         "error.call.e2ee_key_source_unauthorised",
         "通话加密密钥来自不受信任的来源,已被拒绝。密钥只能来自群组自身的加密通道。",
     );
@@ -86,19 +82,6 @@ fn add_r3_error_keys_zh(dict: &mut TranslationDict) {
     dict.set(
         "error.call.desktop_media_unavailable",
         "此版本的桌面端通话功能尚未就绪。请改用网页版发起本次通话。",
-    );
-
-    dict.set(
-        "error.handle.homograph_forbidden",
-        "该 handle 含有跨脚本或易混淆字符,无法注册。",
-    );
-    dict.set(
-        "error.handle.script_mixed_warning",
-        "警告:handle 混合了多种文字系统(例如 Latin + Cyrillic),将被拒绝。",
-    );
-    dict.set(
-        "error.handle.nfc_normalization_warning",
-        "Handle 已进行 Unicode 规范化(NFC),规范化结果将作为唯一形式。",
     );
 
     dict.set(
@@ -209,14 +192,6 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("moderation.appeal.state.under_review", "审核中");
     dict.set("moderation.appeal.state.decided", "已裁定");
     dict.set("moderation.appeal.state.closed", "已关闭");
-    dict.set("blob.error.legal_hold_active", "此文件处于法律保留状态");
-    dict.set("blob.error.not_authorised", "无权访问此文件");
-    dict.set(
-        "blob.error.plaintext_not_authorised",
-        "无权访问此文件的明文内容",
-    );
-    dict.set("blob.error.redacted", "此文件已被移除");
-
     dict.set("common.retry", "重试");
     dict.set("common.close", "关闭");
     dict.set("common.cancel", "取消");
@@ -368,7 +343,6 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("realm_admin.refresh_members", "刷新");
     dict.set("realm_admin.kick_member", "踢出");
     dict.set("realm_admin.ban_member", "封禁");
-    dict.set("realm_admin.rotate_epoch", "轮换 Epoch");
     dict.set("realm_admin.leave_realm", "退出");
     dict.set("realm_admin.leave_confirm_title", "退出此 Realm？");
     dict.set(
@@ -531,10 +505,6 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set(
         "recovery.upload.backed_up",
         "恢复密钥已创建，恢复策略和加密的账户备份已保存。请把 24 个词写下来——这是在新设备上恢复的唯一方式。",
-    );
-    dict.set(
-        "recovery.upload.policy_active",
-        "恢复密钥已创建，恢复策略已生效。加密内容将在你首次使用加密时自动备份。",
     );
     dict.set(
         "recovery.upload.device_unauthorized",
@@ -973,7 +943,6 @@ pub fn chinese_translations() -> TranslationDict {
         "watch level 更新失败（已回滚）。",
     );
     // T7.3 handle reassignment context
-    dict.set("chat.binding_context.separator", " @ ");
     dict.set("chat.binding_context.details", "显示服务绑定");
     // T7.4 E2EE state
     dict.set("chat.crypto.decrypting", "解密中…");
@@ -1306,34 +1275,82 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("shortcuts.list.palette_mac", "打开命令面板 (macOS)");
     dict.set("shortcuts.list.send", "发送当前消息");
     dict.set("shortcuts.list.send_alias", "发送当前消息（备用键）");
-    // Personal blocklist (A5)
-    dict.set("settings.privacy.blocked_users.title", "已屏蔽的用户");
+    // 个人屏蔽名单：设置卡片中的所有可见文案均由词典提供；Select
+    // 的 wire value 保持不翻译。
+    dict.set("settings.privacy.blocklist.title", "个人屏蔽名单");
     dict.set(
-        "settings.privacy.blocked_users.empty",
-        "尚未屏蔽任何用户。在成员列表或消息行中屏蔽用户后，可在此管理。",
+        "settings.privacy.blocklist.description",
+        "被屏蔽的对象不会再出现在你各设备的消息和通知中。屏蔽设置仅自己可见，不会改变其他成员看到的内容。",
+    );
+    dict.set("settings.privacy.blocklist.empty_title", "屏蔽名单为空");
+    dict.set(
+        "settings.privacy.blocklist.empty_body",
+        "你还没有屏蔽任何对象。",
+    );
+    dict.set("settings.privacy.blocklist.kind.service", "Station 或服务");
+    dict.set("settings.privacy.blocklist.kind.domain", "域名");
+    dict.set("settings.privacy.blocklist.kind.organization", "组织");
+    dict.set("settings.privacy.blocklist.kind.actor", "用户或代理");
+    dict.set(
+        "settings.privacy.blocklist.applies_summary",
+        "适用范围：{surfaces}",
     );
     dict.set(
-        "settings.privacy.blocked_users.did_placeholder",
-        "要屏蔽的 DID",
+        "settings.privacy.blocklist.expires_summary",
+        "到期时间：{expires}",
     );
     dict.set(
-        "settings.privacy.blocked_users.reason_placeholder",
-        "原因（可选）",
+        "settings.privacy.blocklist.reason_summary",
+        "原因：{reason}",
     );
-    dict.set("settings.privacy.blocked_users.add", "屏蔽");
-    dict.set("settings.privacy.blocked_users.added", "已屏蔽");
-    dict.set("settings.privacy.blocked_users.removed", "已取消屏蔽");
-    dict.set("settings.privacy.blocked_users.duplicate", "已在屏蔽列表中");
+    dict.set("settings.privacy.blocklist.unblock", "取消屏蔽");
     dict.set(
-        "settings.privacy.blocked_users.did_required",
-        "请先输入 DID。",
+        "settings.privacy.blocklist.status.unblocked",
+        "已取消屏蔽 {target}",
     );
-    // F-BLOCKLIST-VALID-1: live format validation hints synced with the en dict.
+    dict.set("settings.privacy.blocklist.target_type", "对象类型");
+    dict.set("settings.privacy.blocklist.target.actor", "目标账户或代理");
+    dict.set("settings.privacy.blocklist.target.identity", "目标身份");
+    dict.set("settings.privacy.blocklist.target.domain", "目标域名");
     dict.set(
-        "settings.privacy.blocked_users.did_invalid",
-        "请输入以 did: 开头的身份地址。",
+        "settings.privacy.blocklist.invalid.actor",
+        "请输入完整的账户或代理身份；账户身份必须包含所属 Station。",
     );
-    dict.set("settings.privacy.unblock", "取消屏蔽");
+    dict.set(
+        "settings.privacy.blocklist.invalid.identity",
+        "请输入有效且稳定的身份。",
+    );
+    dict.set(
+        "settings.privacy.blocklist.invalid.domain",
+        "请输入有效域名，例如 example.com。",
+    );
+    dict.set("settings.privacy.blocklist.applies_to", "适用范围");
+    dict.set(
+        "settings.privacy.blocklist.applies_required",
+        "请至少选择一个屏蔽范围。",
+    );
+    dict.set("settings.privacy.blocklist.surface.messages", "消息");
+    dict.set("settings.privacy.blocklist.surface.mentions", "提及");
+    dict.set("settings.privacy.blocklist.surface.dm", "私信");
+    dict.set("settings.privacy.blocklist.surface.calls", "通话");
+    dict.set("settings.privacy.blocklist.surface.contacts", "联系人");
+    dict.set("settings.privacy.blocklist.surface.applets", "应用");
+    dict.set("settings.privacy.blocklist.surface.presence", "在线状态");
+    dict.set("settings.privacy.blocklist.surface.notifications", "通知");
+    dict.set("settings.privacy.blocklist.surface.directory", "目录");
+    dict.set("settings.privacy.blocklist.reason_optional", "原因（可选）");
+    dict.set("settings.privacy.blocklist.no_reason", "不填写原因");
+    dict.set("settings.privacy.blocklist.expires", "到期时间");
+    dict.set("settings.privacy.blocklist.expiry.never", "永久");
+    dict.set("settings.privacy.blocklist.expiry.1d", "24 小时");
+    dict.set("settings.privacy.blocklist.expiry.7d", "7 天");
+    dict.set("settings.privacy.blocklist.expiry.30d", "30 天");
+    dict.set("settings.privacy.blocklist.block", "屏蔽对象");
+    dict.set("settings.privacy.blocklist.status.added", "已屏蔽 {target}");
+    dict.set(
+        "settings.privacy.blocklist.status.duplicate",
+        "{target} 已在屏蔽名单中",
+    );
     // A4b - avatar upload.
     dict.set("settings.avatar.upload", "上传新头像");
     dict.set("settings.avatar.clear", "清除头像");
@@ -2429,10 +2446,6 @@ fn prompt_copy_strings(dict: &mut TranslationDict) {
     dict.set("agent_runtime.approve", "批准");
     dict.set("manage.realms_title", "管理 Realm");
     dict.set("manage.principal_control_button", "PCR");
-    dict.set(
-        "manage.principal_control_title",
-        "Principal Control Realm（PCR）",
-    );
     dict.set(
         "manage.principal_control_subtitle",
         "用于系统身份与设备授权，与协作 Realm 分开管理。",

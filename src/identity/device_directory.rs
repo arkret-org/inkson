@@ -506,43 +506,6 @@ pub fn verify_proof_value_for_signer_result_with_digest_suite(
     .map_err(|error| error.to_string())
 }
 
-pub fn verify_signal_envelope_proof(
-    envelope: &arkret_wire::SignalEnvelope,
-    public_key: &PublicKeyMaterial,
-) -> bool {
-    verify_signal_envelope_proof_at(envelope, public_key, chrono::Utc::now())
-}
-
-pub fn verify_signal_envelope_proof_at(
-    envelope: &arkret_wire::SignalEnvelope,
-    public_key: &PublicKeyMaterial,
-    now: chrono::DateTime<chrono::Utc>,
-) -> bool {
-    let controller = verification_method_controller(&envelope.proof.verification_method);
-    let controller_matches_sender = arkret_sdk::Did::new(controller.to_owned())
-        .ok()
-        .and_then(|did| arkret_sdk::project_did_to_core_id(&did).ok())
-        .is_some_and(|core_id| &core_id == envelope.sender_actor_id.signing_principal_id());
-    if envelope.validate_structural().is_err()
-        || !controller_matches_sender
-        || envelope.expires_at <= now
-    {
-        return false;
-    }
-    let Ok(expected_digest) = envelope.envelope_digest() else {
-        return false;
-    };
-    if envelope.proof.envelope_digest != expected_digest {
-        return false;
-    }
-    let Ok(binding_bytes) = envelope.proof_binding_bytes() else {
-        return false;
-    };
-    arkret_sdk::signatures::proof::Ed25519DetachedJwsVerifier::new()
-        .verify_detached_jws(&envelope.proof.jws, &binding_bytes, public_key)
-        .is_ok()
-}
-
 pub fn verify_persistent_envelope_proofs(
     envelope: &serde_json::Value,
     public_key: &PublicKeyMaterial,
