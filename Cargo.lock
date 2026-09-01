@@ -2336,7 +2336,7 @@ checksum = "37e3a5bec7ffc999ff23446a487eb5cd86111d1574a23533dd3f8b3c69a53a22"
 dependencies = [
  "dioxus-core",
  "dioxus-core-macro",
- "dioxus-core-types 0.7.9",
+ "dioxus-core-types 0.7.10",
  "dioxus-html",
  "futures-channel",
  "futures-util",
@@ -2482,7 +2482,7 @@ dependencies = [
  "bytes",
  "dioxus-core",
  "dioxus-core-macro",
- "dioxus-core-types 0.7.9",
+ "dioxus-core-types 0.7.10",
  "dioxus-hooks",
  "dioxus-html-internal-macro",
  "enumset",
@@ -2529,7 +2529,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "11999d6eb5bb179a9512dad30e5de408aab66f2cb65de9098c9fbe02927e2978"
 dependencies = [
  "dioxus-core",
- "dioxus-core-types 0.7.9",
+ "dioxus-core-types 0.7.10",
  "dioxus-html",
  "js-sys",
  "lazy-js-bundle",
@@ -2678,7 +2678,7 @@ checksum = "bc0a0be76b404e8242a597db0fb239d05f8dee4e7856bc1fc7144f7e244822fd"
 dependencies = [
  "dioxus-cli-config",
  "dioxus-core",
- "dioxus-core-types 0.7.9",
+ "dioxus-core-types 0.7.10",
  "dioxus-devtools",
  "dioxus-document",
  "dioxus-history",
