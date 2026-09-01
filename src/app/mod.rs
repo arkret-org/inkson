@@ -644,6 +644,7 @@ fn AppBootstrap() -> Element {
                     token,
                     principal_id,
                     did_cache,
+                    state_store,
                 ),
             ));
         });

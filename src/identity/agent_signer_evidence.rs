@@ -207,6 +207,152 @@ fn selector_cache_key(selector: &EventAgentSelector) -> (String, String, String)
     )
 }
 
+fn signal_request_digest(envelope: &arkret_wire::SignalEnvelope) -> Option<Hash> {
+    Hash::new(crate::canonical::canonical_sha256(envelope).ok()?).ok()
+}
+
+/// Resolve and verify a current Agent authority object for this exact Signal.
+///
+/// Current observations are deliberately request-bound. The complete signed
+/// envelope is hashed into `request_digest`, while a fresh operation id and
+/// challenge prevent a response for one admission attempt from becoming a
+/// reusable Agent-directory entry. The existing self query authenticates only
+/// our local Station, so a foreign Agent remains unresolved until the owning
+/// specification registers the proxy/peer evidence binding.
+pub(crate) async fn resolve_current_signal_sender_evidence(
+    http: &arkret_sdk::http_client::Client,
+    envelope: &arkret_wire::SignalEnvelope,
+    anchor: &crate::identity::did_resolver::ResolverDidAnchor,
+) -> Option<CachedAgentSignerEvidence> {
+    if envelope.sender_device_id.is_some() {
+        return None;
+    }
+    envelope.validate_structural().ok()?;
+    let account_id = envelope.sender_actor_id.as_account_id()?;
+    let service_id = http.describe().await.ok()?.service_id;
+    if account_id.station_id != service_id {
+        return None;
+    }
+    let request_digest = signal_request_digest(envelope)?;
+    let mut random = [0_u8; 24];
+    getrandom::fill(&mut random).ok()?;
+    let nonce = URL_SAFE_NO_PAD.encode(random);
+    let context = CachedAgentSignerEvidenceContext::CurrentSignal {
+        operation_id: ProtocolOperationId::new(format!(
+            "ak:operation:signal-admission-evidence-{nonce}"
+        ))
+        .ok()?,
+        request_digest: request_digest.clone(),
+        verifier_id: service_id.clone(),
+        audience: service_id,
+        challenge: NonEmptyString::new(format!("ak.challenge:{nonce}")).ok()?,
+    };
+    let CachedAgentSignerEvidenceContext::CurrentSignal {
+        operation_id,
+        verifier_id,
+        audience,
+        challenge,
+        ..
+    } = &context
+    else {
+        unreachable!("Signal admission evidence uses current context")
+    };
+    let agent_id = envelope.sender_actor_id.signing_principal_id().clone();
+    let verification_method = envelope.proof.verification_method.clone();
+    let request = AgentSignerEvidenceQueryRequestBody {
+        realm_id: envelope.realm_id.clone(),
+        queries: vec![AgentSignerEvidenceQuerySelector::CurrentAdmission {
+            agent_id: agent_id.clone(),
+            verification_method: verification_method.clone(),
+            operation_id: operation_id.clone(),
+            request_digest,
+            verifier_id: verifier_id.clone(),
+            audience: audience.clone(),
+            challenge: challenge.clone(),
+        }],
+    };
+    let outcome = http.agent_signer_evidence_query(&request).await.ok()?;
+    outcome.validate_for_request(&request).ok()?;
+    let mut verified = Vec::new();
+    for root in outcome.evidence_items {
+        let arkret_sdk::AuthenticatedSignerResolutionEvidence::Agent {
+            signer_id,
+            verification_method: resolved_method,
+            agent_signer_evidence,
+            ..
+        } = root
+        else {
+            continue;
+        };
+        if signer_id != agent_id || resolved_method != verification_method {
+            continue;
+        }
+        let evidence = *agent_signer_evidence;
+        if !current_evidence_matches_context(&evidence, &context) {
+            continue;
+        }
+        let Some(entry) =
+            materialize_verified_cache_entry(http, anchor, evidence, context.clone()).await
+        else {
+            continue;
+        };
+        let Some(key) = validate_current_entry(&entry, &agent_id, &verification_method) else {
+            continue;
+        };
+        verified.push((key, entry));
+    }
+    let (first_key, first_entry) = verified.pop()?;
+    if verified.iter().any(|(key, _)| key != &first_key) {
+        return None;
+    }
+    Some(first_entry)
+}
+
+/// Read the exact-context Agent key prepared for this Signal admission.
+pub(crate) fn cached_current_signal_sender_evidence(
+    store: &LocalStateStore,
+    envelope: &arkret_wire::SignalEnvelope,
+) -> Option<(PublicKeyMaterial, arkret_sdk::EventId)> {
+    if envelope.sender_device_id.is_some() {
+        return None;
+    }
+    let request_digest = signal_request_digest(envelope)?;
+    let agent_id = envelope.sender_actor_id.signing_principal_id();
+    let verification_method = &envelope.proof.verification_method;
+    let mut verified = Vec::new();
+    for entry in store.cached_agent_signer_evidence(agent_id, verification_method) {
+        let CachedAgentSignerEvidenceContext::CurrentSignal {
+            request_digest: cached_digest,
+            ..
+        } = &entry.verification_context
+        else {
+            continue;
+        };
+        if cached_digest != &request_digest {
+            continue;
+        }
+        let Some(key) = validate_current_entry(&entry, agent_id, verification_method) else {
+            continue;
+        };
+        verified.push((
+            key,
+            signing_key_binding(&entry.evidence)
+                .agent_key_authorize_event_id
+                .clone(),
+        ));
+    }
+    let (first_key, first_event) = verified.pop()?;
+    if verified.iter().any(|(key, _)| key != &first_key) {
+        return None;
+    }
+    Some((
+        PublicKeyMaterial::Ed25519Raw {
+            bytes: first_key.to_vec(),
+        },
+        first_event,
+    ))
+}
+
 pub(crate) fn verify_cached_event(
     envelope: &Value,
     store: &LocalStateStore,
@@ -333,6 +479,87 @@ pub(crate) fn verify_cached_event(
     } else {
         CachedAgentEventVerdict::Unresolved
     }
+}
+
+/// Resolve the historical raw-key endpoint of an already accepted Agent Event.
+///
+/// This is used only to bind a transient message-stream preview to its durable
+/// final. It repeats the historical evidence and producer-proof checks instead
+/// of deriving an Agent key from the proof method name.
+pub(crate) fn verified_cached_agent_event_endpoint(
+    event: &arkret_sdk::Event,
+    store: &LocalStateStore,
+) -> Option<arkret_sdk::SignalSequenceEndpoint> {
+    let envelope = serde_json::to_value(event).ok()?;
+    let (event, agent_id, verification_method) = event_agent_identity(&envelope)?;
+    let admission = origin_admission(&event)?;
+    let signed_digest = arkret_sdk::signed_event_digest_claim(&event).ok()?;
+    if signed_digest != event.event_id.identity_key().event_digest() {
+        return None;
+    }
+    let mut digests = BTreeSet::new();
+    for entry in store.cached_agent_signer_evidence(&agent_id, &verification_method) {
+        let Some(receipt) = historical_receipt(&entry.evidence) else {
+            continue;
+        };
+        let selector = EventAgentSelector {
+            realm_id: event.realm_id.clone(),
+            agent_id: agent_id.clone(),
+            verification_method: verification_method.clone(),
+            event_id: event.event_id.clone(),
+            producer_accepted_at: admission.accepted_at,
+            producer_signer_resolution_evidence_ref: admission
+                .producer_signer_resolution_evidence_ref
+                .clone()?,
+            producer_signer_resolution_evidence_digest: admission
+                .producer_signer_resolution_evidence_digest
+                .clone()?,
+            receiver_id: receipt.receiver_id.clone(),
+        };
+        if !historical_receipt_matches_selector(receipt, &selector) {
+            continue;
+        }
+        let CachedAgentSignerEvidenceContext::HistoricalEvent {
+            realm_id,
+            event_id,
+            producer_accepted_at,
+            producer_signer_resolution_evidence_ref,
+            producer_signer_resolution_evidence_digest,
+            receiver_id,
+        } = &entry.verification_context
+        else {
+            continue;
+        };
+        if realm_id != &selector.realm_id
+            || event_id != &selector.event_id
+            || producer_accepted_at != &selector.producer_accepted_at
+            || producer_signer_resolution_evidence_ref
+                != &selector.producer_signer_resolution_evidence_ref
+            || producer_signer_resolution_evidence_digest
+                != &selector.producer_signer_resolution_evidence_digest
+            || receiver_id != &selector.receiver_id
+        {
+            continue;
+        }
+        let Some(key) = validate_cached_historical(&entry, &selector) else {
+            continue;
+        };
+        let material = PublicKeyMaterial::Ed25519Raw {
+            bytes: key.to_vec(),
+        };
+        if !crate::identity::device_directory::verify_persistent_envelope_proofs(
+            &envelope, &material,
+        ) {
+            continue;
+        }
+        digests.insert(material.raw_ed25519_digest().ok()?);
+    }
+    let mut digests = digests.into_iter();
+    let public_key_digest = digests.next()?;
+    if digests.next().is_some() {
+        return None;
+    }
+    Some(arkret_sdk::SignalSequenceEndpoint::AgentKey { public_key_digest })
 }
 
 async fn verify_for_cache(
@@ -1016,7 +1243,12 @@ fn event_agent_identity(envelope: &Value) -> Option<(arkret_sdk::Event, DidCoreI
     if event.actor_kind != Some(arkret_sdk::EnvelopeActorKind::Agent) || event.applet_id.is_some() {
         return None;
     }
-    let agent_id = event.executed_by.as_ref()?.signing_principal_id().clone();
+    let agent_id = event
+        .executed_by
+        .as_ref()
+        .unwrap_or(&event.actor_id)
+        .signing_principal_id()
+        .clone();
     let verification_method = event
         .proofs
         .iter()

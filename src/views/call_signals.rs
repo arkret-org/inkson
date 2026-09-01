@@ -178,7 +178,7 @@ pub fn decode_call_signal(
             .signing_principal_id()
             .as_str()
             .to_owned(),
-        sender_device: envelope.sender_device_id.as_str().to_owned(),
+        sender_device: envelope.sender_device_id.as_ref()?.as_str().to_owned(),
         signal: body.signal,
         envelope: Some(Box::new(envelope.clone())),
     })

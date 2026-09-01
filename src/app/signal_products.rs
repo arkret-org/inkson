@@ -64,6 +64,7 @@ pub(super) struct AppSignalProductSink {
     token: Signal<String>,
     principal_id: Signal<Option<arkret_sdk::DidCoreId>>,
     did_cache: Signal<arkret_sdk::identity::DidResolutionCache>,
+    state_store: SyncSignal<crate::state::LocalStateStore>,
     authz_verdicts: RefCell<BTreeMap<String, CachedVerdict>>,
 }
 
@@ -76,6 +77,7 @@ impl AppSignalProductSink {
         token: Signal<String>,
         principal_id: Signal<Option<arkret_sdk::DidCoreId>>,
         did_cache: Signal<arkret_sdk::identity::DidResolutionCache>,
+        state_store: SyncSignal<crate::state::LocalStateStore>,
     ) -> Self {
         Self {
             call_hub,
@@ -85,6 +87,7 @@ impl AppSignalProductSink {
             token,
             principal_id,
             did_cache,
+            state_store,
             authz_verdicts: RefCell::new(BTreeMap::new()),
         }
     }
@@ -175,13 +178,41 @@ impl SignalProductSink for AppSignalProductSink {
         envelope: &'a arkret_wire::SignalEnvelope,
     ) -> LocalBoxFuture<'a> {
         Box::pin(async move {
+            let Some(device) = envelope.sender_device_id.as_ref() else {
+                let Some(api) = self.authenticated_api() else {
+                    return;
+                };
+                let Ok(http) = api.sdk_http_client() else {
+                    return;
+                };
+                let anchor = crate::identity::did_resolver::ResolverDidAnchor::from_profile(
+                    crate::identity::did_resolver::DeploymentProfile::PersonalNode,
+                    self.did_cache.peek().clone(),
+                );
+                if let Some(entry) =
+                    crate::identity::agent_signer_evidence::resolve_current_signal_sender_evidence(
+                        &http, envelope, &anchor,
+                    )
+                    .await
+                {
+                    let mut state_store = self.state_store;
+                    let _ = state_store
+                        .write()
+                        .store_verified_agent_signer_evidence(entry);
+                }
+                let mut did_cache = self.did_cache;
+                did_cache.set(anchor.into_cache());
+                return;
+            };
             let actor = envelope.sender_actor_id.to_string();
-            let device = envelope.sender_device_id.as_str();
             // The registered carrier is account-device only. A missing or
             // revoked directory key is never a hint to classify this as Agent.
             if envelope.sender_actor_id.as_account_id().is_none()
                 || !directory_prefetch_needed(
-                    &crate::identity::device_directory::cached_device_signing_key(&actor, device),
+                    &crate::identity::device_directory::cached_device_signing_key(
+                        &actor,
+                        device.as_str(),
+                    ),
                 )
             {
                 return;
@@ -194,7 +225,10 @@ impl SignalProductSink for AppSignalProductSink {
                 self.did_cache.peek().clone(),
             );
             let _ = crate::identity::device_directory::resolve_device_signing_key(
-                &api, &anchor, &actor, device,
+                &api,
+                &anchor,
+                &actor,
+                device.as_str(),
             )
             .await;
             let mut did_cache = self.did_cache;

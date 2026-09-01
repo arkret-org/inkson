@@ -35,16 +35,16 @@ impl MessageStreamHub {
             .apply(plaintext, &allow_authorized_frame, observed_at)
     }
 
-    /// Removes a preview only after the durable Event and its sending device
-    /// have passed the normal schema, proof, authorization and reducer gates.
+    /// Removes a preview only after the durable Event and its verified sender
+    /// endpoint have passed the normal schema, proof, authorization and reducer gates.
     pub fn bind_verified_final(
         &mut self,
         event: &arkret_sdk::Event,
-        verified_sender_device_id: &arkret_sdk::DeviceId,
+        verified_sender_endpoint: &arkret_sdk::SignalSequenceEndpoint,
     ) -> garth::Result<Option<garth::MessageStreamPreview>> {
         self.projection
             .write()
-            .bind_verified_final(event, verified_sender_device_id)
+            .bind_verified_final(event, verified_sender_endpoint)
     }
 
     pub fn maintain(&mut self, now: chrono::DateTime<chrono::Utc>) {

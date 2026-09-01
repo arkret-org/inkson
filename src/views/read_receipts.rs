@@ -375,10 +375,12 @@ mod tests {
             },
             seal_ref: arkret_sdk::SealId::new(format!("ak:seal:sha256:{}", "a".repeat(64)))
                 .unwrap(),
-            sender_device_id: arkret_sdk::DeviceId::new(
-                "ak:device:01904100-0000-7000-8000-000000000002",
-            )
-            .unwrap(),
+            sender_endpoint: arkret_sdk::SignalSequenceEndpoint::AccountDevice {
+                device_id: arkret_sdk::DeviceId::new(
+                    "ak:device:01904100-0000-7000-8000-000000000002",
+                )
+                .unwrap(),
+            },
         }
     }
 

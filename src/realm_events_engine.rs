@@ -98,10 +98,12 @@ impl ClientProjector for RealmIngestProjector {
         let (batch, digest_suite) =
             expand_delivery_events(batch, &self.realm_id, self.digest_suite)?;
         if !batch.is_empty() {
-            let finals = batch
-                .iter()
-                .filter_map(|event| accepted_direct_message_final(event, digest_suite))
-                .collect::<Vec<_>>();
+            let finals = self.state_store.read(|store| {
+                batch
+                    .iter()
+                    .filter_map(|event| accepted_direct_message_final(event, digest_suite, store))
+                    .collect::<Vec<_>>()
+            });
             let changed = self.state_store.write(|store| {
                 crate::sync_engine::ingest_kanban_events(store, &self.realm_id, &batch)
                     + crate::sync_engine::ingest_message_events(store, &self.realm_id, &batch)
@@ -117,8 +119,8 @@ impl ClientProjector for RealmIngestProjector {
             // removed merely because a frame with the same message id was
             // observed on the wire.
             let mut message_stream_hub = self.message_stream_hub;
-            for (event, sender_device_id) in finals {
-                if let Err(error) = message_stream_hub.bind_verified_final(event, &sender_device_id)
+            for (event, sender_endpoint) in finals {
+                if let Err(error) = message_stream_hub.bind_verified_final(event, &sender_endpoint)
                 {
                     tracing::warn!(%error, event_id = %event.event_id, "message stream final binding failed closed");
                 }
@@ -282,17 +284,18 @@ async fn deliver_realm_inbox(
     }
 }
 
-/// Extract the sender device from a service-accepted direct Message Event.
+/// Extract the verified sender endpoint from a service-accepted direct Message Event.
 ///
 /// The Realm stream contains the canonical Event only after Soland's normal
 /// schema, proof, authorization and reducer gates. This function does not
-/// invent a second proof verifier: it accepts only the unique ordinary Event
-/// proof whose method is the exact `{actor_id}#{device_id}` mapping and hands
-/// that already-admitted device identity to Garth's §7.5 binder.
-fn accepted_direct_message_final(
-    client_event: &ClientEvent,
+/// invent a second ordinary proof verifier. Agent finals additionally require
+/// locally verified historical signer evidence so a new runtime key cannot
+/// terminate a preview authored by an older key.
+fn accepted_direct_message_final<'a>(
+    client_event: &'a ClientEvent,
     digest_suite: arkret_sdk::DigestSuite,
-) -> Option<(&arkret_sdk::Event, arkret_sdk::DeviceId)> {
+    store: &crate::state::LocalStateStore,
+) -> Option<(&'a arkret_sdk::Event, arkret_sdk::SignalSequenceEndpoint)> {
     let ClientEvent::Message(message) = client_event else {
         return None;
     };
@@ -304,6 +307,13 @@ fn accepted_direct_message_final(
             .is_err()
     {
         return None;
+    }
+    if event.actor_kind == Some(arkret_sdk::EnvelopeActorKind::Agent) {
+        let endpoint =
+            crate::identity::agent_signer_evidence::verified_cached_agent_event_endpoint(
+                event, store,
+            )?;
+        return Some((event, endpoint));
     }
     let method = event
         .proofs
@@ -317,7 +327,10 @@ fn accepted_direct_message_final(
         return None;
     }
     let device = arkret_sdk::DeviceId::new(device.to_owned()).ok()?;
-    Some((event, device))
+    Some((
+        event,
+        arkret_sdk::SignalSequenceEndpoint::AccountDevice { device_id: device },
+    ))
 }
 
 /// Run the realm events subscribe loop for `realm_id` until the generation is
@@ -659,14 +672,20 @@ mod tests {
     #[test]
     fn final_binding_extracts_only_the_exact_accepted_actor_device_proof() {
         let event = direct_message_event();
-        let (final_event, device_id) =
-            accepted_direct_message_final(&event, arkret_sdk::DigestSuite::Sha256)
+        let store = crate::state::LocalStateStore::default();
+        let (final_event, endpoint) =
+            accepted_direct_message_final(&event, arkret_sdk::DigestSuite::Sha256, &store)
                 .expect("direct final is bindable");
         assert_eq!(
             final_event.actor_id.signing_principal_id().as_str(),
             ACTOR_ID
         );
-        assert_eq!(device_id.as_str(), DEVICE_ID);
+        assert_eq!(
+            endpoint,
+            arkret_sdk::SignalSequenceEndpoint::AccountDevice {
+                device_id: arkret_sdk::DeviceId::new(DEVICE_ID).unwrap(),
+            }
+        );
     }
 
     #[test]
@@ -678,8 +697,10 @@ mod tests {
         message.event.executed_by = Some(arkret_sdk::ActorId::service(
             arkret_sdk::DidCoreId::new("ak:did_core:web:agent.example").unwrap(),
         ));
+        let store = crate::state::LocalStateStore::default();
         assert!(
-            accepted_direct_message_final(&delegated, arkret_sdk::DigestSuite::Sha256).is_none()
+            accepted_direct_message_final(&delegated, arkret_sdk::DigestSuite::Sha256, &store,)
+                .is_none()
         );
 
         let mut ambiguous = direct_message_event();
@@ -688,7 +709,8 @@ mod tests {
         };
         message.event.proofs.push(message.event.proofs[0].clone());
         assert!(
-            accepted_direct_message_final(&ambiguous, arkret_sdk::DigestSuite::Sha256).is_none()
+            accepted_direct_message_final(&ambiguous, arkret_sdk::DigestSuite::Sha256, &store,)
+                .is_none()
         );
     }
 }
