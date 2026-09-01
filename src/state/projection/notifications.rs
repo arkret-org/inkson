@@ -127,13 +127,8 @@ pub(crate) fn notification_kind_wire(kind: &NotificationKind) -> &'static str {
 }
 
 fn account_event_notification(event: &arkret_sdk::Event) -> Option<StoredNotification> {
-    let notification = serde_json::from_value::<Notification>(
-        serde_json::to_value(&event.payload)
-            .ok()?
-            .get("body")?
-            .clone(),
-    )
-    .ok()?;
+    let notification =
+        serde_json::from_value::<Notification>(serde_json::to_value(&event.payload).ok()?).ok()?;
     Some(StoredNotification::Event { notification })
 }
 

@@ -108,7 +108,7 @@ fn event(
 
 fn account_data_event(payload: serde_json::Value) -> arkret_sdk::Event {
     arkret_wire::test_support::raw_event(
-        "ak.account_data.set",
+        "ak.message.create",
         arkret_sdk::ScopeRef::Realm {
             realm_id: arkret_sdk::RealmId::new(
                 "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-",
@@ -119,11 +119,7 @@ fn account_data_event(payload: serde_json::Value) -> arkret_sdk::Event {
         arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap(),
         1,
         arkret_sdk::Hlc::new("01970e589d21-0004-a13f9c2e").unwrap(),
-        json!({
-            "key": "ak.notifications.projection.v1",
-            "expected_revision": 0,
-            "body": payload,
-        }),
+        payload,
     )
     .unwrap()
 }
