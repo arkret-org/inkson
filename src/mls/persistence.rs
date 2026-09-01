@@ -57,8 +57,8 @@
 //!   ([`decrypt_with_epoch_check`]) still relies on the epoch ordering provided by the Seal view,
 //!   but the AAD binding guarantees the timestamp the caller sees has not been swapped out.
 
-use chacha20poly1305::aead::{Aead, OsRng, Payload};
-use chacha20poly1305::{AeadCore, ChaCha20Poly1305, KeyInit, Nonce};
+use chacha20poly1305::aead::{Aead, Payload};
+use chacha20poly1305::{ChaCha20Poly1305, KeyInit, Nonce};
 use chrono::{DateTime, Utc};
 use garth::MlsGroupStateRecord;
 use hkdf::Hkdf;
@@ -244,7 +244,9 @@ pub fn encrypt_state(
 ) -> MlsSnapshotEnvelope {
     let recorded_at = crate::clock::now_utc();
     let key = derive_key(snapshot_secret, salt);
-    let nonce = ChaCha20Poly1305::generate_nonce(&mut OsRng);
+    let mut nonce_bytes = [0_u8; 12];
+    getrandom::fill(&mut nonce_bytes).expect("operating system RNG must be available");
+    let nonce = Nonce::from(nonce_bytes);
     let aad = build_aead_aad(salt, epoch, recorded_at);
     let cipher = ChaCha20Poly1305::new((&key).into());
     let ciphertext = cipher
@@ -316,10 +318,10 @@ fn decrypt_envelope_aead_v1(
     let key = derive_key(snapshot_secret, &salt);
     let aad = build_aead_aad(&salt, envelope.epoch, envelope.recorded_at);
     let cipher = ChaCha20Poly1305::new((&key).into());
-    let nonce = Nonce::from_slice(&nonce_bytes);
+    let nonce = Nonce::try_from(nonce_bytes.as_slice()).expect("nonce length was validated");
     cipher
         .decrypt(
-            nonce,
+            &nonce,
             Payload {
                 msg: &ciphertext,
                 aad: &aad,

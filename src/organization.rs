@@ -23,7 +23,6 @@ use arkret_sdk::webvh::{PreparedInception, ServiceInceptionInput, prepare_servic
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use ed25519_dalek::SigningKey;
-use rand_core_06::{CryptoRng, RngCore};
 
 use crate::secure_key_store::{SecureKeyStore, SecureKeyStoreError};
 
@@ -33,42 +32,6 @@ use crate::secure_key_store::{SecureKeyStore, SecureKeyStoreError};
 /// the same device without key collisions. No version suffix per the storage
 /// convention.
 const ORGANIZATION_CONTROL_SEED_KEY: &str = "organization.control.seed";
-
-/// A `getrandom`-backed [`RngCore`] (rand_core 0.6) adapter. inkson routes all
-/// randomness through `getrandom::fill` (uniform across native + wasm); the SDK
-/// inception builder wants a `rand_core` 0.6 `RngCore`, so this wraps the OS
-/// source into that trait. It is also a `CryptoRng` because `getrandom` is a
-/// cryptographically secure source.
-struct GetrandomRng;
-
-impl RngCore for GetrandomRng {
-    fn next_u32(&mut self) -> u32 {
-        let mut buf = [0u8; 4];
-        // getrandom is infallible in practice on the supported targets; on the
-        // theoretical failure path fall back to a zeroed read rather than
-        // panicking. The inception builder additionally re-verifies its own
-        // proof, so a degenerate read cannot produce an accepted DID.
-        let _ = getrandom::fill(&mut buf);
-        u32::from_le_bytes(buf)
-    }
-
-    fn next_u64(&mut self) -> u64 {
-        let mut buf = [0u8; 8];
-        let _ = getrandom::fill(&mut buf);
-        u64::from_le_bytes(buf)
-    }
-
-    fn fill_bytes(&mut self, dest: &mut [u8]) {
-        let _ = getrandom::fill(dest);
-    }
-
-    fn try_fill_bytes(&mut self, dest: &mut [u8]) -> Result<(), rand_core_06::Error> {
-        getrandom::fill(dest)
-            .map_err(|err| rand_core_06::Error::new(std::io::Error::other(err.to_string())))
-    }
-}
-
-impl CryptoRng for GetrandomRng {}
 
 /// Secure-key-store key for the control seed of `organization_id`.
 fn organization_control_seed_key(organization_id: &DidCoreId) -> String {
@@ -189,7 +152,7 @@ pub fn prepare_organization_inception(
         version_time: crate::clock::now_utc(),
         did_key_fragment: None,
     };
-    let mut rng = GetrandomRng;
+    let mut rng = rand_core::UnwrapErr(getrandom::SysRng);
     let prepared = prepare_service_inception(&mut rng, &input)?;
     let did = Did::new(prepared.did.clone())?;
     let organization_id = project_did_to_core_id(&did)?;

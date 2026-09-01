@@ -39,29 +39,23 @@ pub fn sentry_init(
             return None;
         }
     };
-    let options = sentry::ClientOptions {
-        dsn: Some(dsn),
-        attach_stacktrace: true,
-        release: sentry::release_name!(),
-        before_send: Some(std::sync::Arc::new(|event| {
-            let Ok(value) = serde_json::to_value(&event) else {
-                return None;
-            };
-            crate::secret_surface::find_json_violation("crash_event", &value)
-                .is_none()
-                .then_some(event)
-        })),
-        // R18: never let the SDK attach default PII (IP address, request
-        // headers, usernames). Crash telemetry is opt-in but MUST stay
-        // privacy-preserving by default.
-        send_default_pii: false,
-        // R18: capture every error event (explicit rather than relying on the
-        // SDK default) while leaving performance tracing off — inkson does not
-        // emit transactions, so traces are not sampled.
-        sample_rate: 1.0,
-        traces_sample_rate: 0.0,
-        ..Default::default()
-    };
+    let mut options = sentry::ClientOptions::new()
+        .sample_rate(1.0)
+        .traces_sample_rate(0.0)
+        .attach_stacktrace(true);
+    options.dsn = Some(dsn);
+    options.release = sentry::release_name!();
+    options.before_send = Some(std::sync::Arc::new(|event| {
+        let Ok(value) = serde_json::to_value(&event) else {
+            return None;
+        };
+        crate::secret_surface::find_json_violation("crash_event", &value)
+            .is_none()
+            .then_some(event)
+    }));
+    // R18: never let the SDK attach default PII (IP address, request headers,
+    // usernames). Crash telemetry is opt-in but stays privacy-preserving.
+    options.send_default_pii = false;
     let guard = sentry::init(options);
     tracing::info!("sentry_init: crash telemetry active");
     Some(guard)

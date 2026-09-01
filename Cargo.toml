@@ -7,11 +7,6 @@ description = "Dioxus desktop and web Arkret v1 reference client"
 license = "Apache-2.0"
 repository = "https://github.com/arkret-org/inkson"
 
-[package.metadata.cargo-machete]
-# The renamed crate is used directly in `organization.rs`; cargo-machete does
-# not currently resolve this dependency alias reliably.
-ignored = ["rand_core_06"]
-
 [workspace]
 resolver = "3"
 
@@ -25,7 +20,7 @@ todo = "deny"
 unimplemented = "deny"
 
 [workspace.dependencies]
-anyhow = "1.0.102"
+anyhow = "1.0.104"
 # Needed only to name arkret_crypto::Result in the MlsExporterSource impl:
 # the SFrame exporter trait moved to arkret-crypto (SDK phase 2-d), so its
 # method signature returns arkret_crypto::Error at the crypto boundary.
@@ -33,48 +28,43 @@ arkret-crypto = { version = "0.3.0", path = "../arkret-rust-sdk/crates/crypto", 
 arkret-retry = { version = "0.3.0", path = "../arkret-rust-sdk/crates/retry" }
 arkret-sdk = { package = "arkret", version = "0.3.0", path = "../arkret-rust-sdk/crates/sdk" }
 arkret-signatures = { version = "0.3.0", path = "../arkret-rust-sdk/crates/signatures", default-features = false, features = ["collaboration", "webvh"] }
-base64 = "0.22"
-chacha20poly1305 = { version = "0.10", default-features = false }
+base64 = "0.23"
+chacha20poly1305 = { version = "0.11", default-features = false }
 chime = { version = "0.3.0", path = "../chime" }
 chrono = "0.4.45"
-dioxus = { version = "0.7.9", default-features = false, features = ["minimal", "asset", "document", "mounted"] }
+dioxus = { version = "=0.7.9", default-features = false, features = ["minimal", "asset", "document", "mounted"] }
 dioxus-primitives = { version = "0.0.1", git = "https://github.com/DioxusLabs/components", default-features = false }
-dioxus-router = "0.7.9"
-ed25519-dalek = "2.2.0"
-futures-util = { version = "0.3.31", default-features = false, features = ["sink"] }
-getrandom = "0.4.2"
+dioxus-router = "=0.7.9"
+ed25519-dalek = "3.0.0"
+futures-util = { version = "0.3.34", default-features = false, features = ["sink"] }
+getrandom = "0.4.3"
 getrandom_02 = { package = "getrandom", version = "0.2.17" }
 gloo-timers = "0.4"
 hkdf = "0.13"
 image = { version = "0.25.10", default-features = false }
 js-sys = "0.3"
-jsonschema = { version = "0.46.5", default-features = false }
+jsonschema = { version = "0.52.1", default-features = false }
 pulldown-cmark = { version = "0.13", default-features = false }
 qrcode = { version = "0.14", default-features = false }
 rand_core = "0.10"
-# Distinct alias for the rand_core 0.6 API the arkret SDK's webvh inception
-# builder expects (`prepare_inception` takes a `rand_core::RngCore` from 0.6).
-# inkson's primary `rand_core` is 0.10, so the SDK's RngCore trait is reached
-# through this aliased dependency to keep trait identity matched.
-rand_core_06 = { package = "rand_core", version = "0.6.4", features = ["std"] }
-regex = "1.12"
+regex = "1.13"
 reqwest = { version = "0.13.4", default-features = false }
-sentry = { version = "0.48.2", default-features = false }
-serde = "1.0.228"
-serde_json = "1.0.150"
+sentry = { version = "0.49.2", default-features = false }
+serde = "1.0.229"
+serde_json = "1.0.151"
 sha2 = "0.11"
 thiserror = "2"
-tokio = "1.52.3"
-tokio-tungstenite = { version = "0.29.0", default-features = false, features = ["connect"] }
+tokio = "1.53.1"
+tokio-tungstenite = { version = "0.30.0", default-features = false, features = ["connect"] }
 tracing = "0.1"
 tracing-subscriber = "0.3.23"
 tracing-wasm = "0.2.1"
 url = "2.5.8"
 wasm-bindgen = "0.2"
 wasm-bindgen-futures = "0.4"
-web-sys = "0.3.100"
-x25519-dalek = "2.0.1"
-zeroize = "1.8"
+web-sys = "0.3.104"
+x25519-dalek = "3.0.0"
+zeroize = "1.9"
 
 [features]
 # No default features. `OperationBuilder::build()` always emits
@@ -181,16 +171,14 @@ dioxus-primitives = { workspace = true, default-features = false }
 dioxus-router = { workspace = true }
 ed25519-dalek = { workspace = true, features = ["pem", "pkcs8", "zeroize"] }
 futures-util = { workspace = true }
-getrandom = { workspace = true, features = ["wasm_js"] }
+getrandom = { workspace = true, features = ["sys_rng", "wasm_js"] }
 getrandom_02 = { workspace = true, features = ["js"] }
 hex = "0.4.3"
 hkdf = { workspace = true }
 image = { workspace = true, default-features = false, features = ["gif", "jpeg", "png", "webp"] }
 pulldown-cmark = { workspace = true, default-features = false, features = ["html"] }
 qrcode = { workspace = true, default-features = false, features = ["svg"] }
-# rand_core 0.6 alias for the arkret SDK webvh inception builder
-# (`prepare_inception` takes a 0.6 `RngCore`); inkson's primary rand_core is 0.10.
-rand_core_06 = { workspace = true }
+rand_core = { workspace = true }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 sha2 = { workspace = true }
@@ -364,8 +352,6 @@ garth = { path = "../garth", default-features = false, features = ["native", "ro
 # focus-trap eval closure (`FnOnce called more than once` -> CLOSURE_DTORS
 # out-of-bounds -> wasm heap corruption). See the fork branch for the full note.
 jsonschema = { workspace = true, default-features = false, features = ["resolve-file"] }
-rand_core = { workspace = true }
-rand_core_06 = { workspace = true }
 regex = { workspace = true }
 
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]

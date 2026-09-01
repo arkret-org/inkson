@@ -20,8 +20,8 @@ use std::sync::OnceLock;
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD_NO_PAD;
-use chacha20poly1305::aead::{Aead, OsRng};
-use chacha20poly1305::{AeadCore, ChaCha20Poly1305, KeyInit, Nonce};
+use chacha20poly1305::aead::Aead;
+use chacha20poly1305::{ChaCha20Poly1305, KeyInit, Nonce};
 
 mod fallback;
 mod host_bridge;
@@ -366,7 +366,10 @@ pub(crate) fn require_wasm_indexeddb_ed25519_seed_store(
 /// store) is testable on native too.
 pub fn wrap_secret(secret: &str, wrapping_key: &[u8; 32]) -> Result<String, SecureKeyStoreError> {
     let cipher = ChaCha20Poly1305::new(wrapping_key.into());
-    let nonce = ChaCha20Poly1305::generate_nonce(&mut OsRng);
+    let mut nonce_bytes = [0_u8; 12];
+    getrandom::fill(&mut nonce_bytes)
+        .map_err(|err| SecureKeyStoreError::Backend(format!("wrap_secret RNG: {err}")))?;
+    let nonce = Nonce::from(nonce_bytes);
     let ciphertext = cipher
         .encrypt(&nonce, secret.as_bytes())
         .map_err(|err| SecureKeyStoreError::Backend(format!("wrap_secret encrypt: {err}")))?;
@@ -393,8 +396,8 @@ pub fn unwrap_secret(
     }
     let (nonce_bytes, ciphertext) = packed.split_at(12);
     let cipher = ChaCha20Poly1305::new(wrapping_key.into());
-    let nonce = Nonce::from_slice(nonce_bytes);
-    let plain = match cipher.decrypt(nonce, ciphertext) {
+    let nonce = Nonce::try_from(nonce_bytes).expect("nonce length was validated");
+    let plain = match cipher.decrypt(&nonce, ciphertext) {
         Ok(p) => p,
         Err(_) => return Ok(None),
     };
