@@ -208,7 +208,9 @@ fn test_oidc_method() -> arkret_sdk::AuthMethod {
         scopes: vec!["openid".to_owned(), "profile".to_owned()],
         grant_exchange: arkret_sdk::AuthGrantExchange {
             kind: arkret_sdk::AuthGrantExchangeKind::AccountHandoff,
+            extra: Default::default(),
         },
+        extra: Default::default(),
     }
 }
 

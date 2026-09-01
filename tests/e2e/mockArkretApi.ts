@@ -2565,7 +2565,7 @@ export async function mockArkretApi(
           "https://server.local/_arkret/find/directory",
         ),
         supported_features: [],
-        auth_metadata: { mode: "public_no_auth" },
+        auth_metadata: {},
         limits: {},
         plaintext_visibility: {},
         rate_limit_policy: {},
@@ -4208,7 +4208,6 @@ function principalServiceDescribe() {
     ]),
     supported_reducer_profiles: ["ak.reducer.core.v1"],
     auth_metadata: {
-      mode: "development",
       account_authority: {
         origin: "https://auth.local.host",
         gate_account_base_url: "https://auth.local.host/_arkret/gate/account",
