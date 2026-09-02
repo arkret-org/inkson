@@ -471,11 +471,6 @@ pub(crate) mod tests {
     pub(crate) fn websocket_transport(max_frame_bytes: u32) -> arkret_sdk::TransportBinding {
         arkret_sdk::TransportBinding::Websocket {
             base_url: "wss://server.example/_arkret/ws".to_owned(),
-            extension_profile_required:
-                arkret_models_discovery::WebSocketBindingProfile::BindingWebsocketV1,
-            subprotocol: arkret_models_discovery::WebSocketBindingSubprotocol::ArkretV1,
-            authentication:
-                arkret_models_discovery::WebSocketBindingAuthentication::ChallengeDpopSessionV1,
             max_frame_bytes,
             max_channels: 16,
         }

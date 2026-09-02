@@ -465,7 +465,6 @@ fn mock_service_authority() -> Result<MockServiceAuthority> {
         &signing_key,
     )?;
     let evidence = ResolutionMethodHistoryEvidence::DidKeyExpansion {
-        adapter_version: "did:key:1".to_owned(),
         boundary: ResolutionMethodEvidenceBoundary {
             from_method_history_head: history_position.clone(),
             from_version_id: history_position.clone(),
