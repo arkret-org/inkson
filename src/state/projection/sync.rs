@@ -48,7 +48,7 @@ fn projection_text_from_private_sidecar(value: String) -> String {
 }
 
 /// Project the `realms[*].timeline.events` of an account-subscribe response
-/// into [`ProjectionEvent`]s. YOU-06-003 / YOU-01-013: this is the single
+/// into [`ProjectionEvent`]s. This is the single
 /// owner of account event projection parsing — the former Matrix-shaped `app.rs` copy
 /// (read `sender`/`content` only) was deleted. The sync engine and local
 /// search now call this canonical version, which reads the spec envelope

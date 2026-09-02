@@ -223,7 +223,7 @@ pub fn is_policy_deny_code(code: &str) -> bool {
         )
 }
 
-/// Bridge: a queued AKP-0007 [`CircleErrorKind`] becomes an Error
+/// Bridge: a queued [`CircleErrorKind`] becomes an Error
 /// toast. The kind's English fallback covers locales that don't carry
 /// the `error.circle.*` key yet.
 pub fn circle_error_to_toast(kind: CircleErrorKind) -> Toast {

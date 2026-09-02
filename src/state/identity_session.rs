@@ -153,39 +153,37 @@ impl LocalStateStore {
         let _ = self.flush();
     }
 
-    /// Save a **non-sensitive** UI preference, XOR-obfuscated with the account
-    /// key. This is obfuscation, not encryption (see
-    /// [`obfuscate_nonsensitive`]): `account_key` is a public local storage locator, so
-    /// this MUST NOT be used for secret material — only casual-plaintext-hiding
-    /// of preferences.
-    pub fn save_private_data(
-        &mut self,
-        account_key: &str,
-        key: impl Into<String>,
-        value: impl Into<String>,
-    ) {
+    /// Save one **plaintext, non-secret** device-local record into the active
+    /// account namespace: UI preferences (theme, avatar blob ref, sidebar
+    /// width), prompt-dismissal markers, public Recovery Key metadata, and
+    /// in-flight Sidecar ceremony requests. Values are stored exactly as
+    /// given, with no at-rest protection whatsoever.
+    ///
+    /// Secret material (seeds, private keys, session credentials) MUST go to
+    /// the OS keychain / non-extractable SubtleCrypto tier through
+    /// [`crate::secure_key_store`] instead — never here.
+    pub fn save_plain_local_data(&mut self, key: impl Into<String>, value: impl Into<String>) {
         self.ensure_cached_loaded();
-        let plaintext = value.into();
-        let obfuscated = obfuscate_nonsensitive(account_key, &plaintext);
-        self.cached.private_data.insert(key.into(), obfuscated);
+        self.cached
+            .plain_local_data
+            .insert(key.into(), value.into());
         let _ = self.flush();
     }
 
-    /// Load and de-obfuscate a non-sensitive UI preference.
-    pub fn load_private_data(&self, account_key: &str, key: &str) -> Option<String> {
-        let obfuscated = self.load().private_data.get(key)?.clone();
-        deobfuscate_nonsensitive(account_key, &obfuscated)
+    /// Load one plaintext device-local record.
+    pub fn load_plain_local_data(&self, key: &str) -> Option<String> {
+        self.load().plain_local_data.get(key).cloned()
     }
 
-    /// Remove a private preference.
-    pub fn remove_private_data(&mut self, key: &str) {
+    /// Remove one plaintext device-local record.
+    pub fn remove_plain_local_data(&mut self, key: &str) {
         self.ensure_cached_loaded();
-        self.cached.private_data.remove(key);
+        self.cached.plain_local_data.remove(key);
         let _ = self.flush();
     }
 
-    /// List all private data keys.
-    pub fn private_data_keys(&self) -> Vec<String> {
-        self.load().private_data.keys().cloned().collect()
+    /// List every plaintext device-local record key.
+    pub fn plain_local_data_keys(&self) -> Vec<String> {
+        self.load().plain_local_data.keys().cloned().collect()
     }
 }

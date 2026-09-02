@@ -164,7 +164,7 @@ pub fn DirectoryPanel(
     let mut contact_requester_did = use_signal(|| "did:web:alice.example".to_owned());
     let mut contact_state = use_signal(|| "No contact operation yet".to_owned());
     let mut pagination = use_signal(PaginationState::default);
-    // R3.3 (AKP-0011) — "Open shared link" scratch state.
+    // "Open shared link" scratch state.
     let mut open_link_input = use_signal(String::new);
     let navigator = use_navigator();
     let base_url_key = base_url.clone();
@@ -666,12 +666,12 @@ pub fn DirectoryPanel(
                 }
             }
 
-            // R3.3 (AKP-0011) — "Open shared link" entry point. Accepts a
+            // "Open shared link" entry point. Accepts a
             // pasted `web+arkret:` or HTTPS-fragment link, resolves it via
             // `directory_resolve_target`, and routes to the local UI by
             // `target_kind`. Failures collapse to one friendly message
             // (never distinguish not_found vs unauthorized).
-            // TODO(R3.3.1): a richer share/open surface (per-object "Share"
+            // TODO: a richer share/open surface (per-object "Share"
             // context-menu actions in the Board and Realm pages, an
             // invite-token issuance strand, and a confirm-before-navigate
             // preview card) lives here in a follow-up.
@@ -849,7 +849,7 @@ pub fn DirectoryPanel(
                         let profile_visibility = value_str(&org, "profile_visibility", "unknown");
                         let directory_ids = value_vec(&org, "directory_ids");
                         let proof_count = value_vec(&org, "proofs").len();
-                        // YGN-ORG-04: a single `verified` bool is not enough —
+                        // A single `verified` bool is not enough —
                         // show the proof-backed relationship the organization
                         // statement asserts (owner / governance /
                         // directory_certifier), and never show an official
@@ -1221,7 +1221,7 @@ fn value_bool_any(value: &Value, keys: &[&str]) -> bool {
         .unwrap_or(false)
 }
 
-/// YGN-ORG-04 — derive the proof-backed organization relationships to badge
+/// Derive the proof-backed organization relationships to badge
 /// from a directory organization preview.
 ///
 /// Returns the relationship names (`owner` / `governance` /
@@ -1400,7 +1400,7 @@ mod tests {
 
     #[test]
     fn declared_only_org_gets_no_verified_badge() {
-        // YGN-ORG-04 acceptance: a declared-only Realm/organization with no
+        // Acceptance: a declared-only Realm/organization with no
         // proof-backed relationship array shows no verified badge.
         let org = json!({
             "organization_id": "ak:did_core:web:hint.example",

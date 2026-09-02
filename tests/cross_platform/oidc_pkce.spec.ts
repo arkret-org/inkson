@@ -1,4 +1,4 @@
-// Round 27 cross-platform scenario: OIDC PKCE strand start.
+// cross-platform scenario: OIDC PKCE strand start.
 //
 // Mirrors `open_oidc_authorize_url` (round 24) — the wasm path opens
 // a `https://` authorize URL via `window.open` (web) or

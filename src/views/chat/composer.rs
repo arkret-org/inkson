@@ -272,7 +272,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
     rsx! {
             if !visible_channels_empty {
             div { class: "{composer_class}", "data-testid": "chat-composer",
-                // AKP-0007 P3B.2.3 — Circle composer banner. Rendered
+                // P3B.2.3 — Circle composer banner. Rendered
                 // at the top of the composer surface when the active
                 // Strand carries a `scope_circle_id`. The component is
                 // pure: `CircleScope::Realm` renders nothing, so the

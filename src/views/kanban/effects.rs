@@ -666,7 +666,7 @@ pub(super) fn KanbanEffects(
         });
     }
 
-    // R3.2 handle rendering: roster rows may omit inline handle claims for
+    // handle rendering: roster rows may omit inline handle claims for
     // privacy, size, or freshness. When the Members tab is actually open,
     // backfill missing current primary handles through the subject/context
     // reverse lookup and cache the result locally with a short TTL.

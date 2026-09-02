@@ -210,7 +210,7 @@ pub fn ActionApproveDialog(
     }
 }
 
-/// AKP-0008 approval panel for controller-owne`ak.agent.action_approve
+/// Approval panel for controller-owne`ak.agent.action_approve
 /// requests. Lets `ak.agent.action_rejectwith `ak.agent.action_approve`
 /// or reject with `ak.agent.action_reject`.
 ///

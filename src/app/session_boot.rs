@@ -324,14 +324,12 @@ pub(super) fn inject_test_session_credential(
     principal_id: Option<arkret_sdk::DidCoreId>,
     device_id: &str,
 ) -> Option<String> {
-    let credential = web_sys::window()
-        .and_then(|window| window.local_storage().ok().flatten())
-        .and_then(|storage| {
-            storage
-                .get_item(TEST_SESSION_CREDENTIAL_INJECTION_KEY)
-                .ok()
-                .flatten()
-        })?;
+    let credential = crate::browser_storage::browser_storage().and_then(|storage| {
+        storage
+            .get_item(TEST_SESSION_CREDENTIAL_INJECTION_KEY)
+            .ok()
+            .flatten()
+    })?;
     if credential.trim().is_empty() {
         return None;
     }
@@ -370,8 +368,7 @@ pub(super) async fn inject_test_session_grant(
     device_id: &str,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
 ) -> Option<String> {
-    let raw = match web_sys::window()
-        .and_then(|window| window.local_storage().ok().flatten())
+    let raw = match crate::browser_storage::browser_storage()
         .and_then(|storage| storage.get_item(TEST_SESSION_INJECTION_KEY).ok().flatten())
     {
         Some(raw) => raw,
@@ -455,7 +452,7 @@ pub(super) async fn inject_test_session_grant(
     {
         crate::event_submit::remember_verified_recovery_gate(principal_did.as_str(), device_id);
     }
-    for (fixture_field, private_data_key) in [
+    for (fixture_field, plain_local_data_key) in [
         ("local_recovery_state", "recovery.state.v1"),
         ("mls_recovery_backup_state", "mls.recovery_backup.v1"),
     ] {
@@ -473,7 +470,7 @@ pub(super) async fn inject_test_session_grant(
             };
             state_store
                 .write()
-                .save_private_data(account_key.as_str(), private_data_key, payload);
+                .save_plain_local_data(plain_local_data_key, payload);
         }
     }
     if let Some(value) = parsed.get("pending_principal_registration").cloned() {
@@ -705,9 +702,7 @@ pub(super) async fn inject_test_session_grant(
     // grant immediately after boot; retaining the original fixture in
     // localStorage would overwrite that newer durable grant on a hard reload
     // and make an otherwise valid authenticated deep link fall back to login.
-    if let Some(storage) =
-        web_sys::window().and_then(|window| window.local_storage().ok().flatten())
-    {
+    if let Some(storage) = crate::browser_storage::browser_storage() {
         let _ = storage.remove_item(TEST_SESSION_INJECTION_KEY);
     }
     Some(grant_jwt)

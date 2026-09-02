@@ -1,4 +1,4 @@
-// Round 27 cross-platform scenario: localStorage round-trip of the
+// cross-platform scenario: localStorage round-trip of the
 // `LocalIdentity` shape (round 23 key store).
 //
 // The wasm `LocalStateStore::write_persisted_state` path stores the

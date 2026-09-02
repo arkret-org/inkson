@@ -2,7 +2,7 @@
 //! composer-banner family that lets the user pick between Realm scope
 //! (default) and any Circle the active account belongs to.
 //!
-//! Spec: AKP-0007 (`docs/design/unified-feedback-system.md`).
+//! Spec: `docs/design/unified-feedback-system.md`.
 
 use dioxus::prelude::*;
 
@@ -129,7 +129,7 @@ pub fn CircleComposerBanner(scope: CircleScope) -> Element {
 /// when its `Relation::ConfidentialDiscussionOf` points at a parent
 /// Strand.
 ///
-/// AKP-0007 P3B.2.8 — the link routes through the optional
+/// P3B.2.8 — the link routes through the optional
 /// `target_realm_id`. When the relation projection carries the parent
 /// Strand's home Realm id the link is built as a Board task deep link; when it
 /// doesn't, the seal falls back to a `#strand:<id>` hash.

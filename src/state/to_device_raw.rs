@@ -576,7 +576,7 @@ impl LocalStateStore {
             received_at: Utc::now(),
             payload,
         });
-        // YOU-02-003: roll the audit log so it can't grow without bound (and,
+        // Roll the audit log so it can't grow without bound (and,
         // on wasm, eventually exhaust the localStorage quota and make all
         // persistence fail silently). Drop the oldest records past the cap.
         let len = self.cached.raw_operations.len();

@@ -97,7 +97,7 @@ fn add_r3_error_keys_zh(dict: &mut TranslationDict) {
         "Recovery 挑战证明验证失败。请重新采集证明后再试。",
     );
 
-    // R3.3 (AKP-0011) — shareable object links.
+    // Shareable object links.
     dict.set("object_link.open", "打开分享链接");
     dict.set(
         "object_link.open_placeholder",

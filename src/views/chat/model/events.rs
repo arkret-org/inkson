@@ -3,7 +3,7 @@ use arkret_wire::event_kind_str;
 use super::*;
 #[cfg(test)]
 pub(crate) use crate::state::projection::message_ops::message_operations_from_events;
-// YGN-ARCH-01 step 3: the message-candidate walkers + raw-operation
+// The message-candidate walkers + raw-operation
 // extraction moved to `crate::state::projection::message_ops` (they are the sync
 // engine's ingest step, not chat rendering). Re-exported so every existing
 // chat-model consumer keeps resolving through this module.
@@ -989,7 +989,7 @@ fn verify_chat_envelope_proof_with_local_identity(
     if actor.is_empty() {
         return ChatProofVerdict::Rejected;
     }
-    // AKP-0008 / AKP-0009: delegated and Applet-originated envelopes keep the
+    // Delegated and Applet-originated envelopes keep the
     // accountable principal in actor_id while the runtime that actually
     // signed the envelope is named by executed_by. Native envelopes omit
     // executed_by and therefore continue to require an actor-controlled key.
@@ -1617,7 +1617,7 @@ pub(crate) fn chat_message_from_event_with_sidecar(
                 .and_then(|value| serde_json::from_value::<arkret_sdk::ActorId>(value.clone()).ok())
         }),
         sender,
-        // AKP-0008 §4.10 — act-on-behalf carries a signed envelope-level
+        // §4.10 — act-on-behalf carries a signed envelope-level
         // `executed_by`. When present and distinct from the actor, the
         // renderer shows the "controller via agent" double signature.
         executed_by: candidates.iter().find_map(|candidate| {

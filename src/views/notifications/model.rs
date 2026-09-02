@@ -21,7 +21,7 @@ pub(crate) use crate::state::projection::notifications::actor_is_joined_member;
 #[cfg(test)]
 pub(crate) use crate::state::projection::notifications::raw_notifications_from_sources;
 // Notification wire-payload projection primitives now live in the sync
-// projection layer (`projection::notifications`, YGN-ARCH-01 step 3). They
+// projection layer (`projection::notifications`). They
 // are re-exported here so the notification view's other call sites and the
 // crate-level `views::notifications::*` re-export keep resolving unchanged.
 pub(crate) use crate::state::projection::notifications::{

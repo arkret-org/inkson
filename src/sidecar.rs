@@ -166,7 +166,7 @@ fn cache_sidecar_view_state(
         view_state.context_ref.strand_id.as_str(),
     );
     if let Some(persisted) = store
-        .load_private_data(principal_id, &key)
+        .load_plain_local_data(&key)
         .and_then(|raw| serde_json::from_str::<arkret_sdk::AgentSidecarViewState>(&raw).ok())
     {
         let persisted_plaintext = serde_json::to_value(&persisted)?;
@@ -181,7 +181,7 @@ fn cache_sidecar_view_state(
     }
     let should_replace = apply_sidecar_view_state_checked(store, view_state)?;
     if should_replace {
-        store.save_private_data(principal_id, key, serde_json::to_string(view_state)?);
+        store.save_plain_local_data(key, serde_json::to_string(view_state)?);
     }
     Ok(should_replace)
 }
@@ -266,13 +266,13 @@ pub(crate) fn cache_sidecar_exchange_projection(
         projection.sidecar_id.as_str(),
         projection.exchange_id.as_str(),
     );
-    let current = store.load_private_data(principal_id, &key).and_then(|raw| {
+    let current = store.load_plain_local_data(&key).and_then(|raw| {
         serde_json::from_str::<arkret_sdk::AgentSidecarExchangeProjection>(&raw).ok()
     });
     if current.as_ref() == Some(projection) {
         return Ok(false);
     }
-    store.save_private_data(principal_id, key, serde_json::to_string(projection)?);
+    store.save_plain_local_data(key, serde_json::to_string(projection)?);
     Ok(true)
 }
 
@@ -292,10 +292,10 @@ pub fn cached_sidecar_exchange_projections(
     // snapshot comes from the shared fold below, so ingest and UI cannot drift
     // into separate timeline implementations.
     let restart_seeds = store
-        .private_data_keys()
+        .plain_local_data_keys()
         .into_iter()
         .filter(|key| key.starts_with(&prefix))
-        .filter_map(|key| store.load_private_data(principal_id, &key))
+        .filter_map(|key| store.load_plain_local_data(&key))
         .filter_map(|raw| {
             serde_json::from_str::<arkret_sdk::AgentSidecarExchangeProjection>(&raw).ok()
         })
@@ -460,7 +460,7 @@ pub(crate) struct SidecarPrivacyGate {
 impl SidecarPrivacyGate {
     pub(crate) fn from_store(store: &crate::state::LocalStateStore, controller_id: &str) -> Self {
         let mut private_identifiers = std::collections::BTreeSet::new();
-        for key in store.private_data_keys() {
+        for key in store.plain_local_data_keys() {
             let belongs_to_controller = [
                 SIDECAR_EXCHANGE_FOLD_CACHE_PREFIX,
                 SIDECAR_PENDING_SUBMISSION_PREFIX,
@@ -473,7 +473,7 @@ impl SidecarPrivacyGate {
             if !belongs_to_controller {
                 continue;
             }
-            let Some(raw) = store.load_private_data(controller_id, &key) else {
+            let Some(raw) = store.load_plain_local_data(&key) else {
                 continue;
             };
             let Ok(value) = serde_json::from_str::<serde_json::Value>(&raw) else {
@@ -695,7 +695,7 @@ pub(crate) fn load_pending_sidecar_submission(
     intent_digest: &str,
 ) -> Option<PendingSidecarSubmission> {
     let key = pending_sidecar_submission_key(controller_id, source_strand_id, intent_digest);
-    let raw = store.load_private_data(controller_id, &key)?;
+    let raw = store.load_plain_local_data(&key)?;
     serde_json::from_str::<PendingSidecarSubmission>(&raw)
         .ok()
         .filter(|pending| pending.controller_id == controller_id)
@@ -711,7 +711,7 @@ pub(crate) fn save_pending_sidecar_submission(
         &pending.source_strand_id,
         intent_digest,
     );
-    store.save_private_data(&pending.controller_id, key, serde_json::to_string(pending)?);
+    store.save_plain_local_data(key, serde_json::to_string(pending)?);
     Ok(())
 }
 
@@ -722,7 +722,7 @@ pub(crate) fn remove_pending_sidecar_submission(
     intent_digest: &str,
 ) {
     let key = pending_sidecar_submission_key(controller_id, source_strand_id, intent_digest);
-    store.remove_private_data(&key);
+    store.remove_plain_local_data(&key);
 }
 
 /// Every stored pending submission of this controller, with its storage key.
@@ -732,11 +732,11 @@ pub(crate) fn pending_sidecar_submissions(
 ) -> Vec<(String, PendingSidecarSubmission)> {
     let prefix = format!("{SIDECAR_PENDING_SUBMISSION_PREFIX}:{controller_id}:");
     store
-        .private_data_keys()
+        .plain_local_data_keys()
         .into_iter()
         .filter(|key| key.starts_with(&prefix))
         .filter_map(|key| {
-            let raw = store.load_private_data(controller_id, &key)?;
+            let raw = store.load_plain_local_data(&key)?;
             let pending = serde_json::from_str::<PendingSidecarSubmission>(&raw).ok()?;
             (pending.controller_id == controller_id).then_some((key, pending))
         })
@@ -809,7 +809,7 @@ fn save_pending_sidecar_auto_close_intent(
         &intent.source_strand_id,
         intent.exchange_id.as_str(),
     );
-    store.save_private_data(&intent.controller_id, key, serde_json::to_string(intent)?);
+    store.save_plain_local_data(key, serde_json::to_string(intent)?);
     Ok(())
 }
 
@@ -820,10 +820,10 @@ pub(crate) fn pending_sidecar_auto_close_intents(
 ) -> Vec<PendingSidecarAutoCloseIntent> {
     let prefix = format!("{SIDECAR_AUTO_CLOSE_INTENT_PREFIX}:{controller_id}:");
     store
-        .private_data_keys()
+        .plain_local_data_keys()
         .into_iter()
         .filter(|key| key.starts_with(&prefix))
-        .filter_map(|key| store.load_private_data(controller_id, &key))
+        .filter_map(|key| store.load_plain_local_data(&key))
         .filter_map(|raw| serde_json::from_str::<PendingSidecarAutoCloseIntent>(&raw).ok())
         .filter(|intent| {
             intent.controller_id == controller_id
@@ -948,7 +948,7 @@ fn save_stored_sidecar_exchange_request_fact(
         &stored.source_strand_id,
         stored.exchange_id.as_str(),
     );
-    store.save_private_data(&stored.controller_id, key, serde_json::to_string(stored)?);
+    store.save_plain_local_data(key, serde_json::to_string(stored)?);
     Ok(())
 }
 
@@ -958,10 +958,10 @@ fn stored_sidecar_exchange_request_facts(
 ) -> Vec<StoredSidecarExchangeRequestFact> {
     let prefix = format!("{SIDECAR_EXCHANGE_REQUEST_FACT_PREFIX}:{controller_id}:");
     store
-        .private_data_keys()
+        .plain_local_data_keys()
         .into_iter()
         .filter(|key| key.starts_with(&prefix))
-        .filter_map(|key| store.load_private_data(controller_id, &key))
+        .filter_map(|key| store.load_plain_local_data(&key))
         .filter_map(|raw| serde_json::from_str::<StoredSidecarExchangeRequestFact>(&raw).ok())
         .filter(|fact| fact.controller_id == controller_id)
         .collect()
@@ -1228,15 +1228,14 @@ pub(crate) async fn sync_sidecar_exchange_background(
                     "{SIDECAR_CONTEXT_LOCATOR_PREFIX}:{controller_id}:{}",
                     view.sidecar.id
                 );
-                store.remove_private_data(&key);
+                store.remove_plain_local_data(&key);
             }
             for locator in &locators {
                 let key = format!(
                     "{SIDECAR_CONTEXT_LOCATOR_PREFIX}:{controller_id}:{}",
                     locator.sidecar_id
                 );
-                store.save_private_data(
-                    controller_id,
+                store.save_plain_local_data(
                     key,
                     serde_json::json!({
                         "sidecar_id": locator.sidecar_id,
@@ -1633,11 +1632,9 @@ fn refold_sidecar_exchanges_with_decrypt_report(
                 sidecar_id.as_str(),
                 exchange_id_raw,
             );
-            let cached_projection = store_ref
-                .load_private_data(controller_id, &cache_key)
-                .and_then(|raw| {
-                    serde_json::from_str::<arkret_sdk::AgentSidecarExchangeProjection>(&raw).ok()
-                });
+            let cached_projection = store_ref.load_plain_local_data(&cache_key).and_then(|raw| {
+                serde_json::from_str::<arkret_sdk::AgentSidecarExchangeProjection>(&raw).ok()
+            });
             if let Some(cached) = cached_projection.as_ref()
                 && !upgraded_exchange_keys.contains(&exchange_key)
             {
@@ -1724,7 +1721,7 @@ fn refold_sidecar_exchanges_with_decrypt_report(
                         };
                         if control.validate().is_ok() {
                             let existing = store_ref
-                                .load_private_data(controller_id, &auto_close_key)
+                                .load_plain_local_data(&auto_close_key)
                                 .and_then(|raw| {
                                     serde_json::from_str::<PendingSidecarAutoCloseIntent>(&raw).ok()
                                 });
@@ -1769,7 +1766,7 @@ fn refold_sidecar_exchanges_with_decrypt_report(
         }
     }
     for key in auto_close_removals {
-        store.remove_private_data(&key);
+        store.remove_plain_local_data(&key);
     }
     for intent in auto_close_updates {
         if let Err(error) = save_pending_sidecar_auto_close_intent(store, &intent) {
@@ -1813,7 +1810,7 @@ pub fn cached_sidecar_display_mode(
                 &session.source_realm_id,
                 &session.source_strand_id,
             );
-            store.load_private_data(principal_id, &key).and_then(|raw| {
+            store.load_plain_local_data(&key).and_then(|raw| {
                 serde_json::from_str::<arkret_sdk::AgentSidecarViewState>(&raw).ok()
             })
         })?;
@@ -2556,11 +2553,11 @@ mod tests {
         );
         save_pending_sidecar_submission(&mut store, &intent, &pending).unwrap();
 
-        // The record is a client-local private_data entry, never an
+        // The record is a client-local plain_local_data entry, never an
         // account-data type, and never enters the fold cache.
         assert!(
             store
-                .private_data_keys()
+                .plain_local_data_keys()
                 .iter()
                 .any(|key| { key.starts_with("ak.local.sidecar_pending_submission.v1:") })
         );
@@ -2667,7 +2664,7 @@ mod tests {
         // anywhere — only the client-local fold cache / fact records.
         assert!(
             store
-                .private_data_keys()
+                .plain_local_data_keys()
                 .iter()
                 .all(|key| !key.starts_with("ak.agent."))
         );

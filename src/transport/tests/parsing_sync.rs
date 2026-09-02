@@ -1,6 +1,6 @@
 #[test]
 fn parses_events_subscribe_ndjson_frames() {
-    // Round 4 typed frames carry the discriminator-required fields:
+    // Typed frames carry the discriminator-required fields:
     // `heartbeat` requires `emitted_at`; `frontier` requires a nested
     // `frontier` value; `catchup_complete` is a unit variant.
     let frames = [

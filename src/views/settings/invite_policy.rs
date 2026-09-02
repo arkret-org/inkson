@@ -8,7 +8,7 @@
 //! - `disclosure.high_trust` — whether contacts learn the invite outcome.
 //! - `denied_actor_ids` — exact actors barred from inviting, with removal.
 //!
-//! YOU-01-006: the form edits a `arkret_sdk::InviteReceivePolicy` held whole in
+//! the form edits a `arkret_sdk::InviteReceivePolicy` held whole in
 //! a signal. On GET we keep the *entire* server policy (including the
 //! `trusted_*` / `denied_source_ids` lists this form does not surface);
 //! on SET we stamp the required schema constant and exact active account_id

@@ -24,7 +24,7 @@
 //! byte-for-byte against the RFC 9180 CFRG KAT). This module keeps the
 //! recovery-keypair derivation and re-frames the SDK's single
 //! `base64url(enc || ct)` blob into the envelope's separate `enc` / `ciphertext`
-//! fields ([`HpkeSealed`]). The former YGN-DRY-06 non-convergence no longer
+//! fields ([`HpkeSealed`]). The former non-convergence no longer
 //! holds: with both sides on standard RFC 9180 the constructions are identical.
 
 use anyhow::{Result, anyhow};

@@ -97,7 +97,7 @@ pub(crate) fn realm_member_roster(projection: Option<&Value>) -> Vec<RealmMember
 }
 
 pub(crate) fn verified_inline_handle(row: &RealmMemberRow) -> Option<String> {
-    // R3.2 disclosure gates handle evidence on `subject_id`; claims without
+    // disclosure gates handle evidence on `subject_id`; claims without
     // that disclosed binding are malformed and must not affect display.
     let subject = row.subject_id.as_deref()?;
     row.handle_claims.iter().find_map(|claim| {

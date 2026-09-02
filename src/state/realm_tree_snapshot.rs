@@ -20,7 +20,7 @@ impl LocalStateStore {
             .collect()
     }
 
-    /// Round R2/R3 (T07) — has the Realm (security boundary, formerly Space)
+    /// Has the Realm (security boundary, formerly Space)
     /// emitted a `ak.realm.destroy` event we've already received? The
     /// chat UI MUST gray out the send box and surface the
     /// "permanently retired" banner once this returns true.

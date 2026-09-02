@@ -311,7 +311,7 @@ test("account settings split account/server info and surface Agents", async ({ p
   await expect(page.getByTestId("transport-invariant")).toBeVisible();
 
   // My Agents lives inside account settings — no feature flag — and
-  // exposes the AKP-0010 participation policy editor.
+  // exposes the participation policy editor.
   let agentListRequests = 0;
   page.on("request", (request) => {
     if (

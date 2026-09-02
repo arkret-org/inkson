@@ -159,7 +159,7 @@ pub fn station_options_for(current_server_url: &str, configured_stations: &[Url]
     options
 }
 
-/// AKP-0007 P3B.4 — multi-account profile primitive. A profile is the
+/// P3B.4 — multi-account profile primitive. A profile is the
 /// (server_url, principal_id, device_id, session_credential) tuple that the
 /// existing single-profile `ClientConfig` already carries, plus a
 /// stable `profile_id` so the switcher UI can address profiles by a
@@ -504,17 +504,39 @@ pub fn is_valid_device_id(device_id: &str) -> bool {
 
 pub fn validate_server_url(server_url: &str) -> anyhow::Result<Url> {
     let url = Url::parse(server_url)?;
+    validate_server_url_parsed(&url)?;
+    Ok(url)
+}
+
+/// The single Station-route policy, applied to an already-parsed URL.
+///
+/// A Station route is an origin every other endpoint is joined onto, so it
+/// must be HTTPS (or plain HTTP on a loopback host for local development) and
+/// must not smuggle anything past the origin: embedded credentials, a query
+/// or a fragment would silently ride along into every derived request URL.
+pub fn validate_server_url_parsed(url: &Url) -> anyhow::Result<()> {
     let scheme = url.scheme();
     let host = url
         .host_str()
         .ok_or_else(|| anyhow::anyhow!("server URL must include a host"))?;
 
-    if scheme == "https" || is_loopback_host(host) {
-        return Ok(url);
+    if !url.username().is_empty() || url.password().is_some() {
+        return Err(anyhow::anyhow!(
+            "server URL must not embed userinfo credentials"
+        ));
+    }
+    if url.query().is_some() || url.fragment().is_some() {
+        return Err(anyhow::anyhow!(
+            "server URL must not carry a query string or fragment"
+        ));
+    }
+
+    if scheme == "https" || (scheme == "http" && is_loopback_host(host)) {
+        return Ok(());
     }
 
     Err(anyhow::anyhow!(
-        "HTTPS is required for non-local servers; use https:// or a loopback host"
+        "HTTPS is required for non-local servers; use https:// or an http:// loopback host"
     ))
 }
 
@@ -740,14 +762,14 @@ impl LocalConfigStore {
 
     #[cfg(target_arch = "wasm32")]
     fn read_persisted_profiles(&self) -> Option<MultiProfileConfig> {
-        browser_storage()
+        crate::browser_storage::browser_storage()
             .and_then(|storage| storage.get_item(PROFILES_STORAGE_KEY).ok().flatten())
             .and_then(|json| serde_json::from_str(&json).ok())
     }
 
     #[cfg(target_arch = "wasm32")]
     fn write_profiles_blob(&self, profiles: &MultiProfileConfig) -> anyhow::Result<()> {
-        let Some(storage) = browser_storage() else {
+        let Some(storage) = crate::browser_storage::browser_storage() else {
             return Ok(());
         };
         storage
@@ -764,7 +786,7 @@ impl LocalConfigStore {
 
     #[cfg(target_arch = "wasm32")]
     fn read_persisted_config(&self) -> Option<ClientConfig> {
-        browser_storage()
+        crate::browser_storage::browser_storage()
             .and_then(|storage| storage.get_item(CONFIG_STORAGE_KEY).ok().flatten())
             .and_then(|json| serde_json::from_str(&json).ok())
     }
@@ -788,7 +810,7 @@ impl LocalConfigStore {
 
     #[cfg(target_arch = "wasm32")]
     fn write_config_blob(&self, config: &ClientConfig) -> anyhow::Result<()> {
-        let Some(storage) = browser_storage() else {
+        let Some(storage) = crate::browser_storage::browser_storage() else {
             return Ok(());
         };
         storage
@@ -796,11 +818,6 @@ impl LocalConfigStore {
             .map_err(|error| anyhow::anyhow!("localStorage write failed: {error:?}"))?;
         Ok(())
     }
-}
-
-#[cfg(target_arch = "wasm32")]
-fn browser_storage() -> Option<web_sys::Storage> {
-    web_sys::window().and_then(|window| window.local_storage().ok().flatten())
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -954,6 +971,13 @@ mod tests {
     fn validate_server_url_allows_https_and_loopback_http() {
         assert!(validate_server_url("https://arkret.example").is_ok());
         assert!(validate_server_url("http://127.0.0.1:8787").is_ok());
+        assert!(validate_server_url("http://[::1]:8787").is_ok());
         assert!(validate_server_url("http://arkret.example").is_err());
+        // A Station route is an origin: userinfo, query and fragment would
+        // ride along into every endpoint joined onto it.
+        assert!(validate_server_url("https://user:pass@arkret.example").is_err());
+        assert!(validate_server_url("https://arkret.example/?next=x").is_err());
+        assert!(validate_server_url("https://arkret.example/#frag").is_err());
+        assert!(validate_server_url("ftp://localhost").is_err());
     }
 }

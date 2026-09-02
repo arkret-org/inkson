@@ -1,4 +1,4 @@
-// Round 27 cross-platform scenario: PushManager.subscribe with VAPID.
+// cross-platform scenario: PushManager.subscribe with VAPID.
 //
 // Mirrors `web_push_subscribe` (round 26 A3) — the Rust path goes
 //   navigator.serviceWorker.register(sw_path)

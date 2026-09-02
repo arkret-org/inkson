@@ -2,6 +2,8 @@ use arkret_sdk::{AccountId, DeviceId, Did, DidCoreId, PrincipalResolutionProject
 use serde::{Deserialize, Serialize};
 use url::Url;
 
+use crate::config::validate_server_url_parsed;
+
 /// The one runtime aggregate that identifies an authenticated local account.
 ///
 /// Identity, current DID resolution and transport route deliberately remain
@@ -91,7 +93,7 @@ impl ActiveAccountContext {
                 "accepted principal resolution is missing evidence coordinates"
             ));
         }
-        validate_server_url(&server_url)?;
+        validate_server_url_parsed(&server_url)?;
         Ok(Self {
             profile_id,
             authority,
@@ -151,7 +153,7 @@ impl ActiveAccountContext {
                 "route refresh belongs to a different Station"
             ));
         }
-        validate_server_url(&next)?;
+        validate_server_url_parsed(&next)?;
         self.server_url = next;
         Ok(())
     }
@@ -163,21 +165,6 @@ pub(crate) fn authority_namespace(authority: &AccountId) -> anyhow::Result<Strin
         .map_err(|error| anyhow::anyhow!(error.to_string()))?;
     let canonical = arkret_sdk::canonical::canonical_json_bytes(authority)?;
     Ok(arkret_sdk::canonical::sha256_base64url(canonical))
-}
-
-fn validate_server_url(url: &Url) -> anyhow::Result<()> {
-    if url.username().is_empty()
-        && url.password().is_none()
-        && url.query().is_none()
-        && url.fragment().is_none()
-        && (url.scheme() == "https"
-            || matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "::1")))
-    {
-        return Ok(());
-    }
-    Err(anyhow::anyhow!(
-        "active Station route must be HTTPS (or loopback HTTP) without credentials, query or fragment"
-    ))
 }
 
 #[cfg(test)]

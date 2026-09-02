@@ -1,7 +1,7 @@
 //! Kanban realm-event → `RawOperationRecord` extraction (the sync engine's
 //! kanban ingest funnel).
 //!
-//! YGN-ARCH-01 step 3 (pure move from `views/kanban/model/{board_projection,
+//! Pure move from `views/kanban/model/{board_projection,
 //! overlays}.rs`, zero behavior change): consumed by
 //! `sync_engine::ingest_kanban_events` and the kanban view model.
 

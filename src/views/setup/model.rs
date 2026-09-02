@@ -6,7 +6,7 @@ pub(super) enum SetupSection {
     /// Realm bootstrap strand; the form creates a Realm and emits
     /// `ak.realm.create`.
     Realms,
-    /// Phase 3 — `ak.space.create` form: pick a Realm, pick a kind,
+    /// `ak.space.create` form: pick a Realm, pick a kind,
     /// optionally pick a parent Space. The Space lives inside the
     /// Realm and inherits all security semantics from it.
     NewSpace,

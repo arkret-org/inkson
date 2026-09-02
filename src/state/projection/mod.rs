@@ -1,4 +1,4 @@
-//! Sync projection layer (YGN-ARCH-01 step 3, pure move from
+//! Sync projection layer (pure move from
 //! `views/account_projection`, zero behavior change): folds account-subscribe
 //! / events-subscribe wire payloads into local projection models
 //! ([`ProjectionEvent`], message / kanban `RawOperationRecord`s). Consumed by

@@ -1,4 +1,4 @@
-//! Round R2/R3 (T16) — late key recovery user-facing helpers.
+//! Late key recovery user-facing helpers.
 //!
 //! When the backend transitions a previously-undecryptable event to
 //! `late_recovered` (e.g. an MLS welcome arrived after the messages were
@@ -8,7 +8,7 @@
 //!
 //! > "Older messages were just decrypted, X minutes after they arrived."
 //!
-//! Two extra requirements from spec §4 (Round R2/R3 close-out):
+//! Two extra requirements from spec §4:
 //!
 //! 1. If the *actor* who would have written the message was already revoked / removed before the
 //!    keys arrived, the server REJECTS the decrypt (`late_recovery_rejected_membership`). The
@@ -17,7 +17,7 @@
 //! 2. The banner message is i18n'd by renderers; this module only owns the projection + the minutes
 //!    computation.
 //!
-//! Round 4 (spec a77b995) — the banner is now sourced from the
+//! Since spec a77b995 the banner is sourced from the
 //! Inkson-local policy-access audit record whose `access_kind ==
 //! e2ee_late_recovery` carries
 //! [`late_recovery_original_event_id`](arkret_sdk::AuditPolicyAccessPayload::late_recovery_original_event_id).
@@ -330,7 +330,7 @@ impl LateRecoveredEvent {
 }
 
 impl LateRecoveredEvent {
-    /// Round 4 — construct from an Inkson-local policy-access payload
+    /// Construct from an Inkson-local policy-access payload
     /// whose `access_kind` is
     /// [`AccessKind::E2EELateRecovery`](arkret_sdk::AccessKind::E2EELateRecovery).
     /// Returns `None` if the access_kind is not e2ee_late_recovery or

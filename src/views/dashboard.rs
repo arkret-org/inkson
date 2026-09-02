@@ -710,7 +710,7 @@ fn contact_summary_delta(summary: &DashboardContactsSummary) -> String {
     )
 }
 
-// Shared with the notifications model (single source, YGN-DRY-05):
+// Shared with the notifications model (single source):
 use crate::views::notifications::default_notification_title;
 
 // The projection label helpers below return i18n KEYS; render sites pass

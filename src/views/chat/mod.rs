@@ -699,7 +699,7 @@ async fn ensure_owned_agent_sidecar(
     let pending_key = pending_native_sidecar_commit_key(controller.as_str(), realm_id, strand_id);
     let pending = state_store
         .read()
-        .load_private_data(controller.as_str(), &pending_key)
+        .load_plain_local_data(&pending_key)
         .and_then(|raw| serde_json::from_str::<PendingNativeSidecarCommit>(&raw).ok())
         .filter(|pending| {
             pending.expires_at > crate::clock::now_utc()
@@ -708,10 +708,10 @@ async fn ensure_owned_agent_sidecar(
     if pending.is_none()
         && state_store
             .read()
-            .load_private_data(controller.as_str(), &pending_key)
+            .load_plain_local_data(&pending_key)
             .is_some()
     {
-        state_store.write().remove_private_data(&pending_key);
+        state_store.write().remove_plain_local_data(&pending_key);
     }
     let operation_id = match pending.as_ref() {
         Some(pending) => pending.operation_id.clone(),
@@ -828,9 +828,7 @@ async fn ensure_owned_agent_sidecar(
                             {
                                 let barrier = {
                                     let mut store = ceremony_state_store.write();
-                                    store.save_private_data(
-                                        ceremony_controller.as_str(),
-                                        ceremony_pending_key.clone(),
+                                    store.save_plain_local_data(ceremony_pending_key.clone(),
                                         serde_json::to_string(&pending)?,
                                     );
                                     store.begin_durable_flush()?
@@ -891,9 +889,7 @@ async fn ensure_owned_agent_sidecar(
                             {
                                 let barrier = {
                                     let mut store = ceremony_state_store.write();
-                                    store.save_private_data(
-                                        ceremony_controller.as_str(),
-                                        ceremony_pending_key.clone(),
+                                    store.save_plain_local_data(ceremony_pending_key.clone(),
                                         serde_json::to_string(&pending)?,
                                     );
                                     store.begin_durable_flush()?
@@ -940,7 +936,7 @@ async fn ensure_owned_agent_sidecar(
     {
         let barrier = {
             let mut store = state_store.write();
-            store.remove_private_data(&pending_key);
+            store.remove_plain_local_data(&pending_key);
             store.begin_durable_flush()?
         };
         barrier.wait().await?;
@@ -1866,7 +1862,7 @@ pub fn ChatPanel(
                 else {
                     continue;
                 };
-                store.remove_private_data(&key);
+                store.remove_plain_local_data(&key);
                 if let Err(error) = crate::sidecar::record_accepted_sidecar_exchange_request(
                     &mut store,
                     &pending,
@@ -1926,7 +1922,7 @@ pub fn ChatPanel(
         &visible_moderation_appeal_prompts,
         &private_sidecar_strand_ids,
     );
-    // AKP-0007 P3B.2.4 — per-strand Circle-scope lookup used by the
+    // P3B.2.4 — per-strand Circle-scope lookup used by the
     // message accent rail. We index by `strand_id` once instead of
     // searching the `channels` Vec for every rendered message.
     let strand_scope_lookup: std::collections::BTreeMap<String, StrandScopeCircle> = all_channels
@@ -3225,7 +3221,7 @@ pub fn ChatPanel(
                                             // Experimental discussion promote is
                                             // hidden from the default local UI
                                             // until soland's reducer is enabled.
-                                            // YOU-02-007: stop at the first
+                                            // stop at the first
                                             // failed op and roll back the
                                             // optimistic promoted indicator so
                                             // a half-applied promote is not

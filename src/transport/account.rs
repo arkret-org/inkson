@@ -857,8 +857,6 @@ pub(crate) fn direct_conversation_entry_with_local_blockers(
     }
 }
 
-const DIRECT_CONVERSATION_PEER_CACHE_OBFUSCATION_KEY: &str = "ak.local.direct_conversation.peer.v1";
-
 fn remember_direct_conversation_peer(
     state_store: &mut SyncSignal<crate::state::LocalStateStore>,
     peer: &str,
@@ -867,8 +865,7 @@ fn remember_direct_conversation_peer(
     let Some(coordinates) = direct_conversation_coordinates(outcome) else {
         return;
     };
-    state_store.write().save_private_data(
-        DIRECT_CONVERSATION_PEER_CACHE_OBFUSCATION_KEY,
+    state_store.write().save_plain_local_data(
         direct_conversation_peer_cache_key(
             coordinates.realm_id.as_str(),
             coordinates.main_strand_id.as_str(),
@@ -882,10 +879,7 @@ pub(crate) fn cached_direct_conversation_peer(
     realm_id: &str,
     strand_id: &str,
 ) -> Option<String> {
-    state_store.load_private_data(
-        DIRECT_CONVERSATION_PEER_CACHE_OBFUSCATION_KEY,
-        &direct_conversation_peer_cache_key(realm_id, strand_id),
-    )
+    state_store.load_plain_local_data(&direct_conversation_peer_cache_key(realm_id, strand_id))
 }
 
 /// Opening a canonical Direct Conversation and changing an Agent's participation

@@ -356,7 +356,7 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
                                     controller.toggle_message_menu(msg_id.clone());
                                 }
                             },
-                            // AKP-0007 P3B.2.4 — Circle scope accent
+                            // P3B.2.4 — Circle scope accent
                             // rail. Renders a left-edge coloured ribbon
                             // with the Circle title as a tooltip when
                             // the message's enclosing Strand has a
@@ -601,7 +601,7 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
                                                     &participants_for_messages,
                                                 )
                                             });
-                                        // AKP-0008 §4.10 — act-on-behalf: the
+                                        // §4.10 — act-on-behalf: the
                                         // controller (actor_id = msg.sender) is
                                         // the primary name, the agent executor
                                         // (executed_by) renders as "via {agent}".

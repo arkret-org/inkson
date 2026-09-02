@@ -1,4 +1,4 @@
-// Round 27: shared helpers for the cross-platform deployment matrix.
+// shared helpers for the cross-platform deployment matrix.
 //
 // The scenario specs (subtle_crypto / push_subscribe / push_receive /
 // local_storage / oidc_pkce) all need the same plumbing:

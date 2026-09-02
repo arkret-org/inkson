@@ -80,7 +80,7 @@ pub struct ThemeSwitcherProps {
     /// etc.) re-run automatically.
     pub theme: Signal<String>,
     /// Persist callback. The caller threads the same write path the
-    /// existing topbar toggle uses (`LocalStateStore::save_private_data
+    /// existing topbar toggle uses (`LocalStateStore::save_plain_local_data
     /// (&principal_id(), "theme", next)` for desktop or the LocalStorage
     /// fallback for wasm). Keeps the component free of any direct
     /// storage coupling.

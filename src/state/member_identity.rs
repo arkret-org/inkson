@@ -3,7 +3,7 @@ use arkret_wire::event_kind_str;
 use super::*;
 
 impl LocalStateStore {
-    /// R3.1 MID-2 — record inlined `ak.member.identity.update` event
+    /// MID-2 — record inlined `ak.member.identity.update` event
     /// envelopes harvested off a `members[]` roster entry. Idempotent
     /// on event id; events that already exist for this `(realm, actor)`
     /// pair are skipped. The runtime
@@ -49,7 +49,7 @@ impl LocalStateStore {
         let _ = self.flush();
     }
 
-    /// R3.1 MID-3 — return the resolved [`arkret_sdk::MemberIdentity`]
+    /// MID-3 — return the resolved [`arkret_sdk::MemberIdentity`]
     /// for `(realm_id, actor_id)`, or `None` when no plaintext identity
     /// has been observed (decryption pending or no events ingested
     /// yet). UI surfaces SHOULD fall back to a muted placeholder when

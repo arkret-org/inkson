@@ -1,6 +1,6 @@
 //! Opt-in crash telemetry initialisation.
 
-/// AKP-0007 P3B.8.1 — initialise the opt-in Sentry client.
+/// P3B.8.1 — initialise the opt-in Sentry client.
 ///
 /// The init is gated on TWO conditions:
 ///   1. `prefs.enabled == true` — the user explicitly opted in

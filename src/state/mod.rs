@@ -39,7 +39,7 @@ fn account_state_key(namespace: &str) -> String {
     format!("{LOCAL_STATE_STORAGE_KEY}.account.{namespace}")
 }
 
-/// YOU-02-003: hard cap on the persisted `raw_operations` audit log. Each
+/// Hard cap on the persisted `raw_operations` audit log. Each
 /// user write appends one record and the whole `ClientLocalState` blob is
 /// re-serialized on every flush; left unbounded it grows without limit
 /// (linear native write cost) and, on wasm, eventually blows the ~5 MB
@@ -89,7 +89,7 @@ pub(crate) use account_persist::run_browser_account_persist_fault_contract;
 
 mod move_tracking;
 
-// YOU-07-001: storage / path / at-rest-crypto utility free functions moved out
+// Storage / path / at-rest-crypto utility free functions moved out
 // of this file into `storage_util` (move only). The glob re-export keeps the
 // parent `impl LocalStateStore` call sites and `local_state_tests.rs`
 // `use super::*` resolution unchanged.
@@ -158,7 +158,7 @@ pub struct LocalStateStore {
     /// Set by [`Self::flush`] while suspended; consumed by the batch guard so
     /// it only persists when at least one mutation actually requested a flush.
     flush_pending: AtomicBool,
-    /// YOU-02-002/003: shared persistence-health latch. `None` = healthy;
+    /// Shared persistence-health latch. `None` = healthy;
     /// `Some(message)` records the last persist/read failure (atomic write
     /// failed, localStorage quota exceeded, or a corrupt backing store was
     /// found on boot). Shared via `Arc<Mutex<_>>` so every `Clone` of the store
@@ -169,11 +169,11 @@ pub struct LocalStateStore {
     /// Send + Sync`).
     persist_health: Arc<Mutex<Option<String>>>,
     corrupt_account_scopes: Arc<Mutex<std::collections::BTreeSet<String>>>,
-    /// YOU-02-004 — shared receive-chain write-back overlay (see
+    /// Shared receive-chain write-back overlay (see
     /// [`MlsReceiveOverlay`]). Shared across clones like `persist_health` so
     /// a decrypt recorded through any handle is visible to every reader.
     mls_receive_overlay: Arc<Mutex<MlsReceiveOverlay>>,
-    /// YOU-02-004 — serialization lock for the MLS "decrypt → state
+    /// Serialization lock for the MLS "decrypt → state
     /// write-back" critical section. Multiple views (chat / kanban) can
     /// trigger decrypt-on-read for the same realm; holding this
     /// for the whole restore→decrypt→export→persist sequence guarantees the
@@ -423,7 +423,7 @@ impl LocalStateStore {
         } else {
             self.read_persisted_state().unwrap_or_default()
         };
-        // YOU-02-004: readers must observe receive-chain write-backs that the
+        // Readers must observe receive-chain write-backs that the
         // decrypt paths recorded through the interior-mutable overlay.
         {
             let overlay = self.lock_mls_receive_overlay();
@@ -501,7 +501,7 @@ impl LocalStateStore {
         })
     }
 
-    /// YOU-02-004 — the state every persist must write: `cached` with the
+    /// The state every persist must write: `cached` with the
     /// receive-chain overlay merged over it. Without this, any unrelated
     /// setter's flush would clobber the on-disk receive-chain advancement
     /// that a decrypt recorded via the overlay (a §5.6 violation: the next
@@ -517,7 +517,7 @@ impl LocalStateStore {
         state
     }
 
-    /// YOU-02-004 — drain the receive-chain overlay into `cached`. `&mut`
+    /// Drain the receive-chain overlay into `cached`. `&mut`
     /// writers that touch `mls_snapshots` / `mls_decrypted_plaintext` call
     /// this FIRST so their own write is ordered after (and therefore
     /// supersedes) any decrypt write-backs recorded so far. Safe to call
@@ -534,7 +534,7 @@ impl LocalStateStore {
         drained.apply_to(&mut self.cached);
     }
 
-    /// YOU-02-002: latch the outcome of a persist attempt so callers that
+    /// Latch the outcome of a persist attempt so callers that
     /// (legitimately) drop the `Result` — the fire-and-forget setters — still
     /// leave a durable signal the UI can read via [`Self::persist_error`].
     fn record_persist_result(&self, result: &anyhow::Result<()>) {
@@ -720,13 +720,13 @@ impl LocalStateStore {
 
     #[cfg(target_arch = "wasm32")]
     fn read_root_raw(&self) -> Option<String> {
-        browser_storage()
+        crate::browser_storage::browser_storage()
             .and_then(|storage| storage.get_item(LOCAL_STATE_STORAGE_KEY).ok().flatten())
     }
 
     #[cfg(not(target_arch = "wasm32"))]
     fn preserve_corrupt_root(&self, _raw: &str, error: &str) {
-        // YOU-02-002: a corrupt / truncated root file MUST NOT be silently reset.
+        // A corrupt / truncated root file MUST NOT be silently reset.
         let corrupt_path = self.path.with_extension("corrupt");
         let _ = fs::rename(&self.path, &corrupt_path);
         let message = format!(
@@ -740,7 +740,7 @@ impl LocalStateStore {
 
     #[cfg(target_arch = "wasm32")]
     fn preserve_corrupt_root(&self, raw: &str, error: &str) {
-        if let Some(storage) = browser_storage() {
+        if let Some(storage) = crate::browser_storage::browser_storage() {
             let _ = storage.set_item(&format!("{LOCAL_STATE_STORAGE_KEY}.corrupt"), raw);
         }
         let message = format!(
@@ -930,7 +930,7 @@ impl LocalStateStore {
 
     #[cfg(target_arch = "wasm32")]
     fn write_root(&self, root: &RootIndex) -> anyhow::Result<()> {
-        let Some(storage) = browser_storage() else {
+        let Some(storage) = crate::browser_storage::browser_storage() else {
             return Ok(());
         };
         storage

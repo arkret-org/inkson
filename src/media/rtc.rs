@@ -1,4 +1,4 @@
-//! Real RTC media wiring (AKP-0010, `media-service-binding.md`).
+//! Real RTC media wiring (`media-service-binding.md`).
 //!
 //! This module is the single source of truth for joining a call's media
 //! plane. The flow is:
@@ -142,7 +142,7 @@ impl RtcClientError {
     }
 
     /// Parses a soland error `code` string into a typed [`RtcClientError`].
-    /// Returns `None` for codes outside the AKP-0010 media binding set —
+    /// Returns `None` for codes outside the media binding set —
     /// callers should fall back to the generic error path.
     pub fn from_wire(code: &str) -> Option<Self> {
         Some(match code {

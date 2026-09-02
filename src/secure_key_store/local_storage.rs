@@ -77,15 +77,7 @@ impl LocalStorageSecureKeyStore {
     }
 
     fn storage() -> Result<web_sys::Storage, SecureKeyStoreError> {
-        let window = web_sys::window().ok_or({
-            SecureKeyStoreError::Unsupported("web_sys::window unavailable (non-browser host)")
-        })?;
-        window
-            .local_storage()
-            .map_err(|err| SecureKeyStoreError::Backend(format!("localStorage: {err:?}")))?
-            .ok_or(SecureKeyStoreError::Unsupported(
-                "window.localStorage not available",
-            ))
+        super::browser_storage()
     }
 
     /// The wrap_seed key — `inkson.global.secure_store.wrap_seed.v1`. The

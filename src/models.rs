@@ -92,7 +92,7 @@ pub fn contact_grants_me_invite(contact: &ContactListRow) -> bool {
 
 /// U4 - actor `invite_receive_policy` ("who can invite me").
 ///
-/// YOU-01-006: this used to be a bespoke local mirror with all-`String`
+/// This used to be a bespoke local mirror with all-`String`
 /// enum fields and **no** `schema`/`subject_id` — which made the SET body
 /// fail closed against the real soland handler (it deserialises
 /// `arkret_sdk::InviteReceivePolicy`, `deny_unknown_fields`, with both
@@ -640,7 +640,7 @@ mod tests {
 
     #[test]
     fn submit_event_outcome_decodes_new_events_submit_wire() {
-        // soland head 37ce729: {status, accepted[], cursor} — no top-level
+        // Soland head 37ce729: {status, accepted[], cursor} — no top-level
         // event_id / sync_token. This is the shape that previously failed to
         // decode and broke every event submit ("error decoding response body").
         let value = serde_json::json!({
@@ -740,7 +740,7 @@ mod tests {
 
     #[test]
     fn invite_receive_policy_round_trips_sdk_wire_with_trust_lists() {
-        // YOU-01-006 — the bare SDK wire body (schema + account_id required,
+        // The bare SDK wire body (schema + account_id required,
         // typed enums, trust lists) must decode and re-encode without losing
         // the `trusted_*` / `denied_source_ids` lists the U4 form
         // never touches.
@@ -967,7 +967,7 @@ impl From<arkret_models_discovery::DirectoryHandleResolutionOutcome> for Resolve
 /// Structured mention node embedded in message body. Spec
 /// `models/strand-and-message.md §9.4` + `identity/identity-handles.md §3.8`.
 ///
-/// YOU-05-006: the former hand-rolled weakly-typed mirror (all-`String`
+/// The former hand-rolled weakly-typed mirror (all-`String`
 /// fields) duplicated the SDK's authoritative strongly-typed model
 /// (`Did` / `Handle` / `DateTime<Utc>`) and had already drifted in field
 /// declaration order. Re-export the SDK type; `subject_id` (principal
@@ -1052,7 +1052,7 @@ impl<'de> Deserialize<'de> for SubmitEventResult {
 
 // ── Media ────────────────────────────────────────────────────────
 
-// YOU-05-004: the hand-rolled `IceConfigOutcome` / `IceServer` /
+// The hand-rolled `IceConfigOutcome` / `IceServer` /
 // `IceConfigRequestBody` mirrors drifted from the SDK wire types (missing
 // `turn_required`, `ttl_seconds: u64` vs the authoritative `u32`) and bypassed
 // the TURN credential privacy guard. Re-export the
@@ -1070,12 +1070,12 @@ pub use arkret_models_collaboration::objects::media::{
 // `ak.call.recording.start` event (SubmitEventResult). See
 // `crypto-media/webrtc-signaling.md` §5/§7. The former
 // CreateWebrtcSessionOutcome / WebrtcSignalOutcome / CallRecordingStartOutcome
-// mirrors were removed (YOU-01-002).
+// mirrors were removed.
 
 // ─────────────────────────────────────────────────────────────────────
-// AKP-0008 / AKP-0009 — Agent HTTP wire types.
+// Agent HTTP wire types.
 //
-// YOU-01-005: the former hand-rolled `Agent*ReqBody` / `Agent*ResBody`
+// the former hand-rolled `Agent*ReqBody` / `Agent*ResBody`
 // mirrors drifted from `agent-operations.schema.json` (extra required
 // fields, non-spec `todos`, wrong outcome shapes) and were removed. The
 // agent surface now uses the SDK's authoritative types

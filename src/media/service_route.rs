@@ -67,7 +67,7 @@ struct PersistedRouteLedger {
 pub struct InksonServiceRouteStore {
     #[cfg(not(target_arch = "wasm32"))]
     root: std::path::PathBuf,
-    /// storage key → the persisted version this instance last loaded.
+    /// Storage key → the persisted version this instance last loaded.
     loaded_versions: Mutex<BTreeMap<String, u64>>,
 }
 
@@ -119,7 +119,7 @@ impl InksonServiceRouteStore {
         }
         #[cfg(target_arch = "wasm32")]
         {
-            let storage = crate::state::browser_storage().ok_or_else(|| {
+            let storage = crate::browser_storage::browser_storage().ok_or_else(|| {
                 garth::Error::Protocol("service_route_ledger_unavailable".to_owned())
             })?;
             storage.get_item(&format!("inkson.{key}")).map_err(|error| {
@@ -152,7 +152,7 @@ impl InksonServiceRouteStore {
         }
         #[cfg(target_arch = "wasm32")]
         {
-            let storage = crate::state::browser_storage().ok_or_else(|| {
+            let storage = crate::browser_storage::browser_storage().ok_or_else(|| {
                 garth::Error::Protocol("service_route_ledger_unavailable".to_owned())
             })?;
             storage

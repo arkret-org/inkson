@@ -1,7 +1,7 @@
 //! Active-write event signer wired against the SDK's unified
 //! `EventProofBuilder` / `Ed25519DetachedJwsSigner` pipeline.
 //!
-//! T5.2 (Round 22, 2026-05-20) — T5.1 landed `Ed25519DetachedJwsSigner` and
+//! T5.2 (2026-05-20) — T5.1 landed `Ed25519DetachedJwsSigner` and
 //! `EventProofBuilder` in the SDK
 //! (`arkret-rust-sdk/crates/signatures/src/proof.rs`). Before T5.2
 //! inkson's previous Event signing helper hand-rolled

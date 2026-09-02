@@ -549,18 +549,13 @@ fn device_id_key() -> Result<String, SecureKeyStoreError> {
     account_scoped_device_key(base)
 }
 
-#[cfg(target_arch = "wasm32")]
-fn device_id_local_storage() -> Option<web_sys::Storage> {
-    web_sys::window().and_then(|window| window.local_storage().ok().flatten())
-}
-
 /// Read the persisted stable `device_id` for the active account scope.
 pub fn load_device_id(store: &dyn SecureKeyStore) -> Result<Option<DeviceId>, SecureKeyStoreError> {
     let key = device_id_key()?;
     #[cfg(target_arch = "wasm32")]
     {
         let _ = store;
-        device_id_local_storage()
+        crate::browser_storage::browser_storage()
             .and_then(|storage| storage.get_item(&key).ok().flatten())
             .map(|value| DeviceId::new(value.trim().to_owned()))
             .transpose()
@@ -589,7 +584,7 @@ pub fn store_device_id(
     #[cfg(target_arch = "wasm32")]
     {
         let _ = store;
-        if let Some(storage) = device_id_local_storage() {
+        if let Some(storage) = crate::browser_storage::browser_storage() {
             storage.set_item(&key, device_id.as_str()).map_err(|err| {
                 SecureKeyStoreError::Backend(format!("localStorage device_id set: {err:?}"))
             })?;
@@ -608,7 +603,7 @@ pub(super) fn delete_device_id(store: &dyn SecureKeyStore) -> Result<(), SecureK
     #[cfg(target_arch = "wasm32")]
     {
         let _ = store;
-        if let Some(storage) = device_id_local_storage() {
+        if let Some(storage) = crate::browser_storage::browser_storage() {
             let _ = storage.remove_item(&key);
         }
         Ok(())

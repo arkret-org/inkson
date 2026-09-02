@@ -1,4 +1,4 @@
-// Shared JS-interop helper (single source, YGN-DRY-04).
+// Shared JS-interop helper (single source).
 pub(super) use yoface::utils::dom::copy_text_to_clipboard;
 
 use super::*;

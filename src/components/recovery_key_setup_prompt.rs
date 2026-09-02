@@ -353,11 +353,9 @@ pub fn RecoveryKeySetupPrompt(
                                         ));
                                         return;
                                     };
-                                    let account_principal_id = account.principal_id().clone();
                                     status.set(crate::i18n::tr("recovery_setup.publishing"));
                                     publishing.set(true);
                                     let accepted_key = saved_recovery_key.clone();
-                                    let accepted_principal_id = account_principal_id.clone();
                                     let on_outcome = EventHandler::new(
                                         move |outcome: RecoveryKeyBackupOutcome| match outcome {
                                             RecoveryKeyBackupOutcome::Established => {
@@ -365,7 +363,6 @@ pub fn RecoveryKeySetupPrompt(
                                                 let Some((fingerprint, _)) =
                                                     crate::views::recovery::save_generated_recovery_key_metadata(
                                                         &mut store_signal,
-                                                        &accepted_principal_id,
                                                         &accepted_key,
                                                     )
                                                     else {
@@ -376,13 +373,11 @@ pub fn RecoveryKeySetupPrompt(
                                                     return;
                                                 };
                                                 let mut store = state_store.write();
-                                                store.save_private_data(
-                                                    accepted_principal_id.as_str(),
+                                                store.save_plain_local_data(
                                                     crate::app::RECOVERY_AUTO_PROMPT_SHOWN_KEY,
                                                     "1".to_owned(),
                                                 );
-                                                store.save_private_data(
-                                                    accepted_principal_id.as_str(),
+                                                store.save_plain_local_data(
                                                     crate::app::RECOVERY_AUTO_PROMPT_LOCAL_ONLY_SHOWN_KEY,
                                                     fingerprint,
                                                 );

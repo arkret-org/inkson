@@ -5,10 +5,10 @@ pub mod avatar_uploader;
 /// Generic single-flight / debounce / backoff / digest-dedupe scheduler for
 /// the private-plaintext backup job.
 pub(crate) mod backup_job_scheduler;
-/// AKP-0007 P3B.2 — Circle error queue. Producers push
+/// P3B.2 — Circle error queue. Producers push
 /// [`crate::circle::CircleErrorKind`]; the unified `feedback::ToastHost`
 /// drains it and renders the localized user-facing string.
-/// AKP-0007 P3B.2 — Circle scope picker + composer banner + confidential-
+/// P3B.2 — Circle scope picker + composer banner + confidential-
 /// discussion-of cross-link banner. Shared between the new-Strand form,
 /// the composer header, and the Strand detail view.
 pub mod circle_scope_picker;
@@ -39,7 +39,7 @@ pub mod mls_backup_prompt;
 pub mod mls_unlock;
 pub mod qr_share_panel;
 pub mod recovery_key_setup_prompt;
-// YOU-02-008: the P3B.5 `offline_pending_badge` component was removed
+// The P3B.5 `offline_pending_badge` component was removed
 // together with the unwired offline-queue modules (see `src/lib.rs`).
 /// G3.Y3 — global policy-deny event queue. Producers (the HTTP layer)
 /// push denies; the unified `feedback::ToastHost` mounted near the app

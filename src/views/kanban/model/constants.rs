@@ -1,3 +1,5 @@
+use crate::browser_storage::{local_storage_get, local_storage_set};
+
 pub(crate) const DEMO_BOARD_SPACE_ID: &str =
     "ak:space:AY61QviMxoJ0ALEn5U39bA7Qbi1BxHCrOq4950m2JRjM";
 
@@ -161,32 +163,6 @@ pub(crate) const CARD_DETAIL_DOCK_WIDTH_STORAGE_KEY: &str = "inkson.card-detail.
 pub(crate) const CARD_DETAIL_DOCK_WIDTH_DEFAULT: f64 = 720.0;
 pub(crate) const CARD_DETAIL_DOCK_WIDTH_MIN: f64 = 380.0;
 pub(crate) const CARD_DETAIL_DOCK_WIDTH_MAX: f64 = 1100.0;
-
-#[cfg(target_arch = "wasm32")]
-pub(crate) fn local_storage_get(key: &str) -> Option<String> {
-    web_sys::window()?
-        .local_storage()
-        .ok()
-        .flatten()?
-        .get_item(key)
-        .ok()
-        .flatten()
-}
-
-#[cfg(target_arch = "wasm32")]
-pub(crate) fn local_storage_set(key: &str, value: &str) {
-    if let Some(storage) = web_sys::window().and_then(|w| w.local_storage().ok().flatten()) {
-        let _ = storage.set_item(key, value);
-    }
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-pub(crate) fn local_storage_get(_key: &str) -> Option<String> {
-    None
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-pub(crate) fn local_storage_set(_key: &str, _value: &str) {}
 
 /// Hydrate the docked-vs-dialog choice from `localStorage`. Defaults to
 /// the centered dialog when unset or on desktop.

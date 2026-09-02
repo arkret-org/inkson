@@ -1,6 +1,6 @@
 use super::*;
 
-/// R3.2 §3.8.2 (YG-MENT-2) — resolve the *current* display label for a
+/// §3.8.2 (YG-MENT-2) — resolve the *current* display label for a
 /// structured actor mention via the shared SDK `render_mention()` helper.
 ///
 /// The authoritative `target` (principal `subject_id`) drives §3.2.1
@@ -8,7 +8,7 @@ use super::*;
 /// are audit metadata and feed ONLY the degraded fallback ladder — they
 /// are NEVER used as the current display value directly.
 ///
-/// `TODO(R3.2.1)`: feed the Realm-scoped roster handle-claim snapshot +
+/// `TODO`: feed the Realm-scoped roster handle-claim snapshot +
 /// accepted_issuer_ids + a locally cached verified handle in here. Until the
 /// live claim cache + `list_handles_for_subject` plumbing lands we pass an
 /// empty snapshot, so the renderer steps down to the cached/name/DID
@@ -28,10 +28,10 @@ pub(crate) fn mention_label_from_node(mention: &MentionNode) -> Option<String> {
     let display_name = mention.display_name_at_time.as_deref();
     let rendered = crate::views::helpers::render_actor_mention(
         mention.subject_id.as_str(),
-        &[],  // claim_set_snapshot — TODO(R3.2.1) roster handle-claim evidence
-        &[],  // accepted_issuer_ids — TODO(R3.2.1) Realm policy
+        &[],  // claim_set_snapshot — TODO roster handle-claim evidence
+        &[],  // accepted_issuer_ids — TODO Realm policy
         None, // context (target Realm id)
-        None, // cached verified handle — TODO(R3.2.1) local cache
+        None, // cached verified handle — TODO local cache
         display_name,
     );
     // The verified / cached tiers render `@{localpart}:{domain}`; strip

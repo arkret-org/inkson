@@ -24,7 +24,7 @@ mod card_detail_surface;
 mod controller;
 mod drag_drop_controller;
 mod effects;
-// YOU-07-001: card due-calendar pure calculation helpers moved to `due_calendar`
+// card due-calendar pure calculation helpers moved to `due_calendar`
 // (move-only).
 mod due_calendar;
 /// Board Space id used only when the explicit demo seed fallback is
@@ -103,7 +103,7 @@ fn CardMarkdownEditor(
             else {
                 return;
             };
-            // YOU-06-002: the editor JS only extracts file bytes and hands
+            // the editor JS only extracts file bytes and hands
             // them to Rust over the eval channel; the upload itself runs
             // through the canonical `TransportClient` pipeline (auth headers,
             // retry/backoff, error-envelope decoding) instead of a JS
@@ -501,7 +501,7 @@ fn CalendarScheduleEditForm(
 /// Decode one `uploadImage` bridge request from the Toast editor JS and run
 /// it through the canonical Rust blob pipeline
 /// (`BlobEndpoints::upload_bytes_scoped`, multipart/form-data per
-/// YOU-01-007), so authorization, retry/backoff and spec error-envelope
+/// ), so authorization, retry/backoff and spec error-envelope
 /// decoding stay owned by the network layer. Returns
 /// `(blob_ref, media_type)` for the editor to build its markdown target.
 async fn toast_editor_upload_via_api(
@@ -695,7 +695,7 @@ fn toast_editor_bootstrap_script(
         fallback.dispatchEvent(event);
     }};
 
-    // YOU-06-002: JS never talks to the protocol endpoint itself. It only
+    // JS never talks to the protocol endpoint itself. It only
     // extracts the picked file's bytes and hands them to Rust over the
     // bidirectional eval channel; the upload runs through the canonical
     // `BlobEndpoints::upload_bytes_scoped` pipeline and Rust sends the

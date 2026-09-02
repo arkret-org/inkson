@@ -69,7 +69,7 @@ pub fn SetupPanel(
     // recovery_material_pending gate for encrypted-Realm creation.
     let pending_recovery_gate = use_signal(|| false);
 
-    // Phase 3 — `ak.space.create` form state.
+    // `ak.space.create` form state.
     let new_space_realm_id = use_signal(String::new);
     let new_space_title = use_signal(String::new);
     let new_space_summary = use_signal(String::new);

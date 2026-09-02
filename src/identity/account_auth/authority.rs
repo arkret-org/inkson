@@ -27,7 +27,7 @@ pub fn clear_authority_resolver_cache() {
     AUTHORITY_RESOLVER_CACHE.with(|cache| cache.borrow_mut().clear());
 }
 
-/// R3.2 (YG-HC-1) — best-effort deep link to the issuer/coauth handle
+/// best-effort deep link to the issuer/coauth handle
 /// issuance strand (`/handles/me`). inkson does NOT manage handle lifecycle
 /// (per spec §3.2.3 / §3.4): `ak.profile.update` /
 /// `ak.member.identity.update` MUST NOT set or override handles. Instead

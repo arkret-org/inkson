@@ -1,4 +1,4 @@
-//! R3.2 — Realm-scoped `ak.member.identity.update` event store.
+//! Realm-scoped `ak.member.identity.update` event store.
 //!
 //! Spec source: `identity/identity-handles.md` (`ak.member.identity.update`)
 //! + `artifacts/schemas/member-identity.schema.json`.

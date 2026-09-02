@@ -347,7 +347,7 @@ mod agent_tests {
         .unwrap();
         let value: serde_json::Value = serde_json::from_str(&raw).unwrap();
 
-        // AKP-0008 §4.4: exactly the six pairing fields, no scope payload. The
+        // §4.4: exactly the six pairing fields, no scope payload. The
         // Base URI field is the SDK/spec wire name `arkret_base_url`.
         assert_eq!(value["arkret_base_url"], "https://arkret.example");
         assert_eq!(value["service_id"], "ak:did_core:web:arkret.example");

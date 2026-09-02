@@ -1123,9 +1123,9 @@ fn message_revise_builder_uses_content_payload_schema() {
     assert_registered_payload_valid(&event);
 }
 
-// ── YGN-ORG-05 — ak.realm.organization builder snapshot + negative tests ──
+// ── ak.realm.organization builder snapshot + negative tests ──
 //
-// Covers the YGN-ORG-02 builder: active / revoked payload snapshots against
+// Covers the builder: active / revoked payload snapshots against
 // the registered spec schema, plus negative coverage for missing delegation,
 // missing proof, and the status / revocation coupling. These are the
 // client-side counterparts of the SDK statement verifier tests; the helper

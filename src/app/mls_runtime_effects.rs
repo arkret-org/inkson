@@ -770,11 +770,9 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
                 &state_for_bootstrap_key,
                 &bootstrap_realm_id,
             );
-            let recovery_key_fingerprint = crate::views::recovery::local_recovery_key_fingerprint(
-                &state_for_bootstrap_key,
-                &authority.principal_id,
-            )
-            .unwrap_or_default();
+            let recovery_key_fingerprint =
+                crate::views::recovery::local_recovery_key_fingerprint(&state_for_bootstrap_key)
+                    .unwrap_or_default();
             let local_pending_welcome_hint = crate::mls::runtime::local_mls_welcome_hint_for_realm(
                 &state_for_bootstrap_key.to_device_inbox(),
                 &bootstrap_realm_id,

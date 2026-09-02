@@ -98,7 +98,7 @@ pub fn RealmAdminPanel(
     // that's in a failed state stores its move_id here; the detail block
     // below renders the reason / seal_ref.
     let mut move_detail_open = use_signal(|| Option::<String>::None);
-    // YOU-01-011: the former conflict-repair submit dialog was removed —
+    // the former conflict-repair submit dialog was removed —
     // `ak.conflict.repair` is not in the spec event-kind-registry (186
     // kinds, no conflict/repair entry), so the client must not mint that
     // wire kind. The bottom-cells banner below stays as read-only
@@ -1403,7 +1403,7 @@ pub fn RealmAdminPanel(
             } // closes `if active_section == RealmAdminSection::Access`
 
             if active_section == RealmAdminSection::Security {
-            // MLS epoch rotation. YOU-01-009: the spec has no
+            // MLS epoch rotation: the spec has no
             // `POST /_arkret/self/mls/rotate` shim — epoch rotation is a
             // real local `self_update_commit` published as the canonical
             // `ak.mls.commit` event (persist-on-accept).

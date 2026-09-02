@@ -24,7 +24,7 @@ pub(crate) struct ChannelEntity {
     /// Explicit Strand security state from Strand metadata. `None` inherits
     /// the current Realm / Space security posture.
     pub(crate) security_encrypted: Option<bool>,
-    /// AKP-0007 P3B.2.3 / P3B.2.4 — Circle scope this Strand was
+    /// P3B.2.3 / P3B.2.4 — Circle scope this Strand was
     /// created under, when the Strand projection carries a
     /// `scope_circle_id`. The composer banner and the per-message
     /// accent rail read from this field; `None` means the Strand
@@ -123,7 +123,7 @@ pub(crate) struct ChatMessage {
     /// Signed membership actor, kept separately from the principal display label.
     pub(crate) actor_id: Option<arkret_sdk::ActorId>,
     pub(crate) sender: String,
-    /// AKP-0008 §4.10 — envelope-level `executed_by`. Present only for
+    /// §4.10 — envelope-level `executed_by`. Present only for
     /// act-on-behalf events: `sender` (actor_id) is the controller and
     /// `executed_by` is the agent that performed the action. Drives the
     /// "X via Y" double-signature attribution. `None` for ordinary and

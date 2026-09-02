@@ -6,7 +6,7 @@ use super::{
     apply_card_detail_draft, card_detail_update_patch, collect_encryptable_private_patch_values,
     kanban_plaintext_block_reason, replace_private_patch_values,
 };
-// YGN-ARCH-01 step 2: the MLS commit/genesis event construction moved to
+// The MLS commit/genesis event construction moved to
 // `crate::mls::group_events` (it serves any effective scope and is consumed
 // by `mls::admission` / `circle_mls` / `sync_engine`, not just kanban).
 use crate::mls::group_events::{build_creator_mls_genesis_event, mls_commit_event_from_store};

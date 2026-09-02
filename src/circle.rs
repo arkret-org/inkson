@@ -1,4 +1,4 @@
-//! Circle UX scaffolding (AKP-0007, P3B.2).
+//! Circle UX scaffolding (P3B.2).
 //!
 //! A `Circle` is an intra-Realm cryptographic sub-boundary that hosts its
 //! own MLS group and a strict-subset of the parent Realm's membership. The
@@ -10,9 +10,9 @@
 //!   `scope_circle_id` set on the canonical envelope.
 //! - [`CircleSummary`] is the lightweight projection rendered by the Space-sidebar Circle list and
 //!   scope picker.
-//! - [`CircleErrorKind`] is the typed mapping from the AKP-0007 reason codes that surface in
-//!   soland's error envelopes. The UI Toast layer (see [`crate::components::circle_error_toast`])
-//!   consumes this to produce localized user-facing strings.
+//! - [`CircleErrorKind`] is the typed mapping from the Circle reason codes that surface in soland's
+//!   error envelopes. The UI Toast layer (see [`crate::components::circle_error_toast`]) consumes
+//!   this to produce localized user-facing strings.
 //!
 //! ## Status
 //!
@@ -51,7 +51,7 @@ pub fn ordinary_circle_views(list: arkret_sdk::CircleList) -> Vec<arkret_sdk::Ci
 
 /// The scope a composer / Strand-create form is actively writing into.
 ///
-/// Realm scope is the default; Circle scope flags a AKP-0007
+/// Realm scope is the default; Circle scope flags a
 /// write that MUST end up with `scope_circle_id` populated on the
 /// envelope object.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -126,7 +126,7 @@ impl CircleSummary {
     }
 }
 
-/// AKP-0007 reason / error codes surfaced to the user via the Toast
+/// Reason / error codes surfaced to the user via the Toast
 /// layer. Maps from the wire `reason_code` (a `failed_precondition` /
 /// `schema_violation` sub-code) to a typed enum the UI can translate.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

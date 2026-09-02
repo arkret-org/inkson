@@ -539,7 +539,7 @@ async fn authoring_exporter_aead_content_requires_accepted_transition_evidence()
     let _ = history_store.delete_secret(&history_key);
 }
 
-// ── YOU-02-004: receive-chain persistence (§5.6) ─────────────────
+// ── receive-chain persistence (§5.6) ─────────────────
 
 /// Build a two-member group: alice (in-memory sender) + bob, whose
 /// post-Welcome group state is persisted into `state` under `realm` the

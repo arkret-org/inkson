@@ -343,18 +343,12 @@ pub(super) fn RealmsSection(
     // server policy or a local fallback proves Recovery is configured.
     use_effect(move || {
         let gate_state =
-            active_account().map_or(EncryptedRealmRecoveryGateState::Checking, |account| {
+            active_account().map_or(EncryptedRealmRecoveryGateState::Checking, |_account| {
                 let store = state_store.read();
                 encrypted_realm_recovery_gate_state(
                     account_recovery_configured(),
-                    crate::views::recovery::recovery_options_configured(
-                        &store,
-                        account.principal_id(),
-                    ),
-                    crate::components::mls_recovery_backup_configured(
-                        &store,
-                        account.principal_id(),
-                    ),
+                    crate::views::recovery::recovery_options_configured(&store),
+                    crate::components::mls_recovery_backup_configured(&store),
                 )
             });
         if gate_state == EncryptedRealmRecoveryGateState::Ready && pending_recovery_gate() {
@@ -847,17 +841,15 @@ pub(super) fn RealmsSection(
                                         {
                                             let recovery_gate_state = active_account().map_or(
                                                 EncryptedRealmRecoveryGateState::Checking,
-                                                |account| {
+                                                |_account| {
                                                     let store = state_store.read();
                                                     encrypted_realm_recovery_gate_state(
                                                         account_recovery_configured(),
                                                         crate::views::recovery::recovery_options_configured(
                                                             &store,
-                                                            account.principal_id(),
                                                         ),
                                                         crate::components::mls_recovery_backup_configured(
                                                             &store,
-                                                            account.principal_id(),
                                                         ),
                                                     )
                                                 },

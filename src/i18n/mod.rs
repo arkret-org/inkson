@@ -5,8 +5,8 @@
 //!   examples, no MLS epoch / key package talk, no PCR / RRK / SAS acronyms. Jargon belongs inside
 //!   "technical details" affordances and Developer surfaces only.
 //! * Error copy formula: what happened + what it means + what to do next.
-//! * English: short sentences, sentence case. Chinese: 简洁口语化，统一使用 Realm / 空间 / 设备 /
-//!   恢复密钥 这套词汇，UI 名称不中英混杂。
+//! * English: short sentences, sentence case. Chinese: concise and conversational, with the fixed
+//!   vocabulary "Realm / 空间 / 设备 / 恢复密钥"; never mix English and Chinese inside one UI name.
 
 use std::collections::HashMap;
 

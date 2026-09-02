@@ -121,7 +121,7 @@ pub struct MlsSnapshotEnvelope {
     /// Not bound into the AEAD AAD: it is a local scheduling hint, never a
     /// confidentiality boundary.
     pub epoch_started_at: DateTime<Utc>,
-    /// YOU-02-004 (`encryption-and-audit.md` §5.6) — number of MLS
+    /// Per `encryption-and-audit.md` §5.6 — number of MLS
     /// application messages observed (sent OR successfully decrypted) on
     /// this device within the CURRENT epoch. Drives the spec's
     /// self-preservation commit SHOULD trigger ("epoch has observed at least
@@ -384,7 +384,7 @@ impl MlsSnapshotEnvelope {
         self
     }
 
-    /// YOU-02-004 (§5.6) — set the per-epoch observed application-message
+    /// `encryption-and-audit.md` §5.6 — set the per-epoch observed application-message
     /// count on a freshly minted envelope. Callers compute the value as
     /// `previous.app_messages_observed + new_messages` when the epoch is
     /// unchanged, or just `new_messages` after a commit advanced the epoch.
@@ -431,7 +431,7 @@ fn derive_key(snapshot_secret: &str, salt: &[u8]) -> [u8; 32] {
     out
 }
 
-// YOU-05-007: shared lowercase-hex codec lives in `crate::canonical`.
+// Shared lowercase-hex codec lives in `crate::canonical`.
 use crate::canonical::{hex_decode, hex_encode};
 
 #[cfg(test)]

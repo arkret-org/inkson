@@ -398,7 +398,7 @@ test("realm admin page handles metadata, modal member invite, epoch rotation and
     "/realms/ak:realm:AZQnaSleDidYaYIvfwYy3au5gnd_DSinxyUHEl7ewtxk/settings/security",
   );
   await page.getByTestId("rotate-realm-epoch").click();
-  // YOU-01-009: rotation is now a real local `self_update_commit`
+  // rotation is now a real local `self_update_commit`
   // published as `ak.mls.commit`. The e2e fixture has no local MLS group
   // state for this realm, so the rotate must fail closed with a status
   // message instead of calling the former non-spec /_arkret/self/mls/rotate

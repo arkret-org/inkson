@@ -75,7 +75,7 @@ pub(super) fn RecoveryReminderEffects(state: RecoveryReminderEffectState) -> Ele
                 let store = state_store.read();
                 let account_recovery_configured = account_recovery_configured();
                 let local_recovery_configured =
-                    crate::views::recovery::recovery_options_configured(&store, actor_id);
+                    crate::views::recovery::recovery_options_configured(&store);
                 let inputs = crate::account_health::AccountHealthInputs {
                     has_session: true,
                     sync_bootstrap_complete: sync_bootstrap_complete(),
@@ -98,11 +98,8 @@ pub(super) fn RecoveryReminderEffects(state: RecoveryReminderEffectState) -> Ele
                         account_has_other_devices(),
                     ),
                 };
-                let already = recovery_auto_prompt_already_prompted(
-                    &store,
-                    actor_id,
-                    account_recovery_configured,
-                );
+                let already =
+                    recovery_auto_prompt_already_prompted(&store, account_recovery_configured);
                 (inputs, already)
             };
             if crate::account_health::should_auto_prompt_recovery_setup(inputs, already_prompted) {

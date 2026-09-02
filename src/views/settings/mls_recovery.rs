@@ -106,7 +106,6 @@ fn start_recovery_key_generation(
     let authority = account.authority.clone();
     let session = token();
     let actor = account.principal_id().to_string();
-    let account_key = account.principal_id().clone();
     let device = account.device_id.to_string();
     let Some(recovery_material_evidence) = state_store.read().recovery_material_evidence() else {
         action_status.set("Frozen PCR authority evidence is required".to_owned());
@@ -163,7 +162,6 @@ fn start_recovery_key_generation(
             Ok(backup_id) => {
                 crate::components::mark_mls_recovery_backup_configured(
                     &mut state_store.write(),
-                    &account_key,
                     &backup_id,
                 );
                 if let Some(sidecar_json) = sidecar_json {
@@ -233,7 +231,6 @@ pub fn SettingsMlsRecoveryPanel(
                 let base = account.server_url.to_string();
                 let session = token();
                 let actor = account.principal_id().to_string();
-                let account_key = account.principal_id().clone();
                 let authority = account.authority.clone();
                 if base.trim().is_empty() || session.trim().is_empty() || actor.trim().is_empty() {
                     status.set(MlsRecoveryStatus::NoLocalSecret);
@@ -265,7 +262,6 @@ pub fn SettingsMlsRecoveryPanel(
                         {
                             crate::components::mark_mls_recovery_backup_configured(
                                 &mut state_store.write(),
-                                &account_key,
                                 backup_id,
                             );
                         }

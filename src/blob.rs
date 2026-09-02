@@ -25,7 +25,7 @@
 /// transport `content-type`.
 pub const CIPHERTEXT_MEDIA_TYPE: &str = "application/octet-stream";
 
-// YOU-01-011: the former `ak.blob.register` / `ak.blob.revoke` /
+// The former `ak.blob.register` / `ak.blob.revoke` /
 // `ak.blob.grant` event builders were removed — none of those kinds is in
 // the spec event-kind-registry, and unregistered wire kinds must not be
 // mintable from client code. Re-add once the kinds are registered via AKP.

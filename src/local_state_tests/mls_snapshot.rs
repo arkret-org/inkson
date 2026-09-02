@@ -1,22 +1,6 @@
-//! XOR non-sensitive-preference obfuscation helpers and MLS snapshot envelope
-//! persistence.
+//! MLS snapshot envelope persistence.
 
 use super::*;
-
-#[test]
-fn obfuscate_nonsensitive_roundtrip() {
-    let key = "did:webvh:z6mkfixture:alice.example";
-    let plaintext = "my ui preference";
-    let obfuscated = obfuscate_nonsensitive(key, plaintext);
-    assert_ne!(obfuscated, plaintext);
-    let recovered = deobfuscate_nonsensitive(key, &obfuscated).unwrap();
-    assert_eq!(recovered, plaintext);
-}
-
-#[test]
-fn obfuscate_nonsensitive_empty_key_returns_original() {
-    assert_eq!(obfuscate_nonsensitive("", "hello"), "hello");
-}
 
 #[test]
 fn mls_snapshot_persists_and_round_trips_through_store() {

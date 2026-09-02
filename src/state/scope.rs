@@ -118,7 +118,7 @@ impl LocalStateStore {
         let preserved_grant = self.cached.session_grant.clone();
         let preserved_dpop = self.cached.dpop_device_key.clone();
         let preserved_recovery_material = self.cached.recovery_material_evidence.clone();
-        // YOU-02-004: the MLS receive-chain overlay is account-scoped state —
+        // The MLS receive-chain overlay is account-scoped state —
         // wipe it so a stale decrypt write-back can't resurrect old snapshots.
         *self.lock_mls_receive_overlay() = MlsReceiveOverlay::default();
         // E7: reset the account-scoped cursor overlay alongside the receive

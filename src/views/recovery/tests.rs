@@ -125,13 +125,12 @@ fn webvh_recovery_metadata_is_looked_up_by_stable_core_id() {
         ..Default::default()
     };
     let mut store = crate::state::LocalStateStore::default();
-    store.save_private_data(
-        core_id.as_str(),
+    store.save_plain_local_data(
         super::RECOVERY_STATE_KEY,
         serde_json::to_string(&state).unwrap(),
     );
 
-    assert!(recovery_options_configured(&store, &core_id));
+    assert!(recovery_options_configured(&store));
 }
 
 #[test]

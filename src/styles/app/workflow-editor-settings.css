@@ -230,11 +230,6 @@
   max-width: none;
   box-sizing: border-box;
 }
-.settings-content-stack .data-table,
-.settings-content-column .data-table {
-  width: 100%;
-}
-
 /* Security defaults to a calm, readable status view. Protocol coordinates and
    rare authority workflows are expanded only when an operator asks for them. */
 .security-health-header,
@@ -551,8 +546,7 @@
   min-width: 0;
 }
 .device-identity strong,
-.device-id-secondary,
-.device-created-at {
+.device-id-secondary {
   min-width: 0;
   overflow-wrap: anywhere;
 }
@@ -820,11 +814,6 @@
 .setup-summary-row-stack span {
   text-align: left;
 }
-.setup-chip-wrap {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
 .setup-nav-actions {
   justify-content: flex-end;
   margin-top: 4px;
@@ -836,9 +825,7 @@
   .board-grid { margin-inline: -4px; padding-inline: 4px; }
   .board-column { flex-basis: min(82vw, 320px); width: min(82vw, 320px); min-width: min(82vw, 320px); }
   .settings-shell,
-  .settings-card-grid,
-  .settings-inline-form,
-  .settings-list-row { grid-template-columns: 1fr; }
+  .settings-card-grid { grid-template-columns: 1fr; }
 }
 @media (max-width: 1100px) {
   .setup-shell,

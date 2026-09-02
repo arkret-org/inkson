@@ -111,7 +111,7 @@ mod tests {
         assert!(parse_user_handle("did:web:alice.example").is_none());
         assert!(parse_user_handle("@alice").is_none());
         assert!(parse_user_handle("alice.example.com").is_none());
-        // R3.1: arkret:// URI form is retired.
+        // The arkret:// URI form is retired.
         assert!(parse_user_handle("arkret://example.com/users/alice").is_none());
     }
 

@@ -23,6 +23,17 @@ use base64::engine::general_purpose::STANDARD_NO_PAD;
 use chacha20poly1305::aead::Aead;
 use chacha20poly1305::{ChaCha20Poly1305, KeyInit, Nonce};
 
+/// The browser `localStorage` handle, mapped into the secure-store error
+/// type. Every wasm fallback backend in this module funnels through the one
+/// [`crate::browser_storage`] accessor so "storage unreachable" is reported
+/// identically wherever it happens.
+#[cfg(target_arch = "wasm32")]
+fn browser_storage() -> Result<web_sys::Storage, SecureKeyStoreError> {
+    crate::browser_storage::browser_storage().ok_or(SecureKeyStoreError::Unsupported(
+        "window.localStorage unavailable",
+    ))
+}
+
 mod fallback;
 mod host_bridge;
 mod identity_store;

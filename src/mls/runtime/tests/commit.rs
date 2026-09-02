@@ -80,7 +80,7 @@ fn force_epoch_advance_only_for_overdue_minimal_metadata_realm() {
 
 #[test]
 fn self_preservation_commit_triggers_for_normal_realm_per_spec_5_6() {
-    // YOU-02-004 — `encryption-and-audit.md` §5.6 self-preservation
+    // `encryption-and-audit.md` §5.6 self-preservation
     // SHOULD triggers for a normal (non-minimal-metadata) Realm.
     use chrono::{Duration, Utc};
     let started = Utc::now();
@@ -135,7 +135,7 @@ fn self_preservation_commit_triggers_for_normal_realm_per_spec_5_6() {
 
 #[test]
 fn idle_self_update_jitter_is_deterministic_and_bounded() {
-    // YOU-02-004R — §5.6 deterministic member-order jitter (SHOULD).
+    // §5.6 deterministic member-order jitter (SHOULD).
     use chrono::{Duration, Utc};
     let started = Utc::now();
     let group = "ak:mls:group:g1";

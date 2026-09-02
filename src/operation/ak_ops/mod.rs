@@ -15,7 +15,7 @@ use serde_json::Value;
 pub(super) use super::{TypedOperationBuilder, trim_realm_id};
 pub(super) use crate::payload::strand_id_value;
 
-// YOU-02-001: every fallible helper below returns `anyhow::Result`
+// Every fallible helper below returns `anyhow::Result`
 // instead of panicking. The ids these helpers parse ultimately come from
 // server sync data (bare `String` fields in `models.rs` strand into local
 // UI state), so a non-canonical id from a buggy or malicious server must

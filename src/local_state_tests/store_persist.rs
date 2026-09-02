@@ -786,7 +786,7 @@ fn clear_account_scoped_preserves_device_level_and_session_grant_state() {
     // Account-scoped projections.
     store.save_sync_cursor("sx:before");
     store.save_realm_tree_projection("ak:space:a", serde_json::json!({}));
-    store.save_private_data("did:web:tester.example", "theme", "night");
+    store.save_plain_local_data("theme", "night");
     store.ensure_cached_loaded();
     store.cached.saved_account_data.insert(
         "ak.saved.v1:test".to_owned(),
@@ -831,8 +831,8 @@ fn clear_account_scoped_preserves_device_level_and_session_grant_state() {
         "saved account_data staging should be wiped"
     );
     assert!(
-        state.private_data.is_empty(),
-        "private_data is account-scoped and should be wiped"
+        state.plain_local_data.is_empty(),
+        "plain_local_data is account-scoped and should be wiped"
     );
     assert!(
         state.local_identity.is_some(),

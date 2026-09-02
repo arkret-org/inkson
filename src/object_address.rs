@@ -1,4 +1,4 @@
-//! R3.3 (AKP-0011) — client-side shareable object links (inbound half).
+//! Client-side shareable object links (inbound half).
 //!
 //! A user can paste a shared Realm / Strand / Message link. This module is the
 //! inkson-side glue on top of the SDK's client-agnostic addressing grammar

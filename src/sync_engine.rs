@@ -110,7 +110,7 @@ pub struct SyncEngineContext {
     pub state_store: crate::runtime::input::StateStoreHandle,
     pub account: crate::config::ActiveAccountContext,
     pub principal_id: arkret_sdk::DidCoreId,
-    /// YOU-02-004R (§5.6) — the local device id, needed by the idle
+    /// `encryption-and-audit.md` §5.6 — the local device id, needed by the idle
     /// self-update driver to load the device snapshot secret and build the
     /// background `self_update_commit`. Sourced from the active profile config
     /// (same value the chat / realm-admin send paths use).
@@ -912,7 +912,7 @@ async fn run_circle_scope_rotate_pass(
             }
         };
 
-        // circle.md §10.2/§10.3: a Realm membership removal rotates the
+        // Circle.md §10.2/§10.3: a Realm membership removal rotates the
         // Realm-default MLS group in addition to every MLS-backed Circle.
         // Derive the Realm obligation exclusively from canonical sync state:
         // a complete active-member roster, accepted ak.member.state
@@ -1743,7 +1743,7 @@ fn proof_bearing_sender_device(
         .get("actor_id")
         .or_else(|| object.get("sender_actor_id"))
         .and_then(|value| serde_json::from_value::<arkret_sdk::ActorId>(value.clone()).ok())?;
-    // AKP-0008 / AKP-0009: delegated Events keep the accountable principal
+    // Delegated Events keep the accountable principal
     // in `actor_id`, while `executed_by` identifies the runtime that actually
     // signed the envelope. Keep this selector byte-aligned with the chat proof
     // verifier when that signer is a real directory-backed device. Independent
@@ -1943,7 +1943,7 @@ pub fn apply_response(response: &AccountSyncStep, is_full_sync: bool, ctx: &Sync
                 // Fold the discussion timeline into `raw_operations` too so the
                 // card-detail Discussion tab renders local-first instead of
                 // refetching + redecrypting the realm on every open.
-                // R3.1 MID-2 — harvest inlined `ak.member.identity.update`
+                // MID-2 — harvest inlined `ak.member.identity.update`
                 // event envelopes off the `members[]` roster entries. The
                 // SDK's effective-set filter is applied lazily when a UI
                 // surface needs to resolve a display identity.
@@ -2766,7 +2766,7 @@ pub(crate) fn apply_account_data_entries(
                 continue;
             }
         }
-        // ak.client.ui_state — theme + avatar pointer.
+        // Ak.client.ui_state — theme + avatar pointer.
         if account_data_key == AccountDataKey::CLIENT_UI_STATE {
             match crate::account_data::decrypt_account_data_entry(
                 authority,
@@ -2775,22 +2775,22 @@ pub(crate) fn apply_account_data_entries(
             ) {
                 Ok(content) => {
                     let local_theme = store
-                        .load_private_data(principal_id, "theme")
+                        .load_plain_local_data("theme")
                         .unwrap_or_else(|| "night".to_owned());
                     if let Some(remote_theme) =
                         crate::account_data::merge_client_ui_theme(&local_theme, &content)
                     {
-                        store.save_private_data(principal_id, "theme", remote_theme.clone());
+                        store.save_plain_local_data("theme", remote_theme.clone());
                         synced_theme = Some(remote_theme);
                     }
                     if let Some(avatar_blob_ref) =
                         crate::account_data::avatar_blob_ref_from_client_ui(&content)
                     {
-                        store.save_private_data(principal_id, "avatar_blob_ref", avatar_blob_ref);
+                        store.save_plain_local_data("avatar_blob_ref", avatar_blob_ref);
                     } else if crate::account_data::avatar_blob_ref_tombstoned_from_client_ui(
                         &content,
                     ) {
-                        store.save_private_data(principal_id, "avatar_blob_ref", "");
+                        store.save_plain_local_data("avatar_blob_ref", "");
                     }
                 }
                 Err(error) => tracing::warn!(
@@ -2799,7 +2799,7 @@ pub(crate) fn apply_account_data_entries(
             }
             continue;
         }
-        // ak.account.blocklist — personal block list.
+        // Ak.account.blocklist — personal block list.
         if account_data_key == AccountDataKey::PRESENCE_VISIBILITY {
             let Some(visibility) = crate::account_data::decrypt_account_data_entry(
                 authority,
@@ -2819,7 +2819,7 @@ pub(crate) fn apply_account_data_entries(
             store.set_presence_visibility(visibility);
             continue;
         }
-        // ak.presence.preference — manual presence preference
+        // Ak.presence.preference — manual presence preference
         // (profiles-presence.md §3.6). The server stores only the standard
         // account-data AEAD envelope; decrypt before applying it locally.
         if account_data_key == AccountDataKey::PRESENCE_PREFERENCE {
@@ -2890,7 +2890,7 @@ pub(crate) fn apply_account_data_entries(
             }
             continue;
         }
-        // ak.contacts.actor.<principal_key> — holder-private global petnames.
+        // Ak.contacts.actor.<principal_key> — holder-private global petnames.
         if crate::account_data::principal_key_from_contact_remark_key(account_data_key).is_some() {
             if entry.payload.get("tombstone").and_then(Value::as_bool) == Some(true) {
                 match crate::account_data::account_data_namespace_key(authority) {
@@ -2931,7 +2931,7 @@ pub(crate) fn apply_account_data_entries(
             }
             continue;
         }
-        // ak.contacts.realm.<realm_id> — actor-private Realm remarks.
+        // Ak.contacts.realm.<realm_id> — actor-private Realm remarks.
         let Some(realm_id) = crate::account_data::realm_id_from_realm_remark_key(account_data_key)
         else {
             continue;

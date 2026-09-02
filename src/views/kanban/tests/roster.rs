@@ -54,7 +54,7 @@ fn assignment_mutations_preserve_same_principal_accounts_at_different_stations()
 
 #[test]
 fn realm_member_roster_reads_r32_wire_shape() {
-    // R3.2 (arkret-spec @ b56cab1): roster entries carry
+    // (arkret-spec @ b56cab1): roster entries carry
     // `actor_id` + `membership` + optional `subject_id` /
     // `identity_event_ids` / `member_display_state_digest`. Handle
     // strings only appear inside signed handle_claim evidence.
@@ -121,7 +121,7 @@ fn realm_member_roster_reads_r32_wire_shape() {
 
 #[test]
 fn realm_member_roster_reads_r32_digest_only() {
-    // Aggressive no-compat: only the R3.2 `member_display_state_digest`
+    // Aggressive no-compat: only the `member_display_state_digest`
     // key is read.
     let projection = json!({
         "member_roster_entries": [{
@@ -137,7 +137,7 @@ fn realm_member_roster_reads_r32_digest_only() {
 
 #[test]
 fn realm_member_roster_ignores_removed_digest_key() {
-    // The pre-R3.2 `identity_state_digest` key is NOT honoured.
+    // The legacy `identity_state_digest` key is NOT honoured.
     let projection = json!({
         "member_roster_entries": [{
             "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:acme.example:users:removed","station_id":"ak:did_core:web:principal.example"}},
@@ -198,7 +198,7 @@ fn member_display_label_uses_identity_name_when_no_verified_handle_exists() {
         DisplayProfile, MemberIdentity, MemberIdentityProof, MemberIdentitySignatureAlgorithm,
     };
 
-    // R3.2: `MemberIdentity` discloses subject_id + display_profile
+    // `MemberIdentity` discloses subject_id + display_profile
     // only. A materialized DID path is not itself verified handle evidence.
     let identity = MemberIdentity {
         schema: arkret_sdk::SchemaId::MEMBER_IDENTITY_V1.to_owned(),

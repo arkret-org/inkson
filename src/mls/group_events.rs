@@ -2,7 +2,7 @@
 //! group and `ak.mls.commit` (self-update / add / remove) with the
 //! governance binding, for any effective scope (Realm-wide or Circle).
 //!
-//! YGN-ARCH-01 step 2 (pure move from `views/kanban/mls_encrypt.rs`, zero
+//! Pure move from `views/kanban/mls_encrypt.rs` (zero
 //! behavior change, misleading `kanban_` prefixes dropped): these builders
 //! are consumed by `mls::admission`, `circle_mls`, `sync_engine` and several
 //! views — core MLS logic, not kanban UI. The canonical-hash fallback inputs
@@ -213,7 +213,7 @@ pub(crate) fn build_creator_mls_genesis_event_for_effective_scope_with_binding(
     Ok(event)
 }
 
-// pub(crate): the realm_admin epoch-rotation button (YOU-01-009) reuses
+// pub(crate): the realm_admin epoch-rotation button reuses
 // this builder to wrap a forced `self_update_commit` into the canonical
 // `ak.mls.commit` event with the governance binding.
 pub(crate) fn mls_commit_event_from_store(

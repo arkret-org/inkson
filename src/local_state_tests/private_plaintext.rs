@@ -1,4 +1,4 @@
-//! Private plaintext sidecar, merge semantics, and encrypted private-data tests.
+//! Private plaintext sidecar, merge semantics, and plain local-data tests.
 
 use super::*;
 
@@ -867,30 +867,29 @@ fn browser_storage_warning_starts_at_eighty_percent() {
 }
 
 #[test]
-fn private_data_store_encrypts_and_persists() {
+fn plain_local_data_persists_as_plaintext() {
     let path = temp_state_path("private");
     let mut store = LocalStateStore::with_path(path.clone());
-    let account_key = "did:web:alice.example";
-    store.save_private_data(account_key, "theme", "dark");
-    store.save_private_data(account_key, "custom_emoji", "party_parrot");
+    store.save_plain_local_data("theme", "dark");
+    store.save_plain_local_data("custom_emoji", "party_parrot");
 
     assert_eq!(
-        store.load_private_data(account_key, "theme"),
+        store.load_plain_local_data("theme"),
         Some("dark".to_owned())
     );
     assert_eq!(
-        store.load_private_data(account_key, "custom_emoji"),
+        store.load_plain_local_data("custom_emoji"),
         Some("party_parrot".to_owned())
     );
-    assert!(store.load_private_data(account_key, "missing").is_none());
-    assert_eq!(store.private_data_keys().len(), 2);
+    assert!(store.load_plain_local_data("missing").is_none());
+    assert_eq!(store.plain_local_data_keys().len(), 2);
 
-    // Verify data is encrypted on disk. With per-account isolation the active
-    // blob persists to a sibling `<stem>.account.<sanitized>.json` file (the
-    // root `path` now only holds the small index). Signed out, the namespace is
-    // the anonymous sentinel. Accepted account namespaces are already
-    // authority-pair digests; the reserved anonymous namespace is filesystem
-    // safe as-is.
+    // This channel carries no at-rest protection and must not pretend to.
+    // With per-account isolation the active blob persists to a sibling
+    // `<stem>.account.<sanitized>.json` file (the root `path` now only holds
+    // the small index). Signed out, the namespace is the anonymous sentinel.
+    // Accepted account namespaces are already authority-pair digests; the
+    // reserved anonymous namespace is filesystem safe as-is.
     let account_file = {
         let stem = path.file_stem().unwrap().to_str().unwrap();
         let ext = path.extension().unwrap().to_str().unwrap();
@@ -899,22 +898,18 @@ fn private_data_store_encrypts_and_persists() {
             .join(format!("{stem}.account.anonymous.{ext}"))
     };
     let raw = std::fs::read_to_string(&account_file).unwrap();
-    assert!(!raw.contains("dark"));
-    assert!(!raw.contains("party_parrot"));
-
-    // Verify wrong key cannot decrypt
-    assert_ne!(
-        store.load_private_data("wrong-key", "theme"),
-        Some("dark".to_owned())
+    assert!(
+        raw.contains("dark") && raw.contains("party_parrot"),
+        "plain_local_data is stored verbatim; anything needing protection belongs in the secure key store instead"
     );
 }
 
 #[test]
-fn private_data_remove_works() {
+fn plain_local_data_remove_works() {
     let path = temp_state_path("private-remove");
     let mut store = LocalStateStore::with_path(path);
-    store.save_private_data("key", "temp", "value");
-    assert!(store.load_private_data("key", "temp").is_some());
-    store.remove_private_data("temp");
-    assert!(store.load_private_data("key", "temp").is_none());
+    store.save_plain_local_data("temp", "value");
+    assert!(store.load_plain_local_data("temp").is_some());
+    store.remove_plain_local_data("temp");
+    assert!(store.load_plain_local_data("temp").is_none());
 }

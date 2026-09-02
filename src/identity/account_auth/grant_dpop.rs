@@ -596,7 +596,7 @@ fn jwk_thumbprint_ed25519(
 mod tests {
     use super::*;
     use crate::secure_key_store::{DeviceSeedScopeTestGuard, MemorySecureKeyStore};
-    // YOU-05-010: shared hermetic state-store fixture from `local_state`.
+    // Shared hermetic state-store fixture from `local_state`.
     use crate::state::isolated_store_for_tests as isolated_store;
 
     fn test_authority(actor: &str) -> arkret_sdk::AccountId {

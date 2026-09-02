@@ -48,16 +48,6 @@
   white-space: nowrap;
   flex-shrink: 0;
 }
-.steps .step .num {
-  width: 22px; height: 22px;
-  border-radius: 50%;
-  background: var(--surface-2); color: var(--text-3);
-  display: grid; place-items: center;
-  font-size: 11px; font-weight: 600;
-  margin-right: 8px;
-}
-.steps .step.done .num { background: var(--success); color: white; }
-.steps .step.now  .num { background: var(--accent); color: white; }
 .steps .step.now  { color: var(--text); font-weight: 600; }
 .steps .step.done { color: var(--text-2); }
 .steps .step .line {

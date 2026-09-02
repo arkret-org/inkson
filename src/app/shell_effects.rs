@@ -155,10 +155,7 @@ pub(super) fn ShellEffects(state: ShellEffectState) -> Element {
     use_effect(move || {
         let store = state_store.read();
         let unread = unread_notification_count(&store.load());
-        let sound_enabled = crate::notification_sound::notification_sound_enabled(
-            &store,
-            crate::app::principal_id_text(&principal_id()),
-        );
+        let sound_enabled = crate::notification_sound::notification_sound_enabled(&store);
         let previous = *previous_unread_notification_count.peek();
         if crate::notification_sound::should_play_notification_sound(
             previous,

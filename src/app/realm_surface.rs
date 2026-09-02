@@ -1,7 +1,7 @@
 //! Per-realm surface selection: the `RealmSurface` enum + its
 //! label/route/availability helpers, the private-data preference load/persist
 //! pair, and the route→surface resolution used by the router reconcile. Moved
-//! out of `app.rs` (YOU-07-001, move only); re-exported from the parent so
+//! out of `app.rs` (move only); re-exported from the parent so
 //! inline call sites and `app_tests.rs` `use super::*` resolve unchanged.
 //!
 //! The `Document` surface (Board/Document toggle + `/document` routes + morph
@@ -82,7 +82,7 @@ pub(crate) fn load_realm_surface_preference(
     }
 
     state_store
-        .load_private_data(account_key, &realm_surface_preference_key(realm_id))
+        .load_plain_local_data(&realm_surface_preference_key(realm_id))
         .as_deref()
         .and_then(RealmSurface::from_preference)
         .unwrap_or(RealmSurface::Board)
@@ -98,8 +98,7 @@ pub(crate) fn persist_realm_surface_preference(
         return;
     }
 
-    state_store.save_private_data(
-        account_key,
+    state_store.save_plain_local_data(
         realm_surface_preference_key(realm_id),
         surface.preference_value(),
     );

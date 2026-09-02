@@ -16,7 +16,7 @@ pub mod governance;
 pub(crate) mod governance_acquisition;
 pub(crate) mod governance_proof;
 /// MLS group-lifecycle event builders (`ak.mls.genesis` / `ak.mls.commit`)
-/// with governance bindings; moved out of `views/kanban` (YGN-ARCH-01).
+/// with governance bindings; moved out of `views/kanban`.
 pub(crate) mod group_events;
 pub(crate) mod pairwise_identity;
 pub mod persistence;

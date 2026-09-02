@@ -1,6 +1,6 @@
 # inkson cross-platform deployment test harness
 
-Round 27 deliverable. Drives the five wasm-facing platform contracts
+Drives the five wasm-facing platform contracts
 (SubtleCrypto AES-GCM, PushManager + VAPID, opaque push receive,
 localStorage round-trip of `LocalIdentity`, OIDC PKCE strand start) across **Chromium**,
 **Firefox**, and **WebKit (Safari)** so we catch per-engine drift

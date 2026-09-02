@@ -63,7 +63,7 @@ pub mod message_streams;
 /// `Moderation` section; drives the daily-governance `moderation_*` /
 /// `appeal_*` API. Companion to the appellant-facing [`moderation_appeal`].
 pub mod moderation;
-/// Round R2/R3 (T06) — moderation appeal user strand. Entrypoint button +
+/// (T06) — moderation appeal user strand. Entrypoint button +
 /// `ak.moderation.appeal.submit` builder. Renders near user-facing
 /// moderation decisions; reviewer surface is admin-scope.
 pub mod moderation_appeal;
@@ -145,7 +145,7 @@ pub enum AppView {
 }
 
 // The connection-status label enum is a sync-layer concept; it now lives in
-// `sync_engine` (YGN-ARCH-01, so the sync core no longer reaches back into
+// `sync_engine` (so the sync core no longer reaches back into
 // `views`). Re-exported here so the app-shell call sites that reference it as
 // `crate::views::ConnectionState` keep resolving unchanged.
 pub use crate::sync_engine::ConnectionState;

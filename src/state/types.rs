@@ -1021,10 +1021,12 @@ pub struct ClientLocalState {
     /// Drives message / realm_admin state pill UI.
     #[serde(default)]
     pub move_submissions: BTreeMap<String, MoveSubmissionRecord>,
-    /// Encrypted private account data (preferences, tags, custom emojis).
-    /// Values are XOR-encrypted with account_key and hex-encoded.
+    /// Plaintext, non-secret device-local records for the active account
+    /// namespace: UI preferences, prompt-dismissal markers, public Recovery
+    /// Key metadata, in-flight Sidecar ceremony requests. There is no at-rest
+    /// protection here; secret material belongs in `secure_key_store`.
     #[serde(default)]
-    pub private_data: BTreeMap<String, String>,
+    pub plain_local_data: BTreeMap<String, String>,
     /// Private ak.read_cursor.advance cursors keyed by Realm + read_scope.
     #[serde(default)]
     pub read_cursors: BTreeMap<String, ReadMarkerRecord>,
@@ -1164,7 +1166,7 @@ pub struct ClientLocalState {
     /// unavailable it remains memory-only.
     #[serde(default, skip_serializing)]
     pub mls_private_plaintext: BTreeMap<String, BTreeMap<String, BTreeMap<String, String>>>,
-    /// YOU-02-004 — local-only decrypted-plaintext cache for REMOTE members'
+    /// local-only decrypted-plaintext cache for REMOTE members'
     /// MLS application messages, keyed `realm_id -> payload_digest ->
     /// base64url(plaintext)`. The receive chain is persisted forward on every
     /// successful decrypt (`encryption-and-audit.md` §5.6 first duty: persist the receive chain),
@@ -1266,8 +1268,8 @@ pub struct ClientLocalState {
     /// DM authority and is not revoked as part of this saga.
     #[serde(default)]
     pub pending_personal_block_sagas: BTreeSet<String>,
-    /// Round 4 (spec a77b995) — last `trust_domain` advertised by the
-    /// connected Station's Round 4 `ServiceDescribe` response.
+    /// Per spec a77b995 — last `trust_domain` advertised by the
+    /// connected Station's `ServiceDescribe` response.
     /// Threaded through to strands that need to canonicalise into
     /// transport / signing transcripts.
     /// `None` until the first successful `/server/describe` lands.
@@ -1285,7 +1287,7 @@ pub struct ClientLocalState {
     /// SubtleCrypto during app initialization.
     #[serde(default)]
     pub dpop_device_key: Option<DpopDeviceKeyRecord>,
-    /// R3.1 (MID-2) — raw inlined `ak.member.identity.update` event
+    /// MID-2 — raw inlined `ak.member.identity.update` event
     /// envelopes harvested from `account.subscribe` `members[]` entries.
     /// Keyed by `realm_id -> actor_id -> Vec<envelope>`. The runtime
     /// store ([`crate::identity::member_identity_store::MemberIdentityStore`]) is
@@ -1325,7 +1327,7 @@ pub struct AccountIndexEntry {
 /// observed by every account but carries no identity/account/key material.
 ///
 /// Kept deliberately minimal: today inkson still persists theme/locale through
-/// the per-account `private_data` channel, so this map is reserved for prefs
+/// the per-account `plain_local_data` channel, so this map is reserved for prefs
 /// that are explicitly routed here. Free-form string KV so adding a pref
 /// doesn't churn the on-disk schema.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -1515,7 +1517,7 @@ impl Default for ClientLocalState {
             push_registration: None,
             local_identity: None,
             move_submissions: BTreeMap::new(),
-            private_data: BTreeMap::new(),
+            plain_local_data: BTreeMap::new(),
             read_cursors: BTreeMap::new(),
             session_grant: None,
             pending_principal_registration: None,
@@ -1556,7 +1558,7 @@ impl Default for ClientLocalState {
     }
 }
 
-/// YOU-02-004 — interior-mutable receive-chain write-back overlay.
+/// interior-mutable receive-chain write-back overlay.
 ///
 /// The MLS decrypt-on-read paths only hold `&LocalStateStore` (they run
 /// inside Dioxus render passes where taking the `Signal` write lock would

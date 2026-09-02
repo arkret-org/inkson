@@ -697,7 +697,7 @@ pub(super) fn connect(
                             "server describe loaded: {} / {}",
                             description.service_kind, description.protocol_version
                         ));
-                        // Round 4 — cache the advertised trust_domain so
+                        // Cache the advertised trust_domain so
                         // downstream signing strands and S2S transcripts can pull a canonical
                         // value off local state without an extra round
                         // trip. Cleared when describe fails so a stale
@@ -1669,11 +1669,7 @@ pub(super) fn connect(
                                                 )
                                             {
                                                 theme.set(remote_theme.clone());
-                                                store.save_private_data(
-                                                    crate::app::principal_id_text(&principal_id()),
-                                                    "theme",
-                                                    remote_theme,
-                                                );
+                                                store.save_plain_local_data("theme", remote_theme);
                                             }
                                             // §3.4 `language` — the
                                             // actor-private locale
@@ -1709,17 +1705,12 @@ pub(super) fn connect(
                                                 &content,
                                             )
                                         {
-                                            store.save_private_data(
-                                                crate::app::principal_id_text(&principal_id()),
+                                            store.save_plain_local_data(
                                                 "avatar_blob_ref",
                                                 avatar_blob_ref,
                                             );
                                         } else if crate::account_data::avatar_blob_ref_tombstoned_from_client_ui(&content) {
-                                            store.save_private_data(
-                                                crate::app::principal_id_text(&principal_id()),
-                                                "avatar_blob_ref",
-                                                "",
-                                            );
+                                            store.save_plain_local_data("avatar_blob_ref", "");
                                         }
                                         }
                                         Err(error) => tracing::warn!(
@@ -1749,7 +1740,7 @@ pub(super) fn connect(
                                     store.set_presence_visibility(visibility);
                                     continue;
                                 }
-                                // ak.presence.preference — manual presence
+                                // Ak.presence.preference — manual presence
                                 // preference (profiles-presence.md §3.6).
                                 // Decrypt the standard holder-private envelope
                                 // before applying it to local state.
@@ -1985,7 +1976,7 @@ pub(super) fn connect(
                             if let Err(error) = store.flush() {
                                 last_error.set(Some(format!("state_store flush failed: {error}")));
                             }
-                            // YOU-02-002/003: surface a latched persistence
+                            // Surface a latched persistence
                             // failure from the fire-and-forget setters (quota
                             // exceeded, atomic write error, corrupt boot read)
                             // so the user learns their changes are not being

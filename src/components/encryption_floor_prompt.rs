@@ -52,7 +52,7 @@ pub fn EncryptionFloorPrompt(
         // state as not configured so the auto-apply path never assumes a
         // Recovery Key exists before the account recovery probe has completed.
         let local_recovery_configured =
-            crate::views::recovery::recovery_options_configured(&state_store.read(), actor_id);
+            crate::views::recovery::recovery_options_configured(&state_store.read());
         let recovery_key_configured =
             matches!(account_recovery_configured(), Some(true)) || local_recovery_configured;
 
@@ -77,10 +77,8 @@ fn acknowledge_recommended_encryption(
     mut state_store: SyncSignal<LocalStateStore>,
 ) {
     dismissed.set(true);
-    let actor = principal_id();
-    if let Some(actor_id) = actor.as_ref() {
-        state_store.write().save_private_data(
-            actor_id.as_str(),
+    if principal_id().is_some() {
+        state_store.write().save_plain_local_data(
             crate::app::ENCRYPTION_FLOOR_PROMPT_DISMISSED_KEY,
             "1".to_owned(),
         );

@@ -24,10 +24,11 @@ pub mod app;
 pub mod authorization_lease;
 pub mod avatar_crop;
 pub mod blob;
+pub(crate) mod browser_storage;
 pub mod build_info;
 pub mod calendar;
 pub mod canonical;
-/// AKP-0007 P3B.2 — Circle UX types, scope picker, error-code mapping.
+/// P3B.2 — Circle UX types, scope picker, error-code mapping.
 /// `Circle` is the intra-Realm cryptographic sub-boundary (strict
 /// subset of Realm membership + independent MLS group). This module is
 /// the client-side surface; the canonical struct lives in
@@ -55,10 +56,10 @@ pub(crate) mod identity;
 pub mod key_backup;
 pub mod keyed_cooldown;
 pub(crate) mod keypackage_maintenance;
-/// Round R2/R3 (T16) — late key recovery UX helpers.
+/// Late key recovery UX helpers.
 pub mod late_recovery;
 pub mod media;
-/// R3.1 (arkret-spec @ 7157ee8) — Realm-scoped
+/// Per arkret-spec @ 7157ee8 — Realm-scoped
 /// `ak.member.identity.update` event store. Sync ingests inlined
 /// `members[].identity_events[]` here; UI views resolve the current
 /// effective [`arkret_sdk::MemberIdentity`] via the SDK's
@@ -80,7 +81,7 @@ pub mod notification_sound;
 pub mod object_address;
 pub(crate) mod payload;
 mod signing_stamp;
-// YOU-02-008: the former `offline` / `offline_queue` modules (P3B.5
+// The former `offline` / `offline_queue` modules (P3B.5
 // offline write queue + drain worker) were removed — the entire chain
 // (enqueue helpers, drain worker, pending badge) had zero production
 // call sites, and the replay path posted raw bodies without auth /
@@ -136,7 +137,7 @@ pub mod signal;
 pub mod signal_receive_engine;
 pub mod snapshot;
 /// Sync projection layer (account/realm wire payloads -> local projection
-/// models); moved out of `views/` (YGN-ARCH-01 step 3).
+/// models); moved out of `views/`.
 pub(crate) mod state;
 pub mod sync_engine;
 pub mod sync_parse;

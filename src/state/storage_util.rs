@@ -1,10 +1,8 @@
-//! Storage / path / at-rest-crypto utility free functions for the local
-//! state store: to-device dedup + expiry keys, read-cursor scope/key
-//! derivation, browser/native storage + app-data-dir resolution, the XOR
-//! at-rest cipher + hex codec, secure-store identity / DPoP key load+store,
-//! and the plaintext-seed dev gate.
-//! Moved out of `local_state.rs` (YOU-07-001, move only) — all callers are the
-//! parent `impl LocalStateStore` block and `local_state_tests.rs`; the glob
+//! Storage / path utility free functions for the local state store:
+//! to-device dedup + expiry keys, read-cursor scope/key derivation, native
+//! app-data-dir resolution, the hex codec, secure-store identity / DPoP key
+//! load+store, and the plaintext-seed dev gate. All callers are the parent
+//! `impl LocalStateStore` block and `local_state_tests.rs`; the glob
 //! re-export keeps `super::*` resolution unchanged.
 
 use super::*;
@@ -73,7 +71,7 @@ pub(crate) fn read_scope_for_cursor(_realm_id: &str, topic_id: Option<&str>) -> 
     }
 }
 
-/// YOU-05-010: shared test fixture — build a `LocalStateStore` rooted at a
+/// Shared test fixture — build a `LocalStateStore` rooted at a
 /// unique temp file so tests never read or pollute the developer's real
 /// `state.json` (or the `INKSON_STATE_PATH` override). On wasm32 the
 /// default store is memory-only and therefore already hermetic. The `tag`
@@ -110,11 +108,6 @@ pub(crate) fn read_cursor_key(realm_id: &str, read_scope: &ReadCursorScope) -> S
     )
 }
 
-#[cfg(target_arch = "wasm32")]
-pub(crate) fn browser_storage() -> Option<web_sys::Storage> {
-    web_sys::window().and_then(|window| window.local_storage().ok().flatten())
-}
-
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn default_state_path() -> PathBuf {
     std::env::var_os("INKSON_STATE_PATH")
@@ -130,45 +123,6 @@ pub(crate) fn app_data_dir() -> PathBuf {
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("."))
         .join("inkson")
-}
-
-/// Reversible XOR obfuscation for **non-sensitive** client-side preferences.
-///
-/// This is NOT encryption: the key is the public `principal_id()` (recomputable
-/// by anyone holding the on-disk data) and XOR is trivially invertible. It only
-/// keeps UI preferences (theme, avatar ref, sidebar width, recovery-hint
-/// markers) from being casually readable as plaintext on disk. NEVER route
-/// secret material (seeds, private keys, tokens) through this — use the OS
-/// keychain / non-exportable SubtleCrypto path instead.
-///
-/// The same function obfuscates and de-obfuscates since XOR is its own inverse.
-pub(crate) fn obfuscate_nonsensitive(key: &str, data: &str) -> String {
-    let key_bytes = key.as_bytes();
-    if key_bytes.is_empty() {
-        return data.to_owned();
-    }
-    let encrypted: Vec<u8> = data
-        .bytes()
-        .enumerate()
-        .map(|(i, b)| b ^ key_bytes[i % key_bytes.len()])
-        .collect();
-    // Encode as hex for safe storage
-    crate::canonical::hex_encode(&encrypted)
-}
-
-/// Decode hex-encoded [`obfuscate_nonsensitive`] output back to plaintext.
-pub(crate) fn deobfuscate_nonsensitive(key: &str, hex_data: &str) -> Option<String> {
-    let key_bytes = key.as_bytes();
-    if key_bytes.is_empty() {
-        return Some(hex_data.to_owned());
-    }
-    let bytes = hex_to_bytes(hex_data)?;
-    let decrypted: Vec<u8> = bytes
-        .iter()
-        .enumerate()
-        .map(|(i, &b)| b ^ key_bytes[i % key_bytes.len()])
-        .collect();
-    String::from_utf8(decrypted).ok()
 }
 
 pub(crate) fn hex_to_bytes(hex: &str) -> Option<Vec<u8>> {

@@ -1,6 +1,6 @@
 //! Pure functions and small data types for post-login / startup-check effects.
 //!
-//! YOU-07-001: mechanically moved from `app.rs`; move-only, with no changes to
+//! mechanically moved from `app.rs`; move-only, with no changes to
 //! logic, signatures, or canonical bytes.
 //! This module groups three concerns:
 //!   - session refresh feasibility checks (`has_bootstrap_refresh_material`, etc.);
@@ -103,15 +103,14 @@ pub(crate) fn recovery_setup_prompt_required_for_account_state(
 
 pub(crate) fn recovery_auto_prompt_pending_local_only_fingerprint(
     store: &LocalStateStore,
-    actor: &arkret_sdk::DidCoreId,
     account_recovery_configured: Option<bool>,
 ) -> Option<String> {
     if !matches!(account_recovery_configured, Some(false)) {
         return None;
     }
-    let fingerprint = crate::views::recovery::local_recovery_key_fingerprint(store, actor)?;
+    let fingerprint = crate::views::recovery::local_recovery_key_fingerprint(store)?;
     let prompted_fingerprint = store
-        .load_private_data(actor.as_str(), RECOVERY_AUTO_PROMPT_LOCAL_ONLY_SHOWN_KEY)
+        .load_plain_local_data(RECOVERY_AUTO_PROMPT_LOCAL_ONLY_SHOWN_KEY)
         .map(|value| value.trim().to_owned())
         .filter(|value| !value.is_empty());
     if prompted_fingerprint.as_deref() == Some(fingerprint.as_str()) {
@@ -122,31 +121,23 @@ pub(crate) fn recovery_auto_prompt_pending_local_only_fingerprint(
 
 pub(crate) fn recovery_auto_prompt_already_prompted(
     store: &LocalStateStore,
-    actor: &arkret_sdk::DidCoreId,
     account_recovery_configured: Option<bool>,
 ) -> bool {
-    if recovery_auto_prompt_pending_local_only_fingerprint(
-        store,
-        actor,
-        account_recovery_configured,
-    )
-    .is_some()
+    if recovery_auto_prompt_pending_local_only_fingerprint(store, account_recovery_configured)
+        .is_some()
     {
         return false;
     }
     store
-        .load_private_data(actor.as_str(), RECOVERY_AUTO_PROMPT_SHOWN_KEY)
+        .load_plain_local_data(RECOVERY_AUTO_PROMPT_SHOWN_KEY)
         .is_some()
 }
 
 /// Whether the recommended-encryption-floor check was already auto-acknowledged
 /// for this account (see [`ENCRYPTION_FLOOR_PROMPT_DISMISSED_KEY`]).
-pub(crate) fn encryption_floor_prompt_acknowledged(
-    store: &LocalStateStore,
-    actor: &arkret_sdk::DidCoreId,
-) -> bool {
+pub(crate) fn encryption_floor_prompt_acknowledged(store: &LocalStateStore) -> bool {
     store
-        .load_private_data(actor.as_str(), ENCRYPTION_FLOOR_PROMPT_DISMISSED_KEY)
+        .load_plain_local_data(ENCRYPTION_FLOOR_PROMPT_DISMISSED_KEY)
         .is_some()
 }
 
@@ -248,7 +239,6 @@ fn recovery_public_key_secret_storage_backup_present(list_payload: &Value) -> bo
 fn recovery_key_path_configured_for_mls_setup(
     list_payload: &Value,
     state_store: &LocalStateStore,
-    actor_id: &arkret_sdk::DidCoreId,
     account_recovery_configured: Option<bool>,
 ) -> bool {
     if matches!(account_recovery_configured, Some(true)) {
@@ -257,8 +247,8 @@ fn recovery_key_path_configured_for_mls_setup(
     if !recovery_public_key_secret_storage_backup_present(list_payload) {
         return false;
     }
-    crate::views::recovery::local_recovery_key_fingerprint(state_store, actor_id).is_some()
-        || crate::views::recovery::local_recovery_public_key(state_store, actor_id).is_some()
+    crate::views::recovery::local_recovery_key_fingerprint(state_store).is_some()
+        || crate::views::recovery::local_recovery_public_key(state_store).is_some()
 }
 
 pub(crate) fn mls_recovery_setup_missing(
@@ -266,7 +256,6 @@ pub(crate) fn mls_recovery_setup_missing(
     state_store: &LocalStateStore,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
     authority: &arkret_sdk::AccountId,
-    actor_id: &arkret_sdk::DidCoreId,
     account_recovery_configured: Option<bool>,
 ) -> bool {
     if crate::mls::account_recovery::select_preferred_mls_account_secret_backup(list_payload)
@@ -284,7 +273,6 @@ pub(crate) fn mls_recovery_setup_missing(
     if recovery_key_path_configured_for_mls_setup(
         list_payload,
         state_store,
-        actor_id,
         account_recovery_configured,
     ) {
         return false;

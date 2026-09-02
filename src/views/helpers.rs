@@ -1,7 +1,7 @@
 pub use arkret_sdk::MentionNode;
 use arkret_wire::{SchemaId, ServiceOperationId};
 use dioxus::prelude::*;
-// Single source in yoface (YGN-ARCH-01 step 3: the projection layer needs
+// Single source in yoface (the projection layer needs
 // this label formatter without importing a views module). Re-exported so all
 // existing `views::helpers::short_protocol_id` call sites keep resolving.
 pub use yoface::utils::text::short_protocol_id;
@@ -136,7 +136,7 @@ pub fn parse_mention_nodes(input: &str) -> Vec<MentionNode> {
     mentions
 }
 
-/// R3.2 §3.8.2 — resolved render of an actor mention plus the visual
+/// §3.8.2 — resolved render of an actor mention plus the visual
 /// degradation tier the UI MUST surface. Wraps the SDK
 /// [`arkret_sdk::MentionRender`] so the chat view can drive a distinct
 /// CSS class / badge per fallback level.
@@ -154,7 +154,7 @@ pub struct RenderedMention {
     pub degraded: bool,
 }
 
-/// R3.2 §3.8.2 mention render path (YG-MENT-2).
+/// §3.8.2 mention render path (YG-MENT-2).
 ///
 /// Resolves the *current* display value for an actor mention by running
 /// the shared SDK [`arkret_sdk::render_mention`] helper off the
@@ -171,7 +171,7 @@ pub struct RenderedMention {
 /// Step 2 (live `ak.find.directory.read.list_handles_for_subject.v1` resolution) is
 /// wired through [`crate::views::helpers::list_handles_for_subject_ui`] /
 /// the "Why am I seeing this handle?" panel and feeds the same
-/// `claim_set_snapshot` — `TODO(R3.2.1)`: plumb the live result back into
+/// `claim_set_snapshot` — `TODO`: plumb the live result back into
 /// this synchronous render call once the directory cache lands.
 ///
 /// Fallback ladder (each visually degraded): local cached verified handle
@@ -217,7 +217,7 @@ pub fn render_actor_mention(
         context,
         claim_set_snapshot,
         handle_issuer_policies: handle_issuer_policy,
-        // TODO(R3.2.1): resolve `metadata.primary_handle` at as_of via a
+        // TODO: resolve `metadata.primary_handle` at as_of via a
         // DID Document snapshot resolver (NoHolderPreferenceResolver
         // until the resolver is wired).
         holder_primary_handle_at_as_of: None,
@@ -250,7 +250,7 @@ pub fn render_actor_mention(
     }
 }
 
-/// R3.2 (YG-DIR-1/2) — one row in the "Why am I seeing this handle?"
+/// (YG-DIR-1/2) — one row in the "Why am I seeing this handle?"
 /// transparency panel. Flattens the audit-relevant fields of a signed
 /// `ak.schema.handle_claim.v1` into display strings.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -298,7 +298,7 @@ pub fn handle_claim_rows(
         .collect()
 }
 
-/// R3.2 (YG-DIR-1/2) — "Why am I seeing this handle?" transparency
+/// (YG-DIR-1/2) — "Why am I seeing this handle?" transparency
 /// panel. Given a subject (principal) DID it calls the directory
 /// `ak.find.directory.read.list_handles_for_subject.v1` op and renders the visible
 /// signed handle claims (issuer / status / issued_at / expiry /

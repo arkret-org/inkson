@@ -158,12 +158,6 @@
   gap: 10px;
   justify-items: start;
 }
-.card-detail-tab-actions {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 6px;
-}
 .card-detail-sidebar-tabs {
   margin-bottom: 8px;
 }
@@ -445,26 +439,10 @@
 .card-synthesis-body {
   max-width: 72ch;
 }
-.card-detail-side-section {
-  min-width: 0;
-  display: grid;
-  gap: 5px;
-  padding: 12px;
-  border: 1px solid var(--border, var(--ak-line));
-  border-radius: 8px;
-  background: var(--surface, var(--ak-surface));
-  box-shadow: none;
-}
 .card-detail-side-fields {
   min-width: 0;
   display: grid;
   gap: 5px;
-}
-.card-detail-side-section h3 {
-  margin: 0 0 4px;
-  color: var(--text-2, var(--ak-muted));
-  font-size: 12px;
-  font-weight: 850;
 }
 .card-detail-field-list {
   display: grid;

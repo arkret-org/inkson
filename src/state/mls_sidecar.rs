@@ -295,7 +295,7 @@ impl LocalStateStore {
         effective_scope: &arkret_sdk::ScopeRef,
         mut envelope: crate::mls::persistence::MlsSnapshotEnvelope,
     ) -> Result<(), String> {
-        // YOU-02-004: order this write after any decrypt write-backs so the
+        // Order this write after any decrypt write-backs so the
         // overlay can never shadow it (overlay snapshots always derive from
         // the state this caller just read via `mls_snapshot_for`).
         self.absorb_mls_receive_overlay();
@@ -797,7 +797,7 @@ impl LocalStateStore {
         }
     }
 
-    // ── YOU-02-004: MLS receive-chain persistence + plaintext cache ──
+    // ── MLS receive-chain persistence + plaintext cache ──
     //
     // `encryption-and-audit.md` §5.6 (normative): after every successful
     // decrypt of an application message the advanced MLS group state MUST

@@ -50,8 +50,7 @@ pub fn RecoveryPanel(token: Signal<String>, device_id: Signal<String>) -> Elemen
     let Some(account) = session_context.active_account() else {
         return rsx! {};
     };
-    let actor_key = account.principal_id().clone();
-    let initial = load_state(&state_store, &actor_key);
+    let initial = load_state(&state_store);
 
     // Recovery key state — plaintext only in memory after Generate.
     let mut live_recovery_key = use_signal(String::new);
@@ -77,13 +76,12 @@ pub fn RecoveryPanel(token: Signal<String>, device_id: Signal<String>) -> Elemen
     // Server-side Recovery-Key backup marker (written by the upload paths via
     // `mark_mls_recovery_backup_configured`). Drives the section sync badge.
     let recovery_key_backed_up =
-        crate::components::mls_recovery_backup_configured(&state_store.read(), &actor_key);
+        crate::components::mls_recovery_backup_configured(&state_store.read());
     let recovery_material_established = !recovery_key_fp().is_empty() || recovery_key_backed_up;
 
     {
-        let actor_key = actor_key.clone();
         use_effect(move || {
-            let next = load_state(&state_store, &actor_key);
+            let next = load_state(&state_store);
             if recovery_key_fp() != next.recovery_key_fingerprint {
                 recovery_key_fp.set(next.recovery_key_fingerprint);
             }
@@ -381,7 +379,6 @@ pub fn RecoveryPanel(token: Signal<String>, device_id: Signal<String>) -> Elemen
                         disabled: live_recovery_key().is_empty(),
                         title: tr("recovery.panel.clear_live_title"),
                         onclick: {
-                            let actor_key = actor_key.clone();
                             let store = state_store;
                             move |_| {
                                 let current_key = live_recovery_key();
@@ -402,7 +399,6 @@ pub fn RecoveryPanel(token: Signal<String>, device_id: Signal<String>) -> Elemen
                                         enroll_phase.set(EnrollPhase::Publishing);
                                         recovery_key_status.set(status_custody_confirmed.clone());
                                         let accepted_key = current_key.clone();
-                                        let accepted_actor = actor_key.clone();
                                         let on_outcome = EventHandler::new(
                                             move |outcome: RecoveryKeyBackupOutcome| match outcome {
                                                 RecoveryKeyBackupOutcome::Established => {
@@ -410,7 +406,6 @@ pub fn RecoveryPanel(token: Signal<String>, device_id: Signal<String>) -> Elemen
                                                     let Some((fingerprint, rotated_at)) =
                                                         save_generated_recovery_key_metadata(
                                                             &mut accepted_store,
-                                                            &accepted_actor,
                                                             &accepted_key,
                                                         )
                                                     else {

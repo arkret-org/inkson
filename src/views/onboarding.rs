@@ -184,12 +184,8 @@ fn activate_account_and_save_recovery_metadata(
     recovery_key: &str,
 ) -> anyhow::Result<()> {
     store.switch_active_account(account)?;
-    crate::views::recovery::save_generated_recovery_key_metadata_in_store(
-        store,
-        account.principal_id(),
-        recovery_key,
-    )
-    .context("save Recovery Key metadata in the accepted account scope")?;
+    crate::views::recovery::save_generated_recovery_key_metadata_in_store(store, recovery_key)
+        .context("save Recovery Key metadata in the accepted account scope")?;
     Ok(())
 }
 
@@ -267,20 +263,13 @@ async fn commit_completed_account(
                 recovery_key,
             )?;
             if let Some(backup_id) = completed.initial_mls_backup_id.as_deref() {
-                crate::components::mark_mls_recovery_backup_configured(
-                    &mut store,
-                    completed.account.principal_id(),
-                    backup_id,
-                );
+                crate::components::mark_mls_recovery_backup_configured(&mut store, backup_id);
             }
             store.begin_durable_flush()?
         };
         barrier.wait().await?;
-        crate::views::recovery::local_recovery_public_key_result(
-            &state_store.read(),
-            completed.account.principal_id(),
-        )
-        .context("verify Recovery Key metadata in the accepted account scope")?;
+        crate::views::recovery::local_recovery_public_key_result(&state_store.read())
+            .context("verify Recovery Key metadata in the accepted account scope")?;
         crate::event_submit::remember_verified_recovery_gate(
             completed.account.principal_id().as_str(),
             completed.account.device_id.as_str(),
@@ -3928,12 +3917,8 @@ mod tests {
         activate_account_and_save_recovery_metadata(&mut store, &account, &recovery_key).unwrap();
 
         assert!(store.active_account_matches(account.principal_id()));
-        assert!(crate::views::recovery::recovery_options_configured(
-            &store,
-            account.principal_id(),
-        ));
-        crate::views::recovery::local_recovery_public_key_result(&store, account.principal_id())
-            .unwrap();
+        assert!(crate::views::recovery::recovery_options_configured(&store,));
+        crate::views::recovery::local_recovery_public_key_result(&store).unwrap();
     }
 
     #[test]

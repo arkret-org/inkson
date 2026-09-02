@@ -775,16 +775,8 @@ label.avatar-upload-button:active,
   margin: 0 0 10px;
   display: flex; align-items: center; gap: 8px;
 }
-.section-title .ord {
-  width: 16px; height: 16px; border-radius: 50%;
-  background: var(--accent-soft); color: var(--accent);
-  display: grid; place-items: center; font-size: 10px;
-  font-weight: 700;
-}
-
 .row     { display: flex; align-items: center; gap: 8px; }
 .col     { display: flex; flex-direction: column; gap: 8px; }
-.spread  { display: flex; align-items: center; justify-content: space-between; }
 .muted   { color: var(--text-2); }
 .dim     { color: var(--text-3); }
 .stack   { display: flex; flex-direction: column; gap: 12px; }
@@ -795,9 +787,7 @@ label.avatar-upload-button:active,
 .grow    { flex: 1; min-width: 0; }
 .mono    { font-family: var(--font-mono); }
 .truncate{ overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.nowrap  { white-space: nowrap; }
 .right   { text-align: right; }
 .f-12 { font-size: 12px; } .f-11 { font-size: 11px; } .f-13 { font-size: 13px; }
 .mb-8  { margin-bottom: 8px; }
-.mb-24 { margin-bottom: 24px; }
 .ml-auto { margin-left: auto; }

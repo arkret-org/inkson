@@ -1,6 +1,6 @@
-//! Round R2/R3 (T06) — moderation appeal user strand.
+//! (T06) — moderation appeal user strand.
 //!
-//! Per `governance/content-moderation.md` §4 (Round R2/R3), every
+//! Per `governance/content-moderation.md` §4, every
 //! moderation decision the reducer emits MUST give the affected user an
 //! "Appeal this decision" entrypoint. The four-event lifecycle is:
 //!
@@ -33,7 +33,7 @@ use crate::views::helpers::short_protocol_id;
 
 /// User-facing projection of the four moderation appeal wire states.
 ///
-/// Wire kinds (Round R2/R3):
+/// Wire kinds:
 /// - `ak.moderation.appeal.submit`   → [`AppealState::Submitted`]
 /// - `ak.moderation.appeal.review`   → [`AppealState::UnderReview`]
 /// - `ak.moderation.appeal.decision` → [`AppealState::Decided { .. }`]

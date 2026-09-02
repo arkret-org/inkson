@@ -1,6 +1,6 @@
 //! Pure calculation helpers and cell types for the kanban due calendar.
 //!
-//! YOU-07-001: mechanically moved from `views/kanban/mod.rs` as one contiguous
+//! mechanically moved from `views/kanban/mod.rs` as one contiguous
 //! block. This is move-only: logic, signatures, and canonical bytes are
 //! unchanged. Visibility was raised from module-private to `pub(super)`, so
 //! after `mod.rs` re-exports with `use due_calendar::*;`, `KanbanPanel` and

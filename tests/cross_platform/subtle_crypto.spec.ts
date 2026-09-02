@@ -1,4 +1,4 @@
-// Round 27 cross-platform scenario: SubtleCrypto AES-GCM round-trip.
+// cross-platform scenario: SubtleCrypto AES-GCM round-trip.
 //
 // Mirrors the wasm secure key store's SubtleCrypto path
 // (`src/secure_key_store/indexed_db.rs`) — those Rust bindings call

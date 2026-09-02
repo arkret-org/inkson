@@ -158,7 +158,7 @@ impl OutboundQueueStore for InksonOutboundStore {
         #[cfg(target_arch = "wasm32")]
         {
             Box::pin(async move {
-                let storage = crate::state::browser_storage().ok_or_else(|| {
+                let storage = crate::browser_storage::browser_storage().ok_or_else(|| {
                     garth::Error::Protocol(
                         "browser storage unavailable for durable outbound queue".to_owned(),
                     )

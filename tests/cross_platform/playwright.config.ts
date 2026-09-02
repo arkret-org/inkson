@@ -1,4 +1,4 @@
-// Round 27: cross-platform deployment test harness for the inkson
+// cross-platform deployment test harness for the inkson
 // wasm bundle. Drives the same scenario set across Chromium, Firefox,
 // and WebKit (Safari) so we catch the SubtleCrypto / PushManager /
 // service-worker push receive / LocalStorage / OIDC PKCE divergences

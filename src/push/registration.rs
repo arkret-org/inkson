@@ -119,7 +119,7 @@ pub struct RegisterContext {
     /// `LocalStateStore`, mints the matching introspection proof headers,
     /// and fails closed if no grant is available.
     pub session_grant: Option<String>,
-    /// AKP-0007 P3B.2.9 — active Circle id (when the registration
+    /// P3B.2.9 — active Circle id (when the registration
     /// originates from a Circle-scoped sidebar deep-link or the
     /// current Strand's `scope_circle_id`). `None` falls back to the
     /// historical Realm-wide subscription. Forwarded into the chime
@@ -376,7 +376,7 @@ fn build_request(
         ctx.floria_gateway_url.clone()
     };
     let binding = GatewayBinding::new(PushGatewayType::Standard, push_gateway);
-    // AKP-0007 P3B.2.9 — forward the active Circle id (when present)
+    // P3B.2.9 — forward the active Circle id (when present)
     // into the chime subscribe request by stamping it onto the
     // idempotency key, so re-registration after a Circle switch
     // produces a distinct subscription record. When no Circle is
@@ -428,7 +428,7 @@ mod tests {
     use super::*;
     use crate::push::{FcmPushTokenProvider, PushTokenProvider};
     use crate::state::PersistedSessionGrant;
-    // YOU-05-010: shared hermetic state-store fixture from `local_state`.
+    // Shared hermetic state-store fixture from `local_state`.
     use crate::state::isolated_store_for_tests as isolated_store;
 
     /// Test-only token source that hands back a fixed real-looking

@@ -549,9 +549,8 @@ pub fn SettingsPanel(
     let mut dnd_mode = use_signal(move || initial_dnd_mode);
     let dnd_mode_selected = use_memo(move || Some(dnd_mode()));
     let mut notification_settings_status = use_signal(String::new);
-    let mut notification_sound_enabled = use_signal(|| {
-        crate::notification_sound::notification_sound_enabled(&state_store.read(), &principal_id())
-    });
+    let mut notification_sound_enabled =
+        use_signal(|| crate::notification_sound::notification_sound_enabled(&state_store.read()));
     // Per-realm override editor state (spec push-notifications.md §4.3.2).
     // `new_override_realm` holds the realm id picked in the "add" row;
     // `new_override_level` is the watch level to apply. New overrides default
@@ -596,7 +595,7 @@ pub fn SettingsPanel(
     // published through the spec profile endpoint so directory projections can index it.
     let initial_avatar_blob_ref = state_store
         .read()
-        .load_private_data(&principal_id(), "avatar_blob_ref")
+        .load_plain_local_data("avatar_blob_ref")
         .unwrap_or_default();
     let mut profile_avatar_blob_ref = use_signal(|| initial_avatar_blob_ref.clone());
     let mut avatar_upload_status = use_signal(String::new);
@@ -687,11 +686,10 @@ pub fn SettingsPanel(
     };
     let device_short_label = short_protocol_id(&device_label);
     {
-        let account_key = principal_id();
         use_effect(move || {
             let hydrated = state_store
                 .read()
-                .load_private_data(&account_key, "avatar_blob_ref")
+                .load_plain_local_data("avatar_blob_ref")
                 .unwrap_or_default();
             if hydrated != profile_avatar_blob_ref() {
                 profile_avatar_blob_ref.set(hydrated.clone());
@@ -1116,8 +1114,7 @@ pub fn SettingsPanel(
                                                                                 .await
                                                                                 {
                                                                                     Ok(_) => {
-                                                                                        state_store.write().save_private_data(
-                                                                                            &principal_id(),
+                                                                                        state_store.write().save_plain_local_data(
                                                                                             "avatar_blob_ref",
                                                                                             blob_ref.clone(),
                                                                                         );
@@ -1129,7 +1126,7 @@ pub fn SettingsPanel(
                                                                                         );
                                                                                         let refreshed = state_store
                                                                                             .read()
-                                                                                            .load_private_data(&principal_id(), "avatar_blob_ref")
+                                                                                            .load_plain_local_data("avatar_blob_ref")
                                                                                             .filter(|value| !value.trim().is_empty())
                                                                                             .unwrap_or_else(|| blob_ref.clone());
                                                                                         profile_avatar_blob_ref.set(refreshed);
@@ -1208,8 +1205,7 @@ pub fn SettingsPanel(
                                                         avatar_refresh_nonce.set(avatar_refresh_nonce() + 1);
                                                         pending_avatar_crop.set(None);
                                                         avatar_uploading.set(false);
-                                                        state_store.write().save_private_data(
-                                                            &principal_id(),
+                                                        state_store.write().save_plain_local_data(
                                                             "avatar_blob_ref",
                                                             "",
                                                         );
@@ -1440,7 +1436,7 @@ pub fn SettingsPanel(
                         }
                     }
 
-                    // ── My Agents (AKP-0008 Agents) ──────
+                    // ── My Agents ──────
                     if active_section == SettingsSection::Agents {
                         crate::views::agents::AgentAdminPanel {
                             token,
@@ -1861,7 +1857,6 @@ pub fn SettingsPanel(
                                                 notification_sound_enabled.set(enabled);
                                                 crate::notification_sound::set_notification_sound_enabled(
                                                     &mut state_store.write(),
-                                                    &principal_id(),
                                                     enabled,
                                                 );
                                                 if enabled {
@@ -2928,7 +2923,7 @@ pub fn SettingsPanel(
                             "aria-label": "Light theme",
                             onclick: move |_| {
                                 theme.set("light".to_owned());
-                                state_store.write().save_private_data(&principal_id(), "theme", "light");
+                                state_store.write().save_plain_local_data("theme", "light");
                                 push_client_ui_account_data(base_url(), token(), "light".to_owned());
                             },
                             UiIcon { name: "sun" }
@@ -2942,7 +2937,7 @@ pub fn SettingsPanel(
                             "aria-label": "Night theme",
                             onclick: move |_| {
                                 theme.set("night".to_owned());
-                                state_store.write().save_private_data(&principal_id(), "theme", "night");
+                                state_store.write().save_plain_local_data("theme", "night");
                                 push_client_ui_account_data(base_url(), token(), "night".to_owned());
                             },
                             UiIcon { name: "moon" }
@@ -2956,7 +2951,7 @@ pub fn SettingsPanel(
                             "aria-label": "System theme",
                             onclick: move |_| {
                                 theme.set("system".to_owned());
-                                state_store.write().save_private_data(&principal_id(), "theme", "system");
+                                state_store.write().save_plain_local_data("theme", "system");
                                 push_client_ui_account_data(base_url(), token(), "system".to_owned());
                             },
                             UiIcon { name: "monitor" }
@@ -2973,7 +2968,7 @@ pub fn SettingsPanel(
                             let base = base_url();
                             let api_token = token();
                             EventHandler::new(move |next: String| {
-                                state_store.write().save_private_data(&principal_id(), "theme", next.clone());
+                                state_store.write().save_plain_local_data("theme", next.clone());
                                 push_client_ui_account_data(base.clone(), api_token.clone(), next);
                             })
                         },

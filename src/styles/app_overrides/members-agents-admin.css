@@ -1137,8 +1137,7 @@
   .surface,
   .metric,
   .m-list-item,
-  .settings-row,
-  .settings-list-row {
+  .settings-row {
     min-width: 0;
   }
 
@@ -1176,14 +1175,12 @@
   .event-head,
 .surface-head,
 .settings-row,
-.settings-list-row,
 .toolbar-row,
 .icon-actions{
     align-items: flex-start;
     flex-wrap: wrap;
   }
 
-  .settings-inline-form,
   .workflow-form .actions,
   .settings .actions,
   .composer .actions,
@@ -1197,7 +1194,6 @@
   .actions > .secondary,
   .actions > button:not(.icon),
   .actions > a,
-  .settings-inline-form > *,
   .workflow-form input:not([type="checkbox"]):not([type="radio"]),
   .workflow-form select,
   .settings input:not([type="checkbox"]):not([type="radio"]),
@@ -1209,7 +1205,6 @@
 
   .actions > .primary,
   .actions > .secondary,
-  .settings-inline-form > button,
   .workflow-form .actions > button:not(.icon),
   .settings .actions > button:not(.icon),
   .event .actions > button:not(.icon) {

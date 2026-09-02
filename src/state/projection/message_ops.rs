@@ -2,7 +2,7 @@
 //! discussion-message ingest step) plus the nested-envelope candidate
 //! walkers it is built on.
 //!
-//! YGN-ARCH-01 step 3 (pure move from `views/chat/model/events.rs`, zero
+//! Pure move from `views/chat/model/events.rs` (zero
 //! behavior change): consumed by `sync_engine::ingest_message_events` and the
 //! chat view model (which re-exports these helpers).
 

@@ -1,6 +1,5 @@
-//! Private-data load/save and recovery-material predicates.
+//! Device-local recovery metadata load/save and recovery-material predicates.
 
-use arkret_sdk::DidCoreId;
 use dioxus::prelude::*;
 
 use super::RECOVERY_STATE_KEY;
@@ -8,14 +7,8 @@ use super::types::RecoveryState;
 use crate::recovery_crypto::fingerprint_recovery_key;
 use crate::state::LocalStateStore;
 
-pub(crate) fn load_state(
-    state_store: &SyncSignal<LocalStateStore>,
-    account_key: &DidCoreId,
-) -> RecoveryState {
-    match state_store
-        .read()
-        .load_private_data(account_key.as_str(), RECOVERY_STATE_KEY)
-    {
+pub(crate) fn load_state(state_store: &SyncSignal<LocalStateStore>) -> RecoveryState {
+    match state_store.read().load_plain_local_data(RECOVERY_STATE_KEY) {
         Some(raw) => serde_json::from_str(&raw).unwrap_or_default(),
         None => RecoveryState::default(),
     }
@@ -23,14 +16,9 @@ pub(crate) fn load_state(
 
 pub(crate) fn save_generated_recovery_key_metadata(
     state_store: &mut SyncSignal<LocalStateStore>,
-    account_key: &DidCoreId,
     recovery_key: &str,
 ) -> Option<(String, String)> {
-    save_generated_recovery_key_metadata_in_store(
-        &mut state_store.write(),
-        account_key,
-        recovery_key,
-    )
+    save_generated_recovery_key_metadata_in_store(&mut state_store.write(), recovery_key)
 }
 
 /// Persist public Recovery Key metadata into the caller-selected account
@@ -38,14 +26,13 @@ pub(crate) fn save_generated_recovery_key_metadata(
 /// that switches from the anonymous setup scope to the accepted account scope.
 pub(crate) fn save_generated_recovery_key_metadata_in_store(
     state_store: &mut LocalStateStore,
-    account_key: &DidCoreId,
     recovery_key: &str,
 ) -> Option<(String, String)> {
     if recovery_key.trim().is_empty() {
         return None;
     }
     let mut state = state_store
-        .load_private_data(account_key.as_str(), RECOVERY_STATE_KEY)
+        .load_plain_local_data(RECOVERY_STATE_KEY)
         .and_then(|raw| serde_json::from_str::<RecoveryState>(&raw).ok())
         .unwrap_or_default();
     let fingerprint = fingerprint_recovery_key(recovery_key);
@@ -60,7 +47,7 @@ pub(crate) fn save_generated_recovery_key_metadata_in_store(
     state.backup_hpke_public_key_multibase = key_material.backup_hpke_public_key_multikey.clone();
     state.recovery_key_rotated_at = rotated_at.clone();
     let payload = serde_json::to_string(&state).ok()?;
-    state_store.save_private_data(account_key.as_str(), RECOVERY_STATE_KEY, payload);
+    state_store.save_plain_local_data(RECOVERY_STATE_KEY, payload);
     Some((fingerprint, rotated_at))
 }
 
@@ -68,12 +55,9 @@ pub(crate) fn recovery_state_has_user_material(state: &RecoveryState) -> bool {
     !state.recovery_key_fingerprint.trim().is_empty()
 }
 
-pub(crate) fn recovery_options_configured(
-    state_store: &LocalStateStore,
-    account_key: &DidCoreId,
-) -> bool {
+pub(crate) fn recovery_options_configured(state_store: &LocalStateStore) -> bool {
     state_store
-        .load_private_data(account_key.as_str(), RECOVERY_STATE_KEY)
+        .load_plain_local_data(RECOVERY_STATE_KEY)
         .and_then(|raw| serde_json::from_str::<RecoveryState>(&raw).ok())
         .map(|state| recovery_state_has_user_material(&state))
         .unwrap_or(false)
@@ -82,12 +66,9 @@ pub(crate) fn recovery_options_configured(
 /// SHA-256 fingerprint of the locally configured Recovery Key (24 words), if
 /// one was ever generated on this device. Used by recovery prompts and settings
 /// affordances; never the plaintext.
-pub(crate) fn local_recovery_key_fingerprint(
-    state_store: &LocalStateStore,
-    account_key: &DidCoreId,
-) -> Option<String> {
+pub(crate) fn local_recovery_key_fingerprint(state_store: &LocalStateStore) -> Option<String> {
     state_store
-        .load_private_data(account_key.as_str(), RECOVERY_STATE_KEY)
+        .load_plain_local_data(RECOVERY_STATE_KEY)
         .and_then(|raw| serde_json::from_str::<RecoveryState>(&raw).ok())
         .map(|state| state.recovery_key_fingerprint)
         .filter(|fp| !fp.trim().is_empty())
@@ -96,22 +77,18 @@ pub(crate) fn local_recovery_key_fingerprint(
 /// Public HPKE key derived from the locally configured Recovery Key. This is
 /// safe to keep because it can only seal new backups; opening them still
 /// requires the offline 24-word Recovery Key.
-pub(crate) fn local_recovery_public_key(
-    state_store: &LocalStateStore,
-    account_key: &DidCoreId,
-) -> Option<Vec<u8>> {
-    local_recovery_public_key_result(state_store, account_key).ok()
+pub(crate) fn local_recovery_public_key(state_store: &LocalStateStore) -> Option<Vec<u8>> {
+    local_recovery_public_key_result(state_store).ok()
 }
 
 pub(crate) fn local_recovery_public_key_result(
     state_store: &LocalStateStore,
-    account_key: &DidCoreId,
 ) -> anyhow::Result<Vec<u8>> {
-    let raw = state_store.load_private_data(account_key.as_str(), RECOVERY_STATE_KEY);
+    let raw = state_store.load_plain_local_data(RECOVERY_STATE_KEY);
     let raw = match raw {
         Some(raw) => raw,
         None if state_store
-            .private_data_keys()
+            .plain_local_data_keys()
             .iter()
             .any(|key| key == RECOVERY_STATE_KEY) =>
         {

@@ -2,23 +2,15 @@ use crate::state::LocalStateStore;
 
 pub const NOTIFICATION_SOUND_ENABLED_KEY: &str = "notification.sound.enabled.v1";
 
-pub fn notification_sound_enabled(store: &LocalStateStore, account_key: &str) -> bool {
+pub fn notification_sound_enabled(store: &LocalStateStore) -> bool {
     private_bool_preference(
-        store.load_private_data(account_key, NOTIFICATION_SOUND_ENABLED_KEY),
+        store.load_plain_local_data(NOTIFICATION_SOUND_ENABLED_KEY),
         true,
     )
 }
 
-pub fn set_notification_sound_enabled(
-    store: &mut LocalStateStore,
-    account_key: &str,
-    enabled: bool,
-) {
-    store.save_private_data(
-        account_key,
-        NOTIFICATION_SOUND_ENABLED_KEY,
-        enabled.to_string(),
-    );
+pub fn set_notification_sound_enabled(store: &mut LocalStateStore, enabled: bool) {
+    store.save_plain_local_data(NOTIFICATION_SOUND_ENABLED_KEY, enabled.to_string());
 }
 
 pub fn should_play_notification_sound(
@@ -146,15 +138,14 @@ mod tests {
     #[test]
     fn notification_sound_pref_defaults_on_and_parses_false_values() {
         let mut store = crate::state::isolated_store_for_tests("notification-sound-pref");
-        let account = "did:web:alice.example";
 
-        assert!(notification_sound_enabled(&store, account));
+        assert!(notification_sound_enabled(&store));
 
-        set_notification_sound_enabled(&mut store, account, false);
-        assert!(!notification_sound_enabled(&store, account));
+        set_notification_sound_enabled(&mut store, false);
+        assert!(!notification_sound_enabled(&store));
 
-        set_notification_sound_enabled(&mut store, account, true);
-        assert!(notification_sound_enabled(&store, account));
+        set_notification_sound_enabled(&mut store, true);
+        assert!(notification_sound_enabled(&store));
     }
 
     #[test]

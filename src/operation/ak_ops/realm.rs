@@ -70,7 +70,7 @@ fn message_id_from_target_ref(target_ref: &str) -> anyhow::Result<arkret_sdk::Me
         .map_err(|err| anyhow::anyhow!("invalid message_id {target_ref:?}: {err}"))
 }
 
-/// Build a `ak.realm.organization` statement operation (YGN-ORG-02).
+/// Build a `ak.realm.organization` statement operation.
 ///
 /// Constructs the spec-canonical [`RealmOrganizationPayload`] via the SDK
 /// strong type — the client never hand-rolls the wire object. Supports both

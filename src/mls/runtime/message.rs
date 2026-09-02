@@ -58,7 +58,7 @@ fn warn_mls_decrypt_once(
 pub struct WelcomeApplyOutcome {
     pub applied: usize,
     pub failed: usize,
-    /// YOU-02-005: welcomes skipped because a snapshot at an equal-or-higher
+    /// Welcomes skipped because a snapshot at an equal-or-higher
     /// epoch for the same group already exists (a replayed / stale Welcome that
     /// would otherwise roll the local MLS snapshot back to the join epoch).
     pub skipped_stale: usize,
@@ -1560,7 +1560,7 @@ pub(super) fn welcome_recipient_endpoint(
     }
 }
 
-/// YGN-SEC-01 gate (1): before accepting an inbound Welcome, independently
+/// Welcome admission gate (1): before accepting an inbound Welcome, independently
 /// verify the sender signature on its `claim_envelope` (`encryption-and-audit.md`
 /// admin send gate; `admission.rs` signs it with `sign_welcome_claim_envelope`).
 ///
@@ -1703,13 +1703,13 @@ pub(super) fn verify_welcome_claim_envelope_signer(
         crate::identity::device_directory::CacheLookup::NegativeHit => {
             return Err(format!(
                 "claim_envelope signer {requester_did}/{requester_device_id} is revoked / \
-                 absent in directory (negative verdict); Welcome rejected (YGN-SEC-01)"
+                 absent in directory (negative verdict); Welcome rejected"
             ));
         }
         crate::identity::device_directory::CacheLookup::Miss => {
             return Err(format!(
                 "claim_envelope signer key for {requester_did}/{requester_device_id} not in \
-                 device-directory cache; fail-closed (YGN-SEC-01)"
+                 device-directory cache; fail-closed"
             ));
         }
     };
@@ -1727,7 +1727,7 @@ pub(super) fn verify_welcome_claim_envelope_signer(
     Ok(())
 }
 
-/// YGN-SEC-01 gate (2): before persisting the snapshot, independently verify
+/// Welcome admission gate (2): before persisting the snapshot, independently verify
 /// the Welcome's embedded `governance_binding` (`encryption-and-audit.md`:438:
 /// clients MUST independently verify the referenced Seal view and state_root
 /// before accepting an MLS epoch).
@@ -1889,7 +1889,7 @@ pub(crate) fn apply_welcome_messages_with_device_snapshot(
             outcome.record_failure(format!("welcome claim envelope: {reason}"));
             continue;
         }
-        // YGN-SEC-01 gate (1): before accepting the Welcome, independently
+        // Welcome admission gate (1): before accepting the Welcome, independently
         // verify the claim_envelope sender signature with a device_directory key
         // and fail closed. This runs before join because signature verification
         // does not depend on MLS-layer decryption.
@@ -1905,7 +1905,7 @@ pub(crate) fn apply_welcome_messages_with_device_snapshot(
             outcome.record_failure(format!("welcome claim envelope authz: {reason}"));
             continue;
         }
-        // YGN-SEC-01 gate (2) runs after join because it needs the MLS group
+        // Welcome admission gate (2) runs after join because it needs the MLS group
         // object. It independently verifies this governance_binding against the
         // MLS GroupContext; keep the raw JSON for that check.
         let welcome_value_for_governance = welcome_value.clone();
@@ -1982,7 +1982,7 @@ pub(crate) fn apply_welcome_messages_with_device_snapshot(
                 continue;
             }
         };
-        // YGN-SEC-01 gate (2): independently verify that the MLS group's
+        // Welcome admission gate (2): independently verify that the MLS group's
         // embedded governance_binding matches the durable payload forwarded by
         // the server (`encryption-and-audit.md`:438). Missing binding or
         // profile, epoch, Security Frontier, or leaf-set mismatch rejects the
@@ -2041,7 +2041,7 @@ pub(crate) fn apply_welcome_messages_with_device_snapshot(
                 continue;
             }
         };
-        // YOU-02-005: epoch guard against rolling the realm snapshot backwards.
+        // Epoch guard against rolling the realm snapshot backwards.
         // A replayed / re-delivered Welcome (device_messages GET is read-only
         // until the client consumes an explicit ack token) must not
         // overwrite a snapshot that has already advanced past the join epoch.

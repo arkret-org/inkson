@@ -2,7 +2,7 @@ use std::sync::{LazyLock, Mutex};
 use std::time::Duration;
 
 use dioxus::prelude::*;
-// Shared JS-interop helper (single source, YGN-DRY-04).
+// Shared JS-interop helper (single source).
 pub(crate) use yoface::utils::dom::copy_text_to_clipboard;
 
 use crate::components::backup_job_scheduler::{
@@ -185,9 +185,7 @@ pub(crate) fn schedule_mls_private_plaintext_backup_after_encrypted_write(
     }
     let (sidecar_json, principal_control_realm_id) = {
         let store = state_store.read();
-        if !mls_recovery_backup_configured(&store, &authority.principal_id)
-            || store.private_plaintext_is_empty()
-        {
+        if !mls_recovery_backup_configured(&store) || store.private_plaintext_is_empty() {
             return;
         }
         let Some(evidence) = store.recovery_material_evidence() else {
@@ -323,12 +321,9 @@ async fn upload_mls_private_plaintext_backup_job_snapshot(
     .map_err(|err| anyhow::anyhow!(err.display_diagnostic()))
 }
 
-pub(crate) fn mls_recovery_backup_configured(
-    state_store: &LocalStateStore,
-    account_key: &arkret_sdk::DidCoreId,
-) -> bool {
+pub(crate) fn mls_recovery_backup_configured(state_store: &LocalStateStore) -> bool {
     state_store
-        .load_private_data(account_key.as_str(), MLS_RECOVERY_BACKUP_STATE_KEY)
+        .load_plain_local_data(MLS_RECOVERY_BACKUP_STATE_KEY)
         .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
         .and_then(|value| {
             value
@@ -342,7 +337,6 @@ pub(crate) fn mls_recovery_backup_configured(
 
 pub(crate) fn mark_mls_recovery_backup_configured(
     state_store: &mut LocalStateStore,
-    account_key: &arkret_sdk::DidCoreId,
     backup_id: &str,
 ) {
     if backup_id.trim().is_empty() {
@@ -353,11 +347,7 @@ pub(crate) fn mark_mls_recovery_backup_configured(
         "backup_id": backup_id,
         "configured_at": arkret_sdk::canonical::format_timestamp_canonical(chrono::Utc::now()),
     });
-    state_store.save_private_data(
-        account_key.as_str(),
-        MLS_RECOVERY_BACKUP_STATE_KEY,
-        payload.to_string(),
-    );
+    state_store.save_plain_local_data(MLS_RECOVERY_BACKUP_STATE_KEY, payload.to_string());
 }
 
 /// X11.2 — context-provided handle to the app-root `needs_mls_backup`
@@ -423,9 +413,8 @@ async fn maybe_backup_or_flag_mls_backup_after_encrypted_write(
     }
     let state_store_for_completion_fence = auto_backup.as_ref().map(|(_, store)| *store);
     let backup_completed_while_probe_was_running = || {
-        state_store_for_completion_fence.is_some_and(|store| {
-            mls_recovery_backup_configured(&store.read(), &authority.principal_id)
-        })
+        state_store_for_completion_fence
+            .is_some_and(|store| mls_recovery_backup_configured(&store.read()))
     };
     // Local account secret must exist (encryption has been used) — otherwise
     // there's nothing to back up yet.
@@ -447,8 +436,7 @@ async fn maybe_backup_or_flag_mls_backup_after_encrypted_write(
     // again. Missing public key falls through to the explicit prompt below.
     let auto_backup_inputs = auto_backup.as_ref().and_then(|(device_id, state_store)| {
         let store = state_store.read();
-        let recovery_public_key =
-            crate::views::recovery::local_recovery_public_key(&store, &authority.principal_id)?;
+        let recovery_public_key = crate::views::recovery::local_recovery_public_key(&store)?;
         let recovery_material_evidence = store.recovery_material_evidence()?;
         if recovery_material_evidence.account_id.principal_id.as_str() != actor_id
             || recovery_material_evidence.device_id.as_str() != device_id
@@ -501,7 +489,7 @@ async fn maybe_backup_or_flag_mls_backup_after_encrypted_write(
         {
             let mut state_store = *state_store;
             if let Ok(mut store) = state_store.try_write() {
-                mark_mls_recovery_backup_configured(&mut store, &authority.principal_id, backup_id);
+                mark_mls_recovery_backup_configured(&mut store, backup_id);
             }
         }
         try_set_signal(needs_mls_backup, false);
@@ -544,11 +532,7 @@ async fn maybe_backup_or_flag_mls_backup_after_encrypted_write(
         match upload_result {
             Ok(backup_id) => {
                 if let Ok(mut store) = state_store.try_write() {
-                    mark_mls_recovery_backup_configured(
-                        &mut store,
-                        &authority.principal_id,
-                        &backup_id,
-                    );
+                    mark_mls_recovery_backup_configured(&mut store, &backup_id);
                 }
                 if let Some(sidecar_json) = sidecar_json {
                     let actor = actor_id.clone();
@@ -619,7 +603,6 @@ fn upload_mls_backup_with_recovery_key(
     generated_in_this_strand: bool,
 ) {
     let mut state_store_for_marker = state_store;
-    let account_key_for_marker = authority.principal_id.clone();
     let history_records = {
         let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
         state_store
@@ -690,11 +673,7 @@ fn upload_mls_backup_with_recovery_key(
         match result {
             Ok(backup_id) => {
                 if let Ok(mut store) = state_store_for_marker.try_write() {
-                    mark_mls_recovery_backup_configured(
-                        &mut store,
-                        &account_key_for_marker,
-                        &backup_id,
-                    );
+                    mark_mls_recovery_backup_configured(&mut store, &backup_id);
                 }
                 if let Some(sidecar_json) = sidecar_json {
                     let actor = actor_for_sidecar;
@@ -785,12 +764,8 @@ pub fn MlsBackupPrompt(
         return rsx! {};
     }
 
-    let actor_for_state = account.principal_id().clone();
-    let local_recovery_key_configured = crate::views::recovery::local_recovery_key_fingerprint(
-        &state_store.read(),
-        &actor_for_state,
-    )
-    .is_some();
+    let local_recovery_key_configured =
+        crate::views::recovery::local_recovery_key_fingerprint(&state_store.read()).is_some();
     let recovery_key_configured =
         local_recovery_key_configured || matches!(account_recovery_configured(), Some(true));
     let generated_now = generated_recovery_key();
@@ -816,13 +791,9 @@ pub fn MlsBackupPrompt(
         let session = token();
         let authority = account_for_backup.authority.clone();
         let actor = account_for_backup.did().to_string();
-        let account_key = account_for_backup.principal_id().clone();
         let device = account_for_backup.device_id.to_string();
-        let local_recovery_key_configured = crate::views::recovery::local_recovery_key_fingerprint(
-            &state_store.read(),
-            &account_key,
-        )
-        .is_some();
+        let local_recovery_key_configured =
+            crate::views::recovery::local_recovery_key_fingerprint(&state_store.read()).is_some();
         let recovery_key_configured =
             local_recovery_key_configured || matches!(account_recovery_configured(), Some(true));
         let generated = generated_recovery_key();
@@ -847,7 +818,6 @@ pub fn MlsBackupPrompt(
             let mut state_store_for_recovery_key = state_store;
             if crate::views::recovery::save_generated_recovery_key_metadata(
                 &mut state_store_for_recovery_key,
-                &account_key,
                 &recovery_key,
             )
             .is_none()
@@ -902,7 +872,6 @@ pub fn MlsBackupPrompt(
         let session = token();
         let authority = account_for_regenerate.authority.clone();
         let actor = account_for_regenerate.did().to_string();
-        let account_key = account_for_regenerate.principal_id().clone();
         let device = account_for_regenerate.device_id.to_string();
         if base.trim().is_empty() || session.trim().is_empty() || actor.trim().is_empty() {
             status.set(crate::i18n::tr("mls_backup.status.invalid_recovery_key"));
@@ -921,7 +890,6 @@ pub fn MlsBackupPrompt(
         let mut state_store_for_recovery_key = state_store;
         if crate::views::recovery::save_generated_recovery_key_metadata(
             &mut state_store_for_recovery_key,
-            &account_key,
             &recovery_key,
         )
         .is_none()

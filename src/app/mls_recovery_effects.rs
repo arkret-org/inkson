@@ -119,11 +119,9 @@ pub(super) fn MlsRecoveryEffects(state: MlsRecoveryEffectState) -> Element {
             let has_encrypted_realm_projection =
                 local_state_has_encrypted_realm(&state_for_detection_key);
             let local_mls_epoch_floor = local_mls_epoch_floor_all(&state_for_detection_key);
-            let recovery_key_fingerprint = crate::views::recovery::local_recovery_key_fingerprint(
-                &state_for_detection_key,
-                &authority.principal_id,
-            )
-            .unwrap_or_default();
+            let recovery_key_fingerprint =
+                crate::views::recovery::local_recovery_key_fingerprint(&state_for_detection_key)
+                    .unwrap_or_default();
             drop(state_for_detection_key);
             let has_local_account_secret = crate::mls::runtime::load_account_mls_secret(
                 crate::secure_key_store::default_secure_key_store("inkson").as_ref(),
@@ -240,7 +238,6 @@ pub(super) fn MlsRecoveryEffects(state: MlsRecoveryEffectState) -> Element {
                             if let Some(backup_id) = configured_backup_id.as_deref() {
                                 crate::components::mark_mls_recovery_backup_configured(
                                     &mut store,
-                                    &authority.principal_id,
                                     backup_id,
                                 );
                             }
@@ -342,7 +339,6 @@ pub(super) fn MlsRecoveryEffects(state: MlsRecoveryEffectState) -> Element {
                                     &store,
                                     secure_store.as_ref(),
                                     &authority,
-                                    &authority.principal_id,
                                     account_recovery_configured_value,
                                 )
                             };

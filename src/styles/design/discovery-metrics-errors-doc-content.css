@@ -664,17 +664,6 @@
   box-shadow: var(--shadow-md);
 }
 
-.modal-overlay{
-  position: fixed;
-  inset: 0;
-  z-index: var(--layer-modal);
-  display: grid;
-  place-items: center;
-  padding: 24px;
-  background: rgba(8, 13, 20, 0.72);
-  backdrop-filter: blur(2px);
-}
-
 .publish-to-source-modal {
   width: min(720px, 100%);
   max-height: min(760px, calc(100vh - 48px));
@@ -975,7 +964,6 @@
   gap: 12px;
   padding-top: 4px;
 }
-.onboarding-footer-actions.is-end { justify-content: flex-end; }
 
 .onboarding-finished,
 .onboarding-centered {

@@ -68,7 +68,6 @@ pub(crate) fn upload_recovery_key_account_backup(
     let base = account.server_url.to_string();
     let authority = account.authority.clone();
     let actor_did = account.did().clone();
-    let account_key = account.principal_id().clone();
     let session = token();
     let actor = actor_did.to_string();
     let device = device_id();
@@ -99,7 +98,6 @@ pub(crate) fn upload_recovery_key_account_backup(
     spawn(async move {
         let _publication_guard = publication_guard;
         let actor_for_sidecar = actor.clone();
-        let account_key_for_marker = account_key;
         let authority_for_sidecar = authority.clone();
         let device_for_sidecar = device.clone();
         let base_for_sidecar = base.clone();
@@ -155,7 +153,6 @@ pub(crate) fn upload_recovery_key_account_backup(
                 if let Ok(mut store) = state_store.try_write() {
                     crate::components::mark_mls_recovery_backup_configured(
                         &mut store,
-                        &account_key_for_marker,
                         &account_backup_id,
                     );
                 }

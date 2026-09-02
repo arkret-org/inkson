@@ -168,30 +168,12 @@ a.primary, a.secondary { line-height: 1.5; }
   opacity: 0.55;
   cursor: not-allowed;
 }
-.settings-inline-form {
-  display: grid;
-  grid-template-columns: minmax(180px, 1.1fr) minmax(160px, 0.9fr) auto;
-  gap: 8px;
-  align-items: center;
-}
 .settings-list {
   display: grid;
   gap: 8px;
   padding: 0;
   margin: 0;
   list-style: none;
-}
-.settings-list-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 10px;
-  align-items: center;
-  padding: 10px 0;
-  border-top: 1px solid var(--border);
-}
-.settings-list-row strong,
-.settings-list-row .muted {
-  overflow-wrap: anywhere;
 }
 .badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 12px; }
 .badge-info { background: var(--info-soft); color: var(--info-ink); }

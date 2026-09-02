@@ -27,7 +27,7 @@ pub fn english_translations() -> TranslationDict {
     dict.set("sidebar.realms_sign_in", "Sign in to load Realms");
     dict.set("sidebar.realms_no_results", "No matching Realms");
 
-    // AKP-0007 Circle error keys (P3B.3.2)
+    // Circle error keys (P3B.3.2)
     add_circle_error_keys(&mut dict);
 
     // Directory
@@ -1483,7 +1483,7 @@ pub fn english_translations() -> TranslationDict {
     );
     dict.set("developer.profile.required", "Required profile id");
 
-    // Round R2/R3 (T06) — moderation appeal state labels.
+    // Moderation appeal state labels.
     dict.set("moderation.appeal.state.none", "No appeal filed");
     dict.set(
         "moderation.appeal.state.submitted",
@@ -1494,7 +1494,7 @@ pub fn english_translations() -> TranslationDict {
     dict.set("moderation.appeal.state.closed", "Closed");
 
     // R3 spec sync (b47ff6ec) — new error toast strings surfaced by the
-    // arkret-spec error code expansion (AKP-0010 media binding,
+    // arkret-spec error code expansion (media binding,
     // agent FSM, handle homograph wire-level enforce, recovery
     // policy). The HTTP error reply carries a stable
     // `code` / `reason` field that the toast layer maps via these
@@ -1914,7 +1914,7 @@ fn add_r3_error_keys(dict: &mut TranslationDict) {
         "This approval nonce was already consumed. Request a fresh approval.",
     );
 
-    // Media binding (AKP-0010).
+    // Media binding.
     dict.set(
         "error.call.focus_unavailable_for_client",
         "This call's media connection isn't available in this app. Try again, or leave the call and rejoin.",
@@ -2039,7 +2039,7 @@ fn add_generic_error_keys(dict: &mut TranslationDict) {
     );
 }
 
-/// English i18n strings for the 6 AKP-0007 reason / error codes
+/// English i18n strings for the 6 Circle reason / error codes
 /// surfaced by [`crate::circle::CircleErrorKind`] (P3B.3.2). Zh / Ar
 /// translations follow in a later milestone; the toast falls back to
 /// the English string when the locale doesn't carry the key.
@@ -2080,7 +2080,7 @@ fn add_circle_error_keys(dict: &mut TranslationDict) {
         "Choose a Circle to restrict visibility to a strict subset of Realm members.",
     );
 
-    // R3.3 (AKP-0011) — shareable object links.
+    // Shareable object links.
     dict.set("object_link.open", "Open shared link");
     dict.set("object_link.open_placeholder", "Paste a shared link");
     dict.set("object_link.opening", "Opening link…");

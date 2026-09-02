@@ -2185,7 +2185,7 @@ impl EventSubmitter {
 
     /// `QUERY /_arkret/self/events/describe` — spec binds the response to the
     /// canonical `ServiceDescribe` shape (OpenAPI `ak.self.events.read.describe.v1`).
-    /// YOU-01-016: the former soland-private `SolandEventsDescribeResBody`
+    /// the former soland-private `SolandEventsDescribeResBody`
     /// mirror (with its non-spec `capabilities` blob) was removed.
     pub async fn events_describe(&self) -> anyhow::Result<arkret_sdk::ServiceDescribe> {
         self.http
@@ -3238,7 +3238,7 @@ impl EventSubmitter {
             .ok_or_else(|| anyhow::anyhow!("events.submit batch must not be empty"))?;
         self.ensure_recovery_material_ready(&EventIntent::from_authored(first_event), None)
             .await?;
-        // YOU-01-016: the former `capabilities.batch_submit` probe (a
+        // The former `capabilities.batch_submit` probe (a
         // non-spec soland capability field) was removed. The batch request
         // body is one of the three spec-defined `ak.self.events.command.submit.v1`
         // shapes (distinguished by JSON shape), so it is sent

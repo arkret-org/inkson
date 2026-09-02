@@ -18,7 +18,7 @@ fn current_governance_binding_predecessor(
         })
 }
 
-/// YOU-01-009 — operator-forced MLS epoch rotation via a real
+/// Operator-forced MLS epoch rotation via a real
 /// `self_update_commit`; the spec defines no `POST /_arkret/self/mls/rotate`
 /// HTTP endpoint. Restores the Realm group
 /// from the local snapshot, performs a self-update commit, and returns
@@ -352,7 +352,7 @@ pub(crate) fn build_add_member_commit_for_effective_scope_with_binding(
     Ok((add, new_envelope, previous_governance_binding))
 }
 
-/// YOU-02-004 (`encryption-and-audit.md` §5.6, normative) — decrypt a remote
+/// `encryption-and-audit.md` §5.6 (normative) — decrypt a remote
 /// member's MLS application message AND persist the advanced receive chain.
 ///
 /// "first duty: persist the receive chain": after a successful decrypt the advanced group
@@ -526,7 +526,7 @@ pub const SELF_PRESERVATION_MAX_EPOCH_APP_MESSAGES: u64 = 1000;
 /// at least 7 days (implementations MAY declare a shorter threshold).
 pub const SELF_PRESERVATION_MAX_EPOCH_AGE_DAYS: i64 = 7;
 
-/// SEC-08 (§2.9) + YOU-02-004 (§5.6) — pure committer decision: should a
+/// `encryption-and-audit.md` §2.9 + §5.6 — pure committer decision: should a
 /// send force-advance the MLS epoch *before* riding the current epoch?
 ///
 /// For a `minimal_metadata_realm` Realm the §2.9 epoch-lifetime SHOULD is a

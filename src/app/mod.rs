@@ -45,21 +45,21 @@ pub(crate) fn principal_id_owned(principal_id: Option<arkret_sdk::DidCoreId>) ->
         .unwrap_or_default()
 }
 
-// YOU-07-001: post-login / startup-check effects and small types moved to
+// post-login / startup-check effects and small types moved to
 // `crate::app::bootstrap` (move-only; logic, signatures, and bytes unchanged).
 // The re-export keeps existing app.rs call sites and `app_tests.rs`
 // `use super::*` resolution paths unchanged.
 #[path = "../bootstrap.rs"]
 mod bootstrap;
 pub(crate) use bootstrap::*;
-// YOU-07-001: theme-resolution helpers (system/shell dark-mode detection, the
+// theme-resolution helpers (system/shell dark-mode detection, the
 // `<html>` data-theme mirror, manual toggle) live in `app/theme.rs` (move only).
 // The glob re-export keeps the inline call sites and `app_tests.rs` `use super::*`
 // resolution unchanged.
 mod theme;
 pub(crate) use theme::*;
 mod web_leader;
-// YOU-07-001: per-realm surface selection (RealmSurface enum + preference
+// per-realm surface selection (RealmSurface enum + preference
 // load/persist + route→surface resolution) lives in `app/realm_surface.rs`
 // (move only). The glob re-export keeps inline call sites and `app_tests.rs`
 // `use super::*` resolution unchanged.
@@ -139,7 +139,6 @@ use sidebar::*;
 use sidebar_width::*;
 use sync_effects::SyncEffects;
 
-const UI_PREFERENCES_SCOPE: &str = "ui.browser";
 const SIDEBAR_WIDTH_PREFERENCE_KEY: &str = "layout.sidebar.width";
 const DEFAULT_SIDEBAR_WIDTH: f64 = 320.0;
 const MIN_SIDEBAR_WIDTH: f64 = 280.0;
@@ -295,10 +294,7 @@ fn AppBootstrap() -> Element {
     let initial_locale =
         crate::i18n::resolve_locale(None, initial_state_store.device_pref("locale").as_deref());
     let initial_theme = initial_state_store
-        .load_private_data(
-            crate::app::principal_id_text(&initial_principal_id),
-            "theme",
-        )
+        .load_plain_local_data("theme")
         .filter(|theme| matches!(theme.as_str(), "light" | "night" | "system"))
         .unwrap_or_else(|| "night".to_owned());
     // Rehydrate the persisted primary handle for the booted account so any
@@ -483,7 +479,7 @@ fn AppBootstrap() -> Element {
     //     invalidation hook can invalidate/clear while ingesting projections.
     // The cache is pure in-memory state, is not persisted, and only lives for a
     // single login session, matching the `DidResolutionCache` docs.
-    let mut did_cache =
+    let did_cache =
         use_context_provider(|| Signal::new(arkret_sdk::identity::DidResolutionCache::default()));
     let did_resolution_health = use_signal(crate::components::DidResolutionHealth::healthy);
     let mut theme = use_signal(move || initial_theme);
@@ -655,7 +651,7 @@ fn AppBootstrap() -> Element {
     let websocket_rail_active_generation = use_signal(|| Option::<u64>::None);
     let bootstrap_pending = use_signal(|| true);
 
-    // AKP-0007 P3B.4.3 — active multi-profile snapshot, threaded into
+    // P3B.4.3 — active multi-profile snapshot, threaded into
     // the sync engine context so the loop can detect a profile rotation
     // and exit cleanly. The shell is currently single-profile; the
     // signal stays default-empty until the account switcher writes to
@@ -767,10 +763,7 @@ fn AppBootstrap() -> Element {
         } else {
             state_store
                 .read()
-                .load_private_data(
-                    crate::app::principal_id_text(&principal_id()),
-                    "avatar_blob_ref",
-                )
+                .load_plain_local_data("avatar_blob_ref")
                 .unwrap_or_else(&*current_account_avatar_blob_ref)
         }
     })();
@@ -1197,9 +1190,8 @@ fn AppBootstrap() -> Element {
     let active_prompt = {
         let store = state_store.read();
         let actor = principal_id();
-        let local_recovery_configured = actor.as_ref().is_some_and(|actor_id| {
-            crate::views::recovery::recovery_options_configured(&store, actor_id)
-        });
+        let local_recovery_configured =
+            actor.is_some() && crate::views::recovery::recovery_options_configured(&store);
         let account_recovery_configured = account_recovery_configured();
         crate::account_health::AccountHealthInputs {
             has_session,
@@ -1235,8 +1227,8 @@ fn AppBootstrap() -> Element {
     // once auto-acknowledged it stays quiet across navigations and sessions (the
     // in-session `encryption_floor_prompt_dismissed` signal covers the same
     // frame before the persisted flag is read back).
-    let encryption_floor_prompt_acknowledged = principal_id().as_ref().is_some_and(|actor_id| {
-        crate::app::encryption_floor_prompt_acknowledged(&state_store.read(), actor_id)
+    let encryption_floor_prompt_acknowledged = principal_id().as_ref().is_some_and(|_actor_id| {
+        crate::app::encryption_floor_prompt_acknowledged(&state_store.read())
     });
     let connection_runtime = ConnectionRuntimeSignals {
         connection_status,
@@ -1513,7 +1505,7 @@ fn AppBootstrap() -> Element {
                 // ToastHost: stacked transient toasts. Drains the generic
                 // toast queue plus the policy-deny queue (fed by
                 // `api_error::decode_arkret_error`'s policy-deny dispatch,
-                // G3.Y3) and the AKP-0007 circle-error queue (fed by
+                // G3.Y3) and the circle-error queue (fed by
                 // `maybe_dispatch_circle_error`), so any 403 / Circle error
                 // is surfaced without each call site wiring its own UI.
                 crate::components::ToastHost {}
@@ -1674,11 +1666,7 @@ fn AppBootstrap() -> Element {
                             let current_theme = theme();
                             let next = next_manual_theme(&current_theme);
                             theme.set(next.clone());
-                            state_store.write().save_private_data(
-                                crate::app::principal_id_text(&principal_id()),
-                                "theme",
-                                next.clone(),
-                            );
+                            state_store.write().save_plain_local_data("theme", next.clone());
                             // A4a — best-effort cross-device sync via
                             // `ak.account_data.set(ak.client.ui_state)`.
                             crate::views::settings::push_client_ui_account_data(
@@ -3223,8 +3211,7 @@ fn AppBootstrap() -> Element {
                                     let current_theme = theme();
                                     let next = next_manual_theme(&current_theme);
                                     theme.set(next.clone());
-                                    state_store.write().save_private_data(
-                                        crate::app::principal_id_text(&principal_id()),
+                                    state_store.write().save_plain_local_data(
                                         "theme",
                                         next.clone(),
                                     );

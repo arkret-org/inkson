@@ -1,4 +1,4 @@
-//! YGN-ORG-03 / SOL-ORG-06 (client consumer) — Realm ↔ organization
+//! Realm <-> organization
 //! relationship view.
 //!
 //! The client must NOT conflate "this Realm declared an organization hint"
@@ -68,17 +68,14 @@ pub struct CreatedOrganization {
     pub display_name: String,
 }
 
-/// Private-data key (per account) for the created-organizations index. No
+/// Plain local-data key (per account) for the created-organizations index. No
 /// version suffix per the storage-key convention.
 const CREATED_ORGANIZATIONS_KEY: &str = "organizations.created";
 
-/// Read the created-organizations index for `principal_id` from local state.
-fn load_created_organizations(
-    store: &crate::state::LocalStateStore,
-    principal_id: &str,
-) -> Vec<CreatedOrganization> {
+/// Read the created-organizations index for the active account from local state.
+fn load_created_organizations(store: &crate::state::LocalStateStore) -> Vec<CreatedOrganization> {
     store
-        .load_private_data(principal_id, CREATED_ORGANIZATIONS_KEY)
+        .load_plain_local_data(CREATED_ORGANIZATIONS_KEY)
         .and_then(|raw| serde_json::from_str::<Vec<CreatedOrganization>>(&raw).ok())
         .unwrap_or_default()
 }
@@ -86,10 +83,9 @@ fn load_created_organizations(
 /// Append (or replace by stable id) a created organization into the per-account index.
 fn upsert_created_organization(
     store: &mut crate::state::LocalStateStore,
-    principal_id: &str,
     entry: CreatedOrganization,
 ) {
-    let mut list = load_created_organizations(store, principal_id);
+    let mut list = load_created_organizations(store);
     if let Some(existing) = list
         .iter_mut()
         .find(|item| item.organization_id == entry.organization_id)
@@ -99,7 +95,7 @@ fn upsert_created_organization(
         list.push(entry);
     }
     if let Ok(serialized) = serde_json::to_string(&list) {
-        store.save_private_data(principal_id, CREATED_ORGANIZATIONS_KEY, serialized);
+        store.save_plain_local_data(CREATED_ORGANIZATIONS_KEY, serialized);
     }
 }
 
@@ -277,7 +273,7 @@ fn dtos_from_list(list: &RealmOrganizationRelationshipList) -> Vec<OrgRelationsh
     out
 }
 
-/// YGN-ORG-03 panel. Rendered inside the realm_admin Federation section.
+/// Rendered inside the realm_admin Federation section.
 #[component]
 pub fn RealmOrganizationPanel(
     token: Signal<String>,
@@ -393,10 +389,7 @@ pub fn RealmOrganizationPanel(
             // authority, gated on `AccountView.is_server_admin`. Non-admins never
             // see these controls (D4) and keep only the read-only list above.
             if server_admin {
-                OrganizationCreatePanel {
-                    token,
-                    principal_id: principal_id.clone(),
-                }
+                OrganizationCreatePanel { token }
                 OrganizationBindPanel {
                     token,
                     realm_id: realm_id.clone(),
@@ -418,7 +411,7 @@ pub fn RealmOrganizationPanel(
 /// key locally, and display the minted DID. Server-administrator only (mounted
 /// only when `is_server_admin()` is true).
 #[component]
-fn OrganizationCreatePanel(token: Signal<String>, principal_id: String) -> Element {
+fn OrganizationCreatePanel(token: Signal<String>) -> Element {
     // A4 — base_url / state_store from session context instead of props.
     let base_url = crate::app::SessionContext::base_url_string();
     let mut state_store = crate::app::SessionContext::get().state_store;
@@ -467,10 +460,8 @@ fn OrganizationCreatePanel(token: Signal<String>, principal_id: String) -> Eleme
                     disabled: busy(),
                     onclick: {
                         let base = base_url.clone();
-                        let principal_id = principal_id.clone();
                         move |_| {
                             let base = base.clone();
-                            let principal_id = principal_id.clone();
                             let api_token = token();
                             let local_id = handle().trim().to_owned();
                             let name = display_name().trim().to_owned();
@@ -532,7 +523,6 @@ fn OrganizationCreatePanel(token: Signal<String>, principal_id: String) -> Eleme
                                             let mut store = state_store.write();
                                             upsert_created_organization(
                                                 &mut store,
-                                                &principal_id,
                                                 CreatedOrganization {
                                                     organization_id: organization
                                                         .organization_id
@@ -594,10 +584,7 @@ fn OrganizationBindPanel(token: Signal<String>, realm_id: String, principal_id: 
     // A4 — base_url / state_store from session context instead of props.
     let base_url = crate::app::SessionContext::base_url_string();
     let state_store = crate::app::SessionContext::get().state_store;
-    let created = use_memo({
-        let principal_id = principal_id.clone();
-        move || load_created_organizations(&state_store.read(), &principal_id)
-    });
+    let created = use_memo(move || load_created_organizations(&state_store.read()));
 
     let mut selected_org = use_signal(String::new);
     let mut relationship = use_signal(|| "owner".to_owned());
@@ -907,7 +894,7 @@ mod tests {
 
     #[test]
     fn declared_hint_is_not_presented_as_verified() {
-        // YGN-ORG-05 (UI): a declared hint must read as a hint, never as a
+        // A declared hint must read as a hint, never as a
         // verified relationship, and must not carry the verified-active badge.
         let phase = OrgRelationshipPhase::DeclaredHint;
         assert_eq!(phase.label(), "declared hint");

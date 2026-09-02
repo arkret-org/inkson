@@ -180,7 +180,7 @@ pub(crate) fn user_facing_error_key(error: &anyhow::Error) -> Option<&'static st
     }
 
     let code = envelope.code();
-    // The AKP-0010 media-binding code set already owns its `error.call.*`
+    // The media-binding code set already owns its `error.call.*`
     // copy keys; reuse that mapping instead of duplicating it.
     if let Some(rtc) = crate::media::rtc::RtcClientError::from_wire(code) {
         return Some(rtc.i18n_key());

@@ -32,21 +32,6 @@ fn pending_storage_scope(device_id: &DeviceId) -> &str {
         .unwrap_or_else(|| device_id.as_str())
 }
 
-#[cfg(target_arch = "wasm32")]
-fn browser_storage() -> Result<web_sys::Storage, SecureKeyStoreError> {
-    web_sys::window()
-        .ok_or(SecureKeyStoreError::Unsupported(
-            "web_sys::window unavailable",
-        ))?
-        .local_storage()
-        .map_err(|error| {
-            SecureKeyStoreError::Backend(format!("localStorage access failed: {error:?}"))
-        })?
-        .ok_or(SecureKeyStoreError::Unsupported(
-            "window.localStorage unavailable",
-        ))
-}
-
 fn load_device_id(
     store: &dyn SecureKeyStore,
     storage_key: &str,
@@ -54,9 +39,11 @@ fn load_device_id(
     #[cfg(target_arch = "wasm32")]
     let raw = {
         let _ = store;
-        browser_storage()?.get_item(storage_key).map_err(|error| {
-            SecureKeyStoreError::Backend(format!("localStorage device_id get: {error:?}"))
-        })?
+        super::browser_storage()?
+            .get_item(storage_key)
+            .map_err(|error| {
+                SecureKeyStoreError::Backend(format!("localStorage device_id get: {error:?}"))
+            })?
     };
     #[cfg(not(target_arch = "wasm32"))]
     let raw = store.get_secret(storage_key)?;
@@ -77,7 +64,7 @@ fn save_device_id(
     #[cfg(target_arch = "wasm32")]
     {
         let _ = store;
-        browser_storage()?
+        super::browser_storage()?
             .set_item(storage_key, device_id.as_str())
             .map_err(|error| {
                 SecureKeyStoreError::Backend(format!("localStorage device_id set: {error:?}"))
@@ -115,7 +102,7 @@ fn delete_device_id(
     #[cfg(target_arch = "wasm32")]
     {
         let _ = store;
-        browser_storage()?
+        super::browser_storage()?
             .remove_item(storage_key)
             .map_err(|error| {
                 SecureKeyStoreError::Backend(format!("localStorage device_id remove: {error:?}"))

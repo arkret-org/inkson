@@ -1,6 +1,8 @@
 use std::collections::BTreeMap;
 
-use super::{EventIntent, EventUnitStep};
+use super::EventIntent;
+#[cfg(test)]
+use super::EventUnitStep;
 
 /// The actor chain a single authoring unit builds as it goes.
 ///

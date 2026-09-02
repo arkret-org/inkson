@@ -656,7 +656,7 @@ pub(crate) fn sender_display_label(
         .unwrap_or_else(|| crate::views::helpers::short_protocol_id(sender))
 }
 
-/// AKP-0008 §4.10 — resolve the agent label for an act-on-behalf
+/// §4.10 — resolve the agent label for an act-on-behalf
 /// message. Returns the agent's display label when `executed_by` is a
 /// distinct agent principal from `actor_id` (the controller); otherwise
 /// returns `None` (ordinary message or reply-as-agent, where the sender

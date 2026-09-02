@@ -208,10 +208,10 @@ arkret-egress-reqwest = { version = "0.3.0", path = "../arkret-rust-sdk/crates/e
 # call into.
 # Desktop secure storage delegates to the SDK's canonical platform backend;
 # Inkson only adapts `KeyStore` to garth's `SecureKeyStore` contract.
-# YOU-01-007: `multipart` is required because the spec binds
+# `multipart` is required because the spec binds
 # `POST /_arkret/self/blob/upload` to multipart/form-data
 # (blob_upload_request_body), not a raw octet-stream body.
-# AKP-0007 P3B.8.1 — opt-in crash telemetry. The Sentry client is
+# Opt-in crash telemetry. The Sentry client is
 # initialised only when both the user-facing CrashTelemetryPrefs
 # toggle is on AND a build-time `SENTRY_DSN` env var is set; an
 # empty DSN logs a debug message and skips init silently per
@@ -242,7 +242,7 @@ tracing-subscriber = { workspace = true, features = ["env-filter", "fmt"] }
 # `LocalStorageSecureKeyStore` / `IndexedDbSecureKeyStore` instead of the
 # OS keychain, with the documented "browser has no symmetric-secret tier"
 # warning.
-# Round 26 (A3): web-sys feature flags expanded so the WebPushTokenProvider
+# web-sys feature flags expanded so the WebPushTokenProvider
 # can drive `navigator.serviceWorker.register` + `pushManager.subscribe(...)`
 # end-to-end. The Crypto/SubtleCrypto/CryptoKey features back the
 # IndexedDB + non-extractable SubtleCrypto secure key store
@@ -289,7 +289,7 @@ web-sys = { workspace = true, features = [
     "HtmlAnchorElement",
     "HtmlElement",
     "Url",
-    # Sprint Q1 increment 22 (H6): IndexedDB-backed secure key store.
+    # IndexedDB-backed secure key store.
     # `IndexedDbSecureKeyStore` opens an IDB database, derives an
     # AES-GCM key via SubtleCrypto.deriveKey (`extractable: false`),
     # and persists entries under structured keys.

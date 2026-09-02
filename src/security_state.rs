@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use serde_json::Value;
 
-// YOU-05-008: shared "first non-empty string under candidate keys" helper
+// Shared "first non-empty string under candidate keys" helper
 // lives in `crate::realm_tree`.
 use crate::realm_tree::string_field;
 

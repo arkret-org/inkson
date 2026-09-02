@@ -1,24 +1,15 @@
 use chrono::{DateTime, Utc};
+use garth::HostClock as _;
 
-#[cfg(target_arch = "wasm32")]
-pub(crate) fn now_unix_ms() -> u64 {
-    js_sys::Date::now().max(0.0).floor() as u64
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-pub(crate) fn now_unix_ms() -> u64 {
-    Utc::now().timestamp_millis().max(0) as u64
-}
-
-#[cfg(target_arch = "wasm32")]
+/// The host wall clock. Both targets go through garth's `HostClock`
+/// abstraction: on wasm `chrono`'s `wasmbind` backend reads `Date.now()`, so
+/// there is no second client-side clock implementation to keep in step.
 pub(crate) fn now_utc() -> DateTime<Utc> {
-    DateTime::<Utc>::from_timestamp_millis(now_unix_ms() as i64)
-        .unwrap_or(DateTime::<Utc>::UNIX_EPOCH)
+    garth::SystemClock.now()
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-pub(crate) fn now_utc() -> DateTime<Utc> {
-    Utc::now()
+pub(crate) fn now_unix_ms() -> u64 {
+    now_utc().timestamp_millis().max(0) as u64
 }
 
 pub(crate) fn now_utc_canonical() -> DateTime<Utc> {

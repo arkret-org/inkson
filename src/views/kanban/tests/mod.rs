@@ -11,7 +11,7 @@ pub(super) use crate::state::RawOperationRecord;
 
 pub(super) const TEST_REALM_ID: &str = "ak:realm:AVFSR4O2uTcP6zGsyewp0OdaGeDZBXQAUZ9VIEKLSXYo";
 
-// YOU-05-010: shared hermetic state-store fixture from `local_state`.
+// shared hermetic state-store fixture from `local_state`.
 #[cfg(not(target_arch = "wasm32"))]
 pub(super) use crate::state::isolated_store_for_tests;
 

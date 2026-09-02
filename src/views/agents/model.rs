@@ -90,7 +90,7 @@ pub fn actor_kind_badge_class(actor_kind: Option<&str>) -> &'static str {
 }
 
 // ─────────────────────────────────────────────────────────────────────
-// AKP-0008 §4.7 — additive content grant presets. The five presets are
+// §4.7 — additive content grant presets. The five presets are
 // UI/SDK affordances only; the canonical content authorization is the
 // expanded `ak.capability.grant` object for each preset (actions +
 // resource selector + registered constraints + TTL). Runtime endpoint
@@ -158,7 +158,7 @@ impl AgentGrantPreset {
         }
     }
 
-    /// Registered capability actions for this preset (AKP-0008 §4.7 /
+    /// Registered capability actions for this preset (agent spec §4.7 /
     /// §4.9). Only actions present in `capability-action-registry.json`
     /// are emitted so soland never fail-closes on an unknown action.
     pub fn actions(self) -> &'static [&'static str] {
@@ -374,7 +374,7 @@ pub fn requested_scope_for_presets(
     })
 }
 
-/// Builds the runtime-agnostic pairing bootstrap (AKP-0008 §4.4): the six
+/// Builds the runtime-agnostic pairing bootstrap (agent spec §4.4): the six
 /// short-lived fields any agent runtime needs to start key pairing. It carries
 /// no scope payload — the authoritative ceiling lives in `ak.agent.key.authorize`
 /// and the effective-permission intersection, and the requested scope is shown
@@ -398,7 +398,7 @@ pub fn build_agent_pairing_bootstrap_json(
 }
 
 /// Wraps the bootstrap into a standard HTTPS Universal/App Link whose host is the
-/// deployment's `arkret_base_url` (AKP-0008 forbids a custom URI scheme).
+/// deployment's `arkret_base_url` (a custom URI scheme is forbidden).
 /// The fragment carries only a short handoff token; runtimes resolve it through
 /// `POST /_arkret/open/agent-pairing/resolve` to obtain the six-field bootstrap.
 pub fn build_agent_pairing_deep_link(base_url: &str, pairing_token: &str) -> String {
@@ -951,7 +951,7 @@ impl ActionApproveDialogState {
 
 /// Returns true when the per-request expiry timestamp has already
 /// passed. The dialog must refuse to submit an approve event once
-/// expiry elapses (AKP-0008 §4 action_request invariants).
+/// expiry elapses (agent spec §4 action_request invariants).
 pub fn is_action_request_expired(expires_at: &str, now: &str) -> bool {
     // Both arguments are RFC3339 timestamps emitted by the SDK
     // event-canonicalizer; do a lexicographic compare on UTC ISO-8601

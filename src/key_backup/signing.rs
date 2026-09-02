@@ -46,7 +46,7 @@ impl fmt::Display for KeyBackupUnlockBackoff {
 
 impl std::error::Error for KeyBackupUnlockBackoff {}
 
-/// Phase 2 verify: check a key-backup envelope's `auth_data.signature` against
+/// Check a key-backup envelope's `auth_data.signature` against
 /// `verifying_key`, recomputing `canonical_json(envelope without
 /// auth_data.signature)`. SDK validation first enforces the closed transcript
 /// shape and all envelope cross-field invariants.
