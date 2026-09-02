@@ -62,7 +62,6 @@ mod device_identity_proof_tests {
             verification_method: verification_method.clone(),
             event_digest: arkret_sdk::Hash::new(event_digest).unwrap(),
             signer_resolution_evidence_ref: None,
-            signer_resolution_evidence_digest: None,
             created_at: proof_created_at,
             domain: None,
             audience: None,

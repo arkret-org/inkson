@@ -173,10 +173,6 @@ pub async fn upload_actor_private_file(
             principal_control_realm_id.as_str(),
         )
         .await?;
-    let uploaded_digest = upload.content_digest.to_string();
-    if uploaded_digest != prepared.content_digest {
-        anyhow::bail!("file-transfer blob upload digest mismatch");
-    }
     if upload.size_bytes != ciphertext_len as u64 {
         anyhow::bail!("file-transfer blob upload size mismatch");
     }
@@ -391,9 +387,6 @@ async fn decrypt_file_transfer_item_to_sink<S: FileTransferPlaintextSink>(
         anyhow::bail!("file-transfer plaintext size mismatch");
     }
     let actual_digest = format!("sha256:{}", hex::encode(ciphertext_digest.finalize()));
-    if actual_digest != record.content_digest {
-        anyhow::bail!("file-transfer ciphertext digest mismatch");
-    }
     verify_content_addressed_blob_ref(&record.blob_ref, &actual_digest)?;
     Ok(())
 }
@@ -402,7 +395,6 @@ fn validate_download_record(record: &FileTransferRecord) -> anyhow::Result<[u8; 
     record
         .validate()
         .map_err(|error| anyhow::anyhow!("file-transfer record invalid: {error}"))?;
-    verify_content_addressed_blob_ref(&record.blob_ref, &record.content_digest)?;
     if record.encryption.aead_profile != AEAD_PROFILE_XCHACHA20_POLY1305_V1 {
         anyhow::bail!("file-transfer AEAD profile mismatch");
     }
@@ -797,7 +789,6 @@ impl PreparedFileTransfer {
             kind: FILE_TRANSFER_RECORD_KIND.to_owned(),
             transfer_id: self.transfer_id,
             blob_ref,
-            content_digest: self.content_digest,
             blob_size_bytes,
             media_type: self.media_type,
             filename: self.filename,
@@ -935,9 +926,6 @@ fn validate_ciphertext_blob_binding(
         .validate()
         .map_err(|error| anyhow::anyhow!("file-transfer record invalid: {error}"))?;
     let digest = crate::canonical::sha256_digest(ciphertext);
-    if record.content_digest != digest {
-        anyhow::bail!("file-transfer ciphertext digest mismatch");
-    }
     verify_content_addressed_blob_ref(&record.blob_ref, &digest)?;
     if record.blob_size_bytes != ciphertext.len() as u64 {
         anyhow::bail!("file-transfer blob size mismatch");

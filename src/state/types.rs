@@ -834,7 +834,6 @@ pub enum CachedAgentSignerEvidenceContext {
         event_id: arkret_sdk::EventId,
         producer_accepted_at: chrono::DateTime<chrono::Utc>,
         producer_signer_resolution_evidence_ref: arkret_sdk::SignerEvidenceRef,
-        producer_signer_resolution_evidence_digest: arkret_sdk::Hash,
         receiver_id: arkret_sdk::DidCoreId,
     },
 }

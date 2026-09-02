@@ -1664,8 +1664,8 @@ pub(crate) fn chat_messages_from_events_with_sidecar(
 /// tombstones, which reuse the same kind + `event_id`) are kept.
 /// Shared `ak.pin.*` control events are kept in the same discussion log so the
 /// pinned-message bar and reaction summary project from the same local-first
-/// source. Poll responses / moderation prompts have their own projections and
-/// are deliberately excluded. The FULL event is stored as the record
+/// source. Poll responses have their own projection and are deliberately
+/// excluded. The FULL event is stored as the record
 /// payload so the receiver-proof gate, the `encrypted_content` ciphertext, and
 /// the tombstone markers all survive into the local-first render path — the
 /// decrypted plaintext is NEVER stored here (it stays in the author sidecar /
@@ -1909,131 +1909,6 @@ pub(crate) fn chat_messages_from_sync_realms_with_sidecar(
         ));
     }
     messages
-}
-
-pub(crate) fn moderation_appeal_prompts_from_events(
-    realm_id: &str,
-    events: &[crate::state::projection::moderation_ops::ModerationEvent],
-    appellant: &str,
-) -> Vec<ModerationAppealPrompt> {
-    use crate::state::projection::moderation_ops::LocalModerationEvent;
-
-    let mut decisions = std::collections::BTreeMap::<String, ModerationAppealPrompt>::new();
-    let mut appeal_decisions = std::collections::BTreeMap::<String, String>::new();
-
-    for event in events {
-        if event.realm_id != realm_id {
-            continue;
-        }
-        match &event.payload {
-            LocalModerationEvent::Decision(payload) => {
-                let decision_ref = &event.event_id;
-                decisions.insert(
-                    decision_ref.clone(),
-                    ModerationAppealPrompt {
-                        realm_id: realm_id.to_owned(),
-                        decision_ref: decision_ref.clone(),
-                        target_ref: payload.target_ref.to_string(),
-                        state: AppealState::None,
-                    },
-                );
-            }
-            LocalModerationEvent::DecisionLift(payload) => {
-                decisions.remove(payload.decision_ref.as_str());
-            }
-            LocalModerationEvent::AppealSubmit(payload) => {
-                if payload.appellant_id.as_str() != appellant {
-                    continue;
-                }
-                let Ok(event_id) = arkret_sdk::EventId::new(event.event_id.clone()) else {
-                    continue;
-                };
-                let appeal_id = arkret_sdk::TypedAppealId::from_event_id(&event_id).to_string();
-                let decision_ref = payload.decision_ref.as_str();
-                appeal_decisions.insert(appeal_id, decision_ref.to_owned());
-                if let Some(prompt) = decisions.get_mut(decision_ref) {
-                    prompt.state = AppealState::Submitted;
-                }
-            }
-            LocalModerationEvent::AppealReview(payload) => {
-                if let Some(decision_ref) = appeal_decisions.get(payload.appeal_id.as_str())
-                    && let Some(prompt) = decisions.get_mut(decision_ref)
-                {
-                    prompt.state = AppealState::UnderReview;
-                }
-            }
-            LocalModerationEvent::AppealDecision(payload) => {
-                if let Some(decision_ref) = appeal_decisions.get(payload.appeal_id.as_str())
-                    && let Some(prompt) = decisions.get_mut(decision_ref)
-                {
-                    prompt.state = AppealState::Decided {
-                        decision: payload.decision,
-                    };
-                }
-            }
-            LocalModerationEvent::AppealClose(payload) => {
-                if let Some(decision_ref) = appeal_decisions.get(payload.appeal_id.as_str())
-                    && let Some(prompt) = decisions.get_mut(decision_ref)
-                {
-                    prompt.state = AppealState::Closed;
-                }
-            }
-        }
-    }
-
-    decisions.into_values().collect()
-}
-
-pub(crate) fn moderation_appeal_prompts_from_sdk_events(
-    realm_id: &str,
-    events: &[arkret_sdk::Event],
-    appellant: &str,
-) -> Vec<ModerationAppealPrompt> {
-    let events = events
-        .iter()
-        .filter_map(crate::state::projection::moderation_ops::ModerationEvent::from_sdk_event)
-        .collect::<Vec<_>>();
-    moderation_appeal_prompts_from_events(realm_id, &events, appellant)
-}
-
-pub(crate) fn moderation_appeal_prompts_from_local_records(
-    realm_id: &str,
-    events: &[Value],
-    appellant: &str,
-) -> Vec<ModerationAppealPrompt> {
-    let events = events
-        .iter()
-        .filter_map(|event| {
-            crate::state::projection::moderation_ops::moderation_event_from_local_record(
-                realm_id, event,
-            )
-        })
-        .collect::<Vec<_>>();
-    moderation_appeal_prompts_from_events(realm_id, &events, appellant)
-}
-
-pub(crate) fn moderation_appeal_prompts_from_sync_realms(
-    realms: &std::collections::BTreeMap<String, Value>,
-    appellant: &str,
-) -> Vec<ModerationAppealPrompt> {
-    let mut prompts = Vec::new();
-    for (realm_id, body) in realms {
-        // Moderation decisions and appeal lifecycle events are sealed control-plane
-        // cells, so the account stream projects them through `state.events`. Keep
-        // accepting timeline copies for profiles that also expose the raw event there.
-        let events = ["state", "timeline"]
-            .into_iter()
-            .filter_map(|section| body.get(section))
-            .filter_map(|projection| projection.get("events"))
-            .filter_map(Value::as_array)
-            .flatten()
-            .filter_map(|event| serde_json::from_value::<arkret_sdk::Event>(event.clone()).ok())
-            .collect::<Vec<_>>();
-        prompts.extend(moderation_appeal_prompts_from_sdk_events(
-            realm_id, &events, appellant,
-        ));
-    }
-    prompts
 }
 
 pub(crate) fn poll_cards_from_sync_realms_with_sidecar(

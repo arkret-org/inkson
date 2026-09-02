@@ -1,15 +1,11 @@
 //! Moderation control-event to local raw-operation extraction.
 //!
-//! Moderation decisions and appeal lifecycle events are sealed control-plane
-//! cells. They still need a durable client-side event log so appellant and
-//! reviewer projections can rebuild after reload and react to realm-stream
-//! delivery that occurs after the initial account snapshot.
-
-use std::marker::PhantomData;
+//! Moderation decisions are sealed control-plane cells. They still need a
+//! durable client-side event log so management projections can rebuild after reload and react to
+//! realm-stream delivery that occurs after the initial account snapshot.
 
 use arkret_sdk::EventPayloadExt as _;
-use serde::de::Error as _;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use serde_json::Value;
 
 use crate::state::RawOperationRecord;
@@ -18,10 +14,6 @@ use crate::state::RawOperationRecord;
 pub(crate) enum LocalModerationEvent {
     Decision(arkret_sdk::ModerationDecisionPayload),
     DecisionLift(arkret_sdk::ModerationDecisionLiftPayload),
-    AppealSubmit(arkret_sdk::AppealSubmitPayload),
-    AppealReview(arkret_sdk::AppealReviewPayload),
-    AppealDecision(arkret_sdk::AppealDecisionPayload),
-    AppealClose(arkret_sdk::AppealClosePayload),
 }
 
 impl LocalModerationEvent {
@@ -35,26 +27,6 @@ impl LocalModerationEvent {
             arkret_sdk::EventKind::ModerationDecisionLift => Self::DecisionLift(
                 event
                     .typed_payload::<arkret_wire::event_spec::ModerationDecisionLift>()
-                    .ok()?,
-            ),
-            arkret_sdk::EventKind::ModerationAppealSubmit => Self::AppealSubmit(
-                event
-                    .typed_payload::<arkret_wire::event_spec::ModerationAppealSubmit>()
-                    .ok()?,
-            ),
-            arkret_sdk::EventKind::ModerationAppealReview => Self::AppealReview(
-                event
-                    .typed_payload::<arkret_wire::event_spec::ModerationAppealReview>()
-                    .ok()?,
-            ),
-            arkret_sdk::EventKind::ModerationAppealDecision => Self::AppealDecision(
-                event
-                    .typed_payload::<arkret_wire::event_spec::ModerationAppealDecision>()
-                    .ok()?,
-            ),
-            arkret_sdk::EventKind::ModerationAppealClose => Self::AppealClose(
-                event
-                    .typed_payload::<arkret_wire::event_spec::ModerationAppealClose>()
                     .ok()?,
             ),
             _ => return None,
@@ -79,10 +51,6 @@ impl LocalModerationEvent {
         match self {
             Self::Decision(payload) => serialize_record!(ModerationDecision, payload),
             Self::DecisionLift(payload) => serialize_record!(ModerationDecisionLift, payload),
-            Self::AppealSubmit(payload) => serialize_record!(ModerationAppealSubmit, payload),
-            Self::AppealReview(payload) => serialize_record!(ModerationAppealReview, payload),
-            Self::AppealDecision(payload) => serialize_record!(ModerationAppealDecision, payload),
-            Self::AppealClose(payload) => serialize_record!(ModerationAppealClose, payload),
         }
     }
 }
@@ -103,102 +71,6 @@ struct LocalModerationMetadata {
     event_id: String,
     actor_id: String,
     created_at: String,
-}
-
-#[derive(Clone, Debug)]
-pub(crate) struct ModerationEvent {
-    pub(crate) event_id: String,
-    pub(crate) realm_id: String,
-    pub(crate) payload: LocalModerationEvent,
-}
-
-impl ModerationEvent {
-    pub(crate) fn from_sdk_event(event: &arkret_sdk::Event) -> Option<Self> {
-        Some(Self {
-            event_id: event.event_id.as_str().to_owned(),
-            realm_id: event.realm_id.as_str().to_owned(),
-            payload: LocalModerationEvent::from_sdk_event(event)?,
-        })
-    }
-}
-
-struct ExpectedEventKind<K>(PhantomData<K>);
-
-impl<'de, K: arkret_sdk::EventSpec> Deserialize<'de> for ExpectedEventKind<K> {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        let kind = arkret_sdk::EventKind::deserialize(deserializer)?;
-        if kind != K::KIND {
-            return Err(D::Error::custom(
-                "event kind does not match its typed payload",
-            ));
-        }
-        Ok(Self(PhantomData))
-    }
-}
-
-#[derive(Deserialize)]
-#[serde(bound(deserialize = "K::Payload: Deserialize<'de>"))]
-struct StoredModerationRecord<K: arkret_sdk::EventSpec> {
-    /// Deserialization-time discriminator: the `untagged` enum below picks a
-    /// variant by whether this member parses as the expected kind. Nothing reads
-    /// it afterwards, so it is named for what it is instead of being silenced.
-    #[serde(rename = "kind")]
-    _kind: ExpectedEventKind<K>,
-    #[serde(default)]
-    event_id: Option<String>,
-    body: K::Payload,
-}
-
-#[derive(Deserialize)]
-#[serde(untagged)]
-enum StoredModerationEvent {
-    Decision(StoredModerationRecord<arkret_wire::event_spec::ModerationDecision>),
-    DecisionLift(StoredModerationRecord<arkret_wire::event_spec::ModerationDecisionLift>),
-    AppealSubmit(StoredModerationRecord<arkret_wire::event_spec::ModerationAppealSubmit>),
-    AppealReview(StoredModerationRecord<arkret_wire::event_spec::ModerationAppealReview>),
-    AppealDecision(StoredModerationRecord<arkret_wire::event_spec::ModerationAppealDecision>),
-    AppealClose(StoredModerationRecord<arkret_wire::event_spec::ModerationAppealClose>),
-}
-
-pub(crate) fn moderation_event_from_local_record(
-    realm_id: &str,
-    value: &Value,
-) -> Option<ModerationEvent> {
-    let stored = serde_json::from_value::<StoredModerationEvent>(value.clone()).ok()?;
-    let (event_id, payload) = match stored {
-        StoredModerationEvent::Decision(record) => (
-            record.event_id.unwrap_or_default(),
-            LocalModerationEvent::Decision(record.body),
-        ),
-        StoredModerationEvent::DecisionLift(record) => (
-            record.event_id.unwrap_or_default(),
-            LocalModerationEvent::DecisionLift(record.body),
-        ),
-        StoredModerationEvent::AppealSubmit(record) => (
-            record.event_id.unwrap_or_default(),
-            LocalModerationEvent::AppealSubmit(record.body),
-        ),
-        StoredModerationEvent::AppealReview(record) => (
-            record.event_id.unwrap_or_default(),
-            LocalModerationEvent::AppealReview(record.body),
-        ),
-        StoredModerationEvent::AppealDecision(record) => (
-            record.event_id.unwrap_or_default(),
-            LocalModerationEvent::AppealDecision(record.body),
-        ),
-        StoredModerationEvent::AppealClose(record) => (
-            record.event_id.unwrap_or_default(),
-            LocalModerationEvent::AppealClose(record.body),
-        ),
-    };
-    Some(ModerationEvent {
-        event_id,
-        realm_id: realm_id.to_owned(),
-        payload,
-    })
 }
 
 pub(crate) fn moderation_operations_from_events(

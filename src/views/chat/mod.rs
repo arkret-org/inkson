@@ -29,7 +29,6 @@ use crate::views::helpers::{
     MentionNode, active_sync_token, parse_agent_selector_mention_tokens, parse_mention_nodes,
     short_protocol_id,
 };
-use crate::views::moderation_appeal::{AppealEntrypoint, AppealState};
 
 mod composer;
 mod controller;
@@ -172,7 +171,6 @@ fn timeline_projection_key(
     selected_realm_id: &str,
     realm_live_epoch: u64,
     visible_messages: &[ChatMessage],
-    visible_moderation_appeal_prompts: &[ModerationAppealPrompt],
     private_sidecar_strand_ids: &std::collections::BTreeSet<String>,
 ) -> String {
     use std::hash::{Hash, Hasher};
@@ -193,12 +191,6 @@ fn timeline_projection_key(
         message.redacted.hash(&mut projection);
         message.pending.hash(&mut projection);
         message.failed.hash(&mut projection);
-    }
-    for prompt in visible_moderation_appeal_prompts {
-        prompt.realm_id.hash(&mut projection);
-        prompt.decision_ref.hash(&mut projection);
-        prompt.target_ref.hash(&mut projection);
-        prompt.state.hash(&mut projection);
     }
     private_sidecar_strand_ids.hash(&mut projection);
     format!("{:016x}", projection.finish())
@@ -1492,7 +1484,6 @@ pub fn ChatPanel(
         mut channels,
         selected_channel,
         messages,
-        moderation_appeal_prompts,
         draft: _,
         typing_throttle: _,
         compose_dragover: _,
@@ -1905,21 +1896,13 @@ pub fn ChatPanel(
         sidecar_projection,
         &sidecar_exchange_projections,
     );
-    let visible_moderation_appeal_prompts = moderation_appeal_prompts()
-        .into_iter()
-        .filter(|prompt| {
-            selected_realm_id.trim().is_empty() || prompt.realm_id == selected_realm_id
-        })
-        .collect::<Vec<_>>();
-    let visible_moderation_appeal_prompt_count = visible_moderation_appeal_prompts.len();
     // Dioxus may retain the child timeline across context-backed signal updates. Key the
-    // projection boundary by every visible timeline row so message and moderation lifecycle
-    // folds cannot leave a memoized child rendering an older snapshot.
+    // projection boundary by every visible timeline row so lifecycle folds cannot
+    // leave a memoized child rendering an older snapshot.
     let _timeline_projection_key = timeline_projection_key(
         &selected_realm_id,
         realm_live_epoch(),
         &visible_messages,
-        &visible_moderation_appeal_prompts,
         &private_sidecar_strand_ids,
     );
     // P3B.2.4 — per-strand Circle-scope lookup used by the
@@ -2167,7 +2150,6 @@ pub fn ChatPanel(
             "data-testid": "chat-panel",
             "data-chat-mode": if direct_mode { "direct" } else { "collaboration" },
             "data-initial-sync": if initial_sync_finished() { "complete" } else { "pending" },
-            "data-moderation-appeal-count": "{visible_moderation_appeal_prompt_count}",
             ChatEffects {
                 controller,
                 authority: authority.clone(),
@@ -2928,7 +2910,6 @@ pub fn ChatPanel(
                     context: ChatTimelineContext {
                         embedded,
                         visible_messages: visible_messages.clone(),
-                        visible_moderation_appeal_prompts: visible_moderation_appeal_prompts.clone(),
                         strand_scope_lookup: strand_scope_lookup.clone(),
                         private_sidecar_strand_ids: private_sidecar_strand_ids.clone(),
                         authority: authority.clone(),

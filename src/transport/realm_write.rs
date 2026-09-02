@@ -692,8 +692,8 @@ pub async fn ban_member(
 
 // ── Daily governance — protocol-event pipeline (P3) ───────────────
 //
-// Setting / revoking Realm admins, sealing moderation decisions, and
-// running the appeal loop are now self-authored protocol Moves submitted
+// Setting / revoking Realm admins and sealing moderation decisions are
+// self-authored protocol Moves submitted
 // via `ak.self.events.command.submit.v1` (`POST /_arkret/self/events`) —
 // mirroring `transition_member_state` / `ban_member`. P1 (capability)
 // and P2 (moderation) projected the matching reducers in soland and the
@@ -745,7 +745,7 @@ pub async fn revoke_realm_admin(
 
 /// Seal a moderation disposition via `ak.moderation.decision`. The cell
 /// subject is the moderated `target_ref`; the sealed decision Event's own
-/// id is the reference later lift / appeal events resolve. `decision` is
+/// id is the reference later lift events resolve. `decision` is
 /// the closed-enum runtime verb (`hard_deny` / `soft_deny` / `quarantine`
 /// / `require_review`).
 pub async fn moderation_decide(
@@ -833,203 +833,6 @@ pub async fn moderation_lift(
         reason_code,
     )?
     .build_sdk_event("inkson")?;
-    submitter.submit_sdk_event(&event).await
-}
-
-/// Take an appeal under review (`ak.moderation.appeal.review`).
-pub async fn appeal_review(
-    submitter: &EventSubmitter,
-    realm_id: &str,
-    actor_id: &str,
-    appeal_id: &str,
-    notes_ref: Option<&str>,
-) -> anyhow::Result<SubmitEventResult> {
-    let event = ak_ops::moderation_appeal_review(realm_id, actor_id, appeal_id, notes_ref)?
-        .build_sdk_event("inkson")?;
-    submitter.submit_sdk_event(&event).await
-}
-
-/// Decide an appeal (`ak.moderation.appeal.decision`). For an
-/// `overturn` verdict the caller MUST also submit a matching
-/// [`moderation_lift`] in the same ordered batch; for `modify`,
-/// pass the replacement decision id as `modify_decision_ref` and submit
-/// that new [`moderation_decide`] in the same batch. This single
-/// call only mints the appeal-decision event.
-pub async fn appeal_decide(
-    submitter: &EventSubmitter,
-    realm_id: &str,
-    actor_id: &str,
-    appeal_id: &str,
-    decision: &str,
-    reason_text_ref: &str,
-    modify_decision_ref: Option<&str>,
-) -> anyhow::Result<SubmitEventResult> {
-    let event = ak_ops::moderation_appeal_decision(
-        realm_id,
-        actor_id,
-        appeal_id,
-        decision,
-        reason_text_ref,
-        modify_decision_ref,
-    )?
-    .build_sdk_event("inkson")?;
-    submitter.submit_sdk_event(&event).await
-}
-
-/// `governance/content-moderation.md` §5.5.1.1 — atomically decide an
-/// appeal `verdict=overturn`. The reducer rejects an overturn whose
-/// matching `ak.moderation.decision.lift` (target = `decision_ref`) is not
-/// in the SAME ordered submit batch (`appeal_overturn_missing_lift`), so
-/// this helper builds BOTH events, signs them, and submits them via
-/// [`EventSubmitter::submit_signed_sdk_events_batch`] as one transaction.
-///
-/// Order matters: the appeal-decision precedes the lift it authorizes.
-pub async fn appeal_overturn_atomic(
-    submitter: &EventSubmitter,
-    realm_id: &str,
-    actor_id: &str,
-    appeal_id: &str,
-    target_ref: &str,
-    decision_ref: &str,
-    reason_text_ref: &str,
-    lift_reason_code: &str,
-) -> anyhow::Result<arkret_sdk::EventsSubmitOutcome> {
-    let appeal_event = ak_ops::moderation_appeal_decision(
-        realm_id,
-        actor_id,
-        appeal_id,
-        "overturn",
-        reason_text_ref,
-        None,
-    )?
-    .build_sdk_event("inkson")?;
-    let observed_dot_ids =
-        moderation_observed_dots(submitter, realm_id, target_ref, decision_ref).await?;
-    let lift_event = ak_ops::moderation_decision_lift(
-        realm_id,
-        actor_id,
-        target_ref,
-        decision_ref,
-        &observed_dot_ids,
-        lift_reason_code,
-    )?
-    .build_sdk_event("inkson")?;
-    sign_and_submit_moderation_batch(submitter, realm_id, vec![appeal_event, lift_event]).await
-}
-
-/// `governance/content-moderation.md` §5.5.1.1 — atomically decide an
-/// appeal `verdict=modify`. The reducer rejects a modify whose
-/// replacement `ak.moderation.decision` (target = original target) is not
-/// in the same batch, and cross-checks that the appeal-decision's
-/// `modify_decision_ref` equals that new decision's event id. This helper
-/// completes the replacement decision first, stamps its content-bound id as
-/// `modify_decision_ref`, and submits the replacement, appeal decision, and
-/// original-decision lift as one transaction.
-///
-/// Returns the minted replacement `decision_id` alongside the batch result
-/// so the caller can surface it.
-pub async fn appeal_modify_atomic(
-    submitter: &EventSubmitter,
-    realm_id: &str,
-    actor_id: &str,
-    appeal_id: &str,
-    target_ref: &str,
-    decision_ref: &str,
-    new_verdict: &str,
-    new_reason_code: &str,
-    appeal_reason_text_ref: &str,
-) -> anyhow::Result<(String, arkret_sdk::EventsSubmitOutcome)> {
-    let new_decision =
-        ak_ops::moderation_decision(realm_id, actor_id, target_ref, new_verdict, new_reason_code)?
-            .build_sdk_event("inkson")?
-            .into_intent();
-    let observed_dot_ids =
-        moderation_observed_dots(submitter, realm_id, target_ref, decision_ref).await?;
-    let (realm_id_owned, actor_id_owned) = (realm_id.to_owned(), actor_id.to_owned());
-    let (appeal_id, target_ref_owned, decision_ref_owned, appeal_reason_text_ref) = (
-        appeal_id.to_owned(),
-        target_ref.to_owned(),
-        decision_ref.to_owned(),
-        appeal_reason_text_ref.to_owned(),
-    );
-    let authored = submitter
-        .author_event_unit(vec![
-            Box::new(move |_| Ok(vec![new_decision])),
-            Box::new(move |authored| {
-                // `modify_decision_ref` is the replacement decision's own Event
-                // id; the reducer cross-checks it, so it can only be read after
-                // that Event is authored.
-                let new_decision_id = authored
-                    .first()
-                    .ok_or_else(|| anyhow::anyhow!("appeal modify needs its replacement decision"))?
-                    .event_id()
-                    .to_string();
-                Ok(vec![
-                    ak_ops::moderation_appeal_decision(
-                        &realm_id_owned,
-                        &actor_id_owned,
-                        &appeal_id,
-                        "modify",
-                        &appeal_reason_text_ref,
-                        Some(&new_decision_id),
-                    )?
-                    .build_sdk_event("inkson")?
-                    .into_intent(),
-                    ak_ops::moderation_decision_lift(
-                        &realm_id_owned,
-                        &actor_id_owned,
-                        &target_ref_owned,
-                        &decision_ref_owned,
-                        &observed_dot_ids,
-                        "appeal_modify",
-                    )?
-                    .build_sdk_event("inkson")?
-                    .into_intent(),
-                ])
-            }),
-        ])
-        .await?;
-    let new_decision_id = authored[0].event_id().to_string();
-    let result = submitter
-        .submit_signed_sdk_events_batch(&authored, None)
-        .await?;
-    Ok((new_decision_id, result))
-}
-
-/// Seal-stamp + sign each event in a moderation control transaction, then
-/// submit them atomically via [`EventSubmitter::submit_signed_sdk_events_batch`].
-/// Shared by [`appeal_overturn_atomic`] / [`appeal_modify_atomic`].
-/// All envelopes ride the same Realm seal head so the batch is one
-/// consistent control view.
-async fn sign_and_submit_moderation_batch(
-    submitter: &EventSubmitter,
-    _realm_id: &str,
-    events: Vec<crate::operation::LocalOperation>,
-) -> anyhow::Result<arkret_sdk::EventsSubmitOutcome> {
-    submitter
-        .submit_sdk_events_batch(
-            _realm_id,
-            events
-                .into_iter()
-                .map(crate::operation::LocalOperation::into_intent)
-                .collect(),
-            None,
-        )
-        .await
-}
-
-/// Close an appeal (`ak.moderation.appeal.close`). Reviewer close or
-/// appellant withdrawal (the reducer authorizes withdrawal via
-/// `closer == appellant`).
-pub async fn appeal_close(
-    submitter: &EventSubmitter,
-    realm_id: &str,
-    actor_id: &str,
-    appeal_id: &str,
-    close_reason: Option<&str>,
-) -> anyhow::Result<SubmitEventResult> {
-    let event = ak_ops::moderation_appeal_close(realm_id, actor_id, appeal_id, close_reason)?
-        .build_sdk_event("inkson")?;
     submitter.submit_sdk_event(&event).await
 }
 

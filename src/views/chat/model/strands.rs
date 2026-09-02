@@ -543,21 +543,6 @@ pub(crate) fn restore_pending_messages_from_private_plaintext_sidecar(
     changed
 }
 
-pub(crate) fn merge_moderation_appeal_prompts(
-    target: &mut Vec<ModerationAppealPrompt>,
-    incoming: Vec<ModerationAppealPrompt>,
-) {
-    for prompt in incoming {
-        if let Some(existing) = target.iter_mut().find(|candidate| {
-            candidate.realm_id == prompt.realm_id && candidate.decision_ref == prompt.decision_ref
-        }) {
-            *existing = prompt;
-        } else {
-            target.push(prompt);
-        }
-    }
-}
-
 pub(crate) fn merge_poll_cards(
     target: &mut Vec<crate::messaging::polls::PollCard>,
     incoming: Vec<crate::messaging::polls::PollCard>,

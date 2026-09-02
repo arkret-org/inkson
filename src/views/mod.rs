@@ -58,15 +58,8 @@ pub mod kanban;
 pub mod login;
 pub(crate) mod member_display;
 pub mod message_streams;
-/// P3 — moderation reviewer workbench (decision/lift + appeal review/decide/
-/// close). Admin-scope reviewer surface, mounted as the RealmAdmin
-/// `Moderation` section; drives the daily-governance `moderation_*` /
-/// `appeal_*` API. Companion to the appellant-facing [`moderation_appeal`].
+/// Admin-scope moderation decision/lift workbench.
 pub mod moderation;
-/// (T06) — moderation appeal user strand. Entrypoint button +
-/// `ak.moderation.appeal.submit` builder. Renders near user-facing
-/// moderation decisions; reviewer surface is admin-scope.
-pub mod moderation_appeal;
 pub mod notifications;
 pub mod onboarding;
 /// Actor-private invite-quarantine status surface.

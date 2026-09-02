@@ -380,11 +380,6 @@ pub(super) fn RouteSurface(state: RouteSurfaceState) -> Element {
                                     sync_cursor,
                                     realm_live_epoch,
                                     frontier_state,
-                                    // A banned appellant no longer has an accepted default
-                                    // Strand, but the actor-private moderation projection must
-                                    // remain reachable so they can exercise the normative appeal
-                                    // path. ChatPanel already disables authoring without a Strand
-                                    // and renders only the account-synced appeal prompt here.
                                     initial_strand_id: active_default_strand_id.clone().unwrap_or_default(),
                                     embedded: false,
                                     direct_mode: false,

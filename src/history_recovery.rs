@@ -527,7 +527,7 @@ fn principal_signer_evidence_coordinates_from_event(
     realm_id: &arkret_sdk::RealmId,
     actor_id: &arkret_sdk::DidCoreId,
     verification_method: &arkret_sdk::DidUrl,
-) -> anyhow::Result<Option<(arkret_sdk::SignerEvidenceRef, arkret_sdk::Hash)>> {
+) -> anyhow::Result<Option<arkret_sdk::SignerEvidenceRef>> {
     let Ok(event) = serde_json::from_value::<arkret_sdk::Event>(value.clone()) else {
         return Ok(None);
     };
@@ -540,16 +540,12 @@ fn principal_signer_evidence_coordinates_from_event(
         let arkret_sdk::EventProof::Producer(producer) = proof else {
             continue;
         };
-        let (Some(evidence_ref), Some(evidence_digest)) = (
-            &producer.signer_resolution_evidence_ref,
-            &producer.signer_resolution_evidence_digest,
-        ) else {
+        let Some(evidence_ref) = &producer.signer_resolution_evidence_ref else {
             continue;
         };
-        if producer.verification_method == *verification_method
-            && evidence_ref.content_digest()? == *evidence_digest
-        {
-            return Ok(Some((evidence_ref.clone(), evidence_digest.clone())));
+        if producer.verification_method == *verification_method {
+            evidence_ref.content_digest()?;
+            return Ok(Some(evidence_ref.clone()));
         }
     }
     Ok(None)
@@ -561,7 +557,7 @@ fn current_member_signer_evidence_coordinates(
     scope: &arkret_sdk::HistoryEffectiveScope,
     actor_id: &arkret_sdk::DidCoreId,
     verification_method: &arkret_sdk::DidUrl,
-) -> anyhow::Result<(arkret_sdk::SignerEvidenceRef, arkret_sdk::Hash)> {
+) -> anyhow::Result<arkret_sdk::SignerEvidenceRef> {
     if let Some(evidence) = checkpoint
         .governance_dependencies
         .iter()
@@ -581,10 +577,7 @@ fn current_member_signer_evidence_coordinates(
             _ => None,
         })
     {
-        return Ok((
-            evidence.evidence_ref()?,
-            evidence.canonical_sha256_digest()?,
-        ));
+        return Ok(evidence.evidence_ref()?);
     }
 
     let realm_id = scope.realm_id();
@@ -597,13 +590,13 @@ fn current_member_signer_evidence_coordinates(
         .into_iter()
         .flatten();
     for value in events {
-        if let Some(coordinates) = principal_signer_evidence_coordinates_from_event(
+        if let Some(evidence_ref) = principal_signer_evidence_coordinates_from_event(
             value,
             realm_id,
             actor_id,
             verification_method,
         )? {
-            return Ok(coordinates);
+            return Ok(evidence_ref);
         }
     }
     for record in &state.raw_operations {
@@ -616,13 +609,13 @@ fn current_member_signer_evidence_coordinates(
             .into_iter()
             .chain(std::iter::once(&record.payload));
         for value in values {
-            if let Some(coordinates) = principal_signer_evidence_coordinates_from_event(
+            if let Some(evidence_ref) = principal_signer_evidence_coordinates_from_event(
                 value,
                 realm_id,
                 actor_id,
                 verification_method,
             )? {
-                return Ok(coordinates);
+                return Ok(evidence_ref);
             }
         }
     }
@@ -637,7 +630,6 @@ fn build_signed_member_response(
     source_actor_id: &arkret_sdk::DidCoreId,
     source_sender_domain: &str,
     source_signer_evidence_ref: &arkret_sdk::SignerEvidenceRef,
-    source_signer_evidence_digest: &arkret_sdk::Hash,
     verification_method: &arkret_sdk::DidUrl,
     content: arkret_sdk::HistoryKeyResponseContent,
     signer: &crate::event_signer::InksonEventSigner,
@@ -656,7 +648,6 @@ fn build_signed_member_response(
                 source_actor_id: source_actor_id.clone(),
                 source_sender_domain: source_sender_domain.to_owned(),
                 source_signer_evidence_ref: source_signer_evidence_ref.clone(),
-                source_signer_evidence_digest: source_signer_evidence_digest.clone(),
                 request_digest: request_digest.clone(),
                 request_receipt_digest: request_receipt_digest.clone(),
                 expires_at: request_record.request.expires_at,
@@ -719,14 +710,13 @@ async fn build_member_source_attempt(
         anyhow::bail!("history source signer is not bound to the explicit current device");
     }
     let verification_method = signer.verification_method_for_principal(source_did)?;
-    let (source_signer_evidence_ref, source_signer_evidence_digest) =
-        current_member_signer_evidence_coordinates(
-            state_store,
-            &traversal.checkpoint,
-            &request_record.request.effective_scope,
-            source_actor_id,
-            &verification_method,
-        )?;
+    let source_signer_evidence_ref = current_member_signer_evidence_coordinates(
+        state_store,
+        &traversal.checkpoint,
+        &request_record.request.effective_scope,
+        source_actor_id,
+        &verification_method,
+    )?;
 
     let manifest_response_id = arkret_sdk::HistoryResponseId::new(format!(
         "ak:history_response:{}",
@@ -761,7 +751,6 @@ async fn build_member_source_attempt(
         source_actor_id,
         source_device_id.as_str(),
         &source_signer_evidence_ref,
-        &source_signer_evidence_digest,
         &verification_method,
         arkret_sdk::HistoryKeyResponseContent::Manifest(arkret_sdk::HistoryResponseManifest {
             kind: arkret_sdk::HistoryResponseManifestKind::Value,
@@ -823,7 +812,6 @@ async fn build_member_source_attempt(
             source_actor_id,
             source_device_id.as_str(),
             &source_signer_evidence_ref,
-            &source_signer_evidence_digest,
             &verification_method,
             arkret_sdk::HistoryKeyResponseContent::Chunk(sealed),
             signer.as_ref(),
@@ -1258,25 +1246,38 @@ where
         arkret_sdk::HistoryEffectiveScope::Realm { realm_id }
         | arkret_sdk::HistoryEffectiveScope::Circle { realm_id, .. } => realm_id.clone(),
     };
+    let source_evidence_digests = page
+        .entries
+        .iter()
+        .filter_map(|entry| match entry {
+            arkret_sdk::HistoryResponsePageEntry::Record { record } => Some(
+                record
+                    .source_record
+                    .source_signer_evidence_ref
+                    .content_digest(),
+            ),
+            arkret_sdk::HistoryResponsePageEntry::Lost { .. } => None,
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let release_service_evidence_digests = page
+        .entries
+        .iter()
+        .map(|entry| match entry {
+            arkret_sdk::HistoryResponsePageEntry::Record { record } => {
+                record.release_service_signer_evidence_ref.content_digest()
+            }
+            arkret_sdk::HistoryResponsePageEntry::Lost { lost_record } => lost_record
+                .release_service_signer_evidence_ref
+                .content_digest(),
+        })
+        .collect::<Result<Vec<_>, _>>()?;
     let signer_dependencies =
         crate::mls::governance_acquisition::resolve_history_response_signer_dependencies(
             api,
             &realm_id,
             &request_receipt_digest,
-            page.entries.iter().filter_map(|entry| match entry {
-                arkret_sdk::HistoryResponsePageEntry::Record { record } => {
-                    Some(record.source_record.source_signer_evidence_digest.clone())
-                }
-                arkret_sdk::HistoryResponsePageEntry::Lost { .. } => None,
-            }),
-            page.entries.iter().map(|entry| match entry {
-                arkret_sdk::HistoryResponsePageEntry::Record { record } => {
-                    record.release_service_signer_evidence_digest.clone()
-                }
-                arkret_sdk::HistoryResponsePageEntry::Lost { lost_record } => {
-                    lost_record.release_service_signer_evidence_digest.clone()
-                }
-            }),
+            source_evidence_digests,
+            release_service_evidence_digests,
         )
         .await
         .map_err(anyhow::Error::msg)?;

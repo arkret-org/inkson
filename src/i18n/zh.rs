@@ -187,11 +187,6 @@ pub fn chinese_translations() -> TranslationDict {
         "mls_backup.status.confirm_mismatch",
         "两次输入的恢复密钥不一致",
     );
-    dict.set("moderation.appeal.state.none", "尚未申诉");
-    dict.set("moderation.appeal.state.submitted", "已提交");
-    dict.set("moderation.appeal.state.under_review", "审核中");
-    dict.set("moderation.appeal.state.decided", "已裁定");
-    dict.set("moderation.appeal.state.closed", "已关闭");
     dict.set("common.retry", "重试");
     dict.set("common.close", "关闭");
     dict.set("common.cancel", "取消");

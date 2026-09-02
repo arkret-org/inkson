@@ -603,8 +603,7 @@ pub(super) fn ChatEffects(
                         )
                         .await
                 {
-                    // A removed member can still enter this shell to exercise
-                    // actor-private moderation appeal rights, but cannot
+                    // A removed member can still enter this shell, but cannot
                     // reacquire Realm governance state. Other members must pin
                     // the verified checkpoint before the UI reports authoring
                     // readiness, so a later offline operation is fully
@@ -617,7 +616,6 @@ pub(super) fn ChatEffects(
                 }
                 let mut loaded_messages = Vec::new();
                 let mut loaded_poll_cards = Vec::new();
-                let mut loaded_moderation_appeal_prompts = Vec::new();
                 if let Ok(account) =
                     async { crate::transport::account::account_me(&api.sdk_http_client()?).await }
                         .await
@@ -666,12 +664,6 @@ pub(super) fn ChatEffects(
                         Some(&state_store.read()),
                         decrypt_identity,
                     ));
-                    loaded_moderation_appeal_prompts.extend(
-                        moderation_appeal_prompts_from_sync_realms(
-                            &sync.realm_projections,
-                            &principal_id_for_load,
-                        ),
-                    );
                     event_sink.emit(ChatProjectionEvent::MergeChannels(
                         channels_from_sync_realms(
                             &sync.realm_projections,
@@ -756,13 +748,6 @@ pub(super) fn ChatEffects(
                         Some(&state_store.read()),
                         decrypt_identity,
                     ));
-                    loaded_moderation_appeal_prompts.extend(
-                        moderation_appeal_prompts_from_sdk_events(
-                            &selected_realm_for_load,
-                            &complete_events,
-                            &principal_id_for_load,
-                        ),
-                    );
                 }
 
                 event_sink.emit(ChatProjectionEvent::MergeChannels(
@@ -778,11 +763,6 @@ pub(super) fn ChatEffects(
                 }
                 if !loaded_poll_cards.is_empty() {
                     event_sink.emit(ChatProjectionEvent::MergePollCards(loaded_poll_cards));
-                }
-                if !loaded_moderation_appeal_prompts.is_empty() {
-                    event_sink.emit(ChatProjectionEvent::MergeModerationPrompts(
-                        loaded_moderation_appeal_prompts,
-                    ));
                 }
                 event_sink.emit(ChatProjectionEvent::InitialSync {
                     requested: true,
@@ -816,7 +796,7 @@ pub(super) fn ChatEffects(
                 return;
             }
             local_timeline_sync_key_seen.set(sync_key);
-            let (next_messages, next_poll_cards, next_moderation_appeal_prompts) = {
+            let (next_messages, next_poll_cards) = {
                 let store = state_store.read();
                 let snapshot = store.load();
                 let decrypt_identity = Some((
@@ -844,12 +824,7 @@ pub(super) fn ChatEffects(
                     Some(&store),
                     decrypt_identity,
                 );
-                let prompts = moderation_appeal_prompts_from_local_records(
-                    &realm,
-                    &realm_events,
-                    &principal_id_for_local_timeline,
-                );
-                (messages, poll_cards, prompts)
+                (messages, poll_cards)
             };
             if !next_messages.is_empty() {
                 event_sink.emit(ChatProjectionEvent::MergeMessages(next_messages));
@@ -857,9 +832,6 @@ pub(super) fn ChatEffects(
             if !next_poll_cards.is_empty() {
                 event_sink.emit(ChatProjectionEvent::MergePollCards(next_poll_cards));
             }
-            event_sink.emit(ChatProjectionEvent::ReplaceModerationPrompts(
-                next_moderation_appeal_prompts,
-            ));
         });
     }
 

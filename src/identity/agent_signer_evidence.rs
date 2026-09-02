@@ -28,7 +28,6 @@ struct EventAgentSelector {
     event_id: arkret_sdk::EventId,
     producer_accepted_at: chrono::DateTime<chrono::Utc>,
     producer_signer_resolution_evidence_ref: arkret_sdk::SignerEvidenceRef,
-    producer_signer_resolution_evidence_digest: Hash,
     receiver_id: DidCoreId,
 }
 
@@ -375,16 +374,6 @@ pub(crate) fn verify_cached_event(
                     continue;
                 }
             },
-            producer_signer_resolution_evidence_digest: match admission
-                .producer_signer_resolution_evidence_digest
-                .clone()
-            {
-                Some(value) => value,
-                None => {
-                    saw_rejected = true;
-                    continue;
-                }
-            },
             receiver_id: receipt.receiver_id.clone(),
         };
         if !historical_receipt_matches_selector(receipt, &selector) {
@@ -396,7 +385,6 @@ pub(crate) fn verify_cached_event(
             event_id,
             producer_accepted_at,
             producer_signer_resolution_evidence_ref,
-            producer_signer_resolution_evidence_digest,
             receiver_id,
         } = &entry.verification_context
         else {
@@ -408,8 +396,6 @@ pub(crate) fn verify_cached_event(
             || producer_accepted_at != &selector.producer_accepted_at
             || producer_signer_resolution_evidence_ref
                 != &selector.producer_signer_resolution_evidence_ref
-            || producer_signer_resolution_evidence_digest
-                != &selector.producer_signer_resolution_evidence_digest
             || receiver_id != &selector.receiver_id
         {
             saw_rejected = true;
@@ -488,9 +474,6 @@ pub(crate) fn verified_cached_agent_event_endpoint(
             producer_signer_resolution_evidence_ref: admission
                 .producer_signer_resolution_evidence_ref
                 .clone()?,
-            producer_signer_resolution_evidence_digest: admission
-                .producer_signer_resolution_evidence_digest
-                .clone()?,
             receiver_id: receipt.receiver_id.clone(),
         };
         if !historical_receipt_matches_selector(receipt, &selector) {
@@ -501,7 +484,6 @@ pub(crate) fn verified_cached_agent_event_endpoint(
             event_id,
             producer_accepted_at,
             producer_signer_resolution_evidence_ref,
-            producer_signer_resolution_evidence_digest,
             receiver_id,
         } = &entry.verification_context
         else {
@@ -512,8 +494,6 @@ pub(crate) fn verified_cached_agent_event_endpoint(
             || producer_accepted_at != &selector.producer_accepted_at
             || producer_signer_resolution_evidence_ref
                 != &selector.producer_signer_resolution_evidence_ref
-            || producer_signer_resolution_evidence_digest
-                != &selector.producer_signer_resolution_evidence_digest
             || receiver_id != &selector.receiver_id
         {
             continue;
@@ -551,9 +531,6 @@ async fn verify_for_cache(
         producer_accepted_at: selector.producer_accepted_at,
         producer_signer_resolution_evidence_ref: selector
             .producer_signer_resolution_evidence_ref
-            .clone(),
-        producer_signer_resolution_evidence_digest: selector
-            .producer_signer_resolution_evidence_digest
             .clone(),
         receiver_id: selector.receiver_id.clone(),
     };
@@ -975,8 +952,6 @@ fn validate_cached_historical(
             producer_accepted_at: selector.producer_accepted_at,
             producer_signer_resolution_evidence_ref: &selector
                 .producer_signer_resolution_evidence_ref,
-            producer_signer_resolution_evidence_digest: &selector
-                .producer_signer_resolution_evidence_digest,
             receiver_id: &selector.receiver_id,
             resolve_receiver_historical_key: &resolve_receiver,
         },
@@ -1133,8 +1108,6 @@ fn historical_receipt_matches_selector(
         && receipt.producer_accepted_at == selector.producer_accepted_at
         && receipt.producer_signer_resolution_evidence_ref
             == selector.producer_signer_resolution_evidence_ref
-        && receipt.producer_signer_resolution_evidence_digest
-            == selector.producer_signer_resolution_evidence_digest
         && receipt.receiver_id == selector.receiver_id
 }
 
@@ -1237,9 +1210,6 @@ fn selector_from_object(
         producer_signer_resolution_evidence_ref: admission
             .producer_signer_resolution_evidence_ref
             .clone()?,
-        producer_signer_resolution_evidence_digest: admission
-            .producer_signer_resolution_evidence_digest
-            .clone()?,
         receiver_id: receiver_id.clone(),
     })
 }
@@ -1254,7 +1224,6 @@ impl Ord for EventAgentSelector {
             self.event_id.as_str(),
             self.producer_accepted_at,
             self.producer_signer_resolution_evidence_ref.as_ref(),
-            self.producer_signer_resolution_evidence_digest.as_str(),
             self.receiver_id.as_str(),
         )
             .cmp(&(
@@ -1265,7 +1234,6 @@ impl Ord for EventAgentSelector {
                 other.event_id.as_str(),
                 other.producer_accepted_at,
                 other.producer_signer_resolution_evidence_ref.as_ref(),
-                other.producer_signer_resolution_evidence_digest.as_str(),
                 other.receiver_id.as_str(),
             ))
     }

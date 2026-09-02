@@ -151,14 +151,6 @@ pub(crate) struct ChatMessage {
     pub(crate) crypto_state: MessageCryptoState,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct ModerationAppealPrompt {
-    pub(crate) realm_id: String,
-    pub(crate) decision_ref: String,
-    pub(crate) target_ref: String,
-    pub(crate) state: crate::views::moderation_appeal::AppealState,
-}
-
 impl ChatMessage {
     pub(crate) fn matches_id_or_protocol(&self, message_ref: &str) -> bool {
         self.id == message_ref

@@ -2177,9 +2177,9 @@ pub fn RealmAdminPanel(
                 }
             }
 
-            // P3 — moderation reviewer workbench (decision/lift + appeal
-            // review/decide/close). Drives the daily-governance moderation_*
-            // / appeal_* API; queues project from the local raw-operation log.
+            // P3 — moderation reviewer workbench (decision/lift). Drives the
+            // daily-governance moderation API; queues project from the local
+            // raw-operation log.
             if active_section == RealmAdminSection::Moderation {
                 crate::views::moderation::ModerationWorkbench {
                     principal_id: principal_id.clone(),

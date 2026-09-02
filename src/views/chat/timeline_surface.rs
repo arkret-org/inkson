@@ -27,7 +27,6 @@ fn preserve_chat_feed_scroll_offset(key: &str, scroll_top: f64) {
 pub(super) struct ChatTimelineContext {
     pub embedded: bool,
     pub visible_messages: Vec<ChatMessage>,
-    pub visible_moderation_appeal_prompts: Vec<ModerationAppealPrompt>,
     pub strand_scope_lookup: std::collections::BTreeMap<String, StrandScopeCircle>,
     pub private_sidecar_strand_ids: std::collections::BTreeSet<String>,
     pub authority: arkret_sdk::AccountId,
@@ -56,7 +55,6 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
     let ChatTimelineContext {
         embedded,
         visible_messages,
-        visible_moderation_appeal_prompts,
         strand_scope_lookup,
         private_sidecar_strand_ids,
         authority,
@@ -152,23 +150,6 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
                             }
                         }
                     },
-                    for prompt in visible_moderation_appeal_prompts {
-                        {
-                            let current_state = prompt.state.clone();
-                            let api_token = token();
-                            rsx! {
-                                AppealEntrypoint {
-                                    key: "{prompt.decision_ref}",
-                                    realm_id: prompt.realm_id.clone(),
-                                    appellant: principal_id.to_string(),
-                                    decision_event_id: prompt.decision_ref.clone(),
-                                    target_ref: prompt.target_ref.clone(),
-                                    api_token,
-                                    current_state,
-                                }
-                            }
-                        }
-                    }
                     for preview in message_stream_cards {
                         div {
                             key: "{preview.message_id}",

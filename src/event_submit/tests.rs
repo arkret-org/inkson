@@ -1003,16 +1003,8 @@ fn queued_mls_admission_round_trips_exact_welcome_material() {
             producer_signer_resolution_evidence_ref: producer
                 .signer_resolution_evidence_ref
                 .clone(),
-            producer_signer_resolution_evidence_digest: producer
-                .signer_resolution_evidence_digest
-                .clone(),
             signer_resolution_evidence_ref: arkret_sdk::SignerEvidenceRef::new(format!(
                 "ak:signer_evidence:sha256:{}",
-                "11".repeat(32)
-            ))
-            .unwrap(),
-            signer_resolution_evidence_digest: arkret_sdk::Hash::new(format!(
-                "sha256:{}",
                 "11".repeat(32)
             ))
             .unwrap(),

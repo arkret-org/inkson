@@ -772,8 +772,6 @@ mod tests {
         let start_event_id = "ak:event:AQ_TuICTz2cVFhqtuEZTue46AK_LsqKsKlTPixxkuedX";
         let content_digest =
             "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
-        let ciphertext_digest =
-            "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
         let retention = json!({
             "retention_expires_at": "2026-06-20T00:00:00.000Z",
             "deletion_trigger": "retention_expiry",
@@ -800,9 +798,7 @@ mod tests {
                     "recording_id": recording_id,
                     "recording_start_event_id": start_event_id,
                     "artifact_kind": "recording",
-                    "blob_ref": "ak:blob:019a7360-0000-7000-8000-000000000004",
-                    "content_digest": content_digest,
-                    "ciphertext_digest": ciphertext_digest,
+                    "blob_ref": "ak:blob:sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
                     "size_bytes": 1048576,
                     "duration_ms": 42000,
                     "media_type": "video/mp4",
@@ -816,8 +812,7 @@ mod tests {
                             "recording_id": recording_id,
                             "media_service_id": "ak:did_core:web:recorder.example",
                             "recording_start_event_id": start_event_id
-                        },
-                        "ciphertext_digest": ciphertext_digest
+                        }
                     },
                     "retention_policy_id": "ak:policy:019a7360-0000-7000-8000-000000000005",
                     "retention": retention,

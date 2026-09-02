@@ -430,7 +430,7 @@ pub fn initial_mls_snapshot_summary_from_existing_for_effective_scope_with_bindi
 /// into the top-level `effective_scope` field so the two stay in lockstep
 /// (soland and strict client schema validators both compare them).
 ///
-/// Ref/digest fields are content addresses over the exact raw RFC 9420 bytes,
+/// Blob refs are content addresses over the exact raw RFC 9420 bytes,
 /// matching `encryption-and-audit.md` §5.1.1.
 ///
 /// `created_at` uses the same RFC3339 (seconds, UTC `Z`) format the event
@@ -454,14 +454,8 @@ pub fn build_mls_genesis_payload(
         group_info_ref: arkret_sdk::BlobRef::new(group_info_ref).map_err(|error| {
             MlsRuntimeError::Genesis(format!("invalid GroupInfo blob ref: {error}"))
         })?,
-        group_info_digest: arkret_sdk::Hash::new(group_info_digest).map_err(|error| {
-            MlsRuntimeError::Genesis(format!("invalid GroupInfo digest: {error}"))
-        })?,
         ratchet_tree_ref: arkret_sdk::BlobRef::new(ratchet_tree_ref).map_err(|error| {
             MlsRuntimeError::Genesis(format!("invalid ratchet-tree blob ref: {error}"))
-        })?,
-        ratchet_tree_digest: arkret_sdk::Hash::new(ratchet_tree_digest).map_err(|error| {
-            MlsRuntimeError::Genesis(format!("invalid ratchet-tree digest: {error}"))
         })?,
         governance_binding: governance_binding.clone(),
         // The RRK archive is produced by the exporter durability path, which
@@ -503,10 +497,7 @@ pub async fn upload_mls_genesis_public_material(
             .map_err(|error| {
                 MlsRuntimeError::Genesis(format!("upload MLS {label} material: {error}"))
             })?;
-        if outcome.blob_ref.as_str() != expected_ref
-            || outcome.content_digest.as_str() != digest
-            || outcome.size_bytes != bytes.len() as u64
-        {
+        if outcome.blob_ref.as_str() != expected_ref || outcome.size_bytes != bytes.len() as u64 {
             return Err(MlsRuntimeError::Genesis(format!(
                 "uploaded MLS {label} material does not match its content address"
             )));

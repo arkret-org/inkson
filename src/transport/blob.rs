@@ -113,7 +113,6 @@ impl<'a> BlobEndpoints<'a> {
             .await
             .map_err(anyhow::Error::from)?;
         if outcome.size_bytes != normalized.len() as u64
-            || outcome.content_digest.as_str() != digest
             || outcome.blob_ref.as_str() != expected_blob_ref
         {
             anyhow::bail!(

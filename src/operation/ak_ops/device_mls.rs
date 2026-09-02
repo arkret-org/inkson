@@ -41,10 +41,10 @@ pub fn device_revoke(
 }
 
 /// `ak.mls.commit` event carrying the current wire-schema MLS
-/// governance binding. The commit bytes themselves are stored out of
-/// band; the event carries `commit_digest` plus the schema-closed
-/// epoch and governance binding fields soland validates before
-/// projection.
+/// governance binding. The event carries the complete Commit bytes plus the
+/// schema-closed epoch and governance binding fields; an optional
+/// content-addressed `commit_message_ref` is the only independent wire digest
+/// carrier.
 pub fn mls_commit_with_governance(
     realm_id: &str,
     actor: &str,

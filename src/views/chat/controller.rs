@@ -86,8 +86,6 @@ pub(super) enum ChatProjectionEvent {
     MergeMessages(Vec<ChatMessage>),
     ReplaceMessages(Vec<ChatMessage>),
     MergePollCards(Vec<crate::messaging::polls::PollCard>),
-    MergeModerationPrompts(Vec<ModerationAppealPrompt>),
-    ReplaceModerationPrompts(Vec<ModerationAppealPrompt>),
     AccountDisplayName(String),
 }
 
@@ -159,15 +157,6 @@ impl ChatProjectionSink {
             ChatProjectionEvent::MergePollCards(cards) => {
                 merge_poll_cards(&mut self.0.poll_cards.write(), cards);
             }
-            ChatProjectionEvent::MergeModerationPrompts(prompts) => {
-                merge_moderation_appeal_prompts(
-                    &mut self.0.moderation_appeal_prompts.write(),
-                    prompts,
-                );
-            }
-            ChatProjectionEvent::ReplaceModerationPrompts(prompts) => {
-                self.0.moderation_appeal_prompts.set(prompts);
-            }
             ChatProjectionEvent::AccountDisplayName(name) => {
                 self.0.account_display_name.set(name);
             }
@@ -180,7 +169,6 @@ pub(super) struct ChatController {
     pub channels: Signal<Vec<ChannelEntity>>,
     pub selected_channel: Signal<String>,
     pub messages: Signal<Vec<ChatMessage>>,
-    pub moderation_appeal_prompts: Signal<Vec<ModerationAppealPrompt>>,
     pub draft: Signal<String>,
     pub typing_throttle: crate::perf::TypingThrottle,
     pub compose_dragover: Signal<bool>,
@@ -1266,7 +1254,6 @@ pub(super) fn use_chat_controller(
         channels: use_signal(move || initial_channels),
         selected_channel: use_signal(move || initial_selected_channel),
         messages: use_signal(Vec::<ChatMessage>::new),
-        moderation_appeal_prompts: use_signal(Vec::<ModerationAppealPrompt>::new),
         draft: use_signal(String::new),
         typing_throttle: crate::perf::use_typing_throttle(3_000, 4_000),
         compose_dragover: use_signal(|| false),

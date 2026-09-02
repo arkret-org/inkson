@@ -248,7 +248,13 @@ fn FileTransferRow(
     // A4 — base_url from session context instead of a prop.
     let base_url = crate::app::SessionContext::base_url_string();
     let filename = display_filename(&item.record);
-    let digest_tail = digest_tail(&item.record.content_digest);
+    let digest = item
+        .record
+        .blob_ref
+        .strip_prefix("ak:blob:")
+        .unwrap_or(&item.record.blob_ref);
+    let digest_suite = digest.split(':').next().unwrap_or("digest");
+    let digest_tail = digest_tail(digest);
 
     rsx! {
         article { class: "file-transfer-row event", "data-testid": "file-transfer-row",
@@ -267,7 +273,7 @@ fn FileTransferRow(
             }
             div { class: "file-transfer-meta",
                 span { class: "mono", title: "{item.record.origin_device_id}", {short_id(&item.record.origin_device_id)} }
-                span { class: "mono", title: "{item.record.content_digest}", "sha256:{digest_tail}" }
+                span { class: "mono", title: "{item.record.blob_ref}", "{digest_suite}:{digest_tail}" }
                 span { class: "mono", title: "{item.record.created_at}", "{item.record.created_at}" }
             }
             div { class: "file-transfer-actions",

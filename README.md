@@ -64,10 +64,6 @@ See the protocol spec tree (`../arkret-spec/spec/v1/`) for the normative source.
   encrypted inside `SignalEnvelope` and sent with
   `ak.self.signal.command.send.v1`; device verification uses
   `ak.schema.device_message.v1`.
-- **Moderation appeal strand** — when a moderation decision blocks a
-  member, they can now file an appeal directly from the timeline.
-  Status surfaces back to the appellant as `Submitted → UnderReview →
-  Decided → Closed`.
 - **Late-recovery banner** — when older messages are decrypted after
   the fact (key shared by a recovering device, audit profile late
   emission), the timeline renders an inline banner explaining the lag:

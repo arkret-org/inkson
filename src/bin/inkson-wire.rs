@@ -256,7 +256,6 @@ fn realm_genesis_seal(input: Value) -> Result<Value> {
         authenticated_resolution: authority.resolution.clone(),
     };
     signer_evidence.validate_attester_binding()?;
-    let signer_evidence_digest = signer_evidence.canonical_sha256_digest()?;
     let signer_evidence_ref = signer_evidence.evidence_ref()?;
     let admission_signer = arkret_signatures::Ed25519PayloadSigner::new(
         authority.signing_key.clone(),
@@ -293,9 +292,7 @@ fn realm_genesis_seal(input: Value) -> Result<Value> {
             producer_verification_method: producer.verification_method.clone(),
             producer_signing_key_did: producer_signing_key,
             producer_signer_resolution_evidence_ref: None,
-            producer_signer_resolution_evidence_digest: None,
             signer_resolution_evidence_ref: signer_evidence_ref.clone(),
-            signer_resolution_evidence_digest: signer_evidence_digest.clone(),
             accepted_at,
             jws: String::new(),
         };
@@ -401,7 +398,7 @@ fn realm_genesis_seal(input: Value) -> Result<Value> {
         "accepted_events": input.events,
         "governance_dependencies": [arkret_sdk::GovernanceDependency::AuthenticatedSignerResolutionEvidence {
             selector: arkret_sdk::GovernanceDependencySelector::AuthenticatedSignerResolutionEvidence {
-                content_digest: signer_evidence_digest,
+                content_digest: signer_evidence_ref.content_digest()?,
             },
             authenticated_signer_resolution_evidence: Box::new(signer_evidence),
         }],

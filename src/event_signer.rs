@@ -580,7 +580,6 @@ impl InksonEventSigner {
                 audience: proof_audience,
                 created_at: Some(crate::clock::now_utc()),
                 signer_resolution_evidence_ref: None,
-                signer_resolution_evidence_digest: None,
             },
         )
         .map_err(|error| EventSignerError::Backend(error.to_string()))?;

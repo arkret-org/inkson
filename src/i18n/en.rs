@@ -1483,16 +1483,6 @@ pub fn english_translations() -> TranslationDict {
     );
     dict.set("developer.profile.required", "Required profile id");
 
-    // Moderation appeal state labels.
-    dict.set("moderation.appeal.state.none", "No appeal filed");
-    dict.set(
-        "moderation.appeal.state.submitted",
-        "Appeal submitted — awaiting review",
-    );
-    dict.set("moderation.appeal.state.under_review", "Under review");
-    dict.set("moderation.appeal.state.decided", "Decided");
-    dict.set("moderation.appeal.state.closed", "Closed");
-
     // R3 spec sync (b47ff6ec) — new error toast strings surfaced by the
     // arkret-spec error code expansion (media binding,
     // agent FSM, handle homograph wire-level enforce, recovery

@@ -84,22 +84,18 @@ fn build_mls_genesis_payload_has_required_fields() {
         payload["effective_scope"],
         payload["governance_binding"]["effective_scope"]
     );
-    // group_info / ratchet_tree digest fields present and sha256-shaped.
-    let group_info_digest = payload["group_info_digest"].as_str().unwrap();
-    let ratchet_tree_digest = payload["ratchet_tree_digest"].as_str().unwrap();
-    assert!(group_info_digest.starts_with("sha256:"));
-    assert!(ratchet_tree_digest.starts_with("sha256:"));
-    assert_eq!(
-        group_info_digest,
-        crate::canonical::sha256_digest(&summary.group_info_bytes)
+    // Content digests are carried only by the refs; sibling digest mirrors are forbidden.
+    assert!(payload.get("group_info_digest").is_none());
+    assert!(payload.get("ratchet_tree_digest").is_none());
+    assert!(
+        payload["group_info_ref"]
+            .as_str()
+            .is_some_and(|value| value.starts_with("ak:blob:sha256:"))
     );
-    assert_eq!(
-        payload["group_info_ref"].as_str(),
-        Some(format!("ak:blob:{group_info_digest}").as_str())
-    );
-    assert_eq!(
-        payload["ratchet_tree_ref"].as_str(),
-        Some(format!("ak:blob:{ratchet_tree_digest}").as_str())
+    assert!(
+        payload["ratchet_tree_ref"]
+            .as_str()
+            .is_some_and(|value| value.starts_with("ak:blob:sha256:"))
     );
     // created_at present.
     assert!(payload["created_at"].as_str().unwrap_or("").contains('T'));
