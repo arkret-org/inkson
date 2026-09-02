@@ -368,7 +368,6 @@ pub(super) struct ConnectContext {
     pub(super) realm_tree_nodes: Signal<Vec<RealmTreeNode>>,
     pub(super) projection_events: Signal<Vec<ProjectionEvent>>,
     pub(super) device_queue: Signal<usize>,
-    pub(super) frontier_state: Signal<String>,
     pub(super) crypto_state: Signal<String>,
     pub(super) config_store: Signal<LocalConfigStore>,
     pub(super) state_store: SyncSignal<LocalStateStore>,
@@ -613,7 +612,6 @@ pub(super) fn connect(
         let mut realm_tree_nodes = ctx.realm_tree_nodes;
         let mut projection_events = ctx.projection_events;
         let mut device_queue = ctx.device_queue;
-        let mut frontier_state = ctx.frontier_state;
         let mut crypto_state = ctx.crypto_state;
         let mut config_store = ctx.config_store;
         let mut state_store = ctx.state_store;

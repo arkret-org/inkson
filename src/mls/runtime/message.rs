@@ -1321,24 +1321,6 @@ pub fn mls_welcome_message_matches_realm(message: &serde_json::Value, realm_id: 
         == Some(expected_group_id.as_str())
 }
 
-/// Reads the local MLS roster without advancing or persisting any chain.
-pub fn mls_group_member_principal_ids_for_realm(
-    state_store: &crate::state::LocalStateStore,
-    secure_store: &dyn SecureKeyStore,
-    realm_id: &str,
-    authority: &AccountId,
-    device_id: &DeviceId,
-) -> Option<Vec<String>> {
-    mls_group_member_principal_ids_for_effective_scope(
-        state_store,
-        secure_store,
-        realm_id,
-        None,
-        authority,
-        device_id,
-    )
-}
-
 /// Local RFC 9420 member roster of one effective MLS scope.
 pub(crate) fn mls_group_member_actor_ids_for_effective_scope(
     state_store: &crate::state::LocalStateStore,

@@ -21,7 +21,7 @@ struct PendingAvatarSelection {
     filename: String,
 }
 
-fn avatar_preview_data_url(bytes: &[u8], media_type: &str) -> String {
+pub(crate) fn avatar_preview_data_url(bytes: &[u8], media_type: &str) -> String {
     let media_type = if media_type.trim().is_empty() {
         "application/octet-stream"
     } else {
@@ -328,5 +328,26 @@ pub fn AvatarUploader(props: AvatarUploaderProps) -> Element {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::avatar_preview_data_url;
+
+    #[test]
+    fn avatar_preview_data_url_preserves_media_type_and_bytes() {
+        assert_eq!(
+            avatar_preview_data_url(b"avatar", "image/png"),
+            "data:image/png;base64,YXZhdGFy"
+        );
+    }
+
+    #[test]
+    fn avatar_preview_data_url_defaults_an_empty_media_type() {
+        assert_eq!(
+            avatar_preview_data_url(b"avatar", "   "),
+            "data:application/octet-stream;base64,YXZhdGFy"
+        );
     }
 }

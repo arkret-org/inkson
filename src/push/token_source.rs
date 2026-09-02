@@ -27,12 +27,6 @@ pub(crate) fn default_gateway_binding() -> GatewayBinding {
     GatewayBinding::new(PushGatewayType::Standard, configured_push_gateway())
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-fn configured_push_gateway() -> String {
-    floria_gateway_url()
-}
-
-#[cfg(target_arch = "wasm32")]
 fn configured_push_gateway() -> String {
     floria_gateway_url()
 }

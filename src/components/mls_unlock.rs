@@ -15,12 +15,6 @@ use crate::ui_signal::try_set_signal;
 
 const MLS_UNLOCK_FETCH_TIMEOUT: Duration = Duration::from_secs(20);
 
-fn try_set_status(mut status: Signal<String>, value: impl Into<String>) {
-    if let Ok(mut slot) = status.try_write() {
-        *slot = value.into();
-    }
-}
-
 async fn mls_unlock_fetch_with_timeout<T, F>(future: F) -> Result<T, ApiCallError>
 where
     F: Future<Output = Result<T, ApiCallError>>,
@@ -163,7 +157,7 @@ pub fn MlsUnlockPrompt(
                         has_active_policy = active_policy.is_some(),
                         "MLS unlock: recovery material fetched"
                     );
-                    try_set_status(
+                    try_set_signal(
                         status,
                         format!(
                             "{} {} {}",
@@ -231,7 +225,7 @@ pub fn MlsUnlockPrompt(
                     if let Some(err) = report.first_error {
                         // Some backups failed even though the call returned Ok —
                         // keep the prompt open so the user can retry.
-                        try_set_status(
+                        try_set_signal(
                             status,
                             format!(
                                 "{} {} {}; {} {}: {err}",
@@ -250,7 +244,7 @@ pub fn MlsUnlockPrompt(
                             crate::i18n::tr("mls_unlock.status.restored_suffix")
                         );
                         try_set_signal(passphrase, String::new());
-                        try_set_status(status, restored_status);
+                        try_set_signal(status, restored_status);
                         crate::runtime_helpers::sleep_for(std::time::Duration::from_millis(750))
                             .await;
                         try_set_signal(needs_mls_unlock, false);
@@ -258,7 +252,7 @@ pub fn MlsUnlockPrompt(
                 }
                 Err(err) => {
                     // Wrong passphrase / network: keep prompt open, surface reason.
-                    try_set_status(status, err.display());
+                    try_set_signal(status, err.display());
                 }
             }
         });

@@ -45,6 +45,7 @@ use crate::identity::account_auth::{
     build_session_grant_introspection_proof_bundle, session_grant_signing_key_from_pem,
 };
 use crate::identity::session_refresh::grant_matches_station;
+use crate::push::token_source::current_platform;
 use crate::push::{
     ensure_production_register_request, floria_gateway_url, registration_state_from_response,
 };
@@ -398,7 +399,7 @@ fn build_request(
         Some(circle) => format!("inkson-push-register-{}-{circle}", ctx.device_id),
         None => format!("inkson-push-register-{}", ctx.device_id),
     };
-    let platform = current_platform_str();
+    let platform = current_platform();
     let config = PushDeviceConfig {
         account_id: ctx.account_id.clone(),
         device_id: ctx.device_id.as_str(),
@@ -415,16 +416,6 @@ fn build_request(
     build_register_device_request(&config, &binding, &prefs).map_err(|err| {
         PushRegistrationError::BuildRequest(anyhow::anyhow!("build register-device request: {err}"))
     })
-}
-
-#[cfg(target_arch = "wasm32")]
-fn current_platform_str() -> &'static str {
-    "web"
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn current_platform_str() -> &'static str {
-    "desktop"
 }
 
 #[cfg(test)]
@@ -517,7 +508,7 @@ mod tests {
             "https://push.example/_arkret/edge/push/notify"
         );
         assert_eq!(request.app_id.as_deref(), Some("inkson"));
-        assert_eq!(request.platform.as_deref(), Some(current_platform_str()));
+        assert_eq!(request.platform.as_deref(), Some(current_platform()));
     }
 
     #[test]

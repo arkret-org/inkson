@@ -87,6 +87,70 @@ fn sidecar_view_state_cache_key(controller_id: &str, realm_id: &str, strand_id: 
     format!("{SIDECAR_VIEW_STATE_CACHE_PREFIX}:{controller_id}:{realm_id}:{strand_id}")
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SidecarViewStateMergeDecision {
+    UseCurrent,
+    UseCandidate,
+}
+
+fn sidecar_view_state_merge_decision(
+    current_plaintext: Option<&serde_json::Value>,
+    account_data_key: &str,
+    candidate: &arkret_sdk::AgentSidecarViewState,
+) -> anyhow::Result<SidecarViewStateMergeDecision> {
+    candidate.validate_account_data_key(account_data_key)?;
+    let Some(current_plaintext) = current_plaintext else {
+        return Ok(SidecarViewStateMergeDecision::UseCandidate);
+    };
+    let current =
+        serde_json::from_value::<arkret_sdk::AgentSidecarViewState>(current_plaintext.clone())?;
+    current.validate_account_data_key(account_data_key)?;
+    if current.sidecar_id != candidate.sidecar_id {
+        anyhow::bail!("Sidecar view-state reuses one context key for different Sidecar ids");
+    }
+    if current.updated_hlc == candidate.updated_hlc
+        && current.origin_device_id == candidate.origin_device_id
+    {
+        if current == *candidate {
+            return Ok(SidecarViewStateMergeDecision::UseCurrent);
+        }
+        anyhow::bail!("Sidecar view-state conflicting payload reuses one LWW stamp");
+    }
+    let mut fold = garth::projection::SidecarProjectionFold::default();
+    fold.apply_view_state(current);
+    Ok(if fold.apply_view_state(candidate.clone()) {
+        SidecarViewStateMergeDecision::UseCandidate
+    } else {
+        SidecarViewStateMergeDecision::UseCurrent
+    })
+}
+
+fn apply_sidecar_view_state_checked(
+    store: &mut crate::state::LocalStateStore,
+    view_state: &arkret_sdk::AgentSidecarViewState,
+) -> anyhow::Result<bool> {
+    let current = store.sidecar_view_state(
+        view_state.controller_id.as_str(),
+        &view_state.context_ref.realm_id,
+        &view_state.context_ref.strand_id,
+    );
+    let current_plaintext = current.as_ref().map(serde_json::to_value).transpose()?;
+    match sidecar_view_state_merge_decision(
+        current_plaintext.as_ref(),
+        &view_state.account_data_key(),
+        view_state,
+    )? {
+        SidecarViewStateMergeDecision::UseCurrent => Ok(false),
+        SidecarViewStateMergeDecision::UseCandidate => {
+            anyhow::ensure!(
+                store.apply_sidecar_view_state(view_state.clone()),
+                "Sidecar view-state checked merge did not replace the current fold"
+            );
+            Ok(true)
+        }
+    }
+}
+
 fn cache_sidecar_view_state(
     store: &mut crate::state::LocalStateStore,
     principal_id: &str,
@@ -101,13 +165,21 @@ fn cache_sidecar_view_state(
         view_state.context_ref.realm_id.as_str(),
         view_state.context_ref.strand_id.as_str(),
     );
-    if let Some(current) = store
+    if let Some(persisted) = store
         .load_private_data(principal_id, &key)
         .and_then(|raw| serde_json::from_str::<arkret_sdk::AgentSidecarViewState>(&raw).ok())
     {
-        store.apply_sidecar_view_state(current);
+        let persisted_plaintext = serde_json::to_value(&persisted)?;
+        if sidecar_view_state_merge_decision(
+            Some(&persisted_plaintext),
+            &view_state.account_data_key(),
+            view_state,
+        )? == SidecarViewStateMergeDecision::UseCurrent
+        {
+            apply_sidecar_view_state_checked(store, &persisted)?;
+        }
     }
-    let should_replace = store.apply_sidecar_view_state(view_state.clone());
+    let should_replace = apply_sidecar_view_state_checked(store, view_state)?;
     if should_replace {
         store.save_private_data(principal_id, key, serde_json::to_string(view_state)?);
     }
@@ -1966,8 +2038,39 @@ pub fn push_sidecar_display_mode(
             &base_url,
             api_token,
             |submitter| async move {
-                crate::transport::account::set_account_data(&submitter, &account_data_key, body)
-                    .await
+                crate::transport::account::update_account_data_with_conditional_merge(
+                    &submitter,
+                    &account_data_key,
+                    |snapshot| {
+                        let Some(current) = snapshot.entry.as_ref() else {
+                            return Ok(
+                                crate::transport::account::AccountDataMergeDecision::Replace(
+                                    body.clone(),
+                                ),
+                            );
+                        };
+                        let current_plaintext = crate::account_data::decrypt_account_data_entry(
+                            &authority,
+                            &account_data_key,
+                            current,
+                        )?;
+                        match sidecar_view_state_merge_decision(
+                            Some(&current_plaintext),
+                            &account_data_key,
+                            &view_state,
+                        )? {
+                            SidecarViewStateMergeDecision::UseCandidate => Ok(
+                                crate::transport::account::AccountDataMergeDecision::Replace(
+                                    body.clone(),
+                                ),
+                            ),
+                            SidecarViewStateMergeDecision::UseCurrent => Ok(
+                                crate::transport::account::AccountDataMergeDecision::KeepCurrent,
+                            ),
+                        }
+                    },
+                )
+                .await
             },
         )
         .await
@@ -2026,6 +2129,40 @@ mod tests {
             migrated_draft: String::new(),
             opened_at: chrono::Utc::now(),
         }
+    }
+
+    fn view_state(
+        session: &HostedSidecarState,
+        display_mode: arkret_sdk::AgentSidecarDisplayMode,
+        hlc: &str,
+        device: &str,
+    ) -> arkret_sdk::AgentSidecarViewState {
+        arkret_sdk::AgentSidecarViewState {
+            schema: arkret_sdk::AgentSidecarViewStateSchema::V1,
+            controller_id: crate::mls_api_helpers::principal_core_id("did:web:alice.example")
+                .unwrap(),
+            sidecar_id: session.sidecar_id.clone(),
+            context_ref: arkret_sdk::AgentSidecarStrandContextRef {
+                realm_id: arkret_sdk::RealmId::new(session.source_realm_id.clone()).unwrap(),
+                strand_id: arkret_sdk::StrandId::new(session.source_strand_id.clone()).unwrap(),
+            },
+            display_mode,
+            pinned: None,
+            collapsed: None,
+            updated_hlc: arkret_sdk::Hlc::new(hlc).unwrap(),
+            origin_device_id: arkret_sdk::DeviceId::new(device).unwrap(),
+        }
+    }
+
+    fn merge_decision(
+        current: &arkret_sdk::AgentSidecarViewState,
+        candidate: &arkret_sdk::AgentSidecarViewState,
+    ) -> anyhow::Result<SidecarViewStateMergeDecision> {
+        sidecar_view_state_merge_decision(
+            Some(&serde_json::to_value(current).unwrap()),
+            &candidate.account_data_key(),
+            candidate,
+        )
     }
 
     #[test]
@@ -2089,29 +2226,26 @@ mod tests {
         ));
         let mut store = crate::state::LocalStateStore::with_path(path);
         let session = session(Vec::new());
-        let view_state = |mode, hlc: &str, device: &str| arkret_sdk::AgentSidecarViewState {
-            schema: arkret_sdk::AgentSidecarViewStateSchema::V1,
-            controller_id: crate::mls_api_helpers::principal_core_id(account).unwrap(),
-            sidecar_id: session.sidecar_id.clone(),
-            context_ref: arkret_sdk::AgentSidecarStrandContextRef {
-                realm_id: arkret_sdk::RealmId::new(session.source_realm_id.clone()).unwrap(),
-                strand_id: arkret_sdk::StrandId::new(session.source_strand_id.clone()).unwrap(),
-            },
-            display_mode: mode,
-            pinned: None,
-            collapsed: None,
-            updated_hlc: arkret_sdk::Hlc::new(hlc).unwrap(),
-            origin_device_id: arkret_sdk::DeviceId::new(device).unwrap(),
-        };
         let newer = view_state(
+            &session,
             arkret_sdk::AgentSidecarDisplayMode::SidecarOnly,
             "01970e589d21-0002-a13f9c2e",
             "ak:device:01964137-0000-7000-8000-000000000001",
         );
         let older = view_state(
+            &session,
             arkret_sdk::AgentSidecarDisplayMode::ContextMerged,
             "01970e589d21-0001-a13f9c2e",
             "ak:device:01964137-0000-7000-8000-000000000002",
+        );
+
+        assert_eq!(
+            merge_decision(&newer, &older).unwrap(),
+            SidecarViewStateMergeDecision::UseCurrent
+        );
+        assert_eq!(
+            merge_decision(&older, &newer).unwrap(),
+            SidecarViewStateMergeDecision::UseCandidate
         );
 
         assert!(cache_sidecar_view_state(&mut store, account, &newer).unwrap());
@@ -2119,6 +2253,81 @@ mod tests {
         assert_eq!(
             cached_sidecar_display_mode(&store, account, &session),
             Some(arkret_sdk::AgentSidecarDisplayMode::SidecarOnly)
+        );
+    }
+
+    #[test]
+    fn sidecar_view_state_lww_uses_device_tie_break_and_is_idempotent() {
+        let session = session(Vec::new());
+        let state = |device| {
+            view_state(
+                &session,
+                arkret_sdk::AgentSidecarDisplayMode::ContextMerged,
+                "01970e589d21-0001-a13f9c2e",
+                device,
+            )
+        };
+        let lower = state("ak:device:01964137-0000-7000-8000-000000000001");
+        let higher = state("ak:device:01964137-0000-7000-8000-000000000002");
+
+        assert_eq!(
+            merge_decision(&lower, &higher).unwrap(),
+            SidecarViewStateMergeDecision::UseCandidate
+        );
+        assert_eq!(
+            merge_decision(&higher, &lower).unwrap(),
+            SidecarViewStateMergeDecision::UseCurrent
+        );
+        assert_eq!(
+            merge_decision(&lower, &lower).unwrap(),
+            SidecarViewStateMergeDecision::UseCurrent
+        );
+
+        let mut divergent = lower.clone();
+        divergent.display_mode = arkret_sdk::AgentSidecarDisplayMode::SidecarOnly;
+        assert!(merge_decision(&lower, &divergent).is_err());
+
+        let mut wrong_sidecar = higher;
+        wrong_sidecar.sidecar_id = arkret_sdk::SidecarId::new(
+            "ak:sidecar:AWk_ywNSTc6WhrGkRSaK84HThnFXKBAy3vQ_RLJZ4kCY".to_owned(),
+        )
+        .unwrap();
+        assert!(merge_decision(&lower, &wrong_sidecar).is_err());
+
+        let dir = tempfile::tempdir().unwrap();
+        let mut store = crate::state::LocalStateStore::with_path(dir.path().join("state.json"));
+        assert!(cache_sidecar_view_state(&mut store, "did:web:alice.example", &lower).unwrap());
+        assert!(cache_sidecar_view_state(&mut store, "did:web:alice.example", &divergent).is_err());
+        assert!(
+            cache_sidecar_view_state(&mut store, "did:web:alice.example", &wrong_sidecar).is_err()
+        );
+        assert_eq!(
+            store.sidecar_view_state(
+                lower.controller_id.as_str(),
+                &lower.context_ref.realm_id,
+                &lower.context_ref.strand_id,
+            ),
+            Some(lower)
+        );
+    }
+
+    #[test]
+    fn sidecar_view_state_merge_rejects_malformed_remote_plaintext() {
+        let session = session(Vec::new());
+        let candidate = view_state(
+            &session,
+            arkret_sdk::AgentSidecarDisplayMode::ContextMerged,
+            "01970e589d21-0001-a13f9c2e",
+            "ak:device:01964137-0000-7000-8000-000000000001",
+        );
+
+        assert!(
+            sidecar_view_state_merge_decision(
+                Some(&serde_json::json!({"updated_hlc": "not-a-complete-view-state"})),
+                &candidate.account_data_key(),
+                &candidate,
+            )
+            .is_err()
         );
     }
 

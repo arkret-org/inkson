@@ -210,17 +210,6 @@ impl LocalStateStore {
         ))
     }
 
-    /// The effective `durability_policy` (RRK, realm-and-space.md §2.3.1) for
-    /// `realm_id` from the latest cached realm-tree projection, if declared.
-    /// SDK-typed so the client and the reducer share one closed union. `None`
-    /// when no projection declares a registered value.
-    pub fn realm_durability_policy(&self, realm_id: &str) -> Option<arkret_wire::DurabilityPolicy> {
-        self.load()
-            .realm_tree_projections
-            .get(realm_id.trim())
-            .and_then(super::realm_tree_projection_value_durability_policy)
-    }
-
     /// The effective `content_scheme` selector for `realm_id`. RRK durability is
     /// only effective when this is `mls_exporter_aead_v1`
     /// (encryption-and-audit.md §2.10.8). `None` means the authoritative

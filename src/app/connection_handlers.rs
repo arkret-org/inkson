@@ -52,7 +52,6 @@ impl ConnectionRuntimeSignals {
             realm_tree_nodes: self.realm_tree_nodes,
             projection_events: self.projection_events,
             device_queue: self.device_queue,
-            frontier_state: self.frontier_state,
             crypto_state: self.crypto_state,
             config_store: self.config_store,
             state_store,

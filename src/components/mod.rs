@@ -269,13 +269,3 @@ pub fn HelpTip(text: String) -> Element {
 // `EmptyState` lives in `components/empty_state.rs` — see the
 // re-export above. The richer typed version replaced the old
 // single-prop placeholder that was previously here.
-
-#[component]
-pub fn ErrorBanner(message: String) -> Element {
-    rsx! {
-        div { class: "event error-banner",
-            div { class: "event-head", span { "Error" } span { "" } }
-            div { "{message}" }
-        }
-    }
-}

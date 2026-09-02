@@ -49,12 +49,6 @@ static MLS_PRIVATE_PLAINTEXT_BACKUP_SCHEDULER: BackupJobScheduler<
     MLS_PRIVATE_PLAINTEXT_BACKUP_CONFIG,
 );
 
-fn try_set_status(mut status: Signal<String>, value: impl Into<String>) {
-    if let Ok(mut slot) = status.try_write() {
-        *slot = value.into();
-    }
-}
-
 /// Download the recovery words as a plain-text file. Same goal as the copy
 /// button — guarantee the user captures all 24 words rather than relying on a
 /// hand-made selection — for users who would rather keep a file than the
@@ -634,13 +628,13 @@ fn upload_mls_backup_with_recovery_key(
             .map_err(anyhow::Error::msg)
     };
     let Some(recovery_material_evidence) = state_store.read().recovery_material_evidence() else {
-        try_set_status(status, "Frozen PCR authority evidence is required");
+        try_set_signal(status, "Frozen PCR authority evidence is required");
         return;
     };
     if recovery_material_evidence.account_id.principal_id.as_str() != actor
         || recovery_material_evidence.device_id.as_str() != device
     {
-        try_set_status(
+        try_set_signal(
             status,
             "Frozen PCR authority evidence does not match this account",
         );
@@ -724,7 +718,7 @@ fn upload_mls_backup_with_recovery_key(
                     let _ = outcome;
                 }
                 try_set_signal(backup_created, true);
-                try_set_status(status, crate::i18n::tr("mls_backup.status.created"));
+                try_set_signal(status, crate::i18n::tr("mls_backup.status.created"));
                 if !generated_in_this_strand {
                     try_set_signal(recovery_key_input, String::new());
                     crate::runtime_helpers::sleep_for(std::time::Duration::from_millis(750)).await;
@@ -732,7 +726,7 @@ fn upload_mls_backup_with_recovery_key(
                 }
             }
             Err(err) => {
-                try_set_status(status, err.display());
+                try_set_signal(status, err.display());
             }
         }
     });

@@ -1454,6 +1454,12 @@ pub(crate) struct AccountDataSnapshot {
     pub entry: Option<arkret_sdk::AccountDataRow>,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum AccountDataMergeDecision {
+    Replace(Value),
+    KeepCurrent,
+}
+
 fn account_data_snapshot_from_details(
     type_key: &str,
     details: &std::collections::BTreeMap<String, Value>,
@@ -1573,21 +1579,30 @@ async fn account_data_set_submission(
 
 /// Apply a domain merge against the latest Account Data value and retry
 /// compare-and-set conflicts with the authoritative conflict snapshot.
-pub(crate) async fn update_account_data_with_merge<F>(
+pub(crate) async fn update_account_data_with_conditional_merge<F>(
     submitter: &EventSubmitter,
     type_key: &str,
     mut merge: F,
 ) -> anyhow::Result<Value>
 where
-    F: FnMut(&AccountDataSnapshot) -> anyhow::Result<Value>,
+    F: FnMut(&AccountDataSnapshot) -> anyhow::Result<AccountDataMergeDecision>,
 {
     let mut snapshot = account_data_snapshot(submitter.http(), type_key).await?;
     for attempt in 1..=MAX_ACCOUNT_DATA_CAS_ATTEMPTS {
+        let content = match merge(&snapshot)? {
+            AccountDataMergeDecision::Replace(value) => value,
+            AccountDataMergeDecision::KeepCurrent => {
+                let current = snapshot.entry.as_ref().ok_or_else(|| {
+                    anyhow::anyhow!("account_data merge cannot keep an absent current entry")
+                })?;
+                return serde_json::to_value(current).map_err(anyhow::Error::from);
+            }
+        };
         let body = arkret_sdk::AccountDataReplaceRequestBody {
             set_event: account_data_set_submission(
                 submitter,
                 type_key,
-                Some(merge(&snapshot)?),
+                Some(content),
                 snapshot.revision,
             )
             .await?,
@@ -1608,6 +1623,26 @@ where
         }
     }
     unreachable!("bounded account_data CAS loop always returns")
+}
+
+/// Apply a merge that always replaces the current Account Data value.
+///
+/// This preserves the original helper API for domains whose merge result is
+/// always a write. LWW domains that can keep an authoritative current value
+/// use [`update_account_data_with_conditional_merge`] so a losing or exact
+/// replay does not create a no-op Event and revision.
+pub(crate) async fn update_account_data_with_merge<F>(
+    submitter: &EventSubmitter,
+    type_key: &str,
+    mut merge: F,
+) -> anyhow::Result<Value>
+where
+    F: FnMut(&AccountDataSnapshot) -> anyhow::Result<Value>,
+{
+    update_account_data_with_conditional_merge(submitter, type_key, |snapshot| {
+        merge(snapshot).map(AccountDataMergeDecision::Replace)
+    })
+    .await
 }
 
 /// Replace a per-account whole value through the canonical CAS binding.
