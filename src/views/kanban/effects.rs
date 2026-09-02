@@ -141,10 +141,21 @@ pub(super) fn KanbanEffects(
             let Some(space_id) = accepted else {
                 return;
             };
-            if selected_board.peek().is_some() {
+            // The confirmed-options effect can observe the accepted Space in
+            // the same render pass and seed this exact selection first.  That
+            // ordering must not suppress the second half of the migration:
+            // installing the canonical Board route.  A genuinely different
+            // user selection still wins and is never hijacked.
+            if selected_board
+                .peek()
+                .as_ref()
+                .is_some_and(|selected| selected != &space_id)
+            {
                 return;
             }
-            selected_board.set(Some(space_id.clone()));
+            if selected_board.peek().is_none() {
+                selected_board.set(Some(space_id.clone()));
+            }
             let _ = navigator.replace(kanban_board_route(&route_realm_id, space_id.as_str()));
         });
     }
@@ -193,15 +204,35 @@ pub(super) fn KanbanEffects(
                     realm_id,
                     operation,
                     scope_security_encrypted,
-                } => submit_kanban_operation_event(
-                    base_url,
-                    token,
-                    realm_id,
-                    *operation,
-                    scope_security_encrypted,
-                    state_store,
-                    board_status,
-                ),
+                } => {
+                    // Remember this create before starting the detached submit.
+                    // A local Soland can accept the Event before Dioxus gets a
+                    // render pass that observes the queued op-log row. Without
+                    // this producer-side marker, that fast queued -> accepted
+                    // transition is indistinguishable from a cold-start row and
+                    // the canonical Board route is never installed.
+                    if *operation.kind() == arkret_sdk::EventKind::SpaceCreate
+                        && operation
+                            .typed_payload::<arkret_wire::event_spec::SpaceCreate>()
+                            .is_ok_and(|payload| {
+                                payload.object.kind == "board"
+                                    && payload.object.realm_id.as_str() == realm_id
+                            })
+                    {
+                        awaiting_board_ops
+                            .write()
+                            .insert(operation.local_operation_id().to_string());
+                    }
+                    submit_kanban_operation_event(
+                        base_url,
+                        token,
+                        realm_id,
+                        *operation,
+                        scope_security_encrypted,
+                        state_store,
+                        board_status,
+                    );
+                }
             }
         }
     });

@@ -24,9 +24,9 @@
 //! embeds the grant-binding seed, so it is classified seed-grade
 //! (`PENDING_LOGOUT_SECRET_KEY_PREFIX`): IndexedDB-only on wasm with no localStorage
 //! unload-race mirror, OS keyring on native. The record is cleared only once
-//! the coauth revoke has definitively succeeded (or the grant is already
+//! the Account Authority logout has definitively succeeded (or the grant is already
 //! gone). A wall-clock TTL bounds the record so a permanently-unreachable
-//! coauth can't leave a poison entry forever — and crucially the grant's
+//! authority can't leave a poison entry forever — and crucially the grant's
 //! own 8h TTL means the chain self-heals well before the 24h record TTL.
 
 use arkret_sdk::http_client::{Auth, ClientBuilder};
@@ -241,7 +241,6 @@ async fn hard_logout_at_authority(
 
 fn account_logout_error_is_terminal(error: &arkret_sdk::http_client::Error) -> bool {
     match error {
-        arkret_sdk::http_client::Error::Api { status: 404, .. } => true,
         arkret_sdk::http_client::Error::Api { error, .. } => matches!(
             error.code(),
             "grant_already_consumed"
@@ -433,7 +432,6 @@ mod tests {
     #[test]
     fn account_logout_terminal_errors_complete_pending_logout() {
         for (status, code) in [
-            (404, "not_found"),
             (400, "grant_already_consumed"),
             (401, "session_logged_out"),
             (404, "session_grant_not_found"),
@@ -453,6 +451,7 @@ mod tests {
     #[test]
     fn account_logout_non_terminal_errors_retain_pending_logout() {
         for (status, code) in [
+            (404, "unrecognized_endpoint"),
             (500, "internal"),
             (401, "auth_expired"),
             (403, "capability_denied"),

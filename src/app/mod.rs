@@ -3470,15 +3470,6 @@ fn AppBootstrap() -> Element {
                                                 disabled: !has_session,
                                                 onclick: move |_| {
                                                     let base = base_url();
-                                                    let Some(actor) = principal_id() else {
-                                                        last_error.set(Some(
-                                                            "active session principal is unavailable"
-                                                                .to_owned(),
-                                                        ));
-                                                        return;
-                                                    };
-                                                    let device = device_id();
-                                                    let api_token = token();
                                                     let Some(active) = active_account.peek().clone() else {
                                                         last_error.set(Some(
                                                             "active account context is unavailable"
@@ -3486,6 +3477,14 @@ fn AppBootstrap() -> Element {
                                                         ));
                                                         return;
                                                     };
+                                                    // ActiveAccountContext is the authenticated identity
+                                                    // aggregate. The derived display signals can lag one
+                                                    // render behind a restored session, but logout must not
+                                                    // turn into a no-op when the authoritative account is
+                                                    // already present.
+                                                    let actor = active.principal_id().clone();
+                                                    let device = active.device_id.to_string();
+                                                    let api_token = token();
                                                     // Capture the grant + grant-binding key BEFORE the
                                                     // local wipe below: hard logout MUST also terminate
                                                     // the private authentication session (revoke grant + finish
@@ -3580,13 +3579,6 @@ fn AppBootstrap() -> Element {
                                                     sync_cursor.set(String::new());
                                                     selected_realm_id.set(String::new());
                                                     device_queue.set(0);
-                                                    // Y2 - logout is a full trust-bundle reset:
-                                                    // clear the entire session-scoped DID
-                                                    // resolution cache so the next user in this
-                                                    // browser cannot hit the previous session's
-                                                    // resolution results (stale documents / old key
-                                                    // sets).
-                                                    did_cache.write().clear();
                                                     account_primary_handle.set(String::new());
                                                     personal_handles.set(Vec::new());
                                                     personal_handles_status.set("Not published".to_owned());
@@ -3612,12 +3604,27 @@ fn AppBootstrap() -> Element {
                                                     // in-flight long-poll exits on its next
                                                     // iteration check instead of applying a
                                                     // response after the wipe.
-                                                    sync_generation.set(sync_generation() + 1);
+                                                    // Read before taking the mutable signal borrow.
+                                                    // `set(sync_generation() + 1)` evaluates the
+                                                    // mutable receiver first and traps in wasm when
+                                                    // the nested read tries to borrow the same
+                                                    // Dioxus signal.
+                                                    let next_sync_generation = sync_generation() + 1;
+                                                    sync_generation.set(next_sync_generation);
                                                     account_menu_open.set(false);
                                                     redirect_to_login(navigator);
                                                     let logout_effects =
                                                         runtime_services.effects.clone();
-                                                    spawn(async move {
+                                                    // The session effects may still hold a read
+                                                    // borrow on the shared DID cache when the click
+                                                    // arrives, and a root task cannot safely retain
+                                                    // that component Signal after navigation. The
+                                                    // next authenticated bootstrap clears the cache
+                                                    // before resolving any DID (connect.rs); the
+                                                    // unauthenticated surface cannot consume it.
+                                                    // Keep the detached task signal-free and use it
+                                                    // only to finish the durable server logout.
+                                                    dioxus::core::spawn_forever(async move {
                                                         logout_effects.cancel_all().await;
                                                         // Drive the journalled logout: revoke the grant at
                                                         // coauth (terminating the rotation chain) then run
@@ -3632,18 +3639,7 @@ fn AppBootstrap() -> Element {
                                                                 logout_secure_store.as_ref(),
                                                             )
                                                             .await;
-                                                        let logout_message = match outcome {
-                                                            crate::pending_logout::LogoutRunOutcome::Completed => {
-                                                                "Logout ok: session revoked".to_owned()
-                                                            }
-                                                            crate::pending_logout::LogoutRunOutcome::Retain => {
-                                                                "Logged out locally; server revoke will retry"
-                                                                    .to_owned()
-                                                            }
-                                                        };
-                                                        if session_generation() == logout_generation {
-                                                            account_session_state.set(logout_message);
-                                                        }
+                                                        let _ = outcome;
                                                     });
                                                 },
                                                 "Log out"

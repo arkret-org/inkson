@@ -1924,6 +1924,12 @@ pub fn RealmAdminPanel(
                                             short_protocol_id(&op_id),
                                             short_protocol_id(&resp.event_id)
                                         )),
+                                        Err(err) if crate::event_submit::is_durably_queued_error(err.inner()) => {
+                                            status_msg.set(format!(
+                                                "ak.capability.grant event {} queued for retry",
+                                                short_protocol_id(&op_id)
+                                            ));
+                                        }
                                         Err(err) => status_msg.set(format!(
                                             "capability.grant submit failed: {}", err.display()
                                         )),

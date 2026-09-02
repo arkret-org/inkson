@@ -368,7 +368,7 @@ pub(super) fn RouteSurface(state: RouteSurfaceState) -> Element {
                         {
                             selected_realm_id.set(sid.to_owned());
                         }
-                        if minimal_ready && let Some(initial_strand_id) = active_default_strand_id.clone() {
+                        if minimal_ready {
                             rsx! {
                                 crate::views::chat::ChatPanel {
                                     plaintext_service_id: active_service_id.clone(),
@@ -380,21 +380,19 @@ pub(super) fn RouteSurface(state: RouteSurfaceState) -> Element {
                                     sync_cursor,
                                     realm_live_epoch,
                                     frontier_state,
-                                    initial_strand_id,
+                                    // A banned appellant no longer has an accepted default
+                                    // Strand, but the actor-private moderation projection must
+                                    // remain reachable so they can exercise the normative appeal
+                                    // path. ChatPanel already disables authoring without a Strand
+                                    // and renders only the account-synced appeal prompt here.
+                                    initial_strand_id: active_default_strand_id.clone().unwrap_or_default(),
                                     embedded: false,
                                     direct_mode: false,
                                     focus_message_id: message.clone(),
                                 }
                             }
-                        } else if !minimal_ready {
-                            rsx! { ProfileGateNotice { profile: "minimal_client" } }
                         } else {
-                            rsx! {
-                                div {
-                                    class: "panel-notice panel-notice-error",
-                                    "Default Strand is unavailable until its accepted projection arrives."
-                                }
-                            }
+                            rsx! { ProfileGateNotice { profile: "minimal_client" } }
                         }
                     },
                     Route::Directory => rsx! {

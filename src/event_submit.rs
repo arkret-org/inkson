@@ -1523,7 +1523,6 @@ impl EventSubmitter {
                 )
                 .await?;
         }
-
         let results = OutboundAttemptResults::default();
         let submitter = EventOutboundSubmitter {
             owner: self,
@@ -3156,7 +3155,7 @@ impl EventSubmitter {
                 realm_id,
                 None,
                 None,
-                None,
+                Some("ascending"),
                 Some(REALM_CREATE_AUTHORITY_QUERY_LIMIT),
             )
             .await

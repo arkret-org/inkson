@@ -493,19 +493,6 @@ impl
         if !self.active() {
             return Ok(AccountPostCommitOutcome::Continue);
         }
-        if !step.initial && account_updates_are_empty(&step.updates) {
-            return Ok(AccountPostCommitOutcome::Continue);
-        }
-        let cursor = step.cursor.clone().ok_or_else(|| {
-            garth::Error::Protocol("account post-commit step has no cursor".to_owned())
-        })?;
-        let response = AccountSyncStep::from_updates(cursor, step.updates.clone())
-            .map_err(|error| garth::Error::Protocol(error.to_string()))?;
-        let api = TransportClient::from_http(
-            http.clone(),
-            crate::transport::RequestContext::new(self.ctx.token.get()),
-        );
-
         let submitter = crate::event_submit::EventSubmitter::new(http.clone())
             .with_state_store(self.ctx.state_store.clone());
         if let Err(error) = submitter.drain_outbound().await {
@@ -520,6 +507,22 @@ impl
         {
             tracing::debug!(?error, "account post-commit deferred MLS outbound drain");
         }
+
+        // A bounded account-sync poll is also the retry clock for durable
+        // outbound work. Its empty business delta must not suppress a due
+        // RetryAt item; projection work below still remains delta-driven.
+        if !step.initial && account_updates_are_empty(&step.updates) {
+            return Ok(AccountPostCommitOutcome::Continue);
+        }
+        let cursor = step.cursor.clone().ok_or_else(|| {
+            garth::Error::Protocol("account post-commit step has no cursor".to_owned())
+        })?;
+        let response = AccountSyncStep::from_updates(cursor, step.updates.clone())
+            .map_err(|error| garth::Error::Protocol(error.to_string()))?;
+        let api = TransportClient::from_http(
+            http.clone(),
+            crate::transport::RequestContext::new(self.ctx.token.get()),
+        );
 
         if should_recover_invite_delivery(step.initial) {
             match crate::transport::account::account_data_snapshot(

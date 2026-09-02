@@ -2170,6 +2170,7 @@ pub fn ChatPanel(
             class: "{shell_class}",
             "data-testid": "chat-panel",
             "data-chat-mode": if direct_mode { "direct" } else { "collaboration" },
+            "data-initial-sync": if initial_sync_finished() { "complete" } else { "pending" },
             "data-moderation-appeal-count": "{visible_moderation_appeal_prompt_count}",
             ChatEffects {
                 controller,

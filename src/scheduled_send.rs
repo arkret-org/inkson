@@ -236,19 +236,23 @@ pub(crate) async fn dispatch_due_scheduled_sends(
         );
     }
     let actor_id = authority.principal_id.as_str();
-    let due = due_scheduled_send_plans(authority, &state_store.read(), crate::clock::now_utc());
-    if due.is_empty() {
-        return Ok(0);
-    }
     // Spec §4: an uncertain or interrupted submit MUST be retried with the
     // persisted canonical signed bytes, never re-authored from the plan. The
-    // durable outbound queue owns those bytes, so replay first; fresh
-    // authoring below only runs for plans that have no dispatch record yet.
+    // durable outbound queue owns those bytes.  The account long-poll can end
+    // without a committed heartbeat (for example a browser fetch abort at its
+    // timeout), so this bounded account-scoped tick is also an independent
+    // retry clock for every ordinary durable Event, not only scheduled-send
+    // records.  Fresh scheduled-send authoring below still only runs for plans
+    // with no dispatch record yet.
     if let Err(error) = submitter.drain_outbound().await {
         tracing::debug!(
             error = %format!("{error:#}"),
             "scheduled-send dispatch: durable outbound drain deferred"
         );
+    }
+    let due = due_scheduled_send_plans(authority, &state_store.read(), crate::clock::now_utc());
+    if due.is_empty() {
+        return Ok(0);
     }
     let mut dispatched = 0usize;
     for plan in due {

@@ -40,14 +40,23 @@ pub(crate) fn note_e2ee_submit_refusal(
     circle_id: Option<&str>,
     error: &anyhow::Error,
 ) -> bool {
+    note_e2ee_submit_refusal_in_store(&mut state_store.write(), realm_id, circle_id, error)
+}
+
+/// Store-level form for detached durable writers that must not retain a
+/// component-owned [`SyncSignal`] across an await boundary.
+pub(crate) fn note_e2ee_submit_refusal_in_store(
+    state_store: &mut LocalStateStore,
+    realm_id: &str,
+    circle_id: Option<&str>,
+    error: &anyhow::Error,
+) -> bool {
     if !crate::api_error::is_mls_governance_binding_stale_error(error) {
         return false;
     }
-    if let Err(error) = state_store.write().record_mls_coverage_stale(
-        realm_id.to_owned(),
-        circle_id,
-        &error.to_string(),
-    ) {
+    if let Err(error) =
+        state_store.record_mls_coverage_stale(realm_id.to_owned(), circle_id, &error.to_string())
+    {
         tracing::warn!(realm = %realm_id, %error, "refusing to persist an invalid MLS coverage scope");
         return false;
     }

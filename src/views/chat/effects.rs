@@ -594,6 +594,27 @@ pub(super) fn ChatEffects(
                     });
                     return;
                 };
+                if !selected_realm_for_load.trim().is_empty()
+                    && let Err(error) =
+                        crate::mls::creator_bootstrap::ensure_realm_governance_checkpoint(
+                            &api,
+                            state_store,
+                            &selected_realm_for_load,
+                        )
+                        .await
+                {
+                    // A removed member can still enter this shell to exercise
+                    // actor-private moderation appeal rights, but cannot
+                    // reacquire Realm governance state. Other members must pin
+                    // the verified checkpoint before the UI reports authoring
+                    // readiness, so a later offline operation is fully
+                    // authorable from synchronized state.
+                    tracing::warn!(
+                        realm_id = %selected_realm_for_load,
+                        %error,
+                        "chat initial sync could not pin Realm governance checkpoint"
+                    );
+                }
                 let mut loaded_messages = Vec::new();
                 let mut loaded_poll_cards = Vec::new();
                 let mut loaded_moderation_appeal_prompts = Vec::new();

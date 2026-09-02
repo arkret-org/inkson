@@ -82,8 +82,16 @@ pub(super) fn validate_projected_cba_plane(
     };
     let digest_suite = event.digest_suite();
     let event = event.event();
-    for write in crate::operation::project_registered_cell_writes(event, digest_suite)
-        .map_err(|error| anyhow::anyhow!("cell-write projection failed: {error}"))?
+    // Inkson's Realm-owner grant surface authors direct `realm_root` grants.
+    // The schema projector still requires an explicit resolver so that a
+    // future grant-ref dependency cannot silently acquire invented ancestry;
+    // an empty resolver derives direct roots and fails closed for grant refs.
+    for write in arkret_sdk::schema::project_registered_cell_writes_with_authority_resolver(
+        event,
+        digest_suite,
+        &|_| None,
+    )
+    .map_err(|error| anyhow::anyhow!("cell-write projection failed: {error}"))?
     {
         let cell = arkret_sdk::CellId::from_ref(&write.cell_id)
             .map_err(|error| anyhow::anyhow!("projected cell is invalid: {error}"))?;

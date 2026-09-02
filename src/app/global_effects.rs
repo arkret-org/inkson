@@ -154,7 +154,7 @@ pub(super) fn GlobalEffects(
                 };
                 let base = account.server_url.to_string();
                 let authority = account.authority;
-                if let Err(error) = crate::transport::auth::with_event_submitter(
+                let tick_result = crate::transport::auth::with_event_submitter(
                     &base,
                     session,
                     |submitter| async move {
@@ -166,8 +166,8 @@ pub(super) fn GlobalEffects(
                         .await
                     },
                 )
-                .await
-                {
+                .await;
+                if let Err(error) = tick_result {
                     tracing::debug!(
                         error = %error.display_diagnostic(),
                         "scheduled-send dispatch tick deferred"

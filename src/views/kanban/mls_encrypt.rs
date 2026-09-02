@@ -425,6 +425,21 @@ pub(super) fn dispatch_card_detail_update(
     mut state_store: SyncSignal<LocalStateStore>,
     mut board_status: Signal<String>,
 ) -> bool {
+    let mut current = current;
+    if arkret_sdk::StrandId::new(current.id.clone()).is_err() {
+        let canonical_id = {
+            let snapshot = state_store.read().load();
+            event_derived_target_aliases(&snapshot.raw_operations)
+                .get(&current.id)
+                .cloned()
+        };
+        let Some(canonical_id) = canonical_id else {
+            board_status
+                .set("card creation is still awaiting its canonical Strand identity".to_owned());
+            return false;
+        };
+        current.id = canonical_id;
+    }
     let patch = match card_detail_update_patch(&current, &draft) {
         Ok(patch) => patch,
         Err(msg) => {
@@ -542,7 +557,6 @@ pub(super) fn dispatch_card_detail_update(
         short_protocol_id(&operation_id)
     ));
     let api_token = token();
-    let strand_id = current.id.clone();
     let mls_commit_operation_id = mls_commit_op
         .as_ref()
         .map(|op| op.local_operation_id().to_string());
@@ -576,20 +590,40 @@ pub(super) fn dispatch_card_detail_update(
     let update_realm_id = realm_id.clone();
     let update_actor_id = actor_id.clone();
     let update_strand_id = current.id.clone();
-    spawn(async move {
+    let submit_authority = match crate::app::SessionContext::get()
+        .active_account
+        .read()
+        .as_ref()
+        .map(|account| account.authority.clone())
+    {
+        Some(authority) => authority,
+        None => {
+            board_status.set("active account authority is unavailable".to_owned());
+            return false;
+        }
+    };
+    // Saving closes the editor immediately. A component-scoped task would be
+    // cancelled as that edit subtree unmounts, leaving the durable operation
+    // permanently queued and never sending its Event. Run the protocol
+    // sequence at the root and retain only the app-owned state store across
+    // awaits; component UI signals are deliberately not captured.
+    let submit_state_store = crate::app::runtime_adapter::state_store_handle(state_store);
+    dioxus::core::spawn_forever(async move {
         if let Some(pending) = pending_history_secrets {
             let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
             if let Err(error) = pending.persist(secure_store.as_ref()).await {
-                state_store.write().update_raw_operation_write_state(
-                    &operation_id,
-                    "failed",
-                    None,
-                    Some(error.to_string()),
-                );
-                board_status.set(format!("MLS history-secret persist failed: {error}"));
+                submit_state_store.write(|store| {
+                    store.update_raw_operation_write_state(
+                        &operation_id,
+                        "failed",
+                        None,
+                        Some(error.to_string()),
+                    );
+                });
+                tracing::warn!(%error, "MLS history-secret persist failed");
                 return;
             }
-            state_store.write().publish_history_secrets(pending);
+            submit_state_store.write(|store| store.publish_history_secrets(pending));
         }
         // Genesis MUST land before the first commit so the server has the
         // group at epoch 0 before the commit bumps it to 1. A duplicate
@@ -599,6 +633,8 @@ pub(super) fn dispatch_card_detail_update(
         let mut accepted_genesis_event_id = None::<arkret_sdk::EventId>;
         if let Some(genesis_op) = mls_genesis_op {
             let realm_for_genesis_lookup = realm_id.clone();
+            let genesis_state_store = submit_state_store.clone();
+            let genesis_authority = submit_authority.clone();
             let genesis_result = with_authed_api(&base_url, api_token.clone(), |api| async move {
                 let material = mls_genesis_material.ok_or_else(|| {
                     anyhow::anyhow!(
@@ -608,7 +644,10 @@ pub(super) fn dispatch_card_detail_update(
                 crate::mls::runtime::upload_mls_genesis_public_material(&api, &material)
                     .await
                     .map_err(|error| anyhow::anyhow!(error.user_message()))?;
-                let submitter = api.event_submitter()?;
+                let submitter = api
+                    .event_submitter()?
+                    .with_state_store(genesis_state_store)
+                    .with_authority(genesis_authority);
                 match submitter.submit_sdk_event(&genesis_op).await {
                     Ok(accepted) => arkret_sdk::EventId::new(accepted.event_id.clone())
                         .map_err(|error| {
@@ -635,39 +674,40 @@ pub(super) fn dispatch_card_detail_update(
             .await;
             match genesis_result {
                 Ok(event_id) => {
-                    if let Err(error) = state_store
-                        .write()
-                        .mark_mls_genesis_emitted_with_event(realm_id.clone(), &event_id)
-                    {
-                        board_status.set(format!("MLS genesis reference persist failed: {error}"));
+                    let persist_result = submit_state_store.write(|store| {
+                        store.mark_mls_genesis_emitted_with_event(realm_id.clone(), &event_id)
+                    });
+                    if let Err(error) = persist_result {
+                        tracing::warn!(%error, "MLS genesis reference persist failed");
                         return;
                     }
                     accepted_genesis_event_id = Some(event_id);
                 }
                 Err(err) => {
                     let err_text = err.display().to_string();
-                    state_store.write().update_raw_operation_write_state(
-                        &operation_id,
-                        "failed",
-                        None,
-                        Some(err_text.clone()),
-                    );
-                    let selected = selected_card.read().clone();
-                    if let Some(mut card) = selected
-                        && card.id == strand_id
-                    {
-                        card.state = CardState::SoftFailed;
-                        selected_card.set(Some(card));
-                    }
-                    board_status.set(format!("MLS genesis event failed: {err_text}"));
+                    submit_state_store.write(|store| {
+                        store.update_raw_operation_write_state(
+                            &operation_id,
+                            "failed",
+                            None,
+                            Some(err_text.clone()),
+                        );
+                    });
+                    tracing::warn!(error = %err_text, "MLS genesis event failed");
                     return;
                 }
             }
         }
         let mut accepted_commit_event_id = None::<arkret_sdk::EventId>;
         if let Some(commit_op) = mls_commit_op {
+            let commit_state_store = submit_state_store.clone();
+            let commit_authority = submit_authority.clone();
             let commit_result = with_authed_api(&base_url, api_token.clone(), |api| async move {
-                api.event_submitter()?.submit_sdk_event(&commit_op).await
+                api.event_submitter()?
+                    .with_state_store(commit_state_store)
+                    .with_authority(commit_authority)
+                    .submit_sdk_event(&commit_op)
+                    .await
             })
             .await;
             match commit_result {
@@ -675,39 +715,36 @@ pub(super) fn dispatch_card_detail_update(
                     let commit_event_id = match arkret_sdk::EventId::new(resp.event_id.clone()) {
                         Ok(event_id) => event_id,
                         Err(error) => {
-                            board_status.set(format!("accepted MLS commit id is invalid: {error}"));
+                            tracing::warn!(%error, "accepted MLS commit id is invalid");
                             return;
                         }
                     };
                     accepted_commit_event_id = Some(commit_event_id.clone());
                     if let Some(commit_operation_id) = mls_commit_operation_id {
-                        state_store.write().record_move_submission_with_event_id(
-                            commit_operation_id,
-                            Some(resp.event_id),
-                            realm_id.clone(),
-                            "mls_commit".to_owned(),
-                            MoveSubmissionState::from_submit_state("accepted", None),
-                            None,
-                            None,
-                        );
+                        submit_state_store.write(|store| {
+                            store.record_move_submission_with_event_id(
+                                commit_operation_id,
+                                Some(resp.event_id),
+                                realm_id.clone(),
+                                "mls_commit".to_owned(),
+                                MoveSubmissionState::from_submit_state("accepted", None),
+                                None,
+                                None,
+                            );
+                        });
                     }
                 }
                 Err(err) => {
                     let err_text = err.display().to_string();
-                    state_store.write().update_raw_operation_write_state(
-                        &operation_id,
-                        "failed",
-                        None,
-                        Some(err_text.clone()),
-                    );
-                    let selected = selected_card.read().clone();
-                    if let Some(mut card) = selected
-                        && card.id == strand_id
-                    {
-                        card.state = CardState::SoftFailed;
-                        selected_card.set(Some(card));
-                    }
-                    board_status.set(format!("MLS commit event failed: {err_text}"));
+                    submit_state_store.write(|store| {
+                        store.update_raw_operation_write_state(
+                            &operation_id,
+                            "failed",
+                            None,
+                            Some(err_text.clone()),
+                        );
+                    });
+                    tracing::warn!(error = %err_text, "MLS commit event failed");
                     return;
                 }
             }
@@ -718,13 +755,15 @@ pub(super) fn dispatch_card_detail_update(
         ) {
             Ok(patch) => patch,
             Err(error) => {
-                state_store.write().update_raw_operation_write_state(
-                    &operation_id,
-                    "failed",
-                    None,
-                    Some(error.clone()),
-                );
-                board_status.set(error);
+                submit_state_store.write(|store| {
+                    store.update_raw_operation_write_state(
+                        &operation_id,
+                        "failed",
+                        None,
+                        Some(error.clone()),
+                    );
+                });
+                tracing::warn!(%error, "cannot seal encrypted card update");
                 return;
             }
         };
@@ -756,57 +795,65 @@ pub(super) fn dispatch_card_detail_update(
             Ok(op) => op,
             Err(error) => {
                 let error = format!("cannot update card: {error:#}");
-                state_store.write().update_raw_operation_write_state(
-                    &operation_id,
-                    "failed",
-                    None,
-                    Some(error.clone()),
-                );
-                board_status.set(error);
+                submit_state_store.write(|store| {
+                    store.update_raw_operation_write_state(
+                        &operation_id,
+                        "failed",
+                        None,
+                        Some(error.clone()),
+                    );
+                });
+                tracing::warn!(%error, "cannot author encrypted card update");
                 return;
             }
         };
         if let Some(reason) = kanban_plaintext_block_reason(guard_security_state, &submit_event) {
-            state_store.write().update_raw_operation_write_state(
-                &operation_id,
-                "failed",
-                None,
-                Some(reason.clone()),
-            );
-            board_status.set(reason);
+            submit_state_store.write(|store| {
+                store.update_raw_operation_write_state(
+                    &operation_id,
+                    "failed",
+                    None,
+                    Some(reason.clone()),
+                );
+            });
+            tracing::warn!(%reason, "encrypted card update blocked");
             return;
         }
         // The optimistic row was enqueued before the patch could be sealed, so
         // the body lands here, once it exists.
-        state_store
-            .write()
-            .update_raw_operation_body(&operation_id, submit_event.payload_value());
+        submit_state_store.write(|store| {
+            store.update_raw_operation_body(&operation_id, submit_event.payload_value());
+        });
+        let update_state_store = submit_state_store.clone();
+        let update_authority = submit_authority.clone();
         match with_authed_api(&base_url, api_token.clone(), |api| async move {
-            api.event_submitter()?.submit_sdk_event(&submit_event).await
+            api.event_submitter()?
+                .with_state_store(update_state_store)
+                .with_authority(update_authority)
+                .submit_sdk_event(&submit_event)
+                .await
         })
         .await
         {
             Ok(resp) => {
-                state_store.write().update_raw_operation_write_state(
-                    &operation_id,
-                    "accepted",
-                    Some(resp.event_id.clone()),
-                    None,
+                submit_state_store.write(|store| {
+                    store.update_raw_operation_write_state(
+                        &operation_id,
+                        "accepted",
+                        Some(resp.event_id.clone()),
+                        None,
+                    );
+                });
+                tracing::debug!(
+                    kind = %kind,
+                    event_id = %short_protocol_id(&resp.event_id),
+                    "detached card update accepted by server"
                 );
-                let selected = selected_card.read().clone();
-                if let Some(mut card) = selected
-                    && card.id == strand_id
-                {
-                    card.state = CardState::Accepted;
-                    selected_card.set(Some(card));
-                }
-                board_status.set(format!(
-                    "{kind} operation accepted by server (event_id={})",
-                    short_protocol_id(&resp.event_id)
-                ));
                 if effective_security_encrypted {
                     let Some(backup_account_scope) = backup_account_scope else {
-                        board_status.set("active account authority is unavailable".to_owned());
+                        tracing::warn!(
+                            "active account authority is unavailable after encrypted write"
+                        );
                         return;
                     };
                     crate::components::schedule_mls_private_plaintext_backup_after_encrypted_write(
@@ -836,37 +883,35 @@ pub(super) fn dispatch_card_detail_update(
                 }
             }
             Err(err) => {
-                state_store.write().update_raw_operation_write_state(
-                    &operation_id,
-                    "failed",
-                    None,
-                    Some(err.display().to_string()),
-                );
-                let selected = selected_card.read().clone();
-                if let Some(mut card) = selected
-                    && card.id == strand_id
-                {
-                    card.state = CardState::SoftFailed;
-                    selected_card.set(Some(card));
-                }
+                let error = err.display().to_string();
+                submit_state_store.write(|store| {
+                    store.update_raw_operation_write_state(
+                        &operation_id,
+                        "failed",
+                        None,
+                        Some(error.clone()),
+                    );
+                });
                 // §2.4.1 `epoch_update_required`: arm the coverage repair so the
                 // per-Realm MLS effect advances the epoch. Without this the
                 // refusal is just another failed write and the scope never
                 // recovers.
-                let paused = crate::mls::coverage_liveness::note_e2ee_submit_refusal(
-                    &mut state_store,
-                    &realm_id,
-                    None,
-                    err.inner(),
-                );
-                board_status.set(if paused {
-                    format!(
-                        "{kind} operation paused: MLS epoch must cover the latest governance Seal; \
-                         advancing the epoch"
+                let paused = submit_state_store.write(|store| {
+                    crate::mls::coverage_liveness::note_e2ee_submit_refusal_in_store(
+                        store,
+                        &realm_id,
+                        None,
+                        err.inner(),
                     )
-                } else {
-                    format!("{kind} operation failed: {}", err.display())
                 });
+                if paused {
+                    tracing::warn!(
+                        kind = %kind,
+                        "card update paused while MLS epoch advances to cover governance Seal"
+                    );
+                } else {
+                    tracing::warn!(kind = %kind, %error, "detached card update failed");
+                }
             }
         }
     });
