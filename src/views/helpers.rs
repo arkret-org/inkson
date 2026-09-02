@@ -464,13 +464,11 @@ pub(crate) fn verified_handle_claim(
     let mut claim = HandleClaim {
         schema: HandleClaim::SCHEMA.to_owned(),
         claim: core,
-        claim_digest: digest,
         status: HandleClaimStatus::Verified,
         as_of: issued_at,
         verifier_id: issuer_id,
         verified_at: Some(issued_at),
         revocation: None,
-        revocation_digest: None,
         fresh_until: issued_at + chrono::Duration::minutes(5),
         status_proof: proof(PayloadProofPurpose::StatusAttestation, placeholder),
     };
