@@ -4,6 +4,8 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use chrono::Utc;
 use dioxus::prelude::*;
 use dioxus_router::Link;
+#[cfg(not(target_arch = "wasm32"))]
+use dioxus_router::hooks::use_navigator;
 use garth::{
     AccountHandoffDisposition, BoundSessionRoute, LocalEvidenceHydration,
     LocalEvidenceUnavailableReason, OidcAccountHandoffInput, ReturningDeviceCandidate,
@@ -23,6 +25,8 @@ use crate::identity::account_auth::{
     extract_state_from_callback, fetch_oidc_discovery, open_oidc_authorize_url,
     persist_oidc_scaffold, restore_oidc_scaffold,
 };
+#[cfg(not(target_arch = "wasm32"))]
+use crate::routes::Route;
 use crate::state::{LocalStateStore, PersistedSessionGrant};
 use crate::transport::TransportClient;
 use crate::ui::button::{Button, ButtonVariant};
@@ -324,7 +328,6 @@ pub fn LoginPanel(
     mut locale: Signal<crate::i18n::UiLocale>,
     auto_capture_callback: bool,
     on_login: EventHandler<()>,
-    on_onboarding: EventHandler<()>,
 ) -> Element {
     // A4 — base_url / state_store from session context instead of props.
     let session_context = crate::app::SessionContext::get();
@@ -336,6 +339,8 @@ pub fn LoginPanel(
     let session = use_context::<crate::runtime::services::RuntimeServices>()
         .session
         .clone();
+    #[cfg(not(target_arch = "wasm32"))]
+    let navigator = use_navigator();
     let pending_device_id = use_signal(|| {
         active_account
             .peek()
@@ -542,7 +547,18 @@ pub fn LoginPanel(
                 auth_status.set(
                     "Account authenticated. Continue identity custody and binding.".to_owned(),
                 );
-                on_onboarding.call(());
+                #[cfg(target_arch = "wasm32")]
+                if let Some(window) = web_sys::window() {
+                    if let Err(error) = window.location().replace("/onboarding") {
+                        tracing::warn!(?error, "OIDC onboarding browser navigation failed");
+                    }
+                } else {
+                    tracing::warn!("OIDC onboarding browser window unavailable");
+                }
+                #[cfg(not(target_arch = "wasm32"))]
+                if let Some(failure) = navigator.replace(Route::Onboarding) {
+                    tracing::warn!(?failure, "OIDC onboarding navigation failed");
+                }
             }
             Ok(OidcCallbackOutcome::RetryableSessionExchange { message }) => {
                 auth_status.set(format!(

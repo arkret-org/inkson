@@ -1090,8 +1090,6 @@ fn AppBootstrap() -> Element {
             ""
         }
     );
-    let login_onboarding_navigator = navigator;
-    let callback_onboarding_navigator = navigator;
     let mut login_bootstrap_pending = bootstrap_pending;
     let mut callback_bootstrap_pending = bootstrap_pending;
     let login_session_boot_state = session_boot_state;
@@ -1123,13 +1121,19 @@ fn AppBootstrap() -> Element {
                                         "OIDC callback accepted; bootstrap requested",
                                     );
                                 },
-                                on_onboarding: move |_| {
-                                    let _ = callback_onboarding_navigator.push(Route::Onboarding);
-                                },
                             }
                         },
                         AuthSurface::Onboarding => rsx! {
-                            Outlet::<Route> {}
+                            crate::views::onboarding::OnboardingPanel {
+                                secure_store_ready: secure_store_bootstrap_ready(),
+                                token,
+                                principal_id,
+                                device_id,
+                                config_store,
+                                account_primary_handle,
+                                needs_device_authorization,
+                                device_authorization_check_complete,
+                            }
                         },
                         AuthSurface::Register => rsx! {
                             crate::views::register::RegistrationPanel {}
@@ -1170,9 +1174,6 @@ fn AppBootstrap() -> Element {
                                         SessionBootState::Checking,
                                         "interactive session accepted; bootstrap requested",
                                     );
-                                },
-                                on_onboarding: move |_| {
-                                    let _ = login_onboarding_navigator.push(Route::Onboarding);
                                 },
                             }
                         },
