@@ -456,17 +456,16 @@ fn inkson_accepts_server_contract_payloads() {
     let ok: inkson::models::OkOutcome = serde_json::from_value(json!({"ok": true})).unwrap();
     assert!(ok.ok);
 
-    // Spec rename: blob upload response uses `size_bytes` and
-    // `content_digest`; no serde aliases in aggressive migration mode.
+    // The content-addressed `blob_ref` is the sole carrier of the content
+    // digest; the outcome and its receipt carry no sibling `content_digest`
+    // (`conformance/encoding.md` §4.0.1).
     let blob_digest = format!("sha256:{}", "ab".repeat(32));
     let blob: inkson::models::BlobUploadOutcome = serde_json::from_value(json!({
         "blob_ref": format!("ak:blob:{blob_digest}"),
         "size_bytes": 23,
         "media_type": "application/octet-stream",
-        "content_digest": blob_digest,
         "upload_receipt": {
             "blob_ref": format!("ak:blob:{blob_digest}"),
-            "content_digest": blob_digest,
             "size_bytes": 23,
             "received_at": "2026-04-28T12:00:00.000Z",
             "issuer_id": "ak:did_core:web:server.local",
@@ -479,9 +478,14 @@ fn inkson_accepts_server_contract_payloads() {
     }))
     .unwrap();
     assert_eq!(blob.size_bytes, 23);
-    assert_eq!(
-        blob.content_digest.as_str(),
-        format!("sha256:{}", "ab".repeat(32))
+    assert_eq!(blob.blob_ref.as_str(), format!("ak:blob:{blob_digest}"));
+    assert!(
+        serde_json::from_value::<inkson::models::BlobUploadOutcome>(json!({
+            "blob_ref": format!("ak:blob:{blob_digest}"),
+            "size_bytes": 23,
+            "content_digest": blob_digest
+        }))
+        .is_err()
     );
 
     // SDK spec shape: status is `submitted`, and routed_to_ids carries principal cores.

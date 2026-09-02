@@ -1047,7 +1047,7 @@ pub(crate) fn primary_handle_from_viewer(
         .filter(|claim| {
             claim.claim.subject_account_id.principal_id == viewer.principal_id
                 && claim.status == arkret_models_identity::HandleClaimStatus::Verified
-                && claim.revocation_digest.is_none()
+                && claim.revocation.is_none()
                 && claim.fresh_until > chrono::Utc::now()
         })
         .map(|claim| &claim.claim.handle)
