@@ -97,15 +97,9 @@ pub fn build_genesis_unit(
     let descriptor = arkret_sdk::FoundingDeviceDescriptor {
         descriptor_version: 1,
         device_id: payload.device_id.clone(),
-        device_key_digest: arkret_sdk::Hash::new(arkret_sdk::canonical::sha256_digest(
-            payload.device_public_key_did.as_bytes(),
-        ))?,
         device_public_key_did: payload.device_public_key_did.clone(),
         device_key_algorithm: arkret_sdk::FoundingDeviceKeyAlgorithm::Ed25519,
         device_key_purpose: arkret_sdk::FoundingDeviceKeyPurpose::EventSigningAndMlsIdentity,
-        hpke_key_digest: arkret_sdk::Hash::new(arkret_sdk::canonical::sha256_digest(
-            payload.hpke_key.as_bytes(),
-        ))?,
         hpke_key: payload.hpke_key.clone(),
         hpke_key_algorithm: arkret_sdk::FoundingDeviceHpkeKeyAlgorithm::X25519,
         algorithms: payload.algorithms.clone(),
