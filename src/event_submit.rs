@@ -3158,7 +3158,6 @@ impl EventSubmitter {
                 None,
                 None,
                 Some(REALM_CREATE_AUTHORITY_QUERY_LIMIT),
-                None,
             )
             .await
             .map_err(anyhow::Error::from)?;

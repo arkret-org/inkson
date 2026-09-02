@@ -43,7 +43,6 @@ pub enum DeploymentProfile {
     SmallTeam,
     Organization,
     HighSecurity,
-    Sovereign,
 }
 
 impl DeploymentProfile {

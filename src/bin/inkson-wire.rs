@@ -44,12 +44,6 @@ struct IngressReceiptsInput {
 }
 
 #[derive(Debug, Deserialize)]
-struct RangeCompletenessInput {
-    realm_id: arkret_sdk::RealmId,
-    events: Vec<arkret_sdk::Event>,
-}
-
-#[derive(Debug, Deserialize)]
 struct RealmActorFrontierInput {
     realm_id: arkret_sdk::RealmId,
     actor_id: arkret_sdk::ActorId,
@@ -89,7 +83,6 @@ fn main() -> Result<()> {
         "mls-governance-proof" => mls_governance_proof(input)?,
         "control-proposal-ack" => control_proposal_ack(input)?,
         "ingress-receipts" => ingress_receipts(input)?,
-        "range-completeness" => range_completeness(input)?,
         "realm-actor-frontier" => realm_actor_frontier(input)?,
         "service-resolution" => service_resolution()?,
         "principal-locator" => principal_locator(input)?,
@@ -632,175 +625,6 @@ fn realm_actor_frontier(input: Value) -> Result<Value> {
     )
     .context("derive Realm actor frontier")?;
     serde_json::to_value(frontier).context("serialize Realm actor frontier")
-}
-
-fn range_completeness(input: Value) -> Result<Value> {
-    use arkret_sdk::{
-        Event, EventId, EventRequirements, Hash, PayloadProof, PayloadProofPurpose, PayloadSigner,
-        ScopeRef,
-    };
-    use arkret_signatures::{Ed25519PayloadSigner, SignEventOptions, sign_event};
-
-    let input: RangeCompletenessInput =
-        serde_json::from_value(input).context("parse range-completeness input")?;
-    if input.events.len() < 2
-        || input
-            .events
-            .iter()
-            .any(|event| event.realm_id != input.realm_id)
-    {
-        bail!("range-completeness fixture requires at least two Events in one Realm");
-    }
-    let (from_frontier, to_frontier) = arkret_sdk::full_realm_range_frontiers(&input.events)
-        .map_err(|error| anyhow::anyhow!("derive fixture completeness frontiers: {error}"))?;
-    let range_events = arkret_sdk::full_realm_range_events(&input.events)
-        .map_err(|error| anyhow::anyhow!("derive fixture completeness range: {error}"))?;
-    let actor_seq_ranges = arkret_sdk::range_completeness_actor_seq_ranges(&range_events)
-        .map_err(|error| anyhow::anyhow!("derive fixture actor ranges: {error}"))?;
-    if actor_seq_ranges.is_empty() {
-        bail!("range-completeness fixture has no reducer-input Events after its genesis frontier");
-    }
-    let digest_algorithm = input
-        .events
-        .iter()
-        .find(|event| event.kind.as_str() == event_kind_str::REALM_CREATE)
-        .and_then(|event| {
-            event
-                .payload
-                .get("object")
-                .and_then(|object| object.get("digest_algorithm"))
-                .or_else(|| event.payload.get("digest_algorithm"))
-        })
-        .and_then(Value::as_str)
-        .unwrap_or("sha256");
-    let digest_suite = arkret_sdk::canonical::digest_suite(digest_algorithm)
-        .map_err(|error| anyhow::anyhow!("derive fixture Realm digest suite: {error}"))?;
-    let (root, covered_event_ids) =
-        arkret_sdk::range_completeness_root_with_suite(&range_events, digest_suite)
-            .map_err(|error| anyhow::anyhow!("derive fixture completeness root: {error}"))?;
-
-    let issuer_did = arkret_sdk::Did::new("did:web:server.local")?;
-    let issuer = arkret_sdk::DidCoreId::new("ak:did_core:web:server.local")?;
-    let verification_method = arkret_sdk::DidUrl::new(format!("{issuer_did}#notary-key"))
-        .map_err(|error| anyhow::anyhow!("fixture verification method: {error}"))?;
-    let signing_key = ed25519_dalek::SigningKey::from_bytes(&[0x5a_u8; 32]);
-    let signer = Ed25519PayloadSigner::new(
-        signing_key.clone(),
-        issuer_did.clone(),
-        verification_method.clone(),
-    );
-    let observed_at = arkret_sdk::canonical::normalize_timestamp_canonical(chrono::Utc::now());
-    let mut payload = arkret_sdk::RangeCompletenessAttestation {
-        attestation_id: "ak:attestation:019fbeef-0000-7000-8000-000000000001".to_owned(),
-        schema: SchemaId::RANGE_COMPLETENESS_ATTESTATION_V1.to_owned(),
-        issuer_id: issuer.clone(),
-        issuer_role: "events_api".to_owned(),
-        realm_id: input.realm_id.clone(),
-        event_range: arkret_sdk::RangeCompletenessAttestationEventRange {
-            from_frontier: arkret_sdk::RangeCompletenessAttestationEventRangeFromFrontier {
-                realm_frontier: from_frontier,
-                extra: BTreeMap::new(),
-            },
-            to_frontier: arkret_sdk::RangeCompletenessAttestationEventRangeToFrontier {
-                realm_frontier: to_frontier.clone(),
-                extra: BTreeMap::new(),
-            },
-            actor_seq_ranges,
-        },
-        root,
-        count: covered_event_ids.len() as u64,
-        observed_at,
-        witness_attestation: arkret_sdk::RangeCompletenessAttestationWitnessAttestation {
-            witnesses: vec![
-                arkret_sdk::RangeCompletenessAttestationWitnessAttestationWitnessesItem {
-                    witness_id: issuer.clone(),
-                    verification_method: verification_method.clone(),
-                    controlling_organization_id: issuer.clone(),
-                    attested_at: Some(observed_at),
-                    extra: BTreeMap::new(),
-                },
-            ],
-        },
-        proofs: Vec::new(),
-    };
-    let canonical_payload = payload.proof_payload_bytes()?;
-    let mut payload_proof = PayloadProof {
-        kind: arkret_sdk::proof_kind::DETACHED_JWS.to_owned(),
-        verification_method: verification_method.clone(),
-        payload_digest: Hash::new(arkret_sdk::canonical::sha256_digest(&canonical_payload))?,
-        created_at: observed_at,
-        domain: None,
-        audience: None,
-        proof_purpose: Some(PayloadProofPurpose::IssuerAttestation),
-        jws: String::new(),
-    };
-    let binding = payload.proof_binding_bytes(&payload_proof)?;
-    let signature = signer.sign_payload(&binding)?;
-    payload_proof.jws = signature.jws;
-    payload.proofs.push(payload_proof);
-    let Value::Object(payload) = serde_json::to_value(payload)? else {
-        bail!("typed completeness payload is not an object");
-    };
-    let event = Event {
-        // Replaced by `finalize_with_digest_suite` below: the identity is derived
-        // from the finished content, so nothing here may claim one.
-        event_id: EventId::from_digest(digest_suite, [0; 32]),
-        kind: arkret_wire::EventKind::AttestationRangeCompleteness,
-        realm_id: input.realm_id.clone(),
-        scope_ref: ScopeRef::Realm {
-            realm_id: input.realm_id,
-        },
-        actor_id: arkret_sdk::ActorId::service(issuer.clone()),
-        executed_by: None,
-        authorization_ref: None,
-        applet_id: None,
-        external_ref: None,
-        actor_kind: None,
-        actor_seq: 0,
-        created_at: observed_at,
-        hlc: None,
-        prev_refs: to_frontier,
-        refs: Vec::new(),
-        causal_refs: Vec::new(),
-        preconditions: Vec::new(),
-        seal_ref: None,
-        auth_context: None,
-        seal_basis: None,
-        payload: payload.into_iter().collect(),
-        unsigned: BTreeMap::new(),
-        proofs: Vec::new(),
-        requirements: EventRequirements::default(),
-    };
-    let mut event = arkret_sdk::AuthoredEvent::finalize_with_digest_suite(event, digest_suite)
-        .map_err(|error| anyhow::anyhow!("finalize fixture attestation Event: {error}"))?;
-    let event_id = event.event_id().clone();
-    sign_event(
-        &mut event,
-        &signer,
-        &verification_method,
-        SignEventOptions::new().with_created_at(observed_at),
-    )?;
-
-    let mut multikey = vec![0xed, 0x01];
-    multikey.extend_from_slice(signing_key.verifying_key().as_bytes());
-    let public_key_multibase = arkret_sdk::encode_multibase_base58btc(multikey);
-    Ok(json!({
-        "range_completeness": {
-            "attestation_refs": [event_id],
-            "attestations": [event]
-        },
-        "did_document": {
-            "id": issuer,
-            "verificationMethod": [{
-                "id": verification_method,
-                "type": "Multikey",
-                "controller": issuer,
-                "publicKeyMultibase": public_key_multibase
-            }],
-            "authentication": [verification_method],
-            "assertionMethod": [verification_method]
-        }
-    }))
 }
 
 fn read_stdin_json() -> Result<Value> {

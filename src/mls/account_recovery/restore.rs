@@ -1,14 +1,7 @@
 //! Fetch + restore flow: account secret, MLS history, and the private-plaintext
 //! sidecar.
 
-use std::collections::BTreeMap;
-
 use anyhow::{Result, anyhow};
-use arkret_sdk::EventPayloadExt as _;
-use arkret_wire::event_kind_str;
-use base64::Engine as _;
-use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
-use ed25519_dalek::Verifier as _;
 use serde_json::{Value, json};
 
 use super::backup_body::{
@@ -317,314 +310,13 @@ pub async fn fetch_mls_restore_payload_after_encrypted_projection(
 }
 
 async fn fetch_authoritative_active_series(
-    api: &crate::transport::TransportClient,
-    actor_id: &str,
+    _api: &crate::transport::TransportClient,
+    _actor_id: &str,
 ) -> Result<Vec<Value>> {
-    let account_actor = crate::mls_api_helpers::local_account_actor_id(actor_id)
-        .map_err(|error| anyhow!("invalid backup actor_id: {error}"))?;
-    let actor = account_actor.signing_principal_id().clone();
-    let http = api.http();
-    let realm_id = crate::identity::principal_control::resolve_accepted(http, &actor).await?;
-    let events = api
-        .http()
-        .events_read_all_pages_with_completeness(realm_id.as_str())
-        .await
-        .map_err(|error| anyhow!("read key backup active-series control stream: {error}"))?;
-    let accepted_events = crate::models::require_complete_event_rows(
-        &events.events,
-        "key-backup active-series verification",
-    )?;
-    let mut active_events = accepted_events
-        .iter()
-        .filter(|event| {
-            event.kind.as_str() == event_kind_str::KEY_BACKUP_ACTIVE_SERIES
-                && event.actor_id == account_actor
-        })
-        .collect::<Vec<_>>();
-    if active_events.is_empty() {
-        return Ok(Vec::new());
-    }
-    verify_active_series_range_completeness(
-        api,
-        &realm_id,
-        &events,
-        &accepted_events,
-        &active_events,
-    )
-    .await?;
-    let mut device_ids = active_events
-        .iter()
-        .filter_map(|event| {
-            event
-                .payload
-                .get("auth_data")
-                .and_then(Value::as_object)
-                .and_then(|auth| auth.get("verification_method"))
-                .and_then(Value::as_str)
-                .and_then(|method| active_series_principal_device(method, &actor))
-        })
-        .collect::<Vec<_>>();
-    device_ids.sort();
-    device_ids.dedup();
-    if device_ids.is_empty() {
-        return Err(anyhow!(
-            "active-series verification has no principal-bound device signer"
-        ));
-    }
-    let keys = api
-        .http()
-        .keys_query(&arkret_models_crypto::KeysQueryRequestBody {
-            device_keys: vec![arkret_models_crypto::QueryAccountDeviceSelector {
-                account_id: account_actor
-                    .as_account_id()
-                    .cloned()
-                    .ok_or_else(|| anyhow!("backup actor must be an exact account"))?,
-                device_ids,
-            }],
-            timeout_ms: None,
-        })
-        .await
-        .map_err(|error| anyhow!("read active-series verification keys: {error}"))?;
-    if !keys.failures.is_empty() {
-        return Err(anyhow!(
-            "active-series verification key query was incomplete"
-        ));
-    }
-    let mut current = BTreeMap::<
-        String,
-        (
-            arkret_sdk::KeyBackupActiveSeriesHead,
-            arkret_sdk::KeyBackupActiveSeries,
-        ),
-    >::new();
-    active_events.sort_by_key(|event| event.actor_seq);
-    for event in active_events {
-        let record = serde_json::from_value::<arkret_sdk::KeyBackupActiveSeries>(
-            serde_json::to_value(&event.payload)?,
-        )
-        .map_err(|error| anyhow!("accepted active-series Event is invalid: {error}"))?;
-        if record.actor_id != account_actor || event.actor_id != account_actor {
-            return Err(anyhow!(
-                "accepted active-series Event actor does not match its exact Station account"
-            ));
-        }
-        verify_active_series_record_signature(&record, &keys)?;
-        let class = record.backup_kind.as_str().to_owned();
-        let head = arkret_sdk::validate_key_backup_active_series_transition(
-            current.get(&class).map(|(head, _)| head),
-            &record,
-        )
-        .map_err(|error| anyhow!("accepted active-series chain is not canonical: {error}"))?;
-        current.insert(class, (head, record));
-    }
-    current
-        .into_values()
-        .map(|(_, record)| serde_json::to_value(record).map_err(anyhow::Error::from))
-        .collect()
-}
-
-async fn verify_active_series_range_completeness(
-    api: &crate::transport::TransportClient,
-    realm_id: &arkret_sdk::RealmId,
-    outcome: &arkret_sdk::EventsQueryOutcome,
-    accepted_events: &[arkret_sdk::Event],
-    active_events: &[&arkret_sdk::Event],
-) -> Result<()> {
-    use arkret_sdk::identity::DidResolver as _;
-
-    let digest_algorithm = accepted_events
-        .iter()
-        .find(|event| event.kind.as_str() == event_kind_str::REALM_CREATE)
-        .and_then(|event| {
-            event
-                .payload
-                .get("object")
-                .and_then(|object| object.get("digest_algorithm"))
-                .or_else(|| event.payload.get("digest_algorithm"))
-        })
-        .and_then(Value::as_str)
-        .unwrap_or("sha256");
-    let digest_suite = arkret_sdk::canonical::digest_suite(digest_algorithm)
-        .map_err(|error| anyhow!("unsupported active-series Realm digest algorithm: {error}"))?;
-    let describe = api
-        .event_submitter()
-        .map_err(|error| anyhow!("build active-series completeness client: {error}"))?
-        .events_describe()
-        .await
-        .map_err(|error| anyhow!("describe active-series completeness support: {error}"))?;
-    if !describe
-        .supported_features
-        .iter()
-        .any(|feature| feature == "ak.feature.events_query_range_completeness.v1")
-    {
-        return Err(anyhow!(
-            "first-device active-series recovery requires events_query_range_completeness"
-        ));
-    }
-    let completeness = outcome.range_completeness.as_ref().ok_or_else(|| {
-        anyhow!("first-device active-series recovery received no range-completeness evidence")
-    })?;
-    if completeness.attestation_refs.is_empty() || completeness.attestations.is_empty() {
-        return Err(anyhow!(
-            "first-device active-series recovery received empty range-completeness evidence"
-        ));
-    }
-    let referenced = completeness
-        .attestation_refs
-        .iter()
-        .collect::<std::collections::BTreeSet<_>>();
-    let mut first_error = None;
-    for attestation_event in &completeness.attestations {
-        if !referenced.contains(&attestation_event.event_id) {
-            first_error.get_or_insert_with(|| {
-                "inline range-completeness Event is not present in attestation_refs".to_owned()
-            });
-            continue;
-        }
-        let payload = match attestation_event
-            .typed_payload::<arkret_sdk::event_spec::AttestationRangeCompleteness>()
-        {
-            Ok(payload) => payload,
-            Err(error) => {
-                first_error.get_or_insert_with(|| {
-                    format!("decode active-series range-completeness payload: {error}")
-                });
-                continue;
-            }
-        };
-        let issuer_actor = payload.issuer_id.clone();
-        if issuer_actor != describe.service_id
-            || attestation_event.actor_id.signing_principal_id() != &issuer_actor
-        {
-            first_error.get_or_insert_with(|| {
-                "active-series completeness issuer does not match the described service".to_owned()
-            });
-            continue;
-        }
-        let issuer_did = attestation_event
-            .proofs
-            .first()
-            .and_then(arkret_sdk::EventProof::as_producer)
-            .and_then(|proof| proof.verification_method.as_str().split_once('#'))
-            .map(|(controller, _)| controller.to_owned())
-            .ok_or_else(|| anyhow!("range-completeness proof omits issuer DID fragment"))?;
-        let issuer_did = arkret_sdk::Did::new(issuer_did)?;
-        if arkret_sdk::project_did_to_core_id(&issuer_did)? != issuer_actor {
-            return Err(anyhow!(
-                "range-completeness proof controller differs from issuer"
-            ));
-        }
-        let document =
-            crate::mls::governance_proof::resolve_proof_signer_document(api, &issuer_did)
-                .await
-                .map_err(anyhow::Error::msg)?;
-        let mut resolver = crate::mls::governance_proof::StaticProofDidResolver::default();
-        resolver
-            .documents
-            .insert(issuer_did.as_str().to_owned(), document);
-        let outer_verified = attestation_event
-            .proofs
-            .iter()
-            .filter_map(arkret_sdk::EventProof::as_producer)
-            .all(|proof| {
-                let Ok(mut context) =
-                    arkret_sdk::event_proof_verification_context_with_digest_suite(
-                        attestation_event,
-                        digest_suite,
-                    )
-                else {
-                    return false;
-                };
-                context.replay_window = chrono::Duration::MAX;
-                arkret_sdk::verify_event_proof_with_did_resolver_context(
-                    attestation_event,
-                    proof,
-                    &resolver,
-                    context,
-                )
-                .is_ok_and(|verification| verification.valid)
-            });
-        if !outer_verified {
-            first_error.get_or_insert_with(|| {
-                "active-series range-completeness Event signature is invalid".to_owned()
-            });
-            continue;
-        }
-        let payload_verified = payload.proofs.iter().all(|proof| {
-            let Ok(binding) = payload.proof_binding_bytes(proof) else {
-                return false;
-            };
-            let Ok(resolved) = arkret_sdk::resolve_verification_method_key(
-                &resolver,
-                proof.verification_method.as_str(),
-            ) else {
-                return false;
-            };
-            let Ok(absolute_method) = resolved.absolutize(&resolved.did) else {
-                return false;
-            };
-            if absolute_method != proof.verification_method {
-                return false;
-            }
-            let Ok(controller) = arkret_sdk::project_did_to_core_id(&resolved.did) else {
-                return false;
-            };
-            if controller != issuer_actor {
-                return false;
-            }
-            arkret_sdk::signatures::verify_ed25519_detached_jws_payload_proof(
-                proof,
-                &binding,
-                &resolved.public_key,
-            )
-            .is_ok()
-        });
-        if !payload_verified {
-            first_error.get_or_insert_with(|| {
-                "active-series range-completeness payload witness signature is invalid".to_owned()
-            });
-            continue;
-        }
-        let verified = match arkret_sdk::verify_full_realm_range_completeness_with_suite(
-            attestation_event,
-            accepted_events,
-            realm_id,
-            digest_suite,
-            false,
-            &std::collections::BTreeSet::new(),
-        ) {
-            Ok(verified) => verified,
-            Err(error) => {
-                first_error
-                    .get_or_insert_with(|| format!("verify active-series completeness: {error}"));
-                continue;
-            }
-        };
-        if active_events
-            .iter()
-            .any(|event| !verified.covered_event_ids.contains(&event.event_id))
-        {
-            first_error.get_or_insert_with(|| {
-                "range-completeness evidence does not cover every active-series Event".to_owned()
-            });
-            continue;
-        }
-        if !resolver.supports(&issuer_did) {
-            first_error.get_or_insert_with(|| {
-                "range-completeness issuer DID was not authority-resolved".to_owned()
-            });
-            continue;
-        }
-        return Ok(());
-    }
     Err(anyhow!(
-        "{}",
-        first_error.unwrap_or_else(|| {
-            "no usable active-series range-completeness attestation was returned".to_owned()
-        })
+        "remote first-device active-series recovery is unsupported in v1 because historical completeness is not a protocol guarantee"
     ))
 }
-
 /// The DID URL shapes that may authorize an `ak.key_backup.active_series`
 /// record for one `(actor_id, device_id, device_signing_key)` triple.
 ///
@@ -635,6 +327,7 @@ async fn verify_active_series_range_completeness(
 /// - `<principal_did>#<device_id>` — the principal-bound device reference;
 /// - `<device_signing_key>#<multikey>` — the self-describing `did:key` form;
 /// - `<device_signing_key>#device` — the same key with the conventional fragment.
+#[cfg(test)]
 fn active_series_verification_method_matches(
     verification_method: &str,
     principal_id: &arkret_sdk::DidCoreId,
@@ -648,6 +341,7 @@ fn active_series_verification_method_matches(
         || verification_method == format!("{device_signing_key}#device")
 }
 
+#[cfg(test)]
 fn active_series_principal_device(
     verification_method: &str,
     principal_id: &arkret_sdk::DidCoreId,
@@ -662,89 +356,6 @@ fn active_series_principal_device(
         return None;
     }
     arkret_sdk::DeviceId::new(fragment).ok()
-}
-
-fn verify_active_series_record_signature(
-    record: &arkret_sdk::KeyBackupActiveSeries,
-    keys: &arkret_models_crypto::KeysQueryOutcome,
-) -> Result<()> {
-    if record.auth_data.signature_algorithm
-        != arkret_models_crypto::KeyBackupSignatureAlgorithm::Ed25519
-    {
-        return Err(anyhow!(
-            "active-series record uses an unsupported signature algorithm"
-        ));
-    }
-    let message = record.signing_payload_bytes()?;
-    let signature = ed25519_dalek::Signature::from_slice(
-        &B64.decode(record.auth_data.signature.as_str())
-            .map_err(|error| anyhow!("decode active-series signature: {error}"))?,
-    )
-    .map_err(|error| anyhow!("parse active-series signature: {error}"))?;
-    let account_id = record
-        .actor_id
-        .as_account_id()
-        .ok_or_else(|| anyhow!("active-series record must name an exact account"))?;
-    let devices = keys
-        .devices_for(account_id)
-        .ok_or_else(|| anyhow!("active-series key query omitted its actor"))?;
-    let generation = keys.generation_for(account_id);
-    let Some(generation) = generation else {
-        return Err(anyhow!("active-series device generation is absent"));
-    };
-    for (device_id, device) in devices {
-        if device
-            .validate_attestation_binding(account_id, device_id)
-            .is_err()
-        {
-            continue;
-        }
-        if !device.is_usable_in_generation(Some(generation)) {
-            continue;
-        }
-        let attested = &device.device_projection_attestation.attestation;
-        let did_key = attested.device_signing_key_did.as_str();
-        let Some(multikey) = did_key.strip_prefix("did:key:") else {
-            continue;
-        };
-        if !active_series_verification_method_matches(
-            record.auth_data.verification_method.as_str(),
-            record.actor_id.signing_principal_id(),
-            device_id.as_str(),
-            did_key,
-            multikey,
-        ) {
-            continue;
-        }
-        let event_id = &record.auth_data.device_authorize_event_id;
-        let frontier = &record.frontier_ref.device_generation_ref;
-        let anchored = generation.device_generation_status
-            == arkret_sdk::DeviceGenerationStatus::Active
-            && generation.current_device_generation_ref == *frontier
-            && &attested.device_authorize_event_id == event_id
-            && attested.authorized_generation_ref == *frontier;
-        if !anchored {
-            continue;
-        }
-        let decoded = arkret_sdk::decode_multibase_base58btc(multikey)
-            .map_err(|error| anyhow!("active-series Ed25519 key is invalid: {error}"))?;
-        let Some((codec, header_len)) = arkret_sdk::decode_multicodec_varint(&decoded) else {
-            continue;
-        };
-        if codec != 0xed || decoded.len().saturating_sub(header_len) != 32 {
-            continue;
-        }
-        let key_bytes = <[u8; 32]>::try_from(&decoded[header_len..])
-            .map_err(|_| anyhow!("active-series Ed25519 key length is invalid"))?;
-        let verifying_key = ed25519_dalek::VerifyingKey::from_bytes(&key_bytes)
-            .map_err(|error| anyhow!("active-series Ed25519 key is invalid: {error}"))?;
-        if verifying_key.verify(&message, &signature).is_ok() {
-            return Ok(());
-        }
-    }
-    Err(anyhow!(
-        "active-series record signature is not anchored to the current trust generation"
-    ))
 }
 
 pub async fn fetch_mls_restore_payload_with_unlock_proof(

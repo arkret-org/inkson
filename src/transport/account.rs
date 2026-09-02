@@ -25,7 +25,7 @@ use dioxus::prelude::{SyncSignal, WritableExt};
 use serde_json::Value;
 
 use crate::event_submit::EventSubmitter;
-use crate::models::{ContactList, CurrentAccount, IdentityResolveOutcome};
+use crate::models::{ContactList, CurrentAccount};
 
 pub(crate) fn did_for_request_field(
     field: &str,
@@ -1016,21 +1016,6 @@ pub async fn identity_describe(
     http.identity_describe()
         .await
         .map_err(|error| anyhow::anyhow!("identity describe: {error}"))
-}
-
-pub async fn identity_resolve(
-    http: &arkret_sdk::http_client::Client,
-    did: &str,
-) -> anyhow::Result<IdentityResolveOutcome> {
-    let subject = arkret_sdk::Did::new(did.to_owned())
-        .map_err(|err| anyhow::anyhow!("invalid did `{did}`: {err}"))?;
-    let body = arkret_models_identity::IdentityResolveRequestBody {
-        did: subject,
-        requested_evidence_kinds: Vec::new(),
-    };
-    http.identity_resolve(&body)
-        .await
-        .map_err(anyhow::Error::from)
 }
 
 pub async fn sync_describe(

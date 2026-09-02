@@ -1486,7 +1486,6 @@ fn mls_genesis_event_lookup_filters_kind_and_realm() {
         next_cursor: None,
         prev_cursor: None,
         has_more: false,
-        range_completeness: None,
     };
 
     assert_eq!(

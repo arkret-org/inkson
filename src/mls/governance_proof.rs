@@ -1,6 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use arkret_sdk::identity::DidResolver;
 use dioxus::prelude::{ReadableExt, WritableExt};
 
 pub(crate) fn bind_sidecar_scope(
@@ -45,32 +44,6 @@ impl GovernanceProofStateStore for crate::runtime::input::StateStoreHandle {
 
     fn with_write<R>(&self, write: impl FnOnce(&mut crate::state::LocalStateStore) -> R) -> R {
         self.write(write)
-    }
-}
-
-#[derive(Default)]
-pub(crate) struct StaticProofDidResolver {
-    pub(crate) documents: BTreeMap<String, arkret_sdk::DidDocument>,
-}
-
-impl DidResolver for StaticProofDidResolver {
-    fn supports(&self, did: &arkret_sdk::Did) -> bool {
-        self.documents.contains_key(did.as_str())
-    }
-
-    fn resolve_did(
-        &self,
-        did: &arkret_sdk::Did,
-    ) -> arkret_sdk::identity::Result<arkret_sdk::identity::ResolvedDid> {
-        self.documents
-            .get(did.as_str())
-            .cloned()
-            .map(arkret_sdk::identity::ResolvedDid::proofless)
-            .ok_or_else(|| {
-                arkret_sdk::identity::IdentityError::Protocol(format!(
-                    "no authority-resolved DID document for proof signer {did}"
-                ))
-            })
     }
 }
 
@@ -489,44 +462,6 @@ pub(crate) fn verify_agent_external_trust<S: GovernanceProofStateStore>(
             ))
         }
     }
-}
-
-pub(crate) async fn resolve_proof_signer_document(
-    api: &crate::transport::TransportClient,
-    did: &arkret_sdk::Did,
-) -> Result<arkret_sdk::DidDocument, String> {
-    let http = api
-        .sdk_http_client()
-        .map_err(|error| format!("build MLS governance proof DID client: {error}"))?;
-    let outcome = crate::transport::account::identity_resolve(&http, did.as_str())
-        .await
-        .map_err(|error| {
-            format!(
-                "authority DID resolution failed for MLS governance proof signer {did}: {error}"
-            )
-        })?;
-    if outcome
-        .did_document
-        .get("id")
-        .and_then(serde_json::Value::as_str)
-        != Some(did.as_str())
-    {
-        return Err(format!(
-            "authority DID resolution returned a different DID for MLS governance proof signer {did}"
-        ));
-    }
-    let document: arkret_sdk::DidDocument = serde_json::to_value(outcome.did_document)
-        .and_then(serde_json::from_value)
-        .map_err(|error| {
-            format!("decode authority DID document for MLS governance proof signer {did}: {error}")
-        })?;
-    if document.id != *did {
-        return Err(format!(
-            "authority DID document id {} does not match MLS governance proof signer {did}",
-            document.id
-        ));
-    }
-    Ok(document)
 }
 
 pub(crate) async fn ensure_governance_checkpoint<S: GovernanceProofStateStore>(

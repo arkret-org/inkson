@@ -221,6 +221,34 @@ fn migrated_ui_modules_carry_no_bare_english_text() {
     );
 }
 
+#[test]
+fn realm_creation_has_no_private_sovereign_deployment_controls() {
+    let setup = crate_src_dir().join("views/setup");
+    let source = rust_files_under(&setup)
+        .into_iter()
+        .map(|path| {
+            fs::read_to_string(&path)
+                .unwrap_or_else(|error| panic!("failed to read {}: {error}", path.display()))
+                .to_ascii_lowercase()
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    for retired in [
+        "sovereign",
+        "hosted_on",
+        "deployment_profile",
+        "profile_override",
+        "enclave_realms",
+        "/_soland/admin/deployment",
+    ] {
+        assert!(
+            !source.contains(retired),
+            "Realm creation must not expose retired private deployment control {retired:?}"
+        );
+    }
+}
+
 /// Not a gate — a visible backlog. Prints every UI file that still renders
 /// with `rsx!` but never calls `tr()`, so the remaining work is measurable
 /// instead of being discovered by a user seeing a half-translated page.

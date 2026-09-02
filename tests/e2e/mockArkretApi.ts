@@ -126,7 +126,6 @@ type InksonWireCommand =
   | "mls-governance-proof"
   | "control-proposal-ack"
   | "ingress-receipts"
-  | "range-completeness"
   | "realm-actor-frontier"
   | "service-resolution"
   | "principal-locator"
@@ -2688,23 +2687,6 @@ export async function mockArkretApi(
         events,
         has_more: false,
       };
-      if (
-        (requestBody.include_completeness === true ||
-          url.searchParams.get("include_completeness") === "true") &&
-        events.length >= 2 &&
-        events.some((event) => event.kind === "ak.key_backup.active_series")
-      ) {
-        const realmId = eventRealmId(events[0]);
-        const fixture = inksonWire<{
-          range_completeness: Record<string, unknown>;
-          did_document: Record<string, unknown>;
-        }>("range-completeness", {
-          realm_id: realmId,
-          events,
-        });
-        response.range_completeness = fixture.range_completeness;
-        serverDidDocument = fixture.did_document;
-      }
       return json(route, response);
     }
 
@@ -4321,7 +4303,7 @@ function eventsServiceDescribe() {
   return {
     ...principalServiceDescribe(),
     supported_profiles: ["ak.profile.core_event_store.v1"],
-    supported_features: ["ak.feature.events_query_range_completeness.v1"],
+    supported_features: [],
   };
 }
 
