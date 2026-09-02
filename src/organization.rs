@@ -192,7 +192,7 @@ pub struct OrganizationStatementInput {
 /// reconstructs an identical payload so the canonical bytes — and therefore the
 /// proof — remain valid on the wire.
 ///
-/// `issuer_role` is always `OrganizationPrincipalId`: the organization principal controller
+/// `issuer_role` is always `Organization`: the organization principal controller
 /// signs directly, so no `delegation_ref` is involved.
 pub fn sign_organization_statement(
     input: &OrganizationStatementInput,
@@ -246,7 +246,7 @@ pub fn sign_organization_statement(
         organization_policy_ref: None,
         authorization: RealmOrganizationAuthorization {
             issuer_id: input.organization_id.clone(),
-            issuer_role: RealmOrganizationIssuerRole::OrganizationPrincipalId,
+            issuer_role: RealmOrganizationIssuerRole::Organization,
             verification_method: arkret_sdk::DidUrl::new(input.verification_method.clone())
                 .map_err(anyhow::Error::msg)?,
             delegation_ref: None,

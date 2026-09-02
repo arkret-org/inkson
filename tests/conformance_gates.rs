@@ -823,9 +823,15 @@ fn sas_key_verification_device_message_matches_device_message_schema() {
     let delivered = serde_json::json!({
         "device_message_id": target["device_message_id"],
         "kind": target["kind"],
-        "sender_principal_id": "ak:did_core:web:alice.example",
+        "sender_account_id": {
+            "principal_id": "ak:did_core:web:alice.example",
+            "station_id": "ak:did_core:web:alice-station.example"
+        },
         "sender_device_id": from_device,
-        "recipient_principal_id": "ak:did_core:web:bob.example",
+        "recipient_account_id": {
+            "principal_id": "ak:did_core:web:bob.example",
+            "station_id": "ak:did_core:web:bob-station.example"
+        },
         "recipient_device_id": target_device,
         "sent_at": "2026-04-26T00:00:00.000Z",
         "expires_at": target["expires_at"],

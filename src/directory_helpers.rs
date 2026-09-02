@@ -17,10 +17,10 @@ pub(crate) struct ResolveHandleContext<'a> {
     pub(crate) expected_principal_id: Option<&'a str>,
     pub(crate) proof_challenge: Option<&'a str>,
     /// Detached-JWS proofs answering `proof_challenge`. The wire element is the
-    /// SDK `PayloadProof` (digest over the unsigned request payload), never an
-    /// event-bound `Proof`, so the caller signs
+    /// Directory request proof (digest over the unsigned request payload),
+    /// never an event-bound `Proof`, so the caller signs
     /// `DirectoryResolveHandleRequestBody::proof_binding_bytes`.
-    pub(crate) proofs: &'a [arkret_sdk::PayloadProof],
+    pub(crate) proofs: &'a [arkret_models_discovery::DirectoryRequestProof],
 }
 
 pub(crate) fn resolve_handle_request_body(

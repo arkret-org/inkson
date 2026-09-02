@@ -198,7 +198,7 @@ pub async fn search_realms(
         .map(|cursor| cursor.into_string());
     let body = arkret_models_discovery::DirectorySearchRealmsRequestBody {
         query: Some(query.to_owned()),
-        organization_principal_id: None,
+        organization_id: None,
         source_realm_id: None,
         requester_id: None,
         proof_challenge: None,
@@ -323,7 +323,7 @@ pub async fn search_actors(
     let body = arkret_models_discovery::DirectorySearchActorsRequestBody {
         query: Some(query.to_owned()),
         realm_id: None,
-        organization_principal_id: None,
+        organization_id: None,
         cursor,
         limit: Some(20),
     };

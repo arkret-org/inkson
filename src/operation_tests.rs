@@ -1153,10 +1153,10 @@ mod realm_organization_builder_tests {
     }
 
     fn direct_org_auth() -> RealmOrganizationAuthorization {
-        // OrganizationPrincipalId is a non-delegated role: no delegation_ref.
+        // Organization is a non-delegated role: no delegation_ref.
         RealmOrganizationAuthorization {
             issuer_id: organization_id(),
-            issuer_role: RealmOrganizationIssuerRole::OrganizationPrincipalId,
+            issuer_role: RealmOrganizationIssuerRole::Organization,
             verification_method: arkret_sdk::DidUrl::new(ORG_VM).unwrap(),
             delegation_ref: None,
             executed_by: None,
@@ -1217,7 +1217,7 @@ mod realm_organization_builder_tests {
         // local login session.
         assert_eq!(
             event.payload()["authorization"]["issuer_role"],
-            "organization_principal_id"
+            "organization_id"
         );
         assert_eq!(event.payload()["authorization"]["proof"], "c2ln");
         assert_payload_field_names_are_spec_canonical(event.payload());

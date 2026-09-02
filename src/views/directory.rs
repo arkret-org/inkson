@@ -841,7 +841,7 @@ pub fn DirectoryPanel(
             if active_tab() == DirectoryTab::Organizations {
                 for org in org_results() {
                     {
-                        let org_id = value_str(&org, "organization_principal_id", "-");
+                        let org_id = value_str(&org, "organization_id", "-");
                         let org_name = value_str_any(&org, &["display_name", "name"], "unknown");
                         let org_description = value_str(&org, "description", "");
                         let org_handle = value_str(&org, "handle", "");
@@ -1372,7 +1372,7 @@ mod tests {
             actor_id: actor_id.clone(),
             handle: Some("alice:example.com".to_owned()),
             display_name: Some("Alice".to_owned()),
-            organization_principal_id: None,
+            organization_id: None,
             avatar_blob_ref: None,
             as_of: chrono::Utc::now(),
             source_refs: Vec::new(),
@@ -1403,7 +1403,7 @@ mod tests {
         // YGN-ORG-04 acceptance: a declared-only Realm/organization with no
         // proof-backed relationship array shows no verified badge.
         let org = json!({
-            "organization_principal_id": "ak:did_core:web:hint.example",
+            "organization_id": "ak:did_core:web:hint.example",
             "display_name": "Hinted Org",
             // A bare bool is intentionally ignored on its own.
             "verified_badge": true,
@@ -1414,7 +1414,7 @@ mod tests {
     #[test]
     fn active_relationships_are_badged() {
         let org = json!({
-            "organization_principal_id": "ak:did_core:web:acme.example",
+            "organization_id": "ak:did_core:web:acme.example",
             "verified_relationships": [
                 { "relationship": "owner", "status": "active" },
                 { "relationship": "governance", "status": "active" },

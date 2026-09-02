@@ -820,7 +820,7 @@ fn local_remarks_do_not_leak_into_event_push_search_log_or_directory_surfaces() 
             alias: None,
             title: Some("Contract Realm".to_owned()),
             avatar_blob_ref: None,
-            organization_principal_id: None,
+            organization_id: None,
             join_rule: Some("public".to_owned()),
             member_count_bucket: Some(arkret_models_discovery::RealmMemberCountBucket::Bucket(
                 arkret_models_discovery::RealmMemberCountBucketLabel::OneToTen,
