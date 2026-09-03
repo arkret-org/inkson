@@ -12,7 +12,7 @@ fn test_payload_proof(
     payload_digest: arkret_sdk::Hash,
 ) -> arkret_models_discovery::DirectoryRequestProof {
     arkret_models_discovery::DirectoryRequestProof {
-        kind: arkret_sdk::proof_kind::DETACHED_JWS.to_owned(),
+        kind: arkret_models_discovery::DirectoryRequestProofKind::DetachedJws,
         verification_method: arkret_sdk::DidUrl::new("did:web:alice.example#key-1".to_owned())
             .expect("test verification method is a DID URL"),
         payload_digest,
@@ -27,12 +27,16 @@ fn test_payload_proof(
 
 #[test]
 fn resolve_handle_request_body_carries_lookup_context() {
+    let expected_account_id = arkret_sdk::AccountId::new(
+        arkret_sdk::DidCoreId::new("ak:did_core:web:bob.example").unwrap(),
+        arkret_sdk::DidCoreId::new("ak:did_core:web:bob-station.example").unwrap(),
+    );
     let context = ResolveHandleContext {
         intent: Some("lookup"),
         requester: Some("ak:did_core:web:alice.example"),
         audience: Some("ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-"),
         realm_id: Some("ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-"),
-        expected_principal_id: Some("ak:did_core:web:bob.example"),
+        expected_account_id: Some(&expected_account_id),
         proof_challenge: Some("ak:challenge:test"),
         proofs: &[],
     };
@@ -67,7 +71,13 @@ fn resolve_handle_request_body_carries_lookup_context() {
         body["realm_id"],
         "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-"
     );
-    assert_eq!(body["expected_principal_id"], "ak:did_core:web:bob.example");
+    assert_eq!(
+        body["expected_account_id"],
+        json!({
+            "principal_id": "ak:did_core:web:bob.example",
+            "station_id": "ak:did_core:web:bob-station.example"
+        })
+    );
     assert_eq!(body["proof_challenge"], "ak:challenge:test");
     assert_eq!(body["proofs"].as_array().expect("proofs array").len(), 1);
     assert_eq!(

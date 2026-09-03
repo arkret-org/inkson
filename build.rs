@@ -12,6 +12,24 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+fn check_dioxus_version(manifest_dir: &Path) {
+    const DIOXUS_VERSION: &str = "=0.7.10";
+
+    let cargo_toml_path = manifest_dir.join("Cargo.toml");
+    let raw = fs::read_to_string(&cargo_toml_path)
+        .unwrap_or_else(|err| panic!("read {}: {err}", cargo_toml_path.display()));
+    for crate_name in ["dioxus", "dioxus-router"] {
+        let line = raw
+            .lines()
+            .find(|line| line.trim_start().starts_with(crate_name))
+            .unwrap_or_else(|| panic!("Cargo.toml Dioxus version drift: missing {crate_name}"));
+        assert!(
+            line.contains(DIOXUS_VERSION),
+            "Cargo.toml Dioxus version drift: {crate_name} must use {DIOXUS_VERSION}"
+        );
+    }
+}
+
 fn git_output(manifest_dir: &Path, args: &[&str]) -> Option<String> {
     Command::new("git")
         .args(args)
@@ -27,6 +45,7 @@ fn main() {
     let manifest_dir = PathBuf::from(
         std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR is set by Cargo"),
     );
+    check_dioxus_version(&manifest_dir);
 
     // Emitting any `rerun-if-changed` instruction disables Cargo's default
     // package-wide build-script invalidation. We also track Git metadata below,

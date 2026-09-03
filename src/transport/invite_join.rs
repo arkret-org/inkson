@@ -63,7 +63,7 @@ impl crate::transport::TransportClient {
         event: &crate::operation::LocalOperation,
     ) -> anyhow::Result<SubmitEventResult> {
         let Some(endpoint) = candidate
-            .endpoint
+            .endpoint_url
             .as_deref()
             .map(str::trim)
             .filter(|s| !s.is_empty())

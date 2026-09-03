@@ -13,7 +13,7 @@ or upload Sigstore transparency-log entries.
   sibling checkout: git credentials for `github.com/arkret-org/yoface` are
   required instead, and the web image build additionally needs that token in
   `GITHUB_TOKEN` for the `github_token` build secret.
-- Dioxus CLI `0.7.9`.
+- Dioxus CLI `0.7.10`.
 - Docker for web image evidence.
 - Optional local signing tools:
   - macOS: `codesign`, `xcrun`, `INKSON_MACOS_SIGN_IDENTITY`.

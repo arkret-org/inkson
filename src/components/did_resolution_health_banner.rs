@@ -51,7 +51,7 @@ impl DidResolutionHealth {
     }
 
     pub fn from_identity_description(description: &arkret_sdk::ServiceDescribe) -> Self {
-        if description.protocol_version.trim() == "1.0" {
+        if description.protocol_version.as_str() == arkret_sdk::PROTOCOL_VERSION {
             Self::Healthy
         } else {
             Self::Degraded {
@@ -193,8 +193,8 @@ mod tests {
 
     use super::*;
 
-    fn identity_description(protocol_version: &str) -> ServiceDescribe {
-        let mut description = ServiceDescribe::development(
+    fn identity_description() -> ServiceDescribe {
+        ServiceDescribe::development(
             Did::new("did:web:identity.example".to_owned()).expect("valid did"),
             TrustDomainId::new("ak:trust_domain:identity.example").expect("valid trust domain"),
             ServiceKind::IdentityRegistry,
@@ -203,9 +203,7 @@ mod tests {
                 base_url: "https://identity.example/".to_owned(),
                 extension_profile_required: (),
             }],
-        );
-        description.protocol_version = protocol_version.to_owned();
-        description
+        )
     }
 
     fn cache_with_entry(ttl: Duration, now: DateTime<Utc>) -> DidResolutionCache {
@@ -226,21 +224,10 @@ mod tests {
 
     #[test]
     fn successful_v1_identity_description_is_healthy() {
-        let description = identity_description("1.0");
+        let description = identity_description();
         assert_eq!(
             DidResolutionHealth::from_identity_description(&description),
             DidResolutionHealth::Healthy
-        );
-    }
-
-    #[test]
-    fn unsupported_identity_protocol_is_degraded() {
-        let description = identity_description("2.0");
-        assert_eq!(
-            DidResolutionHealth::from_identity_description(&description),
-            DidResolutionHealth::Degraded {
-                reason: DidResolutionHealthReason::UnsupportedIdentityProtocol
-            }
         );
     }
 

@@ -2353,6 +2353,7 @@ fn prompt_copy_strings(dict: &mut TranslationDict) {
     dict.set("recovery_setup.generating_button", "正在生成…");
     dict.set("recovery_setup.not_now", "暂不设置");
     dict.set("recovery_setup.regenerate", "生成新密钥");
+    dict.set("recovery_setup.close_unpublished", "关闭且暂不发布");
     dict.set(
         "recovery_setup.err_word_count",
         "你输入了 24 个词中的 {entered} 个。请补全后再确认。",

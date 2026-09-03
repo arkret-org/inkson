@@ -2789,6 +2789,10 @@ fn prompt_copy_strings(dict: &mut TranslationDict) {
     dict.set("recovery_setup.not_now", "Not now");
     dict.set("recovery_setup.regenerate", "Generate a new key");
     dict.set(
+        "recovery_setup.close_unpublished",
+        "Close without publishing",
+    );
+    dict.set(
         "recovery_setup.err_word_count",
         "You entered {entered} of 24 words. Complete the phrase, then confirm again.",
     );

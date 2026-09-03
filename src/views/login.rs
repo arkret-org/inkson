@@ -285,7 +285,7 @@ fn recover_pending_handoff_for_sign_in(
 }
 
 // Process-global OIDC-callback completion claims. `callback_started` below is a
-// per-component signal, so a Dioxus double-mount (the 0.7.9 reactivity quirk
+// per-component signal, so a Dioxus development double-mount (the reactivity quirk
 // that occasionally renders the panel twice) gives each instance its own `false`
 // flag and BOTH run `finish_oidc_callback` — double-submitting the handoff and
 // burning the single-use authorization_code (second POST → `invalid grant`).

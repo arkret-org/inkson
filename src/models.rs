@@ -185,7 +185,7 @@ pub fn missing_v1_station_requirements(description: &ServiceDescribe) -> Vec<&'s
     if description.service_kind != arkret_sdk::ServiceKind::Station {
         missing.push("service_kind=station");
     }
-    if description.protocol_version != "1.0" {
+    if description.protocol_version.as_str() != arkret_sdk::PROTOCOL_VERSION {
         missing.push("protocol_version=1.0");
     }
     missing.extend(missing_event_envelope_write_requirements(description));
@@ -991,7 +991,7 @@ pub struct ResolveHandleView {
     #[serde(default)]
     pub claims: Option<Vec<arkret_models_identity::HandleClaim>>,
     #[serde(default)]
-    pub source_refs: Vec<String>,
+    pub source_refs: Vec<arkret_sdk::EventId>,
     #[serde(default)]
     pub expires_at: Option<chrono::DateTime<chrono::Utc>>,
 }

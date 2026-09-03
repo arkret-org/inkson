@@ -9,7 +9,7 @@
 
 FROM rust:bookworm AS build
 
-ARG DIOXUS_CLI_VERSION=0.7.9
+ARG DIOXUS_CLI_VERSION=0.7.10
 
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/usr/local/cargo/git \

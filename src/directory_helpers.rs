@@ -14,7 +14,7 @@ pub(crate) struct ResolveHandleContext<'a> {
     pub(crate) requester: Option<&'a str>,
     pub(crate) audience: Option<&'a str>,
     pub(crate) realm_id: Option<&'a str>,
-    pub(crate) expected_principal_id: Option<&'a str>,
+    pub(crate) expected_account_id: Option<&'a arkret_sdk::AccountId>,
     pub(crate) proof_challenge: Option<&'a str>,
     /// Detached-JWS proofs answering `proof_challenge`. The wire element is the
     /// Directory request proof (digest over the unsigned request payload),
@@ -40,12 +40,6 @@ pub(crate) fn resolve_handle_request_body(
         ),
         None => None,
     };
-    let expected_principal_id = match non_empty(context.expected_principal_id) {
-        Some(principal_id) => Some(arkret_sdk::DidCoreId::new(principal_id.clone()).map_err(
-            |err| anyhow::anyhow!("invalid expected_principal_id `{principal_id}`: {err}"),
-        )?),
-        None => None,
-    };
     let requester = match non_empty(context.requester) {
         Some(requester) => Some(
             arkret_sdk::DidCoreId::new(requester.clone())
@@ -63,7 +57,7 @@ pub(crate) fn resolve_handle_request_body(
     };
     Ok(arkret_models_discovery::DirectoryResolveHandleRequestBody {
         handle: handle.to_owned(),
-        expected_principal_id,
+        expected_account_id: context.expected_account_id.cloned(),
         proof_challenge: non_empty(context.proof_challenge),
         claim_presentations: Vec::new(),
         intent,

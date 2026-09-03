@@ -836,7 +836,12 @@ fn local_remarks_do_not_leak_into_event_push_search_log_or_directory_surfaces() 
             history_access: None,
             join_candidates: Vec::new(),
             as_of: Utc::now(),
-            source_refs: vec!["ak:event:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1".to_owned()],
+            source_refs: vec![
+                arkret_sdk::EventId::new(
+                    "ak:event:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1".to_owned(),
+                )
+                .unwrap(),
+            ],
             policy_revision: "contract-rev".to_owned(),
             stale: None,
             divergent: None,

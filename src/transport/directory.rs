@@ -387,7 +387,7 @@ pub async fn list_handles_for_subject(
     let body = DirectoryListHandlesForSubjectRequestBody {
         account_id,
         realm_id: realm,
-        intent: intent.map(|value| value.as_str().to_owned()),
+        intent,
         requester_id: None,
         proof_challenge: None,
         proofs: Vec::new(),

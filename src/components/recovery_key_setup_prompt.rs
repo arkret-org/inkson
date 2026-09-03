@@ -309,6 +309,17 @@ pub fn RecoveryKeySetupPrompt(
                             {crate::i18n::tr("recovery_setup.regenerate")}
                         }
                         Button {
+                            variant: ButtonVariant::Secondary,
+                            "data-testid": "recovery-key-setup-dismiss-unpublished",
+                            disabled: is_publishing,
+                            onclick: move |_| {
+                                generated_recovery_key.set(String::new());
+                                confirmation_input.set(String::new());
+                                open.set(false);
+                            },
+                            {crate::i18n::tr("recovery_setup.close_unpublished")}
+                        }
+                        Button {
                             variant: ButtonVariant::Primary,
                             "data-testid": "recovery-key-setup-saved",
                             disabled: confirmation_now.trim().is_empty() || is_publishing,
