@@ -1,10 +1,12 @@
 param(
-    [string]$BinaryPath = "target/release/inkson",
+    [string]$BinaryPath,
     [string]$DistDir = "dist/linux-packages",
     [string]$Version = "0.9.0-local"
 )
 
 $ErrorActionPreference = "Stop"
+
+. (Join-Path $PSScriptRoot "lib/cargo.ps1")
 
 $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 Push-Location $repoRoot
@@ -15,6 +17,13 @@ try {
     if ($isWindowsHost -or $isMacHost) {
         Write-Host "Linux package creation skipped on non-Linux runner."
         exit 0
+    }
+
+    if (-not $BinaryPath) {
+        # `cargo build --release` writes into the target directory configured
+        # by the workspace-level `../.cargo/config.toml`, which is shared by
+        # every sibling repository and is not `<repo>/target`. Ask cargo.
+        $BinaryPath = Get-InksonBinaryPath -RepositoryRoot $repoRoot
     }
 
     if (-not (Test-Path -LiteralPath $BinaryPath)) {

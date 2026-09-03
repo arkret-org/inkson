@@ -73,25 +73,38 @@ def require_registry_alignment() -> None:
     )
 
 
+def run_captured(command: list[str], cwd: Path | None = None) -> str:
+    """Run a command, reporting its own error text when it fails.
+
+    `check=True` alongside `capture_output=True` raises a CalledProcessError
+    whose message is only the command line and the exit status, so a failing
+    `cargo metadata` reached the terminal as a bare "returned non-zero exit
+    status 101" with the actual cargo diagnostic discarded.
+    """
+    result = subprocess.run(command, cwd=cwd, capture_output=True, text=True)
+    if result.returncode != 0:
+        detail = result.stderr.strip() or result.stdout.strip()
+        rendered = " ".join(command)
+        raise RuntimeError(
+            f"`{rendered}` failed with exit status {result.returncode}"
+            + (f":\n{detail}" if detail else "")
+        )
+    return result.stdout
+
+
+def cargo_metadata() -> dict:
+    return json.loads(
+        run_captured(["cargo", "metadata", "--format-version", "1"], cwd=PROJECT_ROOT)
+    )
+
+
 def git_root(path: Path) -> Path:
-    result = subprocess.run(
-        ["git", "-C", str(path), "rev-parse", "--show-toplevel"],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    return Path(result.stdout.strip()).resolve()
+    return Path(
+        run_captured(["git", "-C", str(path), "rev-parse", "--show-toplevel"]).strip()
+    ).resolve()
 
 
-def local_dependency_roots() -> list[Path]:
-    result = subprocess.run(
-        ["cargo", "metadata", "--format-version", "1"],
-        cwd=PROJECT_ROOT,
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    metadata = json.loads(result.stdout)
+def local_dependency_roots(metadata: dict) -> list[Path]:
     roots: set[Path] = set()
     for package in metadata["packages"]:
         if package["source"] is not None:
@@ -103,14 +116,37 @@ def local_dependency_roots() -> list[Path]:
     return sorted(roots)
 
 
-def watched_files(roots: list[Path]) -> dict[Path, tuple[int, int]]:
+def build_directories(metadata: dict) -> set[Path]:
+    """Directories cargo writes artifacts into, excluded from the watch walk.
+
+    `IGNORED_DIRECTORIES` only knows the name `target`, which was enough while
+    every repository built into its own `target/`. The workspace-level
+    `../.cargo/config.toml` now points `build.target-dir` at one shared tree,
+    so ask cargo where it writes rather than assuming the name. Walking a
+    hundred-gigabyte artifact tree twice a second would stall the rebuild
+    bridge without ever producing a useful change event.
+    """
+    directories: set[Path] = set()
+    for key in ("target_directory", "build_directory"):
+        value = metadata.get(key)
+        if value:
+            directories.add(Path(value))
+    return directories
+
+
+def watched_files(
+    roots: list[Path], build_dirs: set[Path]
+) -> dict[Path, tuple[int, int]]:
     snapshot: dict[Path, tuple[int, int]] = {}
     for root in roots:
         for directory, child_directories, files in os.walk(root):
-            child_directories[:] = [
-                name for name in child_directories if name not in IGNORED_DIRECTORIES
-            ]
             directory_path = Path(directory)
+            child_directories[:] = [
+                name
+                for name in child_directories
+                if name not in IGNORED_DIRECTORIES
+                and directory_path / name not in build_dirs
+            ]
             for name in files:
                 path = directory_path / name
                 if path.suffix.lower() not in WATCHED_SUFFIXES:
@@ -128,11 +164,13 @@ def watched_files(roots: list[Path]) -> dict[Path, tuple[int, int]]:
     return snapshot
 
 
-def dependency_watch_loop(roots: list[Path], stop: threading.Event) -> None:
-    snapshot = watched_files(roots)
+def dependency_watch_loop(
+    roots: list[Path], build_dirs: set[Path], stop: threading.Event
+) -> None:
+    snapshot = watched_files(roots, build_dirs)
     pending_since: float | None = None
     while not stop.wait(0.5):
-        current = watched_files(roots)
+        current = watched_files(roots, build_dirs)
         if current != snapshot:
             snapshot = current
             pending_since = time.monotonic()
@@ -168,7 +206,9 @@ def main() -> int:
     args = parse_args()
     try:
         require_registry_alignment()
-        roots = local_dependency_roots()
+        metadata = cargo_metadata()
+        roots = local_dependency_roots(metadata)
+        build_dirs = build_directories(metadata)
     except Exception as error:
         print(f"[inkson-dev] {error}", file=sys.stderr)
         return 1
@@ -187,7 +227,7 @@ def main() -> int:
     stop = threading.Event()
     watcher = threading.Thread(
         target=dependency_watch_loop,
-        args=(roots, stop),
+        args=(roots, build_dirs, stop),
         name="inkson-local-dependency-watch",
         daemon=True,
     )

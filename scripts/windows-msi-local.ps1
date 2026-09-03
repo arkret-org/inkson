@@ -1,5 +1,5 @@
 param(
-    [string]$BinaryPath = "target/release/inkson.exe",
+    [string]$BinaryPath,
     [string]$DistDir = "dist/windows-msi",
     [string]$Version = "0.1.0-local"
 )
@@ -13,6 +13,8 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+. (Join-Path $PSScriptRoot "lib/cargo.ps1")
+
 $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 Push-Location $repoRoot
 try {
@@ -20,6 +22,13 @@ try {
     if (-not $isWindowsHost) {
         Write-Host "Windows MSI creation skipped on non-Windows runner."
         exit 0
+    }
+
+    if (-not $BinaryPath) {
+        # `cargo build --release` writes into the target directory configured
+        # by the workspace-level `../.cargo/config.toml`, which is shared by
+        # every sibling repository and is not `<repo>/target`. Ask cargo.
+        $BinaryPath = Get-InksonBinaryPath -RepositoryRoot $repoRoot -WindowsBinary
     }
 
     if (-not (Test-Path -LiteralPath $BinaryPath)) {

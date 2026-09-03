@@ -6,6 +6,8 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+. (Join-Path $PSScriptRoot "lib/cargo.ps1")
+
 $repoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 Push-Location $repoRoot
 try {
@@ -15,12 +17,10 @@ try {
     New-Item -ItemType Directory -Force -Path $DistDir | Out-Null
 
     if (-not $ArtifactPath) {
-        if ($isWindowsHost) {
-            $ArtifactPath = "target/release/inkson.exe"
-        }
-        else {
-            $ArtifactPath = "target/release/inkson"
-        }
+        # `cargo build --release` writes into the target directory configured
+        # by the workspace-level `../.cargo/config.toml`, which is shared by
+        # every sibling repository and is not `<repo>/target`. Ask cargo.
+        $ArtifactPath = Get-InksonBinaryPath -RepositoryRoot $repoRoot -WindowsBinary:$isWindowsHost
     }
 
     if (-not $NoBuild -and -not (Test-Path -LiteralPath $ArtifactPath)) {
