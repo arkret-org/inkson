@@ -1,5 +1,7 @@
 use super::*;
 
+const CHAT_INITIAL_BACKFILL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(12);
+
 #[component]
 pub(super) fn ChatEffects(
     controller: ChatController,
@@ -675,79 +677,95 @@ pub(super) fn ChatEffects(
 
                 if !selected_realm_for_load.trim().is_empty()
                     && let Ok(sub) = api.event_submitter()
-                    && let Ok(backfill) = sub.backfill(&selected_realm_for_load).await
                 {
-                    let complete_events = match backfill.complete_events("chat history projection")
-                    {
-                        Ok(events) => events,
-                        Err(error) => {
+                    // Backfill supplements the account snapshot and ongoing
+                    // delta sync. It must not hold the discussion readiness
+                    // gate forever when a quiet or partially projected Realm
+                    // leaves the request open.
+                    let backfill = tokio::select! {
+                        result = sub.backfill(&selected_realm_for_load) => result.ok(),
+                        _ = crate::runtime_helpers::sleep_for(CHAT_INITIAL_BACKFILL_TIMEOUT) => {
                             tracing::warn!(
-                                error = %error,
-                                "chat projection rejected incomplete event rows"
+                                realm_id = %selected_realm_for_load,
+                                timeout_seconds = CHAT_INITIAL_BACKFILL_TIMEOUT.as_secs(),
+                                "chat initial backfill timed out; continuing from snapshot and delta sync"
                             );
-                            return;
+                            None
                         }
                     };
-                    let backfill_events = match complete_events
-                        .iter()
-                        .map(serde_json::to_value)
-                        .collect::<Result<Vec<_>, _>>()
-                    {
-                        Ok(events) => events,
-                        Err(error) => {
-                            tracing::warn!(
-                                error = %error,
-                                "chat projection could not serialize accepted Events"
-                            );
-                            return;
+                    if let Some(backfill) = backfill {
+                        let backfill_events =
+                            match backfill.complete_events("chat history projection") {
+                                Ok(events) => match events
+                                    .iter()
+                                    .map(serde_json::to_value)
+                                    .collect::<Result<Vec<_>, _>>()
+                                {
+                                    Ok(events) => Some(events),
+                                    Err(error) => {
+                                        tracing::warn!(
+                                            error = %error,
+                                            "chat projection could not serialize accepted Events"
+                                        );
+                                        None
+                                    }
+                                },
+                                Err(error) => {
+                                    tracing::warn!(
+                                        error = %error,
+                                        "chat projection rejected incomplete event rows"
+                                    );
+                                    None
+                                }
+                            };
+                        if let Some(backfill_events) = backfill_events {
+                            // Persist the complete encrypted discussion history,
+                            // including Sidecar exchange control Events, before any
+                            // projection work. New controller devices and devices
+                            // with an incomparable local cache frontier refold from
+                            // this accepted union history instead of choosing an
+                            // HLC/LWW winner.
+                            let sidecar_history_changed =
+                                crate::sync_engine::ingest_message_projection_events(
+                                    &mut state_store.write(),
+                                    &selected_realm_for_load,
+                                    &backfill_events,
+                                );
+                            if sidecar_history_changed > 0 {
+                                let next = realm_live_epoch.peek().wrapping_add(1);
+                                realm_live_epoch.set(next);
+                            }
+                            // §2.10.3 — a minimal-metadata Realm's backfill never primes
+                            // the device directory: authors verify against the MLS leaf.
+                            let backfill_realm_is_minimal_metadata = state_store
+                                .read()
+                                .realm_projection_is_minimal_metadata(&selected_realm_for_load);
+                            if !backfill_realm_is_minimal_metadata {
+                                crate::sync_engine::prefetch_persistent_event_sender_keys_from_values(
+                                &api,
+                                &backfill_events,
+                                crate::app::runtime_adapter::value_cell(did_cache),
+                                state_store,
+                            )
+                            .await;
+                            }
+                            event_sink.emit(ChatProjectionEvent::MergeChannels(
+                                channels_from_events(&selected_realm_for_load, &backfill_events),
+                            ));
+                            loaded_messages.extend(chat_messages_from_events_with_sidecar(
+                                &selected_realm_for_load,
+                                &backfill_events,
+                                Some(&state_store.read()),
+                                decrypt_identity,
+                            ));
+                            loaded_poll_cards.extend(poll_cards_from_events_with_sidecar(
+                                &selected_realm_for_load,
+                                &backfill_events,
+                                Some(&state_store.read()),
+                                decrypt_identity,
+                            ));
                         }
-                    };
-                    // Persist the complete encrypted discussion history,
-                    // including Sidecar exchange control Events, before any
-                    // projection work. New controller devices and devices
-                    // with an incomparable local cache frontier refold from
-                    // this accepted union history instead of choosing an
-                    // HLC/LWW winner.
-                    let sidecar_history_changed =
-                        crate::sync_engine::ingest_message_projection_events(
-                            &mut state_store.write(),
-                            &selected_realm_for_load,
-                            &backfill_events,
-                        );
-                    if sidecar_history_changed > 0 {
-                        let next = realm_live_epoch.peek().wrapping_add(1);
-                        realm_live_epoch.set(next);
                     }
-                    // §2.10.3 — a minimal-metadata Realm's backfill never primes
-                    // the device directory: authors verify against the MLS leaf.
-                    let backfill_realm_is_minimal_metadata = state_store
-                        .read()
-                        .realm_projection_is_minimal_metadata(&selected_realm_for_load);
-                    if !backfill_realm_is_minimal_metadata {
-                        crate::sync_engine::prefetch_persistent_event_sender_keys_from_values(
-                            &api,
-                            &backfill_events,
-                            crate::app::runtime_adapter::value_cell(did_cache),
-                            state_store,
-                        )
-                        .await;
-                    }
-                    event_sink.emit(ChatProjectionEvent::MergeChannels(channels_from_events(
-                        &selected_realm_for_load,
-                        &backfill_events,
-                    )));
-                    loaded_messages.extend(chat_messages_from_events_with_sidecar(
-                        &selected_realm_for_load,
-                        &backfill_events,
-                        Some(&state_store.read()),
-                        decrypt_identity,
-                    ));
-                    loaded_poll_cards.extend(poll_cards_from_events_with_sidecar(
-                        &selected_realm_for_load,
-                        &backfill_events,
-                        Some(&state_store.read()),
-                        decrypt_identity,
-                    ));
                 }
 
                 event_sink.emit(ChatProjectionEvent::MergeChannels(

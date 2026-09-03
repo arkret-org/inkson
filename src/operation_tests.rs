@@ -337,6 +337,30 @@ fn kanban_card_strand_create_carries_position_in_metadata_fields() {
 }
 
 #[test]
+fn kanban_card_strand_create_rejects_an_incomplete_position_shape() {
+    let realm_id = "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-";
+    let actor = "did:web:alice.example";
+    let board_id = "ak:space:AQM8rE4gp8l4axkSbbb9_dkqwWE8ZPYHwFsC24o2mrIL";
+    let list_id = "ak:space:AV624IkuHj3HmxAYE6uyYmBa4Est3gGGdnOsjn71z5L2";
+
+    assert!(
+        ak_ops::kanban_card_strand_create(
+            realm_id,
+            actor,
+            board_id,
+            "pending-list-handle",
+            "Card",
+            "U",
+        )
+        .is_err()
+    );
+    assert!(
+        ak_ops::kanban_card_strand_create(realm_id, actor, board_id, list_id, "Card", "not-valid",)
+            .is_err()
+    );
+}
+
+#[test]
 fn mls_commit_builder_matches_registered_payload_schema() {
     let realm_id = "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-";
     let group_id = "mls-group-kanban-test";

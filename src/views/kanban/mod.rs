@@ -2285,6 +2285,15 @@ pub fn KanbanPanel(
                                 Button {
                                     variant: ButtonVariant::Secondary,
                                     "data-testid": "add-card-button",
+                                    // A pending List has no protocol id yet, so it
+                                    // cannot be a card's `list_space_id`; the action
+                                    // unlocks when the receipt commits the Space id.
+                                    disabled: arkret_sdk::SpaceId::new(column.id.as_str()).is_err(),
+                                    title: if arkret_sdk::SpaceId::new(column.id.as_str()).is_ok() {
+                                        "Add a card to this list"
+                                    } else {
+                                        "Waiting for the list to be accepted"
+                                    },
                                     onclick: {
                                         let col_id = column.id.clone();
                                         move |_| adding_card_to.set(Some(col_id.clone()))

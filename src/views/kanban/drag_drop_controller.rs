@@ -435,6 +435,19 @@ pub(super) fn submit_kanban_card_create(
         board_status.set("sign in before updating cards".to_owned());
         return;
     }
+    // realm-and-space.md §3.6 types the placement's List reference as
+    // `id:space`. A List whose create has not been accepted yet is still keyed
+    // by its holder-local operation handle, and that handle is not a Space id:
+    // signing it into the envelope would put a fabricated reference on the
+    // wire, which the server can only reject or store unreadably. Hold the
+    // create until the List receipt lands, exactly as the add-list action holds
+    // for the Board receipt.
+    if arkret_sdk::SpaceId::new(command.list_space_id.as_str()).is_err() {
+        board_status.set(
+            "This list is still being created; add cards after server confirmation.".to_owned(),
+        );
+        return;
+    }
     let envelope = crate::operation::ak_ops::kanban_card_strand_create(
         &realm_id,
         &actor_id,

@@ -19,6 +19,21 @@ pub fn kanban_card_strand_create(
     rank: &str,
 ) -> anyhow::Result<TypedOperationBuilder> {
     let realm_id = trim_realm_id(realm_id);
+    // realm-and-space.md §3.6 types both placement references as `id:space`.
+    // Reject a holder-local handle here, at the single point that produces the
+    // wire bytes, so no call site can sign a fabricated Space reference.
+    for (field, value) in [
+        ("board_space_id", board_space_id),
+        ("list_space_id", list_space_id),
+    ] {
+        arkret_sdk::SpaceId::new(value).map_err(|error| {
+            anyhow::anyhow!("card placement {field} is not a Space id: {error}")
+        })?;
+    }
+    if rank.is_empty() || rank.len() > 128 || !rank.bytes().all(|byte| byte.is_ascii_alphanumeric())
+    {
+        anyhow::bail!("card placement rank must match ^[0-9A-Za-z]{{1,128}}$");
+    }
     let object = arkret_sdk::StrandCreateObject::new(
         realm_id_value(&realm_id)?,
         crate::mls_api_helpers::local_account_actor_id(actor)?,
