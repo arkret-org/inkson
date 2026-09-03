@@ -292,7 +292,33 @@ impl LocalStateStore {
         self.cached = anonymous;
         self.cached_account_key = Some(self.effective_account_key());
         self.loaded.store(true, Ordering::Relaxed);
-        let _ = self.flush();
+        let anonymous_was_quarantined = !preserve_onboarding
+            && self
+                .corrupt_account_scopes
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .contains(ANONYMOUS_ACCOUNT_NAMESPACE);
+        if anonymous_was_quarantined {
+            // A fresh sign-in is an explicit reset of the pre-DID scratch
+            // namespace. `read_account_state` has already preserved the
+            // undecodable payload under the sibling `.corrupt` entry, so it is
+            // safe to replace only the active anonymous blob here. Keep real
+            // account namespaces fail-closed, and keep the quarantine latched
+            // if even this replacement write fails.
+            let result = self.write_account_state(
+                ANONYMOUS_ACCOUNT_NAMESPACE,
+                &self.effective_state_for_persist(),
+            );
+            if result.is_ok() {
+                self.corrupt_account_scopes
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .remove(ANONYMOUS_ACCOUNT_NAMESPACE);
+            }
+            self.record_persist_result(&result);
+        } else {
+            let _ = self.flush();
+        }
     }
 
     /// The in-flight pre-DID login material, if any. Read through storage so a

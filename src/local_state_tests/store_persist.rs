@@ -650,6 +650,41 @@ fn corrupt_account_blob_is_quarantined_without_being_replaced_by_defaults() {
 }
 
 #[test]
+fn fresh_pending_login_replaces_only_a_quarantined_anonymous_blob() {
+    // begin_pending_login mutates the process-global pending-login id.
+    let _scope = crate::secure_key_store::DeviceSeedScopeTestGuard::replace(None);
+    let root_path = temp_state_path("fresh-login-replaces-corrupt-anonymous");
+    let mut store = LocalStateStore::with_path(root_path.clone());
+    let account_path = store.account_state_path(ANONYMOUS_ACCOUNT_NAMESPACE);
+    std::fs::create_dir_all(account_path.parent().unwrap()).unwrap();
+    std::fs::write(&account_path, b"{truncated").unwrap();
+
+    assert_eq!(store.load(), ClientLocalState::default());
+    assert!(account_path.with_extension("corrupt").exists());
+
+    store.begin_test_pending_login(
+        "ak:device:019f0000-0000-7000-8000-000000000001",
+        Some("fresh-jkt"),
+    );
+    assert!(
+        store.persist_error().is_none(),
+        "an explicit fresh login must recover its anonymous scratch namespace"
+    );
+    store.save_sync_cursor("sx:fresh-anonymous");
+    assert!(store.persist_error().is_none());
+
+    let reopened = LocalStateStore::with_path(root_path);
+    assert_eq!(
+        reopened.load().sync_cursor.as_deref(),
+        Some("sx:fresh-anonymous")
+    );
+    assert!(
+        account_path.with_extension("corrupt").exists(),
+        "the original undecodable payload must remain preserved"
+    );
+}
+
+#[test]
 fn local_state_store_keeps_thread_read_cursors_separate() {
     let path = temp_state_path("thread-read-cursor");
     let mut store = LocalStateStore::with_path(path);
