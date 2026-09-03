@@ -52,13 +52,15 @@ fn typed_backup_predecessor(previous: &Value) -> Result<arkret_sdk::KeyBackup> {
 
 fn active_recovery_backup_recipient(
     policy: &arkret_sdk::RecoveryPolicySummary,
+    authority: &arkret_sdk::AccountId,
     actor_id: &str,
     recovery_public_key: &[u8],
 ) -> Result<(String, String, u64)> {
     let actor_id = crate::mls_api_helpers::principal_core_id(actor_id)?;
-    let account_id =
-        arkret_sdk::AccountId::new(actor_id, crate::operation::authoring_station_id()?);
-    if policy.account_id != account_id {
+    if actor_id != authority.principal_id {
+        return Err(anyhow!("backup signer does not match the supplied account"));
+    }
+    if policy.account_id != *authority {
         return Err(anyhow!(
             "active recovery policy belongs to a different account"
         ));
@@ -450,7 +452,7 @@ pub async fn upload_mls_account_secret_backup_with_recovery_public_key(
         .as_ref()
         .ok_or_else(|| anyhow!("active recovery policy is required for account-secret backup"))?;
     let (recovery_key_ref, recovery_policy_id, recovery_policy_version) =
-        active_recovery_backup_recipient(active_policy, actor_id, recovery_public_key)?;
+        active_recovery_backup_recipient(active_policy, authority, actor_id, recovery_public_key)?;
     let recovery_policy_ref = (recovery_policy_id.as_str(), recovery_policy_version);
 
     let account_backup_id = fresh_backup_id();
@@ -514,6 +516,7 @@ pub async fn upload_local_authoritative_mls_history_backups_with_recovery_public
     upload_local_authoritative_mls_history_records_with_recovery_public_key(
         api,
         grouped,
+        authority,
         control_realm,
         actor_id,
         device_id,
@@ -528,6 +531,7 @@ pub(crate) async fn upload_local_authoritative_mls_history_records_with_recovery
         arkret_sdk::HistoryEffectiveScope,
         Vec<arkret_sdk::LocalAuthoritativeHistorySecret>,
     )>,
+    authority: &arkret_sdk::AccountId,
     control_realm: &arkret_sdk::RealmId,
     actor_id: &str,
     device_id: &str,
@@ -542,7 +546,7 @@ pub(crate) async fn upload_local_authoritative_mls_history_records_with_recovery
         .map_err(|error| anyhow!("fetch active recovery policy for history backup: {error}"))?
         .ok_or_else(|| anyhow!("active recovery policy is required for history backup"))?;
     let (recovery_key_ref, recovery_policy_id, recovery_policy_version) =
-        active_recovery_backup_recipient(&active_policy, actor_id, recovery_public_key)?;
+        active_recovery_backup_recipient(&active_policy, authority, actor_id, recovery_public_key)?;
     let list_payload = fetch_mls_restore_payload(api, actor_id).await?;
     let mut previous = fetch_active_series_tail(
         api,

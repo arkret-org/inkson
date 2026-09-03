@@ -660,6 +660,7 @@ fn upload_mls_backup_with_recovery_key(
             crate::mls::account_recovery::upload_local_authoritative_mls_history_records_with_recovery_public_key(
                 &api,
                 history_records?,
+                &authority,
                 &principal_control_realm_id,
                 &actor,
                 &device,

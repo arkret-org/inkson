@@ -1053,7 +1053,7 @@ async fn recover_bound_principal_device(
                     .bound_principal_id
                     .clone()
                     .context("bound recovery handoff has no principal id")?,
-                crate::operation::authoring_station_id()?,
+                handoff.audience_id.clone(),
             ),
             requesting_device_id: arkret_sdk::DeviceId::new(replacement_device_id.to_owned())?,
             trust_domain: arkret_sdk::TrustDomainId::new(handoff.trust_domain.clone())?,
