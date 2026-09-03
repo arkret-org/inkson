@@ -863,6 +863,56 @@ impl BackfillView {
     pub fn complete_events(&self, purpose: &str) -> anyhow::Result<Vec<arkret_sdk::Event>> {
         require_complete_event_rows(&self.events, purpose)
     }
+
+    /// Serialize only complete Events for a non-authoritative display
+    /// projection. Redacted/reference-locked rows intentionally carry too
+    /// little information to rebuild a timeline object, but they must not make
+    /// the chat renderer discard other complete rows from the same page (in
+    /// particular the server-folded redaction tombstone for a Message).
+    ///
+    /// Reducers, MLS recovery and authorization continue to use
+    /// `complete_events` and therefore fail closed on either incomplete row.
+    pub fn display_event_values(&self) -> anyhow::Result<Vec<Value>> {
+        self.events
+            .iter()
+            .filter_map(|row| match row {
+                arkret_sdk::EventReadRow::Event(event) => {
+                    Some(serde_json::to_value(event).map_err(Into::into))
+                }
+                arkret_sdk::EventReadRow::Redacted(_)
+                | arkret_sdk::EventReadRow::ReferenceLocked(_) => None,
+            })
+            .collect()
+    }
+}
+
+#[cfg(test)]
+mod backfill_display_tests {
+    use super::*;
+
+    #[test]
+    fn display_projection_skips_opaque_rows_without_rejecting_the_page() {
+        let redacted = serde_json::from_value(serde_json::json!({
+            "view_kind": "redacted_event_view",
+            "event_id": "ak:event:AQ-IyBN9yVn52Yqaah8H-_0fuHhf3ImJTExtFDnU3ebQ",
+            "kind": "ak.message.redact",
+            "realm_id": "ak:realm:AQPaZ0Jo2vyqxYcuCGXtMaCGulqrjFxOxXHsUhcb30Gt",
+            "redaction_reason": "redacted",
+            "hidden_fields": ["payload", "proofs"],
+            "reducer_input": false
+        }))
+        .expect("valid RedactedEventView row");
+        let backfill = BackfillView {
+            events: vec![redacted],
+            snapshot_bootstrap: None,
+            prev_cursor: None,
+            next_cursor: None,
+            has_more: false,
+        };
+
+        assert!(backfill.display_event_values().unwrap().is_empty());
+        assert!(backfill.complete_events("authority replay").is_err());
+    }
 }
 
 pub(crate) fn require_complete_event_rows(

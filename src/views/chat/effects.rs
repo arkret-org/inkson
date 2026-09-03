@@ -694,30 +694,23 @@ pub(super) fn ChatEffects(
                         }
                     };
                     if let Some(backfill) = backfill {
-                        let backfill_events =
-                            match backfill.complete_events("chat history projection") {
-                                Ok(events) => match events
-                                    .iter()
-                                    .map(serde_json::to_value)
-                                    .collect::<Result<Vec<_>, _>>()
-                                {
-                                    Ok(events) => Some(events),
-                                    Err(error) => {
-                                        tracing::warn!(
-                                            error = %error,
-                                            "chat projection could not serialize accepted Events"
-                                        );
-                                        None
-                                    }
-                                },
-                                Err(error) => {
-                                    tracing::warn!(
-                                        error = %error,
-                                        "chat projection rejected incomplete event rows"
-                                    );
-                                    None
-                                }
-                            };
+                        // Chat is a display projection, not an authority or
+                        // cryptographic replay path. Keep every complete Event
+                        // in the page while omitting opaque stubs that cannot
+                        // identify a timeline object. Rejecting the whole page
+                        // here used to drop the complete, server-folded Message
+                        // tombstone whenever its separate redact Event was
+                        // returned as a RedactedEventView.
+                        let backfill_events = match backfill.display_event_values() {
+                            Ok(events) => Some(events),
+                            Err(error) => {
+                                tracing::warn!(
+                                    error = %error,
+                                    "chat projection could not serialize accepted Events"
+                                );
+                                None
+                            }
+                        };
                         if let Some(backfill_events) = backfill_events {
                             // Persist the complete encrypted discussion history,
                             // including Sidecar exchange control Events, before any
