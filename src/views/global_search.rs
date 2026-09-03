@@ -615,7 +615,10 @@ mod tests {
         let source_strand_id = "ak:strand:AavbN9CgiOJRw5dWi7yMN2_jReUUAXLb-_EF2y2WL8lz".to_owned();
         let mut store = LocalStateStore::default();
         let pending = crate::sidecar::PendingSidecarSubmission {
-            controller_id: actor_id.to_owned(),
+            controller_account_id: arkret_sdk::AccountId::new(
+                crate::mls_api_helpers::principal_core_id(actor_id).unwrap(),
+                arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example".to_owned()).unwrap(),
+            ),
             sidecar_id: arkret_sdk::SidecarId::new(
                 "ak:sidecar:AW550jUB3z2wKhAvnsOXRVZTrs8UAJgTHWF5sxYI7TyI",
             )

@@ -210,7 +210,7 @@ impl LocalStateStore {
         ))
     }
 
-    /// The effective `content_scheme` selector for `realm_id`. RRK durability is
+    /// The effective `content_scheme` selector for `realm_id`. RHRK durability is
     /// only effective when this is `mls_exporter_aead_v1`
     /// (encryption-and-audit.md §2.10.8). `None` means the authoritative
     /// security projection is incomplete; encrypted sends must remain paused

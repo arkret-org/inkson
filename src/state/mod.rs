@@ -300,12 +300,12 @@ impl LocalStateStore {
 
     pub(crate) fn sidecar_view_state(
         &self,
-        controller_id: &str,
+        controller_account_id: &arkret_sdk::AccountId,
         realm_id: &arkret_sdk::RealmId,
         strand_id: &arkret_sdk::StrandId,
     ) -> Option<arkret_sdk::AgentSidecarViewState> {
         self.sidecar_projection_fold
-            .view_state(controller_id, realm_id, strand_id)
+            .view_state(&controller_account_id.to_string(), realm_id, strand_id)
             .cloned()
     }
 

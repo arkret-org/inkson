@@ -30,19 +30,35 @@ pub(super) fn SidecarFoldEvidenceEffects(state: SidecarFoldEvidenceEffectState) 
         use wasm_bindgen::prelude::Closure;
 
         let SidecarFoldEvidenceEffectState { principal_id } = state;
-        let SessionContext { state_store, .. } = SessionContext::get();
+        let SessionContext {
+            state_store,
+            active_account,
+            ..
+        } = SessionContext::get();
         use_hook(move || {
             let Some(window) = web_sys::window() else {
                 return;
             };
             let hook = Closure::<dyn Fn(String) -> String>::new(move |source_realm_id: String| {
-                let Some(controller_id) = principal_id.peek().clone() else {
+                let Some(controller_principal_id) = principal_id.peek().clone() else {
                     return serde_json::json!({"error": "no signed-in controller"}).to_string();
                 };
+                let Some(controller_account_id) = active_account
+                    .peek()
+                    .clone()
+                    .map(|account| account.authority)
+                else {
+                    return serde_json::json!({"error": "no signed-in controller account"})
+                        .to_string();
+                };
+                if controller_account_id.principal_id != controller_principal_id {
+                    return serde_json::json!({"error": "signed-in controller account changed"})
+                        .to_string();
+                }
                 let store = state_store.peek();
                 match crate::sidecar::sidecar_fold_evidence_canonical_json(
                     &store,
-                    controller_id.as_str(),
+                    &controller_account_id,
                     &source_realm_id,
                 ) {
                     Ok(evidence) => evidence,

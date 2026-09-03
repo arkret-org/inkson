@@ -1,4 +1,5 @@
 import { expect, test } from "@playwright/test";
+import { CURRENT_STATION_ID } from "./mockArkretApi";
 import {
   registerStrandsBeforeEach,
   latestTestId,
@@ -207,7 +208,10 @@ test("owned agent opens an independent two-principal Direct Conversation Realm",
   expect(directRequestBody).toEqual({
     peer: {
       agent_id: "ak:did_core:web:agents.example:assistant",
-      controller_id: "ak:did_core:web:alice.example",
+      controller_account_id: {
+        principal_id: "ak:did_core:web:alice.example",
+        station_id: CURRENT_STATION_ID,
+      },
       kind: "agent",
     },
   });

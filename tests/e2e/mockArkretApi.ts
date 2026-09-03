@@ -457,6 +457,10 @@ export async function mockArkretApi(
   const accountPrincipalId =
     options.accountPrincipalId ?? "did:web:alice.example";
   const accountPrincipalCoreId = didCoreId(accountPrincipalId);
+  const accountId = {
+    principal_id: accountPrincipalCoreId,
+    station_id: CURRENT_STATION_ID,
+  };
   const primaryHandle =
     options.primaryHandle === undefined
       ? "alice:local.host"
@@ -726,7 +730,7 @@ export async function mockArkretApi(
   };
   const activeAssistantKeyState = {
     agent_id: activeAssistantId,
-    controller_id: accountPrincipalCoreId,
+    controller_account_id: accountId,
     principal_control_realm_id:
       "ak:realm:AS7wchHFRbXWnMQPln42BrokXsPCf18uboKMm-yhYquI",
     controller_authorization_ref: `${activeAssistantDid}#managed-controller`,
@@ -791,7 +795,7 @@ export async function mockArkretApi(
     });
     personalAgentKeyStates.set(expiredAgentId, {
       agent_id: expiredAgentId,
-      controller_id: accountPrincipalCoreId,
+      controller_account_id: accountId,
       principal_control_realm_id: expiredRealmId,
       controller_authorization_ref: `${didFromCoreId(expiredAgentId)}#managed-controller`,
       requested_scope: expiredScope,
@@ -2894,7 +2898,10 @@ export async function mockArkretApi(
             agents: [
               {
                 agent_id: "ak:did_core:web:agents.example:bob-helper",
-                controller_id: "ak:did_core:web:bob.example",
+                controller_account_id: {
+                  principal_id: "ak:did_core:web:bob.example",
+                  station_id: CURRENT_STATION_ID,
+                },
                 display_name: "Bob Helper",
                 agent_slug: "helper",
                 avatar_blob_ref: DEMO_BLOB_REF,
@@ -3252,7 +3259,7 @@ export async function mockArkretApi(
               id: sidecarId,
               schema: "ak.schema.agent_sidecar.v1",
               realm_id: DEMO_REALM,
-              controller_id: accountPrincipalCoreId,
+              controller_account_id: accountId,
               encryption_profile: "mls_rfc9420",
               state: "active",
               created_at: "2026-07-20T00:00:00.000Z",
@@ -3264,7 +3271,7 @@ export async function mockArkretApi(
                 domain: "ak.sidecar.participant_authority.v1",
                 sidecar_id: sidecarId,
                 realm_id: DEMO_REALM,
-                controller_id: accountPrincipalCoreId,
+                controller_account_id: accountId,
                 desired_agent_ids: desiredAgentIds,
               }),
               control_frontier: [
@@ -3295,7 +3302,7 @@ export async function mockArkretApi(
           id: sidecarId,
           schema: "ak.schema.agent_sidecar.v1",
           realm_id: DEMO_REALM,
-          controller_id: accountPrincipalCoreId,
+          controller_account_id: accountId,
           encryption_profile: "mls_rfc9420",
           state: "active",
           created_at: "2026-07-20T00:00:00.000Z",
@@ -3307,7 +3314,7 @@ export async function mockArkretApi(
             domain: "ak.sidecar.participant_authority.v1",
             sidecar_id: sidecarId,
             realm_id: DEMO_REALM,
-            controller_id: accountPrincipalCoreId,
+            controller_account_id: accountId,
             desired_agent_ids: desiredAgentIds,
           }),
           control_frontier: [
@@ -3359,7 +3366,7 @@ export async function mockArkretApi(
       const controllerAuthorizationRef = `${agentDid}#managed-controller`;
       const requestedScopeDigest = canonicalSha256({
         agent_id: agentId,
-        controller_id: accountPrincipalCoreId,
+        controller_principal_id: accountPrincipalCoreId,
         kind: "ak.agent.requested_scope_commitment.v1",
         requested_scope: body.requested_scope,
       });
@@ -3418,7 +3425,7 @@ export async function mockArkretApi(
       };
       const keyState = {
         agent_id: agentId,
-        controller_id: accountPrincipalCoreId,
+        controller_account_id: accountId,
         principal_control_realm_id: principalControlRealmId,
         controller_authorization_ref: controllerAuthorizationRef,
         pairing_mode: "bootstrap",
@@ -3483,8 +3490,6 @@ export async function mockArkretApi(
         event.proofs.length > 0 &&
         lifecycleSubmission?.authorization_lease &&
         lifecycleSubmission?.control_proposal_ack &&
-        payload?.agent_id === agentId &&
-        payload?.controller_id === accountPrincipalId &&
         payload?.transition === action &&
         payload?.previous_status === expectedFrom &&
         payload?.reason === expectedReason;
@@ -3563,8 +3568,6 @@ export async function mockArkretApi(
         event.proofs.length > 0 &&
         lifecycleSubmission?.authorization_lease &&
         lifecycleSubmission?.control_proposal_ack &&
-        event?.payload?.agent_id === agentId &&
-        event?.payload?.controller_id === accountPrincipalId &&
         event?.payload?.transition === "deactivate" &&
         event?.payload?.previous_status === previousStatus &&
         event?.payload?.reason === body.reason;
@@ -3650,7 +3653,7 @@ export async function mockArkretApi(
         controller_authorization_ref: keyState.controller_authorization_ref,
         requested_scope_digest: canonicalSha256({
           agent_id: keyState.agent_id,
-          controller_id: keyState.controller_id,
+          controller_principal_id: keyState.controller_account_id.principal_id,
           kind: "ak.agent.requested_scope_commitment.v1",
           requested_scope: keyState.requested_scope,
         }),

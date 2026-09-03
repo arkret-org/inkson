@@ -458,7 +458,7 @@ pub fn build_mls_genesis_payload(
             MlsRuntimeError::Genesis(format!("invalid ratchet-tree blob ref: {error}"))
         })?,
         governance_binding: governance_binding.clone(),
-        // The RRK archive is produced by the exporter durability path, which
+        // The RHRK archive is produced by the exporter durability path, which
         // this client does not yet author; the closed schema forbids the field
         // for every other content-scheme/durability combination.
         organization_recovery_archive: None,

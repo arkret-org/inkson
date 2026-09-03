@@ -169,7 +169,10 @@ pub(crate) fn participant_roster_rows(
         let controllers = participants
             .iter()
             .filter(|candidate| {
-                same_principal_core(candidate.principal_id.as_str(), &metadata.controller_id)
+                same_principal_core(
+                    candidate.principal_id.as_str(),
+                    &metadata.controller_principal_id,
+                )
             })
             .collect::<Vec<_>>();
         // Principal-only display metadata cannot choose between two Station accounts.
@@ -371,10 +374,9 @@ pub(crate) fn sidecar_owned_agent_participants(
         .iter()
         .filter(|participant| {
             participant.is_agent
-                && participant
-                    .agent_metadata
-                    .as_ref()
-                    .is_some_and(|metadata| metadata.controller_id.trim() == principal_id.trim())
+                && participant.agent_metadata.as_ref().is_some_and(|metadata| {
+                    metadata.controller_principal_id.trim() == principal_id.trim()
+                })
         })
         .cloned()
         .collect()
@@ -390,7 +392,7 @@ pub(crate) fn sidecar_presence_participants(
             participant.principal_id.as_str().trim() == principal_id.trim()
                 || (participant.is_agent
                     && participant.agent_metadata.as_ref().is_some_and(|metadata| {
-                        metadata.controller_id.trim() == principal_id.trim()
+                        metadata.controller_principal_id.trim() == principal_id.trim()
                     }))
         })
         .cloned()
@@ -427,15 +429,15 @@ pub(crate) fn agent_controller_label(
     let metadata = participant.agent_metadata.as_ref()?;
     participants
         .iter()
-        .find(|candidate| candidate.principal_id.as_str() == metadata.controller_id)
+        .find(|candidate| candidate.principal_id.as_str() == metadata.controller_principal_id)
         .and_then(participant_sender_label)
         .or_else(|| {
             (!metadata.controller_handle.trim().is_empty())
                 .then(|| metadata.controller_handle.clone())
         })
         .or_else(|| {
-            (!metadata.controller_id.trim().is_empty())
-                .then(|| short_principal_label(&metadata.controller_id))
+            (!metadata.controller_principal_id.trim().is_empty())
+                .then(|| short_principal_label(&metadata.controller_principal_id))
         })
 }
 
@@ -462,7 +464,7 @@ pub(crate) fn mention_candidate_for_participant(
         let selector = metadata.and_then(|metadata| {
             if metadata.agent_slug.trim().is_empty() {
                 None
-            } else if same_principal_core(&metadata.controller_id, principal_id) {
+            } else if same_principal_core(&metadata.controller_principal_id, principal_id) {
                 Some(format!("me/{}", metadata.agent_slug.trim()))
             } else {
                 agent_selector_label(participant)
@@ -481,7 +483,7 @@ pub(crate) fn mention_candidate_for_participant(
                 .unwrap_or_else(|| "agent".to_owned()),
             is_agent: true,
             controller_subject_id: metadata
-                .map(|metadata| metadata.controller_id.clone())
+                .map(|metadata| metadata.controller_principal_id.clone())
                 .unwrap_or_default(),
             controller_handle_at_time: metadata
                 .map(|metadata| metadata.controller_handle.clone())
@@ -598,7 +600,7 @@ pub(crate) fn agent_candidate_is_visible(
         || participant
             .agent_metadata
             .as_ref()
-            .is_some_and(|metadata| metadata.controller_id.trim() == principal_id.trim())
+            .is_some_and(|metadata| metadata.controller_principal_id.trim() == principal_id.trim())
 }
 
 pub(crate) fn readable_participation_agent_ids(
@@ -613,7 +615,7 @@ pub(crate) fn readable_participation_agent_ids(
             participant
                 .agent_metadata
                 .as_ref()
-                .is_some_and(|metadata| metadata.controller_id.trim() == principal_id)
+                .is_some_and(|metadata| metadata.controller_principal_id.trim() == principal_id)
         })
         .map(|participant| participant.principal_id.to_string())
         .collect::<Vec<_>>();

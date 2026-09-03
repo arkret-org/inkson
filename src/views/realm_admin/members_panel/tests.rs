@@ -85,7 +85,7 @@ fn member(id: &str) -> MemberProfile {
 fn agent(id: &str, controller: &str, name: &str) -> MemberAgentRow {
     MemberAgentRow {
         agent_id: id.to_owned(),
-        controller_id: controller.to_owned(),
+        controller_principal_id: controller.to_owned(),
         display_name: name.to_owned(),
         slug: "summary".to_owned(),
         status: "active".to_owned(),

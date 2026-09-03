@@ -635,7 +635,7 @@ pub fn RealmAdminPanel(
                     }
                     if let Some(root) = authority_root.clone() {
                         {
-                            let controller_full = root.controller_id.to_string();
+                            let controller_full = root.controller_actor_id.to_string();
                             let controller_label = short_protocol_id(&controller_full);
                             rsx! {
                                 div { class: "security-owner-summary",
@@ -2405,7 +2405,7 @@ fn build_owner_transfer_payload(
         realm_id: arkret_sdk::RealmId::new(realm_id.trim().to_owned())?,
         expected_state_digest: expected_authority_root_digest(root)?,
         patch: arkret_sdk::RealmOwnerTransferPatch {
-            controller_id: serde_json::from_str(successor).map_err(|error| {
+            controller_actor_id: serde_json::from_str(successor).map_err(|error| {
                 anyhow::anyhow!("successor must be a complete ActorId: {error}")
             })?,
         },
@@ -2461,7 +2461,7 @@ mod governance_tests {
 
     fn root() -> arkret_policy::realm_bootstrap::RealmAuthorityRootValue {
         arkret_policy::realm_bootstrap::RealmAuthorityRootValue {
-            controller_id: crate::mls_api_helpers::local_account_actor_id(
+            controller_actor_id: crate::mls_api_helpers::local_account_actor_id(
                 "ak:did_core:web:alice.example",
             )
             .unwrap(),
@@ -2481,7 +2481,7 @@ mod governance_tests {
         let payload =
             build_owner_transfer_payload(REALM, &root(), &successor.to_string(), "detached-proof")
                 .unwrap();
-        assert_eq!(payload.patch.controller_id, successor);
+        assert_eq!(payload.patch.controller_actor_id, successor);
         assert_eq!(
             payload.expected_state_digest.as_str(),
             crate::canonical::canonical_sha256(&root()).unwrap()
@@ -2501,7 +2501,7 @@ mod governance_tests {
 
     #[test]
     fn owner_transfer_payload_rejects_an_empty_acceptance_proof() {
-        let successor = root().controller_id.to_string();
+        let successor = root().controller_actor_id.to_string();
         assert!(build_owner_transfer_payload(REALM, &root(), &successor, "  ").is_err());
     }
 

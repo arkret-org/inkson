@@ -416,7 +416,10 @@ fn agent_selector_mention_is_already_resolved(
         })
 }
 
-fn owned_agent_ids_from_mentions(mentions: &[MentionNode], controller_id: &str) -> Vec<String> {
+fn owned_agent_ids_from_mentions(
+    mentions: &[MentionNode],
+    controller_principal_id: &str,
+) -> Vec<String> {
     let mut agent_ids = mentions
         .iter()
         .filter_map(MentionNode::as_mention)
@@ -424,7 +427,9 @@ fn owned_agent_ids_from_mentions(mentions: &[MentionNode], controller_id: &str) 
             mention
                 .controller_subject_id
                 .as_ref()
-                .is_some_and(|controller| same_principal_core(controller.as_str(), controller_id))
+                .is_some_and(|controller| {
+                    same_principal_core(controller.as_str(), controller_principal_id)
+                })
         })
         .map(|mention| mention.subject_id.as_str().to_owned())
         .collect::<Vec<_>>();
@@ -438,7 +443,7 @@ fn owned_agent_ids_from_composer(
     body: &str,
     mentions: &[MentionNode],
     picker: &[crate::messaging::mentions::MentionCandidate],
-    controller_id: &str,
+    controller_principal_id: &str,
 ) -> Vec<String> {
     if !mentions_enabled {
         return Vec::new();
@@ -448,13 +453,13 @@ fn owned_agent_ids_from_composer(
         .filter(|token| token.controller_handle == "me")
         .map(|token| token.agent_slug)
         .collect::<std::collections::BTreeSet<_>>();
-    let mut agent_ids = owned_agent_ids_from_mentions(mentions, controller_id);
+    let mut agent_ids = owned_agent_ids_from_mentions(mentions, controller_principal_id);
     agent_ids.extend(
         picker
             .iter()
             .filter(|candidate| candidate.is_agent)
             .filter(|candidate| {
-                same_principal_core(&candidate.controller_subject_id, controller_id)
+                same_principal_core(&candidate.controller_subject_id, controller_principal_id)
             })
             .filter(|candidate| selector_slugs.contains(candidate.agent_slug_at_time.trim()))
             .filter_map(|candidate| principal_core_key(&candidate.subject_id)),
@@ -492,11 +497,11 @@ struct PendingNativeSidecarCommit {
 }
 
 fn pending_native_sidecar_commit_key(
-    controller_id: &str,
+    controller_principal_id: &str,
     realm_id: &str,
     strand_id: &str,
 ) -> String {
-    format!("ak.local.native_sidecar_commit.v1:{controller_id}:{realm_id}:{strand_id}")
+    format!("ak.local.native_sidecar_commit.v1:{controller_principal_id}:{realm_id}:{strand_id}")
 }
 
 fn validate_native_prepared_sidecar_binding(
@@ -718,7 +723,7 @@ async fn ensure_owned_agent_sidecar(
             operation_id: operation_id.clone(),
             idempotency_key: arkret_sdk::IdempotencyKey::new(nonce).map_err(anyhow::Error::msg)?,
             source_realm_id: source_realm.clone(),
-            controller_id: controller.clone(),
+            controller_account_id: authority.clone(),
             context_ref: context_ref.clone(),
         },
     );
@@ -730,7 +735,7 @@ async fn ensure_owned_agent_sidecar(
         addressed_agent_count = addressed.len(),
     );
     let ceremony_operation_id = operation_id.clone();
-    let ceremony_controller = controller.clone();
+    let ceremony_controller_account_id = authority.clone();
     let ceremony_controller_did = controller_did.clone();
     let ceremony_realm = source_realm.clone();
     let ceremony_strand = source_strand.clone();
@@ -916,7 +921,7 @@ async fn ensure_owned_agent_sidecar(
             view.validate()?;
             if view.sidecar.id != sidecar_id
                 || view.sidecar.realm_id != ceremony_realm
-                || view.sidecar.controller_id != ceremony_controller
+                || view.sidecar.controller_account_id != ceremony_controller_account_id
             {
                 anyhow::bail!("native Sidecar view differs from its accepted ceremony");
             }
@@ -966,7 +971,7 @@ struct SourceRoutedSidecarMessageOutcome {
 async fn submit_source_routed_sidecar_message(
     base_url: &str,
     api_token: String,
-    controller_id: &str,
+    controller_principal_id: &str,
     authority: &arkret_sdk::AccountId,
     device_id: &arkret_sdk::DeviceId,
     source_realm_id: &str,
@@ -1045,7 +1050,7 @@ async fn submit_source_routed_sidecar_message(
         &addressed_strings,
     );
     let Some(_submission_guard) = crate::sidecar::try_begin_sidecar_submission(
-        controller_id,
+        controller_principal_id,
         attached_source_strand_id,
         &intent_digest,
     ) else {
@@ -1053,7 +1058,7 @@ async fn submit_source_routed_sidecar_message(
     };
     let prior = crate::sidecar::load_pending_sidecar_submission(
         &state_store.read(),
-        controller_id,
+        controller_principal_id,
         attached_source_strand_id,
         &intent_digest,
     );
@@ -1067,7 +1072,7 @@ async fn submit_source_routed_sidecar_message(
                 track_name: "discussion".to_owned(),
             },
             source_hlc: crate::signing_stamp::issue_protocol_hlc(
-                controller_id,
+                controller_principal_id,
                 device_id.as_str(),
                 source_realm_id,
             )?,
@@ -1098,7 +1103,7 @@ async fn submit_source_routed_sidecar_message(
         &seal_view,
         source_realm_id,
         authority,
-        controller_id,
+        controller_principal_id,
         device_id,
         attached_source_strand_id,
         &message_id,
@@ -1111,7 +1116,7 @@ async fn submit_source_routed_sidecar_message(
     .map_err(anyhow::Error::msg)?;
     let local_operation_id = build.message_local_operation_id.to_string();
     let pending = crate::sidecar::PendingSidecarSubmission {
-        controller_id: controller_id.to_owned(),
+        controller_account_id: authority.clone(),
         sidecar_id: view.sidecar.id.clone(),
         source_strand_id: attached_source_strand_id.to_owned(),
         exchange_id,
@@ -1166,7 +1171,7 @@ async fn submit_source_routed_sidecar_message(
             json!({
                 "event_id": event_id.clone(),
                 "kind": event_kind_str::MESSAGE_CREATE,
-                "actor_id": controller_id,
+                "actor_id": controller_principal_id,
                 "strand_id": attached_source_strand_id,
                 "message_id": protocol_message_id,
                 "encrypted_content": true,
@@ -1181,7 +1186,7 @@ async fn submit_source_routed_sidecar_message(
         );
         crate::sidecar::remove_pending_sidecar_submission(
             &mut store,
-            controller_id,
+            controller_principal_id,
             attached_source_strand_id,
             &intent_digest,
         );
@@ -1446,7 +1451,6 @@ pub fn ChatPanel(
         });
     }
     {
-        let actor = principal_id.clone();
         let state_store = state_store;
         use_effect(move || {
             let _account_cursor = sync_cursor();
@@ -1454,7 +1458,7 @@ pub fn ChatPanel(
                 return;
             };
             let Some(remote_mode) =
-                crate::sidecar::cached_sidecar_display_mode(&state_store.read(), &actor, &session)
+                crate::sidecar::cached_sidecar_display_mode(&state_store.read(), &session)
             else {
                 return;
             };
@@ -1636,7 +1640,7 @@ pub fn ChatPanel(
     // as soon as the panel mounts (e.g. the card-detail Discussion tab).
     let sidecar_exchange_projections = crate::sidecar::cached_sidecar_exchange_projections(
         &state_store.read(),
-        &principal_id,
+        &authority,
         &selected_realm_id,
     );
     for projection in &sidecar_exchange_projections {

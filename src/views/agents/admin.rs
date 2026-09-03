@@ -67,12 +67,12 @@ fn agent_id(agent: &AgentView) -> String {
 
 fn selected_agent_binding_matches(
     selected_agent_id: &str,
-    controller_id: &arkret_sdk::DidCoreId,
+    controller_principal_id: &arkret_sdk::DidCoreId,
     key_state: &KeyState,
 ) -> bool {
     arkret_sdk::DidCoreId::new(selected_agent_id.to_owned())
         .is_ok_and(|agent_id| agent_id == key_state.agent_id)
-        && controller_id == &key_state.controller_id
+        && controller_principal_id == &key_state.controller_account_id.principal_id
 }
 
 fn agent_slug_label(agent: &AgentView) -> String {
@@ -325,12 +325,12 @@ mod directory_refresh_tests {
 
         assert!(selected_agent_binding_matches(
             key_state.agent_id.as_str(),
-            &key_state.controller_id,
+            &key_state.controller_account_id.principal_id,
             key_state,
         ));
         assert!(!selected_agent_binding_matches(
             "did:web:agents.example:summary",
-            &key_state.controller_id,
+            &key_state.controller_account_id.principal_id,
             key_state,
         ));
         assert!(!selected_agent_binding_matches(
@@ -348,7 +348,7 @@ mod directory_refresh_tests {
             &arkret_sdk::Did::new("did:web:agents.example:summary").unwrap(),
         )
         .unwrap();
-        let controller_id = arkret_sdk::project_did_to_core_id(
+        let controller_principal_id = arkret_sdk::project_did_to_core_id(
             &arkret_sdk::Did::new("did:web:alice.example").unwrap(),
         )
         .unwrap();
@@ -368,7 +368,11 @@ mod directory_refresh_tests {
             grants: Vec::new(),
             key_state: Some(KeyState {
                 agent_id,
-                controller_id,
+                controller_account_id: arkret_sdk::AccountId::new(
+                    controller_principal_id,
+                    arkret_sdk::DidCoreId::new("ak:did_core:web:station.example".to_owned())
+                        .unwrap(),
+                ),
                 principal_control_realm_id: arkret_sdk::RealmId::new(
                     "ak:realm:AS8XThowW7JnZc80U10gJh-_lqkA-iSQ-LAvBXj6_9O5".to_owned(),
                 )
@@ -421,7 +425,7 @@ mod directory_refresh_tests {
         let key_state = row.key_state.unwrap();
         let requested_scope_digest = arkret_signatures::agent::agent_requested_scope_digest(
             &key_state.agent_id,
-            &key_state.controller_id,
+            &key_state.controller_account_id.principal_id,
             &key_state.requested_scope,
         )
         .unwrap();
@@ -576,7 +580,7 @@ fn apply_renewed_pairing(
     let outcome_agent_actor_id = outcome.agent_id.clone();
     let requested_scope_digest = arkret_signatures::agent::agent_requested_scope_digest(
         &key_state.agent_id,
-        &key_state.controller_id,
+        &key_state.controller_account_id.principal_id,
         &key_state.requested_scope,
     )
     .map_err(|_| "loaded Agent scope is not digestible")?;
@@ -816,7 +820,7 @@ fn spawn_set_agent_enabled(
     base: String,
     api_token: String,
     id: String,
-    controller_id: arkret_sdk::DidCoreId,
+    controller_principal_id: arkret_sdk::DidCoreId,
     key_state: Option<KeyState>,
     enabled: bool,
     mut agents: Signal<Vec<AgentView>>,
@@ -839,7 +843,7 @@ fn spawn_set_agent_enabled(
             );
             return;
         };
-        if !selected_agent_binding_matches(&id, &controller_id, &key_state) {
+        if !selected_agent_binding_matches(&id, &controller_principal_id, &key_state) {
             last_op_status.set(
                 "Agent key binding does not match the selected Agent and controller; refresh and retry."
                     .to_owned(),
@@ -848,18 +852,10 @@ fn spawn_set_agent_enabled(
         }
         let id_for_status = id.clone();
         let status_changed_at = crate::clock::now_utc_millis();
-        let station_id = match crate::operation::authoring_station_id() {
-            Ok(station_id) => station_id,
-            Err(error) => {
-                last_op_status.set(format!("Station route is unavailable: {error}"));
-                return;
-            }
-        };
+        let controller_account_id = key_state.controller_account_id.clone();
         let agent_actor_id = arkret_sdk::ActorId::service(key_state.agent_id.clone());
-        let controller_actor_id = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
-            key_state.controller_id.clone(),
-            station_id,
-        ));
+        let controller_actor_id =
+            arkret_sdk::ActorId::account(key_state.controller_account_id.clone());
         let intent = if enabled {
             arkret_event_draft::build_agent_resume_intent(
                 agent_actor_id.clone(),
@@ -901,7 +897,7 @@ fn spawn_set_agent_enabled(
                 .active_account()
                 .ok_or_else(|| anyhow::anyhow!("active controller account is unavailable"))?;
             anyhow::ensure!(
-                account.principal_id() == &controller_id,
+                account.authority == controller_account_id,
                 "active controller authority changed before lifecycle submission"
             );
             let signer = crate::event_signer::active_signer()
@@ -1001,7 +997,7 @@ fn spawn_deactivate_agent(
     base: String,
     api_token: String,
     id: String,
-    controller_id: arkret_sdk::DidCoreId,
+    controller_principal_id: arkret_sdk::DidCoreId,
     status: AgentLifecycleState,
     key_state: Option<KeyState>,
     mut agents: Signal<Vec<AgentView>>,
@@ -1020,7 +1016,7 @@ fn spawn_deactivate_agent(
             );
             return;
         };
-        if !selected_agent_binding_matches(&id, &controller_id, &key_state) {
+        if !selected_agent_binding_matches(&id, &controller_principal_id, &key_state) {
             last_op_status.set(
                 "Agent key binding does not match the selected Agent and controller; refresh and retry."
                     .to_owned(),
@@ -1040,18 +1036,10 @@ fn spawn_deactivate_agent(
             }
         };
         let changed_at = crate::clock::now_utc_millis();
-        let station_id = match crate::operation::authoring_station_id() {
-            Ok(station_id) => station_id,
-            Err(error) => {
-                last_op_status.set(format!("Station route is unavailable: {error}"));
-                return;
-            }
-        };
+        let controller_account_id = key_state.controller_account_id.clone();
         let agent_actor_id = arkret_sdk::ActorId::service(key_state.agent_id.clone());
-        let controller_actor_id = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
-            key_state.controller_id.clone(),
-            station_id,
-        ));
+        let controller_actor_id =
+            arkret_sdk::ActorId::account(key_state.controller_account_id.clone());
         let operation = match arkret_event_draft::build_agent_deactivate_intent(
             agent_actor_id,
             controller_actor_id,
@@ -1073,6 +1061,13 @@ fn spawn_deactivate_agent(
         let id_for_status = id.clone();
         let refresh_api_token = api_token.clone();
         let result = with_event_submitter(&base, api_token, move |submitter| async move {
+            let account = crate::app::SessionContext::get()
+                .active_account()
+                .ok_or_else(|| anyhow::anyhow!("active controller account is unavailable"))?;
+            anyhow::ensure!(
+                account.authority == controller_account_id,
+                "active controller authority changed before lifecycle submission"
+            );
             // Carried in the deactivate request body, so it is authored here
             // against the accepted actor frontier rather than queued.
             let authored = submitter.author_for_direct_submission(&operation).await?;
@@ -1122,7 +1117,7 @@ fn spawn_deactivate_agent(
 fn spawn_provision_agent(
     base: String,
     api_token: String,
-    controller_id: arkret_sdk::DidCoreId,
+    controller_principal_id: arkret_sdk::DidCoreId,
     slug: String,
     _avatar_blob_ref: Option<arkret_sdk::BlobRef>,
     content_presets: Vec<AgentGrantPreset>,
@@ -1146,7 +1141,7 @@ fn spawn_provision_agent(
                 return;
             }
         };
-        if account.principal_id() != &controller_id {
+        if account.principal_id() != &controller_principal_id {
             last_op_status.set("Create failed: active controller authority changed".to_owned());
             return;
         }
@@ -1218,7 +1213,7 @@ fn spawn_provision_agent(
         let (agent_inception, agent_did_keys) = match crate::agent_identity::prepare_inception(
             &base,
             &agent_did_local_id,
-            &controller_id,
+            &controller_principal_id,
         ) {
             Ok(value) => value,
             Err(error) => {
@@ -1383,7 +1378,7 @@ fn spawn_provision_agent(
         }
         let observed_digest = match arkret_signatures::agent::agent_requested_scope_digest(
             &agent_id,
-            &controller_id,
+            &controller_principal_id,
             &requested_scope,
         ) {
             Ok(value) => value,
@@ -1448,7 +1443,7 @@ fn spawn_provision_agent(
             let agent_id = agent_id.clone();
             let initial_resolution = initial_resolution.clone();
             let agent_notary = agent_notary.clone();
-            let controller_id = controller_id.clone();
+            let controller_principal_id = controller_principal_id.clone();
             let controller_authorization_ref = controller_authorization_ref.clone();
             move |submitter| async move {
                 let describe = submitter.events_describe().await?;
@@ -1456,7 +1451,7 @@ fn spawn_provision_agent(
                     agent_id.as_str(),
                     initial_resolution,
                     agent_notary,
-                    controller_id.as_str(),
+                    controller_principal_id.as_str(),
                     controller_authorization_ref.as_str(),
                     describe.trust_domain.as_str(),
                 )?;
@@ -1722,7 +1717,7 @@ fn spawn_provision_agent(
         let binding_update = match crate::agent_identity::prepare_binding_update(
             &agent_inception,
             &agent_did_keys,
-            &controller_id,
+            &controller_principal_id,
             &binding_coordinates.0,
             &binding_coordinates.1,
         ) {
@@ -1830,7 +1825,10 @@ fn spawn_provision_agent(
 // error paths no caller can reach.
 #[allow(clippy::expect_used)]
 #[component]
-pub fn AgentAdminPanel(token: Signal<String>, controller_id: arkret_sdk::DidCoreId) -> Element {
+pub fn AgentAdminPanel(
+    token: Signal<String>,
+    controller_principal_id: arkret_sdk::DidCoreId,
+) -> Element {
     // A4 — base_url from session context instead of a prop.
     let base_url = crate::app::SessionContext::base_url_string();
     let navigator = use_navigator();
@@ -2008,9 +2006,9 @@ pub fn AgentAdminPanel(token: Signal<String>, controller_id: arkret_sdk::DidCore
     // Separate clones for the replace-runtime "Pause first" affordance, which is
     // rendered after the lifecycle switch closure has already moved the
     // originals.
-    let replace_pause_controller_id = controller_id.clone();
+    let replace_pause_controller_principal_id = controller_principal_id.clone();
     let replace_pause_key_state = selected_key_state_owned.clone();
-    let deactivate_controller_id = controller_id.clone();
+    let deactivate_controller_principal_id = controller_principal_id.clone();
     let deactivate_key_state = selected_key_state_owned.clone();
     let deactivate_status = selected_agent
         .as_ref()
@@ -2352,12 +2350,12 @@ pub fn AgentAdminPanel(token: Signal<String>, controller_id: arkret_sdk::DidCore
                                         disabled: new_agent_slug().trim().is_empty(),
                                         onclick: {
                                             let base = base_url.clone();
-                                            let controller_id = controller_id.clone();
+                                            let controller_principal_id = controller_principal_id.clone();
                                             move |_| {
                                                 spawn_provision_agent(
                                                     base.clone(),
                                                     token(),
-                                                    controller_id.clone(),
+                                                    controller_principal_id.clone(),
                                                     new_agent_slug(),
                                                     arkret_sdk::BlobRef::new(new_agent_avatar_blob_ref()).ok(),
                                                     provision_presets.read().clone(),
@@ -2829,7 +2827,7 @@ pub fn AgentAdminPanel(token: Signal<String>, controller_id: arkret_sdk::DidCore
                                                         base.clone(),
                                                         token(),
                                                         selected_agent_id(),
-                                                        controller_id.clone(),
+                                                        controller_principal_id.clone(),
                                                         selected_key_state_owned.clone(),
                                                         enabled,
                                                         agents,
@@ -3013,7 +3011,7 @@ pub fn AgentAdminPanel(token: Signal<String>, controller_id: arkret_sdk::DidCore
                                                             // compromised: pause first so sessions
                                                             // are refused immediately, then replace.
                                                             let base = base_url.clone();
-                                                            let controller_id = replace_pause_controller_id.clone();
+                                                            let controller_principal_id = replace_pause_controller_principal_id.clone();
                                                             let key_state = replace_pause_key_state.clone();
                                                             move |_| {
                                                                 replace_runtime_confirm_open.set(false);
@@ -3021,7 +3019,7 @@ pub fn AgentAdminPanel(token: Signal<String>, controller_id: arkret_sdk::DidCore
                                                                     base.clone(),
                                                                     token(),
                                                                     selected_agent_id(),
-                                                                    controller_id.clone(),
+                                                                    controller_principal_id.clone(),
                                                                     key_state.clone(),
                                                                     false,
                                                                     agents,
@@ -3105,7 +3103,7 @@ pub fn AgentAdminPanel(token: Signal<String>, controller_id: arkret_sdk::DidCore
                                             disabled: deactivate_confirm() != "DEACTIVATE",
                                             onclick: {
                                                 let base = base_url.clone();
-                                                let controller_id = deactivate_controller_id.clone();
+                                                let controller_principal_id = deactivate_controller_principal_id.clone();
                                                 let key_state = deactivate_key_state.clone();
                                                 move |_| {
                                                     let id = selected_agent_id();
@@ -3114,7 +3112,7 @@ pub fn AgentAdminPanel(token: Signal<String>, controller_id: arkret_sdk::DidCore
                                                         base.clone(),
                                                         token(),
                                                         id,
-                                                        controller_id.clone(),
+                                                        controller_principal_id.clone(),
                                                         deactivate_status,
                                                         key_state.clone(),
                                                         agents,

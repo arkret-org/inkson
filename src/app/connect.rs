@@ -1634,7 +1634,6 @@ pub(super) fn connect(
                                 match crate::sidecar::ingest_sidecar_view_state_account_data(
                                     &mut store,
                                     &accepted_account.authority,
-                                    crate::app::principal_id_text(&principal_id()),
                                     account_data_key,
                                     entry,
                                 ) {

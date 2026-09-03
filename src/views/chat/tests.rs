@@ -102,10 +102,11 @@ fn delivered_exchange_projection_fixture(
     let request_event = arkret_sdk::EventId::new(request_event_id).unwrap();
     arkret_sdk::AgentSidecarExchangeProjection {
         schema: arkret_sdk::AgentSidecarExchangeProjectionSchema::V1,
-        controller_id: crate::mls_api_helpers::principal_core_id(
-            "ak:did_core:web:example.test:alice",
-        )
-        .unwrap(),
+        controller_account_id: arkret_sdk::AccountId::new(
+            crate::mls_api_helpers::principal_core_id("ak:did_core:web:example.test:alice")
+                .unwrap(),
+            arkret_sdk::DidCoreId::new("ak:did_core:web:station.example".to_owned()).unwrap(),
+        ),
         sidecar_id: arkret_sdk::SidecarId::new(
             "ak:sidecar:AWea2MtI5dOI1LSRyI266_gQVrWUd0po0dxZiJNsH8kN",
         )
@@ -3136,7 +3137,7 @@ fn agent_metadata_from_mentions_recovers_selector_audit_metadata() {
         .get("ak:did_core:web:agents.example:summary")
         .expect("agent metadata");
     assert_eq!(
-        summary.controller_id,
+        summary.controller_principal_id,
         "ak:did_core:web:example.com:users:alice"
     );
     assert_eq!(summary.controller_handle, "alice:example.com");
@@ -3150,7 +3151,7 @@ fn mention_audit_metadata_cannot_promote_or_rebind_an_agent() {
     let mut authoritative = std::collections::BTreeMap::from([(
         agent_id.to_owned(),
         AgentParticipantMetadata {
-            controller_id: "ak:did_core:web:example.com:users:alice".to_owned(),
+            controller_principal_id: "ak:did_core:web:example.com:users:alice".to_owned(),
             controller_handle: "alice:example.com".to_owned(),
             agent_slug: "summary".to_owned(),
             display_name: "summary".to_owned(),
@@ -3160,7 +3161,7 @@ fn mention_audit_metadata_cannot_promote_or_rebind_an_agent() {
         (
             agent_id.to_owned(),
             AgentParticipantMetadata {
-                controller_id: "ak:did_core:web:example.com:users:mallory".to_owned(),
+                controller_principal_id: "ak:did_core:web:example.com:users:mallory".to_owned(),
                 controller_handle: "mallory:example.com".to_owned(),
                 agent_slug: "stolen".to_owned(),
                 display_name: "Forged Agent".to_owned(),
@@ -3169,7 +3170,7 @@ fn mention_audit_metadata_cannot_promote_or_rebind_an_agent() {
         (
             "ak:did_core:web:example.com:users:bob".to_owned(),
             AgentParticipantMetadata {
-                controller_id: "ak:did_core:web:example.com:users:alice".to_owned(),
+                controller_principal_id: "ak:did_core:web:example.com:users:alice".to_owned(),
                 controller_handle: "alice:example.com".to_owned(),
                 agent_slug: "review".to_owned(),
                 display_name: "Forged Bob Agent".to_owned(),
@@ -3182,7 +3183,7 @@ fn mention_audit_metadata_cannot_promote_or_rebind_an_agent() {
     assert_eq!(authoritative.len(), 1);
     let summary = authoritative.get(agent_id).unwrap();
     assert_eq!(
-        summary.controller_id,
+        summary.controller_principal_id,
         "ak:did_core:web:example.com:users:alice"
     );
     assert_eq!(summary.controller_handle, "alice:example.com");
@@ -3486,7 +3487,7 @@ fn participant_roster_rows_groups_agents_under_visible_controller() {
         is_self: false,
         is_agent: true,
         agent_metadata: Some(AgentParticipantMetadata {
-            controller_id: controller.principal_id.to_string(),
+            controller_principal_id: controller.principal_id.to_string(),
             controller_handle: "alice:example.com".to_owned(),
             agent_slug: "summary".to_owned(),
             display_name: "Summary Assistant".to_owned(),
@@ -3588,7 +3589,7 @@ fn mention_candidate_for_own_agent_uses_me_alias() {
         is_self: false,
         is_agent: true,
         agent_metadata: Some(AgentParticipantMetadata {
-            controller_id: controller.principal_id.to_string(),
+            controller_principal_id: controller.principal_id.to_string(),
             controller_handle: "alice:example.com".to_owned(),
             agent_slug: "summary".to_owned(),
             display_name: "Summary Assistant".to_owned(),
@@ -3725,7 +3726,7 @@ fn owned_agent_inventory_enriches_existing_realm_member_metadata() {
         .get("ak:did_core:web:agents.example:summary")
         .expect("owned agent metadata");
     assert_eq!(
-        summary.controller_id,
+        summary.controller_principal_id,
         "ak:did_core:web:example.com:users:alice"
     );
     assert_eq!(summary.controller_handle, "alice:example.com");
@@ -3838,7 +3839,7 @@ fn mention_candidate_for_other_agent_keeps_canonical_controller_handle() {
         is_self: false,
         is_agent: true,
         agent_metadata: Some(AgentParticipantMetadata {
-            controller_id: controller.principal_id.to_string(),
+            controller_principal_id: controller.principal_id.to_string(),
             controller_handle: "bob:example.com".to_owned(),
             agent_slug: "summary".to_owned(),
             display_name: "Summary Assistant".to_owned(),
@@ -3885,7 +3886,7 @@ fn agent_candidate_visibility_keeps_owned_agents_and_hides_private_remote_agents
         is_self: false,
         is_agent: true,
         agent_metadata: Some(AgentParticipantMetadata {
-            controller_id: own_controller.principal_id.to_string(),
+            controller_principal_id: own_controller.principal_id.to_string(),
             controller_handle: "alice:example.com".to_owned(),
             agent_slug: "summary".to_owned(),
             display_name: "Alice Summary".to_owned(),
@@ -3904,7 +3905,7 @@ fn agent_candidate_visibility_keeps_owned_agents_and_hides_private_remote_agents
         is_self: false,
         is_agent: true,
         agent_metadata: Some(AgentParticipantMetadata {
-            controller_id: "ak:did_core:web:example.com:users:bob".to_owned(),
+            controller_principal_id: "ak:did_core:web:example.com:users:bob".to_owned(),
             controller_handle: "bob:example.com".to_owned(),
             agent_slug: "summary".to_owned(),
             display_name: "Bob Summary".to_owned(),
@@ -3986,7 +3987,7 @@ fn sidecar_presence_excludes_realm_humans_and_foreign_agents() {
         is_self: false,
         is_agent: true,
         agent_metadata: Some(AgentParticipantMetadata {
-            controller_id: controller.principal_id.to_string(),
+            controller_principal_id: controller.principal_id.to_string(),
             controller_handle: "alice:example.com".to_owned(),
             agent_slug: "summary".to_owned(),
             display_name: "Alice Summary".to_owned(),
@@ -4005,7 +4006,7 @@ fn sidecar_presence_excludes_realm_humans_and_foreign_agents() {
         is_self: false,
         is_agent: true,
         agent_metadata: Some(AgentParticipantMetadata {
-            controller_id: realm_human.principal_id.to_string(),
+            controller_principal_id: realm_human.principal_id.to_string(),
             controller_handle: "bob:example.com".to_owned(),
             agent_slug: "summary".to_owned(),
             display_name: "Bob Summary".to_owned(),

@@ -498,7 +498,7 @@ pub async fn upload_mls_account_secret_backup_with_recovery_public_key(
 
 /// Upload one history-only envelope per local effective scope. The source set
 /// is taken exclusively from the accepted-artifact store, so received member,
-/// RRK, portable-backup candidates and Event-local bindings are structurally
+/// RHRK, portable-backup candidates and Event-local bindings are structurally
 /// unable to enter this path.
 pub async fn upload_local_authoritative_mls_history_backups_with_recovery_public_key(
     api: &crate::transport::TransportClient,

@@ -202,7 +202,7 @@ pub(super) fn DiscussionUsersPanel(
                                 }
                             }
                             ParticipantRosterRow::ControllerWithAgents { controller, agents } => {
-                                let controller_id = controller.principal_id.clone();
+                                let controller_principal_id = controller.principal_id.clone();
                                 let agent_count = agents.len();
                                 let display_label = participant_roster_display_label(
                                     &state_store.read(),
@@ -220,7 +220,7 @@ pub(super) fn DiscussionUsersPanel(
                                     details {
                                         class: "participant-agent-group",
                                         "data-testid": "participant-agent-group",
-                                        "data-controller-id": "{controller_id}",
+                                        "data-controller-principal-id": "{controller_principal_id}",
                                         summary {
                                             class: "participant-agent-group-summary",
                                             "aria-label": "{group_aria_label}",

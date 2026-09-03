@@ -135,7 +135,6 @@ pub fn ActionApproveDialog(
                                 let request_payload = json!({
                                     "request_id": request_id,
                                     "agent_id": agent,
-                                    "controller_id": actor.clone(),
                                     "proposed_action": action,
                                     "target": target,
                                     "request_canonical_digest": digest,
@@ -143,7 +142,6 @@ pub fn ActionApproveDialog(
                                 let approved_at = crate::clock::now_timestamp();
                                 let op = build_action_approve_payload(
                                     &request_payload,
-                                    &actor,
                                     &approved_at,
                                     &approval_expires_at,
                                 )
@@ -218,7 +216,7 @@ pub fn ActionApproveDialog(
 /// `ak.self.account.subscribe`; until the subscribe fold is attached to
 /// this component, operators can paste a draft or action request payload.
 #[component]
-pub fn DraftApprovalPanel(token: Signal<String>, controller_id: String) -> Element {
+pub fn DraftApprovalPanel(token: Signal<String>, controller_principal_id: String) -> Element {
     // A4 — base_url from session context instead of a prop.
     let base_url = crate::app::SessionContext::base_url_string();
     let mut drafts = use_signal(Vec::<Value>::new);
@@ -360,7 +358,7 @@ pub fn DraftApprovalPanel(token: Signal<String>, controller_id: String) -> Eleme
                                             disabled: principal_realm.is_none(),
                                             onclick: {
                                                 let base = base_url.clone();
-                                                let actor = controller_id.clone();
+                                                let actor = controller_principal_id.clone();
                                                 let realm = principal_realm.clone();
                                                 move |_| {
                                                     let Some(realm) = realm.clone() else { return; };
@@ -374,7 +372,6 @@ pub fn DraftApprovalPanel(token: Signal<String>, controller_id: String) -> Eleme
                                                     let approval_expires_at = crate::clock::timestamp_in(60);
                                                     let op = build_action_approve_payload(
                                                         &draft,
-                                                        &actor,
                                                         &approved_at,
                                                         &approval_expires_at,
                                                     )
@@ -428,7 +425,7 @@ pub fn DraftApprovalPanel(token: Signal<String>, controller_id: String) -> Eleme
                                             disabled: principal_realm.is_none(),
                                             onclick: {
                                                 let base = base_url.clone();
-                                                let actor = controller_id.clone();
+                                                let actor = controller_principal_id.clone();
                                                 let realm = principal_realm.clone();
                                                 move |_| {
                                                     let Some(realm) = realm.clone() else { return; };
@@ -440,7 +437,6 @@ pub fn DraftApprovalPanel(token: Signal<String>, controller_id: String) -> Eleme
                                                     let rejected_at = crate::clock::now_timestamp();
                                                     let op = build_action_reject_payload(
                                                         &draft,
-                                                        &actor,
                                                         &rejected_at,
                                                         Some(&reason),
                                                     )

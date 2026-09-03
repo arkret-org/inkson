@@ -611,7 +611,7 @@ pub fn build_agent_pcr_create_event(
     agent_id: &str,
     initial_resolution: arkret_sdk::ResolutionCommitment,
     notary: arkret_sdk::NotaryValue,
-    controller_id: &str,
+    controller_principal_id: &str,
     controller_authorization_ref: &str,
     trust_domain: &str,
 ) -> anyhow::Result<crate::operation::LocalOperation> {
@@ -620,7 +620,9 @@ pub fn build_agent_pcr_create_event(
         arkret_bootstrap::AgentPcrCreatePayloadInput {
             agent_id: crate::mls_api_helpers::principal_core_id(agent_id)?,
             initial_resolution,
-            controller_id: crate::mls_api_helpers::principal_core_id(controller_id)?,
+            controller_principal_id: crate::mls_api_helpers::principal_core_id(
+                controller_principal_id,
+            )?,
             notary,
             genesis_salt: arkret_sdk::GenesisSalt::generate()?,
             trust_domain: arkret_sdk::TrustDomainId::new(trust_domain.to_owned())?,
@@ -635,7 +637,7 @@ pub fn build_agent_pcr_create_event(
         agent_id,
         payload,
     )
-    .executed_by(controller_id)
+    .executed_by(controller_principal_id)
     .authorization_ref(controller_authorization_ref)
     .preconditions(vec![head_eq_precondition(&cell, Value::Null)?])
     .requirements(event_requirements_with_schema(SchemaId::REALM_GENESIS_V1))
@@ -651,7 +653,7 @@ pub fn build_agent_pcr_bootstrap_steps(
     agent_id: &str,
     initial_resolution: arkret_sdk::ResolutionCommitment,
     notary: arkret_sdk::NotaryValue,
-    controller_id: &str,
+    controller_principal_id: &str,
     controller_authorization_ref: &str,
     trust_domain: &str,
 ) -> anyhow::Result<Vec<crate::event_submit::EventUnitStep>> {
@@ -659,7 +661,7 @@ pub fn build_agent_pcr_bootstrap_steps(
         agent_id,
         initial_resolution,
         notary,
-        controller_id,
+        controller_principal_id,
         controller_authorization_ref,
         trust_domain,
     )?
@@ -1942,7 +1944,7 @@ mod notary_derivation_tests {
             "realm_id": realm,
             "expected_state_digest": format!("sha256:{}", "1".repeat(64)),
             "patch": {
-                "controller_id": {
+                "controller_actor_id": {
                     "kind": "account",
                     "account_id": {
                         "principal_id": "ak:did_core:web:bob.example",

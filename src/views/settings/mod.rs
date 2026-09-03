@@ -1441,7 +1441,7 @@ pub fn SettingsPanel(
                     if active_section == SettingsSection::Agents {
                         crate::views::agents::AgentAdminPanel {
                             token,
-                            controller_id: active_principal.clone(),
+                            controller_principal_id: active_principal.clone(),
                         }
                     }
 

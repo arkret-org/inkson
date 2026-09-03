@@ -62,7 +62,7 @@ fn random_seed() -> anyhow::Result<Zeroizing<[u8; 32]>> {
 pub(crate) fn prepare_inception(
     principal_endpoint: &str,
     local_id: &str,
-    controller_id: &arkret_sdk::DidCoreId,
+    controller_principal_id: &arkret_sdk::DidCoreId,
 ) -> anyhow::Result<(PreparedPrincipalInception, AgentDidKeys)> {
     let endpoint = url::Url::parse(principal_endpoint)?;
     let root_seed = random_seed()?;
@@ -76,7 +76,7 @@ pub(crate) fn prepare_inception(
     let prepared = prepare_agent_inception(&AgentInceptionInput {
         principal_endpoint: &endpoint,
         local_id,
-        controller_id,
+        controller_principal_id,
         version_time: crate::clock::now_utc(),
         root_seed: &root_seed,
         next_root_public_key_multibase: &binding_public_key,
@@ -107,7 +107,7 @@ pub(crate) async fn store_keys_durable(
 pub(crate) fn prepare_binding_update(
     inception: &PreparedPrincipalInception,
     keys: &AgentDidKeys,
-    controller_id: &arkret_sdk::DidCoreId,
+    controller_principal_id: &arkret_sdk::DidCoreId,
     principal_control_realm_id: &arkret_sdk::RealmId,
     requested_scope_digest: &arkret_sdk::Hash,
 ) -> anyhow::Result<PreparedPrincipalRotation> {
@@ -120,7 +120,7 @@ pub(crate) fn prepare_binding_update(
         version_time: crate::clock::now_utc(),
         current_root_seed: &binding_seed,
         next_root_public_key_multibase: &next_public_key,
-        controller_id,
+        controller_principal_id,
         principal_control_realm_id,
         requested_scope_digest,
     })?)

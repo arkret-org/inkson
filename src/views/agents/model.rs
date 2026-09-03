@@ -464,10 +464,12 @@ pub fn build_requested_scope_disclosure_for_pairing(
 ) -> anyhow::Result<AgentRequestedScopeDisclosure> {
     let controller_did = Did::new(controller_did.trim().to_owned())?;
     let agent_id = request.agent_id.clone();
-    let controller_actor_id = arkret_sdk::project_did_to_core_id(&controller_did)?;
+    let controller_principal_id = arkret_sdk::project_did_to_core_id(&controller_did)?;
     let agent_actor_id = agent_id.clone();
-    if key_state.controller_id != controller_actor_id {
-        anyhow::bail!("agent key_state.controller_id does not match the signed-in controller");
+    if key_state.controller_account_id.principal_id != controller_principal_id {
+        anyhow::bail!(
+            "agent key_state.controller_account_id does not match the signed-in controller"
+        );
     }
     if key_state.agent_id != agent_actor_id {
         anyhow::bail!("runtime request agent_id does not match this agent key state");
@@ -510,7 +512,7 @@ pub fn build_requested_scope_disclosure_for_pairing(
         schema: arkret_sdk::SchemaId::AgentRequestedScopeDisclosureV1,
         request_id: RequestId::new(format!("ak:request:{request_uuid}"))?,
         agent_id,
-        controller_id: controller_actor_id,
+        controller_principal_id,
         requested_scope,
         verifier_id,
         audience: NonEmptyString::new(ServiceOperationId::GATE_ACCOUNT_COMMAND_PAIR_AGENT_KEY_V1)
@@ -659,9 +661,11 @@ pub fn prepare_agent_key_authorize_pairing(
     request: &AgentRuntimeApprovalControllerProjection,
 ) -> anyhow::Result<AgentKeyAuthorizePairingPlan> {
     let controller = Did::new(controller_did.trim().to_owned())?;
-    let controller_actor_id = arkret_sdk::project_did_to_core_id(&controller)?;
-    if key_state.controller_id != controller_actor_id {
-        anyhow::bail!("agent key_state.controller_id does not match the signed-in controller");
+    let controller_principal_id = arkret_sdk::project_did_to_core_id(&controller)?;
+    if key_state.controller_account_id.principal_id != controller_principal_id {
+        anyhow::bail!(
+            "agent key_state.controller_account_id does not match the signed-in controller"
+        );
     }
     let request_agent_actor_id = request.agent_id.clone();
     if request_agent_actor_id != key_state.agent_id {
@@ -696,7 +700,7 @@ pub fn prepare_agent_key_authorize_pairing(
     let pairing_digest =
         arkret_models_collaboration::agent_operations::agent_key_pairing_request_binding_digest(
             arkret_wire::ServiceOperationId::GATE_ACCOUNT_COMMAND_PAIR_AGENT_KEY_V1,
-            &controller_actor_id,
+            &controller_principal_id,
             &request.agent_id,
             &request.pairing_request_id,
             pairing_code,
@@ -762,7 +766,7 @@ pub fn prepare_agent_key_authorize_pairing(
             &request.public_key,
             issued_at,
             None,
-            controller_actor_id.clone(),
+            controller_principal_id.clone(),
         )
         .map_err(|reason| anyhow::anyhow!(reason.as_str()))?;
     let signing_key_binding_digest =
@@ -776,7 +780,7 @@ pub fn prepare_agent_key_authorize_pairing(
         verification_method: request.verification_method.clone(),
         public_key_digest: validated_runtime_public_key.authorization_digest,
         signing_key_binding_digest,
-        accountable_principal_id: controller_actor_id.clone(),
+        accountable_principal_id: controller_principal_id.clone(),
         agent_key_scope: requested_scope,
         audience: vec![service_id.to_owned()],
         issued_at,
@@ -788,7 +792,7 @@ pub fn prepare_agent_key_authorize_pairing(
             evidence_ref: None,
             request_canonical_digest: Some(Hash::new(pairing_digest.as_str().to_owned())?),
             pairing_request_id: Some(request.pairing_request_id.clone()),
-            approved_by: Some(controller_actor_id.clone()),
+            approved_by: Some(controller_principal_id.clone()),
         },
         supersedes,
         revocation_check_ref: None,
@@ -800,7 +804,7 @@ pub fn prepare_agent_key_authorize_pairing(
         &payload,
         arkret_sdk::ScopeRef::Realm { realm_id },
         arkret_sdk::ActorId::service(request.agent_id.clone()),
-        crate::mls_api_helpers::local_account_actor_id(controller_actor_id.as_str())?,
+        arkret_sdk::ActorId::account(key_state.controller_account_id.clone()),
         authorization_ref,
         crate::clock::now_utc_millis(),
     )?;
@@ -1089,7 +1093,6 @@ fn non_empty_field(payload: &Value, field: &str) -> Option<String> {
 /// draft or action request using the current schema fields.
 pub fn build_action_approve_payload(
     request: &Value,
-    controller_id: &str,
     approved_at: &str,
     expires_at: &str,
 ) -> anyhow::Result<arkret_sdk::AgentActionApprovePayload> {
@@ -1115,7 +1118,6 @@ pub fn build_action_approve_payload(
         request_id: non_empty_field(request, "request_id"),
         draft_id: non_empty_field(request, "draft_id"),
         agent_id: arkret_sdk::DidCoreId::new(agent_id.to_owned())?,
-        controller_id: crate::mls_api_helpers::principal_core_id(controller_id)?,
         proposed_action: proposed_action.to_owned(),
         target: serde_json::from_value(target)?,
         approved_payload_digest: arkret_sdk::Hash::new(approved_payload_digest)?,
@@ -1132,7 +1134,6 @@ pub fn build_action_approve_payload(
 /// request. A human-entered reason is included when present.
 pub fn build_action_reject_payload(
     request: &Value,
-    controller_id: &str,
     rejected_at: &str,
     reason: Option<&str>,
 ) -> anyhow::Result<arkret_sdk::AgentActionRejectPayload> {
@@ -1147,7 +1148,6 @@ pub fn build_action_reject_payload(
                 .unwrap_or("")
                 .to_owned(),
         )?,
-        controller_id: crate::mls_api_helpers::principal_core_id(controller_id)?,
         reason: reason
             .map(str::trim)
             .filter(|value| !value.is_empty())

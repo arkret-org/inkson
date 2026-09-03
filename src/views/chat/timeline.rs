@@ -114,10 +114,10 @@ pub(super) fn DiscussionParticipantRow(
         .map(|metadata| metadata.agent_slug.clone())
         .filter(|slug| !slug.trim().is_empty());
     let identity_label = agent_slug.clone().unwrap_or_else(|| display_label.clone());
-    let controller_id_attr = participant
+    let controller_principal_id_attr = participant
         .agent_metadata
         .as_ref()
-        .map(|metadata| metadata.controller_id.clone())
+        .map(|metadata| metadata.controller_principal_id.clone())
         .unwrap_or_default();
     let row_class = if participant.is_self {
         "contact-row participant-row self"
@@ -132,7 +132,7 @@ pub(super) fn DiscussionParticipantRow(
         div {
             class: "{row_class}",
             "data-testid": if nested_agent { "discussion-agent-row" } else { "discussion-user-row" },
-            "data-agent-controller-id": "{controller_id_attr}",
+            "data-agent-controller-principal-id": "{controller_principal_id_attr}",
             crate::components::IdentityAvatar {
                 seed: participant_id_attr.clone(),
                 alt_text: display_label.clone(),

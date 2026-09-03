@@ -664,7 +664,11 @@ fn verify_seal_signature(
     let snapshot = authority_snapshot(&entry.evidence);
     let allowed = [
         snapshot.core.authority_id.as_str(),
-        snapshot.core.signing_key_binding.controller_id.as_str(),
+        snapshot
+            .core
+            .signing_key_binding
+            .controller_principal_id
+            .as_str(),
     ];
     let canonical = seal
         .canonical_bytes_for_id()
@@ -730,12 +734,14 @@ fn verify_lifecycle_reducer(
 ) -> Result<(), AgentEvidenceRejectedReason> {
     let snapshot = authority_snapshot(&entry.evidence);
     let event = &witness.accepted_status_event;
+    let Some(controller_principal_id) = event
+        .executed_by
+        .as_ref()
+        .map(arkret_sdk::ActorId::signing_principal_id)
+    else {
+        return Err(AgentEvidenceRejectedReason::SigningKeyMismatch);
+    };
     if &witness.agent_id != event.actor_id.signing_principal_id()
-        || event
-            .executed_by
-            .as_ref()
-            .map(arkret_sdk::ActorId::signing_principal_id)
-            != Some(&witness.controller_id)
         || event.realm_id != snapshot.core.principal_control_realm_id
         || arkret_sdk::signed_event_digest_claim(event)
             .ok()
@@ -743,9 +749,6 @@ fn verify_lifecycle_reducer(
                 !witness.seal.delta.contains(&digest)
                     && !witness.seal.covered_event_digests.contains(&digest)
             })
-        || event.payload.get("agent_id").and_then(Value::as_str) != Some(witness.agent_id.as_str())
-        || event.payload.get("controller_id").and_then(Value::as_str)
-            != Some(witness.controller_id.as_str())
     {
         return Err(AgentEvidenceRejectedReason::SigningKeyMismatch);
     }
@@ -810,7 +813,7 @@ fn verify_lifecycle_reducer(
         crate::identity::device_directory::verify_proof_value_for_signer(
             &envelope,
             proof,
-            witness.controller_id.as_str(),
+            controller_principal_id.as_str(),
             witness.agent_id.as_str(),
             key,
         )
@@ -837,7 +840,7 @@ fn verified_evidence_state(
         signer_id: &binding.agent_id,
         signer_actor_id,
         agent_key_id: &binding.agent_key_id,
-        controller_id: &binding.controller_id,
+        controller_principal_id: &binding.controller_principal_id,
         agent_key_authorize_event_id: &binding.agent_key_authorize_event_id,
         authorize_public_key_digest: &public_key_digest,
         authorize_signing_key_binding_digest: &binding_digest,
@@ -861,7 +864,7 @@ fn common_validation_context<'a>(
     Some(AgentEvidenceCommonContext {
         signer_id: &binding.agent_id,
         agent_key_id: &binding.agent_key_id,
-        controller_id: &binding.controller_id,
+        controller_principal_id: &binding.controller_principal_id,
         verification_method: &binding.verification_method,
         agent_key_authorize_event_id: &binding.agent_key_authorize_event_id,
         authorize_public_key_digest: public_key_digest,

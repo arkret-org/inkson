@@ -2011,7 +2011,7 @@ fn AppBootstrap() -> Element {
                                                                 .as_ref()
                                                                 .map(ToString::to_string)
                                                                 .unwrap_or_default();
-                                                            let controller_id = self_principal_id.clone();
+                                                            let controller_principal_id = self_principal_id.clone();
                                                             let opening_key = format!("owned-agent:{agent_id}");
                                                             let opening_target = direct_chat_opening();
                                                             let chat_open_blocked = opening_target.is_some();
@@ -2029,7 +2029,7 @@ fn AppBootstrap() -> Element {
                                                                     r#type: "button",
                                                                     "data-testid": "contact-sidebar-agent-row",
                                                                     "data-agent": "{agent_id}",
-                                                                    "data-controller": "{controller_id}",
+                                                                    "data-controller": "{controller_principal_id}",
                                                                     "data-opening": if is_opening { "true" } else { "false" },
                                                                     "aria-busy": if is_opening { "true" } else { "false" },
                                                                     "aria-label": "{agent_button_label}",
@@ -2038,7 +2038,7 @@ fn AppBootstrap() -> Element {
                                                                     onclick: {
                                                                         let base = base_url();
                                                                         let agent_id = agent_id.clone();
-                                                                        let controller_id = controller_id.clone();
+                                                                        let controller_principal_id = controller_principal_id.clone();
                                                                         let opening_key = opening_key.clone();
                                                                         move |event: dioxus::events::MouseEvent| {
                                                                             event.prevent_default();
@@ -2050,14 +2050,14 @@ fn AppBootstrap() -> Element {
                                                                             let api_token = token();
                                                                             let base = base.clone();
                                                                             let agent_id = agent_id.clone();
-                                                                            let controller_id = controller_id.clone();
+                                                                            let controller_principal_id = controller_principal_id.clone();
                                                                             spawn(async move {
                                                                                 let agent_id_for_log = agent_id.clone();
                                                                                 let route = match crate::transport::auth::with_authed_api(
                                                                                     &base,
                                                                                     api_token,
                                                                                     |api| async move {
-                                                                                        anyhow::ensure!(api.event_submitter()?.authority()?.principal_id == crate::mls_api_helpers::principal_core_id(&controller_id)?, "active controller account changed while opening Agent conversation");
+                                                                                        anyhow::ensure!(api.event_submitter()?.authority()?.principal_id == crate::mls_api_helpers::principal_core_id(&controller_principal_id)?, "active controller account changed while opening Agent conversation");
                                                                                         crate::transport::account::direct_conversation_resolve(
                                                                                             &api,
                                                                                             state_store,

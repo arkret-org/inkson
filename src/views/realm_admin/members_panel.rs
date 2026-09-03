@@ -174,7 +174,7 @@ impl MemberRosterSection {
 #[derive(Clone, Debug, PartialEq)]
 struct MemberAgentRow {
     agent_id: String,
-    controller_id: String,
+    controller_principal_id: String,
     display_name: String,
     slug: String,
     /// Lifecycle intent wire value (active/paused/deactivated).
@@ -282,7 +282,7 @@ struct MemberGroup {
 
 fn member_agent_row_from_value(
     row: arkret_models_collaboration::agent_operations::AgentProjection,
-    fallback_controller_id: &str,
+    fallback_controller_principal_id: &str,
 ) -> Option<MemberAgentRow> {
     let agent_id = row.agent_id.as_str().trim();
     if agent_id.is_empty() {
@@ -296,10 +296,10 @@ fn member_agent_row_from_value(
     let display_name = slug.clone();
     // `agent_projection` carries no controller binding; the list endpoint is
     // already scoped to the caller's owned agents, so use the caller DID.
-    let controller_id = fallback_controller_id.trim().to_owned();
+    let controller_principal_id = fallback_controller_principal_id.trim().to_owned();
     Some(MemberAgentRow {
         agent_id,
-        controller_id,
+        controller_principal_id,
         display_name,
         slug,
         status: crate::views::agents::model::agent_lifecycle_wire(row.lifecycle).to_owned(),
@@ -315,12 +315,13 @@ fn member_agent_row_from_value(
 async fn fetch_owned_agent_rows(
     http: &arkret_sdk::http_client::Client,
     realm: &str,
-    fallback_controller_id: &str,
+    fallback_controller_principal_id: &str,
 ) -> anyhow::Result<Vec<MemberAgentRow>> {
     let list = http.agent_list().await?;
     let mut rows = Vec::<MemberAgentRow>::new();
     for value in list.agent_projections {
-        let Some(mut row) = member_agent_row_from_value(value, fallback_controller_id) else {
+        let Some(mut row) = member_agent_row_from_value(value, fallback_controller_principal_id)
+        else {
             continue;
         };
         // Deactivated agents (lifecycle terminal) and never-keyed agents whose
@@ -578,7 +579,7 @@ fn projected_member_profiles_for_realm(
     if let Some(root) =
         garth::realm_authority_root_value_for_realm(&state.realm_tree_projections, realm_id)
     {
-        let mut owner = MemberProfile::bare(root.controller_id.to_string());
+        let mut owner = MemberProfile::bare(root.controller_actor_id.to_string());
         owner.membership = Some("join".to_owned());
         owner.is_owner = true;
         upsert_member_profile(&mut rows, owner);
@@ -649,7 +650,7 @@ fn local_terminal_invite_ids_for_realm(
 fn group_members_with_owned_agents(
     members: &[MemberProfile],
     owned_agents: &[MemberAgentRow],
-    fallback_controller_id: &str,
+    fallback_controller_principal_id: &str,
 ) -> Vec<MemberGroup> {
     let member_set: BTreeSet<&str> = members
         .iter()
@@ -691,9 +692,9 @@ fn group_members_with_owned_agents(
             .then_with(|| a.agent_id.cmp(&b.agent_id))
     });
     for agent in in_realm_agents {
-        let controller = agent.controller_id.trim();
+        let controller = agent.controller_principal_id.trim();
         let controller = if controller.is_empty() {
-            fallback_controller_id.trim()
+            fallback_controller_principal_id.trim()
         } else {
             controller
         };
@@ -718,9 +719,9 @@ fn group_members_with_owned_agents(
     let mut groups = groups.into_values().collect::<Vec<_>>();
     groups.sort_by(|left, right| {
         let left_is_self =
-            is_local_account_actor(&left.controller.actor_id, fallback_controller_id);
+            is_local_account_actor(&left.controller.actor_id, fallback_controller_principal_id);
         let right_is_self =
-            is_local_account_actor(&right.controller.actor_id, fallback_controller_id);
+            is_local_account_actor(&right.controller.actor_id, fallback_controller_principal_id);
         right_is_self
             .cmp(&left_is_self)
             .then_with(|| {
@@ -2774,7 +2775,7 @@ pub fn RealmMembersPanel(
     {
         let base = base_url.clone();
         let realm = selected_realm_id.clone();
-        let fallback_controller_id = principal_id.clone();
+        let fallback_controller_principal_id = principal_id.clone();
         use_effect(move || {
             let api_token = token();
             if api_token.trim().is_empty() {
@@ -2783,13 +2784,14 @@ pub fn RealmMembersPanel(
             }
             let base = base.clone();
             let realm = realm.clone();
-            let fallback_controller_id = fallback_controller_id.clone();
+            let fallback_controller_principal_id = fallback_controller_principal_id.clone();
             spawn(async move {
                 let result = crate::transport::auth::with_authed_sdk_client(
                     &base,
                     api_token,
                     |http| async move {
-                        fetch_owned_agent_rows(&http, &realm, &fallback_controller_id).await
+                        fetch_owned_agent_rows(&http, &realm, &fallback_controller_principal_id)
+                            .await
                     },
                 )
                 .await;
@@ -2941,7 +2943,7 @@ pub fn RealmMembersPanel(
     let self_owned_agent_rows: Vec<MemberAgentRow> = owned_agent_rows
         .iter()
         .filter(|agent| {
-            let controller = agent.controller_id.trim();
+            let controller = agent.controller_principal_id.trim();
             controller.is_empty() || controller == principal_id.trim()
         })
         .cloned()
@@ -3712,7 +3714,7 @@ pub fn RealmMembersPanel(
                                 div {
                                     class: "{group_class}",
                                     "data-testid": "member-group",
-                                    "data-controller-id": "{member}",
+                                    "data-controller-principal-id": "{member}",
                                     if selected_section != MemberRosterSection::MyAgents {
                                     div { class: "event member-row member-controller-row", "data-testid": "member-row", "data-member-id": "{member}",
                                         div { class: "event-head member-row-main",

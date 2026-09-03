@@ -1479,7 +1479,7 @@ async fn prefetch_member_identity_proof_keys<
 }
 
 /// Recursively scan a projection `Value` for `ak.member.identity.update`
-/// proofs, extracting `(controller_id, device_id)` from each
+/// proofs, extracting `(controller_principal_id, device_id)` from each
 /// `member_identity.proof.verification_method`. Depth-bounded to mirror the
 /// persistent-event scanner.
 fn collect_member_identity_proof_devices_from_value(
@@ -1896,12 +1896,7 @@ pub fn apply_response(response: &AccountSyncStep, is_full_sync: bool, ctx: &Sync
                 // surface needs to resolve a display identity.
                 ingest_member_identity_events_from_projection(store, id, &projection);
             }
-            synced_theme = apply_account_data(
-                store,
-                response,
-                &ctx.account.authority,
-                principal_id.as_str(),
-            );
+            synced_theme = apply_account_data(store, response, &ctx.account.authority);
             store.apply_station_cas_account_data(&response.updates.station_cas_account_data);
             // Fold holder-private delivery cells before Realm membership
             // adjudicates the inbox. If a frame carries both an older full
@@ -2677,21 +2672,14 @@ fn apply_account_data(
     store: &mut LocalStateStore,
     response: &AccountSyncStep,
     authority: &arkret_sdk::AccountId,
-    principal_id: &str,
 ) -> Option<String> {
-    apply_account_data_entries(
-        store,
-        &response.updates.account_data,
-        authority,
-        principal_id,
-    )
+    apply_account_data_entries(store, &response.updates.account_data, authority)
 }
 
 pub(crate) fn apply_account_data_entries(
     store: &mut LocalStateStore,
     entries: &[arkret_sdk::Event],
     authority: &arkret_sdk::AccountId,
-    principal_id: &str,
 ) -> Option<String> {
     let mut synced_theme = None;
     for entry in entries {
@@ -2701,7 +2689,6 @@ pub(crate) fn apply_account_data_entries(
         match crate::sidecar::ingest_sidecar_view_state_account_data(
             store,
             authority,
-            principal_id,
             account_data_key,
             &entry.payload,
         ) {

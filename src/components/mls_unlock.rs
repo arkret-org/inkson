@@ -202,7 +202,6 @@ pub fn MlsUnlockPrompt(
                                     &mut store,
                                     &account_data,
                                     &authority,
-                                    authority.principal_id.as_str(),
                                 );
                             }
                             tracing::warn!(

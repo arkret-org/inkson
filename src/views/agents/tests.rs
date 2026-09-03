@@ -511,7 +511,10 @@ mod agent_tests {
         let expires_at = created_at + chrono::Duration::minutes(5);
         let key_state: arkret_sdk::KeyState = serde_json::from_value(serde_json::json!({
             "agent_id": agent_actor_id,
-            "controller_id": controller_actor_id,
+            "controller_account_id": {
+                "principal_id": controller_actor_id,
+                "station_id": "ak:did_core:web:station.example"
+            },
             "principal_control_realm_id": "ak:realm:AQ4lJ43jR05ytJIf7AGNbPU_MuY1FqT_ny_e8MhCCnwc",
             "controller_authorization_ref": "did:web:controller.example#controller-authorization",
             "pairing_request_id": "agent_pairing_request:01999999-0000-7000-8000-00000000feed",
@@ -587,7 +590,7 @@ mod agent_tests {
         let signing_key_binding = authorization.signing_key_binding;
 
         assert_eq!(disclosure.agent_id, agent_actor_id);
-        assert_eq!(disclosure.controller_id, controller_actor_id);
+        assert_eq!(disclosure.controller_principal_id, controller_actor_id);
         assert_eq!(disclosure.requested_scope, key_state.requested_scope);
 
         let expected_pairing_digest =
@@ -644,7 +647,7 @@ mod agent_tests {
             &signing_key_binding,
             &request.agent_id,
             &signing_key_binding.agent_key_id,
-            &signing_key_binding.controller_id,
+            &signing_key_binding.controller_principal_id,
             &request.verification_method,
             &event.event_id,
             &authorize_public_key_digest,
@@ -690,7 +693,10 @@ mod agent_tests {
 
         let noncanonical_key_state = serde_json::json!({
             "agent_id": agent_actor_id,
-            "controller_id": controller_actor_id,
+            "controller_account_id": {
+                "principal_id": controller_actor_id,
+                "station_id": "ak:did_core:web:station.example"
+            },
             "principal_control_realm_id": "ak:realm:AQ4lJ43jR05ytJIf7AGNbPU_MuY1FqT_ny_e8MhCCnwc",
             "controller_authorization_ref": "did:web:controller.example#controller-authorization",
             "status": "active",
@@ -735,7 +741,10 @@ mod agent_tests {
         .unwrap();
         let key_state: arkret_sdk::KeyState = serde_json::from_value(serde_json::json!({
             "agent_id": agent_actor_id,
-            "controller_id": controller_actor_id,
+            "controller_account_id": {
+                "principal_id": controller_actor_id,
+                "station_id": "ak:did_core:web:station.example"
+            },
             "principal_control_realm_id": "ak:realm:AQ4lJ43jR05ytJIf7AGNbPU_MuY1FqT_ny_e8MhCCnwc",
             "controller_authorization_ref": "did:web:controller.example#controller-authorization",
             "pairing_request_id": "agent_pairing_request:01999999-0000-7000-8000-00000000feed",
@@ -796,7 +805,7 @@ mod agent_tests {
     }
 
     #[test]
-    fn build_action_approve_payload_binds_draft_digest_and_nonce() {
+    fn build_action_approve_payload_binds_draft_digest_without_legacy_controller_mirror() {
         let draft = serde_json::json!({
             "type": "ak.agent.draft.v1",
             "draft_id": "0197-draft",
@@ -808,7 +817,6 @@ mod agent_tests {
         let payload = serde_json::to_value(
             build_action_approve_payload(
                 &draft,
-                "did:web:alice.example",
                 "2026-06-26T00:00:00.000Z",
                 "2026-06-26T01:00:00.000Z",
             )
@@ -816,7 +824,7 @@ mod agent_tests {
         )
         .unwrap();
         assert_eq!(payload["draft_id"], "0197-draft");
-        assert_eq!(payload["controller_id"], "ak:did_core:web:alice.example");
+        assert!(payload.get("controller_id").is_none());
         assert_eq!(payload["proposed_action"], "ak.message.create");
         assert_eq!(payload["approved_at"], "2026-06-26T00:00:00.000Z");
         assert_eq!(payload["expires_at"], "2026-06-26T01:00:00.000Z");
@@ -844,7 +852,6 @@ mod agent_tests {
         let payload = serde_json::to_value(
             build_action_approve_payload(
                 &request,
-                "did:web:alice.example",
                 "2026-06-26T00:00:00.000Z",
                 "2026-06-26T01:00:00.000Z",
             )
@@ -860,23 +867,18 @@ mod agent_tests {
     }
 
     #[test]
-    fn build_action_reject_payload_carries_reason_and_controller() {
+    fn build_action_reject_payload_carries_reason_without_controller_mirror() {
         let request = serde_json::json!({
             "request_id": "ak:agent-action-request:0198",
             "agent_id": "ak:did_core:web:agents.example:summary",
         });
         let payload = serde_json::to_value(
-            build_action_reject_payload(
-                &request,
-                "did:web:alice.example",
-                "2026-06-26T00:00:00.000Z",
-                Some("needs review"),
-            )
-            .unwrap(),
+            build_action_reject_payload(&request, "2026-06-26T00:00:00.000Z", Some("needs review"))
+                .unwrap(),
         )
         .unwrap();
         assert_eq!(payload["request_id"], "ak:agent-action-request:0198");
-        assert_eq!(payload["controller_id"], "ak:did_core:web:alice.example");
+        assert!(payload.get("controller_id").is_none());
         assert_eq!(payload["rejected_at"], "2026-06-26T00:00:00.000Z");
         assert_eq!(payload["reason"], "needs review");
         assert!(!payload["rejection_id"].as_str().unwrap().is_empty());

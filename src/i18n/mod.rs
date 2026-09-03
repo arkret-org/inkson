@@ -2,7 +2,7 @@
 //!
 //! * Plain language first — lead with what happened or what the user can do, then one concrete next
 //!   action. No protocol identifiers in user-facing copy: no `ak.*` event names, no `did:webvh:`
-//!   examples, no MLS epoch / key package talk, no PCR / RRK / SAS acronyms. Jargon belongs inside
+//!   examples, no MLS epoch / key package talk, no PCR / RHRK / SAS acronyms. Jargon belongs inside
 //!   "technical details" affordances and Developer surfaces only.
 //! * Error copy formula: what happened + what it means + what to do next.
 //! * English: short sentences, sentence case. Chinese: concise and conversational, with the fixed

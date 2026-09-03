@@ -6,12 +6,10 @@
 
 use dioxus::prelude::*;
 
-const SIDECAR_VIEW_STATE_CACHE_PREFIX: &str = "sidecar.view_state.v1";
-
 #[derive(Clone, Debug, PartialEq)]
 pub struct HostedSidecarState {
     pub trace_id: String,
-    pub controller_id: String,
+    pub controller_account_id: arkret_sdk::AccountId,
     pub addressed_agent_ids: Vec<String>,
     pub addressed_agent_label: String,
     pub source_realm_id: String,
@@ -83,10 +81,6 @@ impl HostedSidecarState {
     }
 }
 
-fn sidecar_view_state_cache_key(controller_id: &str, realm_id: &str, strand_id: &str) -> String {
-    format!("{SIDECAR_VIEW_STATE_CACHE_PREFIX}:{controller_id}:{realm_id}:{strand_id}")
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum SidecarViewStateMergeDecision {
     UseCurrent,
@@ -95,16 +89,17 @@ enum SidecarViewStateMergeDecision {
 
 fn sidecar_view_state_merge_decision(
     current_plaintext: Option<&serde_json::Value>,
+    account_data_namespace_key: &[u8],
     account_data_key: &str,
     candidate: &arkret_sdk::AgentSidecarViewState,
 ) -> anyhow::Result<SidecarViewStateMergeDecision> {
-    candidate.validate_account_data_key(account_data_key)?;
+    candidate.validate_account_data_key(account_data_namespace_key, account_data_key)?;
     let Some(current_plaintext) = current_plaintext else {
         return Ok(SidecarViewStateMergeDecision::UseCandidate);
     };
     let current =
         serde_json::from_value::<arkret_sdk::AgentSidecarViewState>(current_plaintext.clone())?;
-    current.validate_account_data_key(account_data_key)?;
+    current.validate_account_data_key(account_data_namespace_key, account_data_key)?;
     if current.sidecar_id != candidate.sidecar_id {
         anyhow::bail!("Sidecar view-state reuses one context key for different Sidecar ids");
     }
@@ -127,17 +122,19 @@ fn sidecar_view_state_merge_decision(
 
 fn apply_sidecar_view_state_checked(
     store: &mut crate::state::LocalStateStore,
+    account_data_namespace_key: &[u8],
     view_state: &arkret_sdk::AgentSidecarViewState,
 ) -> anyhow::Result<bool> {
     let current = store.sidecar_view_state(
-        view_state.controller_id.as_str(),
+        &view_state.controller_account_id,
         &view_state.context_ref.realm_id,
         &view_state.context_ref.strand_id,
     );
     let current_plaintext = current.as_ref().map(serde_json::to_value).transpose()?;
     match sidecar_view_state_merge_decision(
         current_plaintext.as_ref(),
-        &view_state.account_data_key(),
+        account_data_namespace_key,
+        &view_state.account_data_key(account_data_namespace_key)?,
         view_state,
     )? {
         SidecarViewStateMergeDecision::UseCurrent => Ok(false),
@@ -151,20 +148,16 @@ fn apply_sidecar_view_state_checked(
     }
 }
 
-fn cache_sidecar_view_state(
+fn cache_sidecar_view_state_with_namespace(
     store: &mut crate::state::LocalStateStore,
-    principal_id: &str,
+    authority: &arkret_sdk::AccountId,
+    namespace_key: &[u8],
     view_state: &arkret_sdk::AgentSidecarViewState,
 ) -> anyhow::Result<bool> {
-    let account_core_id = crate::mls_api_helpers::principal_core_id(principal_id)?;
-    if view_state.controller_id != account_core_id {
+    if &view_state.controller_account_id != authority {
         anyhow::bail!("Sidecar view-state controller does not match the account holder");
     }
-    let key = sidecar_view_state_cache_key(
-        view_state.controller_id.as_str(),
-        view_state.context_ref.realm_id.as_str(),
-        view_state.context_ref.strand_id.as_str(),
-    );
+    let key = view_state.account_data_key(namespace_key)?;
     if let Some(persisted) = store
         .load_plain_local_data(&key)
         .and_then(|raw| serde_json::from_str::<arkret_sdk::AgentSidecarViewState>(&raw).ok())
@@ -172,38 +165,51 @@ fn cache_sidecar_view_state(
         let persisted_plaintext = serde_json::to_value(&persisted)?;
         if sidecar_view_state_merge_decision(
             Some(&persisted_plaintext),
-            &view_state.account_data_key(),
+            namespace_key,
+            &key,
             view_state,
         )? == SidecarViewStateMergeDecision::UseCurrent
         {
-            apply_sidecar_view_state_checked(store, &persisted)?;
+            apply_sidecar_view_state_checked(store, namespace_key, &persisted)?;
         }
     }
-    let should_replace = apply_sidecar_view_state_checked(store, view_state)?;
+    let should_replace = apply_sidecar_view_state_checked(store, namespace_key, view_state)?;
     if should_replace {
         store.save_plain_local_data(key, serde_json::to_string(view_state)?);
     }
     Ok(should_replace)
 }
 
+fn cache_sidecar_view_state(
+    store: &mut crate::state::LocalStateStore,
+    authority: &arkret_sdk::AccountId,
+    view_state: &arkret_sdk::AgentSidecarViewState,
+) -> anyhow::Result<bool> {
+    let namespace_key = crate::account_data::account_data_namespace_key(authority)?;
+    cache_sidecar_view_state_with_namespace(store, authority, &namespace_key, view_state)
+}
+
 pub fn ingest_sidecar_view_state_account_data(
     store: &mut crate::state::LocalStateStore,
     authority: &arkret_sdk::AccountId,
-    principal_id: &str,
     account_data_key: &str,
     entry: &impl serde::Serialize,
 ) -> anyhow::Result<bool> {
-    if !account_data_key.starts_with("ak.agent.sidecar_view_state.v1:") {
+    if !account_data_key.starts_with(&format!(
+        "{}:",
+        arkret_sdk::AccountDataKey::AGENT_SIDECAR_VIEW_STATE_V1
+    )) {
         return Ok(false);
     }
     let view_state: arkret_sdk::AgentSidecarViewState = serde_json::from_value(
         crate::account_data::decrypt_account_data_entry(authority, account_data_key, entry)?,
     )?;
-    view_state.validate_account_data_key(account_data_key)?;
-    if view_state.controller_id != crate::mls_api_helpers::principal_core_id(principal_id)? {
+    let namespace_key = crate::account_data::account_data_namespace_key(authority)?;
+    view_state.validate_account_data_key(&namespace_key, account_data_key)?;
+    if &view_state.controller_account_id != authority {
         anyhow::bail!("Sidecar view-state controller does not match the account holder");
     }
-    cache_sidecar_view_state(store, principal_id, &view_state)?;
+    cache_sidecar_view_state_with_namespace(store, authority, &namespace_key, &view_state)?;
     Ok(true)
 }
 
@@ -239,11 +245,13 @@ const SIDECAR_AUTO_CLOSE_INTENT_PREFIX: &str = "sidecar_exchange_auto_close_inte
 const SIDECAR_CONTEXT_LOCATOR_PREFIX: &str = "sidecar_context_locator";
 
 fn sidecar_exchange_fold_cache_key(
-    controller_id: &str,
+    controller_principal_id: &str,
     sidecar_id: &str,
     exchange_id: &str,
 ) -> String {
-    format!("{SIDECAR_EXCHANGE_FOLD_CACHE_PREFIX}:{controller_id}:{sidecar_id}:{exchange_id}")
+    format!(
+        "{SIDECAR_EXCHANGE_FOLD_CACHE_PREFIX}:{controller_principal_id}:{sidecar_id}:{exchange_id}"
+    )
 }
 
 /// Replace the local fold cache entry for one exchange. The fold output is
@@ -252,17 +260,16 @@ fn sidecar_exchange_fold_cache_key(
 /// do not loop on their own writes. Returns whether the cache changed.
 pub(crate) fn cache_sidecar_exchange_projection(
     store: &mut crate::state::LocalStateStore,
-    principal_id: &str,
+    controller_account_id: &arkret_sdk::AccountId,
     projection: &arkret_sdk::AgentSidecarExchangeProjection,
 ) -> anyhow::Result<bool> {
     projection.validate()?;
-    let account_core_id = crate::mls_api_helpers::principal_core_id(principal_id)?;
-    if projection.controller_id != account_core_id {
+    if &projection.controller_account_id != controller_account_id {
         anyhow::bail!("Sidecar exchange controller does not match the account holder");
     }
     store.apply_sidecar_exchange_projection(projection.clone())?;
     let key = sidecar_exchange_fold_cache_key(
-        projection.controller_id.as_str(),
+        projection.controller_account_id.principal_id.as_str(),
         projection.sidecar_id.as_str(),
         projection.exchange_id.as_str(),
     );
@@ -278,16 +285,16 @@ pub(crate) fn cache_sidecar_exchange_projection(
 
 pub fn cached_sidecar_exchange_projections(
     store: &crate::state::LocalStateStore,
-    principal_id: &str,
+    controller_account_id: &arkret_sdk::AccountId,
     source_realm_id: &str,
 ) -> Vec<arkret_sdk::AgentSidecarExchangeProjection> {
-    let Ok(account_core_id) = crate::mls_api_helpers::principal_core_id(principal_id) else {
-        return Vec::new();
-    };
     let Ok(realm_id) = arkret_sdk::RealmId::new(source_realm_id.to_owned()) else {
         return Vec::new();
     };
-    let prefix = format!("{SIDECAR_EXCHANGE_FOLD_CACHE_PREFIX}:{principal_id}:");
+    let prefix = format!(
+        "{SIDECAR_EXCHANGE_FOLD_CACHE_PREFIX}:{}:",
+        controller_account_id.principal_id
+    );
     // Persisted entries are rebuildable restart seeds only. The actual query
     // snapshot comes from the shared fold below, so ingest and UI cannot drift
     // into separate timeline implementations.
@@ -301,7 +308,7 @@ pub fn cached_sidecar_exchange_projections(
         })
         .filter(|projection| {
             projection.validate().is_ok()
-                && projection.controller_id == account_core_id
+                && projection.controller_account_id == *controller_account_id
                 && projection.source_track_ref.realm_id.as_str() == source_realm_id
         })
         .collect::<Vec<_>>();
@@ -313,7 +320,7 @@ pub fn cached_sidecar_exchange_projections(
     }
     let mut projections = fold
         .exchanges_for_realm(&realm_id)
-        .filter(|&projection| projection.controller_id == account_core_id)
+        .filter(|&projection| projection.controller_account_id == *controller_account_id)
         .cloned()
         .collect::<Vec<_>>();
     projections.sort_by(|left, right| {
@@ -340,7 +347,7 @@ pub fn cached_sidecar_exchange_projections(
 // So the evidence is read straight out of the validated cache instead. It is
 // read-only, same-origin, and controller-only: every entry comes from
 // `cached_sidecar_exchange_projections`, which already requires
-// `projection.validate()` and `controller_id == principal_id`. The whole surface
+// `projection.validate()` and `controller_principal_id == principal_id`. The whole surface
 // is compiled out of production builds, and it is reachable only by an explicit
 // call — never through a URL, a log line, a trace label, telemetry, or ordinary
 // shared DOM — so it cannot widen the disclosure boundary
@@ -385,7 +392,7 @@ pub(crate) struct SidecarFoldEvidenceEntry {
 #[derive(Clone, Debug, serde::Serialize)]
 pub(crate) struct SidecarFoldEvidence {
     pub schema: &'static str,
-    pub controller_id: String,
+    pub controller_account_id: arkret_sdk::AccountId,
     pub source_realm_id: String,
     pub exchanges: Vec<SidecarFoldEvidenceEntry>,
 }
@@ -397,10 +404,14 @@ pub(crate) struct SidecarFoldEvidence {
 /// same order and can be compared as bytes.
 pub(crate) fn sidecar_fold_evidence(
     store: &crate::state::LocalStateStore,
-    controller_id: &str,
+    controller_account_id: &arkret_sdk::AccountId,
     source_realm_id: &str,
 ) -> anyhow::Result<SidecarFoldEvidence> {
-    let exchanges = cached_sidecar_exchange_projections(store, controller_id, source_realm_id)
+    let exchanges = cached_sidecar_exchange_projections(
+        store,
+        controller_account_id,
+        source_realm_id,
+    )
         .into_iter()
         .map(|projection| {
             Ok(SidecarFoldEvidenceEntry {
@@ -417,7 +428,7 @@ pub(crate) fn sidecar_fold_evidence(
         .collect::<anyhow::Result<Vec<_>>>()?;
     Ok(SidecarFoldEvidence {
         schema: SIDECAR_FOLD_EVIDENCE_SCHEMA,
-        controller_id: controller_id.to_owned(),
+        controller_account_id: controller_account_id.clone(),
         source_realm_id: source_realm_id.to_owned(),
         exchanges,
     })
@@ -427,10 +438,10 @@ pub(crate) fn sidecar_fold_evidence(
 /// `to_string` so the comparison the test performs is over stable bytes.
 pub(crate) fn sidecar_fold_evidence_canonical_json(
     store: &crate::state::LocalStateStore,
-    controller_id: &str,
+    controller_account_id: &arkret_sdk::AccountId,
     source_realm_id: &str,
 ) -> anyhow::Result<String> {
-    let evidence = sidecar_fold_evidence(store, controller_id, source_realm_id)?;
+    let evidence = sidecar_fold_evidence(store, controller_account_id, source_realm_id)?;
     Ok(arkret_sdk::canonical::canonical_json_string(&evidence)?)
 }
 }
@@ -458,7 +469,10 @@ pub(crate) struct SidecarPrivacyGate {
 }
 
 impl SidecarPrivacyGate {
-    pub(crate) fn from_store(store: &crate::state::LocalStateStore, controller_id: &str) -> Self {
+    pub(crate) fn from_store(
+        store: &crate::state::LocalStateStore,
+        controller_principal_id: &str,
+    ) -> Self {
         let mut private_identifiers = std::collections::BTreeSet::new();
         for key in store.plain_local_data_keys() {
             let belongs_to_controller = [
@@ -469,7 +483,7 @@ impl SidecarPrivacyGate {
                 SIDECAR_CONTEXT_LOCATOR_PREFIX,
             ]
             .iter()
-            .any(|prefix| key.starts_with(&format!("{prefix}:{controller_id}:")));
+            .any(|prefix| key.starts_with(&format!("{prefix}:{controller_principal_id}:")));
             if !belongs_to_controller {
                 continue;
             }
@@ -607,7 +621,7 @@ fn collect_sidecar_private_identifiers(
 /// state; server acceptance deletes it and seeds the local fold cache.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct PendingSidecarSubmission {
-    pub controller_id: String,
+    pub controller_account_id: arkret_sdk::AccountId,
     pub sidecar_id: arkret_sdk::SidecarId,
     pub source_strand_id: String,
     pub exchange_id: arkret_sdk::AgentSidecarExchangeId,
@@ -648,11 +662,11 @@ impl Drop for SidecarSubmissionGuard {
 /// Reserve the submission slot for one intent. Returns `None` while an
 /// earlier submit of the SAME intent is still in flight.
 pub(crate) fn try_begin_sidecar_submission(
-    controller_id: &str,
+    controller_principal_id: &str,
     source_strand_id: &str,
     intent_digest: &str,
 ) -> Option<SidecarSubmissionGuard> {
-    let key = format!("{controller_id}\u{1f}{source_strand_id}\u{1f}{intent_digest}");
+    let key = format!("{controller_principal_id}\u{1f}{source_strand_id}\u{1f}{intent_digest}");
     let mut in_flight = sidecar_submissions_in_flight().lock().ok()?;
     in_flight
         .insert(key.clone())
@@ -679,26 +693,29 @@ pub(crate) fn sidecar_submission_intent_digest(
 }
 
 fn pending_sidecar_submission_key(
-    controller_id: &str,
+    controller_principal_id: &str,
     source_strand_id: &str,
     intent_digest: &str,
 ) -> String {
     format!(
-        "{SIDECAR_PENDING_SUBMISSION_PREFIX}:{controller_id}:{source_strand_id}:{intent_digest}"
+        "{SIDECAR_PENDING_SUBMISSION_PREFIX}:{controller_principal_id}:{source_strand_id}:{intent_digest}"
     )
 }
 
 pub(crate) fn load_pending_sidecar_submission(
     store: &crate::state::LocalStateStore,
-    controller_id: &str,
+    controller_principal_id: &str,
     source_strand_id: &str,
     intent_digest: &str,
 ) -> Option<PendingSidecarSubmission> {
-    let key = pending_sidecar_submission_key(controller_id, source_strand_id, intent_digest);
+    let key =
+        pending_sidecar_submission_key(controller_principal_id, source_strand_id, intent_digest);
     let raw = store.load_plain_local_data(&key)?;
     serde_json::from_str::<PendingSidecarSubmission>(&raw)
         .ok()
-        .filter(|pending| pending.controller_id == controller_id)
+        .filter(|pending| {
+            pending.controller_account_id.principal_id.as_str() == controller_principal_id
+        })
 }
 
 pub(crate) fn save_pending_sidecar_submission(
@@ -707,7 +724,7 @@ pub(crate) fn save_pending_sidecar_submission(
     pending: &PendingSidecarSubmission,
 ) -> anyhow::Result<()> {
     let key = pending_sidecar_submission_key(
-        &pending.controller_id,
+        pending.controller_account_id.principal_id.as_str(),
         &pending.source_strand_id,
         intent_digest,
     );
@@ -717,20 +734,21 @@ pub(crate) fn save_pending_sidecar_submission(
 
 pub(crate) fn remove_pending_sidecar_submission(
     store: &mut crate::state::LocalStateStore,
-    controller_id: &str,
+    controller_principal_id: &str,
     source_strand_id: &str,
     intent_digest: &str,
 ) {
-    let key = pending_sidecar_submission_key(controller_id, source_strand_id, intent_digest);
+    let key =
+        pending_sidecar_submission_key(controller_principal_id, source_strand_id, intent_digest);
     store.remove_plain_local_data(&key);
 }
 
 /// Every stored pending submission of this controller, with its storage key.
 pub(crate) fn pending_sidecar_submissions(
     store: &crate::state::LocalStateStore,
-    controller_id: &str,
+    controller_principal_id: &str,
 ) -> Vec<(String, PendingSidecarSubmission)> {
-    let prefix = format!("{SIDECAR_PENDING_SUBMISSION_PREFIX}:{controller_id}:");
+    let prefix = format!("{SIDECAR_PENDING_SUBMISSION_PREFIX}:{controller_principal_id}:");
     store
         .plain_local_data_keys()
         .into_iter()
@@ -738,7 +756,8 @@ pub(crate) fn pending_sidecar_submissions(
         .filter_map(|key| {
             let raw = store.load_plain_local_data(&key)?;
             let pending = serde_json::from_str::<PendingSidecarSubmission>(&raw).ok()?;
-            (pending.controller_id == controller_id).then_some((key, pending))
+            (pending.controller_account_id.principal_id.as_str() == controller_principal_id)
+                .then_some((key, pending))
         })
         .collect()
 }
@@ -746,7 +765,7 @@ pub(crate) fn pending_sidecar_submissions(
 /// Durable local record of an accepted controller `role=request` Event.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct StoredSidecarExchangeRequestFact {
-    pub controller_id: String,
+    pub controller_account_id: arkret_sdk::AccountId,
     pub sidecar_id: arkret_sdk::SidecarId,
     pub source_strand_id: String,
     pub exchange_id: arkret_sdk::AgentSidecarExchangeId,
@@ -777,7 +796,7 @@ pub(crate) struct SidecarExchangeScopeHint {
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub(crate) struct PendingSidecarAutoCloseIntent {
-    pub controller_id: String,
+    pub controller_account_id: arkret_sdk::AccountId,
     pub sidecar_id: arkret_sdk::SidecarId,
     pub source_strand_id: String,
     pub source_realm_id: String,
@@ -793,11 +812,13 @@ pub(crate) struct PendingSidecarAutoCloseIntent {
 }
 
 fn sidecar_auto_close_intent_key(
-    controller_id: &str,
+    controller_principal_id: &str,
     source_strand_id: &str,
     exchange_id: &str,
 ) -> String {
-    format!("{SIDECAR_AUTO_CLOSE_INTENT_PREFIX}:{controller_id}:{source_strand_id}:{exchange_id}")
+    format!(
+        "{SIDECAR_AUTO_CLOSE_INTENT_PREFIX}:{controller_principal_id}:{source_strand_id}:{exchange_id}"
+    )
 }
 
 fn save_pending_sidecar_auto_close_intent(
@@ -805,7 +826,7 @@ fn save_pending_sidecar_auto_close_intent(
     intent: &PendingSidecarAutoCloseIntent,
 ) -> anyhow::Result<()> {
     let key = sidecar_auto_close_intent_key(
-        &intent.controller_id,
+        intent.controller_account_id.principal_id.as_str(),
         &intent.source_strand_id,
         intent.exchange_id.as_str(),
     );
@@ -815,10 +836,10 @@ fn save_pending_sidecar_auto_close_intent(
 
 pub(crate) fn pending_sidecar_auto_close_intents(
     store: &crate::state::LocalStateStore,
-    controller_id: &str,
+    controller_principal_id: &str,
     realm_id: &str,
 ) -> Vec<PendingSidecarAutoCloseIntent> {
-    let prefix = format!("{SIDECAR_AUTO_CLOSE_INTENT_PREFIX}:{controller_id}:");
+    let prefix = format!("{SIDECAR_AUTO_CLOSE_INTENT_PREFIX}:{controller_principal_id}:");
     store
         .plain_local_data_keys()
         .into_iter()
@@ -826,7 +847,7 @@ pub(crate) fn pending_sidecar_auto_close_intents(
         .filter_map(|key| store.load_plain_local_data(&key))
         .filter_map(|raw| serde_json::from_str::<PendingSidecarAutoCloseIntent>(&raw).ok())
         .filter(|intent| {
-            intent.controller_id == controller_id
+            intent.controller_account_id.principal_id.as_str() == controller_principal_id
                 && intent.source_realm_id == realm_id
                 && intent.control.validate().is_ok()
         })
@@ -852,11 +873,11 @@ impl Drop for SidecarAutoCloseGuard {
 }
 
 fn try_begin_sidecar_auto_close(
-    controller_id: &str,
+    controller_principal_id: &str,
     source_strand_id: &str,
     exchange_id: &str,
 ) -> Option<SidecarAutoCloseGuard> {
-    let key = format!("{controller_id}\u{1f}{source_strand_id}\u{1f}{exchange_id}");
+    let key = format!("{controller_principal_id}\u{1f}{source_strand_id}\u{1f}{exchange_id}");
     let mut in_flight = SIDECAR_AUTO_CLOSES_IN_FLIGHT
         .get_or_init(|| std::sync::Mutex::new(Default::default()))
         .lock()
@@ -879,7 +900,7 @@ pub(crate) async fn submit_pending_sidecar_auto_close(
         return Ok(());
     }
     let Some(_guard) = try_begin_sidecar_auto_close(
-        &intent.controller_id,
+        intent.controller_account_id.principal_id.as_str(),
         &intent.source_strand_id,
         intent.exchange_id.as_str(),
     ) else {
@@ -893,7 +914,7 @@ pub(crate) async fn submit_pending_sidecar_auto_close(
         &seal_view,
         &intent.source_realm_id,
         authority,
-        &intent.controller_id,
+        intent.controller_account_id.principal_id.as_str(),
         device_id,
         &intent.source_strand_id,
         sidecar_binding,
@@ -930,12 +951,12 @@ pub(crate) async fn submit_pending_sidecar_auto_close(
 }
 
 fn sidecar_exchange_request_fact_key(
-    controller_id: &str,
+    controller_principal_id: &str,
     source_strand_id: &str,
     exchange_id: &str,
 ) -> String {
     format!(
-        "{SIDECAR_EXCHANGE_REQUEST_FACT_PREFIX}:{controller_id}:{source_strand_id}:{exchange_id}"
+        "{SIDECAR_EXCHANGE_REQUEST_FACT_PREFIX}:{controller_principal_id}:{source_strand_id}:{exchange_id}"
     )
 }
 
@@ -944,7 +965,7 @@ fn save_stored_sidecar_exchange_request_fact(
     stored: &StoredSidecarExchangeRequestFact,
 ) -> anyhow::Result<()> {
     let key = sidecar_exchange_request_fact_key(
-        &stored.controller_id,
+        stored.controller_account_id.principal_id.as_str(),
         &stored.source_strand_id,
         stored.exchange_id.as_str(),
     );
@@ -954,16 +975,16 @@ fn save_stored_sidecar_exchange_request_fact(
 
 fn stored_sidecar_exchange_request_facts(
     store: &crate::state::LocalStateStore,
-    controller_id: &str,
+    controller_principal_id: &str,
 ) -> Vec<StoredSidecarExchangeRequestFact> {
-    let prefix = format!("{SIDECAR_EXCHANGE_REQUEST_FACT_PREFIX}:{controller_id}:");
+    let prefix = format!("{SIDECAR_EXCHANGE_REQUEST_FACT_PREFIX}:{controller_principal_id}:");
     store
         .plain_local_data_keys()
         .into_iter()
         .filter(|key| key.starts_with(&prefix))
         .filter_map(|key| store.load_plain_local_data(&key))
         .filter_map(|raw| serde_json::from_str::<StoredSidecarExchangeRequestFact>(&raw).ok())
-        .filter(|fact| fact.controller_id == controller_id)
+        .filter(|fact| fact.controller_account_id.principal_id.as_str() == controller_principal_id)
         .collect()
 }
 
@@ -973,7 +994,7 @@ fn request_fact_from_stored(
     Some(garth::projection::SidecarExchangeRequestFact {
         event_id: arkret_sdk::EventId::new(stored.request_event_id.clone()).ok()?,
         hlc: stored.request_event_hlc.clone(),
-        actor_id: crate::mls_api_helpers::principal_core_id(&stored.controller_id).ok()?,
+        actor_account_id: stored.controller_account_id.clone(),
         actor_seq: stored.request_event_actor_seq,
         event_digest: stored.request_event_digest.clone()?,
         exchange_id: stored.exchange_id.clone(),
@@ -989,7 +1010,7 @@ pub(crate) fn record_accepted_sidecar_exchange_request(
     accepted_event_id: &str,
 ) -> anyhow::Result<()> {
     let stored = StoredSidecarExchangeRequestFact {
-        controller_id: pending.controller_id.clone(),
+        controller_account_id: pending.controller_account_id.clone(),
         sidecar_id: pending.sidecar_id.clone(),
         source_strand_id: pending.source_strand_id.clone(),
         exchange_id: pending.exchange_id.clone(),
@@ -1006,7 +1027,7 @@ pub(crate) fn record_accepted_sidecar_exchange_request(
 fn decrypt_sidecar_scoped_envelope(
     store: &crate::state::LocalStateStore,
     realm_id: &str,
-    controller_id: &str,
+    controller_principal_id: &str,
     authority: &arkret_sdk::AccountId,
     device_id: &arkret_sdk::DeviceId,
     sidecar_id: &str,
@@ -1023,7 +1044,7 @@ fn decrypt_sidecar_scoped_envelope(
         realm_id,
         event,
         Some(store),
-        Some((authority, controller_id, device_id)),
+        Some((authority, controller_principal_id, device_id)),
     )?;
     let event_kind = event.get("kind")?.as_str()?;
     let payload = crate::mls::runtime::encrypted_payload_from_verified_event_context(
@@ -1104,7 +1125,7 @@ fn event_actor_id(event: &arkret_sdk::Event) -> Option<arkret_sdk::DidCoreId> {
     })
 }
 
-/// Refold every locally known exchange of `controller_id` in `realm_id` from
+/// Refold every locally known exchange of `controller_principal_id` in `realm_id` from
 /// Event truth and refresh the local fold cache. The outcome also reports an
 /// incomparable cached frontier so the caller can fetch complete accepted
 /// history and refold the union.
@@ -1126,19 +1147,24 @@ pub(crate) struct SidecarRefoldOutcome {
 
 pub(crate) fn refold_sidecar_exchanges_from_history(
     store: &mut crate::state::LocalStateStore,
-    controller_id: &str,
+    controller_principal_id: &str,
     authority: &arkret_sdk::AccountId,
     device_id: &arkret_sdk::DeviceId,
     realm_id: &str,
     extra_scope_hints: &[SidecarExchangeScopeHint],
 ) -> SidecarRefoldOutcome {
+    if authority.principal_id.as_str() != controller_principal_id {
+        return SidecarRefoldOutcome::default();
+    }
     let realm = realm_id.to_owned();
-    let controller = controller_id.to_owned();
+    let controller = controller_principal_id.to_owned();
     let authority = authority.clone();
+    let decrypt_authority = authority.clone();
     let device = device_id.clone();
     refold_sidecar_exchanges_with_decrypt_report(
         store,
-        controller_id,
+        controller_principal_id,
+        &authority,
         realm_id,
         extra_scope_hints,
         &move |store_ref, circle_id, envelope_value, event| {
@@ -1146,7 +1172,7 @@ pub(crate) fn refold_sidecar_exchanges_from_history(
                 store_ref,
                 &realm,
                 &controller,
-                &authority,
+                &decrypt_authority,
                 &device,
                 circle_id,
                 envelope_value,
@@ -1175,7 +1201,7 @@ pub(crate) struct SidecarBackgroundSyncOutcome {
 pub(crate) async fn sync_sidecar_exchange_background(
     base_url: &str,
     api_token: String,
-    controller_id: &str,
+    controller_principal_id: &str,
     authority: &arkret_sdk::AccountId,
     device_id: &arkret_sdk::DeviceId,
     mut state_store: SyncSignal<crate::state::LocalStateStore>,
@@ -1204,7 +1230,7 @@ pub(crate) async fn sync_sidecar_exchange_background(
         std::collections::BTreeMap::<String, Vec<arkret_sdk::AgentSidecarView>>::new();
     for view in sidecar_views {
         view.validate()?;
-        if view.sidecar.controller_id.as_str() != controller_id {
+        if view.sidecar.controller_account_id != *authority {
             anyhow::bail!("Sidecar list returned a view for another controller");
         }
         views_by_realm
@@ -1225,14 +1251,14 @@ pub(crate) async fn sync_sidecar_exchange_background(
             let mut store = state_store.write();
             for view in &realm_views {
                 let key = format!(
-                    "{SIDECAR_CONTEXT_LOCATOR_PREFIX}:{controller_id}:{}",
+                    "{SIDECAR_CONTEXT_LOCATOR_PREFIX}:{controller_principal_id}:{}",
                     view.sidecar.id
                 );
                 store.remove_plain_local_data(&key);
             }
             for locator in &locators {
                 let key = format!(
-                    "{SIDECAR_CONTEXT_LOCATOR_PREFIX}:{controller_id}:{}",
+                    "{SIDECAR_CONTEXT_LOCATOR_PREFIX}:{controller_principal_id}:{}",
                     locator.sidecar_id
                 );
                 store.save_plain_local_data(
@@ -1270,7 +1296,7 @@ pub(crate) async fn sync_sidecar_exchange_background(
             .collect::<Vec<_>>();
         let refold = refold_sidecar_exchanges_from_history(
             &mut state_store.write(),
-            controller_id,
+            controller_principal_id,
             authority,
             device_id,
             &realm_id,
@@ -1283,11 +1309,14 @@ pub(crate) async fn sync_sidecar_exchange_background(
             .iter()
             .map(|view| (view.sidecar.id.to_string(), view))
             .collect::<std::collections::BTreeMap<_, _>>();
-        let retryable_closes =
-            pending_sidecar_auto_close_intents(&state_store.read(), controller_id, &realm_id)
-                .into_iter()
-                .filter(|intent| intent.accepted_control_event_id.is_none())
-                .collect::<Vec<_>>();
+        let retryable_closes = pending_sidecar_auto_close_intents(
+            &state_store.read(),
+            controller_principal_id,
+            &realm_id,
+        )
+        .into_iter()
+        .filter(|intent| intent.accepted_control_event_id.is_none())
+        .collect::<Vec<_>>();
         for intent in retryable_closes {
             let Some(view) = views_by_sidecar.get(intent.sidecar_id.as_str()) else {
                 continue;
@@ -1327,14 +1356,24 @@ type SidecarEnvelopeDecrypt<'a> = &'a dyn Fn(
 #[cfg(test)]
 fn refold_sidecar_exchanges_with_decrypt(
     store: &mut crate::state::LocalStateStore,
-    controller_id: &str,
+    controller_principal_id: &str,
     realm_id: &str,
     extra_scope_hints: &[SidecarExchangeScopeHint],
     decrypt: SidecarEnvelopeDecrypt<'_>,
 ) -> usize {
+    let Ok(controller_core_id) = crate::mls_api_helpers::principal_core_id(controller_principal_id)
+    else {
+        return 0;
+    };
+    let Ok(station_id) = arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example".to_owned())
+    else {
+        return 0;
+    };
+    let controller_account_id = arkret_sdk::AccountId::new(controller_core_id, station_id);
     refold_sidecar_exchanges_with_decrypt_report(
         store,
-        controller_id,
+        controller_principal_id,
+        &controller_account_id,
         realm_id,
         extra_scope_hints,
         decrypt,
@@ -1348,12 +1387,14 @@ fn refold_sidecar_exchanges_with_decrypt(
 #[allow(clippy::expect_used)]
 fn refold_sidecar_exchanges_with_decrypt_report(
     store: &mut crate::state::LocalStateStore,
-    controller_id: &str,
+    controller_principal_id: &str,
+    controller_account_id: &arkret_sdk::AccountId,
     realm_id: &str,
     extra_scope_hints: &[SidecarExchangeScopeHint],
     decrypt: SidecarEnvelopeDecrypt<'_>,
 ) -> SidecarRefoldOutcome {
-    let Ok(controller_core_id) = crate::mls_api_helpers::principal_core_id(controller_id) else {
+    let Ok(controller_core_id) = crate::mls_api_helpers::principal_core_id(controller_principal_id)
+    else {
         return SidecarRefoldOutcome::default();
     };
     let mut folded = Vec::new();
@@ -1364,7 +1405,8 @@ fn refold_sidecar_exchanges_with_decrypt_report(
     {
         let store_ref: &crate::state::LocalStateStore = store;
         let state = store_ref.load();
-        let mut stored_facts = stored_sidecar_exchange_request_facts(store_ref, controller_id);
+        let mut stored_facts =
+            stored_sidecar_exchange_request_facts(store_ref, controller_principal_id);
         // Source Strand id → native Sidecar id. The signed Event scope must
         // name this exact Sidecar; Realm/Circle scope is never substituted.
         let mut scope_hints = std::collections::BTreeMap::<String, arkret_sdk::SidecarId>::new();
@@ -1374,7 +1416,7 @@ fn refold_sidecar_exchanges_with_decrypt_report(
         for fact in &stored_facts {
             scope_hints.insert(fact.source_strand_id.clone(), fact.sidecar_id.clone());
         }
-        for (_, pending) in pending_sidecar_submissions(store_ref, controller_id) {
+        for (_, pending) in pending_sidecar_submissions(store_ref, controller_principal_id) {
             scope_hints.insert(pending.source_strand_id.clone(), pending.sidecar_id.clone());
         }
         // No known Sidecar private Strand for this controller: nothing can
@@ -1490,7 +1532,7 @@ fn refold_sidecar_exchanges_with_decrypt_report(
                 let Some(hlc) = event.hlc.clone() else {
                     continue;
                 };
-                let Some(actor_did) = event_actor_id(&event) else {
+                let Some(actor_principal_id) = event_actor_id(&event) else {
                     continue;
                 };
                 let exchange_key = (strand_id.clone(), binding.exchange_id.as_str().to_owned());
@@ -1502,12 +1544,15 @@ fn refold_sidecar_exchanges_with_decrypt_report(
                         let Some(context) = binding.request_context.clone() else {
                             continue;
                         };
+                        let Some(actor_account_id) = event.actor_id.as_account_id().cloned() else {
+                            continue;
+                        };
                         request_event_ids.insert(event.event_id.to_string());
                         requests.entry(exchange_key).or_default().push(
                             garth::projection::SidecarExchangeRequestFact {
                                 event_id: event.event_id.clone(),
                                 hlc,
-                                actor_id: actor_did.clone(),
+                                actor_account_id,
                                 actor_seq: event.actor_seq,
                                 event_digest: event_digest.clone(),
                                 exchange_id: binding.exchange_id.clone(),
@@ -1521,7 +1566,7 @@ fn refold_sidecar_exchanges_with_decrypt_report(
                             garth::projection::SidecarExchangeAgentFact {
                                 event_id: event.event_id.clone(),
                                 hlc,
-                                actor_id: actor_did,
+                                actor_principal_id,
                                 binding,
                                 refs_after: event_refs_after(&event),
                             },
@@ -1550,7 +1595,10 @@ fn refold_sidecar_exchanges_with_decrypt_report(
                 let Some(hlc) = event.hlc.clone() else {
                     continue;
                 };
-                let Some(actor_did) = event_actor_id(&event) else {
+                if event_actor_id(&event).is_none() {
+                    continue;
+                }
+                let Some(actor_account_id) = event.actor_id.as_account_id().cloned() else {
                     continue;
                 };
                 let exchange_key = (strand_id, control.exchange_id.as_str().to_owned());
@@ -1558,7 +1606,7 @@ fn refold_sidecar_exchanges_with_decrypt_report(
                     garth::projection::SidecarExchangeControlFact {
                         event_id: event.event_id.clone(),
                         hlc,
-                        actor_id: actor_did,
+                        actor_account_id,
                         actor_seq: event.actor_seq,
                         event_digest,
                         // §7.2.3: the outer refs MUST cover the plaintext
@@ -1675,7 +1723,7 @@ fn refold_sidecar_exchanges_with_decrypt_report(
                 }
             }
             let scope = garth::projection::SidecarExchangeFoldScope {
-                controller_id: controller_core_id.clone(),
+                controller_account_id: controller_account_id.clone(),
                 sidecar_id: sidecar_id.clone(),
             };
             let fold = garth::projection::fold_sidecar_exchange(
@@ -1687,12 +1735,15 @@ fn refold_sidecar_exchanges_with_decrypt_report(
             );
             match fold {
                 Ok(Some(projection)) => {
-                    let auto_close_key =
-                        sidecar_auto_close_intent_key(controller_id, strand_id, exchange_id_raw);
+                    let auto_close_key = sidecar_auto_close_intent_key(
+                        controller_principal_id,
+                        strand_id,
+                        exchange_id_raw,
+                    );
                     if projection.terminal_event_id.is_some() {
                         auto_close_removals.push(auto_close_key);
                     } else if exchange_agent_facts.iter().any(|fact| {
-                        fact.actor_id == projection.coordinator_agent_id
+                        fact.actor_principal_id == projection.coordinator_agent_id
                             && fact.binding.role
                                 == arkret_sdk::AgentSidecarExchangeBindingRole::UserFacingResponse
                             && fact.binding.completes_exchange == Some(true)
@@ -1735,7 +1786,7 @@ fn refold_sidecar_exchanges_with_decrypt_report(
                                 .is_none()
                             {
                                 auto_close_updates.push(PendingSidecarAutoCloseIntent {
-                                    controller_id: controller_id.to_owned(),
+                                    controller_account_id: controller_account_id.clone(),
                                     sidecar_id: sidecar_id.clone(),
                                     source_strand_id: strand_id.clone(),
                                     source_realm_id: realm_id.to_owned(),
@@ -1775,7 +1826,7 @@ fn refold_sidecar_exchanges_with_decrypt_report(
     }
     let mut changed = 0;
     for projection in folded {
-        match cache_sidecar_exchange_projection(store, controller_id, &projection) {
+        match cache_sidecar_exchange_projection(store, controller_account_id, &projection) {
             Ok(true) => changed += 1,
             Ok(false) => {}
             Err(error) => {
@@ -1791,30 +1842,28 @@ fn refold_sidecar_exchanges_with_decrypt_report(
 
 pub fn cached_sidecar_display_mode(
     store: &crate::state::LocalStateStore,
-    principal_id: &str,
     session: &HostedSidecarState,
 ) -> Option<arkret_sdk::AgentSidecarDisplayMode> {
-    let controller_core_id =
-        crate::mls_api_helpers::principal_core_id(&session.controller_id).ok()?;
-    let principal_core_id = crate::mls_api_helpers::principal_core_id(principal_id).ok()?;
-    if controller_core_id != principal_core_id {
-        return None;
-    }
     let realm_id = arkret_sdk::RealmId::new(session.source_realm_id.clone()).ok()?;
     let strand_id = arkret_sdk::StrandId::new(session.source_strand_id.clone()).ok()?;
     let view_state = store
-        .sidecar_view_state(controller_core_id.as_str(), &realm_id, &strand_id)
+        .sidecar_view_state(&session.controller_account_id, &realm_id, &strand_id)
         .or_else(|| {
-            let key = sidecar_view_state_cache_key(
-                controller_core_id.as_str(),
-                &session.source_realm_id,
-                &session.source_strand_id,
-            );
+            let namespace_key =
+                crate::account_data::account_data_namespace_key(&session.controller_account_id)
+                    .ok()?;
+            let key = arkret_sdk::agent_sidecar_view_state_account_data_key(
+                &namespace_key,
+                &session.controller_account_id,
+                &realm_id,
+                &strand_id,
+            )
+            .ok()?;
             store.load_plain_local_data(&key).and_then(|raw| {
                 serde_json::from_str::<arkret_sdk::AgentSidecarViewState>(&raw).ok()
             })
         })?;
-    (view_state.controller_id == controller_core_id
+    (view_state.controller_account_id == session.controller_account_id
         && view_state.sidecar_id == session.sidecar_id
         && view_state.context_ref.realm_id.as_str() == session.source_realm_id
         && view_state.context_ref.strand_id.as_str() == session.source_strand_id)
@@ -1893,7 +1942,6 @@ pub fn HostedSidecarContextBar(base_url: String, api_token: String, device_id: S
                                 merged_token.clone(),
                                 merged_authority.clone(),
                                 merged_did.clone(),
-                                current.controller_id.clone(),
                                 merged_device.clone(),
                                 &current,
                             );
@@ -1925,7 +1973,6 @@ pub fn HostedSidecarContextBar(base_url: String, api_token: String, device_id: S
                                 sidecar_token.clone(),
                                 sidecar_authority.clone(),
                                 sidecar_did.clone(),
-                                current.controller_id.clone(),
                                 sidecar_device.clone(),
                                 &current,
                             );
@@ -1966,19 +2013,15 @@ pub fn push_sidecar_display_mode(
     api_token: String,
     authority: arkret_sdk::AccountId,
     controller_did: arkret_sdk::Did,
-    controller_id: String,
     device_id: arkret_sdk::DeviceId,
     session: &HostedSidecarState,
 ) {
     let context_ref = match (
         arkret_sdk::RealmId::new(session.source_realm_id.clone()),
         arkret_sdk::StrandId::new(session.source_strand_id.clone()),
-        crate::mls_api_helpers::principal_core_id(&controller_id),
         device_id,
     ) {
-        (Ok(realm_id), Ok(strand_id), Ok(controller_id), origin_device_id) => {
-            (realm_id, strand_id, controller_id, origin_device_id)
-        }
+        (Ok(realm_id), Ok(strand_id), origin_device_id) => (realm_id, strand_id, origin_device_id),
         _ => {
             tracing::warn!("Sidecar view-state contains an invalid typed identifier");
             return;
@@ -1986,7 +2029,7 @@ pub fn push_sidecar_display_mode(
     };
     let updated_hlc = match crate::signing_stamp::issue_account_data_hlc(
         controller_did.as_str(),
-        context_ref.3.as_str(),
+        context_ref.2.as_str(),
     ) {
         Ok(hlc) => hlc,
         Err(error) => {
@@ -1996,7 +2039,7 @@ pub fn push_sidecar_display_mode(
     };
     let view_state = arkret_sdk::AgentSidecarViewState {
         schema: arkret_sdk::AgentSidecarViewStateSchema::V1,
-        controller_id: context_ref.2,
+        controller_account_id: authority.clone(),
         sidecar_id: session.sidecar_id.clone(),
         context_ref: arkret_sdk::AgentSidecarStrandContextRef {
             realm_id: context_ref.0,
@@ -2006,10 +2049,23 @@ pub fn push_sidecar_display_mode(
         pinned: None,
         collapsed: None,
         updated_hlc,
-        origin_device_id: context_ref.3,
+        origin_device_id: context_ref.2,
     };
-    let account_data_key = view_state.account_data_key();
-    if let Err(error) = cache_sidecar_view_state(store, &controller_id, &view_state) {
+    let namespace_key = match crate::account_data::account_data_namespace_key(&authority) {
+        Ok(key) => key,
+        Err(error) => {
+            tracing::warn!(%error, "Sidecar view-state namespace derivation failed");
+            return;
+        }
+    };
+    let account_data_key = match view_state.account_data_key(&namespace_key) {
+        Ok(key) => key,
+        Err(error) => {
+            tracing::warn!(%error, "Sidecar view-state account-data key derivation failed");
+            return;
+        }
+    };
+    if let Err(error) = cache_sidecar_view_state(store, &authority, &view_state) {
         tracing::warn!(%error, "Sidecar view-state local cache failed");
     }
     let plaintext = match serde_json::to_value(&view_state) {
@@ -2053,6 +2109,7 @@ pub fn push_sidecar_display_mode(
                         )?;
                         match sidecar_view_state_merge_decision(
                             Some(&current_plaintext),
+                            &namespace_key,
                             &account_data_key,
                             &view_state,
                         )? {
@@ -2084,12 +2141,23 @@ pub fn push_sidecar_display_mode(
 mod tests {
     use super::*;
 
+    fn controller_account() -> arkret_sdk::AccountId {
+        arkret_sdk::AccountId::new(
+            crate::mls_api_helpers::principal_core_id("did:web:alice.example").unwrap(),
+            arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example".to_owned()).unwrap(),
+        )
+    }
+
+    fn account_data_namespace_key() -> [u8; 32] {
+        [7; 32]
+    }
+
     fn session(
         pending: Vec<arkret_sdk::PendingSidecarAccessReconciliationItem>,
     ) -> HostedSidecarState {
         HostedSidecarState {
             trace_id: "019f0000-0000-7000-8000-000000000001".to_owned(),
-            controller_id: "ak:did_core:web:alice.example".to_owned(),
+            controller_account_id: controller_account(),
             addressed_agent_ids: vec!["ak:did_core:web:agents.example:assistant".to_owned()],
             addressed_agent_label: "Assistant".to_owned(),
             source_realm_id: "ak:realm:AUqzNZlfuL-7z087TbZhKOdYyKUNPAa2o_neyoFRh3o2".to_owned(),
@@ -2136,8 +2204,7 @@ mod tests {
     ) -> arkret_sdk::AgentSidecarViewState {
         arkret_sdk::AgentSidecarViewState {
             schema: arkret_sdk::AgentSidecarViewStateSchema::V1,
-            controller_id: crate::mls_api_helpers::principal_core_id("did:web:alice.example")
-                .unwrap(),
+            controller_account_id: controller_account(),
             sidecar_id: session.sidecar_id.clone(),
             context_ref: arkret_sdk::AgentSidecarStrandContextRef {
                 realm_id: arkret_sdk::RealmId::new(session.source_realm_id.clone()).unwrap(),
@@ -2157,7 +2224,10 @@ mod tests {
     ) -> anyhow::Result<SidecarViewStateMergeDecision> {
         sidecar_view_state_merge_decision(
             Some(&serde_json::to_value(current).unwrap()),
-            &candidate.account_data_key(),
+            &account_data_namespace_key(),
+            &candidate
+                .account_data_key(&account_data_namespace_key())
+                .unwrap(),
             candidate,
         )
     }
@@ -2216,7 +2286,7 @@ mod tests {
 
     #[test]
     fn sidecar_view_state_cache_is_lww_and_context_scoped() {
-        let account = "did:web:alice.example";
+        let account = controller_account();
         let path = std::env::temp_dir().join(format!(
             "inkson-sidecar-view-state-{}.json",
             crate::operation::uuid_v7()
@@ -2245,10 +2315,26 @@ mod tests {
             SidecarViewStateMergeDecision::UseCandidate
         );
 
-        assert!(cache_sidecar_view_state(&mut store, account, &newer).unwrap());
-        assert!(!cache_sidecar_view_state(&mut store, account, &older).unwrap());
+        assert!(
+            cache_sidecar_view_state_with_namespace(
+                &mut store,
+                &account,
+                &account_data_namespace_key(),
+                &newer,
+            )
+            .unwrap()
+        );
+        assert!(
+            !cache_sidecar_view_state_with_namespace(
+                &mut store,
+                &account,
+                &account_data_namespace_key(),
+                &older,
+            )
+            .unwrap()
+        );
         assert_eq!(
-            cached_sidecar_display_mode(&store, account, &session),
+            cached_sidecar_display_mode(&store, &session),
             Some(arkret_sdk::AgentSidecarDisplayMode::SidecarOnly)
         );
     }
@@ -2293,14 +2379,36 @@ mod tests {
 
         let dir = tempfile::tempdir().unwrap();
         let mut store = crate::state::LocalStateStore::with_path(dir.path().join("state.json"));
-        assert!(cache_sidecar_view_state(&mut store, "did:web:alice.example", &lower).unwrap());
-        assert!(cache_sidecar_view_state(&mut store, "did:web:alice.example", &divergent).is_err());
         assert!(
-            cache_sidecar_view_state(&mut store, "did:web:alice.example", &wrong_sidecar).is_err()
+            cache_sidecar_view_state_with_namespace(
+                &mut store,
+                &controller_account(),
+                &account_data_namespace_key(),
+                &lower,
+            )
+            .unwrap()
+        );
+        assert!(
+            cache_sidecar_view_state_with_namespace(
+                &mut store,
+                &controller_account(),
+                &account_data_namespace_key(),
+                &divergent,
+            )
+            .is_err()
+        );
+        assert!(
+            cache_sidecar_view_state_with_namespace(
+                &mut store,
+                &controller_account(),
+                &account_data_namespace_key(),
+                &wrong_sidecar,
+            )
+            .is_err()
         );
         assert_eq!(
             store.sidecar_view_state(
-                lower.controller_id.as_str(),
+                &lower.controller_account_id,
                 &lower.context_ref.realm_id,
                 &lower.context_ref.strand_id,
             ),
@@ -2321,7 +2429,10 @@ mod tests {
         assert!(
             sidecar_view_state_merge_decision(
                 Some(&serde_json::json!({"updated_hlc": "not-a-complete-view-state"})),
-                &candidate.account_data_key(),
+                &account_data_namespace_key(),
+                &candidate
+                    .account_data_key(&account_data_namespace_key())
+                    .unwrap(),
                 &candidate,
             )
             .is_err()
@@ -2335,7 +2446,7 @@ mod tests {
     #[cfg(feature = "wasm-localstorage-secrets-test")]
     #[test]
     fn fold_evidence_is_controller_and_realm_scoped_with_a_stable_digest() {
-        let account = "did:web:alice.example";
+        let account = controller_account();
         let realm = "ak:realm:AVMbYk6SunkGxvNL1uT9AigkdS6j5xko3u7tklJAzK1-";
         let other_realm = "ak:realm:AYJtJTaob5e3AuBrnCd-oA9WPc3ZrZyc-0GC98V_h0Qh";
         let projection = |realm_id: &str, exchange: &str| {
@@ -2346,7 +2457,7 @@ mod tests {
                     .unwrap();
             arkret_sdk::AgentSidecarExchangeProjection {
                 schema: arkret_sdk::AgentSidecarExchangeProjectionSchema::V1,
-                controller_id: crate::mls_api_helpers::principal_core_id(account).unwrap(),
+                controller_account_id: account.clone(),
                 sidecar_id: arkret_sdk::SidecarId::new(
                     "ak:sidecar:AWea2MtI5dOI1LSRyI266_gQVrWUd0po0dxZiJNsH8kN",
                 )
@@ -2388,7 +2499,7 @@ mod tests {
         let mut device_one = exchange_test_store("fold-evidence-one");
         cache_sidecar_exchange_projection(
             &mut device_one,
-            account,
+            &account,
             &projection(realm, "exchange-01964137000000000008"),
         )
         .unwrap();
@@ -2396,14 +2507,14 @@ mod tests {
         // in this Realm's evidence.
         cache_sidecar_exchange_projection(
             &mut device_one,
-            account,
+            &account,
             &projection(other_realm, "exchange-01964137000000000009"),
         )
         .unwrap();
 
-        let evidence = sidecar_fold_evidence(&device_one, account, realm).unwrap();
+        let evidence = sidecar_fold_evidence(&device_one, &account, realm).unwrap();
         assert_eq!(evidence.schema, SIDECAR_FOLD_EVIDENCE_SCHEMA);
-        assert_eq!(evidence.controller_id, account);
+        assert_eq!(evidence.controller_account_id, account.clone());
         assert_eq!(evidence.source_realm_id, realm);
         assert_eq!(evidence.exchanges.len(), 1);
         assert_eq!(
@@ -2419,24 +2530,28 @@ mod tests {
 
         // A different account's evidence request must not read this
         // controller's cache.
-        let foreign = sidecar_fold_evidence(&device_one, "did:web:mallory.example", realm).unwrap();
+        let foreign_account = arkret_sdk::AccountId::new(
+            crate::mls_api_helpers::principal_core_id("did:web:mallory.example").unwrap(),
+            account.station_id.clone(),
+        );
+        let foreign = sidecar_fold_evidence(&device_one, &foreign_account, realm).unwrap();
         assert!(foreign.exchanges.is_empty());
 
         // Two devices that folded the same history serialize to the same bytes.
         let mut device_two = exchange_test_store("fold-evidence-two");
         cache_sidecar_exchange_projection(
             &mut device_two,
-            account,
+            &account,
             &projection(realm, "exchange-01964137000000000008"),
         )
         .unwrap();
         assert_eq!(
-            sidecar_fold_evidence_canonical_json(&device_two, account, realm).unwrap(),
-            sidecar_fold_evidence_canonical_json(&device_one, account, realm).unwrap(),
+            sidecar_fold_evidence_canonical_json(&device_two, &account, realm).unwrap(),
+            sidecar_fold_evidence_canonical_json(&device_one, &account, realm).unwrap(),
         );
     }
 
-    const EXCHANGE_ACCOUNT: &str = "did:web:alice.example";
+    const EXCHANGE_ACCOUNT: &str = "ak:did_core:web:alice.example";
     const EXCHANGE_AGENT: &str = "did:web:agents.example:assistant";
     const EXCHANGE_RESPONSE_EVENT: &str = "ak:event:AWgrDMnttudmVRcIZ3C76X4HW8sfi2eTKwkSUZDxwbbK";
 
@@ -2480,7 +2595,7 @@ mod tests {
 
     fn exchange_pending_submission(session: &HostedSidecarState) -> PendingSidecarSubmission {
         PendingSidecarSubmission {
-            controller_id: EXCHANGE_ACCOUNT.to_owned(),
+            controller_account_id: controller_account(),
             sidecar_id: session.sidecar_id.clone(),
             source_strand_id: session.source_strand_id.clone(),
             exchange_id: arkret_sdk::AgentSidecarExchangeId::new("exchange-01964137000000000008")
@@ -2564,7 +2679,7 @@ mod tests {
         assert!(
             cached_sidecar_exchange_projections(
                 &store,
-                EXCHANGE_ACCOUNT,
+                &controller_account(),
                 session.source_realm_id.as_str()
             )
             .is_empty()
@@ -2619,7 +2734,7 @@ mod tests {
         assert!(
             cached_sidecar_exchange_projections(
                 &store,
-                EXCHANGE_ACCOUNT,
+                &controller_account(),
                 session.source_realm_id.as_str(),
             )
             .is_empty(),
@@ -2639,7 +2754,7 @@ mod tests {
 
         let cached = cached_sidecar_exchange_projections(
             &store,
-            EXCHANGE_ACCOUNT,
+            &controller_account(),
             session.source_realm_id.as_str(),
         );
         assert_eq!(cached.len(), 1);
@@ -2670,12 +2785,20 @@ mod tests {
         );
         // The fold cache replaces wholesale and is idempotent.
         assert!(
-            !cache_sidecar_exchange_projection(&mut store, EXCHANGE_ACCOUNT, projection).unwrap()
+            !cache_sidecar_exchange_projection(&mut store, &controller_account(), projection)
+                .unwrap()
         );
         // Controller binding still fails closed.
         assert!(
-            cache_sidecar_exchange_projection(&mut store, "did:web:bob.example", projection)
-                .is_err()
+            cache_sidecar_exchange_projection(
+                &mut store,
+                &arkret_sdk::AccountId::new(
+                    crate::mls_api_helpers::principal_core_id("did:web:bob.example").unwrap(),
+                    controller_account().station_id,
+                ),
+                projection,
+            )
+            .is_err()
         );
     }
 
@@ -2766,7 +2889,7 @@ mod tests {
 
         let cached = cached_sidecar_exchange_projections(
             &store,
-            EXCHANGE_ACCOUNT,
+            &controller_account(),
             session.source_realm_id.as_str(),
         );
         assert_eq!(cached.len(), 1);
@@ -2901,7 +3024,7 @@ mod tests {
         assert_eq!(changed, 0, "foreign-Circle events never enter the fold");
         let cached = cached_sidecar_exchange_projections(
             &store,
-            EXCHANGE_ACCOUNT,
+            &controller_account(),
             session.source_realm_id.as_str(),
         );
         assert_eq!(
@@ -2965,7 +3088,7 @@ mod tests {
         assert_eq!(changed, 1);
         let cached = cached_sidecar_exchange_projections(
             &store,
-            EXCHANGE_ACCOUNT,
+            &controller_account(),
             session.source_realm_id.as_str(),
         );
         assert_eq!(
@@ -3005,7 +3128,7 @@ mod tests {
         );
         let mut cached = cached_sidecar_exchange_projections(
             &store,
-            EXCHANGE_ACCOUNT,
+            &controller_account(),
             session.source_realm_id.as_str(),
         )
         .pop()
@@ -3023,7 +3146,7 @@ mod tests {
             .unwrap(),
             max_hlc: arkret_sdk::Hlc::new("01970e589d21-0002-a13f9c2e").unwrap(),
         };
-        cache_sidecar_exchange_projection(&mut store, EXCHANGE_ACCOUNT, &cached).unwrap();
+        cache_sidecar_exchange_projection(&mut store, &controller_account(), &cached).unwrap();
 
         let no_history_decrypt = |_: &crate::state::LocalStateStore,
                                   _: &str,
@@ -3033,6 +3156,7 @@ mod tests {
         let outcome = refold_sidecar_exchanges_with_decrypt_report(
             &mut store,
             EXCHANGE_ACCOUNT,
+            &controller_account(),
             &session.source_realm_id,
             &[],
             &no_history_decrypt,
@@ -3043,7 +3167,7 @@ mod tests {
         assert_eq!(
             cached_sidecar_exchange_projections(
                 &store,
-                EXCHANGE_ACCOUNT,
+                &controller_account(),
                 session.source_realm_id.as_str(),
             )[0],
             cached,

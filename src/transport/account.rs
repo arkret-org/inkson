@@ -748,13 +748,13 @@ pub async fn create_direct_conversation_from_resolve(
 
 fn direct_conversation_peer_descriptor(
     peer: &str,
-    peer_controller: Option<&str>,
+    peer_controller_account_id: Option<&str>,
 ) -> anyhow::Result<arkret_sdk::contact_operations::ContactPeer> {
     let actor_id: arkret_sdk::ActorId = serde_json::from_str(peer)?;
-    Ok(match peer_controller {
-        Some(controller_id) => arkret_sdk::contact_operations::ContactPeer::Agent {
+    Ok(match peer_controller_account_id {
+        Some(controller_account_id) => arkret_sdk::contact_operations::ContactPeer::Agent {
             actor_id,
-            controller_account_id: serde_json::from_str(controller_id)?,
+            controller_account_id: serde_json::from_str(controller_account_id)?,
         },
         None => arkret_sdk::contact_operations::ContactPeer::Human {
             account_id: actor_id.as_account_id().cloned().ok_or_else(|| {

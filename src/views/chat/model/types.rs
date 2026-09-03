@@ -242,7 +242,7 @@ impl SpaceParticipantRole {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct AgentParticipantMetadata {
-    pub(crate) controller_id: String,
+    pub(crate) controller_principal_id: String,
     pub(crate) controller_handle: String,
     pub(crate) agent_slug: String,
     pub(crate) display_name: String,

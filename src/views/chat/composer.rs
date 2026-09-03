@@ -1330,7 +1330,10 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                                     .set("Native Sidecar reserved".to_owned());
                                                 sidecar_session.set(Some(crate::sidecar::HostedSidecarState {
                                                     trace_id,
-                                                    controller_id: actor.clone(),
+                                                    controller_account_id: sidecar_view
+                                                        .sidecar
+                                                        .controller_account_id
+                                                        .clone(),
                                                     addressed_agent_ids,
                                                     addressed_agent_label,
                                                     source_realm_id: realm.clone(),
@@ -1781,7 +1784,10 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                                     .set("Native Sidecar reserved".to_owned());
                                                 sidecar_session.set(Some(crate::sidecar::HostedSidecarState {
                                                     trace_id,
-                                                    controller_id: actor_for_sidecar.clone(),
+                                                    controller_account_id: sidecar_view
+                                                        .sidecar
+                                                        .controller_account_id
+                                                        .clone(),
                                                     addressed_agent_ids,
                                                     addressed_agent_label,
                                                     source_realm_id: realm_for_sidecar.clone(),

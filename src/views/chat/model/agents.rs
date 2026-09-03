@@ -4,8 +4,8 @@ pub(crate) fn merge_agent_metadata(
     existing: &mut AgentParticipantMetadata,
     next: AgentParticipantMetadata,
 ) {
-    if existing.controller_id.is_empty() {
-        existing.controller_id = next.controller_id;
+    if existing.controller_principal_id.is_empty() {
+        existing.controller_principal_id = next.controller_principal_id;
     }
     if existing.controller_handle.is_empty() {
         existing.controller_handle = next.controller_handle;
@@ -78,7 +78,7 @@ pub(crate) fn agent_metadata_from_mentions(
             continue;
         }
         let next = AgentParticipantMetadata {
-            controller_id: controller_subject_id.as_str().trim().to_owned(),
+            controller_principal_id: controller_subject_id.as_str().trim().to_owned(),
             controller_handle: mention
                 .controller_handle_at_time
                 .as_ref()
@@ -177,11 +177,11 @@ pub(crate) fn annotate_agent_participants_with_metadata(
 
 pub(crate) fn owned_agent_metadata(
     agent_slugs: &std::collections::BTreeMap<String, String>,
-    controller_id: &str,
+    controller_principal_id: &str,
     controller_handle: Option<&str>,
 ) -> std::collections::BTreeMap<String, AgentParticipantMetadata> {
-    let controller_id = controller_id.trim();
-    if controller_id.is_empty() {
+    let controller_principal_id = controller_principal_id.trim();
+    if controller_principal_id.is_empty() {
         return std::collections::BTreeMap::new();
     }
     let controller_handle = controller_handle.unwrap_or_default().trim();
@@ -199,7 +199,7 @@ pub(crate) fn owned_agent_metadata(
             Some((
                 agent_id.to_owned(),
                 AgentParticipantMetadata {
-                    controller_id: controller_id.to_owned(),
+                    controller_principal_id: controller_principal_id.to_owned(),
                     controller_handle: controller_handle.to_owned(),
                     agent_slug: slug.to_owned(),
                     display_name: slug.to_owned(),

@@ -689,7 +689,7 @@ fn build_account_data_set_emits_canonical_kind() {
     .build("node");
     assert_eq!(op.kind(), "ak.account_data.set");
     assert_eq!(op.payload()["key"], "ak.read_receipt.preferences");
-    assert!(op.payload().get("holder_id").is_none());
+    assert!(op.payload().get("holder_principal_id").is_none());
     assert_eq!(op.payload()["body"]["send"], false);
     assert!(op.payload()["updated_at"].is_string());
 }
@@ -985,7 +985,7 @@ fn build_account_data_tombstone_emits_canonical_payload() {
     .build("node");
     assert_eq!(op.kind(), "ak.account_data.set");
     assert_eq!(op.payload()["key"], "ak.read_receipt.preferences");
-    assert!(op.payload().get("holder_id").is_none());
+    assert!(op.payload().get("holder_principal_id").is_none());
     assert_eq!(op.payload()["expected_revision"], 3);
     assert_eq!(op.payload()["tombstone"], true);
     assert!(op.payload()["updated_at"].is_string());
