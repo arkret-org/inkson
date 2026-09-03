@@ -286,14 +286,11 @@ fn event_envelope_rejects_unknown_top_level_fields() {
 }
 
 #[test]
-fn kanban_card_strand_create_carries_position_in_metadata_fields() {
+fn kanban_card_strand_create_omits_position_metadata() {
     let op = ak_ops::kanban_card_strand_create(
         "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-",
         "did:web:alice.example",
-        "ak:space:AQM8rE4gp8l4axkSbbb9_dkqwWE8ZPYHwFsC24o2mrIL",
-        "ak:space:AV624IkuHj3HmxAYE6uyYmBa4Est3gGGdnOsjn71z5L2",
         "Move-backed card",
-        "h1",
     )
     .expect("builds")
     .build("node");
@@ -315,13 +312,20 @@ fn kanban_card_strand_create_carries_position_in_metadata_fields() {
         op.payload()["object"]["tracks"]["discussion"]["profile"],
         "discussion"
     );
-    assert_eq!(
-        op.payload()["object"]["metadata"]["fields"]["board_space_id"],
-        "ak:space:AQM8rE4gp8l4axkSbbb9_dkqwWE8ZPYHwFsC24o2mrIL"
+    assert!(
+        op.payload()["object"]["metadata"]["fields"]
+            .get("board_space_id")
+            .is_none()
     );
-    assert_eq!(
-        op.payload()["object"]["metadata"]["fields"]["list_space_id"],
-        "ak:space:AV624IkuHj3HmxAYE6uyYmBa4Est3gGGdnOsjn71z5L2"
+    assert!(
+        op.payload()["object"]["metadata"]["fields"]
+            .get("list_space_id")
+            .is_none()
+    );
+    assert!(
+        op.payload()["object"]["metadata"]["fields"]
+            .get("rank")
+            .is_none()
     );
     assert_eq!(
         op.payload()["object"]["metadata"]["title"],
@@ -334,30 +338,6 @@ fn kanban_card_strand_create_carries_position_in_metadata_fields() {
     assert!(!op.payload().contains_key("patch"));
     assert_registered_payload_valid(&op);
     assert_payload_field_names_are_spec_canonical(op.payload());
-}
-
-#[test]
-fn kanban_card_strand_create_rejects_an_incomplete_position_shape() {
-    let realm_id = "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-";
-    let actor = "did:web:alice.example";
-    let board_id = "ak:space:AQM8rE4gp8l4axkSbbb9_dkqwWE8ZPYHwFsC24o2mrIL";
-    let list_id = "ak:space:AV624IkuHj3HmxAYE6uyYmBa4Est3gGGdnOsjn71z5L2";
-
-    assert!(
-        ak_ops::kanban_card_strand_create(
-            realm_id,
-            actor,
-            board_id,
-            "pending-list-handle",
-            "Card",
-            "U",
-        )
-        .is_err()
-    );
-    assert!(
-        ak_ops::kanban_card_strand_create(realm_id, actor, board_id, list_id, "Card", "not-valid",)
-            .is_err()
-    );
 }
 
 #[test]

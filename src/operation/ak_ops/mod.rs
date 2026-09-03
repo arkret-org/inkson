@@ -108,7 +108,6 @@ pub(crate) fn strand_create_payload(
             updated_by: object.updated_by,
             updated_at: object.updated_at,
         },
-        initial_relations: None,
     })
 }
 

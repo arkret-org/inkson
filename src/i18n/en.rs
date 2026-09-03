@@ -1264,15 +1264,7 @@ pub fn english_translations() -> TranslationDict {
         "settings.privacy.blocklist.empty_body",
         "You haven't blocked anything yet.",
     );
-    dict.set(
-        "settings.privacy.blocklist.kind.service",
-        "Station or service",
-    );
     dict.set("settings.privacy.blocklist.kind.domain", "Domain");
-    dict.set(
-        "settings.privacy.blocklist.kind.organization",
-        "Organization",
-    );
     dict.set("settings.privacy.blocklist.kind.actor", "Person or agent");
     dict.set(
         "settings.privacy.blocklist.applies_summary",
@@ -1296,18 +1288,10 @@ pub fn english_translations() -> TranslationDict {
         "settings.privacy.blocklist.target.actor",
         "Target account or agent",
     );
-    dict.set(
-        "settings.privacy.blocklist.target.identity",
-        "Target identity",
-    );
     dict.set("settings.privacy.blocklist.target.domain", "Target domain");
     dict.set(
         "settings.privacy.blocklist.invalid.actor",
         "Enter the complete account or agent identity, including its Station.",
-    );
-    dict.set(
-        "settings.privacy.blocklist.invalid.identity",
-        "Enter a valid stable identity.",
     );
     dict.set(
         "settings.privacy.blocklist.invalid.domain",

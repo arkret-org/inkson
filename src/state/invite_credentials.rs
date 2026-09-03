@@ -79,6 +79,81 @@ impl ClientLocalState {
 }
 
 impl LocalStateStore {
+    pub(crate) fn apply_station_cas_account_data(
+        &mut self,
+        deltas: &[arkret_sdk::StationCasAccountDataContainer],
+    ) {
+        self.ensure_cached_loaded();
+        let mut delivery_changed = false;
+        for delta in deltas {
+            if delta.complete {
+                self.cached.station_cas_account_data.clear();
+                delivery_changed = true;
+            }
+            for entry in &delta.upserts {
+                delivery_changed |=
+                    entry.account_data_key == arkret_wire::AccountDataKey::ACCOUNT_INVITE_DELIVERY;
+                self.cached
+                    .station_cas_account_data
+                    .insert(entry.account_data_key.clone(), entry.clone());
+            }
+            for removal in &delta.removals {
+                delivery_changed |= removal.account_data_key
+                    == arkret_wire::AccountDataKey::ACCOUNT_INVITE_DELIVERY;
+                self.cached
+                    .station_cas_account_data
+                    .remove(&removal.account_data_key);
+            }
+        }
+        if delivery_changed {
+            let delivery = self
+                .cached
+                .station_cas_account_data
+                .get(arkret_wire::AccountDataKey::ACCOUNT_INVITE_DELIVERY)
+                .map(|entry| entry.content.clone());
+            self.replace_invite_delivery_cell(delivery.as_ref());
+        }
+        if !deltas.is_empty() {
+            let _ = self.flush();
+        }
+    }
+
+    fn replace_invite_delivery_cell(&mut self, content: Option<&Value>) {
+        let delivery = content.and_then(validated_invite_delivery);
+        let retained_ids = delivery
+            .as_ref()
+            .map(|delivery| {
+                delivery
+                    .delivery_entries
+                    .iter()
+                    .map(|entry| entry.invite_id.as_str().to_owned())
+                    .collect::<std::collections::BTreeSet<_>>()
+            })
+            .unwrap_or_default();
+        self.cached.notification_projection.retain(|candidate| {
+            candidate
+                .invite()
+                .is_none_or(|invite| retained_ids.contains(invite.invite_id.as_str()))
+        });
+        self.cached.invite_credentials.clear();
+        if let Some(delivery) = delivery {
+            let now = Utc::now();
+            for entry in delivery.delivery_entries {
+                let credential = stored_invite_credential(&entry);
+                if credential_expired(&credential, now) {
+                    continue;
+                }
+                self.cached
+                    .invite_credentials
+                    .insert(entry.invite_id.as_str().to_owned(), credential);
+                crate::state::projection::notifications::upsert_invite_delivery_notification(
+                    &mut self.cached.notification_projection,
+                    &entry,
+                );
+            }
+        }
+    }
+
     /// Fold one server-written `ak.account.invite_delivery` cell into local
     /// private state. Per-entry latest `received_at` wins so a stale catch-up
     /// read cannot clobber a newer live fanout.
@@ -268,6 +343,62 @@ mod tests {
                     && invite.realm_id.as_str() == REALM_ID
                     && invite.created_at.to_rfc3339() == "2026-08-18T00:00:00+00:00"
         ));
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn station_cas_baseline_and_removal_replace_invite_delivery_state() {
+        let path = std::env::temp_dir().join(format!(
+            "inkson-station-cas-invite-delivery-{}.json",
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let mut store = LocalStateStore::with_path(&path);
+        let updated_at = DateTime::parse_from_rfc3339("2026-08-18T00:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        store.apply_station_cas_account_data(&[arkret_sdk::StationCasAccountDataContainer {
+            complete: true,
+            upserts: vec![arkret_sdk::AccountDataRow {
+                account_data_key: arkret_wire::AccountDataKey::ACCOUNT_INVITE_DELIVERY.to_owned(),
+                revision: 3,
+                content: cell(json!([entry(
+                    INVITE_ID,
+                    "ak:invite-token:baseline",
+                    "2026-08-18T00:00:00.000Z",
+                    "2099-08-25T00:00:00.000Z"
+                )])),
+                updated_at,
+            }],
+            removals: Vec::new(),
+        }]);
+        assert_eq!(
+            store
+                .load()
+                .invite_credential_for(INVITE_ID)
+                .map(|credential| credential.invite_token.as_str()),
+            Some("ak:invite-token:baseline")
+        );
+
+        store.apply_station_cas_account_data(&[arkret_sdk::StationCasAccountDataContainer {
+            complete: false,
+            upserts: Vec::new(),
+            removals: vec![arkret_sdk::StationCasAccountDataRemoval {
+                account_data_key: arkret_wire::AccountDataKey::ACCOUNT_INVITE_DELIVERY.to_owned(),
+                revision: 4,
+                updated_at,
+            }],
+        }]);
+        let state = store.load();
+        assert!(state.invite_credential_for(INVITE_ID).is_none());
+        assert!(
+            !state
+                .station_cas_account_data
+                .contains_key(arkret_wire::AccountDataKey::ACCOUNT_INVITE_DELIVERY)
+        );
+        assert!(store.notification_projection().is_empty());
         let _ = std::fs::remove_file(path);
     }
 

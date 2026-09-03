@@ -913,10 +913,7 @@ fn encrypted_scope_allows_content_only_metadata_create_payloads() {
     let strand = crate::operation::ak_ops::kanban_card_strand_create(
         TEST_REALM_ID,
         "ak:did_core:web:alice.example",
-        "ak:space:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-",
-        "ak:space:AQM8rE4gp8l4axkSbbb9_dkqwWE8ZPYHwFsC24o2mrIL",
         "private card title",
-        "U",
     )
     .expect("builds")
     .build("inkson");

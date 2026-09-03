@@ -240,7 +240,7 @@ pub(super) fn submit_kanban_operation_event(
     // NOTE: `spawn_forever` is NOT in the dioxus prelude (only `spawn` is);
     // reach it via the re-exported core crate.
     dioxus::core::spawn_forever(async move {
-        let result = with_authed_api(&base_url, api_token, |api| async move {
+        let result = with_authed_api(&base_url, api_token.clone(), |api| async move {
             api.event_submitter()?
                 .with_state_store(submit_state_store)
                 .submit_sdk_event(&operation)
@@ -442,20 +442,26 @@ pub(super) fn submit_kanban_card_create(
     // wire, which the server can only reject or store unreadably. Hold the
     // create until the List receipt lands, exactly as the add-list action holds
     // for the Board receipt.
-    if arkret_sdk::SpaceId::new(command.list_space_id.as_str()).is_err() {
+    if arkret_sdk::SpaceId::new(command.board_space_id.as_str()).is_err()
+        || arkret_sdk::SpaceId::new(command.list_space_id.as_str()).is_err()
+    {
         board_status.set(
             "This list is still being created; add cards after server confirmation.".to_owned(),
         );
         return;
     }
-    let envelope = crate::operation::ak_ops::kanban_card_strand_create(
-        &realm_id,
-        &actor_id,
-        &command.board_space_id,
-        &command.list_space_id,
-        &command.title,
-        &command.rank,
-    );
+    if command.rank.is_empty()
+        || command.rank.len() > 128
+        || !command
+            .rank
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric())
+    {
+        board_status.set("cannot submit card: invalid position rank".to_owned());
+        return;
+    }
+    let envelope =
+        crate::operation::ak_ops::kanban_card_strand_create(&realm_id, &actor_id, &command.title);
     let envelope = match envelope {
         Ok(builder) => builder.build_sdk_event("inkson"),
         Err(err) => {
@@ -533,6 +539,10 @@ pub(super) fn submit_kanban_card_create(
     ));
     let api_token = token();
     let realm_for_record = realm_id.clone();
+    let board_for_position = command.board_space_id.clone();
+    let list_for_position = command.list_space_id.clone();
+    let rank_for_position = command.rank.clone();
+    let actor_for_position = actor_id.clone();
     let seal_for_record = seal_ref.clone();
     let kind_for_record = kind.to_owned();
     let op_for_track = op_id.clone();
@@ -547,7 +557,7 @@ pub(super) fn submit_kanban_card_create(
     // lifetime boundary.
     let submit_state_store = crate::app::runtime_adapter::state_store_handle(state_store);
     dioxus::core::spawn_forever(async move {
-        let result = with_authed_api(&base_url, api_token, |api| async move {
+        let result = with_authed_api(&base_url, api_token.clone(), |api| async move {
             api.event_submitter()?
                 .with_state_store(submit_state_store)
                 .submit_sdk_event(&submit_event)
@@ -566,11 +576,11 @@ pub(super) fn submit_kanban_card_create(
                 state_store.write().record_move_submission_with_event_id(
                     op_for_track.clone(),
                     Some(resp.event_id.clone()),
-                    realm_for_record,
+                    realm_for_record.clone(),
                     kind_for_record.clone(),
                     state,
                     None,
-                    Some(seal_for_record),
+                    Some(seal_for_record.clone()),
                 );
                 tracing::debug!(
                     operation_id = %short_protocol_id(&op_for_track),
@@ -578,6 +588,104 @@ pub(super) fn submit_kanban_card_create(
                     kind = %kind_for_record,
                     "detached kanban card create accepted"
                 );
+
+                let accepted_event_id = match arkret_sdk::EventId::new(resp.event_id.clone()) {
+                    Ok(event_id) => event_id,
+                    Err(error) => {
+                        tracing::error!(%error, "accepted card create returned an invalid Event id");
+                        return;
+                    }
+                };
+                let strand_id =
+                    arkret_sdk::StrandId::from_event_id(&accepted_event_id).into_string();
+                let move_event = match crate::operation::ak_ops::strand_position_cas_update(
+                    &realm_for_record,
+                    &actor_for_position,
+                    event_kind_str::STRAND_MOVE,
+                    &board_for_position,
+                    &strand_id,
+                    serde_json::Value::Null,
+                    json!({"list_space_id": list_for_position, "rank": rank_for_position}),
+                )
+                .and_then(|builder| builder.build_sdk_event("inkson").map_err(Into::into))
+                {
+                    Ok(event) => event,
+                    Err(error) => {
+                        tracing::error!(%error, %strand_id, "card created without placement; move authoring failed");
+                        return;
+                    }
+                };
+                let move_id = move_event.local_operation_id().to_string();
+                let move_body = match queued_strand_position_body(
+                    &move_event,
+                    event_kind_str::STRAND_MOVE,
+                ) {
+                    Ok(body) => body,
+                    Err(error) => {
+                        tracing::error!(%error, %strand_id, "card created without placement; move payload failed");
+                        return;
+                    }
+                };
+                let move_record = match serde_json::to_value(QueuedStrandPositionRecord {
+                    kind: event_kind_str::STRAND_MOVE,
+                    move_id: &move_id,
+                    cell: strand_position_cell_id(&board_for_position, &strand_id),
+                    board_space_id: &board_for_position,
+                    strand_id: &strand_id,
+                    expected_position: serde_json::Value::Null,
+                    target_position: json!({"space_id": list_for_position, "rank": rank_for_position}),
+                    body: move_body,
+                    write_state: "submitted",
+                }) {
+                    Ok(record) => record,
+                    Err(error) => {
+                        tracing::error!(%error, %strand_id, "card created without placement; move queue encoding failed");
+                        return;
+                    }
+                };
+                state_store.write().enqueue_local_projection_command(
+                    move_id.clone(),
+                    Some(realm_for_record.clone()),
+                    move_record,
+                );
+                let move_submit_state_store =
+                    crate::app::runtime_adapter::state_store_handle(state_store);
+                let move_result = with_authed_api(&base_url, api_token, |api| async move {
+                    api.event_submitter()?
+                        .with_state_store(move_submit_state_store)
+                        .submit_sdk_event(&move_event)
+                        .await
+                })
+                .await;
+                match move_result {
+                    Ok(move_response) => {
+                        state_store.write().update_raw_operation_write_state(
+                            &move_id,
+                            "accepted",
+                            Some(move_response.event_id.clone()),
+                            None,
+                        );
+                        state_store.write().record_move_submission_with_event_id(
+                            move_id.clone(),
+                            Some(move_response.event_id),
+                            realm_for_record,
+                            event_kind_str::STRAND_MOVE.to_owned(),
+                            MoveSubmissionState::from_submit_state("accepted", None),
+                            None,
+                            Some(seal_for_record),
+                        );
+                    }
+                    Err(error) => {
+                        let error = error.display().to_string();
+                        state_store.write().update_raw_operation_write_state(
+                            &move_id,
+                            "soft_failed",
+                            None,
+                            Some(error.clone()),
+                        );
+                        tracing::warn!(%error, %strand_id, "card create accepted; placement move remains retryable");
+                    }
+                }
             }
             Err(err) => {
                 let error = err.display().to_string();

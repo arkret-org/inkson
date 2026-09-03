@@ -1273,9 +1273,7 @@ pub fn chinese_translations() -> TranslationDict {
         "settings.privacy.blocklist.empty_body",
         "你还没有屏蔽任何对象。",
     );
-    dict.set("settings.privacy.blocklist.kind.service", "Station 或服务");
     dict.set("settings.privacy.blocklist.kind.domain", "域名");
-    dict.set("settings.privacy.blocklist.kind.organization", "组织");
     dict.set("settings.privacy.blocklist.kind.actor", "用户或代理");
     dict.set(
         "settings.privacy.blocklist.applies_summary",
@@ -1296,15 +1294,10 @@ pub fn chinese_translations() -> TranslationDict {
     );
     dict.set("settings.privacy.blocklist.target_type", "对象类型");
     dict.set("settings.privacy.blocklist.target.actor", "目标账户或代理");
-    dict.set("settings.privacy.blocklist.target.identity", "目标身份");
     dict.set("settings.privacy.blocklist.target.domain", "目标域名");
     dict.set(
         "settings.privacy.blocklist.invalid.actor",
         "请输入完整的账户或代理身份；账户身份必须包含所属 Station。",
-    );
-    dict.set(
-        "settings.privacy.blocklist.invalid.identity",
-        "请输入有效且稳定的身份。",
     );
     dict.set(
         "settings.privacy.blocklist.invalid.domain",

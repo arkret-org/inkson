@@ -43,14 +43,8 @@ const BLOCK_REASON_CODES: &[&str] = &[
 /// Translation key for a `target.kind` value.
 fn target_kind_label_key(kind: crate::account_data::BlocklistUiTargetKind) -> &'static str {
     match kind {
-        crate::account_data::BlocklistUiTargetKind::Service => {
-            "settings.privacy.blocklist.kind.service"
-        }
         crate::account_data::BlocklistUiTargetKind::Domain => {
             "settings.privacy.blocklist.kind.domain"
-        }
-        crate::account_data::BlocklistUiTargetKind::Organization => {
-            "settings.privacy.blocklist.kind.organization"
         }
         crate::account_data::BlocklistUiTargetKind::Actor => {
             "settings.privacy.blocklist.kind.actor"
@@ -80,11 +74,7 @@ fn surface_label_key(
 /// Placeholder hint for the stable identifier input, by target kind.
 fn target_kind_placeholder(kind: crate::account_data::BlocklistUiTargetKind) -> &'static str {
     match kind {
-        crate::account_data::BlocklistUiTargetKind::Service => {
-            "ak:did_core:web:server.acme.example"
-        }
         crate::account_data::BlocklistUiTargetKind::Domain => "example.com",
-        crate::account_data::BlocklistUiTargetKind::Organization => "ak:did_core:web:acme.example",
         crate::account_data::BlocklistUiTargetKind::Actor => {
             r#"{"kind":"account","account_id":{"principal_id":"ak:did_core:web:alice.example","station_id":"ak:did_core:web:station.example"}}"#
         }
@@ -104,10 +94,11 @@ fn expiry_choice_to_rfc3339(choice: &str) -> Option<chrono::DateTime<chrono::Utc
 }
 
 fn is_valid_identity_id(kind: crate::account_data::BlocklistUiTargetKind, input: &str) -> bool {
-    if kind == crate::account_data::BlocklistUiTargetKind::Actor {
-        serde_json::from_str::<arkret_sdk::ActorId>(input).is_ok()
-    } else {
-        arkret_sdk::DidCoreId::new(input.trim().to_owned()).is_ok()
+    match kind {
+        crate::account_data::BlocklistUiTargetKind::Actor => {
+            serde_json::from_str::<arkret_sdk::ActorId>(input).is_ok()
+        }
+        crate::account_data::BlocklistUiTargetKind::Domain => !input.trim().is_empty(),
     }
 }
 
@@ -134,15 +125,14 @@ pub fn BlocklistSettingsCard(principal_id: Signal<String>, token: Signal<String>
     let mut applies_to = use_signal(|| crate::account_data::DEFAULT_BLOCKLIST_APPLIES_TO.to_vec());
     let mut status = use_signal(String::new);
 
-    // Actor targets require an explicit full ActorId; service/organization targets
-    // require a DidCoreId. Domain targets require a domain and at least one surface.
+    // Actor targets require an explicit full ActorId. Do not infer a Station for
+    // a bare principal or expand an organization/service affiliation into senders.
     let kind_now = target_kind();
-    let is_identity_kind = kind_now.is_identity();
     let raw_input = add_input();
     let input_trimmed = raw_input.trim();
     let input_empty = input_trimmed.is_empty();
     let input_valid = !input_empty
-        && if is_identity_kind {
+        && if kind_now == crate::account_data::BlocklistUiTargetKind::Actor {
             is_valid_identity_id(kind_now, input_trimmed)
         } else {
             crate::views::settings::is_likely_valid_domain(input_trimmed)
@@ -159,15 +149,11 @@ pub fn BlocklistSettingsCard(principal_id: Signal<String>, token: Signal<String>
     };
     let invalid_hint_key = if kind_now == crate::account_data::BlocklistUiTargetKind::Actor {
         "settings.privacy.blocklist.invalid.actor"
-    } else if is_identity_kind {
-        "settings.privacy.blocklist.invalid.identity"
     } else {
         "settings.privacy.blocklist.invalid.domain"
     };
     let target_input_label_key = if kind_now == crate::account_data::BlocklistUiTargetKind::Actor {
         "settings.privacy.blocklist.target.actor"
-    } else if is_identity_kind {
-        "settings.privacy.blocklist.target.identity"
     } else {
         "settings.privacy.blocklist.target.domain"
     };
@@ -193,11 +179,10 @@ pub fn BlocklistSettingsCard(principal_id: Signal<String>, token: Signal<String>
                         {
                             let blocked_at = entry.created_at;
                             let kind = crate::account_data::blocklist_target_kind_label(&entry.target);
-                            let kind_label = match kind {
-                                "service" => crate::i18n::tr(target_kind_label_key(crate::account_data::BlocklistUiTargetKind::Service)),
-                                "domain" => crate::i18n::tr(target_kind_label_key(crate::account_data::BlocklistUiTargetKind::Domain)),
-                                "organization" => crate::i18n::tr(target_kind_label_key(crate::account_data::BlocklistUiTargetKind::Organization)),
-                                _ => crate::i18n::tr(target_kind_label_key(crate::account_data::BlocklistUiTargetKind::Actor)),
+                            let kind_label = if kind == "domain" {
+                                crate::i18n::tr(target_kind_label_key(crate::account_data::BlocklistUiTargetKind::Domain))
+                            } else {
+                                crate::i18n::tr(target_kind_label_key(crate::account_data::BlocklistUiTargetKind::Actor))
                             };
                             let entry_value = crate::account_data::blocklist_target_value(&entry.target);
                             let entry_label = if crate::account_data::target_is_actor(&entry.target) {
@@ -498,11 +483,11 @@ mod tests {
             Kind::Actor,
             r#"{"kind":"account","account_id":{"principal_id":"ak:did_core:web:bob.example"}}"#
         ));
-        assert!(is_valid_identity_id(
-            Kind::Service,
-            "ak:did_core:web:station.example"
-        ));
-        assert!(!is_valid_identity_id(Kind::Service, &actor));
+        let service = arkret_sdk::ActorId::service(
+            arkret_sdk::DidCoreId::new("ak:did_core:web:station.example").unwrap(),
+        )
+        .to_string();
+        assert!(is_valid_identity_id(Kind::Actor, &service));
     }
 
     fn account_actor(station: &str) -> String {

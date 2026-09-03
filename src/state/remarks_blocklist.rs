@@ -237,7 +237,7 @@ impl LocalStateStore {
         changed
     }
 
-    /// Append a typed block (`kind` ∈ actor / service / domain / organization)
+    /// Append a typed block exposed by this UI (`kind` ∈ actor / domain)
     /// to the personal blocklist. Idempotent per `(kind, value)` pair.
     /// `applies_to` lists the surfaces the block covers (empty = all default
     /// surfaces); `expires_at` is an optional RFC 3339 expiry. Same

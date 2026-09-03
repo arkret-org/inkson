@@ -80,6 +80,7 @@ fn snapshot_refresh_preserves_an_existing_live_invite_projection() {
                 left_ids: Vec::new(),
             },
             account_data: Vec::new(),
+            station_cas_account_data: Vec::new(),
             notifications: Vec::new(),
             agent_signer_evidence: Vec::new(),
             partial: false,

@@ -230,18 +230,27 @@ test("kanban submits canonical card-create events", async ({ page }) => {
       request.url().includes("/_arkret/self/events") &&
       request.method() === "POST",
   );
+  const moveSubmit = page.waitForRequest((request) => {
+    if (!request.url().includes("/_arkret/self/events") || request.method() !== "POST") {
+      return false;
+    }
+    return submittedEvent(request.postDataJSON())?.kind === "ak.strand.move";
+  });
   await page.getByTestId("save-card-button").click();
   const eventBody = submittedEvent(
     await eventSubmit.then((request) => request.postDataJSON()),
   );
   expect(eventBody.kind).toBe("ak.strand.create");
-  expect(eventBody.payload.object.metadata.fields.board_space_id).toBe(
-    DEMO_BOARD_SPACE,
-  );
-  expect(eventBody.payload.object.metadata.fields.list_space_id).toMatch(
-    /^ak:space:/,
-  );
+  expect(eventBody.payload.object.metadata.fields.board_space_id).toBeUndefined();
+  expect(eventBody.payload.object.metadata.fields.list_space_id).toBeUndefined();
+  expect(eventBody.payload.object.metadata.fields.rank).toBeUndefined();
   expect(eventBody.payload.components).toBeUndefined();
+  const moveBody = submittedEvent(
+    await moveSubmit.then((request) => request.postDataJSON()),
+  );
+  expect(moveBody.payload.board_space_id).toBe(DEMO_BOARD_SPACE);
+  expect(moveBody.payload.target_space_id).toMatch(/^ak:space:/);
+  expect(moveBody.payload.strand_id).toMatch(/^ak:strand:/);
   await page.reload({ waitUntil: "domcontentloaded" });
   await dismissHistoryRecoveryModal(page);
   await dismissBlockingRecoveryModal(page);

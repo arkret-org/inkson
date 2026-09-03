@@ -890,10 +890,7 @@ fn stamped_intent_round_trips_through_authoring_without_semantic_drift() {
     let operation = crate::operation::ak_ops::kanban_card_strand_create(
         realm,
         AUTHORITY_CONTROLLER,
-        "ak:space:Aa5chVG-4dxTy5sBQLuc7faYg5r3Odrl_3Q7uLf7FY_Y",
-        "ak:space:ARO6sshXyY_8aIrsd0F5-zoAcfxTRnG5n7zA6tFwGX2l",
         "probe card",
-        "a0",
     )
     .unwrap()
     .build_sdk_event("inkson")

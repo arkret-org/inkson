@@ -406,7 +406,7 @@ pub(crate) fn contact_petname_binding_index(
     for (principal_id, remark) in remarks {
         for anchor in [
             Some(remark.petname.as_str()),
-            remark.global_display_name_at_save.as_deref(),
+            remark.confirmed_display_name.as_deref(),
         ]
         .into_iter()
         .flatten()

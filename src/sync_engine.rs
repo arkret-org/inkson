@@ -394,16 +394,10 @@ fn account_updates_are_empty(updates: &arkret_sdk::SyncUpdates) -> bool {
         && updates.device_lists.changed_ids.is_empty()
         && updates.device_lists.left_ids.is_empty()
         && updates.account_data.is_empty()
+        && updates.station_cas_account_data.is_empty()
         && updates.notifications.is_empty()
         && updates.agent_signer_evidence.is_empty()
         && !updates.partial
-}
-
-fn should_recover_invite_delivery(initial: bool) -> bool {
-    // Live delivery is owned by the account stream's to-device queue. Initial
-    // startup additionally reads the same server-written account-data cell
-    // once, which is the spec recovery path for an offline or lost fanout.
-    initial
 }
 
 fn realm_update_has_durable_projection(update: &arkret_sdk::RealmUpdate) -> bool {
@@ -520,50 +514,6 @@ impl
             http.clone(),
             crate::transport::RequestContext::new(self.ctx.token.get()),
         );
-
-        if should_recover_invite_delivery(step.initial) {
-            match crate::transport::account::account_data_snapshot(
-                http,
-                arkret_wire::AccountDataKey::ACCOUNT_INVITE_DELIVERY,
-            )
-            .await
-            {
-                Ok(snapshot) => {
-                    let delivery_cell = snapshot.entry.map(|entry| entry.content);
-                    self.ctx.state_store.write(|store| {
-                        if !store.active_account_matches(&self.ctx.principal_id) {
-                            tracing::warn!(
-                                response_principal = %self.ctx.principal_id,
-                                active_principal = ?store.active_principal_id(),
-                                "discarded invite-delivery recovery after the active principal changed"
-                            );
-                            return;
-                        }
-                        store.batch(|store| {
-                            if let Some(content) = &delivery_cell {
-                                store.save_invite_delivery_cell(content);
-                            }
-                            // The recovery cell is a full register and may
-                            // still contain an entry whose Realm joined in the
-                            // initial frame. Typed membership remains the final
-                            // notification adjudicator.
-                            apply_notification_projection(
-                                store,
-                                &response,
-                                self.ctx.principal_id.as_str(),
-                                false,
-                            );
-                        });
-                    });
-                }
-                Err(error) if is_auth_expired_error(&error) => {
-                    return Ok(AccountPostCommitOutcome::Unauthorized {
-                        reason: Some(error.to_string()),
-                    });
-                }
-                Err(error) => tracing::debug!(?error, "invite-delivery recovery deferred"),
-            }
-        }
 
         let agent_evidence_changed =
             crate::identity::agent_signer_evidence::prefetch_from_realm_projections(
@@ -1952,6 +1902,7 @@ pub fn apply_response(response: &AccountSyncStep, is_full_sync: bool, ctx: &Sync
                 &ctx.account.authority,
                 principal_id.as_str(),
             );
+            store.apply_station_cas_account_data(&response.updates.station_cas_account_data);
             // Fold holder-private delivery cells before Realm membership
             // adjudicates the inbox. If a frame carries both an older full
             // invite-delivery cell and membership=`join`, the joined roster
@@ -3059,6 +3010,7 @@ mod tests {
                     left_ids: Vec::new(),
                 },
                 account_data: Vec::new(),
+                station_cas_account_data: Vec::new(),
                 notifications: Vec::new(),
                 agent_signer_evidence: Vec::new(),
                 partial: false,
@@ -3073,12 +3025,6 @@ mod tests {
 
         response.updates.partial = true;
         assert!(!account_updates_are_empty(&response.updates));
-    }
-
-    #[test]
-    fn steady_state_sync_does_not_poll_invites() {
-        assert!(should_recover_invite_delivery(true));
-        assert!(!should_recover_invite_delivery(false));
     }
 
     /// Restates `circle_scan_ignores_ephemeral_only_realm_updates`.

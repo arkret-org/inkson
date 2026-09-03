@@ -6,7 +6,7 @@
 //! wire model.
 
 use arkret_models_collaboration::objects::productivity::{
-    AccountBlocklistDidTarget, AccountBlocklistDidTargetKind, AccountBlocklistMode,
+    AccountBlocklistActorTarget, AccountBlocklistActorTargetKind, AccountBlocklistMode,
     AccountBlocklistPayload, AccountBlocklistPayloadEntry, AccountBlocklistSurface,
     AccountBlocklistTarget, AccountBlocklistValueTarget, AccountBlocklistValueTargetKind,
 };
@@ -18,19 +18,15 @@ use serde_json::Value;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum BlocklistUiTargetKind {
     Actor,
-    Service,
-    Organization,
     Domain,
 }
 
 impl BlocklistUiTargetKind {
-    pub const ALL: [Self; 4] = [Self::Actor, Self::Service, Self::Domain, Self::Organization];
+    pub const ALL: [Self; 2] = [Self::Actor, Self::Domain];
 
     pub const fn ui_value(self) -> &'static str {
         match self {
             Self::Actor => "actor",
-            Self::Service => "service",
-            Self::Organization => "organization",
             Self::Domain => "domain",
         }
     }
@@ -38,15 +34,9 @@ impl BlocklistUiTargetKind {
     pub fn from_ui_value(value: &str) -> Option<Self> {
         match value {
             "actor" => Some(Self::Actor),
-            "service" => Some(Self::Service),
-            "organization" => Some(Self::Organization),
             "domain" => Some(Self::Domain),
             _ => None,
         }
-    }
-
-    pub const fn is_identity(self) -> bool {
-        !matches!(self, Self::Domain)
     }
 }
 
@@ -78,7 +68,7 @@ pub const fn blocklist_surface_label(surface: AccountBlocklistSurface) -> &'stat
 
 pub fn normalize_blocklist_value(kind: BlocklistUiTargetKind, value: &str) -> String {
     let trimmed = value.trim();
-    if kind.is_identity() {
+    if kind == BlocklistUiTargetKind::Actor {
         return trimmed.to_owned();
     }
     let mut value = trimmed
@@ -95,27 +85,11 @@ fn target_from_ui(
 ) -> Result<AccountBlocklistTarget, String> {
     let value = normalize_blocklist_value(kind, value);
     match kind {
-        BlocklistUiTargetKind::Actor
-        | BlocklistUiTargetKind::Service
-        | BlocklistUiTargetKind::Organization => {
-            let kind = match kind {
-                BlocklistUiTargetKind::Actor => AccountBlocklistDidTargetKind::Actor,
-                BlocklistUiTargetKind::Service => AccountBlocklistDidTargetKind::Service,
-                BlocklistUiTargetKind::Organization => AccountBlocklistDidTargetKind::Organization,
-                BlocklistUiTargetKind::Domain => unreachable!(),
-            };
-            Ok(AccountBlocklistTarget::Did(AccountBlocklistDidTarget {
-                kind,
-                actor_id: match kind {
-                    AccountBlocklistDidTargetKind::Actor => {
-                        serde_json::from_str::<arkret_sdk::ActorId>(&value)
-                            .map_err(|error| error.to_string())?
-                    }
-                    AccountBlocklistDidTargetKind::Service
-                    | AccountBlocklistDidTargetKind::Organization => arkret_sdk::ActorId::service(
-                        arkret_sdk::DidCoreId::new(value).map_err(|error| error.to_string())?,
-                    ),
-                },
+        BlocklistUiTargetKind::Actor => {
+            Ok(AccountBlocklistTarget::Actor(AccountBlocklistActorTarget {
+                kind: AccountBlocklistActorTargetKind::Actor,
+                actor_id: serde_json::from_str::<arkret_sdk::ActorId>(&value)
+                    .map_err(|error| error.to_string())?,
             }))
         }
         BlocklistUiTargetKind::Domain => {
@@ -129,11 +103,7 @@ fn target_from_ui(
 
 pub fn blocklist_target_kind_label(target: &AccountBlocklistTarget) -> &'static str {
     match target {
-        AccountBlocklistTarget::Did(target) => match target.kind {
-            AccountBlocklistDidTargetKind::Actor => "actor",
-            AccountBlocklistDidTargetKind::Service => "service",
-            AccountBlocklistDidTargetKind::Organization => "organization",
-        },
+        AccountBlocklistTarget::Actor(_) => "actor",
         AccountBlocklistTarget::DeviceId(_)
         | AccountBlocklistTarget::DeviceVerificationMethod(_) => "device",
         AccountBlocklistTarget::Applet(_) => "applet",
@@ -147,13 +117,7 @@ pub fn blocklist_target_kind_label(target: &AccountBlocklistTarget) -> &'static 
 
 pub fn blocklist_target_value(target: &AccountBlocklistTarget) -> String {
     match target {
-        AccountBlocklistTarget::Did(target) => match target.kind {
-            AccountBlocklistDidTargetKind::Actor => target.actor_id.to_string(),
-            AccountBlocklistDidTargetKind::Service
-            | AccountBlocklistDidTargetKind::Organization => {
-                target.actor_id.signing_principal_id().to_string()
-            }
-        },
+        AccountBlocklistTarget::Actor(target) => target.actor_id.to_string(),
         AccountBlocklistTarget::DeviceId(target) => target.object_ref.to_string(),
         AccountBlocklistTarget::DeviceVerificationMethod(target) => target.value.to_string(),
         AccountBlocklistTarget::Applet(target) => target.object_ref.to_string(),
@@ -164,8 +128,8 @@ pub fn blocklist_target_value(target: &AccountBlocklistTarget) -> String {
 pub fn target_is_actor(target: &AccountBlocklistTarget) -> bool {
     matches!(
         target,
-        AccountBlocklistTarget::Did(AccountBlocklistDidTarget {
-            kind: AccountBlocklistDidTargetKind::Actor,
+        AccountBlocklistTarget::Actor(AccountBlocklistActorTarget {
+            kind: AccountBlocklistActorTargetKind::Actor,
             ..
         })
     )
@@ -257,8 +221,8 @@ fn actor_entries_filter_surface(
     };
     let now = chrono::Utc::now();
     list.iter().any(|entry| {
-        matches!(&entry.target, AccountBlocklistTarget::Did(target)
-            if target.kind == AccountBlocklistDidTargetKind::Actor && target.actor_id == needle)
+        matches!(&entry.target, AccountBlocklistTarget::Actor(target)
+            if target.actor_id == needle)
             && entry_filters_surface(entry, surface, include_mute, now)
     })
 }
@@ -328,8 +292,8 @@ pub fn unblock_user_in(list: &mut Vec<AccountBlocklistPayloadEntry>, actor_id: &
     };
     let before = list.len();
     list.retain(|entry| {
-        !matches!(&entry.target, AccountBlocklistTarget::Did(target)
-            if target.kind == AccountBlocklistDidTargetKind::Actor && target.actor_id == needle)
+        !matches!(&entry.target, AccountBlocklistTarget::Actor(target)
+            if target.actor_id == needle)
     });
     list.len() != before
 }

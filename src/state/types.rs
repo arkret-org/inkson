@@ -959,6 +959,9 @@ pub struct ClientLocalState {
     /// at `MAX_INVITE_CREDENTIALS` (expired first, then oldest).
     #[serde(default)]
     pub invite_credentials: BTreeMap<String, StoredInviteCredential>,
+    /// Authoritative Station-CAS Account Data projection from account subscribe.
+    #[serde(default)]
+    pub station_cas_account_data: BTreeMap<String, arkret_sdk::AccountDataRow>,
     /// Per-realm watch level overrides (spec
     /// `discovery/push-notifications.md` §4.3.2). Only non-default entries are
     /// stored; an absent realm resolves to `WatchLevel::MentionsOnly`.
@@ -1251,7 +1254,7 @@ pub struct ClientLocalState {
     pub accepted_human_contact_principals: BTreeSet<String>,
     /// Actor-private personal blocklist per
     /// `discovery/client-preferences.md` (`ak.account.blocklist`). Each
-    /// entry hides messages from the targeted DID in chat
+    /// actor entry hides messages from one exact complete sender ActorId in chat
     /// renderers and surfaces in the Settings → Privacy panel. The
     /// Entries use the SDK's closed wire contract directly; no client-local
     /// DTO is persisted alongside it.
@@ -1502,6 +1505,7 @@ impl Default for ClientLocalState {
             to_device_receipts: BTreeMap::new(),
             notification_client_state: BTreeMap::new(),
             invite_credentials: BTreeMap::new(),
+            station_cas_account_data: BTreeMap::new(),
             realm_watch_levels: BTreeMap::new(),
             muted_notification_kinds: BTreeMap::new(),
             notification_dnd_settings: None,

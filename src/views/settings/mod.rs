@@ -329,10 +329,11 @@ pub(crate) fn push_blocklist_account_data(
 
 /// Client-side DNS-domain sanity check for the blocklist `domain` target
 /// (`client-preferences.md` §3.5 / `content-moderation.md` §4.3). Like
-/// the typed stable-identity parser used by the blocklist card, this only powers *live*
+/// the ActorId parser used by the blocklist card, this only powers *live*
 /// form feedback. The wire value is normalized by
-/// `account_data::normalize_blocklist_value` and the real DID/claim resolution
-/// stable-identity/claim resolution happens client-side before the block applies.
+/// `account_data::normalize_blocklist_value`. A domain target remains a private
+/// string filter; it does not resolve or prove Actor, service, Organization, or
+/// Realm affiliation.
 /// Accepts a bare multi-label domain (`example.com`, `sub.acme.example`);
 /// rejects schemes, ports, paths, whitespace, `@`, and single-label inputs.
 pub(crate) fn is_likely_valid_domain(input: &str) -> bool {
