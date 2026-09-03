@@ -1785,11 +1785,18 @@ async fn finish_oidc_callback(
     )
     .await
     .map_err(|error| format!("Persist account handoff credential failed: {error}"))?;
-    {
+    let handoff_barrier = {
         let mut store = state_store.write();
         persist_pending_account_handoff(&mut store, pending_handoff.clone())
             .map_err(|error| format!("Persist account handoff checkpoint failed: {error}"))?;
-    }
+        store.begin_durable_flush().map_err(|error| {
+            format!("Prepare account handoff durability barrier failed: {error}")
+        })?
+    };
+    handoff_barrier
+        .wait()
+        .await
+        .map_err(|error| format!("Durably persist account handoff checkpoint failed: {error}"))?;
     record_authenticated_account_route(&pending_handoff, &disposition, &account_route);
     if let (
         AuthenticatedAccountRoute::ReturningSession(returning_device),
@@ -2320,6 +2327,26 @@ mod tests {
 
         assert!(store.pending_principal_registration().is_some());
         assert_eq!(store.pending_account_handoff(), Some(new_handoff));
+    }
+
+    #[tokio::test]
+    async fn callback_handoff_checkpoint_can_be_awaited_before_full_page_navigation() {
+        let path = std::env::temp_dir().join(format!(
+            "inkson-test-callback-handoff-durable-{}.json",
+            crate::operation::uuid_v7()
+        ));
+        let mut store = crate::state::LocalStateStore::with_path(path.clone());
+        let handoff = pending_handoff_for_test(
+            "ak:request:019f0000-0000-7000-8000-000000000013",
+            "alice:auth.example",
+        );
+
+        persist_pending_account_handoff(&mut store, handoff.clone()).unwrap();
+        store.begin_durable_flush().unwrap().wait().await.unwrap();
+        drop(store);
+
+        let reopened = crate::state::LocalStateStore::with_path(path);
+        assert_eq!(reopened.pending_account_handoff(), Some(handoff));
     }
 
     #[test]

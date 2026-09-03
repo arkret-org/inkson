@@ -51,6 +51,30 @@ fn account_snapshot_refresh_preserves_local_realm_profile_overlay() {
 }
 
 #[test]
+fn account_snapshot_refresh_preserves_pre_genesis_mls_binding_selectors() {
+    let path = temp_state_path("pre-genesis-mls-binding-refresh");
+    let mut store = LocalStateStore::with_path(path);
+    let realm_id = "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-";
+
+    store.save_realm_tree_projection(
+        realm_id,
+        json!({
+            "summary": {"title": "Encrypted"},
+            "content_scheme": "mls_exporter_aead_v1",
+            "durability_policy": {"kind": "rhrk_v1"}
+        }),
+    );
+    store.save_realm_tree_projection(
+        realm_id,
+        json!({"summary": {"title": "Encrypted", "encryption_profile": "mls_rfc9420"}}),
+    );
+
+    let projection = &store.load().realm_tree_projections[realm_id];
+    assert_eq!(projection["content_scheme"], "mls_exporter_aead_v1");
+    assert_eq!(projection["durability_policy"]["kind"], "rhrk_v1");
+}
+
+#[test]
 fn submit_receipt_reconciles_before_local_projection_runs() {
     let path = temp_state_path("local-projection-command-fast-receipt");
     let mut store = LocalStateStore::with_path(path);

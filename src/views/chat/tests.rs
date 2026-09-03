@@ -3351,6 +3351,16 @@ fn composer_enter_behavior_matches_chat_conventions_and_protects_ime_input() {
 }
 
 #[test]
+fn encrypted_send_stays_blocked_until_creator_governance_bootstrap_converges() {
+    assert!(composer::chat_secure_send_blocked(
+        false, true, false, false
+    ));
+    assert!(!composer::chat_secure_send_blocked(
+        false, false, false, false
+    ));
+}
+
+#[test]
 fn participation_visibility_uses_most_specific_effective_scope() {
     use arkret_models_collaboration::governance::agent_participation::{
         AgentParticipationEntry, ParticipationBits, ParticipationNextReplaceInput,

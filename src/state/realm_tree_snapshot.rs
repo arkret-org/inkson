@@ -63,6 +63,25 @@ impl LocalStateStore {
         {
             incoming.insert("_inkson_realm_profile_payload".to_owned(), local_profile);
         }
+        // The create workflow stores these create-locked selectors locally so
+        // a pre-Genesis MLS proposal can be resumed after navigation/reload.
+        // Account snapshots do not carry them until an accepted MLS Genesis is
+        // folded into the local Event projection. Preserve the local values
+        // across that gap; accepted Genesis remains authoritative because the
+        // resolver always prefers its signed governance_binding.
+        for key in ["content_scheme", "durability_policy"] {
+            if let Some(local_value) = self
+                .cached
+                .realm_tree_projections
+                .get(&projection_id)
+                .and_then(|current| current.get(key))
+                .cloned()
+                && let Some(incoming) = projection.as_object_mut()
+                && !incoming.contains_key(key)
+            {
+                incoming.insert(key.to_owned(), local_value);
+            }
+        }
         if self.cached.realm_tree_projections.get(&projection_id) == Some(&projection) {
             return; // projection identical — skip flush + dirtying renders
         }

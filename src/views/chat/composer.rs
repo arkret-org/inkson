@@ -61,6 +61,18 @@ pub(super) fn chat_composer_should_send_key(
     key == "Enter" && !shift && !alt && !is_composing && !is_auto_repeating
 }
 
+pub(super) fn chat_secure_send_blocked(
+    pending_mls_binding: bool,
+    creator_mls_bootstrap_pending: bool,
+    sidecar_send_blocked: bool,
+    sidecar_route_pending: bool,
+) -> bool {
+    pending_mls_binding
+        || creator_mls_bootstrap_pending
+        || sidecar_send_blocked
+        || sidecar_route_pending
+}
+
 fn latest_source_event_anchor(
     messages: &[ChatMessage],
     realm_id: &str,
@@ -176,6 +188,18 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
     };
     let sidecar_send_blocked = sidecar_send_block_reason.is_some();
     let active_sidecar_present = active_sidecar_session.is_some();
+    // Realm creation exposes the discussion surface as soon as the Genesis
+    // Event is accepted, while the background verifier may still be advancing
+    // the locally pinned governance checkpoint to the Seal that covers it.
+    // Keep encrypted send disabled during that convergence window; the
+    // state-store Signal rerenders this component when bootstrap completes.
+    let creator_mls_bootstrap_pending = selected_channel_security_encrypted
+        && !active_sidecar_present
+        && crate::mls::creator_bootstrap::creator_mls_bootstrap_pending(
+            &state_store.read(),
+            &selected_realm_id,
+            &principal_id,
+        );
     let participants_for_plaintext_sidecar = participants_for_messages.clone();
     let participants_for_encrypted_sidecar = participants_for_messages.clone();
     let composer_placeholder = chat_composer_placeholder(mentions_enabled);
@@ -1620,9 +1644,12 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                     Button {
                         variant: send_secure_variant,
                         "data-testid": send_secure_testid,
-                        disabled: selected_realm_pending_mls_binding
-                            || sidecar_send_blocked
-                            || sidecar_route_pending(),
+                        disabled: chat_secure_send_blocked(
+                            selected_realm_pending_mls_binding,
+                            creator_mls_bootstrap_pending,
+                            sidecar_send_blocked,
+                            sidecar_route_pending(),
+                        ),
                         onclick: {
                             let base = base_url.clone();
                             let realm = selected_realm_id.clone();
