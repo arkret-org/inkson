@@ -149,11 +149,7 @@ pub fn CirclesPanel(
                                     span { class: "pill", "{lifecycle_label(circle.state)}" }
                                 }
                                 span { class: "muted",
-                                    if let Some(member_count) = circle.member_count {
-                                        "{circle.display.short_name} · {member_count} members"
-                                    } else {
-                                        "{circle.display.short_name} · member count hidden"
-                                    }
+                                    "{circle.display.short_name} · {circle.member_ids.len()} members"
                                 }
                                 span { class: "muted", "{encryption_label(&circle.encryption_profile)}" }
                             }
@@ -175,11 +171,7 @@ pub fn CirclesPanel(
                         }
                         div { class: "circle-boundary-grid",
                             div { strong { "Membership" } span {
-                                if let Some(member_count) = circle.member_count {
-                                    "{member_count} active members"
-                                } else {
-                                    "Exact count hidden until you join"
-                                }
+                                "{circle.member_ids.len()} active members"
                             } }
                             div { strong { "Your access" } span { "{membership_label(circle.viewer_membership)}" } }
                             div { strong { "Join rule" } span { "{circle.join_rule:?}" } }

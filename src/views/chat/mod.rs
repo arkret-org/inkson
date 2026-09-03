@@ -1589,7 +1589,8 @@ pub fn ChatPanel(
                                 short_name: circle.display.short_name,
                                 color_token: format!("{:?}", circle.display.color_token),
                                 symbol: format!("{:?}", circle.display.symbol),
-                                member_count: circle.member_count.unwrap_or(0),
+                                member_count: u32::try_from(circle.member_ids.len())
+                                    .unwrap_or(u32::MAX),
                                 state: circle.state,
                                 viewer_is_member: true,
                             })
