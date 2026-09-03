@@ -217,8 +217,11 @@ fn visible_realm_preview_does_not_masquerade_as_joined_membership() {
         .expect("valid typed Realm sync entry")
     };
 
+    // `account-subscribe-frame.schema.json#/$defs/member_roster_entry` closes
+    // `membership` to `join | knock` and states that invite lifecycle records
+    // are not membership and MUST NOT appear on the roster, so there is no
+    // `"invite"` row to assert against — the typed roster cannot carry one.
     assert!(actor_is_joined_member(&entry("join"), actor_id));
-    assert!(!actor_is_joined_member(&entry("invite"), actor_id));
     assert!(!actor_is_joined_member(&entry("knock"), actor_id));
     assert!(!actor_is_joined_member(
         &arkret_sdk::RealmSyncEntry::default(),
@@ -244,9 +247,12 @@ fn hydrate_pending_invite_uses_typed_local_membership() {
     let invite = || test_invite(1, realm_id);
 
     let mut invited_state = ClientLocalState::default();
+    // Same closed enum as the wire roster: `knock` is the roster's real
+    // "present but not joined" row. Feeding `"invite"` here only exercised the
+    // deserialization-failure path while claiming to test a membership value.
     invited_state
         .realm_tree_projections
-        .insert(realm_id.to_owned(), projection("invite"));
+        .insert(realm_id.to_owned(), projection("knock"));
     let mut invited_raw = Vec::new();
     push_test_invite_projection(&mut invited_raw, vec![invite()], &JoinedRealmIds::default());
     assert_eq!(

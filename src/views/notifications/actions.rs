@@ -29,11 +29,33 @@ pub(crate) fn refresh_notifications(
         let session_credential = session_credential();
         match with_authed_api(&base_url, session_credential, |api| async move {
             let http = api.sdk_http_client()?;
-            crate::client_core::account_subscribe_snapshot(&http, None).await
+            let response = crate::client_core::account_subscribe_snapshot(&http, None).await?;
+            // `invite-addressing.md` §7 - the notify branch's durable carrier is
+            // the holder-private `ak.account.invite_delivery` cell, and the
+            // account-subscribe stream never carries CAS-only cells. The live
+            // to-device fanout is a wake, not the record of truth, so a surface
+            // that renders invites has to read the cell itself; otherwise an
+            // invite whose wake was missed stays invisible until the next cold
+            // start, and the visible refresh control cannot recover it. This is
+            // the same recovery the sync engine performs on its initial step. A
+            // failed read must not take the rest of the refresh down with it.
+            let delivery_cell = match crate::transport::account::account_data_snapshot(
+                &http,
+                arkret_wire::AccountDataKey::ACCOUNT_INVITE_DELIVERY,
+            )
+            .await
+            {
+                Ok(snapshot) => snapshot.entry.map(|entry| entry.content),
+                Err(error) => {
+                    tracing::debug!(?error, "invite-delivery notification recovery deferred");
+                    None
+                }
+            };
+            Ok((response, delivery_cell))
         })
         .await
         {
-            Ok(response) => {
+            Ok((response, delivery_cell)) => {
                 let principal_id = state_store.read().active_principal_id().unwrap_or_default();
                 let push_rules =
                     push_rules_from_account_data(&authority, &response.updates.account_data);
@@ -48,6 +70,9 @@ pub(crate) fn refresh_notifications(
                     );
                 let hydrated = {
                     let mut store = state_store.write();
+                    if let Some(content) = &delivery_cell {
+                        store.save_invite_delivery_cell(content);
+                    }
                     let raw_notifications =
                         apply_notification_snapshot_to_store(&mut store, &response, &joined_realms);
                     apply_notification_inbox_states(&mut store, &inbox_states);

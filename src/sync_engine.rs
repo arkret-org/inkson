@@ -3806,13 +3806,18 @@ mod tests {
             response
         };
 
-        apply_notification_projection(&mut store, &response("invite"), actor_id, false);
+        // `account-subscribe-frame.schema.json#/$defs/member_roster_entry`
+        // closes `membership` to `join | knock` and states that invite
+        // lifecycle records are not membership and MUST NOT appear on the
+        // roster. `knock` is therefore the roster's real "present but not
+        // joined" row, and it is what must leave a pending invite standing.
+        apply_notification_projection(&mut store, &response("knock"), actor_id, false);
         assert!(
             store
                 .notification_projection()
                 .iter()
                 .any(|entry| entry.invite().is_some()),
-            "an invite membership projection must preserve the pending invite"
+            "a non-join roster membership must preserve the pending invite"
         );
 
         apply_notification_projection(&mut store, &response("join"), actor_id, false);

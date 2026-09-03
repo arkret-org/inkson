@@ -90,6 +90,7 @@ impl LocalStateStore {
         let mut merged = std::mem::take(&mut self.cached.invite_credentials);
         let now = Utc::now();
         merged.retain(|_, credential| !credential_expired(credential, now));
+        let projection_before = self.cached.notification_projection.clone();
         let mut applied = 0;
         for entry in delivery.delivery_entries {
             let invite_id = entry.invite_id.as_str().to_owned();
@@ -101,13 +102,21 @@ impl LocalStateStore {
                 Some(existing) if existing.received_at >= credential.received_at => {}
                 _ => {
                     merged.insert(invite_id, credential);
-                    crate::state::projection::notifications::upsert_invite_delivery_notification(
-                        &mut self.cached.notification_projection,
-                        &entry,
-                    );
                     applied += 1;
                 }
             }
+            // The credential map and the notification projection are separate
+            // durable stores, so "the credential is already current" is no
+            // evidence that the notification survived: a joined-Realm prune or
+            // a projection rewrite drops the notification without touching the
+            // credential, and gating the upsert on the credential would then
+            // leave the two permanently diverged with no path back. The upsert
+            // is keyed by `invite:<invite_id>` and the read/archived overlay
+            // lives outside the projection, so re-asserting it is idempotent.
+            crate::state::projection::notifications::upsert_invite_delivery_notification(
+                &mut self.cached.notification_projection,
+                &entry,
+            );
         }
         while merged.len() > MAX_INVITE_CREDENTIALS {
             let Some(oldest) = merged
@@ -120,7 +129,7 @@ impl LocalStateStore {
             merged.remove(&oldest);
         }
         self.cached.invite_credentials = merged;
-        if applied > 0 {
+        if applied > 0 || projection_before != self.cached.notification_projection {
             let _ = self.flush();
         }
         applied
