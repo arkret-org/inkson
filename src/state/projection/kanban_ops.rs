@@ -26,6 +26,7 @@ enum LocalKanbanEvent {
     StrandReorder(arkret_sdk::StrandReorderPayload),
     StrandArchive(arkret_sdk::ObjectLifecyclePayload),
     StrandRestore(arkret_sdk::ObjectLifecyclePayload),
+    RsvpSet(arkret_sdk::RsvpSetPayload),
     RelationCreate(arkret_sdk::RelationCreatePayload),
     RelationTombstone(arkret_sdk::RelationTombstonePayload),
 }
@@ -83,6 +84,11 @@ impl LocalKanbanEvent {
                     .typed_payload::<arkret_wire::event_spec::StrandRestore>()
                     .ok()?,
             ),
+            arkret_sdk::EventKind::RsvpSet => Self::RsvpSet(
+                event
+                    .typed_payload::<arkret_wire::event_spec::RsvpSet>()
+                    .ok()?,
+            ),
             arkret_sdk::EventKind::RelationCreate => Self::RelationCreate(
                 event
                     .typed_payload::<arkret_wire::event_spec::RelationCreate>()
@@ -107,6 +113,7 @@ impl LocalKanbanEvent {
                     created_at: &metadata.created_at,
                     write_state: "synced",
                     body: $payload,
+                    causal_refs: &metadata.causal_refs,
                     local_target_ref: metadata.local_target_ref.as_deref(),
                     local_temporary_target_ref: metadata.local_temporary_target_ref.as_deref(),
                     local_operation_idempotency_alias: metadata
@@ -127,6 +134,7 @@ impl LocalKanbanEvent {
             Self::StrandReorder(payload) => serialize_record!(StrandReorder, payload),
             Self::StrandArchive(payload) => serialize_record!(StrandArchive, payload),
             Self::StrandRestore(payload) => serialize_record!(StrandRestore, payload),
+            Self::RsvpSet(payload) => serialize_record!(RsvpSet, payload),
             Self::RelationCreate(payload) => serialize_record!(RelationCreate, payload),
             Self::RelationTombstone(payload) => serialize_record!(RelationTombstone, payload),
         }
@@ -141,6 +149,8 @@ struct LocalKanbanRecord<'a, T> {
     created_at: &'a str,
     write_state: &'static str,
     body: &'a T,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    causal_refs: &'a Vec<arkret_sdk::Hash>,
     #[serde(skip_serializing_if = "Option::is_none")]
     local_target_ref: Option<&'a str>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -153,6 +163,7 @@ struct LocalRecordMetadata {
     operation_id: String,
     actor_id: arkret_sdk::ActorId,
     created_at: String,
+    causal_refs: Vec<arkret_sdk::Hash>,
     local_target_ref: Option<String>,
     local_temporary_target_ref: Option<String>,
     local_operation_idempotency_alias: Option<String>,
@@ -210,6 +221,7 @@ fn kanban_operation_from_typed(event: &arkret_sdk::Event) -> Option<RawOperation
         operation_id: operation_id.clone(),
         actor_id: event.actor_id.clone(),
         created_at: arkret_sdk::canonical::format_timestamp_canonical(event.created_at),
+        causal_refs: event.causal_refs.clone(),
         local_target_ref,
         local_temporary_target_ref,
         local_operation_idempotency_alias: event
@@ -309,6 +321,43 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    #[test]
+    fn rsvp_events_enter_the_kanban_projection_with_their_causal_basis() {
+        let basis = arkret_sdk::Hash::new(
+            "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        )
+        .unwrap();
+        let mut event = arkret_wire::test_support::raw_event(
+            arkret_sdk::EventKind::RsvpSet.as_str(),
+            arkret_sdk::ScopeRef::Realm {
+                realm_id: arkret_sdk::RealmId::new(
+                    "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
+                )
+                .unwrap(),
+            },
+            arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example").unwrap(),
+            arkret_sdk::DidCoreId::new("ak:did_core:web:station.example").unwrap(),
+            1,
+            arkret_sdk::Hlc::new("01970e589d21-0004-a13f9c2e").unwrap(),
+            serde_json::json!({
+                "event_ref": "ak:strand:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1",
+                "occurrence": null,
+                "entry": {
+                    "schedule_basis_refs": [basis.to_string()],
+                    "response": {"status": "accepted"}
+                }
+            }),
+        )
+        .unwrap();
+        event.causal_refs = vec![basis.clone()];
+
+        let records = kanban_operations_from_events(&[event]);
+
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].payload["kind"], "ak.rsvp.set");
+        assert_eq!(records[0].payload["causal_refs"][0], basis.to_string());
+    }
 
     #[test]
     fn client_event_path_projects_without_reparsing_the_envelope() {

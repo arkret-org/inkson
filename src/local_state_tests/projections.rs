@@ -30,6 +30,27 @@ fn local_projection_commands_wait_for_the_projector() {
 }
 
 #[test]
+fn account_snapshot_refresh_preserves_local_realm_profile_overlay() {
+    let path = temp_state_path("realm-profile-overlay-refresh");
+    let mut store = LocalStateStore::with_path(path);
+    let realm_id = "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-";
+
+    store.save_realm_tree_projection(
+        realm_id,
+        json!({
+            "summary": {"title": "stale"},
+            "_inkson_realm_profile_payload": {"title": "current"}
+        }),
+    );
+    store.save_realm_tree_projection(realm_id, json!({"summary": {"title": "stale"}}));
+
+    assert_eq!(
+        store.load().realm_tree_projections[realm_id]["_inkson_realm_profile_payload"]["title"],
+        "current"
+    );
+}
+
+#[test]
 fn submit_receipt_reconciles_before_local_projection_runs() {
     let path = temp_state_path("local-projection-command-fast-receipt");
     let mut store = LocalStateStore::with_path(path);

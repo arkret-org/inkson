@@ -756,7 +756,7 @@ pub(super) fn dispatch_calendar_rsvp(
                         event.created_at(),
                     ),
                     write_state: "queued",
-                    body,
+                    body: body.clone(),
                 }) {
                     Ok(record) => record,
                     Err(err) => {
@@ -781,6 +781,31 @@ pub(super) fn dispatch_calendar_rsvp(
                     board_status.set(format!("RSVP failed: {submitted:#?}"));
                     return;
                 };
+                let accepted_event_id = response.event_id.clone();
+                let causal_refs = body
+                    .entry
+                    .schedule_basis_refs
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>();
+                state_store.write().upsert_raw_operation(
+                    accepted_event_id.clone(),
+                    Some(realm_id),
+                    serde_json::json!({
+                        "kind": kind,
+                        "operation_id": accepted_event_id,
+                        "event_id": response.event_id,
+                        "local_operation_idempotency_alias": operation_id,
+                        "actor_id": actor_id,
+                        "created_at": arkret_sdk::canonical::format_timestamp_canonical(
+                            crate::clock::now_utc()
+                        ),
+                        "write_state": "synced",
+                        "body": body,
+                        "causal_refs": causal_refs.clone(),
+                        "locally_observed_schedule_heads": causal_refs,
+                    }),
+                );
                 board_status.set(format!(
                     "{} accepted as {}",
                     kind,

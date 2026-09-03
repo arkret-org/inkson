@@ -39,14 +39,10 @@ fn calendar_patch_writes_one_activation_pair() {
             "by_day": [{"day": "mo"}, {"day": "we"}]
         })
     );
-    // `location` is the one schedule member that may be encrypted, so it is
-    // written on its own child path where the private-value pipeline can reach
-    // it; the child sorts after its parent object.
-    assert!(calendar.get("location").is_none());
-    assert_eq!(
-        patch[CALENDAR_LOCATION_PRIVATE_PATH]["value"],
-        json!({ "title": "Board room" })
-    );
+    // The whole calendar subtree is one atomic patch value. The private-value
+    // pipeline discovers the nested location without adding an overlapping
+    // child patch path.
+    assert_eq!(calendar["location"], json!({ "title": "Board room" }));
 
     // The activation pair plus the encrypted `location` child are the only
     // schedule entries: no flat field or profile-id impostor is ever written.
@@ -66,6 +62,23 @@ fn calendar_patch_writes_one_activation_pair() {
     let private_values = collect_encryptable_private_patch_values(&patch).unwrap();
     assert_eq!(private_values.len(), 1);
     assert_eq!(private_values[0].0, CALENDAR_LOCATION_PRIVATE_PATH);
+
+    let mut encrypted_patch = patch.clone();
+    replace_private_patch_values(
+        &mut encrypted_patch,
+        &[CALENDAR_LOCATION_PRIVATE_PATH.to_owned()],
+        vec![json!({"ciphertext": "calendar-location"})],
+    )
+    .unwrap();
+    assert!(
+        encrypted_patch
+            .get(CALENDAR_LOCATION_PRIVATE_PATH)
+            .is_none()
+    );
+    assert_eq!(
+        encrypted_patch[CALENDAR_SUBTREE_PATH]["value"]["location"]["ciphertext"],
+        "calendar-location"
+    );
 }
 
 #[test]
@@ -385,6 +398,58 @@ fn card_without_a_projected_frontier_cannot_author_an_rsvp() {
 }
 
 #[test]
+fn locally_accepted_rsvp_retains_the_observed_schedule_frontier() {
+    let source_event_id =
+        arkret_sdk::EventId::from_digest(arkret_sdk::canonical::DigestSuite::Sha256, [9_u8; 32]);
+    let projected = vec![crate::state::projection_views::StrandProjectionView {
+        strand_id: TEST_CALENDAR_STRAND_ID.to_owned(),
+        realm_id: TEST_REALM_ID.to_owned(),
+        title: "Calendar".to_owned(),
+        summary: None,
+        content: None,
+        encrypted_content: None,
+        tracks: Default::default(),
+        board_space_id: None,
+        list_space_id: None,
+        rank: None,
+        assigned_actor_ids: Vec::new(),
+        assigned_to_relations: Vec::new(),
+        fields: Default::default(),
+        schema_refs: Vec::new(),
+        rsvps: Vec::new(),
+        schedule_revision_heads: Vec::new(),
+        state: arkret_sdk::ProjectionObjectState::Active,
+        created_by: None,
+        created_at: None,
+        updated_by: None,
+        updated_at: None,
+    }];
+    let accepted = RawOperationRecord {
+        operation_id: source_event_id.to_string(),
+        realm_id: Some(TEST_REALM_ID.to_owned()),
+        received_at: chrono::Utc::now(),
+        payload: json!({
+            "kind": "ak.rsvp.set",
+            "event_id": source_event_id,
+            "actor_id": "ak:did_core:web:alice.example",
+            "write_state": "synced",
+            "locally_observed_schedule_heads": [FRONTIER],
+            "body": {
+                "event_ref": TEST_CALENDAR_STRAND_ID,
+                "entry": {
+                    "schedule_basis_refs": [FRONTIER],
+                    "response": {"status": "accepted"}
+                }
+            }
+        }),
+    };
+
+    let views = strand_views_from_projection_and_ops(&projected, &[accepted]);
+    assert_eq!(views[0].schedule_revision_heads, vec![FRONTIER.to_owned()]);
+    assert_eq!(views[0].rsvps.len(), 1);
+}
+
+#[test]
 fn calendar_overlay_replaces_the_whole_schedule_subtree() {
     let mut card = test_card(TEST_CALENDAR_STRAND_ID, "U");
     card.calendar = CalendarCardFields {
@@ -493,6 +558,24 @@ fn rsvp_display_shows_own_answer_and_aggregate() {
     assert_eq!(display.accepted, 1);
     assert_eq!(display.declined, 1);
     assert_eq!(display.excluded, 0);
+}
+
+#[test]
+fn rsvp_display_matches_a_complete_account_actor_to_the_self_principal() {
+    let cells = vec![RsvpCellProjectionView {
+        occurrence: None,
+        actor_id: r#"{"account_id":{"principal_id":"ak:did_core:web:alice.example","station_id":"ak:did_core:web:station.example"},"kind":"account"}"#.to_owned(),
+        heads: vec![rsvp_head(1, FRONTIER, "accepted")],
+    }];
+
+    let display = calendar_rsvp_display(
+        &cells,
+        &[FRONTIER.to_owned()],
+        None,
+        "ak:did_core:web:alice.example",
+    );
+
+    assert_eq!(display.own_status.as_deref(), Some("accepted"));
 }
 
 #[test]

@@ -84,7 +84,11 @@ impl PrincipalControlHistory {
         let rows = http.events_read_all_pages_for_actor(actor_id).await?.events;
         let mut events = crate::models::require_complete_event_rows(&rows, purpose)?
             .into_iter()
-            .filter(|event| &event.actor_id == actor_id && event.realm_id == *realm_id)
+            .filter(|event| {
+                &event.actor_id == actor_id
+                    && event.realm_id == *realm_id
+                    && event.kind.is_control_plane()
+            })
             .collect::<Vec<_>>();
         events.sort_by(|left, right| {
             left.actor_seq

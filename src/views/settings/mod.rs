@@ -1202,27 +1202,16 @@ pub fn SettingsPanel(
                                                         if avatar_uploading() {
                                                             return;
                                                         }
-                                                        profile_avatar_blob_ref.set(String::new());
-                                                        avatar_refresh_nonce.set(avatar_refresh_nonce() + 1);
-                                                        pending_avatar_crop.set(None);
-                                                        avatar_uploading.set(false);
-                                                        state_store.write().save_plain_local_data(
-                                                            "avatar_blob_ref",
-                                                            "",
-                                                        );
+                                                        avatar_uploading.set(true);
                                                         avatar_upload_status.set(String::new());
                                                         avatar_cache_status.set(
-                                                            "Avatar removed locally; syncing clear to other devices.".to_owned(),
+                                                            "Removing avatar from the public profile.".to_owned(),
                                                         );
-                                                        // Tombstone the actor-private mirror so
-                                                        // other devices clear too.
-                                                        push_client_ui_account_data_with_avatar(
-                                                            base.clone(),
-                                                            api_token.clone(),
-                                                            theme(),
-                                                            Some(String::new()),
-                                                        );
-                                                        // Tombstone the public profile entry.
+                                                        // Publish the public tombstone before the
+                                                        // actor-private mirror. Both Events share
+                                                        // one actor frontier; authoring them in the
+                                                        // opposite order lets the mirror advance the
+                                                        // frontier after the profile Event was built.
                                                         spawn(async move {
                                                             let authority_evidence = state_store
                                                                 .read()
@@ -1235,7 +1224,7 @@ pub fn SettingsPanel(
                                                                 })?;
                                                                 crate::transport::auth::with_event_submitter(
                                                                     &base,
-                                                                    api_token,
+                                                                    api_token.clone(),
                                                                     move |submitter| async move {
                                                                         crate::transport::account::update_profile(
                                                                             &submitter,
@@ -1252,8 +1241,33 @@ pub fn SettingsPanel(
                                                                 .map_err(|error| anyhow::anyhow!(error.display()))
                                                             }
                                                             .await;
-                                                            if let Err(err) = result {
-                                                                tracing::warn!("avatar profile clear failed: {err}");
+                                                            match result {
+                                                                Ok(_) => {
+                                                                    state_store.write().save_plain_local_data(
+                                                                        "avatar_blob_ref",
+                                                                        "",
+                                                                    );
+                                                                    push_client_ui_account_data_with_avatar(
+                                                                        base,
+                                                                        api_token,
+                                                                        theme(),
+                                                                        Some(String::new()),
+                                                                    );
+                                                                    profile_avatar_blob_ref.set(String::new());
+                                                                    avatar_refresh_nonce.set(avatar_refresh_nonce() + 1);
+                                                                    pending_avatar_crop.set(None);
+                                                                    avatar_uploading.set(false);
+                                                                    avatar_cache_status.set(
+                                                                        "Avatar removed; syncing clear to other devices.".to_owned(),
+                                                                    );
+                                                                }
+                                                                Err(err) => {
+                                                                    avatar_uploading.set(false);
+                                                                    avatar_cache_status.set(format!(
+                                                                        "Avatar removal failed: {err}"
+                                                                    ));
+                                                                    tracing::warn!("avatar profile clear failed: {err}");
+                                                                }
                                                             }
                                                         });
                                                     }

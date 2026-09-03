@@ -113,6 +113,7 @@ impl ClientProjector for RealmIngestProjector {
                         &self.realm_id,
                         &batch,
                     )
+                    + crate::sync_engine::ingest_realm_profile_events(store, &self.realm_id, &batch)
                     + crate::sync_engine::ingest_moderation_events(store, &batch)
             });
             // The local fold above is the durable gate. A preview is never

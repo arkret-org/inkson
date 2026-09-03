@@ -987,6 +987,7 @@ pub fn KanbanPanel(
         let seed_realm_id = local_realm_id.clone();
         let decrypt_realm_id = selected_realm_id.clone();
         let decrypt_authority = authority.clone();
+        let self_actor_id = principal_id.clone();
         let seed_columns = initial_columns.clone();
         move || {
             let board_id = selected_board()
@@ -1009,13 +1010,14 @@ pub fn KanbanPanel(
                     overlay_local_card_update_records(cols, &raw_operations, decrypt_ctx.as_ref());
                 return overlay_local_card_assignment_records(cols, &raw_operations);
             }
-            let (cols, ..) = project_board_with_projection(
+            let (cols, ..) = project_board_with_projection_for_actor(
                 &raw_operations,
                 &projected_containers,
                 &projected_strands,
                 &board_id,
                 &seed_realm_id,
                 decrypt_ctx.as_ref(),
+                &self_actor_id,
             );
             cols
         }

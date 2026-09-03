@@ -186,6 +186,22 @@ pub(crate) fn columns_from_lifecycle_projection(
     preferred_board_id: &str,
     decrypt_ctx: Option<&MlsDecryptCtx<'_>>,
 ) -> (Vec<KanbanColumn>, Vec<BoardSpaceOption>, Option<String>) {
+    columns_from_lifecycle_projection_for_actor(
+        containers,
+        strands,
+        preferred_board_id,
+        decrypt_ctx,
+        "",
+    )
+}
+
+pub(crate) fn columns_from_lifecycle_projection_for_actor(
+    containers: &[crate::state::projection_views::SpaceContainerProjectionView],
+    strands: &[crate::state::projection_views::StrandProjectionView],
+    preferred_board_id: &str,
+    decrypt_ctx: Option<&MlsDecryptCtx<'_>>,
+    self_actor_id: &str,
+) -> (Vec<KanbanColumn>, Vec<BoardSpaceOption>, Option<String>) {
     let board_options = board_space_options_from_projection(containers);
     let selected_board_id = if !preferred_board_id.trim().is_empty()
         && board_options
@@ -241,9 +257,11 @@ pub(crate) fn columns_from_lifecycle_projection(
             continue;
         };
         if let Some(column) = cols.iter_mut().find(|col| col.id == list_space_id) {
-            column
-                .cards
-                .push(card_from_strand_projection(strand, decrypt_ctx));
+            column.cards.push(card_from_strand_projection_for_actor(
+                strand,
+                decrypt_ctx,
+                self_actor_id,
+            ));
         }
     }
 

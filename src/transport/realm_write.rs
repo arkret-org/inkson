@@ -289,8 +289,7 @@ pub async fn update_realm_metadata(
 
 fn settled_realm_profile_payload(rows: &[arkret_sdk::EventReadRow]) -> anyhow::Result<Value> {
     let cell = arkret_wire::REALM_PROFILE_CELL;
-    let mut current = Value::Null;
-    let mut found = false;
+    let mut entries = Vec::new();
 
     for row in rows {
         let event = match row {
@@ -335,20 +334,42 @@ fn settled_realm_profile_payload(rows: &[arkret_sdk::EventReadRow]) -> anyhow::R
                 event.event_id
             );
         };
-        if guard.predicate.op != arkret_sdk::PredicateOp::HeadEq
-            || guard.predicate.value.as_ref() != Some(&current)
+        if guard.predicate.op != arkret_sdk::PredicateOp::HeadEq || guard.predicate.value.is_none()
         {
             anyhow::bail!(
-                "Realm profile history is not a single CAS chain at Event {}; conflict recovery is required",
+                "Realm profile Event {} must carry a value-bearing head_eq guard for {cell}",
                 event.event_id
             );
         }
-        current = payload;
-        found = true;
+        entries.push((
+            event.event_id.to_string(),
+            guard.predicate.value.clone().expect("checked above"),
+            payload,
+        ));
     }
 
-    if !found {
+    if entries.is_empty() {
         anyhow::bail!("Realm profile is missing from the accepted Realm history");
+    }
+    settle_realm_profile_chain(entries)
+}
+
+fn settle_realm_profile_chain(mut entries: Vec<(String, Value, Value)>) -> anyhow::Result<Value> {
+    let mut current = Value::Null;
+    while !entries.is_empty() {
+        let candidates = entries
+            .iter()
+            .enumerate()
+            .filter_map(|(index, (_, expected, _))| (expected == &current).then_some(index))
+            .collect::<Vec<_>>();
+        let [next] = candidates.as_slice() else {
+            anyhow::bail!(
+                "Realm profile history is not a single CAS chain at Event {}; conflict recovery is required",
+                entries[0].0
+            );
+        };
+        let (_, _, payload) = entries.swap_remove(*next);
+        current = payload;
     }
     Ok(current)
 }
@@ -922,7 +943,7 @@ mod tests {
         assert_eq!(guard.predicate.op, arkret_sdk::PredicateOp::HeadEq);
         assert_eq!(guard.predicate.value.as_ref(), Some(&expected));
 
-        let rows = vec![
+        let mut rows = vec![
             initial_row,
             arkret_sdk::EventReadRow::Event(
                 crate::operation::author_for_test(&replacement).into_event(),
@@ -931,6 +952,12 @@ mod tests {
         assert_eq!(
             settled_realm_profile_payload(&rows).unwrap()["title"],
             serde_json::json!("Platform")
+        );
+        rows.reverse();
+        assert_eq!(
+            settled_realm_profile_payload(&rows).unwrap()["title"],
+            serde_json::json!("Platform"),
+            "event pagination order must not change the CAS chain head"
         );
     }
 

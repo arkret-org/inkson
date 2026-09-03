@@ -41,6 +41,59 @@ fn canonical_realm_profile(body: Option<&Value>) -> Option<arkret_sdk::WindowSta
     serde_json::from_value(metadata.clone()).ok()
 }
 
+fn local_realm_profile(body: Option<&Value>) -> Option<arkret_sdk::RealmProfile> {
+    serde_json::from_value(body?.get("_inkson_realm_profile_payload")?.clone()).ok()
+}
+
+pub(crate) fn store_accepted_realm_profile(
+    store: &mut LocalStateStore,
+    realm_id: &str,
+    title: &str,
+    summary: Option<&str>,
+    avatar_blob_ref: Option<&str>,
+) {
+    let Some(mut projection) = store.load().realm_tree_projections.get(realm_id).cloned() else {
+        return;
+    };
+    let Ok(mut profile) = arkret_sdk::RealmProfile::new(title) else {
+        return;
+    };
+    profile.summary = summary.map(ToOwned::to_owned);
+    profile.avatar_blob_ref = avatar_blob_ref
+        .map(|value| arkret_sdk::BlobRef::new(value.to_owned()))
+        .transpose()
+        .ok()
+        .flatten();
+    let Ok(payload) = serde_json::to_value(profile) else {
+        return;
+    };
+    let Some(root) = projection.as_object_mut() else {
+        return;
+    };
+    root.insert("_inkson_realm_profile_payload".to_owned(), payload);
+    let Some(state) = root
+        .entry("state_at_window_start")
+        .or_insert_with(|| serde_json::json!({}))
+        .as_object_mut()
+    else {
+        return;
+    };
+    let Some(metadata) = state
+        .entry("realm_metadata")
+        .or_insert_with(|| serde_json::json!({}))
+        .as_object_mut()
+    else {
+        return;
+    };
+    metadata.insert("title".to_owned(), Value::String(title.to_owned()));
+    if let Some(summary) = summary {
+        metadata.insert("summary".to_owned(), Value::String(summary.to_owned()));
+    } else {
+        metadata.remove("summary");
+    }
+    store.save_realm_tree_projection(realm_id.to_owned(), projection);
+}
+
 fn canonical_space_string(body: Option<&Value>, field: &str) -> String {
     body.and_then(|body| body.get(field))
         .and_then(Value::as_str)
@@ -68,17 +121,23 @@ pub(crate) fn metadata_subject_for(store: &LocalStateStore, subject_id: &str) ->
     let kind = projection_kind_for_admin(subject_id);
     let (title, summary, avatar_blob_ref) = match kind {
         RealmTreeNodeKind::Realm => {
+            let local_profile = local_realm_profile(body);
             let profile = canonical_realm_profile(body);
             (
-                profile
+                local_profile
                     .as_ref()
-                    .and_then(|profile| profile.title.clone())
+                    .map(|profile| profile.title.clone())
+                    .or_else(|| profile.as_ref().and_then(|profile| profile.title.clone()))
                     .unwrap_or_default(),
-                profile
+                local_profile
                     .as_ref()
                     .and_then(|profile| profile.summary.clone())
+                    .or_else(|| profile.as_ref().and_then(|profile| profile.summary.clone()))
                     .unwrap_or_default(),
-                String::new(),
+                local_profile
+                    .and_then(|profile| profile.avatar_blob_ref)
+                    .map(|blob_ref| blob_ref.to_string())
+                    .unwrap_or_default(),
             )
         }
         RealmTreeNodeKind::Space => (

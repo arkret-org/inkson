@@ -693,6 +693,7 @@ fn realm_owner_coverage_gates_the_root_claim() {
     assert!(realm_owner_covers_event_kind("ak.space.create"));
     assert!(realm_owner_covers_event_kind("ak.mls.genesis"));
     assert!(realm_owner_covers_event_kind("ak.message.create"));
+    assert!(!realm_owner_covers_event_kind("ak.rsvp.set"));
     assert!(!realm_owner_covers_event_kind("ak.realm.create"));
     assert!(!realm_owner_covers_event_kind("ak.not.a.kind"));
 }
@@ -708,6 +709,8 @@ fn realm_authority_root_claim_stamps_only_the_matching_controller() {
         realm_authority_root_claim(&event(AUTHORITY_CONTROLLER), Some(&root)),
         Some(arkret_sdk::AuthorizationRef::new(arkret_wire::REALM_AUTHORITY_ROOT_CELL).unwrap())
     );
+    let rsvp = sdk_intent_with_kind(AUTHORITY_REALM, "ak.rsvp.set", AUTHORITY_CONTROLLER);
+    assert_eq!(realm_authority_root_claim(&rsvp, Some(&root)), None);
     assert_eq!(
         realm_authority_root_claim(&event("did:web:bob.example"), Some(&root)),
         None

@@ -158,6 +158,17 @@ pub(super) fn collect_encryptable_private_patch_values(
             values.push((path.clone(), bytes));
         }
     }
+    if let Some(location) = object
+        .get(CALENDAR_SUBTREE_PATH)
+        .and_then(|operation| operation.get("value").unwrap_or(operation).get("location"))
+        && value_is_plaintext_private_content(location)
+    {
+        values.push((
+            CALENDAR_LOCATION_PRIVATE_PATH.to_owned(),
+            serde_json::to_vec(location)
+                .map_err(|err| format!("cannot serialize calendar location: {err}"))?,
+        ));
+    }
     Ok(values)
 }
 
@@ -178,6 +189,16 @@ pub(super) fn replace_private_patch_values(
         return Ok(());
     };
     for (path, encrypted_value) in paths.iter().zip(encrypted_values) {
+        if path == CALENDAR_LOCATION_PRIVATE_PATH && !object.contains_key(path) {
+            let location = object
+                .get_mut(CALENDAR_SUBTREE_PATH)
+                .and_then(|operation| operation.get_mut("value"))
+                .and_then(Value::as_object_mut)
+                .and_then(|calendar| calendar.get_mut("location"))
+                .ok_or_else(|| format!("internal: missing nested private patch path {path}"))?;
+            *location = encrypted_value;
+            continue;
+        }
         let Some(mut patch_value) = object.remove(path) else {
             return Err(format!("internal: missing private patch path {path}"));
         };

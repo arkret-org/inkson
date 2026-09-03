@@ -1857,7 +1857,20 @@ pub fn apply_response(response: &AccountSyncStep, is_full_sync: bool, ctx: &Sync
                 } else {
                     RealmProjectionFrame::Incremental(body)
                 };
-                let projection = reconcile_realm_projection(existing.as_ref(), frame);
+                let mut projection = reconcile_realm_projection(existing.as_ref(), frame);
+                // This exact accepted profile payload is a local projection
+                // checkpoint, not a server wire field. A window-start frame
+                // can legitimately lag an accepted, not-yet-sealed Control
+                // Event, so retain the checkpoint until the Event fold below
+                // advances or confirms it.
+                if let Some(local_profile) = existing
+                    .as_ref()
+                    .and_then(|value| value.get(LOCAL_REALM_PROFILE_PAYLOAD))
+                    .cloned()
+                    && let Some(root) = projection.as_object_mut()
+                {
+                    root.insert(LOCAL_REALM_PROFILE_PAYLOAD.to_owned(), local_profile);
+                }
                 store.save_realm_tree_projection(id.to_owned(), projection.clone());
                 if let Err(error) =
                     store.reconcile_mls_genesis_group_state_ref_from_checkpoint(id, None)
@@ -1885,7 +1898,8 @@ pub fn apply_response(response: &AccountSyncStep, is_full_sync: bool, ctx: &Sync
                 let _ = ingest_kanban_projection_events(store, id, state_events)
                     + ingest_discussion_state_events_from_projection(store, id, &projection)
                     + ingest_message_events_from_projection(store, id, &projection)
-                    + ingest_moderation_projection_events(store, id, state_events);
+                    + ingest_moderation_projection_events(store, id, state_events)
+                    + ingest_realm_profile_projection_events(store, id, state_events);
                 ingest_membership_projection_events(store, id, state_events);
                 // Fold the discussion timeline into `raw_operations` too so the
                 // card-detail Discussion tab renders local-first instead of
@@ -2499,6 +2513,141 @@ pub(crate) fn ingest_default_strand_events(
     1
 }
 
+const LOCAL_REALM_PROFILE_PAYLOAD: &str = "_inkson_realm_profile_payload";
+
+fn realm_profile_event_entry(event: &arkret_sdk::Event) -> Option<(String, Value, Value)> {
+    if event.kind != arkret_sdk::EventKind::RealmProfile {
+        return None;
+    }
+    let payload = serde_json::to_value(&event.payload).ok()?;
+    serde_json::from_value::<arkret_sdk::RealmProfile>(payload.clone()).ok()?;
+    let guards = event
+        .preconditions
+        .iter()
+        .filter(|guard| guard.cell_id.as_str() == arkret_wire::REALM_PROFILE_CELL)
+        .collect::<Vec<_>>();
+    let [guard] = guards.as_slice() else {
+        return None;
+    };
+    if guard.predicate.op != arkret_sdk::PredicateOp::HeadEq {
+        return None;
+    }
+    Some((
+        event.event_id.to_string(),
+        guard.predicate.value.clone()?,
+        payload,
+    ))
+}
+
+fn advance_realm_profile_chain(
+    start: Value,
+    entries: &[(String, Value, Value)],
+) -> Option<(Value, usize)> {
+    let mut current = start;
+    let mut remaining = (0..entries.len()).collect::<Vec<_>>();
+    let mut consumed = 0;
+    loop {
+        let candidates = remaining
+            .iter()
+            .copied()
+            .filter(|index| entries[*index].1 == current)
+            .collect::<Vec<_>>();
+        match candidates.as_slice() {
+            [] => return Some((current, consumed)),
+            [next] => {
+                current = entries[*next].2.clone();
+                remaining.retain(|index| index != next);
+                consumed += 1;
+            }
+            _ => return None,
+        }
+    }
+}
+
+fn apply_realm_profile_events<'a>(
+    store: &mut LocalStateStore,
+    realm_id: &str,
+    events: impl Iterator<Item = &'a arkret_sdk::Event>,
+) -> usize {
+    let mut entries = events
+        .filter_map(realm_profile_event_entry)
+        .collect::<Vec<_>>();
+    entries.sort_by(|left, right| left.0.cmp(&right.0));
+    entries.dedup_by(|left, right| left.0 == right.0);
+    if entries.is_empty() {
+        return 0;
+    }
+    let Some(mut projection) = store.load().realm_tree_projections.get(realm_id).cloned() else {
+        return 0;
+    };
+    let stored = projection
+        .get(LOCAL_REALM_PROFILE_PAYLOAD)
+        .cloned()
+        .unwrap_or(Value::Null);
+    let settled_from_genesis = advance_realm_profile_chain(Value::Null, &entries)
+        .filter(|(_, consumed)| *consumed == entries.len());
+    let settled = settled_from_genesis.or_else(|| {
+        advance_realm_profile_chain(stored.clone(), &entries).filter(|(_, consumed)| *consumed > 0)
+    });
+    let Some((payload, _)) = settled else {
+        return 0;
+    };
+    if payload == stored {
+        return 0;
+    }
+    let Ok(profile) = serde_json::from_value::<arkret_sdk::RealmProfile>(payload.clone()) else {
+        return 0;
+    };
+    let Some(root) = projection.as_object_mut() else {
+        return 0;
+    };
+    root.insert(LOCAL_REALM_PROFILE_PAYLOAD.to_owned(), payload);
+    let state = root
+        .entry("state_at_window_start")
+        .or_insert_with(|| serde_json::json!({}));
+    let Some(state) = state.as_object_mut() else {
+        return 0;
+    };
+    let metadata = state
+        .entry("realm_metadata")
+        .or_insert_with(|| serde_json::json!({}));
+    let Some(metadata) = metadata.as_object_mut() else {
+        return 0;
+    };
+    metadata.insert("title".to_owned(), Value::String(profile.title));
+    if let Some(summary) = profile.summary {
+        metadata.insert("summary".to_owned(), Value::String(summary));
+    } else {
+        metadata.remove("summary");
+    }
+    store.save_realm_tree_projection(realm_id.to_owned(), projection);
+    1
+}
+
+pub(crate) fn ingest_realm_profile_projection_events(
+    store: &mut LocalStateStore,
+    realm_id: &str,
+    events: &[arkret_sdk::Event],
+) -> usize {
+    apply_realm_profile_events(store, realm_id, events.iter())
+}
+
+pub(crate) fn ingest_realm_profile_events(
+    store: &mut LocalStateStore,
+    realm_id: &str,
+    events: &[garth::ClientEvent],
+) -> usize {
+    apply_realm_profile_events(
+        store,
+        realm_id,
+        events.iter().filter_map(|event| match event {
+            garth::ClientEvent::Message(message) => Some(&message.event),
+            garth::ClientEvent::Event(event) => Some(event),
+            _ => None,
+        }),
+    )
+}
+
 fn ingest_member_identity_events_from_projection(
     store: &mut LocalStateStore,
     realm_id: &str,
@@ -2897,6 +3046,32 @@ mod tests {
     use serde_json::{Value, json};
 
     use super::*;
+
+    #[test]
+    fn realm_profile_chain_settles_independently_of_delivery_order() {
+        let initial = json!({
+            "schema": "ak.schema.realm_profile.v1",
+            "title": "Initial"
+        });
+        let updated = json!({
+            "schema": "ak.schema.realm_profile.v1",
+            "title": "Updated",
+            "summary": "Visible"
+        });
+        let cleared = json!({
+            "schema": "ak.schema.realm_profile.v1",
+            "title": "Updated"
+        });
+        let entries = vec![
+            ("event-c".to_owned(), updated.clone(), cleared.clone()),
+            ("event-a".to_owned(), Value::Null, initial.clone()),
+            ("event-b".to_owned(), initial, updated),
+        ];
+
+        let settled = advance_realm_profile_chain(Value::Null, &entries).unwrap();
+
+        assert_eq!(settled, (cleared, 3));
+    }
 
     #[test]
     fn local_device_revocation_rotates_the_live_device_id() {

@@ -4,6 +4,7 @@
 //! the blob service, while the transfer record is sealed before being written
 //! as private account-data under `ak.file_transfer.v1:<transfer_key>`.
 
+use anyhow::Context as _;
 pub use arkret_sdk::{
     FileTransferAad, FileTransferAccess, FileTransferAccessVisibility, FileTransferEncryption,
     FileTransferKeyDelivery, FileTransferKeyEnvelope, FileTransferRecord, FileTransferStatus,
@@ -144,7 +145,7 @@ pub async fn upload_actor_private_file(
     plaintext: Vec<u8>,
 ) -> anyhow::Result<FileTransferUploadResult> {
     let http = api.sdk_http_client()?;
-    let actor = arkret_sdk::Did::new(actor_id.trim().to_owned())?;
+    let actor = crate::mls_api_helpers::principal_core_id(actor_id)?;
     let principal_control_realm_id =
         crate::identity::principal_control::resolve_accepted(&http, &actor).await?;
     let mut prepared = prepare_actor_private_file(
@@ -711,12 +712,14 @@ fn prepare_actor_private_file(
     if device_id.trim().is_empty() {
         anyhow::bail!("device_id is required for file transfer");
     }
-    let actor = arkret_sdk::Did::new(actor_id.trim().to_owned())?;
+    let actor = crate::mls_api_helpers::principal_core_id(actor_id)
+        .context("file-transfer principal identity")?;
     let updated_hlc = crate::signing_stamp::issue_protocol_hlc(
         actor.as_str(),
         device_id.trim(),
         principal_control_realm_id.as_str(),
-    )?;
+    )
+    .context("file-transfer signing stamp")?;
     let transfer_id = crate::random::base64url_token(24, "file-transfer transfer-id rng")?;
     let account_data_key =
         crate::account_data::file_transfer_account_data_key(crypto.namespace_key(), &transfer_id)?;
@@ -817,6 +820,7 @@ fn file_transfer_item_from_account_data(
 ) -> anyhow::Result<FileTransferItem> {
     let account_data_key = entry
         .get("account_data_key")
+        .or_else(|| entry.get("key"))
         .or_else(|| entry.get("type"))
         .and_then(Value::as_str)
         .ok_or_else(|| anyhow::anyhow!("account_data entry missing account_data_key"))?;
@@ -1164,15 +1168,14 @@ mod tests {
 
     #[test]
     fn prepared_file_round_trips_through_record_envelope_and_content_aead() {
-        let crypto = FileTransferCryptoContext::from_account_secret(
-            &test_authority(),
-            &test_account_secret(),
-        )
-        .unwrap();
+        let authority = test_authority();
+        let crypto =
+            FileTransferCryptoContext::from_account_secret(&authority, &test_account_secret())
+                .unwrap();
         let prepared = prepare_actor_private_file(
             &crypto,
             &test_pcr(),
-            ACTOR,
+            authority.principal_id.as_str(),
             DEVICE,
             Some("report.pdf"),
             "Application/Pdf; charset=utf-8",
@@ -1212,6 +1215,42 @@ mod tests {
 
         let plaintext = decrypt_file_transfer_ciphertext(&items[0].record, &ciphertext).unwrap();
         assert_eq!(plaintext, b"hello file");
+    }
+
+    #[test]
+    fn account_subscribe_event_payload_restores_file_transfer_record() {
+        let authority = test_authority();
+        let crypto =
+            FileTransferCryptoContext::from_account_secret(&authority, &test_account_secret())
+                .unwrap();
+        let prepared = prepare_actor_private_file(
+            &crypto,
+            &test_pcr(),
+            authority.principal_id.as_str(),
+            DEVICE,
+            Some("restored.txt"),
+            "text/plain",
+            b"restored".to_vec(),
+        )
+        .unwrap();
+        let blob_ref = format!(
+            "ak:blob:sha256:{}",
+            prepared.content_digest.trim_start_matches("sha256:")
+        );
+        let blob_size_bytes = prepared.ciphertext.len() as u64;
+        let record = prepared.into_record(blob_ref, blob_size_bytes).unwrap();
+        let key = record_account_key(&record, &crypto).unwrap();
+        let envelope = seal_record_envelope(&record, &crypto, &key, ACTOR).unwrap();
+        let event_payload = json!({
+            "key": key,
+            "expected_revision": 0,
+            "encrypted_payload": envelope,
+            "updated_at": "2026-06-07T00:00:00.000Z",
+        });
+
+        let items = file_transfer_items_from_account_data(&[event_payload], &crypto);
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].record.filename.as_deref(), Some("restored.txt"));
     }
 
     #[test]

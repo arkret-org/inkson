@@ -266,6 +266,116 @@ fn apply_reorder_to_view(
     }
 }
 
+fn operation_actor_principal_id(record: &RawOperationRecord) -> Option<String> {
+    let actor = record.payload.get("actor_id")?;
+    if let Ok(actor) = serde_json::from_value::<arkret_sdk::ActorId>(actor.clone()) {
+        return Some(actor.signing_principal_id().as_str().to_owned());
+    }
+    let actor = actor.as_str()?.trim();
+    if let Ok(actor) = serde_json::from_str::<arkret_sdk::ActorId>(actor) {
+        return Some(actor.signing_principal_id().as_str().to_owned());
+    }
+    arkret_sdk::DidCoreId::new(actor.to_owned())
+        .ok()
+        .map(|actor| actor.as_str().to_owned())
+}
+
+/// Fold an accepted `ak.rsvp.set` into the Strand's local `mv_register`
+/// projection. The canonical Strand list deliberately omits RSVP cells, so
+/// the Event log is the client-side source for this component.
+fn apply_rsvp_set_to_view(
+    view: &mut crate::state::projection_views::StrandProjectionView,
+    record: &RawOperationRecord,
+) {
+    let Some(body) = op_body(record) else {
+        return;
+    };
+    if body.get("event_ref").and_then(Value::as_str) != Some(view.strand_id.as_str()) {
+        return;
+    }
+    let occurrence = match body.get("occurrence") {
+        None | Some(Value::Null) => None,
+        Some(Value::String(value)) => Some(value.clone()),
+        _ => return,
+    };
+    let Some(actor_id) = operation_actor_principal_id(record) else {
+        return;
+    };
+    let Some(entry) = body.get("entry").cloned() else {
+        return;
+    };
+    if serde_json::from_value::<arkret_sdk::RsvpEntry>(entry.clone()).is_err() {
+        return;
+    }
+    let source_event_id = record
+        .payload
+        .get("event_id")
+        .and_then(Value::as_str)
+        .unwrap_or(record.operation_id.as_str());
+    let Ok(event_id) = arkret_sdk::EventId::new(source_event_id.to_owned()) else {
+        // A queued holder-local operation has no content-derived Event id yet.
+        // The accepted Event replaces it through the ordinary sync funnel.
+        return;
+    };
+    let source_event_digest = event_id.event_digest().to_string();
+    // A holder-local accepted RSVP was built immediately after a complete
+    // Event-log read. Retain that observed schedule frontier until the regular
+    // synchronized Strand projection catches up. This is not inferred from a
+    // remote RSVP assertion: only the local authoring path writes the marker.
+    if view.schedule_revision_heads.is_empty()
+        && let Some(observed) = record
+            .payload
+            .get("locally_observed_schedule_heads")
+            .and_then(Value::as_array)
+    {
+        let heads = observed
+            .iter()
+            .filter_map(Value::as_str)
+            .filter_map(|value| arkret_sdk::Hash::new(value.to_owned()).ok())
+            .map(|value| value.to_string())
+            .collect::<std::collections::BTreeSet<_>>();
+        view.schedule_revision_heads.extend(heads);
+    }
+    let causal_refs = record
+        .payload
+        .get("causal_refs")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .collect::<std::collections::BTreeSet<_>>();
+
+    let cell = if let Some(cell) = view
+        .rsvps
+        .iter_mut()
+        .find(|cell| cell.occurrence == occurrence && cell.actor_id == actor_id)
+    {
+        cell
+    } else {
+        view.rsvps
+            .push(crate::state::projection_views::RsvpCellProjectionView {
+                occurrence,
+                actor_id,
+                heads: Vec::new(),
+            });
+        let Some(cell) = view.rsvps.last_mut() else {
+            return;
+        };
+        cell
+    };
+    if cell.heads.iter().any(|head| head.entry == entry) {
+        return;
+    }
+    cell.heads
+        .retain(|head| !causal_refs.contains(head.source_event_digest.as_str()));
+    cell.heads
+        .push(crate::state::projection_views::RsvpHeadProjectionView {
+            source_event_id: event_id.to_string(),
+            source_event_digest,
+            entry,
+        });
+}
+
 /// Reduce the operation stream into the current set of strands. Folds CREATE
 /// (base view) + MOVE / REORDER (placement) + ARCHIVE / RESTORE (lifecycle) in
 /// causal order; content updates and assignments are layered later at the card
@@ -388,6 +498,15 @@ pub(crate) fn strand_views_from_projection_and_ops(
                     && let Some(view) = by_id.get_mut(&id)
                 {
                     view.state = arkret_sdk::ProjectionObjectState::Active;
+                }
+            }
+            event_kind_str::RSVP_SET => {
+                if let Some(id) = op_body(record)
+                    .and_then(|body| json_path_string(Some(body), &["event_ref"]))
+                    .map(|id| resolve_event_derived_target_alias(&aliases, &id))
+                    && let Some(view) = by_id.get_mut(&id)
+                {
+                    apply_rsvp_set_to_view(view, record);
                 }
             }
             _ => {}
@@ -530,13 +649,38 @@ pub(crate) fn project_board_with_projection(
     realm_id: &str,
     decrypt_ctx: Option<&MlsDecryptCtx<'_>>,
 ) -> (Vec<KanbanColumn>, Vec<BoardSpaceOption>, Option<String>) {
+    project_board_with_projection_for_actor(
+        ops,
+        projected_containers,
+        projected_strands,
+        preferred_board_id,
+        realm_id,
+        decrypt_ctx,
+        "",
+    )
+}
+
+pub(crate) fn project_board_with_projection_for_actor(
+    ops: &[RawOperationRecord],
+    projected_containers: &[crate::state::projection_views::SpaceContainerProjectionView],
+    projected_strands: &[crate::state::projection_views::StrandProjectionView],
+    preferred_board_id: &str,
+    realm_id: &str,
+    decrypt_ctx: Option<&MlsDecryptCtx<'_>>,
+    self_actor_id: &str,
+) -> (Vec<KanbanColumn>, Vec<BoardSpaceOption>, Option<String>) {
     let aliases = event_derived_target_aliases(ops);
     let preferred_board_id = resolve_event_derived_target_alias(&aliases, preferred_board_id);
     let containers =
         space_container_views_from_projection_and_ops(projected_containers, ops, realm_id);
     let strands = strand_views_from_projection_and_ops(projected_strands, ops);
-    let (columns, board_options, board_id) =
-        columns_from_lifecycle_projection(&containers, &strands, &preferred_board_id, decrypt_ctx);
+    let (columns, board_options, board_id) = columns_from_lifecycle_projection_for_actor(
+        &containers,
+        &strands,
+        &preferred_board_id,
+        decrypt_ctx,
+        self_actor_id,
+    );
     let columns = overlay_local_card_update_records(columns, ops, decrypt_ctx);
     let columns = overlay_local_card_assignment_records(columns, ops);
     (columns, board_options, board_id)

@@ -30,7 +30,7 @@ pub fn RealmAdminPanel(
 ) -> Element {
     // A4 — base_url / state_store from session context instead of props.
     let base_url = crate::app::SessionContext::base_url_string();
-    let state_store = crate::app::SessionContext::get().state_store;
+    let mut state_store = crate::app::SessionContext::get().state_store;
     let mut metadata_title = use_signal(String::new);
     let mut metadata_summary = use_signal(String::new);
     let mut metadata_avatar_blob_ref = use_signal(String::new);
@@ -1147,30 +1147,35 @@ pub fn RealmAdminPanel(
                                             },
                                         );
                                         let patch = Value::Object(patch);
+                                        let accepted_title = title.clone();
+                                        let accepted_summary = (!summary.is_empty()).then_some(summary.clone());
+                                        let accepted_avatar = (!avatar_blob_ref.is_empty())
+                                            .then_some(avatar_blob_ref.clone());
                                         spawn(async move {
+                                            let submit_home_realm_id = home_realm_id.clone();
                                             match crate::transport::auth::with_event_submitter(
                                                 &base,
                                                 api_token,
                                                 |sub| async move {
                                                     let digest_suite = sub
                                                         .ensure_realm_governance_checkpoint(
-                                                            &home_realm_id,
+                                                            &submit_home_realm_id,
                                                         )
                                                         .await?;
                                                     let profile_result = match subject_kind {
                                                         RealmTreeNodeKind::Realm => {
-                                                            crate::transport::realm_write::update_realm_metadata(&sub, &home_realm_id, &actor_id, digest_suite, patch).await
+                                                            crate::transport::realm_write::update_realm_metadata(&sub, &submit_home_realm_id, &actor_id, digest_suite, patch).await
                                                         }
                                                         RealmTreeNodeKind::Space => {
-                                                            crate::transport::realm_write::update_space_metadata(&sub, &home_realm_id, &subject_id, &actor_id, patch).await
+                                                            crate::transport::realm_write::update_space_metadata(&sub, &submit_home_realm_id, &subject_id, &actor_id, patch).await
                                                         }
                                                     }?;
                                                     if subject_kind == RealmTreeNodeKind::Realm
                                                         && !alias.is_empty()
                                                     {
-                                                        crate::transport::realm_write::set_realm_alias(
-                                                            &sub,
-                                                            &home_realm_id,
+                                                            crate::transport::realm_write::set_realm_alias(
+                                                                &sub,
+                                                                &submit_home_realm_id,
                                                             &actor_id,
                                                             Some(&alias),
                                                         )
@@ -1181,12 +1186,22 @@ pub fn RealmAdminPanel(
                                             )
                                             .await
                                             {
-                                                Ok(_) if updates_alias => status_msg.set(format!(
-                                                    "{metadata_event_kind} profile and Realm alias updated"
-                                                )),
-                                                Ok(_) => status_msg.set(format!(
-                                                    "{metadata_event_kind} profile updated"
-                                                )),
+                                                Ok(_) => {
+                                                    if subject_kind == RealmTreeNodeKind::Realm {
+                                                        crate::views::realm_admin::metadata::store_accepted_realm_profile(
+                                                            &mut state_store.write(),
+                                                            &home_realm_id,
+                                                            &accepted_title,
+                                                            accepted_summary.as_deref(),
+                                                            accepted_avatar.as_deref(),
+                                                        );
+                                                    }
+                                                    status_msg.set(if updates_alias {
+                                                        format!("{metadata_event_kind} profile and Realm alias updated")
+                                                    } else {
+                                                        format!("{metadata_event_kind} profile updated")
+                                                    });
+                                                }
                                                 Err(err) => status_msg.set(format!(
                                                     "profile update failed: {}", err.display()
                                                 )),

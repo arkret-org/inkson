@@ -42,10 +42,27 @@ impl LocalStateStore {
     pub fn save_realm_tree_projection(
         &mut self,
         projection_id: impl Into<String>,
-        projection: Value,
+        mut projection: Value,
     ) {
         self.ensure_cached_loaded();
         let projection_id = projection_id.into();
+        // `_inkson_realm_profile_payload` is a local, event-replayed overlay.
+        // Account-sync snapshots do not carry it and may arrive after a
+        // freshly accepted profile Event. Preserve it unless the incoming
+        // projection explicitly supplies a newer settled value. Realm removal
+        // still goes through `forget_realm_tree_projection`, so this cannot
+        // retain data for a Realm that left the account window.
+        if let Some(local_profile) = self
+            .cached
+            .realm_tree_projections
+            .get(&projection_id)
+            .and_then(|current| current.get("_inkson_realm_profile_payload"))
+            .cloned()
+            && let Some(incoming) = projection.as_object_mut()
+            && !incoming.contains_key("_inkson_realm_profile_payload")
+        {
+            incoming.insert("_inkson_realm_profile_payload".to_owned(), local_profile);
+        }
         if self.cached.realm_tree_projections.get(&projection_id) == Some(&projection) {
             return; // projection identical — skip flush + dirtying renders
         }

@@ -306,30 +306,14 @@ pub(crate) fn calendar_patch_entries(
         CALENDAR_SCHEMA_REFS_PATH.to_owned(),
         json!({ "$op": "set", "value": [arkret_sdk::SchemaId::CALENDAR_EVENT_V1] }),
     );
-    // The subtree is validated as a whole object, so it is written as a whole
-    // object rather than field by field. `location` is split back out into its
-    // own child path: it is the one schedule member that may be encrypted, and
-    // the private-value pipeline encrypts per patch path. The child path sorts
-    // after its parent, so the parent object lands first and the encrypted
-    // envelope is written on top of it.
-    let mut subtree = event_value;
-    let location_changed = current.location != draft.location
-        || current.location_locked != draft.location_locked
-        || current.location_source.is_none() && draft.location_source.is_some();
-    let location = location_changed
-        .then(|| {
-            subtree
-                .as_object_mut()
-                .and_then(|object| object.remove("location"))
-        })
-        .flatten();
+    // The subtree is one atomic patch value. Patch paths may not overlap, so
+    // emitting both `metadata.fields.calendar` and its `.location` child in
+    // the same Event is a `patch_atomic_conflict`. The E2EE pipeline discovers
+    // the nested location and replaces it in this parent value before submit.
     patch.insert(
         CALENDAR_SUBTREE_PATH.to_owned(),
-        json!({ "$op": "set", "value": subtree }),
+        json!({ "$op": "set", "value": event_value }),
     );
-    if location_changed {
-        set_location_if_changed(patch, current, location, draft.location.trim());
-    }
     Ok(())
 }
 
@@ -888,14 +872,6 @@ fn parse_calendar_attendees(value: &str) -> Result<Vec<arkret_sdk::CalendarAtten
         .map_err(|err| format!("calendar attendees must be a JSON array: {err}"))
 }
 
-fn location_json_from_text(value: &str) -> Option<Value> {
-    location_value_from_text(value)
-        .map(serde_json::to_value)
-        .transpose()
-        .ok()
-        .flatten()
-}
-
 fn calendar_location_display_value(
     value: Option<&Value>,
     decrypt_ctx: Option<&MlsDecryptCtx<'_>>,
@@ -940,38 +916,6 @@ fn validate_calendar_event_value(value: &Value) -> Result<(), String> {
     arkret_sdk::ProtocolSchemaRegistry::default()
         .validate_value(arkret_sdk::SchemaId::CALENDAR_EVENT_V1, value)
         .map_err(|err| format!("calendar schedule does not match schema: {err}"))
-}
-
-fn set_if_changed(
-    patch: &mut Map<String, Value>,
-    path: &str,
-    current: Option<Value>,
-    next: Option<Value>,
-) {
-    if current == next {
-        return;
-    }
-    match next {
-        Some(value) => {
-            patch.insert(path.to_owned(), json!({ "$op": "set", "value": value }));
-        }
-        None => {
-            patch.insert(path.to_owned(), json!({ "$op": "unset" }));
-        }
-    }
-}
-
-fn set_location_if_changed(
-    patch: &mut Map<String, Value>,
-    current: &CalendarCardFields,
-    next: Option<Value>,
-    draft_location: &str,
-) {
-    if current.location_locked && draft_location.is_empty() {
-        return;
-    }
-    let current_value = location_json_from_text(&current.location);
-    set_if_changed(patch, CALENDAR_LOCATION_PRIVATE_PATH, current_value, next);
 }
 
 /// Card-level RSVP display state.
@@ -1057,7 +1001,11 @@ pub(crate) fn calendar_rsvp_display(
         let status = projection
             .effective_response()
             .map(|response| rsvp_status_text(response.status));
-        if actor_id == self_actor_id {
+        let actor_principal_id = serde_json::from_str::<arkret_sdk::ActorId>(actor_id)
+            .ok()
+            .map(|actor| actor.signing_principal_id().as_str().to_owned())
+            .unwrap_or_else(|| actor_id.trim().to_owned());
+        if actor_principal_id == self_actor_id.trim() {
             display.own_status = status.clone();
             display.own_conflicted = conflicted;
             display.own_needs_reconfirmation = needs_reconfirmation;
