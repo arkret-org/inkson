@@ -90,7 +90,7 @@ pub(crate) fn strand_projection_security_state(
             serde_json::json!({"synthesis": {(leaf): content}}),
         );
     }
-    crate::security_state::strand_projection_security_state(&Value::Object(value))
+    garth::strand_projection_security_state(&Value::Object(value))
 }
 
 pub(crate) fn strand_body_display_text(value: Option<&Value>) -> String {

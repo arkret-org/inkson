@@ -575,10 +575,9 @@ fn projected_member_profiles_for_realm(
     // source is the Realm authority-root cell derived from the accepted
     // `ak.realm.create` Event, so classify the owner from that projected Event
     // rather than the discarded `owners` / `admins` presentation mirrors.
-    if let Some(root) = crate::security_state::realm_authority_root_value_for_realm(
-        &state.realm_tree_projections,
-        realm_id,
-    ) {
+    if let Some(root) =
+        garth::realm_authority_root_value_for_realm(&state.realm_tree_projections, realm_id)
+    {
         let mut owner = MemberProfile::bare(root.controller_id.to_string());
         owner.membership = Some("join".to_owned());
         owner.is_owner = true;

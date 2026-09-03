@@ -40,9 +40,9 @@ pub(super) fn iter_backup_bodies(list_payload: &Value) -> impl Iterator<Item = &
         .flatten()
 }
 
-pub(super) fn backup_series_seq(body: &Value) -> u64 {
-    body.get("series_seq").and_then(Value::as_u64).unwrap_or(0)
-}
+// The `series_seq` accessor moved to garth with the series-chain verifier that
+// is its main consumer; re-exported so `super::selection::` paths keep working.
+pub(super) use garth::mls::backup_series::backup_series_seq;
 
 pub(super) fn backup_created_at(body: &Value) -> &str {
     body.get("created_at")

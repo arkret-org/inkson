@@ -171,7 +171,7 @@ impl LocalStateStore {
         self.load()
             .realm_tree_projections
             .get(realm_id)
-            .is_some_and(crate::security_state::realm_projection_is_encrypted)
+            .is_some_and(garth::realm_projection_is_encrypted)
     }
 
     /// Joined-actor projection hint when account sync explicitly says the

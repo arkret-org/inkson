@@ -66,8 +66,6 @@ fn seed_current_group_state_ref(
     event_id
 }
 
-mod commit;
 mod genesis_backup;
 mod message;
 mod reaction;
-mod secret;

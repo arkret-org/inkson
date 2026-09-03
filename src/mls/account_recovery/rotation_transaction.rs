@@ -10,13 +10,13 @@ use arkret_wire::{
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use dioxus::prelude::{ReadableExt, SyncSignal, WritableExt};
+use garth::mls::backup_series::fresh_backup_id;
 use garth::{PutSecretOptions, SecretClass, SecretDurability, SecureKeyStore};
 use serde_json::Value;
 use zeroize::Zeroizing;
 
 use super::backup_body::build_mls_account_secret_backup_body_with_kek_and_version;
 use super::selection::{active_series_id_for_backup_class, iter_backup_bodies};
-use super::series::fresh_backup_id;
 use crate::recovery_crypto::derive_vault_kek;
 
 const PENDING_ROTATION_INDEX_KEY: &str = "security_rotation.pending.v1";

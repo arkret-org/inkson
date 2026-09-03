@@ -182,29 +182,12 @@ pub(crate) const MLS_HISTORY_SECRET_KEY_PREFIX: &str = "inkson.mls_history_secre
 /// neither the plaintext nor a decryptable mirror can enter localStorage.
 pub(crate) const E2EE_PLAINTEXT_CACHE_KEY_PREFIX: &str = "inkson.e2ee_plaintext_cache.v1.";
 
-/// Stable, opaque physical namespace for one Account Authority pair.
-///
-/// The typed authority remains the source of truth in the profile/root index;
-/// this digest is only a bounded storage locator.  It deliberately hashes the
-/// SDK canonical JSON form instead of concatenating the two DIDs, so the
-/// namespace cannot be ambiguous and does not expose an unbounded DID in a
-/// native filename or platform-keystore key.
-pub(crate) fn account_id_storage_digest(
-    authority: &arkret_sdk::AccountId,
-) -> Result<String, SecureKeyStoreError> {
-    authority
-        .validate()
-        .map_err(|error| SecureKeyStoreError::Backend(format!("invalid AccountId: {error}")))?;
-    let canonical = arkret_sdk::canonical::canonical_json_bytes(authority).map_err(|error| {
-        SecureKeyStoreError::Backend(format!("canonicalize AccountId storage namespace: {error}"))
-    })?;
-    Ok(arkret_sdk::canonical::sha256_base64url(canonical))
-}
-
-/// Character-safe storage suffix for a device coordinate below an authority.
-pub(crate) fn device_storage_digest(device_id: &arkret_sdk::DeviceId) -> String {
-    arkret_sdk::canonical::sha256_base64url(device_id.as_str().as_bytes())
-}
+// Stable, opaque physical namespaces for an Account Authority pair and for a
+// device coordinate below it. Both hash the SDK canonical form rather than
+// concatenating DIDs, so a namespace cannot be ambiguous and no unbounded DID
+// lands in a native filename or platform-keystore key. They belong with the
+// `SecureKeyStore` port itself, which garth owns.
+pub(crate) use garth::{account_id_storage_digest, device_storage_digest};
 
 /// Per-account main `ClientLocalState` blob stored in the IndexedDB +
 /// non-extractable SubtleCrypto encrypted entries store. The semantic key is

@@ -12,7 +12,7 @@ use super::{TypedOperationBuilder, trim_realm_id};
 /// Realm creation locks the v1 root to controller epoch 0 / generation 0, so
 /// [`Default`] is exactly the genesis basis. After `ak.realm.owner.transfer`
 /// or `ak.realm.authority.reset` the values MUST come from the resolved root
-/// ([`crate::security_state::realm_authority_root_value_for_realm`]), or the
+/// ([`garth::realm_authority_root_value_for_realm`]), or the
 /// grant is minted against a superseded root and its authority audit binds
 /// the wrong epoch/generation.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

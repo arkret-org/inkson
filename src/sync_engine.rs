@@ -45,7 +45,8 @@ use arkret_sdk::EventPayloadExt as _;
 use arkret_wire::{AccountDataKey, event_kind_str};
 use garth::{
     AccountCommitOutcome, AccountPostCommitHook, AccountPostCommitOutcome, AccountStepCommitter,
-    AccountStepHandlers, AccountStreamStep, RunOptions, SyncLoopControl, TransportProvider,
+    AccountStepHandlers, AccountStreamStep, RealmProjectionFrame, RunOptions, SyncLoopControl,
+    TransportProvider, reconcile_realm_projection,
 };
 #[cfg(test)]
 use garth::{ClientEvent, ClientProjector};
@@ -59,10 +60,6 @@ use crate::models::{AccountSyncStep, RealmTreeNodeKind};
 use crate::runtime::projection::{ClientProjectionEvent, ProjectionSink, SyncStatusEvent};
 use crate::state::{LocalStateStore, RawOperationRecord};
 use crate::transport::TransportClient;
-
-mod realm_projection_merge;
-
-use realm_projection_merge::{RealmProjectionFrame, reconcile_realm_projection};
 
 /// Connection-status label surfaced to the app shell's status signal.
 /// A pure sync-layer concept (no Dioxus state, no rendering); the app views

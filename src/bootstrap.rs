@@ -59,7 +59,7 @@ pub(crate) fn local_state_has_encrypted_realm(state_store: &LocalStateStore) -> 
         .load()
         .realm_tree_projections
         .values()
-        .any(crate::security_state::realm_projection_is_encrypted)
+        .any(garth::realm_projection_is_encrypted)
 }
 
 pub(crate) fn local_mls_epoch_floor_all(state_store: &LocalStateStore) -> u64 {

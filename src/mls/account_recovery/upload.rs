@@ -2,6 +2,7 @@
 
 use anyhow::{Result, anyhow};
 use arkret_wire::BackupRotationKind;
+use garth::mls::backup_series::fresh_backup_id;
 use serde_json::Value;
 
 use super::backup_body::{
@@ -13,7 +14,6 @@ use super::backup_body::{
 };
 use super::restore::fetch_mls_restore_payload;
 use super::selection::select_mls_private_plaintext_backup;
-use super::series::fresh_backup_id;
 use crate::recovery_crypto::derive_vault_kek;
 
 fn passphrase_is_blank(passphrase: &[u8]) -> bool {

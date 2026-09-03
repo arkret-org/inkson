@@ -105,13 +105,12 @@ pub(crate) fn creator_mls_bootstrap_pending(
     actor_id: &str,
 ) -> bool {
     let state = store.load();
-    let Some(projection) = crate::security_state::security_projection_for_scope_id(
-        &state.realm_tree_projections,
-        realm_id,
-    ) else {
+    let Some(projection) =
+        garth::security_projection_for_scope_id(&state.realm_tree_projections, realm_id)
+    else {
         return false;
     };
-    if !crate::security_state::realm_projection_is_encrypted(projection)
+    if !garth::realm_projection_is_encrypted(projection)
         || !crate::mls::group_events::projected_realm_creator_matches_actor(
             &state.realm_tree_projections,
             realm_id,

@@ -75,7 +75,7 @@ pub(super) fn assert_registered_payload_valid(event: &impl TestEventPayloadView)
 /// The creator fact is carried only by the projected `ak.realm.create` Event —
 /// the sole registered writer of `ak.component.realm.authority_root.v1`. Post-P1
 /// projections no longer mirror it into an `owner` / `created_by` field, and
-/// `security_state::realm_authority_root_controller_from_events` reads nothing
+/// `garth::realm_authority_root_controller_from_events` reads nothing
 /// else, so a fixture that mirrors it would test a fallback the client does not
 /// have.
 #[cfg(not(target_arch = "wasm32"))]

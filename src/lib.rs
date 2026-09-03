@@ -131,7 +131,6 @@ pub async fn run_browser_account_persist_fault_contract() -> anyhow::Result<()> 
     state::run_browser_account_persist_fault_contract().await
 }
 pub(crate) mod scheduled_send;
-pub mod security_state;
 pub mod sidecar;
 pub mod signal;
 pub mod signal_receive_engine;

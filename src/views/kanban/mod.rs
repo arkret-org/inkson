@@ -1121,17 +1121,14 @@ pub fn KanbanPanel(
         } else {
             projection_realm_id.as_str()
         };
-        crate::security_state::security_projection_for_scope_id(
-            &state.realm_tree_projections,
-            scope_id,
-        )
-        .or_else(|| {
-            crate::security_state::security_projection_for_scope_id(
-                &state.realm_tree_projections,
-                &selected_realm_id,
-            )
-        })
-        .and_then(crate::security_state::realm_projection_security_state)
+        garth::security_projection_for_scope_id(&state.realm_tree_projections, scope_id)
+            .or_else(|| {
+                garth::security_projection_for_scope_id(
+                    &state.realm_tree_projections,
+                    &selected_realm_id,
+                )
+            })
+            .and_then(garth::realm_projection_security_state)
     };
     // Fail-closed `bool` projection for the non-guard consumers (security
     // badge display, the per-card encrypt decision): when the Realm security

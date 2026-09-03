@@ -12,7 +12,6 @@ pub(crate) mod coverage_liveness;
 /// Replayable creator-side MLS bootstrap (accepted Seal view → verified
 /// governance proof → epoch-0 snapshot → `ak.mls.genesis`).
 pub(crate) mod creator_bootstrap;
-pub mod governance;
 pub(crate) mod governance_acquisition;
 pub(crate) mod governance_proof;
 /// MLS group-lifecycle event builders (`ak.mls.genesis` / `ak.mls.commit`)

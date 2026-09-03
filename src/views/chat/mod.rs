@@ -1684,12 +1684,9 @@ pub fn ChatPanel(
         .unwrap_or(0);
     let selected_realm_security_encrypted = {
         let state = state_store.read().load();
-        crate::security_state::security_projection_for_scope_id(
-            &state.realm_tree_projections,
-            &selected_realm_id,
-        )
-        .map(crate::security_state::realm_projection_is_encrypted)
-        .unwrap_or(false)
+        garth::security_projection_for_scope_id(&state.realm_tree_projections, &selected_realm_id)
+            .map(garth::realm_projection_is_encrypted)
+            .unwrap_or(false)
     };
     // The first-class Sidecar contract requires an independent MLS backing scope.
     // The private Strand only carries its internal scope id, so ordinary Realm

@@ -105,8 +105,8 @@ impl OptimisticRealmTreeProjection {
         // `summary` because the two have different readers, and neither set
         // covers the other:
         //
-        //   * top level only — `security_state::strand_projection_security_state` walks `[],
-        //     object, strand, body, fields, scope, …` and never descends into `summary`, and
+        //   * top level only — `garth::strand_projection_security_state` walks `[], object, strand,
+        //     body, fields, scope, …` and never descends into `summary`, and
         //     `state::realm_tree_snapshot` reads `projection["member_roster_entries"]` flat;
         //   * `summary` first — `explicit_realm_title` and `extract_parent_space_id` /
         //     `extract_child_space_ids` prefer it, because that is where the *server* sync
@@ -252,18 +252,10 @@ struct ProjectionEventFeed {
     events: Vec<Value>,
 }
 
-pub(crate) fn non_empty_string(value: Option<&Value>) -> Option<String> {
-    value
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(ToOwned::to_owned)
-}
-
-pub(crate) fn string_field(value: &Value, keys: &[&str]) -> Option<String> {
-    keys.iter()
-        .find_map(|key| non_empty_string(value.get(*key)))
-}
+// The two JSON field accessors moved to garth alongside the projection
+// security-state reader that is their main consumer; re-exported here so the
+// existing `crate::realm_tree::` paths keep resolving.
+pub(crate) use garth::projection::string_field;
 
 fn state_event_values(body: &Value) -> impl Iterator<Item = &Value> {
     body.get("state")
@@ -1752,47 +1744,33 @@ mod tests {
 
     #[test]
     fn realm_projection_encryption_state_uses_profile_and_visibility() {
-        assert!(crate::security_state::realm_projection_is_encrypted(
-            &json!({
-                "summary": {"encryption_profile": "mls_rfc9420"}
-            })
-        ));
-        assert!(crate::security_state::realm_projection_is_encrypted(
-            &json!({
-                "plaintext_visibility": {"default": "encrypted"}
-            })
-        ));
-        assert!(!crate::security_state::realm_projection_is_encrypted(
-            &json!({
-                "encryption_profile": "none"
-            })
-        ));
-        assert!(!crate::security_state::realm_projection_is_encrypted(
-            &json!({
-                "summary": {"title": "Projection without encryption metadata"}
-            })
-        ));
-        assert!(crate::security_state::realm_projection_is_encrypted(
-            &json!({
-                "state_at_window_start": {
-                    "e2ee_epoch": {"epoch": 0, "key_ref": "mock-key:realm"}
-                }
-            })
-        ));
-        assert!(!crate::security_state::realm_projection_is_encrypted(
-            &json!({
-                "state_at_window_start": {"e2ee_epoch": null}
-            })
-        ));
-        assert!(crate::security_state::realm_projection_is_encrypted(
-            &json!({
-                "state_at_window_start": {"e2ee_epoch": null},
-                "state": {"events": [{
-                    "kind": "ak.realm.create",
-                    "payload": {"object": {"encryption_profile": "mls_rfc9420"}}
-                }]}
-            })
-        ));
+        assert!(garth::realm_projection_is_encrypted(&json!({
+            "summary": {"encryption_profile": "mls_rfc9420"}
+        })));
+        assert!(garth::realm_projection_is_encrypted(&json!({
+            "plaintext_visibility": {"default": "encrypted"}
+        })));
+        assert!(!garth::realm_projection_is_encrypted(&json!({
+            "encryption_profile": "none"
+        })));
+        assert!(!garth::realm_projection_is_encrypted(&json!({
+            "summary": {"title": "Projection without encryption metadata"}
+        })));
+        assert!(garth::realm_projection_is_encrypted(&json!({
+            "state_at_window_start": {
+                "e2ee_epoch": {"epoch": 0, "key_ref": "mock-key:realm"}
+            }
+        })));
+        assert!(!garth::realm_projection_is_encrypted(&json!({
+            "state_at_window_start": {"e2ee_epoch": null}
+        })));
+        assert!(garth::realm_projection_is_encrypted(&json!({
+            "state_at_window_start": {"e2ee_epoch": null},
+            "state": {"events": [{
+                "kind": "ak.realm.create",
+                "payload": {"object": {"encryption_profile": "mls_rfc9420"}}
+            }]}
+        })));
     }
 
     #[test]

@@ -2,6 +2,7 @@
 //! sidecar.
 
 use anyhow::{Result, anyhow};
+use garth::mls::backup_series::verify_series_chain;
 use serde_json::{Value, json};
 
 use super::backup_body::{
@@ -14,7 +15,6 @@ use super::selection::{
     select_mls_account_secret_recovery_public_key_backup, select_mls_history_backups,
     select_mls_private_plaintext_backup, select_preferred_mls_account_secret_backup,
 };
-use super::series::verify_series_chain;
 
 fn mls_history_recipient_method(body: &Value) -> Option<arkret_sdk::KeyBackupRecipientMethod> {
     serde_json::from_value::<arkret_sdk::KeyBackupSummaryEncryption>(
@@ -149,7 +149,7 @@ fn verify_active_backup_series(list_payload: &Value, backup_kind: &str) -> Resul
             "authoritative {backup_kind} series has no envelopes"
         ));
     };
-    verify_series_chain(tail, &bodies)
+    verify_series_chain(tail, &bodies).map_err(|error| anyhow!("{error}"))
 }
 
 pub(super) fn observe_active_series_versions(
@@ -562,7 +562,8 @@ pub async fn restore_mls_history_with_passphrase_from_payload(
         // Fail closed against series rollback / withholding: the selected tail
         // must sit at the end of a complete, digest-linked chain back to genesis
         // before we trust it as the account secret to import.
-        verify_series_chain(&secret_body, &all_mls_account_secret_backups(list_payload))?;
+        verify_series_chain(&secret_body, &all_mls_account_secret_backups(list_payload))
+            .map_err(|error| anyhow!("{error}"))?;
         let secret_bytes = decrypt_mls_account_secret_backup(passphrase, &secret_body)?;
         let secret = String::from_utf8(secret_bytes)
             .map_err(|err| anyhow!("account secret is not valid UTF-8: {err}"))?;

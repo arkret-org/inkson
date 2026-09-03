@@ -33,7 +33,7 @@ use std::time::Duration;
 
 use garth::{
     ClientEvent, ClientProjector, DurableInboxStore, RetrySchedule, RunOptions, ScanCatchupOptions,
-    SyncLoopControl, TransportProvider,
+    SyncLoopControl, TransportProvider, expand_realm_delivery_events,
 };
 
 use crate::config::MultiProfileConfig;
@@ -96,7 +96,7 @@ struct RealmIngestProjector {
 impl ClientProjector for RealmIngestProjector {
     async fn project(&self, batch: Vec<ClientEvent>) -> garth::Result<()> {
         let (batch, digest_suite) =
-            expand_delivery_events(batch, &self.realm_id, self.digest_suite)?;
+            expand_realm_delivery_events(batch, &self.realm_id, self.digest_suite)?;
         if !batch.is_empty() {
             let finals = self.state_store.read(|store| {
                 batch
@@ -132,84 +132,6 @@ impl ClientProjector for RealmIngestProjector {
         }
         Ok(())
     }
-}
-
-fn expand_delivery_events(
-    events: Vec<ClientEvent>,
-    expected_realm_id: &str,
-    fallback_digest_suite: arkret_sdk::DigestSuite,
-) -> garth::Result<(Vec<ClientEvent>, arkret_sdk::DigestSuite)> {
-    let decoder = garth::InboundDecoder::new();
-    let mut expanded = Vec::new();
-    let mut carried_digest_suite = None;
-    for event in events {
-        match event {
-            ClientEvent::Backfill {
-                realm_id,
-                digest_suite,
-                outcome,
-            } => {
-                validate_carried_realm_suite(
-                    expected_realm_id,
-                    &realm_id,
-                    digest_suite,
-                    &mut carried_digest_suite,
-                )?;
-                for (index, row) in outcome.events.into_iter().enumerate() {
-                    let event = row.into_event().ok_or_else(|| {
-                        garth::Error::Protocol(format!(
-                            "Realm inbox backfill requires complete Events; row {index} is redacted or reference-locked"
-                        ))
-                    })?;
-                    expanded.push(match decoder.decode_event(event) {
-                        garth::DecodedInbound::Message(message) => ClientEvent::Message(*message),
-                        garth::DecodedInbound::Event(event) => ClientEvent::Event(*event),
-                    });
-                }
-            }
-            ClientEvent::RealmAccepted {
-                realm_id,
-                digest_suite,
-                event,
-            } => {
-                validate_carried_realm_suite(
-                    expected_realm_id,
-                    &realm_id,
-                    digest_suite,
-                    &mut carried_digest_suite,
-                )?;
-                expanded.push(match decoder.decode_event(event) {
-                    garth::DecodedInbound::Message(message) => ClientEvent::Message(*message),
-                    garth::DecodedInbound::Event(event) => ClientEvent::Event(*event),
-                });
-            }
-            event => expanded.push(event),
-        }
-    }
-    Ok((
-        expanded,
-        carried_digest_suite.unwrap_or(fallback_digest_suite),
-    ))
-}
-
-fn validate_carried_realm_suite(
-    expected_realm_id: &str,
-    realm_id: &arkret_sdk::RealmId,
-    digest_suite: arkret_sdk::DigestSuite,
-    carried_digest_suite: &mut Option<arkret_sdk::DigestSuite>,
-) -> garth::Result<()> {
-    if realm_id.as_str() != expected_realm_id {
-        return Err(garth::Error::Protocol(
-            "durable Realm delivery crossed Realm scope".to_owned(),
-        ));
-    }
-    if carried_digest_suite.is_some_and(|existing| existing != digest_suite) {
-        return Err(garth::Error::Protocol(
-            "durable Realm delivery mixed digest suites".to_owned(),
-        ));
-    }
-    *carried_digest_suite = Some(digest_suite);
-    Ok(())
 }
 
 async fn deliver_realm_inbox(

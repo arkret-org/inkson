@@ -913,7 +913,7 @@ fn AppBootstrap() -> Element {
                 .unwrap_or_else(|| node.title.clone());
             let encrypted = realm_tree_projections
                 .get(&node.id)
-                .and_then(crate::security_state::realm_projection_security_state)
+                .and_then(garth::realm_projection_security_state)
                 .unwrap_or_else(|| realm_ids_with_local_mls.contains(&node.id));
             let space_count = descendant_node_ids(&collaboration_realm_tree_nodes, &node.id)
                 .len()
@@ -996,11 +996,11 @@ fn AppBootstrap() -> Element {
         .find(|row| row.realm_id == active_realm_id)
         .map(|row| row.encrypted)
         .or_else(|| {
-            crate::security_state::security_projection_for_scope_id(
+            garth::security_projection_for_scope_id(
                 &realm_tree_projections,
                 active_security_scope_id,
             )
-            .map(crate::security_state::realm_projection_is_encrypted)
+            .map(garth::realm_projection_is_encrypted)
         })
         .unwrap_or(false);
     let active_locale = locale();
@@ -2736,7 +2736,7 @@ fn AppBootstrap() -> Element {
                                         RealmTreeNodeKind::Realm => {
                                             let is_encrypted = realm_tree_projections
                                                 .get(&item_node.id)
-                                                .and_then(crate::security_state::realm_projection_security_state)
+                                                .and_then(garth::realm_projection_security_state)
                                                 .unwrap_or_else(|| realm_ids_with_local_mls.contains(&item_node.id));
                                             if is_encrypted {
                                                 (

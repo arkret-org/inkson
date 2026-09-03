@@ -222,11 +222,11 @@ pub fn RealmAdminPanel(
     let (authority_root, is_root_controller) = {
         let store = state_store.read();
         let state = store.load();
-        let root = crate::security_state::realm_authority_root_value_for_realm(
+        let root = garth::realm_authority_root_value_for_realm(
             &state.realm_tree_projections,
             &selected_realm_id,
         );
-        let controller = crate::security_state::realm_authority_root_controller_for_realm(
+        let controller = garth::realm_authority_root_controller_for_realm(
             &state.realm_tree_projections,
             &selected_realm_id,
         );

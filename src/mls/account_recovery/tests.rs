@@ -1,6 +1,7 @@
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
 use ed25519_dalek::Signer as _;
+use garth::mls::backup_series::verify_series_chain;
 use serde_json::Value;
 
 use super::backup_body::{
@@ -19,7 +20,6 @@ use super::selection::{
     select_mls_history_backups, select_mls_private_plaintext_backup,
     select_preferred_mls_account_secret_backup,
 };
-use super::series::verify_series_chain;
 use crate::key_backup::BackupKind;
 use crate::recovery_crypto::derive_vault_kek;
 use crate::secure_key_store::MemorySecureKeyStore;

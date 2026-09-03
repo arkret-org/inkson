@@ -45,10 +45,8 @@ pub(crate) fn projected_realm_creator_matches_actor(
     let Ok(actor) = crate::mls_api_helpers::local_account_actor_id(actor_id) else {
         return false;
     };
-    crate::security_state::realm_authority_root_controller_for_realm(
-        realm_tree_projections,
-        realm_id,
-    ) == Some(actor)
+    garth::realm_authority_root_controller_for_realm(realm_tree_projections, realm_id)
+        == Some(actor)
 }
 
 pub(crate) fn circle_effective_scope(
@@ -400,7 +398,7 @@ pub(crate) fn mls_commit_basis_from_store(
         &effective_scope,
         commit_envelope.group_id.as_str(),
     )?;
-    let preconditions = crate::mls::governance::mls_commit_preconditions(
+    let preconditions = garth::mls_commit_preconditions(
         &effective_scope,
         commit_envelope.group_id.as_str(),
         prev_epoch,

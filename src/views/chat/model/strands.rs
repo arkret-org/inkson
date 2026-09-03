@@ -53,7 +53,7 @@ pub(crate) fn strand_create_has_synthesis_track(candidates: &[&Value]) -> bool {
 pub(crate) fn strand_security_state_from_candidates(candidates: &[&Value]) -> Option<bool> {
     candidates
         .iter()
-        .find_map(|candidate| crate::security_state::strand_projection_security_state(candidate))
+        .find_map(|candidate| garth::strand_projection_security_state(candidate))
 }
 
 pub(crate) fn channel_from_strand_projection(
@@ -128,7 +128,7 @@ pub(crate) fn channel_from_strand_projection(
         }
     });
     let has_synthesis = strand_create_has_synthesis_track(&[strand]);
-    let security_encrypted = crate::security_state::strand_projection_security_state(strand);
+    let security_encrypted = garth::strand_projection_security_state(strand);
     let scope_circle = strand_scope_circle_from_projection(strand);
 
     Some(ChannelEntity {
@@ -225,9 +225,7 @@ pub(crate) fn default_discussion_channel(realm_body: Option<&Value>) -> Option<C
         unread: 0,
         is_default: true,
         is_private_sidecar: false,
-        security_encrypted: Some(crate::security_state::realm_projection_is_encrypted(
-            realm_body,
-        )),
+        security_encrypted: Some(garth::realm_projection_is_encrypted(realm_body)),
         scope_circle: None,
     })
 }
