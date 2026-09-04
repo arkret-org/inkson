@@ -520,7 +520,7 @@ pub fn SettingsPanel(
     };
     let initial_presence_manual_state = initial_presence_preference
         .manual_state
-        .map(arkret_sdk::PresenceStatus::as_wire)
+        .map(arkret_sdk::ManualPresenceState::as_wire)
         .unwrap_or("auto")
         .to_owned();
     let initial_presence_status_message = initial_presence_preference
@@ -2265,9 +2265,9 @@ pub fn SettingsPanel(
                                 }
                                 let typed_manual_state = match manual_state.as_str() {
                                     "auto" => None,
-                                    "online" => Some(arkret_sdk::PresenceStatus::Online),
-                                    "idle" => Some(arkret_sdk::PresenceStatus::Idle),
-                                    "dnd" => Some(arkret_sdk::PresenceStatus::Dnd),
+                                    "online" => Some(arkret_sdk::ManualPresenceState::Online),
+                                    "idle" => Some(arkret_sdk::ManualPresenceState::Idle),
+                                    "dnd" => Some(arkret_sdk::ManualPresenceState::Dnd),
                                     _ => {
                                         presence_status_feedback.set(
                                             "Status state is not in the protocol closed set.".to_owned(),

@@ -86,7 +86,7 @@ fn presence_preference_account_data_matches_spec() {
         "ak.presence.preference"
     );
     let body = build_presence_preference_body(&crate::state::PresencePreference {
-        manual_state: Some(arkret_sdk::PresenceStatus::Dnd),
+        manual_state: Some(arkret_sdk::ManualPresenceState::Dnd),
         status_message: Some("In a meeting".to_owned()),
         clears_at: Some("2026-07-03T12:00:00.000Z".parse().unwrap()),
     });

@@ -21,7 +21,7 @@ fn presence_preference_persists_and_expires() {
     assert!(store.presence_preference().is_empty());
 
     store.set_presence_preference(PresencePreference {
-        manual_state: Some(arkret_sdk::PresenceStatus::Dnd),
+        manual_state: Some(arkret_sdk::ManualPresenceState::Dnd),
         status_message: Some("In a meeting".to_owned()),
         clears_at: Some("2026-07-03T12:00:00.000Z".parse().unwrap()),
     });
@@ -47,11 +47,12 @@ fn presence_preference_persists_and_expires() {
 
 #[test]
 fn presence_preference_rejects_bad_wire_values() {
-    let offline: PresencePreference = serde_json::from_value(serde_json::json!({
-        "manual_state": "offline"
-    }))
-    .unwrap();
-    assert!(offline.validate().is_err());
+    assert!(
+        serde_json::from_value::<PresencePreference>(serde_json::json!({
+            "manual_state": "offline"
+        }))
+        .is_err()
+    );
 
     let corrupted = serde_json::from_value::<PresencePreference>(serde_json::json!({
         "manual_state": "dnd",
