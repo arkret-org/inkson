@@ -202,8 +202,6 @@ pub struct MemberHandleCacheEntry {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReadMarkerBody {
-    #[serde(default = "new_read_cursor_id")]
-    pub id: String,
     pub schema: String,
     pub realm_id: String,
     pub read_scope: ReadCursorScope,
