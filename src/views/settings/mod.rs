@@ -17,6 +17,7 @@ pub mod storage;
 
 pub(crate) mod account_data;
 mod invite_locator;
+mod model;
 mod profile_helpers;
 mod sections;
 mod widgets;
@@ -510,23 +511,13 @@ pub fn SettingsPanel(
     // Manual presence preference editor state (profiles-presence.md
     // §3.6). Hydrated from persisted local state; the expiry picker is
     // relative so it always starts at "never".
-    let initial_presence_preference = {
-        let preference = state_store.read().presence_preference();
-        if !preference.is_empty() && !preference.is_active(chrono::Utc::now()) {
-            crate::state::PresencePreference::default()
-        } else {
-            preference
-        }
-    };
-    let initial_presence_manual_state = initial_presence_preference
-        .manual_state
-        .map(arkret_sdk::ManualPresenceState::as_wire)
-        .unwrap_or("auto")
-        .to_owned();
-    let initial_presence_status_message = initial_presence_preference
-        .status_message
-        .clone()
-        .unwrap_or_default();
+    let model::PresenceEditorSeed {
+        manual_state: initial_presence_manual_state,
+        status_message: initial_presence_status_message,
+    } = model::presence_editor_seed(
+        &state_store.read().presence_preference(),
+        chrono::Utc::now(),
+    );
     let mut presence_manual_state = use_signal(move || initial_presence_manual_state);
     let presence_manual_state_selected = use_memo(move || Some(presence_manual_state()));
     let mut presence_status_message = use_signal(move || initial_presence_status_message);
@@ -536,16 +527,10 @@ pub fn SettingsPanel(
     // Hydrate DND from the persisted local snapshot so the toggle reflects
     // the last-saved state instead of always rendering "off" (the saved body
     // only carries a full-day period when the user picked "now").
-    let initial_dnd_settings = state_store.read().notification_dnd_settings();
-    let initial_dnd_enabled = initial_dnd_settings.as_ref().is_some_and(|dnd| dnd.enabled);
-    let initial_dnd_mode = if initial_dnd_settings
-        .as_ref()
-        .is_some_and(|dnd| dnd.enabled && !dnd.schedule.periods.is_empty())
-    {
-        "now".to_owned()
-    } else {
-        "off".to_owned()
-    };
+    let model::DndEditorSeed {
+        enabled: initial_dnd_enabled,
+        mode: initial_dnd_mode,
+    } = model::dnd_editor_seed(state_store.read().notification_dnd_settings().as_ref());
     let mut dnd_enabled = use_signal(move || initial_dnd_enabled);
     let mut dnd_mode = use_signal(move || initial_dnd_mode);
     let dnd_mode_selected = use_memo(move || Some(dnd_mode()));
@@ -668,23 +653,18 @@ pub fn SettingsPanel(
         String::new()
     };
     let invite_locator_qr_svg = render_invite_locator_qr_svg(&invite_locator_url);
-    let principal_label = if has_session {
-        principal_id()
-    } else {
-        "Not signed in".to_owned()
-    };
-    let device_label = if has_session {
-        device_id()
-    } else {
-        "No authenticated device session".to_owned()
-    };
-    let account_handles_label =
-        format_settings_handle_list(&personal_handles, &personal_handles_status);
-    let account_handles_title = if personal_handles.is_empty() {
-        account_handles_label.clone()
-    } else {
-        personal_handles.join(", ")
-    };
+    let model::SessionIdentityLabels {
+        principal: principal_label,
+        device: device_label,
+        handles_label: account_handles_label,
+        handles_title: account_handles_title,
+    } = model::session_identity_labels(
+        has_session,
+        &principal_id(),
+        &device_id(),
+        &personal_handles,
+        &personal_handles_status,
+    );
     let device_short_label = short_protocol_id(&device_label);
     {
         use_effect(move || {
@@ -723,25 +703,7 @@ pub fn SettingsPanel(
                             }
                             div { class: "settings-nav-list",
                             {
-                                let visible_groups: Vec<_> = SETTINGS_NAV_GROUPS
-                                    .iter()
-                                    .copied()
-                                    .filter_map(|(group_label, hint, sections)| {
-                                        let matched: Vec<SettingsSection> = sections
-                                            .iter()
-                                            .copied()
-                                            .filter(|section| {
-                                                query.is_empty()
-                                                    || section.label().to_lowercase().contains(&query)
-                                            })
-                                            .collect();
-                                        if matched.is_empty() {
-                                            None
-                                        } else {
-                                            Some((group_label, hint, matched))
-                                        }
-                                    })
-                                    .collect();
+                                let visible_groups = model::visible_nav_groups(&query);
                                 let group_count = visible_groups.len();
                                 rsx! {
                                     if group_count == 0 {
@@ -751,10 +713,10 @@ pub fn SettingsPanel(
                                             "{crate::i18n::tr(\"settings.search.no_results\")}"
                                         }
                                     }
-                                    for (group_index, (group_label, _, sections)) in visible_groups.into_iter().enumerate() {
+                                    for (group_index, group) in visible_groups.into_iter().enumerate() {
                                         div { class: "settings-nav-cluster",
-                                            div { class: "settings-nav-group-label", "{crate::i18n::tr(group_label)}" }
-                                            for section in sections.into_iter() {
+                                            div { class: "settings-nav-group-label", "{crate::i18n::tr(group.label_key)}" }
+                                            for section in group.sections.into_iter() {
                                                 Link {
                                                     class: if active_section == section { "settings-nav-item active" } else { "settings-nav-item" },
                                                     "data-testid": "settings-nav-item-{section.slug()}",

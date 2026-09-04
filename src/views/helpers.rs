@@ -7,6 +7,24 @@ use dioxus::prelude::*;
 pub use yoface::utils::text::short_protocol_id;
 
 pub(crate) use super::member_display::actor_display_label;
+
+/// Render an account's handles as one `@a, @b` label, or `fallback` when the
+/// account has none.
+///
+/// Shared by the sidebar account row and the settings account section. They
+/// used to hold byte-identical private copies, which is how the two surfaces
+/// could have disagreed about the empty case.
+pub(crate) fn account_handles_display(handles: &[String], fallback: &str) -> String {
+    if handles.is_empty() {
+        fallback.to_owned()
+    } else {
+        handles
+            .iter()
+            .map(|handle| format!("@{handle}"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+}
 use crate::api_error::normalize_wait_for_sync_token;
 use crate::config::{ClientConfig, LocalConfigStore};
 use crate::transport::auth::with_endpoint_clients;

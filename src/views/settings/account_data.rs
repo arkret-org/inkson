@@ -13,18 +13,6 @@ use crate::state::{LocalStateStore, PresencePreference, PresenceVisibility};
 use crate::transport::auth::with_event_submitter;
 use crate::views::helpers::short_protocol_id;
 
-pub(super) fn format_settings_handle_list(handles: &[String], fallback: &str) -> String {
-    if handles.is_empty() {
-        fallback.to_owned()
-    } else {
-        handles
-            .iter()
-            .map(|handle| format!("@{handle}"))
-            .collect::<Vec<_>>()
-            .join(", ")
-    }
-}
-
 pub(crate) fn encrypted_account_data_value(
     account_data_key: &str,
     plaintext: &serde_json::Value,

@@ -372,6 +372,7 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("settings.section.audit", "审计日志");
     dict.set("settings.section.developer", "开发者工具");
     dict.set("settings.account.identity", "账号身份");
+    dict.set("settings.account.no_device_session", "没有已认证的设备会话");
     dict.set("settings.account.handles", "账号标识");
     dict.set("settings.account.current_device", "当前设备");
     dict.set("settings.account.copy_did", "复制 DID");

@@ -1353,6 +1353,10 @@ pub fn english_translations() -> TranslationDict {
     dict.set("settings.avatar.pan_y", "Vertical");
     dict.set("settings.avatar.error", "Avatar upload failed");
     dict.set("settings.account.identity", "Account identity");
+    dict.set(
+        "settings.account.no_device_session",
+        "No authenticated device session",
+    );
     dict.set("settings.account.handles", "Handles");
     dict.set("settings.account.current_device", "Current device");
     dict.set("settings.account.copy_did", "Copy DID");

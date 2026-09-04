@@ -77,8 +77,10 @@ pub(super) struct AccountIdentityInput<'a> {
 }
 
 pub(super) fn account_identity_labels(input: AccountIdentityInput<'_>) -> AccountIdentityLabels {
-    let handles_label =
-        super::account_handles_display(input.personal_handles, input.personal_handles_status);
+    let handles_label = crate::views::helpers::account_handles_display(
+        input.personal_handles,
+        input.personal_handles_status,
+    );
     let handles_title = if input.personal_handles.is_empty() {
         handles_label.clone()
     } else {
