@@ -113,7 +113,6 @@ fn delivered_exchange_projection_fixture(
         .unwrap(),
         exchange_id: arkret_sdk::AgentSidecarExchangeId::new("exchange-01964137000000000008")
             .unwrap(),
-        origin: arkret_sdk::AgentSidecarExchangeOrigin::SourceTrackRouted,
         source_track_ref: arkret_sdk::AgentSidecarSourceTrackRef {
             realm_id: arkret_sdk::RealmId::new(realm_id).unwrap(),
             strand_id: arkret_sdk::StrandId::new(source_strand_id).unwrap(),
@@ -123,7 +122,6 @@ fn delivered_exchange_projection_fixture(
         source_hlc: arkret_sdk::Hlc::new("01970e589d21-0001-a13f9c2e").unwrap(),
         client_order_key: arkret_sdk::NonEmptyString::new("device-1-1").unwrap(),
         addressed_agent_ids: vec![coordinator.clone()],
-        completion_policy: arkret_sdk::AgentSidecarExchangeCompletionPolicy::Coordinator,
         coordinator_agent_id: coordinator,
         coordinator_assignment_event_id: request_event.clone(),
         participating_agent_ids: Vec::new(),

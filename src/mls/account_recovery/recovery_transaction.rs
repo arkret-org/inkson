@@ -43,9 +43,10 @@ pub(crate) async fn prepare_pcr_policy_recovery(
     proof_outcome: &arkret_sdk::RecoverySessionProofSubmitOutcome,
     recovery_words: &str,
 ) -> anyhow::Result<PreparedPcrPolicyRecovery> {
-    if proof_outcome.recovery_session_id != session.recovery_session_id
-        || proof_outcome.state != arkret_sdk::SessionState::Verified
-    {
+    // A 2xx submit reply already means the proof verified and the session
+    // entered `verified`; the outcome echoes neither `state` nor
+    // `verification`. The authoritative state is re-read below.
+    if proof_outcome.recovery_session_id != session.recovery_session_id {
         anyhow::bail!("recovery proof outcome did not verify the requested session");
     }
     let verified_session = api
