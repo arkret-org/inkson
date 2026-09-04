@@ -2364,14 +2364,12 @@ pub fn ChatPanel(
                                         let selected_scope_circle_id = selected_scope_circle
                                             .as_ref()
                                             .map(|scope| scope.circle_id.clone());
-                                        let rank = format!("r{}", chrono::Utc::now().timestamp_millis());
                                         let op = match ak_ops::discussion_strand_create(
                                             &realm,
                                             &actor,
                                             &title,
                                             &category,
                                             (!summary.is_empty()).then_some(summary.as_str()),
-                                            &rank,
                                             selected_scope_circle_id.as_deref(),
                                             create_card,
                                         )

@@ -396,7 +396,6 @@ fn discussion_strand_create_emits_discussion_track() {
         "Ops",
         "general",
         None,
-        "a0",
         None,
         false,
     )
@@ -424,6 +423,13 @@ fn discussion_strand_create_emits_discussion_track() {
     );
     assert_eq!(op.payload()["object"]["metadata"]["title"], "Ops");
     assert!(op.payload()["object"].get("title").is_none());
+    // `metadata.fields.rank` is a forbidden Strand member; placement lives in
+    // the position component written by move / reorder.
+    assert!(
+        op.payload()["object"]["metadata"]["fields"]
+            .get("rank")
+            .is_none()
+    );
     assert_registered_payload_valid(&op);
     assert!(op.payload()["object"].get("kind").is_none());
 }
@@ -1221,7 +1227,7 @@ mod realm_organization_builder_tests {
         // local login session.
         assert_eq!(
             event.payload()["authorization"]["issuer_role"],
-            "organization_id"
+            "organization"
         );
         assert_eq!(event.payload()["authorization"]["proof"], "c2ln");
         assert_payload_field_names_are_spec_canonical(event.payload());

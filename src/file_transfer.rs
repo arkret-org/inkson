@@ -177,10 +177,9 @@ pub async fn upload_actor_private_file(
     if upload.size_bytes != ciphertext_len as u64 {
         anyhow::bail!("file-transfer blob upload size mismatch");
     }
-    let blob_ref = upload.blob_ref.to_string();
-    verify_content_addressed_blob_ref(&blob_ref, &prepared.content_digest)?;
-
-    let record = prepared.into_record(blob_ref, upload.size_bytes)?;
+    // `into_record` re-derives the content-addressed binding, so the upload
+    // outcome only has to agree on the byte count here.
+    let record = prepared.into_record(upload.blob_ref.to_string(), upload.size_bytes)?;
     let derived_account_data_key = record_account_key(&record, crypto)?;
     if derived_account_data_key != account_data_key {
         anyhow::bail!("file-transfer account_data key derivation drift");
@@ -788,6 +787,13 @@ impl PreparedFileTransfer {
         blob_ref: String,
         blob_size_bytes: u64,
     ) -> anyhow::Result<FileTransferRecord> {
+        // `blob_ref` is the only wire carrier of the ciphertext digest
+        // (file-transfer.md §4), and the record deliberately keeps no second
+        // copy of it. Binding it to the exact ciphertext this transfer
+        // produced therefore has to happen where the record is constructed,
+        // not only on the upload path, or a drifting digest reaches
+        // account-data unchecked.
+        verify_content_addressed_blob_ref(&blob_ref, &self.content_digest)?;
         let record = FileTransferRecord {
             kind: FILE_TRANSFER_RECORD_KIND.to_owned(),
             transfer_id: self.transfer_id,
