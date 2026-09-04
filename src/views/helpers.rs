@@ -549,7 +549,11 @@ mod tests {
                 arkret_sdk::DidCoreId::new("ak:did_core:web:station.acme.example").unwrap(),
             ),
             crate::mls_api_helpers::principal_core_id("did:web:issuer.acme.example").unwrap(),
-            now - chrono::Duration::hours(1),
+            // `verified_handle_claim` freezes `fresh_until` at issued_at + 5
+            // minutes, and §3.2.1 rejects any candidate whose freshness window
+            // has closed. An issued_at outside that window would test the
+            // stale ladder, not the verified tier this case is about.
+            now,
             now + chrono::Duration::days(30),
         );
         let accepted = vec![arkret_sdk::identity::HandleIssuerPolicyEntry {

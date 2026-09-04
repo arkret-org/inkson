@@ -2986,6 +2986,7 @@ fn participant_roster_rejects_naked_handle_field() {
         "member_roster_entries": [
             {
                 "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:example.com:users:bob","station_id":"ak:did_core:web:principal.example"}},
+                "membership": "join",
                 "handle": "bob:example.com"
             }
         ]
@@ -3015,6 +3016,7 @@ fn extracts_participant_handle_label_from_inline_handle_claims() {
         "member_roster_entries": [
             {
                 "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:bob.example","station_id":"ak:did_core:web:principal.example"}},
+                "membership": "join",
                 "subject_id": "ak:did_core:web:bob.example",
                 "handle_claims": [crate::views::member_display::test_inline_handle_claim(
                     "ak:did_core:web:bob.example",
@@ -4074,7 +4076,8 @@ fn mention_candidate_uses_cached_member_handle() {
         None,
     );
     let projection = json!({"member_roster_entries": [{
-        "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:bob.example","station_id":"ak:did_core:web:principal.example"}}
+        "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:bob.example","station_id":"ak:did_core:web:principal.example"}},
+        "membership": "join"
     }]});
     let participants = space_participants(
         Some(&projection),

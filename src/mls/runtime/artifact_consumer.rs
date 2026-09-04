@@ -713,9 +713,19 @@ mod tests {
         let replay_error = own_wire_replay
             .apply_commit_and_retain_history_secret(&add.commit, REALM)
             .unwrap_err();
+        // The author's own PrivateMessage Commit is never decryptable by the
+        // author: the own sender ratchet only produces encryption keys. The
+        // MLS library surfaces that as a non-Commit processing outcome rather
+        // than as a decryption failure, so the observable contract is the
+        // rejection itself plus an untouched local epoch.
         assert!(
-            format!("{replay_error:?}").contains("CannotDecryptOwnMessage"),
+            format!("{replay_error:?}").contains("expected MLS Commit"),
             "unexpected own-wire replay error: {replay_error:?}"
+        );
+        assert_eq!(
+            own_wire_replay.epoch(),
+            0,
+            "a rejected own-wire replay must not advance the local epoch"
         );
 
         let post_commit = author.export_state_record().unwrap();

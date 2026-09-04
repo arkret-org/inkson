@@ -167,7 +167,7 @@ fn realm_member_roster_reads_only_root_members() {
             "participants": [{ "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:participant.example","station_id":"ak:did_core:web:principal.example"}} }]
         },
         "owners": [{ "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:owner.example","station_id":"ak:did_core:web:principal.example"}} }],
-        "member_roster_entries": [{ "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:canonical.example","station_id":"ak:did_core:web:principal.example"}} }]
+        "member_roster_entries": [{ "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:canonical.example","station_id":"ak:did_core:web:principal.example"}}, "membership": "join" }]
     });
 
     let rows = realm_member_roster(Some(&projection));

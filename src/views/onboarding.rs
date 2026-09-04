@@ -4329,6 +4329,11 @@ mod tests {
         handoff.bound_principal_id =
             Some(arkret_sdk::project_did_to_core_id(&checkpoint.did).unwrap());
         handoff.bound_principal_did = Some(checkpoint.did.clone());
+        // account-lifecycle.md 2.1.2: only the closed `NoReturningDevice`
+        // normalization result opens Device Setup on a bound account. An
+        // absent result is not "no device" and must keep failing closed.
+        handoff.bound_device_entry_state =
+            Some(crate::state::BoundDeviceEntryState::NoReturningDevice);
 
         assert_eq!(
             onboarding_surface(Some(&handoff), None),

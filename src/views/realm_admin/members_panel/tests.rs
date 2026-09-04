@@ -346,6 +346,7 @@ fn projected_member_profiles_use_only_verified_canonical_identity_fields() {
         serde_json::json!({
             "member_roster_entries": [{
                 "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:alice.example","station_id":"ak:did_core:web:principal.example"}},
+                "membership": "join",
                 "display_name": "Alice",
                 "subject_id": "ak:did_core:web:acme.example:users:alice",
                 "handle_claims": [crate::views::member_display::test_inline_handle_claim(

@@ -1537,9 +1537,12 @@ fn welcome_claim_receipt_context_must_match_exact_requester_realm_group_and_targ
 
     for (name, path, replacement) in [
         (
-            "requester_id",
-            vec!["claim_receipt", "request", "requester_id"],
-            json!("ak:did_core:webvh:z6mkfixturebobexample"),
+            "requester_account_id",
+            vec!["claim_receipt", "request", "requester_account_id"],
+            json!({
+                "principal_id": "ak:did_core:webvh:z6mkfixturebobexample",
+                "station_id": "ak:did_core:webvh:z6mkfixturepsexample"
+            }),
         ),
         (
             "realm",
@@ -1552,9 +1555,12 @@ fn welcome_claim_receipt_context_must_match_exact_requester_realm_group_and_targ
             json!("different-fixture-group"),
         ),
         (
-            "target",
-            vec!["claim_receipt", "request", "target_principal_id"],
-            json!("ak:did_core:webvh:z6mkfixture"),
+            "target_account_id",
+            vec!["claim_receipt", "request", "target_account_id"],
+            json!({
+                "principal_id": "ak:did_core:webvh:z6mkfixture",
+                "station_id": "ak:did_core:webvh:z6mkfixturepsexample"
+            }),
         ),
     ] {
         let mut mismatched = valid.clone();
