@@ -47,7 +47,6 @@ button, input, textarea, select { font: inherit; }
 .blocklist-applies-grid { display: flex; flex-wrap: wrap; gap: 8px 16px; }
 .blocklist-applies-grid .metric { display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px; }
 .primary, .secondary { border: 0; border-radius: 6px; padding: 10px 12px; cursor: pointer; display: inline-block; text-decoration: none; text-align: center; }
-.secondary { background: var(--surface-3); color: var(--text); }
 a.primary, a.secondary { line-height: 1.5; }
 .timeline { display: grid; gap: 10px; align-content: start; overflow: auto; }
 .event { background: var(--surface-solid); border: 1px solid var(--border); border-radius: 8px; padding: 14px; display: grid; gap: 6px; }
@@ -56,6 +55,7 @@ a.primary, a.secondary { line-height: 1.5; }
 .section { display: grid; gap: 10px; }
 .section h2 { margin: 0; font-size: 16px; }
 .metric-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.metric { background: var(--surface-solid); border: 1px solid var(--border); border-radius: 8px; padding: 10px; min-width: 0; }
 .metric strong { display: block; font-size: 12px; color: var(--text-2); margin-bottom: 4px; }
 .metric span { overflow-wrap: anywhere; }
 .mobile-shellbar, .mobile-drawer { display: none; }

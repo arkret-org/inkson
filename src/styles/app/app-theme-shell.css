@@ -116,12 +116,9 @@
 .event,
 .composer,
 .metric {
-  background: var(--ak-surface);
-  border: 1px solid var(--border);
-  border-radius: 14px;
-  padding: 10px;
-  min-width: 0;
   border-color: var(--ak-line);
+  border-radius: 14px;
+  background: var(--ak-surface);
   color: var(--ak-ink);
   box-shadow: var(--ak-shadow-sm);
 }
@@ -189,9 +186,9 @@
   color: var(--text-on-accent);
 }
 .secondary {
-  border: 1px solid var(--ak-line-strong);
   background: var(--ak-surface);
   color: var(--ak-ink);
+  border: 1px solid var(--ak-line-strong);
 }
 .write-state-badge {
   display: inline-flex;
