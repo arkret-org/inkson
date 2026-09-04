@@ -9,7 +9,6 @@ use arkret_wire::{
 };
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use dioxus::prelude::{ReadableExt, SyncSignal, WritableExt};
 use garth::mls::backup_selection::{active_series_id_for_backup_class, iter_backup_bodies};
 use garth::mls::backup_series::fresh_backup_id;
 use garth::{PutSecretOptions, SecretClass, SecretDurability, SecureKeyStore};
@@ -127,7 +126,7 @@ fn sign_rotation_key_backup(
 pub(crate) async fn execute_device_revoke_security_rotation(
     api: &crate::transport::TransportClient,
     secure_store: std::sync::Arc<dyn SecureKeyStore + Send + Sync>,
-    state_store: SyncSignal<crate::state::LocalStateStore>,
+    state_store: &crate::runtime::input::StateStoreHandle,
     authority: &arkret_sdk::AccountId,
     actor_id: &str,
     current_device_id: &str,
@@ -315,7 +314,7 @@ pub(crate) async fn execute_device_revoke_security_rotation(
 async fn resume_device_revoke_security_rotation(
     api: &crate::transport::TransportClient,
     secure_store: std::sync::Arc<dyn SecureKeyStore + Send + Sync>,
-    state_store: SyncSignal<crate::state::LocalStateStore>,
+    state_store: &crate::runtime::input::StateStoreHandle,
     authority: &arkret_sdk::AccountId,
     actor_id: &str,
     current_device_id: &str,
@@ -353,7 +352,7 @@ async fn resume_device_revoke_security_rotation(
 async fn drive_security_rotation(
     api: &crate::transport::TransportClient,
     secure_store: std::sync::Arc<dyn SecureKeyStore + Send + Sync>,
-    mut state_store: SyncSignal<crate::state::LocalStateStore>,
+    state_store: &crate::runtime::input::StateStoreHandle,
     authority: &arkret_sdk::AccountId,
     actor_id: &str,
     current_device_id: &str,
@@ -404,8 +403,7 @@ async fn drive_security_rotation(
         .clone();
     if transaction.next_required_step()? == Some(SecurityTransactionStep::EraseOldMaterial) {
         let digest_suite = state_store
-            .read()
-            .trusted_mls_governance_checkpoint(control_realm.as_str())
+            .read(|store| store.trusted_mls_governance_checkpoint(control_realm.as_str()))
             .ok_or_else(|| anyhow!("security rotation has no verified PCR governance checkpoint"))?
             .live_digest_suite;
         let erase_frontier = submitter
@@ -474,13 +472,16 @@ async fn drive_security_rotation(
     let staged: StagedRotationSecret =
         serde_json::from_slice(staged.as_slice()).context("decode staged MLS rotation material")?;
     let rotation = staged.into_rotation();
-    crate::mls::runtime::commit_account_mls_secret_rotation(
-        &mut state_store.write(),
-        secure_store.as_ref(),
-        authority,
-        &rotation,
-    )
-    .map_err(|error| anyhow!(error.to_string()))?;
+    state_store
+        .write(|store| {
+            crate::mls::runtime::commit_account_mls_secret_rotation(
+                store,
+                secure_store.as_ref(),
+                authority,
+                &rotation,
+            )
+        })
+        .map_err(|error| anyhow!(error.to_string()))?;
     let local_commit = arkret_models_crypto::SecurityRotationLocalCommit {
         schema: SchemaId::SECURITY_ROTATION_LOCAL_COMMIT_V1.to_owned(),
         transaction_id: transaction.transaction_id.clone(),

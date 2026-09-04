@@ -390,7 +390,7 @@ pub(super) fn push_dnd_account_data(
                         authority,
                         actor_id,
                         device_id,
-                        state_store,
+                        crate::app::runtime_adapter::state_store_handle(state_store),
                         signal,
                     )
                     .await;

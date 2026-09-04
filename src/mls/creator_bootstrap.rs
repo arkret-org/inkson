@@ -19,8 +19,7 @@
 //! which runs the SDK admission test. Nothing here requires the sequence to
 //! complete in one attempt, and replaying it is safe.
 
-use dioxus::prelude::{ReadableExt, SyncSignal, WritableExt};
-
+use crate::runtime::input::StateStoreHandle;
 use crate::state::LocalStateStore;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -155,7 +154,7 @@ pub(crate) fn creator_mls_bootstrap_pending(
 /// accepted Event id rather than treated as an error.
 pub(crate) async fn ensure_creator_realm_mls_genesis(
     api: &crate::transport::TransportClient,
-    mut state_store: SyncSignal<LocalStateStore>,
+    state_store: &StateStoreHandle,
     realm_id: &str,
     authority: &arkret_sdk::AccountId,
     device_id: &arkret_sdk::DeviceId,
@@ -165,12 +164,12 @@ pub(crate) async fn ensure_creator_realm_mls_genesis(
     if realm_id.is_empty() {
         return Err("realm_id is required for creator MLS bootstrap".to_owned());
     }
-    if !creator_mls_bootstrap_pending(&state_store.read(), realm_id, actor_id) {
+    if state_store.read(|store| !creator_mls_bootstrap_pending(store, realm_id, actor_id)) {
         return Ok(());
     }
-    if state_store.read().mls_genesis_emitted_for(realm_id)
-        && state_store.read().mls_snapshot_for(realm_id).is_none()
-    {
+    if state_store.read(|store| {
+        store.mls_genesis_emitted_for(realm_id) && store.mls_snapshot_for(realm_id).is_none()
+    }) {
         return Err(format!(
             "accepted MLS genesis exists for {realm_id}, but the local snapshot is missing; restore this device before retrying creator bootstrap"
         ));
@@ -178,7 +177,7 @@ pub(crate) async fn ensure_creator_realm_mls_genesis(
 
     // encryption-and-audit.md 2.5.4 T1. The creator's trust in the checkpoint
     // comes from the create Event it authored, recognised through realm_id.
-    ensure_realm_governance_checkpoint(api, state_store, realm_id).await?;
+    ensure_realm_governance_checkpoint(api, state_store.clone(), realm_id).await?;
     let submitter = api
         .event_submitter()
         .map_err(|error| format!("MLS genesis Event submitter: {error}"))?;
@@ -198,41 +197,44 @@ pub(crate) async fn ensure_creator_realm_mls_genesis(
         .find_mls_genesis_event_id(realm_id)
         .await
         .map_err(|error| format!("resolve accepted ak.mls.genesis Event: {error}"))?;
-    let genesis_emitted = state_store.read().mls_genesis_emitted_for(realm_id);
+    let genesis_emitted = state_store.read(|store| store.mls_genesis_emitted_for(realm_id));
     match creator_genesis_resume_action(accepted_event_id.as_ref(), genesis_emitted)? {
         CreatorGenesisResumeAction::ConvergeAccepted => {
             let accepted_event_id = accepted_event_id.as_ref().ok_or_else(|| {
                 "creator MLS convergence is missing its accepted Event id".to_owned()
             })?;
-            if state_store.read().mls_snapshot_for(realm_id).is_none() {
+            if state_store.read(|store| store.mls_snapshot_for(realm_id).is_none()) {
                 return Err(format!(
                     "accepted MLS genesis exists for {realm_id}, but the local snapshot is missing; restore this device before retrying creator bootstrap"
                 ));
             }
-            state_store
-                .write()
-                .mark_mls_genesis_emitted_for_effective_scope_with_event(
+            state_store.write(|store| {
+                store.mark_mls_genesis_emitted_for_effective_scope_with_event(
                     realm_id,
                     None,
                     accepted_event_id,
-                )?;
+                )
+            })?;
         }
         CreatorGenesisResumeAction::Author => {
-            let request = crate::mls::governance_proof::proof_request(
-                &state_store.read(),
-                realm_id,
-                None,
-                garth::mls::welcome_admission::mls_group_id_for_realm(realm_id)?,
-                0,
-                0,
-                leaves.clone(),
-            )
-            .map_err(|error| {
-                format!("preparing the MLS governance proof request failed: {error}")
-            })?;
+            let request = state_store
+                .read(|store| {
+                    crate::mls::governance_proof::proof_request(
+                        store,
+                        realm_id,
+                        None,
+                        garth::mls::welcome_admission::mls_group_id_for_realm(realm_id)?,
+                        0,
+                        0,
+                        leaves.clone(),
+                    )
+                })
+                .map_err(|error| {
+                    format!("preparing the MLS governance proof request failed: {error}")
+                })?;
             crate::mls::governance_proof::fetch_verify_and_cache_proof(
                 api,
-                state_store,
+                state_store.clone(),
                 &request,
                 &leaves,
             )
@@ -253,19 +255,19 @@ pub(crate) async fn ensure_creator_realm_mls_genesis(
             .map_err(|error| {
                 format!("durably persisting the account MLS secret failed: {error}")
             })?;
-            let fresh_summary = {
-                let mut store = state_store.write();
-                crate::mls::runtime::ensure_creator_mls_snapshot(
-                    &mut store,
-                    secure_store.as_ref(),
-                    realm_id,
-                    authority,
-                    device_id,
-                )
+            let fresh_summary = state_store
+                .write(|store| {
+                    crate::mls::runtime::ensure_creator_mls_snapshot(
+                        store,
+                        secure_store.as_ref(),
+                        realm_id,
+                        authority,
+                        device_id,
+                    )
+                })
                 .map_err(|error| {
                     format!("MLS initial group setup failed: {}", error.user_message())
-                })?
-            };
+                })?;
             // The interesting recovery case is "snapshot persisted, genesis never
             // accepted": `ensure_creator_mls_snapshot` short-circuits to `None` there,
             // and the genesis builder refuses to emit without epoch-0 material. Restore
@@ -275,16 +277,15 @@ pub(crate) async fn ensure_creator_realm_mls_genesis(
             let summary = match fresh_summary {
                 Some(summary) => Some(summary),
                 None => {
-                    let restored_summary = {
-                        let store = state_store.read();
+                    let restored_summary = state_store.read(|store| {
                         crate::mls::runtime::initial_mls_snapshot_summary_from_existing(
-                            &store,
+                            store,
                             secure_store.as_ref(),
                             realm_id,
                             authority,
                             device_id,
                         )
-                    };
+                    });
                     match restored_summary {
                         Ok(summary) => summary,
                         Err(crate::mls::runtime::MlsRuntimeError::Genesis(reason))
@@ -298,19 +299,22 @@ pub(crate) async fn ensure_creator_realm_mls_genesis(
                             // additionally refuses this replacement if any local
                             // accepted/emitted marker exists.
                             Some(
-                                crate::mls::runtime::recreate_unaccepted_creator_mls_snapshot(
-                                    &mut state_store.write(),
-                                    secure_store.as_ref(),
-                                    realm_id,
-                                    authority,
-                                    device_id,
-                                )
-                                .map_err(|error| {
-                                    format!(
-                                        "rebasing the unaccepted epoch-0 MLS snapshot failed: {}",
-                                        error.user_message()
-                                    )
-                                })?,
+                                state_store
+                                    .write(|store| {
+                                        crate::mls::runtime::recreate_unaccepted_creator_mls_snapshot(
+                                            store,
+                                            secure_store.as_ref(),
+                                            realm_id,
+                                            authority,
+                                            device_id,
+                                        )
+                                    })
+                                    .map_err(|error| {
+                                        format!(
+                                            "rebasing the unaccepted epoch-0 MLS snapshot failed: {}",
+                                            error.user_message()
+                                        )
+                                    })?,
                             )
                         }
                         Err(error) => {
@@ -322,17 +326,17 @@ pub(crate) async fn ensure_creator_realm_mls_genesis(
                     }
                 }
             };
-            let genesis_event = {
-                let mut store = state_store.write();
-                crate::mls::group_events::build_creator_mls_genesis_event(
-                    &mut store,
-                    realm_id,
-                    actor_id,
-                    summary.as_ref(),
-                )
+            let genesis_event = state_store
+                .write(|store| {
+                    crate::mls::group_events::build_creator_mls_genesis_event(
+                        store,
+                        realm_id,
+                        actor_id,
+                        summary.as_ref(),
+                    )
+                })
                 .map_err(|error| format!("building ak.mls.genesis event failed: {error}"))?
-                .ok_or_else(|| "creator MLS Genesis authoring returned no Event".to_owned())?
-            };
+                .ok_or_else(|| "creator MLS Genesis authoring returned no Event".to_owned())?;
             let genesis_material = summary.as_ref().ok_or_else(|| {
                 "ak.mls.genesis was built without recoverable epoch-0 public material".to_owned()
             })?;
@@ -370,11 +374,11 @@ pub(crate) async fn ensure_creator_realm_mls_genesis(
         };
             match accepted {
                 Ok(event_id) => {
-                    state_store
-                        .write()
-                        .mark_mls_genesis_emitted_for_effective_scope_with_event(
+                    state_store.write(|store| {
+                        store.mark_mls_genesis_emitted_for_effective_scope_with_event(
                             realm_id, None, &event_id,
-                        )?;
+                        )
+                    })?;
                     accepted_event_id = Some(event_id);
                 }
                 Err(error) => {
@@ -398,8 +402,7 @@ pub(crate) async fn ensure_creator_realm_mls_genesis(
         "MLS genesis is marked emitted but its accepted Event is unavailable".to_owned()
     })?;
     let checkpoint_has_genesis = state_store
-        .read()
-        .trusted_mls_governance_checkpoint(realm_id)
+        .read(|store| store.trusted_mls_governance_checkpoint(realm_id))
         .is_some_and(|checkpoint| {
             checkpoint
                 .accepted_events
@@ -408,37 +411,40 @@ pub(crate) async fn ensure_creator_realm_mls_genesis(
         });
     if !checkpoint_has_genesis {
         let current_basis = state_store
-            .read()
-            .trusted_mls_governance_checkpoint(realm_id)
+            .read(|store| store.trusted_mls_governance_checkpoint(realm_id))
             .ok_or_else(|| "creator MLS genesis has no verified base checkpoint".to_owned())?
             .basis;
         let seal_view =
             wait_for_realm_seal_view_after_basis(&submitter, realm_id, &current_basis).await?;
-        state_store.write().set_realm_seal_view(
-            realm_id.to_owned(),
-            crate::state::LocalSealView {
-                frontier: seal_view
-                    .seal_basis
-                    .leaves
-                    .iter()
-                    .map(ToString::to_string)
-                    .collect(),
-                state_root: None,
-                ..Default::default()
-            },
-        );
-        let request = crate::mls::governance_proof::proof_request(
-            &state_store.read(),
-            realm_id,
-            None,
-            garth::mls::welcome_admission::mls_group_id_for_realm(realm_id)?,
-            0,
-            0,
-            leaves.clone(),
-        )?;
+        state_store.write(|store| {
+            store.set_realm_seal_view(
+                realm_id.to_owned(),
+                crate::state::LocalSealView {
+                    frontier: seal_view
+                        .seal_basis
+                        .leaves
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect(),
+                    state_root: None,
+                    ..Default::default()
+                },
+            );
+        });
+        let request = state_store.read(|store| {
+            crate::mls::governance_proof::proof_request(
+                store,
+                realm_id,
+                None,
+                garth::mls::welcome_admission::mls_group_id_for_realm(realm_id)?,
+                0,
+                0,
+                leaves.clone(),
+            )
+        })?;
         crate::mls::governance_proof::fetch_verify_and_cache_proof(
             api,
-            state_store,
+            state_store.clone(),
             &request,
             &leaves,
         )
@@ -446,8 +452,7 @@ pub(crate) async fn ensure_creator_realm_mls_genesis(
     }
     crate::mls::runtime::converge_accepted_mls_artifacts(state_store, authority, device_id).await?;
     let ready = state_store
-        .read()
-        .accepted_mls_artifact_snapshot()
+        .read(|store| store.accepted_mls_artifact_snapshot())
         .snapshot
         .artifacts
         .contains_key(accepted_event_id.as_str());

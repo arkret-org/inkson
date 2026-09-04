@@ -716,7 +716,9 @@ fn render_revoke_modal(
                                         crate::mls::account_recovery::execute_device_revoke_security_rotation(
                                             &api,
                                             secure_store,
-                                            state_store,
+                                            &crate::app::runtime_adapter::state_store_handle(
+                                                state_store,
+                                            ),
                                             &authority,
                                             &actor,
                                             &current_device,

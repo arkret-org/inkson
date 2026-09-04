@@ -16,7 +16,7 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
 use arkret_wire::event_kind_str;
-use dioxus::prelude::*;
+use dioxus::prelude::Signal;
 use garth::mls::welcome_admission::{
     device_authorization_from_record, device_revoked, merge_accepted_welcomes_for_local_endpoint,
     mls_welcome_batch_is_exclusively_for_realm, recovery_public_key_secret_storage_backup_present,
@@ -903,7 +903,7 @@ pub(crate) async fn bootstrap_mls_welcome_for_realm(
     authority: arkret_sdk::AccountId,
     device_id: arkret_sdk::DeviceId,
     realm_id: String,
-    mut state_store: SyncSignal<LocalStateStore>,
+    state_store: &crate::runtime::input::StateStoreHandle,
     needs_mls_backup: Option<Signal<bool>>,
 ) -> Result<MlsWelcomeBootstrapOutcome, String> {
     if session_credential.trim().is_empty() || realm_id.trim().is_empty() {
@@ -930,7 +930,7 @@ pub(crate) async fn bootstrap_mls_welcome_for_realm(
     let can_ack_welcome_batch =
         mls_welcome_batch_is_exclusively_for_realm(&messages_value, &realm_id);
     retain_mls_welcomes_for_realm(&mut messages_value, &realm_id)?;
-    let local_inbox = state_store.read().to_device_inbox();
+    let local_inbox = state_store.read(|store| store.to_device_inbox());
     let replayed_local_welcomes =
         merge_durable_local_mls_welcomes_for_realm(&mut messages_value, &local_inbox, &realm_id)?;
     if replayed_local_welcomes > 0 {
@@ -951,7 +951,7 @@ pub(crate) async fn bootstrap_mls_welcome_for_realm(
                 message.get("kind").and_then(Value::as_str) == Some(event_kind_str::MLS_WELCOME)
             })
         });
-    if !has_welcome && state_store.read().mls_snapshot_for(&realm_id).is_none() {
+    if !has_welcome && state_store.read(|store| store.mls_snapshot_for(&realm_id).is_none()) {
         // The accepted Welcome Event is the durable carrier; the device-message
         // queue is only a notification/acceleration path. If that queue was
         // missed, recover the exact still-live Event from canonical history and
@@ -989,30 +989,36 @@ pub(crate) async fn bootstrap_mls_welcome_for_realm(
             .seals_frontier_realm_view(&realm_id)
             .await
             .map_err(|error| format!("refresh accepted Seal view before Welcome proof: {error}"))?;
-        state_store.write().set_realm_seal_view(
-            realm_id.clone(),
-            crate::state::LocalSealView {
-                frontier: seal_view
-                    .seal_basis
-                    .leaves
-                    .iter()
-                    .map(ToString::to_string)
-                    .collect(),
-                // The frontier view carries no service-derived root hint; the
-                // local post-state root is filled by verified Seal replay.
-                state_root: None,
-                ..Default::default()
-            },
-        );
+        state_store.write(|store| {
+            store.set_realm_seal_view(
+                realm_id.clone(),
+                crate::state::LocalSealView {
+                    frontier: seal_view
+                        .seal_basis
+                        .leaves
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect(),
+                    // The frontier view carries no service-derived root hint; the
+                    // local post-state root is filled by verified Seal replay.
+                    state_root: None,
+                    ..Default::default()
+                },
+            );
+        });
     }
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
     let transition_checkpoint = if has_welcome {
-        crate::mls::governance_proof::ensure_governance_checkpoint(&api, state_store, &realm_id)
-            .await?;
+        crate::mls::governance_proof::ensure_governance_checkpoint(
+            &api,
+            state_store.clone(),
+            &realm_id,
+        )
+        .await?;
         Some(
             crate::mls::governance_proof::verify_governance_checkpoint_candidate(
                 &api,
-                &state_store,
+                state_store,
                 &realm_id,
             )
             .await?,
@@ -1035,17 +1041,19 @@ pub(crate) async fn bootstrap_mls_welcome_for_realm(
         // Welcome deliberately carries no anchor: a carried one would be a second,
         // weaker trust source. Knowing realm_id is enough, and the Welcome gives
         // that much.
-        let request = crate::mls::governance_proof::proof_request_for_scope(
-            &state_store.read(),
-            preview.binding.effective_scope().clone(),
-            preview.binding.mls_group_id(),
-            preview.binding.previous_epoch(),
-            preview.binding.next_epoch(),
-            preview.leaves.clone(),
-        )?;
+        let request = state_store.read(|store| {
+            crate::mls::governance_proof::proof_request_for_scope(
+                store,
+                preview.binding.effective_scope().clone(),
+                preview.binding.mls_group_id(),
+                preview.binding.previous_epoch(),
+                preview.binding.next_epoch(),
+                preview.leaves.clone(),
+            )
+        })?;
         crate::mls::governance_proof::fetch_verify_and_cache_expected_proof(
             &api,
-            state_store,
+            state_store.clone(),
             &request,
             &preview.leaves,
             &preview.binding,
@@ -1064,14 +1072,13 @@ pub(crate) async fn bootstrap_mls_welcome_for_realm(
         .await
         .map_err(|error| format!("durably persisting the account MLS secret failed: {error}"))?;
     }
-    let snapshot_before = state_store.read().mls_snapshot_for(&realm_id).is_some();
+    let snapshot_before = state_store.read(|store| store.mls_snapshot_for(&realm_id).is_some());
     let converged =
         crate::mls::runtime::converge_accepted_mls_artifacts(state_store, &authority, &device_id)
             .await?;
-    let snapshot_after = state_store.read().mls_snapshot_for(&realm_id).is_some();
+    let snapshot_after = state_store.read(|store| store.mls_snapshot_for(&realm_id).is_some());
     let accepted_welcome_event_ids = state_store
-        .read()
-        .accepted_mls_artifact_snapshot()
+        .read(|store| store.accepted_mls_artifact_snapshot())
         .snapshot
         .artifacts
         .values()
@@ -1096,9 +1103,8 @@ pub(crate) async fn bootstrap_mls_welcome_for_realm(
     // normal sync engine, so the explicit ingest preserves the same durable
     // device-message accounting as an ordinary sync delivery.
     if !messages.messages.is_empty() {
-        let ingested = state_store
-            .write()
-            .ingest_to_device_messages(&messages.messages);
+        let ingested =
+            state_store.write(|store| store.ingest_to_device_messages(&messages.messages));
         tracing::debug!(
             realm = %realm_id,
             ingested,
@@ -1125,8 +1131,7 @@ pub(crate) async fn bootstrap_mls_welcome_for_realm(
     let applied = welcome_outcome.applied;
     if applied > 0 || welcome_outcome.skipped_stale > 0 {
         let barrier = state_store
-            .read()
-            .begin_durable_flush()
+            .read(crate::state::LocalStateStore::begin_durable_flush)
             .map_err(|error| format!("begin durable MLS Welcome persist: {error}"))?;
         barrier
             .wait()
@@ -1136,7 +1141,7 @@ pub(crate) async fn bootstrap_mls_welcome_for_realm(
     if applied == 0 && welcome_outcome.skipped_stale == 0 {
         return Ok(MlsWelcomeBootstrapOutcome::default());
     }
-    if let Some(error) = state_store.read().persist_error() {
+    if let Some(error) = state_store.read(|store| store.persist_error()) {
         return Err(format!(
             "local state was not durably persisted after MLS Welcome: {error}"
         ));
@@ -1185,13 +1190,13 @@ pub(crate) async fn bootstrap_mls_welcome_for_realm(
             authority.clone(),
             actor_id.clone(),
             device_id.to_string(),
-            state_store,
+            state_store.clone(),
             needs_mls_backup,
         )
         .await;
     }
 
-    let Some(_snapshot) = state_store.read().mls_snapshot_for(&realm_id) else {
+    let Some(_snapshot) = state_store.read(|store| store.mls_snapshot_for(&realm_id)) else {
         return Err("MLS Welcome batch had no durable local MLS snapshot".to_owned());
     };
     if applied > 0 || welcome_outcome.skipped_stale > 0 {
@@ -1268,7 +1273,7 @@ pub(crate) async fn bootstrap_mls_welcome_for_realm(
         }
     }
 
-    let persist_error = state_store.read().persist_error();
+    let persist_error = state_store.read(|store| store.persist_error());
     if should_ack_mls_welcome_batch(
         can_ack_welcome_batch,
         &welcome_outcome,

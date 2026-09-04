@@ -478,7 +478,7 @@ pub async fn maybe_auto_backup_mls_after_encrypted_write(
     authority: arkret_sdk::AccountId,
     actor_id: String,
     device_id: String,
-    state_store: SyncSignal<LocalStateStore>,
+    state_store: crate::runtime::input::StateStoreHandle,
     needs_mls_backup: Signal<bool>,
 ) {
     maybe_backup_or_flag_mls_backup_after_encrypted_write(
@@ -497,7 +497,7 @@ async fn maybe_backup_or_flag_mls_backup_after_encrypted_write(
     token: String,
     authority: arkret_sdk::AccountId,
     actor_id: String,
-    auto_backup: Option<(String, SyncSignal<LocalStateStore>)>,
+    auto_backup: Option<(String, crate::runtime::input::StateStoreHandle)>,
     needs_mls_backup: Signal<bool>,
 ) {
     if base_url.trim().is_empty() || token.trim().is_empty() || actor_id.trim().is_empty() {
@@ -506,10 +506,11 @@ async fn maybe_backup_or_flag_mls_backup_after_encrypted_write(
     if needs_mls_backup() {
         return;
     }
-    let state_store_for_completion_fence = auto_backup.as_ref().map(|(_, store)| *store);
+    let state_store_for_completion_fence = auto_backup.as_ref().map(|(_, store)| store.clone());
     let backup_completed_while_probe_was_running = || {
         state_store_for_completion_fence
-            .is_some_and(|store| mls_recovery_backup_configured(&store.read()))
+            .as_ref()
+            .is_some_and(|store| store.read(mls_recovery_backup_configured))
     };
     // Local account secret must exist (encryption has been used) — otherwise
     // there's nothing to back up yet.
@@ -530,26 +531,27 @@ async fn maybe_backup_or_flag_mls_backup_after_encrypted_write(
     // key to seal the first account-secret backup without asking for the words
     // again. Missing public key falls through to the explicit prompt below.
     let auto_backup_inputs = auto_backup.as_ref().and_then(|(device_id, state_store)| {
-        let store = state_store.read();
-        let recovery_public_key = crate::views::recovery::local_recovery_public_key(&store)?;
-        let recovery_material_evidence = store.recovery_material_evidence()?;
-        if recovery_material_evidence.account_id.principal_id.as_str() != actor_id
-            || recovery_material_evidence.device_id.as_str() != device_id
-        {
-            return None;
-        }
-        let sidecar_json = if store.private_plaintext_is_empty() {
-            None
-        } else {
-            Some(store.private_plaintext_snapshot_json())
-        };
-        Some((
-            *state_store,
-            device_id.clone(),
-            recovery_material_evidence,
-            recovery_public_key,
-            sidecar_json,
-        ))
+        state_store.read(|store| {
+            let recovery_public_key = crate::views::recovery::local_recovery_public_key(store)?;
+            let recovery_material_evidence = store.recovery_material_evidence()?;
+            if recovery_material_evidence.account_id.principal_id.as_str() != actor_id
+                || recovery_material_evidence.device_id.as_str() != device_id
+            {
+                return None;
+            }
+            let sidecar_json = if store.private_plaintext_is_empty() {
+                None
+            } else {
+                Some(store.private_plaintext_snapshot_json())
+            };
+            Some((
+                state_store.clone(),
+                device_id.clone(),
+                recovery_material_evidence,
+                recovery_public_key,
+                sidecar_json,
+            ))
+        })
     });
     // Server must NOT already hold an `mls_account_secret` backup. (When it
     // does, the restore/unlock path owns the strand — backup and restore are
@@ -582,16 +584,13 @@ async fn maybe_backup_or_flag_mls_backup_after_encrypted_write(
                 .get("backup_id")
                 .and_then(serde_json::Value::as_str)
         {
-            let mut state_store = *state_store;
-            if let Ok(mut store) = state_store.try_write() {
-                mark_mls_recovery_backup_configured(&mut store, backup_id);
-            }
+            state_store.write(|store| mark_mls_recovery_backup_configured(store, backup_id));
         }
         try_set_signal(needs_mls_backup, false);
         return;
     }
     if let Some((
-        mut state_store,
+        state_store,
         device_id,
         recovery_material_evidence,
         recovery_public_key,
@@ -626,9 +625,7 @@ async fn maybe_backup_or_flag_mls_backup_after_encrypted_write(
         .await;
         match upload_result {
             Ok(backup_id) => {
-                if let Ok(mut store) = state_store.try_write() {
-                    mark_mls_recovery_backup_configured(&mut store, &backup_id);
-                }
+                state_store.write(|store| mark_mls_recovery_backup_configured(store, &backup_id));
                 if let Some(sidecar_json) = sidecar_json {
                     let actor = actor_id.clone();
                     let device = device_id;

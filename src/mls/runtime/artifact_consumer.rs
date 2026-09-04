@@ -1,17 +1,19 @@
 //! Host adapter for Garth's checkpoint-proven accepted MLS artifact consumer.
 
-use dioxus::prelude::{ReadableExt, SyncSignal, WritableExt};
+use crate::runtime::input::StateStoreHandle;
 
 #[derive(Clone)]
 struct HostArtifactStore {
-    state: SyncSignal<crate::state::LocalStateStore>,
+    state: StateStoreHandle,
 }
 
 impl garth::AcceptedMlsArtifactStore for HostArtifactStore {
     fn load_accepted_mls_artifacts(
         &self,
     ) -> garth::Result<garth::VersionedAcceptedMlsArtifactSnapshot> {
-        Ok(self.state.read().accepted_mls_artifact_snapshot())
+        Ok(self
+            .state
+            .read(|store| store.accepted_mls_artifact_snapshot()))
     }
 
     async fn compare_and_swap_accepted_mls_artifacts(
@@ -19,10 +21,9 @@ impl garth::AcceptedMlsArtifactStore for HostArtifactStore {
         revision: u64,
         snapshot: &garth::AcceptedMlsArtifactSnapshot,
     ) -> garth::Result<bool> {
-        let mut state = self.state;
-        let barrier = state
-            .write()
-            .compare_and_swap_accepted_mls_artifacts(revision, snapshot)
+        let barrier = self
+            .state
+            .write(|store| store.compare_and_swap_accepted_mls_artifacts(revision, snapshot))
             .map_err(garth::Error::Protocol)?;
         let Some(barrier) = barrier else {
             return Ok(false);
@@ -36,7 +37,7 @@ impl garth::AcceptedMlsArtifactStore for HostArtifactStore {
 }
 
 struct HostArtifactApplicator {
-    state: SyncSignal<crate::state::LocalStateStore>,
+    state: StateStoreHandle,
     authority: arkret_sdk::AccountId,
     device_id: arkret_sdk::DeviceId,
     local_authored_commit: Option<LocalAuthoredCommitStaging>,
@@ -148,8 +149,11 @@ impl HostArtifactApplicator {
     ) -> garth::Result<arkret_sdk::Event> {
         let transition_ref = &payload.commit_ref;
         self.state
-            .read()
-            .trusted_mls_governance_checkpoint(payload.governance_binding.realm_id().as_str())
+            .read(|store| {
+                store.trusted_mls_governance_checkpoint(
+                    payload.governance_binding.realm_id().as_str(),
+                )
+            })
             .and_then(|checkpoint| {
                 checkpoint
                     .accepted_events
@@ -177,11 +181,12 @@ impl HostArtifactApplicator {
                 let payload = event_payload::<arkret_sdk::MlsGenesisPayload>(event)?;
                 let staged = self
                     .state
-                    .read()
-                    .staged_mls_snapshot_for_scope_and_group(
-                        &payload.effective_scope,
-                        payload.mls_group_id.as_str(),
-                    )
+                    .read(|store| {
+                        store.staged_mls_snapshot_for_scope_and_group(
+                            &payload.effective_scope,
+                            payload.mls_group_id.as_str(),
+                        )
+                    })
                     .filter(|snapshot| snapshot.epoch == 0)
                     .ok_or_else(|| {
                         protocol("accepted MLS Genesis has no epoch-zero authoring state")
@@ -222,8 +227,7 @@ impl HostArtifactApplicator {
                     .ok_or_else(|| protocol("accepted MLS Commit has no Realm scope"))?;
                 let checkpoint = self
                     .state
-                    .read()
-                    .trusted_mls_governance_checkpoint(realm_id.as_str())
+                    .read(|store| store.trusted_mls_governance_checkpoint(realm_id.as_str()))
                     .ok_or_else(|| protocol("accepted MLS Commit has no verified checkpoint"))?;
                 for proposal_ref in payload.proposal_refs() {
                     let mut matches = checkpoint
@@ -269,12 +273,15 @@ impl HostArtifactApplicator {
                         realm_id.as_str(),
                     )
                     .map_err(protocol)?;
-                crate::mls::governance_proof::install_cached_transition_leaf_bindings(
-                    &self.state.read(),
-                    &mut group,
-                    payload.governance_binding(),
-                )
-                .map_err(protocol)?;
+                self.state
+                    .read(|store| {
+                        crate::mls::governance_proof::install_cached_transition_leaf_bindings(
+                            store,
+                            &mut group,
+                            payload.governance_binding(),
+                        )
+                    })
+                    .map_err(protocol)?;
                 Ok((
                     scope,
                     payload.governance_binding().clone(),
@@ -318,20 +325,26 @@ impl HostArtifactApplicator {
                 let authority_hints =
                     crate::mls::governance_proof::leaf_authority_hints_from_welcome(&payload)
                         .map_err(protocol)?;
-                crate::mls::governance_proof::install_cached_transition_leaf_bindings_with_hints(
-                    &self.state.read(),
-                    &mut group,
-                    &payload.governance_binding,
-                    &authority_hints,
-                )
-                .map_err(protocol)?;
-                super::message::verify_welcome_governance_binding(
-                    &self.state.read(),
-                    payload.governance_binding.realm_id().as_str(),
-                    &group,
-                    &value,
-                )
-                .map_err(protocol)?;
+                self.state
+                    .read(|store| {
+                        crate::mls::governance_proof::install_cached_transition_leaf_bindings_with_hints(
+                            store,
+                            &mut group,
+                            &payload.governance_binding,
+                            &authority_hints,
+                        )
+                    })
+                    .map_err(protocol)?;
+                self.state
+                    .read(|store| {
+                        super::message::verify_welcome_governance_binding(
+                            store,
+                            payload.governance_binding.realm_id().as_str(),
+                            &group,
+                            &value,
+                        )
+                    })
+                    .map_err(protocol)?;
                 group
                     .derive_and_retain_history_secret(
                         payload.governance_binding.realm_id().as_str(),
@@ -371,12 +384,13 @@ impl HostArtifactApplicator {
             ));
         }
         if event.kind != arkret_sdk::EventKind::MlsGenesis {
-            crate::mls::governance_proof::install_cached_transition_leaf_bindings(
-                &self.state.read(),
-                &mut group,
-                &binding,
-            )
-            .map_err(protocol)?;
+            self.state
+                .read(|store| {
+                    crate::mls::governance_proof::install_cached_transition_leaf_bindings(
+                        store, &mut group, &binding,
+                    )
+                })
+                .map_err(protocol)?;
         }
         let realm_id = scope
             .realm_id_opt()
@@ -513,12 +527,12 @@ fn locally_executable(
 /// Apply all locally executable MLS artifacts in current verified checkpoints.
 /// No projection Event or to-device envelope can enter this path directly.
 pub(crate) async fn converge_accepted_mls_artifacts(
-    state: SyncSignal<crate::state::LocalStateStore>,
+    state: &StateStoreHandle,
     authority: &arkret_sdk::AccountId,
     device_id: &arkret_sdk::DeviceId,
 ) -> Result<usize, String> {
     let frontiers = {
-        let local = state.read().load();
+        let local = state.read(crate::state::LocalStateStore::load);
         local
             .mls_governance_proofs
             .values()
@@ -539,9 +553,11 @@ pub(crate) async fn converge_accepted_mls_artifacts(
             })
             .collect::<Vec<_>>()
     };
-    let consumer = garth::AcceptedMlsArtifactConsumer::new(HostArtifactStore { state });
+    let consumer = garth::AcceptedMlsArtifactConsumer::new(HostArtifactStore {
+        state: state.clone(),
+    });
     let applicator = HostArtifactApplicator {
-        state,
+        state: state.clone(),
         authority: authority.clone(),
         device_id: device_id.clone(),
         local_authored_commit: None,
@@ -558,7 +574,9 @@ pub(crate) async fn converge_accepted_mls_artifacts(
             {
                 continue;
             }
-            if !locally_executable(&consumer, &state.read(), event, authority, device_id)? {
+            if !state
+                .read(|store| locally_executable(&consumer, store, event, authority, device_id))?
+            {
                 continue;
             }
             let committed = consumer
@@ -578,13 +596,13 @@ pub(crate) async fn converge_accepted_mls_artifacts(
 /// best-effort scan, every missing or non-winning input is an error: a durable
 /// admission unit must never turn a skipped Commit into a successful no-op.
 pub(crate) async fn converge_accepted_local_commit(
-    state: SyncSignal<crate::state::LocalStateStore>,
+    state: &StateStoreHandle,
     authority: &arkret_sdk::AccountId,
     device_id: &arkret_sdk::DeviceId,
     event_id: &arkret_sdk::EventId,
     staged_snapshot: &garth::QueuedMlsSnapshot,
 ) -> Result<garth::AcceptedMlsArtifactCommitOutcome, String> {
-    let local = state.read().load();
+    let local = state.read(crate::state::LocalStateStore::load);
     let checkpoint = local
         .mls_governance_checkpoints
         .get(staged_snapshot.realm_id.as_str())
@@ -630,9 +648,11 @@ pub(crate) async fn converge_accepted_local_commit(
     {
         return Err("locally authored MLS Commit is not the checkpoint winner".to_owned());
     }
-    let consumer = garth::AcceptedMlsArtifactConsumer::new(HostArtifactStore { state });
+    let consumer = garth::AcceptedMlsArtifactConsumer::new(HostArtifactStore {
+        state: state.clone(),
+    });
     let applicator = HostArtifactApplicator {
-        state,
+        state: state.clone(),
         authority: authority.clone(),
         device_id: device_id.clone(),
         local_authored_commit: Some(LocalAuthoredCommitStaging {

@@ -25,8 +25,7 @@
 //! shape (idempotent, re-enterable, driven from the per-Realm MLS effect) for
 //! the state after genesis.
 
-use dioxus::prelude::{ReadableExt, SyncSignal, WritableExt};
-
+use crate::runtime::input::StateStoreHandle;
 use crate::state::LocalStateStore;
 
 /// Record a receiver's governance-binding coverage refusal for the effective
@@ -35,16 +34,15 @@ use crate::state::LocalStateStore;
 /// Call this from every E2EE application DataEvent send path: without it the
 /// refusal is just another failed submit and the epoch never advances.
 pub(crate) fn note_e2ee_submit_refusal(
-    state_store: &mut SyncSignal<LocalStateStore>,
+    state_store: &StateStoreHandle,
     realm_id: &str,
     circle_id: Option<&str>,
     error: &anyhow::Error,
 ) -> bool {
-    note_e2ee_submit_refusal_in_store(&mut state_store.write(), realm_id, circle_id, error)
+    state_store.write(|store| note_e2ee_submit_refusal_in_store(store, realm_id, circle_id, error))
 }
 
-/// Store-level form for detached durable writers that must not retain a
-/// component-owned [`SyncSignal`] across an await boundary.
+/// Store-level form for callers that already hold the store borrow.
 pub(crate) fn note_e2ee_submit_refusal_in_store(
     state_store: &mut LocalStateStore,
     realm_id: &str,
@@ -114,7 +112,7 @@ pub(crate) fn mls_coverage_repair_dedup_hint(store: &LocalStateStore, realm_id: 
 /// declare the repair finished on its own.
 pub(crate) async fn ensure_mls_governance_coverage(
     api: &crate::transport::TransportClient,
-    mut state_store: SyncSignal<LocalStateStore>,
+    state_store: &StateStoreHandle,
     realm_id: &str,
     circle_id: Option<&str>,
     authority: &arkret_sdk::AccountId,
@@ -128,17 +126,15 @@ pub(crate) async fn ensure_mls_governance_coverage(
     let circle_id = circle_id
         .map(str::trim)
         .filter(|circle_id| !circle_id.is_empty());
-    {
-        let store = state_store.read();
-        if store
+    if state_store.read(|store| {
+        store
             .mls_coverage_stale_reason(realm_id, circle_id)
             .is_none()
             || store
                 .mls_snapshot_for_effective_scope(realm_id, circle_id)
                 .is_none()
-        {
-            return Ok(false);
-        }
+    }) {
+        return Ok(false);
     }
 
     let submitter = api
@@ -153,8 +149,7 @@ pub(crate) async fn ensure_mls_governance_coverage(
         .map_err(|error| {
             format!("refreshing the accepted Seal view before MLS coverage repair failed: {error}")
         })?;
-    {
-        let mut store = state_store.write();
+    state_store.write(|store| {
         let mut view = store.seal_view_for_realm(realm_id);
         view.frontier = seal_view
             .seal_basis
@@ -166,39 +161,44 @@ pub(crate) async fn ensure_mls_governance_coverage(
         // post-state root is filled by verified Seal replay.
         view.state_root = None;
         store.set_realm_seal_view(realm_id.to_owned(), view);
-    }
+    });
 
     let snapshot = state_store
-        .read()
-        .mls_snapshot_for_effective_scope(realm_id, circle_id)
+        .read(|store| store.mls_snapshot_for_effective_scope(realm_id, circle_id))
         .ok_or_else(|| "MLS coverage repair requires a local group snapshot".to_owned())?;
-    let leaves = crate::mls::governance_proof::current_security_frontier_leaves(
-        &state_store.read(),
-        realm_id,
-        circle_id,
-        authority,
-        device_id,
-    )?;
-    let request = crate::mls::governance_proof::proof_request(
-        &state_store.read(),
-        realm_id,
-        circle_id,
-        snapshot.group_id.clone(),
-        snapshot.epoch,
-        snapshot.epoch.saturating_add(1),
-        leaves.clone(),
-    )
-    .map_err(|error| format!("preparing the MLS governance proof request failed: {error}"))?;
-    crate::mls::governance_proof::fetch_verify_and_cache_proof(api, state_store, &request, &leaves)
-        .await
-        .map_err(|error| {
-            format!(
-                "verifying the accepted governance proof before MLS coverage repair failed: {error}"
+    let leaves = state_store.read(|store| {
+        crate::mls::governance_proof::current_security_frontier_leaves(
+            store, realm_id, circle_id, authority, device_id,
+        )
+    })?;
+    let request = state_store
+        .read(|store| {
+            crate::mls::governance_proof::proof_request(
+                store,
+                realm_id,
+                circle_id,
+                snapshot.group_id.clone(),
+                snapshot.epoch,
+                snapshot.epoch.saturating_add(1),
+                leaves.clone(),
             )
-        })?;
+        })
+        .map_err(|error| format!("preparing the MLS governance proof request failed: {error}"))?;
+    crate::mls::governance_proof::fetch_verify_and_cache_proof(
+        api,
+        state_store.clone(),
+        &request,
+        &leaves,
+    )
+    .await
+    .map_err(|error| {
+        format!(
+            "verifying the accepted governance proof before MLS coverage repair failed: {error}"
+        )
+    })?;
 
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-    let local_state = state_store.read().clone();
+    let local_state = state_store.read(Clone::clone);
     let (commit_envelope, next_snapshot, previous_governance_binding) =
         crate::mls::runtime::force_epoch_rotation_commit_for_effective_scope(
             &local_state,
@@ -236,8 +236,7 @@ pub(crate) async fn ensure_mls_governance_coverage(
 
     // Persist-on-accept, identical to every other commit path: the local
     // snapshot only advances once the server admitted the epoch.
-    {
-        let mut store = state_store.write();
+    state_store.write(|store| {
         store
             .record_mls_group_state_ref_for_effective_scope(
                 realm_id.to_owned(),
@@ -254,8 +253,8 @@ pub(crate) async fn ensure_mls_governance_coverage(
             circle_id,
             next_snapshot,
         )?;
-        store.clear_mls_coverage_stale(realm_id, circle_id)?;
-    }
+        store.clear_mls_coverage_stale(realm_id, circle_id)
+    })?;
     tracing::info!(
         realm = %realm_id,
         circle = circle_id.unwrap_or("-"),

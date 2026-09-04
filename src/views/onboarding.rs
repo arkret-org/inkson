@@ -1025,9 +1025,10 @@ async fn recover_bound_principal_device(
         replacement_device_id,
     )?;
     let api = issue_recovery_session_transport(handoff, state_store).await?;
+    let store_handle = crate::app::runtime_adapter::state_store_handle(state_store);
     if let Some(mut completed) = crate::mls::account_recovery::resume_pending_pcr_policy_recovery(
         &api,
-        state_store,
+        &store_handle,
         recovery_words,
     )
     .await?
@@ -1072,7 +1073,7 @@ async fn recover_bound_principal_device(
         .await?;
     let mut completed = crate::mls::account_recovery::execute_pcr_policy_recovery(
         &api,
-        state_store,
+        &store_handle,
         principal_did,
         &session,
         &proof_outcome,

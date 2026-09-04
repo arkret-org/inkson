@@ -881,7 +881,7 @@ pub(super) async fn dispatch_card_detail_update(
                             backup_account_scope.authority.clone(),
                             actor_for_backup_trigger.clone(),
                             backup_account_scope.device_id.to_string(),
-                            state_store,
+                            crate::app::runtime_adapter::state_store_handle(state_store),
                             signal,
                         )
                         .await;

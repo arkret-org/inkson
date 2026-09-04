@@ -1832,7 +1832,9 @@ pub(crate) async fn submit_mls_admission_for_invitee(
         .await?
     {
         let advanced = admission_submitter
-            .drain_mls_outbound_with_accepted_store(state_store)
+            .drain_mls_outbound_with_accepted_store(
+                crate::app::runtime_adapter::state_store_handle(state_store),
+            )
             .await?;
         tracing::warn!(
             target: "mls_admission",
@@ -2590,7 +2592,7 @@ async fn ensure_mls_genesis_frontier_for_invite(
     .map_err(anyhow::Error::msg)?;
     crate::mls::governance_proof::fetch_verify_and_cache_proof(
         api,
-        state_store,
+        crate::app::runtime_adapter::state_store_handle(state_store),
         &genesis_request,
         &leaves,
     )
@@ -2721,10 +2723,15 @@ async fn ensure_mls_governance_proof_for_next_commit(
         )
         .map_err(anyhow::Error::msg)?
     };
-    crate::mls::governance_proof::fetch_verify_and_cache_proof(api, state_store, &request, &leaves)
-        .await
-        .map(|_| ())
-        .map_err(anyhow::Error::msg)
+    crate::mls::governance_proof::fetch_verify_and_cache_proof(
+        api,
+        crate::app::runtime_adapter::state_store_handle(state_store),
+        &request,
+        &leaves,
+    )
+    .await
+    .map(|_| ())
+    .map_err(anyhow::Error::msg)
 }
 
 async fn refresh_mls_governance_target_basis(

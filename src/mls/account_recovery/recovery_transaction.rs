@@ -17,7 +17,6 @@ use arkret_wire::{
     SecurityTransaction, SecurityTransactionCreateRequest, SecurityTransactionResultKind,
     SecurityTransactionStep, TransactionId,
 };
-use dioxus::prelude::WritableExt as _;
 use zeroize::Zeroizing;
 
 fn non_empty(value: String) -> anyhow::Result<NonEmptyString> {
@@ -392,7 +391,7 @@ fn reject_terminal_recovery_transaction(
 
 pub(crate) async fn execute_pcr_policy_recovery(
     api: &crate::transport::TransportClient,
-    mut state_store: dioxus::prelude::SyncSignal<crate::state::LocalStateStore>,
+    state_store: &crate::runtime::input::StateStoreHandle,
     principal_did: &arkret_sdk::Did,
     session: &arkret_sdk::RecoverySessionState,
     proof_outcome: &arkret_sdk::RecoverySessionProofSubmitOutcome,
@@ -420,26 +419,21 @@ pub(crate) async fn execute_pcr_policy_recovery(
     // The restore report is intentionally not bound: the returned summary was
     // only ever stored in a transaction field that was retired as never-read;
     // the restore side effects inside the write guard are what matters here.
-    {
-        let mut store = state_store.write();
-        super::restore_mls_history_with_recovery_key_from_payload(
-            &restore_payload,
-            &mut store,
-            secure_store.as_ref(),
-            &session.account_id,
-            session.account_id.principal_id.as_str(),
-            session.requesting_device_id.as_str(),
-            prepared.recovery_private_key.as_slice(),
-            (session.policy_id.as_str(), session.policy_version),
-        )
+    super::restore_mls_history_with_recovery_key_from_payload(
+        &restore_payload,
+        state_store,
+        secure_store.as_ref(),
+        &session.account_id,
+        session.account_id.principal_id.as_str(),
+        session.requesting_device_id.as_str(),
+        prepared.recovery_private_key.as_slice(),
+        (session.policy_id.as_str(), session.policy_version),
+    )
+    .await?;
+    state_store
+        .read(crate::state::LocalStateStore::begin_durable_flush)?
+        .wait()
         .await?;
-    }
-    {
-        let store = state_store.write();
-        let barrier = store.begin_durable_flush()?;
-        drop(store);
-        barrier.wait().await?;
-    }
 
     let transaction_id = prepared.create_request.transaction_id.clone();
     crate::security_transaction::store_pending_fresh_device_recovery(
@@ -516,7 +510,7 @@ pub(crate) async fn execute_pcr_policy_recovery(
 /// Recovery words are re-entered; they are never part of the persisted plan.
 pub(crate) async fn resume_pending_pcr_policy_recovery(
     api: &crate::transport::TransportClient,
-    mut state_store: dioxus::prelude::SyncSignal<crate::state::LocalStateStore>,
+    state_store: &crate::runtime::input::StateStoreHandle,
     recovery_words: &str,
 ) -> anyhow::Result<Option<CompletedFreshDeviceRecovery>> {
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
@@ -582,26 +576,21 @@ pub(crate) async fn resume_pending_pcr_policy_recovery(
         &recovery_material,
     )
     .await?;
-    {
-        let mut store = state_store.write();
-        super::restore_mls_history_with_recovery_key_from_payload(
-            &restore_payload,
-            &mut store,
-            secure_store.as_ref(),
-            &session.account_id,
-            session.account_id.principal_id.as_str(),
-            session.requesting_device_id.as_str(),
-            &recovery_material.backup_hpke_serialized_private_key,
-            (session.policy_id.as_str(), session.policy_version),
-        )
+    super::restore_mls_history_with_recovery_key_from_payload(
+        &restore_payload,
+        state_store,
+        secure_store.as_ref(),
+        &session.account_id,
+        session.account_id.principal_id.as_str(),
+        session.requesting_device_id.as_str(),
+        &recovery_material.backup_hpke_serialized_private_key,
+        (session.policy_id.as_str(), session.policy_version),
+    )
+    .await?;
+    state_store
+        .read(crate::state::LocalStateStore::begin_durable_flush)?
+        .wait()
         .await?;
-    }
-    {
-        let store = state_store.write();
-        let barrier = store.begin_durable_flush()?;
-        drop(store);
-        barrier.wait().await?;
-    }
     while transaction.next_required_step()? == Some(SecurityTransactionStep::SubmitReanchorUnit) {
         transaction = workflow.continue_server_step(&transaction).await?;
     }

@@ -101,8 +101,10 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
             basis_seen.set(Some(basis.clone()));
             in_flight.set(true);
             spawn(async move {
+                let convergence_store =
+                    crate::app::runtime_adapter::state_store_handle(convergence_store);
                 match crate::mls::runtime::converge_accepted_mls_artifacts(
-                    convergence_store,
+                    &convergence_store,
                     &authority,
                     &device,
                 )
@@ -113,7 +115,7 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
                             tracing::info!(applied, "accepted MLS artifacts converged durably");
                         }
                         match crate::mls::runtime::converge_external_history_candidate_decryptions(
-                            convergence_store,
+                            &convergence_store,
                             &authority,
                             &actor,
                             &device,
@@ -185,8 +187,10 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
                     move |api| async move {
                         let secure_store =
                             crate::secure_key_store::default_secure_key_store("inkson");
+                        let recovery_store =
+                            crate::app::runtime_adapter::state_store_handle(recovery_store);
                         let outcome = crate::history_recovery::converge_member_history_recovery(
-                            recovery_store,
+                            &recovery_store,
                             &api,
                             secure_store,
                             &authority,
@@ -197,7 +201,7 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
                         .await?;
                         let opened =
                             crate::mls::runtime::converge_external_history_candidate_decryptions(
-                                recovery_store,
+                                &recovery_store,
                                 &authority,
                                 did.as_str(),
                                 &device,
@@ -818,6 +822,8 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
             let state_store_for_probe = state_store_for_bootstrap;
             let mut coverage_repair_in_flight_for_probe = coverage_repair_in_flight;
             spawn(async move {
+                let state_store_task =
+                    crate::app::runtime_adapter::state_store_handle(state_store_task);
                 let mut bootstrap_retry_required = false;
                 match bootstrap_mls_welcome_for_realm(
                     base,
@@ -826,7 +832,7 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
                     authority,
                     device,
                     bootstrap_realm_id,
-                    state_store_task,
+                    &state_store_task,
                     Some(needs_mls_backup_for_bootstrap),
                 )
                 .await
@@ -875,7 +881,7 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
                     {
                         Ok(api) => crate::mls::creator_bootstrap::ensure_creator_realm_mls_genesis(
                             &api,
-                            state_store_task,
+                            &state_store_task,
                             &creator_bootstrap_realm_id,
                             &detect_authority,
                             &detect_device,
@@ -955,7 +961,7 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
                     {
                         Ok(api) => crate::mls::coverage_liveness::ensure_mls_governance_coverage(
                             &api,
-                            state_store_task,
+                            &state_store_task,
                             &creator_bootstrap_realm_id,
                             circle_id.as_deref(),
                             &detect_authority,

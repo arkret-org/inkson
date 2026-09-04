@@ -364,7 +364,7 @@ async fn recover_mls_snapshot_for_encrypted_write(
     actor_id: &str,
     authority: &arkret_sdk::AccountId,
     device_id: &arkret_sdk::DeviceId,
-    mut state_store: SyncSignal<LocalStateStore>,
+    state_store: SyncSignal<LocalStateStore>,
 ) -> Result<(), String> {
     // The account MLS secret is an IndexedDB-only key on wasm; before that
     // tier finishes its async boot the sync store surface reports it missing.
@@ -383,6 +383,7 @@ async fn recover_mls_snapshot_for_encrypted_write(
     }
 
     let mut failures = Vec::new();
+    let store_handle = crate::app::runtime_adapter::state_store_handle(state_store);
     match crate::app::bootstrap_mls_welcome_for_realm(
         base_url.to_owned(),
         session_credential.to_owned(),
@@ -390,7 +391,7 @@ async fn recover_mls_snapshot_for_encrypted_write(
         authority.clone(),
         device_id.clone(),
         realm_id.to_owned(),
-        state_store,
+        &store_handle,
         None,
     )
     .await
@@ -425,16 +426,15 @@ async fn recover_mls_snapshot_for_encrypted_write(
         .await
         {
             Ok(payload) => {
-                let report = {
-                    let mut store = state_store.write();
+                let report =
                     crate::mls::account_recovery::restore_mls_history_with_local_secret_from_payload(
                         &payload,
-                        &mut store,
+                        &store_handle,
                         secure_store.as_ref(),
                         authority,
                         actor_id,
-                    ).await
-                };
+                    )
+                    .await;
                 if report.failed > 0 {
                     failures.push(format!(
                         "history backup: {}",
@@ -459,7 +459,7 @@ async fn recover_mls_snapshot_for_encrypted_write(
             .map_err(|error| format!("creator MLS bootstrap transport: {error}"))?;
         if let Err(error) = crate::mls::creator_bootstrap::ensure_creator_realm_mls_genesis(
             &api,
-            state_store,
+            &store_handle,
             realm_id,
             authority,
             device_id,

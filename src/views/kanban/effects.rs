@@ -632,10 +632,9 @@ pub(super) fn KanbanEffects(
 
                     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
                     let restored_private_plaintext = {
-                        let mut store = state_store.write();
                         let report = crate::mls::account_recovery::restore_mls_history_with_local_secret_from_payload(
                             &payload,
-                            &mut store,
+                            &crate::app::runtime_adapter::state_store_handle(state_store),
                             secure_store.as_ref(),
                             &authority,
                             &actor,

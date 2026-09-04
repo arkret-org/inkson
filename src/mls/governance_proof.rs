@@ -1,7 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use dioxus::prelude::{ReadableExt, WritableExt};
-
 pub(crate) fn bind_sidecar_scope(
     base: &arkret_sdk::MlsGovernanceBindingPayload,
     sidecar_binding: arkret_sdk::SidecarMlsBinding,
@@ -33,19 +31,6 @@ pub(crate) trait GovernanceProofStateStore:
 {
     fn with_read<R>(&self, read: impl FnOnce(&crate::state::LocalStateStore) -> R) -> R;
     fn with_write<R>(&self, write: impl FnOnce(&mut crate::state::LocalStateStore) -> R) -> R;
-}
-
-impl GovernanceProofStateStore for dioxus::prelude::SyncSignal<crate::state::LocalStateStore> {
-    fn with_read<R>(&self, read: impl FnOnce(&crate::state::LocalStateStore) -> R) -> R {
-        let store = ReadableExt::read(self);
-        read(&store)
-    }
-
-    fn with_write<R>(&self, write: impl FnOnce(&mut crate::state::LocalStateStore) -> R) -> R {
-        let mut signal = *self;
-        let mut store = WritableExt::write(&mut signal);
-        write(&mut store)
-    }
 }
 
 impl GovernanceProofStateStore for crate::runtime::input::StateStoreHandle {
