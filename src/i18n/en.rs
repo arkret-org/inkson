@@ -2933,6 +2933,50 @@ fn prompt_copy_strings(dict: &mut TranslationDict) {
     dict.set("quarantine.title", "Invite quarantine");
     dict.set("quarantine.status", "Pending invites are stored privately for you. Review controls appear once the consent flow is available.");
     dict.set("theme.switcher_aria_label", "Theme");
+    dict.set("common.delete", "Delete");
+    dict.set("app.boot.opening_secure_storage", "Opening secure storage");
+    dict.set(
+        "app.boot.loading_keys",
+        "Loading encrypted account and device keys…",
+    );
+    dict.set(
+        "app.recovery.incomplete_title",
+        "Recovery setup is incomplete",
+    );
+    dict.set("app.recovery.incomplete_body", "Generate your Recovery Key (24 words) before relying on this account. Backups are stored server-side as ciphertext only; Arkret cannot recover the 24 words for you.");
+    dict.set("app.recovery.configure", "Configure recovery");
+    dict.set("app.recovery.history_status", "Encrypted history status");
+    dict.set("app.recovery.history_status_body", "Encrypted-history recovery needs an account MLS secret; if this is a brand-new account, the app will prompt again after your first encrypted write creates material that can be backed up.");
+    dict.set("app.nav.close_menu", "Close menu");
+    dict.set("app.nav.open_menu", "Open menu");
+    dict.set("app.nav.main_navigation", "Main navigation");
+    dict.set("app.nav.resize_menu", "Drag to resize menu");
+    dict.set("app.nav.scope_toggle", "Collaboration and contacts");
+    dict.set("app.nav.show_navigation", "Show navigation");
+    dict.set("app.nav.hide_navigation", "Hide navigation");
+    dict.set("app.brand.home", "Inkson | Arkret Home");
+    dict.set("app.main_content", "Main content");
+    dict.set("app.sidebar.hide_own_agents", "Hide your AI agents");
+    dict.set("app.sidebar.show_own_agents", "Show your AI agents");
+    dict.set("app.sidebar.opening", "Opening...");
+    dict.set("app.sidebar.agent_badge", "AI agent");
+    dict.set("app.sidebar.remark", "Remark");
+    dict.set(
+        "app.sidebar.remark_title",
+        "Local remark (private to this account)",
+    );
+    dict.set("app.sidebar.direct_badge", "DM");
+    dict.set("app.sidebar.agent_count", "Agents {count}");
+    dict.set("app.sidebar.contact_actions", "Contact actions");
+    dict.set("app.sidebar.close_row_actions", "Close row actions");
+    dict.set("app.sidebar.delete_contact", "Delete Contact");
+    dict.set("app.topbar.current_view", "Current view: {surface}");
+    dict.set("app.topbar.open_global_search", "Open global search");
+    dict.set("app.account.open_settings", "Open settings");
+    dict.set("app.account.did", "DID");
+    dict.set("app.account.server", "Server");
+    dict.set("app.account.refresh_session", "Refresh session");
+    dict.set("app.account.log_out", "Log out");
     dict.set("theme.switch_to_light", "Switch to light theme");
     dict.set("theme.switch_to_night", "Switch to night theme");
     dict.set("account.not_signed_in", "Not signed in");
