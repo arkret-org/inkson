@@ -693,6 +693,18 @@ async fn encrypted_private_patch_with_ready_snapshot_replaces_plaintext() {
     )
     .unwrap();
     let group_id = arkret_sdk::base64url_encode(realm.as_bytes());
+    state.save_realm_tree_projection(
+        realm,
+        json!({
+            "schema_refs": [arkret_sdk::ProfileId::MLS_MINIMAL_METADATA_REALM_V1],
+            "content_scheme": "mls_rfc9420",
+            "member_roster_entries_limited": false,
+            "member_roster_entries": [{
+                "actor_id": arkret_sdk::ActorId::account(test_authority(actor)),
+                "membership": "join"
+            }]
+        }),
+    );
     crate::mls::governance_proof::seed_test_governance_proof(
         &mut state,
         realm,
@@ -733,18 +745,6 @@ async fn encrypted_private_patch_with_ready_snapshot_replaces_plaintext() {
         &serde_json::to_vec(&record).unwrap(),
         &secret,
         b"deterministic-salt",
-    );
-    state.save_realm_tree_projection(
-        realm,
-        json!({
-            "schema_refs": [arkret_sdk::ProfileId::MLS_MINIMAL_METADATA_REALM_V1],
-            "content_scheme": "mls_rfc9420",
-            "member_roster_entries_limited": false,
-            "member_roster_entries": [{
-                "actor_id": arkret_sdk::ActorId::account(test_authority(actor)),
-                "membership": "join"
-            }]
-        }),
     );
     // Match the accepted-Seal frontier installed by
     // `seed_test_governance_proof`; the emitted binding must carry that exact

@@ -1188,6 +1188,11 @@ pub(crate) fn seed_test_governance_proof(
             .unwrap();
         Some(event_id)
     };
+    let proposed_group_genesis_binding = if previous_epoch == 0 && next_epoch == 0 {
+        proposed_group_genesis_binding(state_store, &effective_scope).ok()
+    } else {
+        None
+    };
     let request = arkret_sdk::MlsGovernanceProofRequestBody {
         profile: arkret_sdk::MlsGovernanceProofProfile::GroupSecurityFrontier,
         effective_scope,
@@ -1198,7 +1203,7 @@ pub(crate) fn seed_test_governance_proof(
         byte_limit: arkret_sdk::MLS_GOVERNANCE_PROOF_MAX_BYTES,
         frontier_purpose: arkret_sdk::MlsGovernanceFrontierPurpose::GroupBinding,
         base_group_state_ref,
-        proposed_group_genesis_binding: None,
+        proposed_group_genesis_binding,
         previous_epoch,
         next_epoch,
         binding_profile: arkret_sdk::MlsGovernanceBindingProfile::AkSecurityFrontierV1,
