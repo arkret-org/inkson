@@ -55,10 +55,11 @@ fn nav_query_with_no_match_renders_no_groups() {
 fn expired_presence_preference_seeds_an_empty_editor() {
     // An expired manual state must not be re-offered: the server has already
     // stopped honouring it, so showing it would misreport the account.
-    let mut preference = PresencePreference::default();
-    preference.manual_state = Some(arkret_sdk::ManualPresenceState::Dnd);
-    preference.status_message = Some("heads down".to_owned());
-    preference.clears_at = Some("2026-01-01T00:00:00Z".parse().unwrap());
+    let preference = PresencePreference {
+        manual_state: Some(arkret_sdk::ManualPresenceState::Dnd),
+        status_message: Some("heads down".to_owned()),
+        clears_at: Some("2026-01-01T00:00:00Z".parse().unwrap()),
+    };
     let seed = presence_editor_seed(&preference, "2026-06-01T00:00:00Z".parse().unwrap());
     assert_eq!(seed.manual_state, "auto");
     assert_eq!(seed.status_message, "");
@@ -66,10 +67,11 @@ fn expired_presence_preference_seeds_an_empty_editor() {
 
 #[test]
 fn unexpired_presence_preference_seeds_the_saved_state() {
-    let mut preference = PresencePreference::default();
-    preference.manual_state = Some(arkret_sdk::ManualPresenceState::Dnd);
-    preference.status_message = Some("heads down".to_owned());
-    preference.clears_at = Some("2026-12-01T00:00:00Z".parse().unwrap());
+    let preference = PresencePreference {
+        manual_state: Some(arkret_sdk::ManualPresenceState::Dnd),
+        status_message: Some("heads down".to_owned()),
+        clears_at: Some("2026-12-01T00:00:00Z".parse().unwrap()),
+    };
     let seed = presence_editor_seed(&preference, "2026-06-01T00:00:00Z".parse().unwrap());
     assert_eq!(
         seed.manual_state,
@@ -80,8 +82,10 @@ fn unexpired_presence_preference_seeds_the_saved_state() {
 
 #[test]
 fn presence_preference_without_expiry_stays_active() {
-    let mut preference = PresencePreference::default();
-    preference.manual_state = Some(arkret_sdk::ManualPresenceState::Dnd);
+    let preference = PresencePreference {
+        manual_state: Some(arkret_sdk::ManualPresenceState::Dnd),
+        ..Default::default()
+    };
     let seed = presence_editor_seed(&preference, "2099-01-01T00:00:00Z".parse().unwrap());
     assert_eq!(
         seed.manual_state,

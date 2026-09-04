@@ -312,3 +312,88 @@ fn identity_labels_prefer_display_name_then_handle_then_protocol_id() {
     assert_eq!(without_handle.detail, "Laptop");
     assert_eq!(without_handle.handles_title, without_handle.handles_label);
 }
+
+fn contact_row(principal: &str) -> crate::models::ContactListRow {
+    crate::models::ContactListRow {
+        peer: arkret_sdk::contact_operations::ContactPeer::Human {
+            account_id: crate::test_support::authority(principal),
+        },
+        state: arkret_sdk::ContactState::Accepted,
+        request_event_ref: None,
+        request_receipt: None,
+        response_event_ref: None,
+        tombstone_event_ref: None,
+        next_prepare_input: None,
+        granted_to_peer_scopes: Vec::new(),
+        granted_by_peer_scopes: Vec::new(),
+        bidirectional_scopes: vec![arkret_sdk::contact_operations::ContactScope::DirectMessage],
+        effective_scopes: None,
+        peer_host_id: None,
+        peer_host_resolution: None,
+        continuity_evidence: None,
+        direct_conversation: None,
+        contact_agent_projections: Vec::new(),
+    }
+}
+
+fn pinned_remark(principal: &str) -> ContactRemark {
+    let mut remark = ContactRemark::new(
+        crate::test_support::core_id(principal),
+        String::new(),
+        "2026-06-01T00:00:00.000Z".parse().unwrap(),
+    );
+    remark.pinned = true;
+    remark
+}
+
+const CONTACT_A: &str = "ak:did_core:web:aaa.example";
+const CONTACT_B: &str = "ak:did_core:web:bbb.example";
+const CONTACT_C: &str = "ak:did_core:web:ccc.example";
+
+#[test]
+fn pinned_direct_contacts_sort_ahead_of_the_rest() {
+    let store = crate::state::isolated_store_for_tests("shell-model-contacts-pin");
+    let rows = vec![
+        contact_row(CONTACT_A),
+        contact_row(CONTACT_B),
+        contact_row(CONTACT_C),
+    ];
+    let mut remarks = BTreeMap::new();
+    remarks.insert(CONTACT_C.to_owned(), pinned_remark(CONTACT_C));
+    let sorted = filter_and_sort_direct_contacts(&rows, "", &store, &remarks);
+    let order: Vec<String> = sorted
+        .iter()
+        .map(|row| crate::models::contact_peer_id(row).as_str().to_owned())
+        .collect();
+    assert_eq!(order[0], CONTACT_C, "pinned contact leads");
+    // The remaining two keep a stable label-then-peer-id order.
+    assert_eq!(&order[1..], &[CONTACT_A.to_owned(), CONTACT_B.to_owned()]);
+}
+
+#[test]
+fn direct_contact_query_matches_the_peer_id() {
+    let store = crate::state::isolated_store_for_tests("shell-model-contacts-query");
+    let rows = vec![contact_row(CONTACT_A), contact_row(CONTACT_B)];
+    let remarks = BTreeMap::new();
+    let matched = filter_and_sort_direct_contacts(&rows, "bbb.example", &store, &remarks);
+    assert_eq!(matched.len(), 1);
+    assert_eq!(
+        crate::models::contact_peer_id(&matched[0]).as_str(),
+        CONTACT_B
+    );
+    assert!(filter_and_sort_direct_contacts(&rows, "nobody", &store, &remarks).is_empty());
+}
+
+#[test]
+fn direct_contact_query_matches_the_contact_state_wire_word() {
+    // The sidebar search reaches the state word as well as the peer id; a
+    // regression here silently narrows what the box can find.
+    let store = crate::state::isolated_store_for_tests("shell-model-contacts-state");
+    let rows = vec![contact_row(CONTACT_A)];
+    let remarks = BTreeMap::new();
+    let wire = crate::models::contact_state_wire(rows[0].state);
+    assert_eq!(
+        filter_and_sort_direct_contacts(&rows, wire, &store, &remarks).len(),
+        1
+    );
+}
