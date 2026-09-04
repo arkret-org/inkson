@@ -19,7 +19,7 @@ pub(crate) fn bind_sidecar_scope(
     )
 }
 
-pub(crate) trait GovernanceProofStateStore: Clone {
+pub(crate) trait GovernanceProofStateStore: Clone + Send + Sync + 'static {
     fn with_read<R>(&self, read: impl FnOnce(&crate::state::LocalStateStore) -> R) -> R;
     fn with_write<R>(&self, write: impl FnOnce(&mut crate::state::LocalStateStore) -> R) -> R;
 }
@@ -349,6 +349,7 @@ async fn fetch_verify_and_cache_proof_internal<S: GovernanceProofStateStore>(
             state_store.with_read(|store| group_genesis_binding(store, &request.effective_scope))?
         }
     };
+    let verifier_store = state_store.clone();
     let verified = arkret_sdk::verify_mls_governance_frontier(
         request,
         &resolved.bundle,
@@ -359,8 +360,8 @@ async fn fetch_verify_and_cache_proof_internal<S: GovernanceProofStateStore>(
         &resolved.dependencies,
         &group_genesis_binding,
         leaves,
-        |event, digest_suite, evidence, dependencies| {
-            verify_agent_history_key(&state_store, event, digest_suite, evidence, dependencies)
+        move |event, digest_suite, evidence, dependencies| {
+            verify_agent_history_key(&verifier_store, event, digest_suite, evidence, dependencies)
         },
     )
     .await
@@ -394,15 +395,25 @@ async fn fetch_verify_and_cache_proof_internal<S: GovernanceProofStateStore>(
     Ok((resolved.bundle, binding))
 }
 
-pub(crate) fn verify_agent_history_key<S: GovernanceProofStateStore>(
+pub(crate) fn verify_agent_history_key<'a, S: GovernanceProofStateStore>(
     state_store: &S,
-    event: &arkret_sdk::Event,
+    event: &'a arkret_sdk::Event,
     _digest_suite: arkret_sdk::DigestSuite,
-    evidence: &arkret_sdk::AuthenticatedSignerResolutionEvidence,
-    dependencies: &[arkret_sdk::GovernanceDependency],
-) -> Result<arkret_sdk::signatures::PublicKeyMaterial, arkret_sdk::WireError> {
-    arkret_sdk::verify_agent_historical_event_key(event, evidence, dependencies, |request| {
-        verify_agent_external_trust(state_store, request)
+    evidence: &'a arkret_sdk::AuthenticatedSignerResolutionEvidence,
+    dependencies: &'a [arkret_sdk::GovernanceDependency],
+) -> arkret_sdk::VerifyAgentHistoryKeyFuture<'a> {
+    let state_store = state_store.clone();
+    Box::pin(async move {
+        arkret_sdk::verify_agent_historical_event_key(
+            event,
+            evidence,
+            dependencies,
+            move |request| {
+                let state_store = state_store.clone();
+                Box::pin(async move { verify_agent_external_trust(&state_store, request) })
+            },
+        )
+        .await
     })
 }
 
@@ -534,14 +545,15 @@ async fn verify_governance_checkpoint_candidate_with_http<S: GovernanceProofStat
         &target_basis,
     )
     .await?;
+    let verifier_store = state_store.clone();
     let checkpoint = arkret_sdk::verify_mls_governance_closure(
         &realm,
         &resolved.target_basis,
         &resolved.seals,
         &resolved.events,
         &resolved.dependencies,
-        |event, digest_suite, evidence, dependencies| {
-            verify_agent_history_key(state_store, event, digest_suite, evidence, dependencies)
+        move |event, digest_suite, evidence, dependencies| {
+            verify_agent_history_key(&verifier_store, event, digest_suite, evidence, dependencies)
         },
     )
     .await

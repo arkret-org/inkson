@@ -170,12 +170,13 @@ impl garth::ReceiptBoundHistoryTraversal for ReceiptTraversal<'_> {
                     "history traversal has no complete locally verified checkpoint".to_owned(),
                 )
             })?;
+        let base_verifier_store = self.state_store.clone();
         let base = arkret_sdk::derive_verified_mls_governance_checkpoint_at_basis(
             &existing,
             base_basis,
-            |event, digest_suite, evidence, dependencies| {
+            move |event, digest_suite, evidence, dependencies| {
                 crate::mls::governance_proof::verify_agent_history_key(
-                    &self.state_store,
+                    &base_verifier_store,
                     event,
                     digest_suite,
                     evidence,
@@ -190,15 +191,16 @@ impl garth::ReceiptBoundHistoryTraversal for ReceiptTraversal<'_> {
         )
         .await
         .map_err(garth::Error::Protocol)?;
+        let cut_verifier_store = self.state_store.clone();
         let checkpoint = arkret_sdk::verify_mls_governance_cut(
             &base,
             &cut.target_basis,
             &cut.seals,
             &cut.events,
             &cut.dependencies,
-            |event, digest_suite, evidence, dependencies| {
+            move |event, digest_suite, evidence, dependencies| {
                 crate::mls::governance_proof::verify_agent_history_key(
-                    &self.state_store,
+                    &cut_verifier_store,
                     event,
                     digest_suite,
                     evidence,
@@ -948,7 +950,7 @@ pub async fn discover_member_request_replicas(
 pub async fn converge_member_history_recovery(
     state_store: SyncSignal<LocalStateStore>,
     api: &crate::transport::TransportClient,
-    secure_store: &dyn SecureKeyStore,
+    secure_store: std::sync::Arc<dyn SecureKeyStore + Send + Sync>,
     authority: &arkret_sdk::AccountId,
     requester_did: &arkret_sdk::Did,
     device_id: &arkret_sdk::DeviceId,
@@ -1034,7 +1036,7 @@ pub async fn converge_member_history_recovery(
         let result = author_and_create_ordinary_human_request(
             state_store,
             api,
-            secure_store,
+            secure_store.as_ref(),
             authority,
             requester_did,
             device_id,
@@ -1058,7 +1060,7 @@ pub async fn converge_member_history_recovery(
 
     let local_sources = state_store
         .read()
-        .local_authoritative_history_secrets_for_backup(secure_store, authority)
+        .local_authoritative_history_secrets_for_backup(secure_store.as_ref(), authority)
         .unwrap_or_else(|error| {
             outcome.pending_errors += 1;
             tracing::debug!(%error, "no local-authoritative history source material is available");
@@ -1136,7 +1138,8 @@ pub async fn converge_member_history_recovery(
                         continue;
                     }
                 };
-                match stage_member_source_attempt(state_store, secure_store, bundle).await {
+                match stage_member_source_attempt(state_store, secure_store.as_ref(), bundle).await
+                {
                     Ok(_) => outcome.source_attempts_staged += 1,
                     Err(error) => {
                         outcome.pending_errors += 1;
@@ -1162,7 +1165,7 @@ pub async fn converge_member_history_recovery(
         }
     }
 
-    match drain_source_outbox(state_store, api, secure_store, now).await {
+    match drain_source_outbox(state_store, api, secure_store.as_ref(), now).await {
         Ok(drained) => outcome.source_attempts_completed = drained.completed,
         Err(error) => {
             outcome.pending_errors += 1;
@@ -1173,7 +1176,7 @@ pub async fn converge_member_history_recovery(
         let installed = verify_and_install_response_page_from_local_state(
             state_store,
             api,
-            secure_store,
+            secure_store.clone(),
             authority,
             device_id,
             &request_id,
@@ -1221,12 +1224,10 @@ pub async fn verify_and_install_response_page<VerifyExternalSourceKey>(
     verify_external_source_key: VerifyExternalSourceKey,
 ) -> anyhow::Result<HistoryResponsePageInstallOutcome>
 where
-    VerifyExternalSourceKey: Fn(
-        arkret_sdk::HistorySourceProofExternalVerificationRequest<'_>,
-    ) -> std::result::Result<
-        arkret_sdk::signatures::proof::PublicKeyMaterial,
-        arkret_sdk::WireError,
-    >,
+    VerifyExternalSourceKey: for<'a> Fn(
+            arkret_sdk::HistorySourceProofExternalVerificationRequest<'a>,
+        ) -> arkret_sdk::HistorySourceProofVerificationFuture<'a>
+        + Clone,
 {
     let page = acquire_response_page(state_store, api, secure_store, request_id, limit).await?;
     if page.entries.is_empty() {
@@ -1388,8 +1389,10 @@ where
             manifest.as_ref(),
             &record_dependencies,
             now,
-            &verify_external_source_key,
-        ) {
+            verify_external_source_key.clone(),
+        )
+        .await
+        {
             Ok(verified) => verified,
             Err(error) => {
                 tracing::warn!(
@@ -1577,11 +1580,11 @@ where
     Ok(outcome)
 }
 
-fn verify_history_external_source_key(
+async fn verify_history_external_source_key(
     state_store: SyncSignal<LocalStateStore>,
-    secure_store: &dyn SecureKeyStore,
-    authority: &arkret_sdk::AccountId,
-    device_id: &arkret_sdk::DeviceId,
+    secure_store: std::sync::Arc<dyn SecureKeyStore + Send + Sync>,
+    authority: arkret_sdk::AccountId,
+    device_id: arkret_sdk::DeviceId,
     request: arkret_sdk::HistorySourceProofExternalVerificationRequest<'_>,
 ) -> Result<arkret_sdk::signatures::proof::PublicKeyMaterial, arkret_sdk::WireError> {
     match request {
@@ -1589,14 +1592,22 @@ fn verify_history_external_source_key(
             source_record,
             signer_evidence,
             dependencies,
-        } => arkret_sdk::verify_agent_history_source_key(
-            source_record,
-            signer_evidence,
-            dependencies,
-            |request| {
-                crate::mls::governance_proof::verify_agent_external_trust(&state_store, request)
-            },
-        ),
+        } => {
+            arkret_sdk::verify_agent_history_source_key(
+                source_record,
+                signer_evidence,
+                dependencies,
+                |request| {
+                    Box::pin(async move {
+                        crate::mls::governance_proof::verify_agent_external_trust(
+                            &state_store,
+                            request,
+                        )
+                    })
+                },
+            )
+            .await
+        }
         arkret_sdk::HistorySourceProofExternalVerificationRequest::MinimalMetadata {
             source_record,
             signer_evidence,
@@ -1658,9 +1669,9 @@ fn verify_history_external_source_key(
             };
             let winning_group_state = crate::mls::runtime::minimal_metadata_author_view_for_scope(
                 &state_store.read(),
-                secure_store,
-                authority,
-                device_id,
+                secure_store.as_ref(),
+                &authority,
+                &device_id,
                 &effective_scope,
                 &signer_evidence.mls_group_id,
                 signer_evidence.epoch,
@@ -1689,28 +1700,31 @@ fn verify_history_external_source_key(
 pub async fn verify_and_install_response_page_from_local_state(
     state_store: SyncSignal<LocalStateStore>,
     api: &crate::transport::TransportClient,
-    secure_store: &dyn SecureKeyStore,
+    secure_store: std::sync::Arc<dyn SecureKeyStore + Send + Sync>,
     authority: &arkret_sdk::AccountId,
     device_id: &arkret_sdk::DeviceId,
     request_id: &arkret_sdk::HistoryRequestId,
     limit: Option<u8>,
     now: chrono::DateTime<chrono::Utc>,
 ) -> anyhow::Result<HistoryResponsePageInstallOutcome> {
+    let verifier_store = secure_store.clone();
+    let verifier_authority = authority.clone();
+    let verifier_device_id = device_id.clone();
     verify_and_install_response_page(
         state_store,
         api,
-        secure_store,
+        secure_store.as_ref(),
         request_id,
         limit,
         now,
-        |request| {
-            verify_history_external_source_key(
+        move |request| {
+            Box::pin(verify_history_external_source_key(
                 state_store,
-                secure_store,
-                authority,
-                device_id,
+                verifier_store.clone(),
+                verifier_authority.clone(),
+                verifier_device_id.clone(),
                 request,
-            )
+            ))
         },
     )
     .await

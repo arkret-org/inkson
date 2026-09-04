@@ -214,15 +214,16 @@ async fn verify_and_pin_agent_pcr_checkpoint<
             governance_dependencies: resolved.dependencies,
         }
     } else {
+        let verifier_store = state_store.clone();
         arkret_sdk::verify_mls_governance_closure(
             &seal.realm_id,
             &resolved.target_basis,
             &resolved.seals,
             &resolved.events,
             &resolved.dependencies,
-            |event, digest_suite, evidence, dependencies| {
+            move |event, digest_suite, evidence, dependencies| {
                 crate::mls::governance_proof::verify_agent_history_key(
-                    &state_store,
+                    &verifier_store,
                     event,
                     digest_suite,
                     evidence,
