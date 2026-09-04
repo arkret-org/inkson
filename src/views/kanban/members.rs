@@ -7,10 +7,6 @@ use super::model::*;
 use crate::operation::trim_realm_id;
 use crate::state::{LocalStateStore, RawOperationRecord};
 use crate::views::helpers::actor_display_label;
-#[cfg(test)]
-pub(super) use crate::views::member_display::member_label;
-#[cfg(test)]
-pub(super) use crate::views::member_display::verified_inline_handle;
 pub(super) use crate::views::member_display::{
     RealmMemberRow, owned_agent_slug, realm_member_roster,
 };
@@ -157,9 +153,7 @@ pub(super) fn member_display_label_for_actor(
             let mut matches = context.member_rows.iter().filter(|row| {
                 row.actor_id.signing_principal_id().as_str() == actor_id
                     || row
-                        .subject_id
-                        .as_deref()
-                        .map(str::trim)
+                        .subject_principal_id()
                         .is_some_and(|subject| subject == actor_id)
             });
             let row = matches.next()?;
@@ -174,7 +168,7 @@ pub(super) fn bare_member_row(actor_id: arkret_sdk::ActorId) -> RealmMemberRow {
         membership: None,
         identity_event_ids: Vec::new(),
         member_display_state_digest: None,
-        subject_id: None,
+        subject_account_id: None,
         handle_claims: Vec::new(),
         handle_claims_limited: false,
     }

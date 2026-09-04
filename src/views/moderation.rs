@@ -7,6 +7,7 @@ use arkret_wire::event_kind_str;
 use dioxus::prelude::*;
 use serde_json::Value;
 
+use crate::i18n::{tr, tr_args};
 use crate::transport::auth::with_event_submitter;
 use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::input::Input;
@@ -90,17 +91,17 @@ pub fn ModerationWorkbench(
             class: "timeline",
             "data-testid": "moderation-workbench",
             role: "region",
-            "aria-label": "Moderation decision workbench",
+            "aria-label": tr("moderation.workbench_aria_label"),
             div { class: "event", "data-testid": "moderation-decide-form",
                 div { class: "event-head",
-                    span { "Seal moderation decision" }
-                    span { class: "badge", title: event_kind_str::MODERATION_DECISION, "Decision" }
+                    span { {tr("moderation.decide_title")} }
+                    span { class: "badge", title: event_kind_str::MODERATION_DECISION, {tr("moderation.decide_badge")} }
                 }
                 div { class: "workflow-form",
                     Input {
                         "data-testid": "moderation-decide-target",
                         value: "{target}",
-                        placeholder: "target_ref (ak:event:… / ak:strand:…)",
+                        placeholder: tr("moderation.target_placeholder"),
                         oninput: move |event: FormEvent| target.set(event.value()),
                     }
                     select {
@@ -149,17 +150,17 @@ pub fn ModerationWorkbench(
                                 });
                             }
                         },
-                        "Seal decision"
+                        {tr("moderation.decide_submit")}
                     }
                 }
             }
             div { class: "event", "data-testid": "moderation-decision-queue",
                 div { class: "event-head",
-                    span { "Standing decisions" }
+                    span { {tr("moderation.standing_title")} }
                     span { class: "badge", "{standing.len()}" }
                 }
                 if standing.is_empty() {
-                    div { class: "muted", "No standing moderation decisions observed locally." }
+                    div { class: "muted", {tr("moderation.standing_empty")} }
                 } else {
                     for decision in standing.iter().cloned() {
                         {
@@ -175,7 +176,13 @@ pub fn ModerationWorkbench(
                                         span { class: "badge", "{decision.decision}" }
                                     }
                                     div { class: "muted", title: "{decision.target_ref}",
-                                        "target {target_label} — {decision.reason_code}"
+                                        {tr_args(
+                                            "moderation.decision_row_summary",
+                                            &[
+                                                ("target", target_label.clone()),
+                                                ("reason", decision.reason_code.clone()),
+                                            ],
+                                        )}
                                     }
                                     Button {
                                         variant: ButtonVariant::Secondary,
@@ -198,7 +205,7 @@ pub fn ModerationWorkbench(
                                                 }
                                             });
                                         },
-                                        "Lift decision"
+                                        {tr("moderation.lift")}
                                     }
                                 }
                             }

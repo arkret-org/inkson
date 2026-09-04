@@ -3000,31 +3000,45 @@ fn participant_roster_rejects_naked_handle_field() {
         "ak:realm:A_UALC69_WeDbu3WQ3suidUfmxa1MAW5tIIxjRS1C9yE",
         "ak:did_core:web:alice.example",
     );
-    let bob = participants
-        .iter()
-        .find(|participant| {
-            participant.principal_id.as_str() == "ak:did_core:web:example.com:users:bob"
-        })
-        .unwrap();
-
-    assert!(mention_label_for_participant(bob).is_none());
+    // §3.8 forbids a naked handle string on the roster entry. The entry is a
+    // closed wire type, so the row is rejected outright rather than rendered
+    // with the naked field quietly ignored.
+    assert!(!participants.iter().any(|participant| {
+        participant.principal_id.as_str() == "ak:did_core:web:example.com:users:bob"
+    }));
 }
 
 #[test]
 fn extracts_participant_handle_label_from_inline_handle_claims() {
+    let bob_subject = arkret_sdk::AccountId::new(
+        arkret_sdk::DidCoreId::new("ak:did_core:web:bob.example".to_owned()).unwrap(),
+        arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example".to_owned()).unwrap(),
+    );
     let projection = json!({
         "member_roster_entries": [
             {
                 "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:bob.example","station_id":"ak:did_core:web:principal.example"}},
                 "membership": "join",
-                "subject_id": "ak:did_core:web:bob.example",
-                "handle_claims": [crate::views::member_display::test_inline_handle_claim(
-                    "ak:did_core:web:bob.example",
+                "subject_account_id": bob_subject,
+                "handle_claims": [crate::views::member_display::test_handle_claim(
+                    &bob_subject,
                     "bob:local.host",
-                    "verified"
+                    "ak:did_core:web:local.host",
+                    arkret_models_identity::HandleClaimStatus::Verified,
                 )]
             }
-        ]
+        ],
+        "state": {"events": [{
+            "kind": "ak.realm.policy_bundle",
+            "payload": {
+                "policy_revision": 1,
+                "handle_issuer_policies": [{
+                    "issuer_id": "ak:did_core:web:local.host",
+                    "authorized_handle_domains": ["local.host"],
+                    "issuer_class": "domain_authority"
+                }]
+            }
+        }]}
     });
 
     let temp = std::env::temp_dir().join(format!("inkson-chat-roster-{}", uuid_v7()));

@@ -15,10 +15,10 @@ pub fn QuarantinePanel() -> Element {
         div { class: "timeline", "data-testid": "quarantine-panel",
             div { class: "event", "data-testid": "quarantine-header",
                 div { class: "event-head",
-                    span { "Invite quarantine" }
+                    span { {crate::i18n::tr("quarantine.title")} }
                 }
                 div { class: "muted", "data-testid": "quarantine-status",
-                    "Pending invites are holder-private Station-CAS account data. Review controls will appear after the typed consent-grant flow is available."
+                    {crate::i18n::tr("quarantine.status")}
                 }
             }
         }

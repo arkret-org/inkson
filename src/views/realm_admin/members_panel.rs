@@ -194,6 +194,13 @@ struct MemberProfile {
     display_name: Option<String>,
     avatar_blob_ref: Option<arkret_sdk::BlobRef>,
     handles: Vec<String>,
+    /// §3.8.2 public label already rendered by
+    /// `member_display::resolve_member_display` for roster-backed rows.
+    /// Rows synthesised from local invite operations have no roster render
+    /// and fall back to the same ladder with no exact account id.
+    resolved_public_label: Option<String>,
+    /// §3.8.2 step 5 degradation tier of `resolved_public_label`.
+    resolved_tier: Option<crate::views::member_display::MemberDisplayTier>,
     remark_name: Option<String>,
     remark_note: Option<String>,
     confusable_contact_warning: bool,
@@ -214,6 +221,8 @@ impl MemberProfile {
             display_name: None,
             avatar_blob_ref: None,
             handles: Vec::new(),
+            resolved_public_label: None,
+            resolved_tier: None,
             remark_name: None,
             remark_note: None,
             confusable_contact_warning: false,
@@ -225,21 +234,47 @@ impl MemberProfile {
         }
     }
 
+    /// `client-preferences.md` §3.6 — an accepted Contact's petname is the
+    /// overlay on top of the §3.8.2 render, never a replacement ladder.
     fn primary_label(&self) -> String {
         self.remark_name
-            .as_deref()
-            .or(self.display_name.as_deref())
-            .or_else(|| self.handles.first().map(String::as_str))
-            .map(str::to_owned)
-            .unwrap_or_else(|| member_identity_fallback_label(&self.actor_id))
+            .clone()
+            .unwrap_or_else(|| self.public_label())
+    }
+
+    /// §3.8.2 render without the holder-private petname overlay, plus the
+    /// degradation tier the row MUST surface.
+    fn rendered_public(&self) -> (String, crate::views::member_display::MemberDisplayTier) {
+        if let (Some(label), Some(tier)) = (&self.resolved_public_label, self.resolved_tier) {
+            return (label.clone(), tier);
+        }
+        // Invite rows never carry roster handle-claim evidence, so §3.2.1
+        // Step 0 has no candidate set; the render starts at the step 4
+        // fallback ladder with whatever handle the invite disclosed.
+        let cached_handle = self
+            .handles
+            .first()
+            .and_then(|handle| arkret_sdk::Handle::parse(handle).ok());
+        let rendered = crate::views::member_display::resolve_subject_display(
+            None,
+            &[],
+            &[],
+            None,
+            cached_handle.as_ref(),
+            self.display_name.as_deref(),
+            &member_identity_fallback_label(&self.actor_id),
+        );
+        (rendered.label, rendered.tier)
     }
 
     fn public_label(&self) -> String {
-        self.display_name
-            .as_deref()
-            .or_else(|| self.handles.first().map(String::as_str))
-            .map(str::to_owned)
-            .unwrap_or_else(|| member_identity_fallback_label(&self.actor_id))
+        self.rendered_public().0
+    }
+
+    /// The holder-private petname overlay is not a resolution result, so it
+    /// never upgrades the tier out of "degraded".
+    fn display_tier(&self) -> crate::views::member_display::MemberDisplayTier {
+        self.rendered_public().1
     }
 
     fn role_label(&self) -> &'static str {
@@ -466,16 +501,6 @@ fn push_unique(out: &mut Vec<String>, value: impl Into<String>) {
     out.push(value.to_owned());
 }
 
-fn normalize_handle_label(raw: &str) -> Option<String> {
-    let raw = raw.trim();
-    if raw.is_empty() {
-        return None;
-    }
-    crate::identity::handle::parse_user_handle(raw)
-        .map(|handle| handle.display)
-        .or_else(|| Some(raw.to_owned()))
-}
-
 fn merge_member_profile(target: &mut MemberProfile, incoming: MemberProfile) {
     if target.subject_id.is_none() {
         target.subject_id = incoming.subject_id;
@@ -494,6 +519,10 @@ fn merge_member_profile(target: &mut MemberProfile, incoming: MemberProfile) {
     }
     for handle in incoming.handles {
         push_unique(&mut target.handles, handle);
+    }
+    if target.resolved_public_label.is_none() {
+        target.resolved_public_label = incoming.resolved_public_label;
+        target.resolved_tier = incoming.resolved_tier;
     }
     if should_replace_member_membership(
         target.membership.as_deref(),
@@ -553,9 +582,15 @@ fn projected_member_profiles_for_realm(
         &store.active_contact_remarks(),
     );
     if let Some(projection) = state.realm_tree_projections.get(realm_id) {
+        let handle_issuer_policies =
+            crate::views::member_display::handle_issuer_policies_from_projection(Some(projection));
         for row in crate::views::member_display::realm_member_roster(Some(projection)) {
-            let display =
-                crate::views::member_display::resolve_member_display(store, realm_id, &row);
+            let display = crate::views::member_display::resolve_member_display_with_policies(
+                store,
+                realm_id,
+                &row,
+                &handle_issuer_policies,
+            );
             let mut profile = MemberProfile::bare(row.actor_id.to_string());
             profile.confusable_contact_warning =
                 crate::views::member_display::public_display_conflicts_with_other_contact(
@@ -567,7 +602,12 @@ fn projected_member_profiles_for_realm(
             profile.display_name = display.display_name;
             profile.avatar_blob_ref = display.avatar_blob_ref;
             profile.handles = display.primary_handle.into_iter().collect();
-            profile.membership = row.membership;
+            profile.resolved_public_label = Some(display.public_label.clone());
+            profile.resolved_tier = Some(display.tier);
+            profile.membership = row
+                .membership
+                .map(crate::views::member_display::membership_wire_str)
+                .map(ToOwned::to_owned);
             profile.member_display_state_digest = row.member_display_state_digest;
             upsert_member_profile(&mut rows, profile);
         }
@@ -795,8 +835,16 @@ fn upsert_pending_invite_profile(
             }
             return;
         }
-        if let Some(handle) = normalize_handle_label(label) {
-            push_unique(&mut profile.handles, handle);
+        match crate::identity::handle::normalize_user_handle_display(label) {
+            Some(handle) => push_unique(&mut profile.handles, handle),
+            // A label that is not a canonical handle is a display name, not
+            // a handle: §3.8.2 forbids showing an unverified string in the
+            // handle rung.
+            None => {
+                if profile.display_name.is_none() {
+                    profile.display_name = Some(label.to_owned());
+                }
+            }
         }
     };
     if let Some(existing) = rows
@@ -872,8 +920,11 @@ fn local_pending_invite_profile_from_raw_operation(
     {
         if label.starts_with("did:") {
             profile.display_name = Some(short_protocol_id(&label));
-        } else if let Some(handle) = normalize_handle_label(&label) {
+        } else if let Some(handle) = crate::identity::handle::normalize_user_handle_display(&label)
+        {
             push_unique(&mut profile.handles, handle);
+        } else {
+            profile.display_name = Some(label.clone());
         }
     }
     Some(profile)
@@ -1473,6 +1524,7 @@ fn PendingInviteRow(
     let mut state_store = crate::app::SessionContext::get().state_store;
     let member = profile.actor_id.clone();
     let member_label = profile.primary_label();
+    let member_tier = profile.display_tier();
     let avatar_blob_ref = profile.avatar_blob_ref.as_ref().map(ToString::to_string);
     let invite_id = profile.invite_id.clone().unwrap_or_default();
     let invite_class_known = profile.invite_is_direct.is_some();
@@ -1537,7 +1589,20 @@ fn PendingInviteRow(
                 }
                 div { class: "member-row-text",
                     div { class: "member-row-title",
-                        span { class: "member-row-primary", title: "{member}", "{member_label}" }
+                        span {
+                            class: "member-row-primary {member_tier.css_class()}",
+                            "data-identity-tier": "{member_tier.css_class()}",
+                            title: "{member}",
+                            "{member_label}"
+                        }
+                        if let Some((badge, detail)) = member_tier.degraded_badge() {
+                            span {
+                                class: "badge muted identity-tier-badge",
+                                "data-testid": "member-identity-tier",
+                                title: "{detail}",
+                                "{badge}"
+                            }
+                        }
                         span { class: "badge amber", "Pending invite" }
                     }
                     div { class: "muted member-row-sub member-profile-lines",
@@ -2024,7 +2089,7 @@ fn projected_realm_membership_hint(
     };
     let joined = crate::views::member_display::realm_member_roster(Some(projection))
         .into_iter()
-        .filter(|member| member.membership.as_deref() == Some("join"))
+        .filter(|member| member.membership == Some(arkret_sdk::MembershipState::Join))
         .map(|member| member.actor_id.to_string())
         .collect();
     let completeness = if projection
@@ -3736,6 +3801,7 @@ pub fn RealmMembersPanel(
                             let member = member_profile.actor_id.clone();
                             let member_label = member_profile.primary_label();
                             let public_label = member_profile.public_label();
+                            let member_tier = member_profile.display_tier();
                             let is_self = is_local_account_actor(&member, &principal_id);
                             let has_agents = !group.agents.is_empty();
                             let group_class = if has_agents {
@@ -3802,7 +3868,20 @@ pub fn RealmMembersPanel(
                                             }
                                             div { class: "member-row-text",
                                                 div { class: "member-row-title",
-                                                    span { class: "member-row-primary", title: "{member}", "{member_label}" }
+                                                    span {
+                                                        class: "member-row-primary {member_tier.css_class()}",
+                                                        "data-identity-tier": "{member_tier.css_class()}",
+                                                        title: "{member}",
+                                                        "{member_label}"
+                                                    }
+                                                    if let Some((badge, detail)) = member_tier.degraded_badge() {
+                                                        span {
+                                                            class: "badge muted identity-tier-badge",
+                                                            "data-testid": "member-identity-tier",
+                                                            title: "{detail}",
+                                                            "{badge}"
+                                                        }
+                                                    }
                                                     if is_self {
                                                         SelfAttributionBadge {
                                                             class: Some("member-you-badge".to_owned()),

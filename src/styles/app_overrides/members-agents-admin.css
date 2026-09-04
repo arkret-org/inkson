@@ -860,30 +860,6 @@
   background: color-mix(in srgb, var(--surface-2) 92%, white);
 }
 
-.badge-info,
-.badge.blue {
-  background: var(--info-soft);
-  color: var(--info-ink);
-}
-
-.badge.amber,
-.badge-warning {
-  background: var(--warning-soft);
-  color: var(--warning-ink);
-}
-
-.badge.red,
-.badge-error {
-  background: var(--danger-soft);
-  color: var(--danger-ink);
-}
-
-.badge.green,
-.badge-success {
-  background: var(--success-soft);
-  color: var(--success-ink);
-}
-
 .tab.active {
   border-color: color-mix(in srgb, var(--accent) 70%, var(--accent-2));
   background: linear-gradient(135deg, var(--accent) 0%, var(--accent-2) 100%);

@@ -332,6 +332,17 @@ button[data-style="link"]:disabled:hover {
 .badge.danger { background: var(--danger); }
 .badge.success { background: var(--success); }
 .badge.warning { background: var(--warning); }
+/* Semantic tone variants. Both spellings exist because some surfaces name
+   the tone (`badge-warning`) and some name the colour (`badge amber`); they
+   resolve to the same tokens and are defined here once. */
+.badge-info,
+.badge.blue { background: var(--info-soft); color: var(--info-ink); }
+.badge-success,
+.badge.green { background: var(--success-soft); color: var(--success-ink); }
+.badge-error,
+.badge.red { background: var(--danger-soft); color: var(--danger-ink); }
+.badge-warning,
+.badge.amber { background: var(--warning-soft); color: var(--warning-ink); }
 /* Device-list verification shield: a touch wider so the glyph + label
    ("Verified" / "Unverified") read as a pill rather than a count bubble. */
 .device-verification-badge { gap: 3px; min-width: 0; }
@@ -791,3 +802,16 @@ label.avatar-upload-button:active,
 .f-12 { font-size: 12px; } .f-11 { font-size: 11px; } .f-13 { font-size: 13px; }
 .mb-8  { margin-bottom: 8px; }
 .ml-auto { margin-left: auto; }
+
+/* identity-handles.md §3.8.2 step 5 — a member label that came from a
+   fallback rung MUST NOT look identical to a resolved one. The badge next to
+   it names the rung; these carry the visual weight difference. */
+.identity-verified { color: inherit; }
+.identity-cached,
+.identity-name-only { color: var(--text-2); font-style: italic; }
+.identity-unresolved { color: var(--text-2); font-style: italic; opacity: 0.85; }
+.identity-tier-badge {
+  background: var(--surface-3);
+  color: var(--text-2);
+  font-weight: 500;
+}

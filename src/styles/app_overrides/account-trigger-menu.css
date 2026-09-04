@@ -219,28 +219,6 @@
   border-top: 1px solid var(--border);
 }
 
-.badge.green,
-.badge-success {
-  background: var(--success-soft);
-  color: var(--success-ink);
-}
-
-.badge.blue {
-  background: var(--info-soft);
-  color: var(--info-ink);
-}
-
-.badge.amber,
-.badge-warning {
-  background: var(--warning-soft);
-  color: var(--warning-ink);
-}
-
-.badge-error {
-  background: var(--danger-soft);
-  color: var(--danger-ink);
-}
-
 .main.realm {
   padding: 0;
   display: flex;

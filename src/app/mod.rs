@@ -174,6 +174,7 @@ const STYLE: &str = concat!(
     include_str!("../styles/app/app-theme-shell.css"),
     include_str!("../styles/app/workflow-card-detail.css"),
     include_str!("../styles/app/workflow-card-assignees.css"),
+    include_str!("../styles/app/rich-text-editor.css"),
     include_str!("../styles/app/workflow-editor-settings.css"),
     include_str!("../styles/app/shell-contacts-settings.css"),
 );

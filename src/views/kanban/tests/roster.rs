@@ -1,5 +1,4 @@
 use super::*;
-use crate::views::member_display::test_inline_handle_claim;
 
 #[test]
 fn assignment_mutations_preserve_same_principal_accounts_at_different_stations() {
@@ -52,29 +51,55 @@ fn assignment_mutations_preserve_same_principal_accounts_at_different_stations()
     );
 }
 
+const ROSTER_ISSUER: &str = "ak:did_core:web:acme.example";
+const ROSTER_STATION: &str = "ak:did_core:web:principal.example";
+
+fn roster_account(principal: &str) -> arkret_sdk::AccountId {
+    arkret_sdk::AccountId::new(
+        arkret_sdk::DidCoreId::new(principal.to_owned()).unwrap(),
+        arkret_sdk::DidCoreId::new(ROSTER_STATION.to_owned()).unwrap(),
+    )
+}
+
+fn acme_policy() -> Vec<arkret_sdk::identity::HandleIssuerPolicyEntry> {
+    vec![crate::views::member_display::test_issuer_policy(
+        ROSTER_ISSUER,
+        "acme.example",
+    )]
+}
+
+fn verified_claim(
+    subject: &arkret_sdk::AccountId,
+    handle: &str,
+) -> arkret_models_identity::HandleClaim {
+    crate::views::member_display::test_handle_claim(
+        subject,
+        handle,
+        ROSTER_ISSUER,
+        arkret_models_identity::HandleClaimStatus::Verified,
+    )
+}
+
 #[test]
 fn realm_member_roster_reads_r32_wire_shape() {
     // (arkret-spec @ b56cab1): roster entries carry
-    // `actor_id` + `membership` + optional `subject_id` /
+    // `actor_id` + `membership` + optional `subject_account_id` /
     // `identity_event_ids` / `member_display_state_digest`. Handle
     // strings only appear inside signed handle_claim evidence.
+    let alice_subject = roster_account("ak:did_core:web:acme.example:principals:alice");
     let projection = json!({
         "member_roster_entries": [
             {
-                "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:acme.example:users:alice","station_id":"ak:did_core:web:principal.example"}},
+                "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:acme.example:users:alice","station_id":ROSTER_STATION}},
                 "membership": "join",
-                "subject_id": "ak:did_core:web:acme.example:principals:alice",
+                "subject_account_id": alice_subject,
                 "identity_event_ids": ["ak:event:ATOz4l-vKJUCGZDmS_knGS9TjZ64pkOzx-HNGAgY5RGJ"],
                 "member_display_state_digest": "sha256:abababababababababababababababababababababababababababababababab",
-                "handle_claims": [test_inline_handle_claim(
-                    "ak:did_core:web:acme.example:principals:alice",
-                    "alice:acme.example",
-                    "verified"
-                )],
+                "handle_claims": [verified_claim(&alice_subject, "alice:acme.example")],
                 "handle_claims_limited": false
             },
             {
-                "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:webvh:zQmPr8","station_id":"ak:did_core:web:principal.example"}},
+                "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:webvh:zQmPr8","station_id":ROSTER_STATION}},
                 "membership": "knock"
             }
         ]
@@ -90,16 +115,13 @@ fn realm_member_roster_reads_r32_wire_shape() {
                 .contains("alice")
         })
         .unwrap();
-    assert_eq!(alice.membership.as_deref(), Some("join"));
+    assert_eq!(alice.membership, Some(arkret_sdk::MembershipState::Join));
     assert_eq!(
         alice.identity_event_ids,
         vec!["ak:event:ATOz4l-vKJUCGZDmS_knGS9TjZ64pkOzx-HNGAgY5RGJ".to_owned()]
     );
     assert!(alice.member_display_state_digest.is_some());
-    assert_eq!(
-        alice.subject_id.as_deref(),
-        Some("ak:did_core:web:acme.example:principals:alice")
-    );
+    assert_eq!(alice.subject_account_id.as_ref(), Some(&alice_subject));
     assert_eq!(alice.handle_claims.len(), 1);
     assert!(!alice.handle_claims_limited);
 
@@ -112,11 +134,11 @@ fn realm_member_roster_reads_r32_wire_shape() {
                 .starts_with("ak:did_core:webvh:")
         })
         .unwrap();
-    assert_eq!(webvh.membership.as_deref(), Some("knock"));
+    assert_eq!(webvh.membership, Some(arkret_sdk::MembershipState::Knock));
     assert!(webvh.identity_event_ids.is_empty());
     assert!(webvh.member_display_state_digest.is_none());
-    // subject_id not disclosed for the invite row.
-    assert!(webvh.subject_id.is_none());
+    // subject_account_id not disclosed for the invite row.
+    assert!(webvh.subject_account_id.is_none());
 }
 
 #[test]
@@ -125,7 +147,7 @@ fn realm_member_roster_reads_r32_digest_only() {
     // key is read.
     let projection = json!({
         "member_roster_entries": [{
-            "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:acme.example:users:v2","station_id":"ak:did_core:web:principal.example"}},
+            "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:acme.example:users:v2","station_id":ROSTER_STATION}},
             "membership": "join",
             "member_display_state_digest": "sha256:cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
         }]
@@ -136,18 +158,18 @@ fn realm_member_roster_reads_r32_digest_only() {
 }
 
 #[test]
-fn realm_member_roster_ignores_removed_digest_key() {
-    // The legacy `identity_state_digest` key is NOT honoured.
+fn realm_member_roster_rejects_removed_digest_key() {
+    // The roster entry is a closed wire type: the legacy
+    // `identity_state_digest` key is not ignored, it makes the whole entry
+    // unparseable so no drifted producer can smuggle a display field in.
     let projection = json!({
         "member_roster_entries": [{
-            "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:acme.example:users:removed","station_id":"ak:did_core:web:principal.example"}},
+            "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:acme.example:users:removed","station_id":ROSTER_STATION}},
             "membership": "join",
             "identity_state_digest": "sha256:cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
         }]
     });
-    let rows = realm_member_roster(Some(&projection));
-    assert_eq!(rows.len(), 1);
-    assert!(rows[0].member_display_state_digest.is_none());
+    assert!(realm_member_roster(Some(&projection)).is_empty());
 }
 
 #[test]
@@ -163,11 +185,11 @@ fn realm_member_roster_ignores_bare_did_strings() {
 fn realm_member_roster_reads_only_root_members() {
     let projection = json!({
         "summary": {
-            "members": [{ "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:summary-member.example","station_id":"ak:did_core:web:principal.example"}} }],
-            "participants": [{ "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:participant.example","station_id":"ak:did_core:web:principal.example"}} }]
+            "members": [{ "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:summary-member.example","station_id":ROSTER_STATION}} }],
+            "participants": [{ "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:participant.example","station_id":ROSTER_STATION}} }]
         },
-        "owners": [{ "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:owner.example","station_id":"ak:did_core:web:principal.example"}} }],
-        "member_roster_entries": [{ "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:canonical.example","station_id":"ak:did_core:web:principal.example"}}, "membership": "join" }]
+        "owners": [{ "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:owner.example","station_id":ROSTER_STATION}} }],
+        "member_roster_entries": [{ "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:canonical.example","station_id":ROSTER_STATION}}, "membership": "join" }]
     });
 
     let rows = realm_member_roster(Some(&projection));
@@ -182,14 +204,30 @@ fn realm_member_roster_reads_only_root_members() {
 fn realm_member_roster_keeps_first_duplicate_actor_entry() {
     let projection = json!({
         "member_roster_entries": [
-            { "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:alice.example","station_id":"ak:did_core:web:principal.example"}}, "membership": "join" },
-            { "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:alice.example","station_id":"ak:did_core:web:principal.example"}}, "membership": "knock" }
+            { "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:alice.example","station_id":ROSTER_STATION}}, "membership": "join" },
+            { "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:alice.example","station_id":ROSTER_STATION}}, "membership": "knock" }
         ]
     });
 
     let rows = realm_member_roster(Some(&projection));
     assert_eq!(rows.len(), 1);
-    assert_eq!(rows[0].membership.as_deref(), Some("join"));
+    assert_eq!(rows[0].membership, Some(arkret_sdk::MembershipState::Join));
+}
+
+#[test]
+fn realm_member_roster_drops_undisclosed_rows_carrying_claim_evidence() {
+    // R3.2 dependentRequired: handle-claim evidence without
+    // `subject_account_id` disclosure is a malformed entry, not a row to
+    // render with the evidence silently ignored.
+    let subject = roster_account("ak:did_core:web:acme.example:principals:mallory");
+    let projection = json!({
+        "member_roster_entries": [{
+            "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:acme.example:users:mallory","station_id":ROSTER_STATION}},
+            "membership": "join",
+            "handle_claims": [verified_claim(&subject, "mallory:acme.example")]
+        }]
+    });
+    assert!(realm_member_roster(Some(&projection)).is_empty());
 }
 
 #[test]
@@ -198,7 +236,7 @@ fn member_display_label_uses_identity_name_when_no_verified_handle_exists() {
         DisplayProfile, MemberIdentity, MemberIdentityProof, MemberIdentitySignatureAlgorithm,
     };
 
-    // `MemberIdentity` discloses subject_id + display_profile
+    // `MemberIdentity` discloses the subject account + display_profile
     // only. A materialized DID path is not itself verified handle evidence.
     let identity = MemberIdentity {
         schema: arkret_sdk::SchemaId::MEMBER_IDENTITY_V1.to_owned(),
@@ -229,113 +267,149 @@ fn member_display_label_uses_identity_name_when_no_verified_handle_exists() {
         },
     };
 
-    let row = RealmMemberRow {
-        actor_id: crate::mls_api_helpers::local_account_actor_id(
-            "ak:did_core:web:acme.example:users:alice",
-        )
-        .unwrap(),
-        membership: Some("join".to_owned()),
-        identity_event_ids: vec![],
-        member_display_state_digest: None,
-        subject_id: None,
-        handle_claims: Vec::new(),
-        handle_claims_limited: false,
-    };
-    assert_eq!(member_label(&row, Some(&identity), None), "Alice");
+    let rendered = crate::views::member_display::resolve_subject_display(
+        identity.subject_actor_id.as_account_id(),
+        &[],
+        &acme_policy(),
+        Some(TEST_REALM_ID),
+        None,
+        Some(identity.display_profile.display_name.as_str()),
+        "ak:did_core:web:acme...ice",
+    );
+    assert_eq!(rendered.label, "Alice");
+    assert_eq!(
+        rendered.tier,
+        crate::views::member_display::MemberDisplayTier::NameOnly
+    );
 
     // Decryption-pending / no MemberIdentity → fall back to compact DID.
-    let bare = RealmMemberRow {
-        actor_id: crate::mls_api_helpers::local_account_actor_id(
-            "ak:did_core:webvh:zQmPr8aaaaaaaaaaaaaaaaa7h4q87ha",
-        )
-        .unwrap(),
-        membership: None,
-        identity_event_ids: vec![],
-        member_display_state_digest: None,
-        subject_id: None,
-        handle_claims: Vec::new(),
-        handle_claims_limited: false,
-    };
-    let label = member_label(&bare, None, None);
-    assert!(label.starts_with("ak:did_core:webvh:"));
-    assert!(label.contains("..."));
+    let bare = crate::views::member_display::resolve_subject_display(
+        None,
+        &[],
+        &[],
+        None,
+        None,
+        None,
+        "ak:did_core:webvh:zQmPr8...7ha",
+    );
+    assert!(bare.label.starts_with("ak:did_core:webvh:"));
+    assert_eq!(
+        bare.tier,
+        crate::views::member_display::MemberDisplayTier::Unresolved
+    );
 }
 
 #[test]
 fn member_display_label_prefers_inline_verified_handle_claim() {
+    let subject = roster_account("ak:did_core:web:acme.example:principals:alice");
+    let other = roster_account("ak:did_core:web:acme.example:principals:other");
     let row = RealmMemberRow {
         actor_id: crate::mls_api_helpers::local_account_actor_id(
             "ak:did_core:webvh:zQmPairwiseActor",
         )
         .unwrap(),
-        membership: Some("join".to_owned()),
+        membership: Some(arkret_sdk::MembershipState::Join),
         identity_event_ids: vec![],
         member_display_state_digest: Some(
             "sha256:abababababababababababababababababababababababababababababababab".to_owned(),
         ),
-        subject_id: Some("did:key:z6MkPrincipal".to_owned()),
+        subject_account_id: Some(subject.clone()),
         handle_claims: vec![
-            test_inline_handle_claim("did:key:z6MkOther", "other:acme.example", "verified"),
-            test_inline_handle_claim("did:key:z6MkPrincipal", "alice:acme.example", "verified"),
+            verified_claim(&other, "other:acme.example"),
+            verified_claim(&subject, "alice:acme.example"),
         ],
         handle_claims_limited: false,
     };
 
-    assert_eq!(member_label(&row, None, None), "alice:acme.example");
+    let handle = crate::views::member_display::inline_primary_handle(
+        &row,
+        &acme_policy(),
+        Some(TEST_REALM_ID),
+    );
+    assert_eq!(
+        handle.as_ref().map(arkret_sdk::Handle::canonical),
+        Some("alice:acme.example")
+    );
 }
 
 #[test]
-fn member_display_label_rejects_unverified_or_noncanonical_handle_claims() {
+fn member_display_label_rejects_unverified_or_untrusted_handle_claims() {
+    let subject = roster_account("ak:did_core:web:acme.example:principals:alice");
     let row = RealmMemberRow {
         actor_id: crate::mls_api_helpers::local_account_actor_id(
             "ak:did_core:webvh:zQmPairwiseActor",
         )
         .unwrap(),
-        membership: Some("join".to_owned()),
+        membership: Some(arkret_sdk::MembershipState::Join),
         identity_event_ids: vec![],
         member_display_state_digest: None,
-        subject_id: Some("did:key:z6MkPrincipal".to_owned()),
-        handle_claims: vec![
-            test_inline_handle_claim("did:key:z6MkPrincipal", "pending:acme.example", "pending"),
-            test_inline_handle_claim(
-                "ak:did_core:key:z6MkPrincipal",
-                "other:acme.example",
-                "verified",
-            ),
-        ],
+        subject_account_id: Some(subject.clone()),
+        handle_claims: vec![crate::views::member_display::test_handle_claim(
+            &subject,
+            "pending:acme.example",
+            ROSTER_ISSUER,
+            arkret_models_identity::HandleClaimStatus::Pending,
+        )],
         handle_claims_limited: false,
     };
+    assert!(
+        crate::views::member_display::inline_primary_handle(
+            &row,
+            &acme_policy(),
+            Some(TEST_REALM_ID)
+        )
+        .is_none()
+    );
 
-    assert!(verified_inline_handle(&row).is_none());
-
-    let undisclosed = RealmMemberRow {
-        subject_id: None,
-        handle_claims: vec![test_inline_handle_claim(
-            "ak:did_core:webvh:zQmPairwiseActor",
-            "hidden:acme.example",
-            "verified",
-        )],
+    // §3.2.1 Step 0 makes the issuer trust + domain-authority filter
+    // mandatory: a verified claim from an issuer the Realm policy does not
+    // authorize MUST NOT be displayed, and an empty policy is not "no
+    // constraint".
+    let untrusted = RealmMemberRow {
+        handle_claims: vec![verified_claim(&subject, "alice:acme.example")],
         ..row
     };
-    assert!(verified_inline_handle(&undisclosed).is_none());
+    assert!(
+        crate::views::member_display::inline_primary_handle(&untrusted, &[], Some(TEST_REALM_ID))
+            .is_none()
+    );
+    assert!(
+        crate::views::member_display::inline_primary_handle(
+            &untrusted,
+            &[crate::views::member_display::test_issuer_policy(
+                ROSTER_ISSUER,
+                "other.example"
+            )],
+            Some(TEST_REALM_ID)
+        )
+        .is_none()
+    );
+    assert!(
+        crate::views::member_display::inline_primary_handle(
+            &untrusted,
+            &acme_policy(),
+            Some(TEST_REALM_ID)
+        )
+        .is_some()
+    );
 }
 
 #[test]
 fn member_display_label_uses_cached_directory_primary_handle() {
-    let row = RealmMemberRow {
-        actor_id: crate::mls_api_helpers::local_account_actor_id("ak:did_core:webvh:zQmPrincipal")
-            .unwrap(),
-        membership: Some("join".to_owned()),
-        identity_event_ids: vec![],
-        member_display_state_digest: None,
-        subject_id: Some("ak:did_core:webvh:zQmPrincipal".to_owned()),
-        handle_claims: Vec::new(),
-        handle_claims_limited: false,
-    };
-
+    let subject = roster_account("ak:did_core:webvh:zQmPrincipal");
+    let rendered = crate::views::member_display::resolve_subject_display(
+        Some(&subject),
+        &[],
+        &acme_policy(),
+        Some(TEST_REALM_ID),
+        Some(&arkret_sdk::Handle::parse("alice:example.com").unwrap()),
+        None,
+        "ak:did_core:webvh:zQm...pal",
+    );
+    assert_eq!(rendered.label, "alice:example.com");
     assert_eq!(
-        member_label(&row, None, Some("Alice:Example.COM")),
-        "alice:example.com"
+        rendered.tier,
+        crate::views::member_display::MemberDisplayTier::Cached
     );
 }
 
@@ -345,10 +419,10 @@ fn resolved_member_display_uses_persisted_current_account_handle() {
     let did = "did:web:current-account.example";
     let row = RealmMemberRow {
         actor_id: crate::mls_api_helpers::local_account_actor_id(actor).unwrap(),
-        membership: Some("join".to_owned()),
+        membership: Some(arkret_sdk::MembershipState::Join),
         identity_event_ids: vec![],
         member_display_state_digest: None,
-        subject_id: None,
+        subject_account_id: None,
         handle_claims: Vec::new(),
         handle_claims_limited: false,
     };
@@ -360,6 +434,10 @@ fn resolved_member_display_uses_persisted_current_account_handle() {
 
     assert_eq!(display.label, "alice:local.host");
     assert_eq!(display.primary_handle.as_deref(), Some("alice:local.host"));
+    assert_eq!(
+        display.tier,
+        crate::views::member_display::MemberDisplayTier::Cached
+    );
 }
 
 #[test]
@@ -367,10 +445,10 @@ fn member_handle_lookup_keeps_authoritative_subject_separate_from_actor_candidat
     let row = RealmMemberRow {
         actor_id: crate::mls_api_helpers::local_account_actor_id("ak:did_core:webvh:zQmPrincipal")
             .unwrap(),
-        membership: Some("join".to_owned()),
+        membership: Some(arkret_sdk::MembershipState::Join),
         identity_event_ids: vec![],
         member_display_state_digest: None,
-        subject_id: None,
+        subject_account_id: None,
         handle_claims: Vec::new(),
         handle_claims_limited: false,
     };

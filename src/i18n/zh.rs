@@ -2371,6 +2371,132 @@ fn prompt_copy_strings(dict: &mut TranslationDict) {
         "恢复已设置完成,但本地信息未能保存到此设备。",
     );
     dict.set("recovery_setup.confirm_button", "确认已保存的密钥");
+    dict.set("identity.tier.cached", "缓存名称");
+    dict.set(
+        "identity.tier.cached_detail",
+        "这是本地保存的旧名称,刚才没能重新核对。",
+    );
+    dict.set("identity.tier.name_only", "未核验名称");
+    dict.set(
+        "identity.tier.name_only_detail",
+        "这是此前记录下来的名称,不是核验过的名称。",
+    );
+    dict.set("identity.tier.unresolved", "名称不可用");
+    dict.set(
+        "identity.tier.unresolved_detail",
+        "没能查到这个账号的名称,这里显示的是账号标识。",
+    );
+    dict.set("settings.devices.title", "设备访问");
+    dict.set(
+        "settings.devices.subtitle",
+        "查看受信任的设备,或批准一台新设备。",
+    );
+    dict.set("settings.devices.help", "管理绑定到你账户的设备。吊销设备会把它移出活跃设备集合,并在它参与的每个端到端加密 Realm 中移除对应的 MLS 叶节点。");
+    dict.set("settings.devices.tabs_aria_label", "设备设置");
+    dict.set("settings.devices.tab_list", "设备");
+    dict.set("settings.devices.tab_add", "添加设备");
+    dict.set("settings.devices.refresh", "刷新");
+    dict.set("settings.devices.active_title", "活跃设备");
+    dict.set("settings.devices.empty_title", "还没有加载到设备");
+    dict.set(
+        "settings.devices.empty_message",
+        "正在加载你的设备…也可以点击“刷新”重试。",
+    );
+    dict.set("settings.devices.column_device", "设备");
+    dict.set("settings.devices.column_verification", "验证状态");
+    dict.set("settings.devices.column_authorized", "授权时间");
+    dict.set("settings.devices.column_actions", "操作");
+    dict.set("settings.devices.this_device", "当前设备");
+    dict.set("settings.devices.state_verified", "已验证");
+    dict.set("settings.devices.state_unverified", "未验证");
+    dict.set("settings.devices.state_revoked", "已吊销");
+    dict.set("settings.devices.state_title", "设备验证状态:{state}");
+    dict.set("settings.devices.revoke_title", "吊销设备");
+    dict.set(
+        "settings.devices.revoke_recovery_label",
+        "恢复密钥(24 个词)",
+    );
+    dict.set(
+        "settings.devices.revoke_recovery_placeholder",
+        "你的 24 词恢复密钥 —— 轮换加密历史备份时必须提供",
+    );
+    dict.set("settings.devices.revoke_confirm", "确认吊销");
+    dict.set("settings.devices.pair_this_browser", "当前浏览器");
+    dict.set("settings.devices.pair_title", "批准这台设备");
+    dict.set("settings.devices.pair_required_badge", "需要批准");
+    dict.set(
+        "settings.devices.pair_body",
+        "生成配对二维码或链接,然后在一台已授权的设备上扫描或打开它。系统不会自动发送账户通知。",
+    );
+    dict.set("settings.devices.pair_hide_link", "隐藏链接");
+    dict.set("settings.devices.pair_qr_aria_label", "设备批准二维码");
+    dict.set("settings.devices.pair_link_aria_label", "设备批准链接");
+    dict.set("settings.devices.accept_title", "用链接批准");
+    dict.set(
+        "settings.devices.accept_body",
+        "如果已授权设备上没有弹出确认提示,就用这个备用方式。",
+    );
+    dict.set(
+        "settings.devices.accept_placeholder",
+        "粘贴配对链接(…/device-pairing/resolve#token=…)或令牌",
+    );
+    dict.set("settings.devices.session_active", "已登录");
+    dict.set("settings.devices.session_inactive", "未登录");
+    dict.set("settings.devices.revoke_self_blocked", "不能吊销当前设备");
+    dict.set("settings.devices.revoke", "吊销");
+    dict.set("settings.devices.revoke_body_before", "这会写入 ");
+    dict.set("settings.devices.revoke_body_after", " 到你的主控 Realm,把该设备移出它参与的每个端到端加密 Realm,并轮换账户 MLS 历史密钥。此操作无法撤销。");
+    dict.set("settings.devices.pair_requesting", "正在请求…");
+    dict.set("settings.devices.pair_request", "请求批准");
+    dict.set("settings.devices.pair_checking", "正在检查…");
+    dict.set("settings.devices.pair_check", "检查批准状态");
+    dict.set("settings.devices.accept_resolving", "正在解析…");
+    dict.set("settings.devices.accept_resolve", "解析链接");
+    dict.set(
+        "settings.devices.accept_rejected",
+        "已忽略这次配对请求,没有批准任何设备。",
+    );
+    dict.set("settings.devices.accept_device_name", "设备名称");
+    dict.set("settings.devices.accept_device_id", "设备标识");
+    dict.set("settings.devices.accept_key_fingerprint", "密钥指纹");
+    dict.set("settings.devices.accept_gate_audience", "批准账户服务器");
+    dict.set("settings.devices.accept_unnamed_device", "未提供");
+    dict.set("settings.devices.revoke_threat_note", "吊销不等于远程擦除。它无法删除该设备上已经复制走的密钥或缓存历史。请把丢失或被盗的设备当作仍能读取它在吊销前留存的一切内容。");
+    dict.set("audit.title", "审计日志");
+    dict.set("audit.help", "有些 Realm 会记录每一次读取,有些会记录每一次写入。此视图只读,只显示这台设备已经看到的记录。");
+    dict.set("audit.access_events", "已记录的读取");
+    dict.set("audit.access_events_hint", "在 Realm 记录每次读取时产生");
+    dict.set("audit.write_receipts", "已记录的写入");
+    dict.set("audit.write_receipts_hint", "在 Realm 记录每次写入时产生");
+    dict.set("audit.total_observed", "本机共计");
+    dict.set("audit.total_observed_hint", "仅统计这台设备已同步到的部分");
+    dict.set("audit.empty_title", "还没有审计记录");
+    dict.set(
+        "audit.empty_message",
+        "目前还没有任何记录。只有在设置要求记录的 Realm 中才会出现。",
+    );
+    dict.set("quarantine.title", "邀请隔离区");
+    dict.set(
+        "quarantine.status",
+        "待处理的邀请只为你自己私密保存。等同意流程可用后,这里会出现审阅控件。",
+    );
+    dict.set("theme.switcher_aria_label", "主题");
+    dict.set("visibility.pill_title", "谁可以找到并看到它");
+    dict.set("moderation.workbench_aria_label", "内容处置");
+    dict.set("moderation.decide_title", "记录一次处置");
+    dict.set("moderation.decide_badge", "处置");
+    dict.set("moderation.target_placeholder", "这次处置针对的对象");
+    dict.set("moderation.decide_submit", "记录处置");
+    dict.set("moderation.standing_title", "生效中的处置");
+    dict.set(
+        "moderation.standing_empty",
+        "这台设备上还没有生效中的处置。",
+    );
+    dict.set(
+        "moderation.decision_row_summary",
+        "针对 {target} —— {reason}",
+    );
+    dict.set("moderation.lift", "撤销处置");
     dict.set("device_pair.aria_label", "有新设备正在请求访问你的账户");
     dict.set("device_pair.title", "新设备请求加入你的账户");
     dict.set("device_pair.subtitle", "设备配对");

@@ -4,6 +4,9 @@
  * canonical theme tokens from app_overrides/theme-shell-overrides.css
  * so both light and dark themes resolve from one palette. */
 .shell {
+  min-height: 100vh;
+  display: grid;
+  grid-template-columns: 288px minmax(0, 1fr) 340px;
   --ak-bg: var(--bg);
   --ak-bg-soft: var(--surface-2);
   --ak-bg-end: var(--bg-elev);
@@ -29,15 +32,19 @@
 .sidebar {
   background: var(--ak-nav);
   color: var(--nav-text);
+  padding: 22px;
+  display: grid;
+  grid-template-rows: auto auto 1fr auto;
+  gap: 18px;
   border-right: 1px solid var(--nav-border);
 }
 .brand {
+  font-size: 20px;
+  font-weight: 800;
   position: relative;
   display: flex;
   align-items: center;
   gap: 10px;
-  font-size: 20px;
-  font-weight: 800;
 }
 .brand::before {
   content: "C";
@@ -51,24 +58,42 @@
   box-shadow: 0 12px 30px color-mix(in srgb, var(--ak-brand-strong) 24%, transparent);
 }
 .status {
-  border-color: var(--nav-border);
+  border: 1px solid var(--nav-border);
   border-radius: 14px;
+  padding: 12px;
+  color: var(--nav-muted);
+  overflow-wrap: anywhere;
+  border-color: var(--nav-border);
   background: var(--nav-soft);
   box-shadow: var(--ak-shadow-sm);
 }
 .realm-tree-node-button {
-  border-color: var(--nav-border);
+  border: 1px solid var(--nav-border);
   border-radius: 12px;
+  padding: 12px;
+  color: var(--nav-text);
   background: var(--ak-nav-soft);
+  text-align: left;
+  cursor: pointer;
+  border-color: var(--nav-border);
 }
 .realm-tree-node-button.active {
   border-color: color-mix(in srgb, var(--accent) 48%, transparent);
   background: color-mix(in srgb, var(--accent) 18%, transparent);
 }
 .main {
+  padding: 24px;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: 16px;
+  min-width: 0;
   background: transparent;
 }
 .topbar {
+  display: flex;
+  justify-content: space-between;
+  gap: 14px;
+  align-items: flex-start;
   margin: -6px -6px 2px;
   padding: 14px 16px;
   border: 1px solid var(--border);
@@ -78,8 +103,10 @@
   backdrop-filter: blur(16px);
 }
 .title {
-  color: var(--ak-ink);
   font-size: 30px;
+  font-weight: 750;
+  overflow-wrap: anywhere;
+  color: var(--ak-ink);
   line-height: 1.12;
 }
 .muted,
@@ -89,19 +116,33 @@
 .event,
 .composer,
 .metric {
-  border-color: var(--ak-line);
-  border-radius: 14px;
   background: var(--ak-surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 10px;
+  min-width: 0;
+  border-color: var(--ak-line);
   color: var(--ak-ink);
   box-shadow: var(--ak-shadow-sm);
 }
 .event-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
   color: var(--ak-muted);
+  font-size: 13px;
   font-weight: 650;
 }
 .panel {
-  border-color: var(--ak-line);
+  border-left: 1px solid var(--border);
   background: var(--ak-surface-raised);
+  padding: 22px;
+  display: grid;
+  gap: 16px;
+  align-content: start;
+  overflow: auto;
+  min-width: 0;
+  border-color: var(--ak-line);
   color: var(--ak-ink);
 }
 .search input:not([type="checkbox"]):not([type="radio"]),
@@ -152,18 +193,6 @@
   background: var(--ak-surface);
   color: var(--ak-ink);
 }
-.badge {
-  border-radius: 999px;
-  font-weight: 700;
-}
-.badge-info { background: var(--info-soft); color: var(--info-ink); }
-.badge-success { background: var(--success-soft); color: var(--success-ink); }
-.badge-error { background: var(--danger-soft); color: var(--danger-ink); }
-.badge-warning { background: var(--warning-soft); color: var(--warning-ink); }
-.badge.blue { background: var(--info-soft); color: var(--info-ink); }
-.badge.amber { background: var(--warning-soft); color: var(--warning-ink); }
-.badge.red { background: var(--danger-soft); color: var(--danger-ink); }
-.badge.green { background: var(--success-soft); color: var(--success-ink); }
 .write-state-badge {
   display: inline-flex;
   align-items: center;

@@ -2809,6 +2809,149 @@ fn prompt_copy_strings(dict: &mut TranslationDict) {
         "Recovery was set up, but local details couldn't be saved on this device.",
     );
     dict.set("recovery_setup.confirm_button", "Confirm saved key");
+    // identity-handles.md §3.8.2 step 5 — every fallback rung MUST be
+    // visually marked so a degraded label never looks like a resolved one.
+    dict.set("identity.tier.cached", "Cached name");
+    dict.set(
+        "identity.tier.cached_detail",
+        "Shown from a saved copy. We could not re-check this name just now.",
+    );
+    dict.set("identity.tier.name_only", "Unverified name");
+    dict.set(
+        "identity.tier.name_only_detail",
+        "This is the name captured earlier, not a checked one.",
+    );
+    dict.set("identity.tier.unresolved", "Name unavailable");
+    dict.set(
+        "identity.tier.unresolved_detail",
+        "We could not look up a name for this account, so the account id is shown.",
+    );
+    dict.set("settings.devices.title", "Device access");
+    dict.set(
+        "settings.devices.subtitle",
+        "Review trusted devices or approve another one.",
+    );
+    dict.set("settings.devices.help", "Manage the devices bound to your account. Revoking a device removes it from the active set and triggers MLS leaf removal in any E2EE Realm the device participates in.");
+    dict.set("settings.devices.tabs_aria_label", "Device settings");
+    dict.set("settings.devices.tab_list", "Devices");
+    dict.set("settings.devices.tab_add", "Add a device");
+    dict.set("settings.devices.refresh", "Refresh");
+    dict.set("settings.devices.active_title", "Active devices");
+    dict.set("settings.devices.empty_title", "No devices loaded yet");
+    dict.set(
+        "settings.devices.empty_message",
+        "Loading your devices… or click Refresh to retry.",
+    );
+    dict.set("settings.devices.column_device", "Device");
+    dict.set("settings.devices.column_verification", "Verification");
+    dict.set("settings.devices.column_authorized", "Authorized");
+    dict.set("settings.devices.column_actions", "Actions");
+    dict.set("settings.devices.this_device", "this device");
+    dict.set("settings.devices.state_verified", "Verified");
+    dict.set("settings.devices.state_unverified", "Unverified");
+    dict.set("settings.devices.state_revoked", "Revoked");
+    dict.set(
+        "settings.devices.state_title",
+        "Device verification state: {state}",
+    );
+    dict.set("settings.devices.revoke_title", "Revoke device");
+    dict.set(
+        "settings.devices.revoke_recovery_label",
+        "Recovery Key (24 words)",
+    );
+    dict.set(
+        "settings.devices.revoke_recovery_placeholder",
+        "Your 24-word Recovery Key — required to rotate encrypted history backups",
+    );
+    dict.set("settings.devices.revoke_confirm", "Confirm revoke");
+    dict.set("settings.devices.pair_this_browser", "This browser");
+    dict.set("settings.devices.pair_title", "Approve this device");
+    dict.set("settings.devices.pair_required_badge", "Approval required");
+    dict.set("settings.devices.pair_body", "Generate a pairing QR code or link, then scan or open it on an already-authorized device. No automatic account notification is sent.");
+    dict.set("settings.devices.pair_hide_link", "Hide link");
+    dict.set(
+        "settings.devices.pair_qr_aria_label",
+        "Device approval QR code",
+    );
+    dict.set(
+        "settings.devices.pair_link_aria_label",
+        "Device approval link",
+    );
+    dict.set("settings.devices.accept_title", "Approve using a link");
+    dict.set(
+        "settings.devices.accept_body",
+        "Use this fallback on an authorized device when no confirmation prompt appears.",
+    );
+    dict.set(
+        "settings.devices.accept_placeholder",
+        "Paste the pairing link (…/device-pairing/resolve#token=…) or the token",
+    );
+    dict.set("settings.devices.session_active", "Signed in");
+    dict.set("settings.devices.session_inactive", "Not signed in");
+    dict.set("settings.devices.revoke_self_blocked", "Cannot self-revoke");
+    dict.set("settings.devices.revoke", "Revoke");
+    dict.set("settings.devices.revoke_body_before", "This will write ");
+    dict.set("settings.devices.revoke_body_after", " to your principal control Realm, remove the device from any E2EE Realm it participates in, and rotate the account MLS history secret. The action cannot be undone.");
+    dict.set("settings.devices.pair_requesting", "Requesting…");
+    dict.set("settings.devices.pair_request", "Request approval");
+    dict.set("settings.devices.pair_checking", "Checking…");
+    dict.set("settings.devices.pair_check", "Check approval");
+    dict.set("settings.devices.accept_resolving", "Resolving…");
+    dict.set("settings.devices.accept_resolve", "Resolve link");
+    dict.set(
+        "settings.devices.accept_rejected",
+        "Pairing request dismissed. Nothing was approved.",
+    );
+    dict.set("settings.devices.accept_device_name", "Device name");
+    dict.set("settings.devices.accept_device_id", "Device id");
+    dict.set("settings.devices.accept_key_fingerprint", "Key fingerprint");
+    dict.set(
+        "settings.devices.accept_gate_audience",
+        "Approving account server",
+    );
+    dict.set("settings.devices.accept_unnamed_device", "Not provided");
+    dict.set("settings.devices.revoke_threat_note", "Revoking is not a remote wipe. It cannot erase secrets or cached history already copied onto that device. Treat a lost or stolen device as able to read anything it kept before you revoked it.");
+    dict.set("audit.title", "Audit log");
+    dict.set("audit.help", "Some Realms record every read, others record every write. This view is read-only and shows only what this device has already seen.");
+    dict.set("audit.access_events", "Reads recorded");
+    dict.set(
+        "audit.access_events_hint",
+        "Recorded when a Realm logs every read",
+    );
+    dict.set("audit.write_receipts", "Writes recorded");
+    dict.set(
+        "audit.write_receipts_hint",
+        "Recorded when a Realm logs every write",
+    );
+    dict.set("audit.total_observed", "Total seen here");
+    dict.set(
+        "audit.total_observed_hint",
+        "Only what this device has synced so far",
+    );
+    dict.set("audit.empty_title", "No audit records yet");
+    dict.set("audit.empty_message", "Nothing has been recorded yet. Records appear only for Realms whose settings ask for them.");
+    dict.set("quarantine.title", "Invite quarantine");
+    dict.set("quarantine.status", "Pending invites are stored privately for you. Review controls appear once the consent flow is available.");
+    dict.set("theme.switcher_aria_label", "Theme");
+    dict.set("visibility.pill_title", "Who can find and see this");
+    dict.set("moderation.workbench_aria_label", "Moderation decisions");
+    dict.set("moderation.decide_title", "Record a decision");
+    dict.set("moderation.decide_badge", "Decision");
+    dict.set(
+        "moderation.target_placeholder",
+        "What this decision applies to",
+    );
+    dict.set("moderation.decide_submit", "Record decision");
+    dict.set("moderation.standing_title", "Decisions in force");
+    dict.set(
+        "moderation.standing_empty",
+        "No decisions are in force on this device yet.",
+    );
+    dict.set(
+        "moderation.decision_row_summary",
+        "Applies to {target} — {reason}",
+    );
+    dict.set("moderation.lift", "Lift decision");
     dict.set(
         "device_pair.aria_label",
         "A new device is requesting access to your account",

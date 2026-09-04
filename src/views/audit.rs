@@ -13,6 +13,7 @@ use dioxus::prelude::*;
 use serde_json::Value;
 
 use crate::components::{EmptyState, EmptyStateKind, HelpTip};
+use crate::i18n::tr;
 use crate::views::helpers::short_protocol_id;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -68,38 +69,35 @@ pub fn AuditPanel() -> Element {
         .count();
 
     rsx! {
-        div { class: "timeline", "data-testid": "audit-panel", role: "region", "aria-label": "Audit log",
+        div { class: "timeline", "data-testid": "audit-panel", role: "region", "aria-label": tr("audit.title"),
                 div { class: "event",
                     div { class: "event-head",
-                        span { "Audit log" }
-                    HelpTip { text: "Attested-audit Realms require every successful decrypt to emit a ak.audit.accessed event. Disclosed-audit Realms require every write to emit a ak.audit.ryw_receipt. This view is read-only — it reflects what the local raw-operation log has observed." }
+                        span { {tr("audit.title")} }
+                    HelpTip { text: tr("audit.help") }
                 }
                 div { class: "metric-grid",
                     div { class: "metric",
-                        strong { "Access events" }
+                        strong { {tr("audit.access_events")} }
                         span { "data-testid": "audit-accessed-count", "{attested_count}" }
-                        div { class: "muted", "ak.audit.accessed (attested policy)" }
+                        div { class: "muted", {tr("audit.access_events_hint")} }
                     }
                     div { class: "metric",
-                        strong { "Write receipts" }
+                        strong { {tr("audit.write_receipts")} }
                         span { "data-testid": "audit-receipt-count", "{receipt_count}" }
-                        div { class: "muted", "ak.audit.ryw_receipt (disclosed policy)" }
+                        div { class: "muted", {tr("audit.write_receipts_hint")} }
                     }
                     div { class: "metric",
-                        strong { "Total observed" }
+                        strong { {tr("audit.total_observed")} }
                         span { "data-testid": "audit-total-count", "{rows.len()}" }
-                        div { class: "muted", "Local raw-operation projection only" }
+                        div { class: "muted", {tr("audit.total_observed_hint")} }
                     }
                 }
             }
             if rows.is_empty() {
                 EmptyState {
-                    title: "Audit".to_owned(),
+                    title: tr("audit.empty_title"),
                     kind: EmptyStateKind::Empty,
-                    message: Some(
-                        "No audit events recorded yet. Audit emission depends on the active Realm policy; if no Realm you are in is under an attested or disclosed audit profile, nothing will show up here."
-                            .to_owned(),
-                    ),
+                    message: Some(tr("audit.empty_message")),
                     test_id: Some("audit-empty".to_owned()),
                 }
             } else {
