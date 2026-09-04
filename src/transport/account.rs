@@ -1778,15 +1778,16 @@ pub async fn submit_read_cursor_advance(
     marker: &crate::state::ReadMarkerRecord,
 ) -> anyhow::Result<arkret_sdk::ReadMarkerOutcome> {
     let payload = arkret_sdk::ReadCursor {
-        id: arkret_sdk::ReadCursorId::new(marker.body.id.clone())?,
         schema: marker.body.schema.clone(),
         actor_id: crate::mls_api_helpers::local_account_actor_id(&marker.actor)?,
         device_id: arkret_sdk::DeviceId::new(marker.device_id.clone())?,
         realm_id: arkret_sdk::RealmId::new(marker.body.realm_id.clone())?,
         read_scope: marker.body.read_scope.clone(),
         position: marker.body.position.clone(),
-        updated_at: marker.updated_at,
     };
+    // read-receipts.md §6.1: the cursor object carries no `updated_at`. The
+    // time this device read the position is carried by the envelope
+    // `created_at`, which is why the local marker time is the authoring time.
     let event = crate::operation::TypedOperationBuilder::new::<
         arkret_sdk::event_spec::ReadCursorAdvance,
     >(marker.body.realm_id.clone(), marker.actor.clone(), payload)

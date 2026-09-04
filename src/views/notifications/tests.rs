@@ -313,7 +313,6 @@ fn hydrate_notifications_applies_synced_read_cursor() {
         "cursor".to_owned(),
         ReadMarkerRecord {
             body: ReadMarkerBody {
-                id: "ak:read_cursor:01904100-0000-7000-8000-000000000006".to_owned(),
                 schema: "ak.schema.read_cursor.v1".to_owned(),
                 realm_id: realm_id.to_owned(),
                 read_scope,
@@ -363,7 +362,6 @@ fn hydrate_notifications_does_not_order_missing_cursor_target_by_event_id() {
         "cursor".to_owned(),
         ReadMarkerRecord {
             body: ReadMarkerBody {
-                id: "ak:read_cursor:01904100-0000-7000-8000-000000000006".to_owned(),
                 schema: "ak.schema.read_cursor.v1".to_owned(),
                 realm_id: realm_id.to_owned(),
                 read_scope: read_scope_for_cursor(realm_id, Some(strand_id)),

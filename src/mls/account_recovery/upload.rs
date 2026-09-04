@@ -26,12 +26,12 @@ fn passphrase_is_blank(passphrase: &[u8]) -> bool {
 async fn current_backup_frontier_ref(
     api: &crate::transport::TransportClient,
     control_realm: &arkret_sdk::RealmId,
-    actor_id: &str,
+    authority: &arkret_sdk::AccountId,
     device_id: &str,
 ) -> Result<arkret_sdk::KeyBackupFrontierRef> {
     let http = api.sdk_http_client()?;
     let trust_anchor = super::rotation_transaction::current_controller_backup_trust_anchor(
-        &http, actor_id, device_id,
+        &http, authority, device_id,
     )
     .await?;
     let seal = api
@@ -128,6 +128,7 @@ fn active_recovery_backup_recipient(
 async fn ensure_initial_active_series(
     api: &crate::transport::TransportClient,
     control_realm: &arkret_sdk::RealmId,
+    authority: &arkret_sdk::AccountId,
     actor_id: &str,
     device_id: &str,
     backup_kind: BackupRotationKind,
@@ -135,7 +136,12 @@ async fn ensure_initial_active_series(
 ) -> Result<()> {
     let wire_kind = super::rotation_transaction::wire_backup_kind(backup_kind);
     let http = api.sdk_http_client()?;
-    let account_actor = crate::mls_api_helpers::local_account_actor_id(actor_id)?;
+    // The account this series belongs to is already closed in `authority`.
+    // Deriving it from the principal plus the ambient authoring Station broke
+    // first enrollment outright (that slot is only installed once `describe`
+    // succeeds) and would silently name a different account whenever the
+    // ambient Station differs -- account-lifecycle.md §156/§158.
+    let account_actor = arkret_sdk::ActorId::account(authority.clone());
     let history = crate::event_signer::PrincipalControlHistory::load(
         &http,
         &account_actor,
@@ -167,12 +173,13 @@ async fn ensure_initial_active_series(
         .seals_frontier_realm_head(control_realm.as_str())
         .await?;
     let trust_anchor = super::rotation_transaction::current_controller_backup_trust_anchor(
-        &http, actor_id, device_id,
+        &http, authority, device_id,
     )
     .await?;
     let event = super::rotation_transaction::build_active_series_event(
         control_realm,
         actor_id,
+        authority,
         backup_kind,
         series_id,
         1,
@@ -342,7 +349,7 @@ pub async fn upload_mls_account_secret_backup_with_passphrase(
         .ok_or_else(|| anyhow!("active device signer is required"))?;
     let account_body = if let Some(previous) = previous_account_backup.as_ref() {
         let predecessor = typed_backup_predecessor(previous)?;
-        let frontier = current_backup_frontier_ref(api, control_realm, actor_id, device_id).await?;
+        let frontier = current_backup_frontier_ref(api, control_realm, authority, device_id).await?;
         build_mls_account_secret_backup_successor_body_with_kek_and_version(
             &account_backup_id,
             &predecessor,
@@ -371,6 +378,7 @@ pub async fn upload_mls_account_secret_backup_with_passphrase(
         ensure_initial_active_series(
             api,
             control_realm,
+            authority,
             actor_id,
             device_id,
             BackupRotationKind::SecretStorage,
@@ -461,7 +469,7 @@ pub async fn upload_mls_account_secret_backup_with_recovery_public_key(
     let signer = crate::event_signer::active_signer()
         .ok_or_else(|| anyhow!("active device signer is required"))?;
     let frontier_ref = if previous_account_backup.is_some() {
-        Some(current_backup_frontier_ref(api, control_realm, actor_id, device_id).await?)
+        Some(current_backup_frontier_ref(api, control_realm, authority, device_id).await?)
     } else {
         None
     };
@@ -485,6 +493,7 @@ pub async fn upload_mls_account_secret_backup_with_recovery_public_key(
         ensure_initial_active_series(
             api,
             control_realm,
+            authority,
             actor_id,
             device_id,
             BackupRotationKind::SecretStorage,
@@ -578,7 +587,7 @@ pub(crate) async fn upload_local_authoritative_mls_history_records_with_recovery
         )?;
         let backup_id = fresh_backup_id();
         let frontier_ref = if previous.is_some() {
-            Some(current_backup_frontier_ref(api, control_realm, actor_id, device_id).await?)
+            Some(current_backup_frontier_ref(api, control_realm, authority, device_id).await?)
         } else {
             None
         };
@@ -607,6 +616,7 @@ pub(crate) async fn upload_local_authoritative_mls_history_records_with_recovery
         ensure_initial_active_series(
             api,
             control_realm,
+            authority,
             actor_id,
             device_id,
             BackupRotationKind::MlsHistory,
@@ -724,7 +734,7 @@ pub async fn upload_mls_private_plaintext_backup_with_previous(
         .ok_or_else(|| anyhow!("active device signer is required"))?;
     let body = if let Some(previous) = previous_backup.as_ref() {
         let predecessor = typed_backup_predecessor(previous)?;
-        let frontier = current_backup_frontier_ref(api, control_realm, actor_id, device_id).await?;
+        let frontier = current_backup_frontier_ref(api, control_realm, authority, device_id).await?;
         build_mls_private_plaintext_backup_successor_body_with_kek(
             &backup_id,
             &predecessor,
@@ -752,6 +762,7 @@ pub async fn upload_mls_private_plaintext_backup_with_previous(
         ensure_initial_active_series(
             api,
             control_realm,
+            authority,
             actor_id,
             device_id,
             BackupRotationKind::SecretStorage,

@@ -94,10 +94,6 @@ pub(crate) fn isolated_store_for_tests(tag: &str) -> LocalStateStore {
     }
 }
 
-pub(crate) fn new_read_cursor_id() -> String {
-    format!("ak:read_cursor:{}", crate::operation::uuid_v7())
-}
-
 pub(crate) fn read_cursor_key(realm_id: &str, read_scope: &ReadCursorScope) -> String {
     format!(
         "{}\n{}\n{}\n{}",

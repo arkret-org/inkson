@@ -161,7 +161,7 @@ pub(crate) async fn execute_device_revoke_security_rotation(
     let signer = crate::event_signer::active_signer()
         .ok_or_else(|| anyhow!("active device signer is required"))?;
     let trust_anchor =
-        current_controller_backup_trust_anchor(&http, actor_id, current_device_id).await?;
+        current_controller_backup_trust_anchor(&http, authority, current_device_id).await?;
     let prepared = prepare_rotation_backup_material(
         secure_store.as_ref(),
         authority,
@@ -199,6 +199,7 @@ pub(crate) async fn execute_device_revoke_security_rotation(
         pointer_events.push(build_active_series_event(
             &control_realm,
             actor_id,
+            authority,
             class.backup_kind,
             class.new_series_id.as_str(),
             active_pointer_version(&list_payload, class.backup_kind)? + 1,
@@ -643,11 +644,14 @@ fn rotation_backup_count(transaction: &arkret_wire::SecurityTransaction) -> Resu
 /// anchor is that it comes from the authority's current state.
 pub(super) async fn current_controller_backup_trust_anchor(
     http: &arkret_sdk::http_client::Client,
-    actor_id: &str,
+    // The closed `AccountId` of the account being backed up. Rebuilding it from
+    // the principal plus the ambient authoring Station would pass the two
+    // components as a loose identity, which account-lifecycle.md §156 forbids,
+    // and the ambient slot is not installed yet during first enrollment.
+    account_id: &arkret_sdk::AccountId,
     device_id: &str,
 ) -> Result<ControllerBackupTrustAnchor> {
-    let actor = crate::mls_api_helpers::principal_core_id(actor_id)?;
-    let account_id = arkret_sdk::AccountId::new(actor, crate::operation::authoring_station_id()?);
+    let account_id = account_id.clone();
     let device = arkret_sdk::DeviceId::new(device_id.to_owned())?;
     let outcome = crate::transport::keys::query_keys(http, &account_id, device_id).await?;
     resolve_controller_backup_trust_anchor(&outcome, &account_id, &device)
@@ -690,6 +694,9 @@ fn signer_did_for_principal(signer_did: &str, principal: &arkret_sdk::DidCoreId)
 pub(super) fn build_active_series_event(
     principal_control_realm_id: &arkret_sdk::RealmId,
     actor_id: &str,
+    // Closed account identity of the author; see
+    // `current_controller_backup_trust_anchor`.
+    account_id: &arkret_sdk::AccountId,
     kind: BackupRotationKind,
     series_id: &str,
     pointer_version: u64,
@@ -700,6 +707,11 @@ pub(super) fn build_active_series_event(
     let signer = crate::event_signer::active_signer()
         .ok_or_else(|| anyhow!("active device signer is required"))?;
     let principal = crate::mls_api_helpers::principal_core_id(actor_id)?;
+    if principal != account_id.principal_id {
+        return Err(anyhow!(
+            "active-series author does not match the supplied account"
+        ));
+    }
     let principal_did = signer_did_for_principal(signer.signer_did(), &principal)?;
     let verification_method = signer.verification_method_for_principal(&principal_did)?;
     let backup_kind = match kind {
@@ -707,7 +719,7 @@ pub(super) fn build_active_series_event(
         BackupRotationKind::MlsHistory => BackupKind::MlsHistory,
     };
     let unsigned = arkret_sdk::UnsignedKeyBackupActiveSeries::new(
-        crate::mls_api_helpers::local_account_actor_id(principal.as_str())?,
+        arkret_sdk::ActorId::account(account_id.clone()),
         backup_kind,
         BackupSeriesId::new(series_id.to_owned())?,
         pointer_version,
@@ -723,9 +735,16 @@ pub(super) fn build_active_series_event(
     )
     .map_err(anyhow::Error::msg)?;
     let payload = unsigned.attach_signature(signature)?;
-    crate::operation::TypedOperationBuilder::new::<arkret_sdk::event_spec::KeyBackupActiveSeries>(
+    // `new` would take the Station from the ambient authoring slot, which is
+    // only installed once `describe` succeeds -- first enrollment authors this
+    // pointer before that. The account's own Station is already closed in
+    // `account_id` (account-lifecycle.md §156/§158), so name it explicitly.
+    crate::operation::TypedOperationBuilder::new_for_station::<
+        arkret_sdk::event_spec::KeyBackupActiveSeries,
+    >(
         principal_control_realm_id.to_string(),
         actor_id,
+        account_id.station_id.clone(),
         payload,
     )
     .build_sdk_event("inkson")

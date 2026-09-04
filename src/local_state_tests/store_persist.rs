@@ -348,7 +348,7 @@ fn local_state_store_persists_private_read_cursors() {
 
     let reader = LocalStateStore::with_path(path);
     let persisted = read_cursor_for(&reader, REALM_ID, None).expect("read marker persisted");
-    assert_eq!(persisted.body.id, marker.body.id);
+    assert_eq!(persisted.body, marker.body);
     assert_eq!(persisted.actor, "did:web:alice.example");
     assert_eq!(persisted.device_id, DEVICE_ID);
     assert_eq!(persisted.body.position.event_id.as_str(), EVENT_ID);
