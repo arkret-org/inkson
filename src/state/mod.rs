@@ -191,6 +191,26 @@ pub struct LocalStateStore {
     path: PathBuf,
 }
 
+impl Clone for LocalStateStore {
+    fn clone(&self) -> Self {
+        Self {
+            cached: self.cached.clone(),
+            cached_account_key: self.cached_account_key.clone(),
+            loaded: AtomicBool::new(self.loaded.load(Ordering::Acquire)),
+            flush_suspended: self.flush_suspended,
+            flush_pending: AtomicBool::new(self.flush_pending.load(Ordering::Acquire)),
+            persist_health: Arc::clone(&self.persist_health),
+            corrupt_account_scopes: Arc::clone(&self.corrupt_account_scopes),
+            mls_receive_overlay: Arc::clone(&self.mls_receive_overlay),
+            mls_decrypt_serial: Arc::clone(&self.mls_decrypt_serial),
+            sidecar_projection_fold: self.sidecar_projection_fold.clone(),
+            pending_projection_commands: self.pending_projection_commands.clone(),
+            #[cfg(not(target_arch = "wasm32"))]
+            path: self.path.clone(),
+        }
+    }
+}
+
 pub(crate) struct LocalStatePersistBarrier {
     inner: account_persist::AccountPersistBarrier,
     persist_health: Arc<Mutex<Option<String>>>,

@@ -786,7 +786,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                 let entries = synthesis_entries.clone();
                                                                 let sidecar_write = sidecar_track_write.clone();
                                                                 move |_| {
-                                                                    save_card_detail_edit(
+                                                                    spawn(save_card_detail_edit(
                                                                         base.clone(),
                                                                         token,
                                                                         realm.clone(),
@@ -811,7 +811,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                         selected_card,
                                                                         state_store,
                                                                         board_status,
-                                                                    );
+                                                                    ));
                                                                 }
                                                             },
                                                             on_cancel: {
@@ -967,7 +967,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                         let current = card.clone();
                                                                         let entries = synthesis_entries.clone();
                                                                         move |_| {
-                                                                            save_card_detail_edit(
+                                                                            spawn(save_card_detail_edit(
                                                                                 base.clone(),
                                                                                 token,
                                                                                 realm.clone(),
@@ -992,7 +992,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                                 selected_card,
                                                                                 state_store,
                                                                                 board_status,
-                                                                            );
+                                                                            ));
                                                                         }
                                                                     },
                                                                     on_cancel: {
@@ -1340,7 +1340,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                                                 let entries = synthesis_entries.clone();
                                                                                                 let sidecar_write = sidecar_track_write.clone();
                                                                                                 move |_| {
-                                                                                                    save_card_detail_edit(
+                                                                                                    spawn(save_card_detail_edit(
                                                                                                         base.clone(),
                                                                                                         token,
                                                                                                         realm.clone(),
@@ -1365,7 +1365,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                                                         selected_card,
                                                                                                         state_store,
                                                                                                         board_status,
-                                                                                                    );
+                                                                                                    ));
                                                                                                 }
                                                                                             },
                                                                                             on_cancel: {
@@ -1431,7 +1431,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                         let entries = synthesis_entries.clone();
                                                                         let sidecar_write = sidecar_track_write.clone();
                                                                         move |_| {
-                                                                            save_card_detail_edit(
+                                                                            spawn(save_card_detail_edit(
                                                                                 base.clone(),
                                                                                 token,
                                                                                 realm.clone(),
@@ -1456,7 +1456,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                                 selected_card,
                                                                                 state_store,
                                                                                 board_status,
-                                                                            );
+                                                                            ));
                                                                         }
                                                                     },
                                                                     on_cancel: {
@@ -1965,13 +1965,18 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                                                     due_edit_value.set(String::new());
                                                                                                     due_calendar_month.set(default_due_calendar_month());
                                                                                                     due_picker_open.set(true);
-                                                                                                    save_card_due_edit(
-                                                                                                        base.clone(),
+                                                                                                    let base = base.clone();
+                                                                                                    let realm = realm.clone();
+                                                                                                    let actor = actor.clone();
+                                                                                                    let device = device.clone();
+                                                                                                    let current_card = current_card.clone();
+                                                                                                    spawn(async move { let _ = save_card_due_edit(
+                                                                                                        base,
                                                                                                         token,
-                                                                                                        realm.clone(),
-                                                                                                        actor.clone(),
-                                                                                                        device.clone(),
-                                                                                                        current_card.clone(),
+                                                                                                        realm,
+                                                                                                        actor,
+                                                                                                        device,
+                                                                                                        current_card,
                                                                                                         String::new(),
                                                                                                         selected_scope_security_encrypted,
                                                                                                         due_picker_open,
@@ -1979,7 +1984,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                                                         selected_card,
                                                                                                         state_store,
                                                                                                         board_status,
-                                                                                                    );
+                                                                                                    ).await; });
                                                                                                 }
                                                                                             },
                                                                                             UiIcon { name: "x" }
@@ -2180,13 +2185,18 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                                                         let device = device_id.clone();
                                                                                                         let current_card = card.clone();
                                                                                                         move |_| {
-                                                                                                            save_card_due_edit(
-                                                                                                                base.clone(),
+                                                                                                            let base = base.clone();
+                                                                                                            let realm = realm.clone();
+                                                                                                            let actor = actor.clone();
+                                                                                                            let device = device.clone();
+                                                                                                            let current_card = current_card.clone();
+                                                                                                            spawn(async move { let _ = save_card_due_edit(
+                                                                                                                base,
                                                                                                                 token,
-                                                                                                                realm.clone(),
-                                                                                                                actor.clone(),
-                                                                                                                device.clone(),
-                                                                                                                current_card.clone(),
+                                                                                                                realm,
+                                                                                                                actor,
+                                                                                                                device,
+                                                                                                                current_card,
                                                                                                                 due_edit_value(),
                                                                                                                 selected_scope_security_encrypted,
                                                                                                                 due_picker_open,
@@ -2194,7 +2204,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                                                                 selected_card,
                                                                                                                 state_store,
                                                                                                                 board_status,
-                                                                                                            );
+                                                                                                            ).await; });
                                                                                                         }
                                                                                                     },
                                                                                                     {crate::i18n::tr("common.save")}
@@ -2281,13 +2291,18 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                                                     let device = device_id.clone();
                                                                                                     let current_card = card.clone();
                                                                                                     move |_| {
-                                                                                                        save_card_calendar_edit(
-                                                                                                            base.clone(),
+                                                                                                        let base = base.clone();
+                                                                                                        let realm = realm.clone();
+                                                                                                        let actor = actor.clone();
+                                                                                                        let device = device.clone();
+                                                                                                        let current_card = current_card.clone();
+                                                                                                        spawn(async move { let _ = save_card_calendar_edit(
+                                                                                                            base,
                                                                                                             token,
-                                                                                                            realm.clone(),
-                                                                                                            actor.clone(),
-                                                                                                            device.clone(),
-                                                                                                            current_card.clone(),
+                                                                                                            realm,
+                                                                                                            actor,
+                                                                                                            device,
+                                                                                                            current_card,
                                                                                                             card_edit_calendar(),
                                                                                                             selected_scope_security_encrypted,
                                                                                                             editing_card_detail,
@@ -2296,7 +2311,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                                                             selected_card,
                                                                                                             state_store,
                                                                                                             board_status,
-                                                                                                        );
+                                                                                                        ).await; });
                                                                                                     }
                                                                                                 },
                                                                                                 on_cancel: {

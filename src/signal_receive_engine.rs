@@ -172,86 +172,98 @@ impl MlsSignalDecryptor {
 }
 
 impl garth::SignalDecryptor for MlsSignalDecryptor {
-    fn open(
-        &self,
-        envelope: &arkret_wire::SignalEnvelope,
-        verified_sender: &garth::VerifiedSignalSenderKey,
-    ) -> garth::Result<Vec<u8>> {
-        // The MLS exporter only evaluates the group's current epoch
-        // (`crates/mls/src/signal.rs::signal_suite_for`), so the shared restore
-        // helper's epoch gate drops a Signal naming any other epoch rather than
-        // routing around it. No decryption queue, no downgrade, no backfill.
-        let (session, accepted_group_state_ref) = self
-            .state_store
-            .read(|store| {
-                validate_signal_governance(store, envelope)?;
-                let session = crate::signal::restore_signal_mls_session(
-                    store,
-                    self.secure_store.as_ref(),
-                    &envelope.scope_ref,
-                    &self.authority,
-                    &self.device_id,
-                    envelope.encrypted_payload.epoch,
-                )?;
-                let accepted_group_state_ref = store
-                    .mls_group_state_ref_for_scope(
+    fn open<'a>(
+        &'a self,
+        envelope: &'a arkret_wire::SignalEnvelope,
+        verified_sender: &'a garth::VerifiedSignalSenderKey,
+    ) -> garth::BoxSignalDecryptFuture<'a> {
+        Box::pin(async move {
+            // The MLS exporter only evaluates the group's current epoch
+            // (`crates/mls/src/signal.rs::signal_suite_for`), so the shared restore
+            // helper's epoch gate drops a Signal naming any other epoch rather than
+            // routing around it. No decryption queue, no downgrade, no backfill.
+            validate_signal_governance(&self.state_store, envelope)
+                .await
+                .map_err(|error| garth::Error::Protocol(error.to_string()))?;
+            let (session, accepted_group_state_ref) = self
+                .state_store
+                .read(|store| {
+                    let session = crate::signal::restore_signal_mls_session(
+                        store,
+                        self.secure_store.as_ref(),
                         &envelope.scope_ref,
-                        &session.group.group_id(),
-                        session.group.epoch(),
-                    )
-                    .map_err(anyhow::Error::msg)?;
-                Ok::<_, anyhow::Error>((session, accepted_group_state_ref))
-            })
-            .map_err(|error| garth::Error::Protocol(error.to_string()))?;
-        let group = session.group;
-        let mut replay = self.replay.lock().map_err(|error| {
-            garth::Error::Protocol(format!("signal replay tracker poisoned: {error}"))
-        })?;
-        let authority = match verified_sender.authority() {
-            garth::VerifiedSignalSenderAuthority::AccountDevice {
-                device_authorize_event_id,
-                ..
-            } => arkret_sdk::mls::SignalSenderAuthority::AccountDevice {
-                public_key: verified_sender.public_key(),
-                device_authorize_event_id,
-            },
-            garth::VerifiedSignalSenderAuthority::Agent {
-                agent_key_authorize_event_id,
-                ..
-            } => arkret_sdk::mls::SignalSenderAuthority::Agent {
-                public_key: verified_sender.public_key(),
-                verification_method: &envelope.proof.verification_method,
-                agent_key_authorize_event_id,
-            },
-        };
-        group
-            .open_signal_envelope(
-                envelope,
-                session.content_scheme,
-                authority,
-                accepted_group_state_ref.as_str(),
-                &mut replay,
-            )
-            .map_err(|error| garth::Error::Protocol(error.to_string()))
+                        &self.authority,
+                        &self.device_id,
+                        envelope.encrypted_payload.epoch,
+                    )?;
+                    let accepted_group_state_ref = store
+                        .mls_group_state_ref_for_scope(
+                            &envelope.scope_ref,
+                            &session.group.group_id(),
+                            session.group.epoch(),
+                        )
+                        .map_err(anyhow::Error::msg)?;
+                    Ok::<_, anyhow::Error>((session, accepted_group_state_ref))
+                })
+                .map_err(|error| garth::Error::Protocol(error.to_string()))?;
+            let group = session.group;
+            let mut replay = self.replay.lock().map_err(|error| {
+                garth::Error::Protocol(format!("signal replay tracker poisoned: {error}"))
+            })?;
+            let authority = match verified_sender.authority() {
+                garth::VerifiedSignalSenderAuthority::AccountDevice {
+                    device_authorize_event_id,
+                    ..
+                } => arkret_sdk::mls::SignalSenderAuthority::AccountDevice {
+                    public_key: verified_sender.public_key(),
+                    device_authorize_event_id,
+                },
+                garth::VerifiedSignalSenderAuthority::Agent {
+                    agent_key_authorize_event_id,
+                    ..
+                } => arkret_sdk::mls::SignalSenderAuthority::Agent {
+                    public_key: verified_sender.public_key(),
+                    verification_method: &envelope.proof.verification_method,
+                    agent_key_authorize_event_id,
+                },
+            };
+            group
+                .open_signal_envelope(
+                    envelope,
+                    session.content_scheme,
+                    authority,
+                    accepted_group_state_ref.as_str(),
+                    &mut replay,
+                )
+                .map_err(|error| garth::Error::Protocol(error.to_string()))
+        })
     }
 }
 
-fn validate_signal_governance(
-    store: &crate::state::LocalStateStore,
+async fn validate_signal_governance(
+    state_store: &crate::runtime::input::StateStoreHandle,
     envelope: &arkret_wire::SignalEnvelope,
 ) -> anyhow::Result<()> {
     let realm = envelope.realm_id.as_str();
-    if store.realm_has_pending_mls_binding(realm)
-        || store
-            .mls_coverage_stale_reason(realm, envelope.scope_ref.circle_id().map(|id| id.as_str()))
-            .is_some()
-    {
+    let (has_pending_binding, has_stale_coverage, checkpoint, observed) =
+        state_store.read(|store| {
+            (
+                store.realm_has_pending_mls_binding(realm),
+                store
+                    .mls_coverage_stale_reason(
+                        realm,
+                        envelope.scope_ref.circle_id().map(|id| id.as_str()),
+                    )
+                    .is_some(),
+                store.trusted_mls_governance_checkpoint(realm),
+                store.seal_view_for_realm(realm),
+            )
+        });
+    if has_pending_binding || has_stale_coverage {
         anyhow::bail!("Signal scope has pending or stale MLS governance coverage");
     }
-    let checkpoint = store
-        .trusted_mls_governance_checkpoint(realm)
+    let checkpoint = checkpoint
         .ok_or_else(|| anyhow::anyhow!("Signal requires a verified governance checkpoint"))?;
-    let observed = store.seal_view_for_realm(realm);
     let verified_frontier = checkpoint
         .basis
         .leaves
@@ -299,7 +311,8 @@ fn validate_signal_governance(
                 |event, digest_suite| arkret_schema::project_registered_cell_writes_with_authority_resolver(
                     event, digest_suite, &|grant_id| audits.resolve(grant_id),
                 ).map_err(|error| error.to_string()),
-            )?;
+            )
+            .await?;
             if value.as_str() != Some("join") {
                 anyhow::bail!(
                     "Signal sender is not joined at both current and declared Seal bases"
@@ -316,6 +329,7 @@ fn validate_signal_governance(
                 &registry,
                 &audits,
             )
+            .await
             .map_err(|error| anyhow::anyhow!("{error}"))?
         {
             anyhow::bail!(

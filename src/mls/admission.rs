@@ -154,7 +154,7 @@ pub(crate) async fn current_requester_device_authorize_event_id(
         })
 }
 
-fn current_authorization_incarnation(
+async fn current_authorization_incarnation(
     state_store: &LocalStateStore,
     realm_id: &str,
     circle_id: Option<&str>,
@@ -179,6 +179,7 @@ fn current_authorization_incarnation(
         target,
         circle_id.as_ref(),
     )
+    .await
     .map_err(|error| format!("derive current MLS Add authorization incarnation: {error}"))
 }
 
@@ -231,7 +232,7 @@ fn build_add_proposal_event(
         .map_err(|error| format!("MLS Add proposal SDK Event conversion failed: {error}"))
 }
 
-pub(crate) fn build_realm_mls_admission_events_from_claim(
+pub(crate) async fn build_realm_mls_admission_events_from_claim(
     state_store: &LocalStateStore,
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
@@ -255,10 +256,11 @@ pub(crate) fn build_realm_mls_admission_events_from_claim(
         claim_request_id,
         claim_receipt,
     )
+    .await
 }
 
 #[allow(clippy::too_many_arguments)]
-fn build_realm_mls_admission_events_from_verified_claim(
+async fn build_realm_mls_admission_events_from_verified_claim(
     state_store: &LocalStateStore,
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
@@ -310,10 +312,11 @@ fn build_realm_mls_admission_events_from_verified_claim(
         &add.commit,
         &previous_governance_binding,
         None,
-    )?;
+    )
+    .await?;
     let target_actor = crate::mls::governance_proof::claimed_actor_id(claim, claim_receipt)?;
     let target_authorization_incarnation =
-        current_authorization_incarnation(state_store, realm_id, None, &target_actor)?;
+        current_authorization_incarnation(state_store, realm_id, None, &target_actor).await?;
     let proposal = build_add_proposal_event(
         realm_id,
         None,
@@ -1214,8 +1217,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn mismatched_claim_target_cannot_authorize_welcome() {
+    #[tokio::test]
+    async fn mismatched_claim_target_cannot_authorize_welcome() {
         let alice_state = isolated_store_for_tests("peer-self-claim-fail-closed");
         let secure = MemorySecureKeyStore::new();
         let realm = "ak:realm:Aa8_CTduEn4HY_7QtwQ1Ct3QH2pg-9mfHGxJfGOYYHxx";
@@ -1260,6 +1263,7 @@ mod tests {
             claim_request_id,
             &claim_receipt,
         )
+        .await
         .err()
         .expect("remote claim must fail before MLS state mutation");
 

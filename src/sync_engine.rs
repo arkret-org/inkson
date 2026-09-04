@@ -988,20 +988,19 @@ async fn run_circle_scope_rotate_pass(
                     .await
                     .map_err(anyhow::Error::msg)?;
                     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-                    let draft = state_store
-                        .read(|store| {
-                            crate::circle_mls::build_realm_remove_members_scope_rotate_draft(
-                                store,
-                                secure_store.as_ref(),
-                                &realm_for_submit,
-                                &authority_for_submit,
-                                &actor_for_submit,
-                                &device_for_submit,
-                                &targets_for_submit,
-                                &frontier_for_submit,
-                            )
-                        })
-                        .map_err(anyhow::Error::msg)?;
+                    let local_state = state_store.read(Clone::clone);
+                    let draft = crate::circle_mls::build_realm_remove_members_scope_rotate_draft(
+                        &local_state,
+                        secure_store.as_ref(),
+                        &realm_for_submit,
+                        &authority_for_submit,
+                        &actor_for_submit,
+                        &device_for_submit,
+                        &targets_for_submit,
+                        &frontier_for_submit,
+                    )
+                    .await
+                    .map_err(anyhow::Error::msg)?;
                     let post_commit_snapshot = draft.post_commit_snapshot;
                     let removed_actors = draft.removed_actors;
                     // The commit's id exists only once the unit is authored, so
@@ -1171,19 +1170,19 @@ async fn run_circle_scope_rotate_pass(
                 .collect();
             revocation_membership_frontier.sort();
             revocation_membership_frontier.dedup();
-            let draft = ctx.state_store.read(|store| {
-                crate::circle_mls::build_circle_remove_members_scope_rotate_draft(
-                    store,
-                    secure_store.as_ref(),
-                    &realm_id,
-                    &circle_id,
-                    &authority,
-                    &actor_id,
-                    &device_id,
-                    &target_actor_ids,
-                    &revocation_membership_frontier,
-                )
-            });
+            let local_state = ctx.state_store.read(Clone::clone);
+            let draft = crate::circle_mls::build_circle_remove_members_scope_rotate_draft(
+                &local_state,
+                secure_store.as_ref(),
+                &realm_id,
+                &circle_id,
+                &authority,
+                &actor_id,
+                &device_id,
+                &target_actor_ids,
+                &revocation_membership_frontier,
+            )
+            .await;
             let draft = match draft {
                 Ok(draft) => draft,
                 Err(err) => {
@@ -1331,22 +1330,25 @@ async fn run_idle_self_update_pass(
                 now,
             )
             .map_err(|err| err.user_message())
-            .and_then(|maybe| match maybe {
-                None => Ok(None),
-                Some((commit_envelope, snapshot, previous_governance_binding)) => {
-                    let schedule_hash = commit_envelope.commit_digest.clone();
-                    crate::mls::group_events::mls_commit_event_from_store(
-                        store,
-                        &realm_id,
-                        &actor_id,
-                        &schedule_hash,
-                        &commit_envelope,
-                        &previous_governance_binding,
-                    )
-                    .map(|event| Some((event, commit_envelope.epoch, snapshot)))
-                }
-            })
         });
+        let built = match built {
+            Ok(None) => Ok(None),
+            Ok(Some((commit_envelope, snapshot, previous_governance_binding))) => {
+                let schedule_hash = commit_envelope.commit_digest.clone();
+                let local_state = ctx.state_store.read(Clone::clone);
+                crate::mls::group_events::mls_commit_event_from_store(
+                    &local_state,
+                    &realm_id,
+                    &actor_id,
+                    &schedule_hash,
+                    &commit_envelope,
+                    &previous_governance_binding,
+                )
+                .await
+                .map(|event| Some((event, commit_envelope.epoch, snapshot)))
+            }
+            Err(error) => Err(error),
+        };
         let (commit_event, next_epoch, snapshot) = match built {
             Ok(Some(parts)) => parts,
             Ok(None) => continue,

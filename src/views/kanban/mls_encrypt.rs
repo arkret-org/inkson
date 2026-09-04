@@ -147,7 +147,7 @@ fn active_scope_matches_write_identity(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(super) fn encrypt_private_card_detail_patch_values_for_effective_scope(
+pub(super) async fn encrypt_private_card_detail_patch_values_for_effective_scope(
     patch: Value,
     realm_id: &str,
     strand_id: &str,
@@ -168,10 +168,11 @@ pub(super) fn encrypt_private_card_detail_patch_values_for_effective_scope(
         secure_store.as_ref(),
         sidecar,
     )
+    .await
 }
 
 #[cfg(test)]
-pub(super) fn encrypt_private_card_detail_patch_values_with_store(
+pub(super) async fn encrypt_private_card_detail_patch_values_with_store(
     patch: Value,
     realm_id: &str,
     strand_id: &str,
@@ -190,10 +191,11 @@ pub(super) fn encrypt_private_card_detail_patch_values_with_store(
         secure_store,
         None,
     )
+    .await
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(super) fn encrypt_private_card_detail_patch_values_with_store_for_effective_scope(
+pub(super) async fn encrypt_private_card_detail_patch_values_with_store_for_effective_scope(
     patch: Value,
     realm_id: &str,
     strand_id: &str,
@@ -338,7 +340,8 @@ pub(super) fn encrypt_private_card_detail_patch_values_with_store_for_effective_
                 sidecar.binding.clone().ok_or_else(|| {
                     "Private Sidecar MLS governance binding is unavailable".to_owned()
                 })?,
-            )?
+            )
+            .await?
         } else {
             mls_commit_event_from_store(
                 state_store,
@@ -347,7 +350,8 @@ pub(super) fn encrypt_private_card_detail_patch_values_with_store_for_effective_
                 &schedule_hash,
                 &prepared_commit.envelope,
                 &prepared_commit.previous_governance_binding,
-            )?
+            )
+            .await?
         }),
         None => None,
     };
@@ -408,7 +412,7 @@ pub(super) fn encrypt_private_card_detail_patch_values_with_store_for_effective_
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(super) fn dispatch_card_detail_update(
+pub(super) async fn dispatch_card_detail_update(
     base_url: String,
     token: Signal<String>,
     realm_id: String,
@@ -466,7 +470,9 @@ pub(super) fn dispatch_card_detail_update(
             &device_id,
             state_store,
             sidecar_track_write.as_ref(),
-        ) {
+        )
+        .await
+        {
             Ok(result) => result,
             Err(msg) => {
                 board_status.set(msg);

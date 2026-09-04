@@ -229,7 +229,8 @@ async fn verify_and_pin_agent_pcr_checkpoint<
                     dependencies,
                 )
             },
-        )?
+        )
+        .await?
         .checkpoint
     };
     state_store

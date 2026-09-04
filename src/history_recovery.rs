@@ -183,6 +183,7 @@ impl garth::ReceiptBoundHistoryTraversal for ReceiptTraversal<'_> {
                 )
             },
         )
+        .await
         .map_err(|error| garth::Error::Protocol(error.to_string()))?;
         let cut = crate::mls::governance_acquisition::resolve_history_governance_cut(
             self.api, retention, access,
@@ -205,6 +206,7 @@ impl garth::ReceiptBoundHistoryTraversal for ReceiptTraversal<'_> {
                 )
             },
         )
+        .await
         .map_err(|error| garth::Error::Protocol(error.to_string()))?;
         Ok(garth::VerifiedHistoryTraversal { checkpoint })
     }
@@ -986,7 +988,9 @@ pub async fn converge_member_history_recovery(
                 &checkpoint,
                 &arkret_sdk::ActorId::account(authority.clone()),
                 circle_id,
-            ) {
+            )
+            .await
+            {
                 Ok(incarnation) => incarnation,
                 Err(error) => {
                     outcome.pending_errors += 1;
@@ -1431,7 +1435,7 @@ where
                     .map_err(|error| anyhow::anyhow!(error.to_string()))?;
             }
             arkret_sdk::VerifiedHistoryResponseRecord::Chunk { chunk, .. } => {
-                let prepared = (|| -> anyhow::Result<Vec<_>> {
+                let prepared = async {
                     let plaintext = arkret_crypto::secret_share::open_history_secret_chunk(
                         &private_key_b64u,
                         &chunk.seal_context,
@@ -1451,7 +1455,8 @@ where
                         &accepted.request.effective_scope,
                         &accepted.request.effective_scope.canonical_mls_group_id()?,
                         std::slice::from_ref(&chunk.covered_epoch_range),
-                    )?;
+                    )
+                    .await?;
                     let secret_bytes = arkret_sdk::base64url_decode(
                         plaintext.secret_range.secrets_b64u.as_bytes(),
                     )?;
@@ -1497,8 +1502,9 @@ where
                         candidates.push((material_key, secret, attribution, suite.cipher_suite));
                         offset = next;
                     }
-                    Ok(candidates)
-                })();
+                    Ok::<_, anyhow::Error>(candidates)
+                }
+                .await;
                 let candidates = match prepared {
                     Ok(candidates) => candidates,
                     Err(error) => {

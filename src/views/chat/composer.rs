@@ -2169,7 +2169,9 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                     None,
                                     None,
                                     None,
-                                ) {
+                                )
+                                .await
+                                {
                                     Ok(build) => build,
                                     Err(message) => {
                                         fail_optimistic_chat_send(

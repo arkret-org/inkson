@@ -239,7 +239,7 @@ pub(crate) struct SecureSendBuild {
 /// the message payload's `encrypted_metadata` field; it never enters plaintext
 /// `metadata`.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn build_secure_send(
+pub(crate) async fn build_secure_send(
     state_store: SyncSignal<LocalStateStore>,
     seal_view: &LocalSealView,
     realm_id: &str,
@@ -330,26 +330,31 @@ pub(crate) fn build_secure_send(
                 .saturating_sub(u64::from(real_commit_envelope.is_some())),
         )?
         .to_string();
+    let local_state = state_store.read().clone();
     let commit_event = match real_commit_envelope.as_ref() {
         Some(prepared_commit) => Some(match sidecar_binding.as_ref() {
             Some(binding) => {
                 crate::mls::group_events::mls_commit_event_from_store_for_sidecar_scope(
-                    &state_store.read(),
+                    &local_state,
                     realm_id,
                     &event_actor,
                     &prepared_commit.envelope,
                     &prepared_commit.previous_governance_binding,
                     binding.clone(),
-                )?
+                )
+                .await?
             }
-            None => crate::mls::group_events::mls_commit_event_from_store_for_effective_scope(
-                &state_store.read(),
-                realm_id,
-                circle_id,
-                &event_actor,
-                &prepared_commit.envelope,
-                &prepared_commit.previous_governance_binding,
-            )?,
+            None => {
+                crate::mls::group_events::mls_commit_event_from_store_for_effective_scope(
+                    &local_state,
+                    realm_id,
+                    circle_id,
+                    &event_actor,
+                    &prepared_commit.envelope,
+                    &prepared_commit.previous_governance_binding,
+                )
+                .await?
+            }
         }),
         None => None,
     };
@@ -438,7 +443,7 @@ pub(crate) fn build_secure_send(
 /// callers must wait for history refold before presenting the exchange as
 /// closed.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn build_sidecar_exchange_control_send(
+pub(crate) async fn build_sidecar_exchange_control_send(
     state_store: SyncSignal<LocalStateStore>,
     seal_view: &LocalSealView,
     realm_id: &str,
@@ -498,16 +503,18 @@ pub(crate) fn build_sidecar_exchange_control_send(
                 .saturating_sub(u64::from(prepared_commit.is_some())),
         )?
         .to_string();
+    let local_state = state_store.read().clone();
     let commit_event = match prepared_commit.as_ref() {
         Some(prepared) => Some(
             crate::mls::group_events::mls_commit_event_from_store_for_sidecar_scope(
-                &state_store.read(),
+                &local_state,
                 realm_id,
                 actor,
                 &prepared.envelope,
                 &prepared.previous_governance_binding,
                 sidecar_binding.clone(),
-            )?,
+            )
+            .await?,
         ),
         None => None,
     };

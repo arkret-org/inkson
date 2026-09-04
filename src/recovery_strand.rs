@@ -142,7 +142,8 @@ pub async fn ensure_principal_bootstrap_governance_checkpoint(
                 dependencies,
             )
         },
-    )?
+    )
+    .await?
     .checkpoint;
     if !verified
         .accepted_seals

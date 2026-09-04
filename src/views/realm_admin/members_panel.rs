@@ -1924,22 +1924,21 @@ pub(crate) async fn submit_mls_admission_for_invitee(
     } else {
         None
     };
-    let admission = {
-        let store = state_store.read();
-        crate::mls::admission::build_realm_mls_admission_events_from_claim(
-            &store,
-            secure_store.as_ref(),
-            &realm_id,
-            &account.authority,
-            &mls_actor_id,
-            &account.device_id,
-            requester_device_authorize_event_id.as_ref(),
-            &claim,
-            &claim_request_id,
-            &claim_receipt,
-        )
-        .map_err(|err| anyhow::anyhow!(err))?
-    };
+    let local_state = state_store.read().clone();
+    let admission = crate::mls::admission::build_realm_mls_admission_events_from_claim(
+        &local_state,
+        secure_store.as_ref(),
+        &realm_id,
+        &account.authority,
+        &mls_actor_id,
+        &account.device_id,
+        requester_device_authorize_event_id.as_ref(),
+        &claim,
+        &claim_request_id,
+        &claim_receipt,
+    )
+    .await
+    .map_err(|err| anyhow::anyhow!(err))?;
     let next_epoch = admission.snapshot.epoch;
     let invitee_device_id = claim.device_id.clone();
     // Persist the entire fail-closed admission saga before the first write.
@@ -2624,24 +2623,31 @@ async fn refresh_mls_governance_target_basis(
     const ATTEMPTS: usize = 20;
     const DELAY: std::time::Duration = std::time::Duration::from_millis(250);
 
-    let (base_basis, requires_membership_advance) = {
+    let checkpoint = {
         let store = state_store.read();
-        let checkpoint = store
+        store
             .trusted_mls_governance_checkpoint(realm_id)
-            .ok_or_else(|| anyhow::anyhow!("MLS governance checkpoint is unavailable"))?;
-        let requires_membership_advance = added_claims.iter().any(|(claim, receipt)| {
-            let Ok(actor) = crate::mls::governance_proof::claimed_actor_id(claim, receipt) else {
-                return true;
-            };
-            arkret_sdk::current_authorization_incarnation_from_verified_checkpoint(
-                &checkpoint,
-                &actor,
-                None,
-            )
-            .is_err()
-        });
-        (checkpoint.basis, requires_membership_advance)
+            .ok_or_else(|| anyhow::anyhow!("MLS governance checkpoint is unavailable"))?
     };
+    let base_basis = checkpoint.basis.clone();
+    let mut requires_membership_advance = false;
+    for (claim, receipt) in added_claims {
+        let Ok(actor) = crate::mls::governance_proof::claimed_actor_id(claim, receipt) else {
+            requires_membership_advance = true;
+            break;
+        };
+        if arkret_sdk::current_authorization_incarnation_from_verified_checkpoint(
+            &checkpoint,
+            &actor,
+            None,
+        )
+        .await
+        .is_err()
+        {
+            requires_membership_advance = true;
+            break;
+        }
+    }
     let submitter = api.event_submitter()?;
     for attempt in 0..ATTEMPTS {
         match submitter.seals_frontier_realm_view(realm_id).await {

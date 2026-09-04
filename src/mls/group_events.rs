@@ -214,7 +214,7 @@ pub(crate) fn build_creator_mls_genesis_event_for_effective_scope_with_binding(
 // pub(crate): the realm_admin epoch-rotation button reuses
 // this builder to wrap a forced `self_update_commit` into the canonical
 // `ak.mls.commit` event with the governance binding.
-pub(crate) fn mls_commit_event_from_store(
+pub(crate) async fn mls_commit_event_from_store(
     state_store: &LocalStateStore,
     realm_id: &str,
     actor_id: &str,
@@ -230,9 +230,10 @@ pub(crate) fn mls_commit_event_from_store(
         commit_envelope,
         previous_governance_binding,
     )
+    .await
 }
 
-pub(crate) fn mls_commit_event_from_store_for_effective_scope(
+pub(crate) async fn mls_commit_event_from_store_for_effective_scope(
     state_store: &LocalStateStore,
     realm_id: &str,
     circle_id: Option<&str>,
@@ -249,9 +250,10 @@ pub(crate) fn mls_commit_event_from_store_for_effective_scope(
         previous_governance_binding,
         Vec::new(),
     )
+    .await
 }
 
-pub(crate) fn mls_commit_event_from_store_for_effective_scope_with_proposal_refs(
+pub(crate) async fn mls_commit_event_from_store_for_effective_scope_with_proposal_refs(
     state_store: &LocalStateStore,
     realm_id: &str,
     circle_id: Option<&str>,
@@ -270,9 +272,10 @@ pub(crate) fn mls_commit_event_from_store_for_effective_scope_with_proposal_refs
         proposal_refs,
         None,
     )
+    .await
 }
 
-pub(crate) fn mls_commit_event_from_store_for_sidecar_scope(
+pub(crate) async fn mls_commit_event_from_store_for_sidecar_scope(
     state_store: &LocalStateStore,
     realm_id: &str,
     actor_id: &str,
@@ -290,6 +293,7 @@ pub(crate) fn mls_commit_event_from_store_for_sidecar_scope(
         Vec::new(),
         Some(sidecar_binding),
     )
+    .await
 }
 
 /// Everything an `ak.mls.commit` needs from the local store, read once.
@@ -340,7 +344,7 @@ impl MlsCommitBasis {
     }
 }
 
-pub(crate) fn mls_commit_basis_from_store(
+pub(crate) async fn mls_commit_basis_from_store(
     state_store: &LocalStateStore,
     realm_id: &str,
     circle_id: Option<&str>,
@@ -397,7 +401,8 @@ pub(crate) fn mls_commit_basis_from_store(
         state_store,
         &effective_scope,
         commit_envelope.group_id.as_str(),
-    )?;
+    )
+    .await?;
     let preconditions = garth::mls_commit_preconditions(
         &effective_scope,
         commit_envelope.group_id.as_str(),
@@ -419,7 +424,7 @@ pub(crate) fn mls_commit_basis_from_store(
     })
 }
 
-fn mls_commit_event_from_store_for_effective_scope_with_options(
+async fn mls_commit_event_from_store_for_effective_scope_with_options(
     state_store: &LocalStateStore,
     realm_id: &str,
     circle_id: Option<&str>,
@@ -437,6 +442,7 @@ fn mls_commit_event_from_store_for_effective_scope_with_options(
         commit_envelope,
         previous_governance_binding,
         sidecar_binding,
-    )?
+    )
+    .await?
     .build(proposal_refs)
 }

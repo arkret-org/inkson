@@ -920,6 +920,7 @@ pub(crate) async fn submit_pending_sidecar_auto_close(
         sidecar_binding,
         &intent.control,
     )
+    .await
     .map_err(anyhow::Error::msg)?;
     let api = crate::transport::auth::authed_api_with_sync(base_url, api_token.clone(), None)?;
     let outcome = crate::views::secure_send::submit_secure_send(

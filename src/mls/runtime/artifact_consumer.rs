@@ -553,6 +553,7 @@ pub(crate) async fn converge_accepted_mls_artifacts(
                 &frontier.target_checkpoint,
                 &event.event_id,
             )
+            .await
             .map_err(|error| error.to_string())?
             {
                 continue;
@@ -624,6 +625,7 @@ pub(crate) async fn converge_accepted_local_commit(
         target_checkpoint: checkpoint,
     };
     if !garth::is_checkpoint_winning_accepted_mls_artifact(&frontier.target_checkpoint, event_id)
+        .await
         .map_err(|error| error.to_string())?
     {
         return Err("locally authored MLS Commit is not the checkpoint winner".to_owned());

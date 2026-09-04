@@ -60,7 +60,7 @@ fn build_remove_proposal_event(
         .map_err(|err| format!("MLS proposal SDK Event conversion failed: {err}"))
 }
 
-fn build_remove_scope_rotate_draft(
+async fn build_remove_scope_rotate_draft(
     state_store: &LocalStateStore,
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
@@ -148,7 +148,8 @@ fn build_remove_scope_rotate_draft(
         &remove.commit,
         &previous_governance_binding,
         sidecar_binding,
-    )?;
+    )
+    .await?;
     let commit_step: crate::event_submit::EventUnitStep = Box::new(move |authored| {
         let proposal_refs = authored
             .iter()
@@ -167,7 +168,7 @@ fn build_remove_scope_rotate_draft(
     })
 }
 
-pub fn build_realm_remove_members_scope_rotate_draft(
+pub async fn build_realm_remove_members_scope_rotate_draft(
     state_store: &LocalStateStore,
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
@@ -189,9 +190,10 @@ pub fn build_realm_remove_members_scope_rotate_draft(
         revocation_membership_frontier,
         None,
     )
+    .await
 }
 
-pub fn build_circle_remove_members_scope_rotate_draft(
+pub async fn build_circle_remove_members_scope_rotate_draft(
     state_store: &LocalStateStore,
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
@@ -218,4 +220,5 @@ pub fn build_circle_remove_members_scope_rotate_draft(
         revocation_membership_frontier,
         None,
     )
+    .await
 }

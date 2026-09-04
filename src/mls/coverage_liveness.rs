@@ -198,35 +198,32 @@ pub(crate) async fn ensure_mls_governance_coverage(
         })?;
 
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-    let (commit_envelope, next_snapshot, commit_event) = {
-        let store = state_store.read();
-        let (commit_envelope, next_snapshot, previous_governance_binding) =
-            crate::mls::runtime::force_epoch_rotation_commit_for_effective_scope(
-                &store,
-                secure_store.as_ref(),
-                realm_id,
-                circle_id,
-                authority,
-                device_id,
+    let local_state = state_store.read().clone();
+    let (commit_envelope, next_snapshot, previous_governance_binding) =
+        crate::mls::runtime::force_epoch_rotation_commit_for_effective_scope(
+            &local_state,
+            secure_store.as_ref(),
+            realm_id,
+            circle_id,
+            authority,
+            device_id,
+        )
+        .map_err(|error| {
+            format!(
+                "building the MLS coverage repair commit failed: {}",
+                error.user_message()
             )
-            .map_err(|error| {
-                format!(
-                    "building the MLS coverage repair commit failed: {}",
-                    error.user_message()
-                )
-            })?;
-        let commit_event =
-            crate::mls::group_events::mls_commit_event_from_store_for_effective_scope(
-                &store,
-                realm_id,
-                circle_id,
-                actor_id,
-                &commit_envelope,
-                &previous_governance_binding,
-            )
-            .map_err(|error| format!("building ak.mls.commit event failed: {error}"))?;
-        (commit_envelope, next_snapshot, commit_event)
-    };
+        })?;
+    let commit_event = crate::mls::group_events::mls_commit_event_from_store_for_effective_scope(
+        &local_state,
+        realm_id,
+        circle_id,
+        actor_id,
+        &commit_envelope,
+        &previous_governance_binding,
+    )
+    .await
+    .map_err(|error| format!("building ak.mls.commit event failed: {error}"))?;
 
     // Persist-on-accept binds the group state to the Event the server admitted,
     // so its id is read from the receipt rather than from a pre-submit draft.

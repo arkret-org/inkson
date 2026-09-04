@@ -1461,37 +1461,42 @@ pub fn RealmAdminPanel(
                                     status_msg.set("rotate failed: active account authority changed".to_owned());
                                     return;
                                 }
-                                let built = {
-                                    let store = state_store.read();
-                                    crate::mls::runtime::force_epoch_rotation_commit(
-                                        &store,
+                                spawn(async move {
+                                    let local_state = state_store.read().clone();
+                                    let built = crate::mls::runtime::force_epoch_rotation_commit(
+                                        &local_state,
                                         secure_store.as_ref(),
                                         &realm,
                                         &account.authority,
                                         &account.device_id,
                                     )
-                                    .map_err(|err| err.user_message())
-                                    .and_then(|(commit_envelope, snapshot, previous_governance_binding)| {
-                                        let schedule_hash = commit_envelope.commit_digest.clone();
-                                        crate::mls::group_events::mls_commit_event_from_store(
-                                            &store,
-                                            &realm,
-                                            &actor_id,
-                                            &schedule_hash,
-                                            &commit_envelope,
-                                            &previous_governance_binding,
-                                        )
-                                        .map(|event| (event, commit_envelope.epoch, snapshot))
-                                    })
-                                };
-                                let (commit_event, next_epoch, snapshot) = match built {
-                                    Ok(parts) => parts,
-                                    Err(err) => {
-                                        status_msg.set(format!("rotate failed: {err}"));
-                                        return;
-                                    }
-                                };
-                                spawn(async move {
+                                    .map_err(|err| err.user_message());
+                                    let (commit_envelope, snapshot, previous_governance_binding) =
+                                        match built {
+                                            Ok(parts) => parts,
+                                            Err(err) => {
+                                                status_msg.set(format!("rotate failed: {err}"));
+                                                return;
+                                            }
+                                        };
+                                    let schedule_hash = commit_envelope.commit_digest.clone();
+                                    let commit_event = match crate::mls::group_events::mls_commit_event_from_store(
+                                        &local_state,
+                                        &realm,
+                                        &actor_id,
+                                        &schedule_hash,
+                                        &commit_envelope,
+                                        &previous_governance_binding,
+                                    )
+                                    .await
+                                    {
+                                        Ok(event) => event,
+                                        Err(err) => {
+                                            status_msg.set(format!("rotate failed: {err}"));
+                                            return;
+                                        }
+                                    };
+                                    let next_epoch = commit_envelope.epoch;
                                     match crate::transport::auth::with_authed_api(
                                         &base,
                                         api_token,

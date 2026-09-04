@@ -198,7 +198,7 @@ pub(super) fn reset_card_detail_edit(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(super) fn save_card_detail_edit(
+pub(super) async fn save_card_detail_edit(
     base_url: String,
     token: Signal<String>,
     realm_id: String,
@@ -293,7 +293,9 @@ pub(super) fn save_card_detail_edit(
                         selected_card,
                         state_store,
                         board_status,
-                    ) {
+                    )
+                    .await
+                    {
                         card_detail_edit_status.set(String::new());
                         editing_card_detail.set(false);
                         card_detail_actions_open.set(false);
@@ -335,7 +337,9 @@ pub(super) fn save_card_detail_edit(
         selected_card,
         state_store,
         board_status,
-    ) {
+    )
+    .await
+    {
         card_detail_edit_status.set(String::new());
         editing_card_detail.set(false);
         card_detail_actions_open.set(false);
@@ -564,7 +568,7 @@ pub(super) fn card_detail_draft_for_edit_scope(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(super) fn save_card_due_edit(
+pub(super) async fn save_card_due_edit(
     base_url: String,
     token: Signal<String>,
     realm_id: String,
@@ -597,7 +601,9 @@ pub(super) fn save_card_due_edit(
         selected_card,
         state_store,
         board_status,
-    ) {
+    )
+    .await
+    {
         due_edit_status.set(String::new());
         due_picker_open.set(false);
         true
@@ -613,7 +619,7 @@ pub(super) fn save_card_due_edit(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(super) fn save_card_calendar_edit(
+pub(super) async fn save_card_calendar_edit(
     base_url: String,
     token: Signal<String>,
     realm_id: String,
@@ -647,7 +653,9 @@ pub(super) fn save_card_calendar_edit(
         selected_card,
         state_store,
         board_status,
-    ) {
+    )
+    .await
+    {
         card_detail_edit_status.set(String::new());
         editing_card_detail.set(false);
         card_detail_actions_open.set(false);

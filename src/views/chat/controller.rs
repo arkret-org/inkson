@@ -975,7 +975,9 @@ impl ChatController {
                     None,
                     None,
                     None,
-                ) {
+                )
+                .await
+                {
                     Ok(build) => build,
                     Err(error) => {
                         mark_message_command_failed(

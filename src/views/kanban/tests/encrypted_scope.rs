@@ -196,8 +196,8 @@ fn unknown_scope_security_blocks_plaintext_private_content_fail_closed() {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-#[test]
-fn encrypted_scope_allows_encrypted_strand_update_patch_value() {
+#[tokio::test]
+async fn encrypted_scope_allows_encrypted_strand_update_patch_value() {
     // The ciphertext is produced by the production encryption path
     // (`kanban::mls_encrypt` → `mls::runtime`), not by a local MLS harness, so
     // the guard is exercised against the exact value shape the product writes.
@@ -233,6 +233,7 @@ fn encrypted_scope_allows_encrypted_strand_update_patch_value() {
         &mut state,
         &secure,
     )
+    .await
     .expect("complete creator projection must reach the encrypted success path");
     let patched = seal_against_accepted_epoch(patched, &_mls_events);
     let encrypted_payload = patched["encrypted_content"]["value"].clone();
@@ -335,8 +336,8 @@ fn private_patch_replacement_keeps_description_and_synthesis_separate() {
     );
 }
 
-#[test]
-fn encrypted_private_patch_without_checkpoint_proven_snapshot_is_blocked_before_queueing() {
+#[tokio::test]
+async fn encrypted_private_patch_without_checkpoint_proven_snapshot_is_blocked_before_queueing() {
     let _account_scope = active_account_scope(
         "ak:did_core:web:alice.example",
         "ak:device:01904100-0000-7000-8000-000000000001",
@@ -358,6 +359,7 @@ fn encrypted_private_patch_without_checkpoint_proven_snapshot_is_blocked_before_
         &mut state,
         &secure,
     )
+    .await
     .unwrap_err();
 
     assert_eq!(error, "checkpoint-proven MLS group state is pending");
@@ -370,8 +372,8 @@ fn encrypted_private_patch_without_checkpoint_proven_snapshot_is_blocked_before_
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-#[test]
-fn kanban_write_does_not_consume_pending_welcome_without_checkpoint() {
+#[tokio::test]
+async fn kanban_write_does_not_consume_pending_welcome_without_checkpoint() {
     use arkret_sdk::{ArkretMlsIdentity, DeviceId};
 
     let realm = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
@@ -440,6 +442,7 @@ fn kanban_write_does_not_consume_pending_welcome_without_checkpoint() {
     let error = encrypt_private_card_detail_patch_values_with_store(
         patch, realm, strand_id, bob_actor, bob_device, &mut state, &secure,
     )
+    .await
     .unwrap_err();
 
     assert_eq!(error, "checkpoint-proven MLS group state is pending");
@@ -452,8 +455,8 @@ fn kanban_write_does_not_consume_pending_welcome_without_checkpoint() {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-#[test]
-fn kanban_write_waits_for_runtime_to_apply_pending_welcome() {
+#[tokio::test]
+async fn kanban_write_waits_for_runtime_to_apply_pending_welcome() {
     use arkret_sdk::{ArkretMlsIdentity, DeviceId};
 
     let realm = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
@@ -529,6 +532,7 @@ fn kanban_write_waits_for_runtime_to_apply_pending_welcome() {
     let error = encrypt_private_card_detail_patch_values_with_store(
         patch, realm, strand_id, bob_actor, bob_device, &mut state, &secure,
     )
+    .await
     .unwrap_err();
     assert_eq!(error, "checkpoint-proven MLS group state is pending");
     assert!(state.mls_snapshot_for(realm).is_none());
@@ -552,8 +556,8 @@ fn kanban_write_waits_for_runtime_to_apply_pending_welcome() {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-#[test]
-fn encrypted_private_patch_uses_checkpoint_proven_creator_snapshot() {
+#[tokio::test]
+async fn encrypted_private_patch_uses_checkpoint_proven_creator_snapshot() {
     let actor = "ak:did_core:web:alice.example";
     let device = "ak:device:01904100-0000-7000-8000-000000000001";
     let _account_scope = active_account_scope(actor, device);
@@ -584,6 +588,7 @@ fn encrypted_private_patch_uses_checkpoint_proven_creator_snapshot() {
     let (patched, mls_events) = encrypt_private_card_detail_patch_values_with_store(
         patch, realm, strand_id, actor, device, &mut state, &secure,
     )
+    .await
     .expect("checkpoint-proven creator state must reach the encrypted success path");
 
     assert!(state.mls_snapshot_for(realm).is_some());
@@ -607,8 +612,8 @@ fn encrypted_private_patch_uses_checkpoint_proven_creator_snapshot() {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-#[test]
-fn encrypted_private_patch_rejects_epoch_zero_without_accepted_genesis_reference() {
+#[tokio::test]
+async fn encrypted_private_patch_rejects_epoch_zero_without_accepted_genesis_reference() {
     let actor = "ak:did_core:web:alice.example";
     let device = "ak:device:01904100-0000-7000-8000-000000000001";
     let _account_scope = active_account_scope(actor, device);
@@ -662,14 +667,15 @@ fn encrypted_private_patch_rejects_epoch_zero_without_accepted_genesis_reference
     let error = encrypt_private_card_detail_patch_values_with_store(
         patch, realm, strand_id, actor, device, &mut state, &secure,
     )
+    .await
     .unwrap_err();
     assert!(error.contains("accepted MLS group-state Event is unavailable"));
     assert!(state.load().raw_operations.is_empty());
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-#[test]
-fn encrypted_private_patch_with_ready_snapshot_replaces_plaintext() {
+#[tokio::test]
+async fn encrypted_private_patch_with_ready_snapshot_replaces_plaintext() {
     use arkret_sdk::{ArkretMlsIdentity, DeviceId};
 
     let actor = "ak:did_core:web:alice.example";
@@ -772,6 +778,7 @@ fn encrypted_private_patch_with_ready_snapshot_replaces_plaintext() {
     let (patched, mls_events) = encrypt_private_card_detail_patch_values_with_store(
         patch, realm, strand_id, actor, device, &mut state, &secure,
     )
+    .await
     .expect("complete projection and ready snapshot must encrypt the patch");
 
     let patched = seal_against_accepted_epoch(patched, &mls_events);
@@ -810,8 +817,8 @@ fn encrypted_private_patch_with_ready_snapshot_replaces_plaintext() {
     assert!(state.load().raw_operations.is_empty());
 }
 
-#[test]
-fn encrypted_metadata_only_patch_does_not_require_mls_snapshot() {
+#[tokio::test]
+async fn encrypted_metadata_only_patch_does_not_require_mls_snapshot() {
     let _account_scope = active_account_scope(
         "ak:did_core:web:alice.example",
         "ak:device:01904100-0000-7000-8000-000000000001",
@@ -831,6 +838,7 @@ fn encrypted_metadata_only_patch_does_not_require_mls_snapshot() {
         &mut state,
         &secure,
     )
+    .await
     .unwrap();
 
     assert!(patched.is_plaintext());
@@ -840,8 +848,8 @@ fn encrypted_metadata_only_patch_does_not_require_mls_snapshot() {
     assert!(state.load().local_identity.is_none());
 }
 
-#[test]
-fn encrypted_write_accepts_resolvable_did_for_active_core_identity() {
+#[tokio::test]
+async fn encrypted_write_accepts_resolvable_did_for_active_core_identity() {
     let device = "ak:device:01904100-0000-7000-8000-000000000001";
     let _account_scope = active_account_scope("ak:did_core:web:alice.example", device);
     let mut state = isolated_store_for_tests("DID-active-account-match");
@@ -859,13 +867,14 @@ fn encrypted_write_accepts_resolvable_did_for_active_core_identity() {
         &mut state,
         &secure,
     )
+    .await
     .expect("the active Core DID must match its resolvable DID");
 
     assert_eq!(seal_against_accepted_epoch(patched, &mls_events), patch);
 }
 
-#[test]
-fn encrypted_write_rejects_did_for_a_different_active_identity() {
+#[tokio::test]
+async fn encrypted_write_rejects_did_for_a_different_active_identity() {
     let device = "ak:device:01904100-0000-7000-8000-000000000001";
     let _account_scope = active_account_scope("ak:did_core:web:alice.example", device);
     let mut state = isolated_store_for_tests("different-DID-active-account");
@@ -880,6 +889,7 @@ fn encrypted_write_rejects_did_for_a_different_active_identity() {
         &mut state,
         &secure,
     )
+    .await
     .unwrap_err();
 
     assert_eq!(
@@ -1025,8 +1035,8 @@ fn encrypted_scope_allows_strand_summary_metadata_update() {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-#[test]
-fn sidecar_track_patch_encrypts_with_only_the_native_sidecar_snapshot() {
+#[tokio::test]
+async fn sidecar_track_patch_encrypts_with_only_the_native_sidecar_snapshot() {
     let mut state = isolated_store_for_tests("sidecar-track-circle-encrypt");
     let secure = crate::secure_key_store::MemorySecureKeyStore::new();
     let actor = "ak:did_core:web:alice.example";
@@ -1132,6 +1142,7 @@ fn sidecar_track_patch_encrypts_with_only_the_native_sidecar_snapshot() {
         &secure,
         Some(&context),
     )
+    .await
     .unwrap();
 
     let patch = seal_against_accepted_epoch(patch, &events);

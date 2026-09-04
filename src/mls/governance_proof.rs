@@ -363,6 +363,7 @@ async fn fetch_verify_and_cache_proof_internal<S: GovernanceProofStateStore>(
             verify_agent_history_key(&state_store, event, digest_suite, evidence, dependencies)
         },
     )
+    .await
     .map_err(|error| format!("verify MLS governance frontier: {error}"))?;
     let binding = match expected_binding {
         Some(binding) => {
@@ -543,6 +544,7 @@ async fn verify_governance_checkpoint_candidate_with_http<S: GovernanceProofStat
             verify_agent_history_key(state_store, event, digest_suite, evidence, dependencies)
         },
     )
+    .await
     .map_err(|error| format!("verify initial MLS governance checkpoint: {error}"))?
     .checkpoint;
     Ok(checkpoint)
@@ -592,7 +594,7 @@ pub(crate) fn cached_verified_binding_for_transition(
 /// locally verified governance checkpoint. A producer must bind a Commit's
 /// `head_eq` predicate to this whole registered value; the scalar epoch is
 /// only one member of that value and is not a Cell head.
-pub(crate) fn cached_verified_mls_epoch_head(
+pub(crate) async fn cached_verified_mls_epoch_head(
     state_store: &crate::state::LocalStateStore,
     effective_scope: &arkret_sdk::ScopeRef,
     mls_group_id: &str,
@@ -622,6 +624,7 @@ pub(crate) fn cached_verified_mls_epoch_head(
             .map_err(|error| error.to_string())
         },
     )
+    .await
     .map_err(|error| error.to_string())
 }
 

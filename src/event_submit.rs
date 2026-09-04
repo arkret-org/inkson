@@ -663,7 +663,8 @@ where
         &resolved.events,
         &resolved.dependencies,
         verify_agent_history_key,
-    )?;
+    )
+    .await?;
     let digest = arkret_sdk::signed_event_digest_claim(event)?;
     let digest_suite = verified
         .event_digest_suites

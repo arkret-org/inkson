@@ -1113,6 +1113,7 @@ async fn submit_source_routed_sidecar_message(
         None,
         Some(sidecar_mls_binding(view)),
     )
+    .await
     .map_err(anyhow::Error::msg)?;
     let local_operation_id = build.message_local_operation_id.to_string();
     let pending = crate::sidecar::PendingSidecarSubmission {
