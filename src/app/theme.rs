@@ -65,10 +65,11 @@ pub(crate) fn theme_renders_as_night(theme: &str, system_theme_is_night: bool) -
 /// its `data-theme`) has no effect — descendants inherit the already-computed
 /// palette. CSS cannot propagate a `<div>` attribute up to `:root`, so the
 /// switch must live on `<html>` itself. Writing `data-theme` here lets the
-/// vendored switch — and design.css's `[data-theme]` tokens — resolve at the
-/// level the palette is declared, fixing dxc controls (select, tabs, …) and
+/// vendored switch — and the `[data-theme]` tokens in
+/// `styles/base/tokens.css` — resolve at the level the palette is
+/// declared, fixing dxc controls (select, tabs, …) and
 /// dialogs teleported under `<body>`. Uses the canonical `light`/`dark`
-/// values understood by both the vendored theme and design.css.
+/// values understood by both the vendored theme and `styles/base/tokens.css`.
 pub(crate) fn apply_document_root_theme(is_night: bool) {
     #[cfg(target_arch = "wasm32")]
     {

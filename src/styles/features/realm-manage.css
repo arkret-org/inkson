@@ -1,0 +1,254 @@
+/* The realm management pages and principal controls.
+ */
+.realm-manage-page {
+  width: min(100%, 1080px);
+  margin: 0 auto;
+}
+
+.realm-manage-shell {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.realm-manage-main {
+  gap: 10px;
+}
+
+.realm-manage-pcr-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  text-decoration: none;
+}
+
+.realm-manage-pcr-link .ui-icon {
+  width: 14px;
+  height: 14px;
+}
+
+.realm-manage-list-tools {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+}
+
+.realm-manage-search {
+  position: relative;
+  min-width: 0;
+}
+
+.realm-manage-search input:not([type="checkbox"]):not([type="radio"]) {
+  width: 100%;
+  min-height: 36px;
+  padding-left: 34px;
+}
+
+.realm-manage-search-icon {
+  position: absolute;
+  left: 11px;
+  top: 50%;
+  z-index: 1;
+  width: 16px;
+  height: 16px;
+  color: var(--text-3);
+  pointer-events: none;
+  transform: translateY(-50%);
+}
+
+.realm-manage-search-icon .ui-icon {
+  width: 16px;
+  height: 16px;
+}
+
+.shell.rtl .realm-manage-search input:not([type="checkbox"]):not([type="radio"]) {
+  padding-right: 34px;
+  padding-left: 12px;
+}
+
+.shell.rtl .realm-manage-search-icon {
+  right: 11px;
+  left: auto;
+}
+
+.realm-manage-list-card {
+  gap: 12px;
+}
+
+.realm-manage-list {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.realm-manage-row {
+  position: relative;
+  min-width: 0;
+  min-height: 56px;
+  border: 1px solid color-mix(in srgb, var(--border) 78%, transparent);
+  border-radius: 8px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  color: var(--text);
+  background: color-mix(in srgb, var(--surface-2) 72%, var(--surface));
+  transition: border-color 120ms ease, background-color 120ms ease;
+}
+
+.realm-manage-row:hover,
+.realm-manage-row:focus-within {
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--border));
+  background: color-mix(in srgb, var(--surface-2) 64%, var(--accent-soft));
+}
+
+.realm-manage-row-main {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+.realm-manage-row-main strong,
+.realm-manage-row-main span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.realm-manage-row-meta {
+  grid-column: 2;
+  grid-row: 1;
+  min-width: 0;
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  flex-wrap: wrap;
+  visibility: visible;
+  opacity: 1;
+  transition: opacity 120ms ease, visibility 120ms ease;
+}
+
+.realm-manage-row-meta .pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.realm-manage-row-meta .ui-icon {
+  width: 12px;
+  height: 12px;
+}
+
+.realm-manage-row-actions {
+  position: absolute;
+  top: 50%;
+  right: 10px;
+  visibility: hidden;
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  opacity: 0;
+  transform: translate(4px, -50%);
+  transition: opacity 120ms ease, transform 120ms ease, visibility 120ms ease;
+}
+
+.shell.rtl .realm-manage-row-actions {
+  right: auto;
+  left: 10px;
+  transform: translate(-4px, -50%);
+}
+
+.realm-manage-row:hover .realm-manage-row-meta,
+.realm-manage-row:focus-within .realm-manage-row-meta,
+.realm-manage-row:focus .realm-manage-row-meta {
+  visibility: hidden;
+  opacity: 0;
+}
+
+.realm-manage-row:hover .realm-manage-row-actions,
+.realm-manage-row:focus-within .realm-manage-row-actions,
+.realm-manage-row:focus .realm-manage-row-actions {
+  visibility: visible;
+  opacity: 1;
+  transform: translate(0, -50%);
+}
+
+.shell.rtl .realm-manage-row:hover .realm-manage-row-actions,
+.shell.rtl .realm-manage-row:focus-within .realm-manage-row-actions,
+.shell.rtl .realm-manage-row:focus .realm-manage-row-actions {
+  transform: translate(0, -50%);
+}
+
+.compact-page-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+@media (max-width: 760px) {
+  .realm-manage-list-tools {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .realm-manage-pcr-link {
+    justify-self: start;
+  }
+
+  .realm-manage-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .realm-manage-row-meta,
+  .realm-manage-row-actions {
+    grid-column: 1;
+    grid-row: auto;
+    justify-content: flex-start;
+  }
+
+  .realm-manage-row:hover .realm-manage-row-meta,
+  .realm-manage-row:focus-within .realm-manage-row-meta,
+  .realm-manage-row:focus .realm-manage-row-meta,
+  .realm-manage-row-meta {
+    visibility: visible;
+    opacity: 1;
+  }
+
+  .realm-manage-row-actions {
+    position: static;
+    visibility: visible;
+    opacity: 1;
+    transform: none;
+  }
+
+  .shell.rtl .realm-manage-row-actions {
+    transform: none;
+  }
+}
+
+.principal-control-card {
+  display: grid;
+  gap: 14px;
+}
+
+.principal-control-field {
+  display: grid;
+  gap: 5px;
+}
+
+.principal-control-field code {
+  overflow-wrap: anywhere;
+}
+
+.principal-control-card .panel-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.principal-control-card .panel-notice .ui-icon {
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+}

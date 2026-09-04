@@ -1,0 +1,463 @@
+/* The realm members admin panel.
+ */
+/* Members admin panel ------------------------------------------------- */
+.member-count-badge {
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+  font-weight: 600;
+  min-width: 22px;
+  text-align: center;
+}
+
+.member-pending-count-badge {
+  background: color-mix(in srgb, var(--warning) 26%, var(--surface));
+  color: var(--warning-ink);
+  border: 1px solid color-mix(in srgb, var(--warning) 34%, transparent);
+  font-weight: 650;
+}
+
+.members-invite-hint {
+  margin-top: -2px;
+  font-size: 12px;
+}
+
+.invite-by-handle {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--border, var(--ak-line));
+  border-radius: 8px;
+  background: var(--surface-2, var(--ak-surface));
+}
+
+.invite-by-handle input {
+  width: 100%;
+}
+
+.member-list-card .event-head {
+  align-items: center;
+}
+
+.members-admin-layout {
+  display: grid;
+  grid-template-columns: minmax(150px, 190px) minmax(0, 1fr);
+  gap: 14px;
+  align-items: start;
+}
+
+.members-admin-menu {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.members-admin-menu-item {
+  width: 100%;
+  min-height: 38px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--border) 80%, transparent);
+  border-radius: 8px;
+  background: var(--surface-2);
+  color: var(--text);
+  font: inherit;
+  font-weight: 650;
+  text-align: left;
+  cursor: pointer;
+}
+
+.members-admin-menu-item > span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.members-admin-menu-item:hover,
+.members-admin-menu-item:focus-visible {
+  border-color: color-mix(in srgb, var(--accent) 48%, var(--border));
+  background: color-mix(in srgb, var(--accent-soft) 42%, var(--surface-2));
+  outline: none;
+}
+
+.members-admin-menu-item.active {
+  border-color: color-mix(in srgb, var(--accent) 62%, var(--border));
+  background: color-mix(in srgb, var(--accent-soft) 56%, var(--surface-2));
+  color: var(--accent-ink);
+}
+
+.members-admin-content {
+  min-width: 0;
+  display: grid;
+  gap: 10px;
+}
+
+.member-group {
+  display: grid;
+  gap: 8px;
+}
+
+.member-group.has-agents {
+  padding-left: 0;
+}
+
+.member-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+}
+
+.member-row-main {
+  min-width: 0;
+}
+
+.member-row-text {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.member-row-title {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+.member-row-title > span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.member-row-sub {
+  font-size: 12px;
+}
+
+.member-profile-lines {
+  display: grid;
+  gap: 3px;
+}
+
+.member-profile-line {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+.member-profile-label {
+  color: var(--text-3);
+  font-weight: 650;
+}
+
+.member-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+
+.member-pending-invites {
+  display: grid;
+  gap: 8px;
+}
+
+.member-pending-invite-row {
+  background: color-mix(in srgb, var(--surface-2) 84%, var(--warning) 8%);
+}
+
+.member-pending-invite-empty {
+  padding: 4px 2px 2px;
+  font-size: 12px;
+}
+
+.member-handle-list {
+  align-items: baseline;
+}
+
+.member-handle-chip {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--info-ink);
+}
+
+.member-you-badge {
+  background: color-mix(in srgb, var(--warning) 36%, var(--surface));
+  color: var(--warning-ink);
+  border: 1px solid color-mix(in srgb, var(--warning) 38%, transparent);
+}
+
+.member-avatar {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.member-avatar-image,
+.member-avatar-image .content-block-image,
+.member-avatar-image .content-block-image img{
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  overflow: hidden;
+}
+
+.member-avatar-image .content-block-image img{
+  display: block;
+  object-fit: cover;
+}
+
+.member-avatar-image .content-block-image {
+  margin: 0;
+}
+
+.member-avatar-image .content-block-image .muted,
+.member-avatar-image .content-block-blob-error {
+  display: none;
+}
+
+.member-avatar-agent {
+  background: var(--info-soft);
+  color: var(--info-ink);
+}
+
+.member-avatar-pending {
+  background: color-mix(in srgb, var(--warning) 20%, var(--surface-2));
+  color: var(--warning-ink);
+}
+
+.member-avatar-pending .ui-icon {
+  width: 16px;
+  height: 16px;
+}
+
+.member-avatar-agent .ui-icon {
+  width: 16px;
+  height: 16px;
+}
+
+.member-agent-list {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-left: 44px;
+  padding: 0 2px;
+  font-size: 12px;
+}
+
+.member-agent-chip {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 2px 7px;
+  border: 1px solid color-mix(in srgb, var(--info-ink) 22%, transparent);
+  border-radius: 999px;
+  background: var(--info-soft);
+  color: var(--info-ink);
+  font-weight: 650;
+}
+
+.member-self-agent-settings {
+  display: grid;
+  gap: 10px;
+  margin-left: 0;
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--accent) 26%, var(--border));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface-2) 92%, var(--accent-soft));
+}
+
+.member-self-agent-settings-head,
+.member-self-agent-row,
+.member-agent-summary,
+.member-self-agent-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.member-agent-realm-behavior {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  width: 100%;
+  padding-top: 8px;
+  border-top: 1px solid color-mix(in srgb, var(--border) 72%, transparent);
+}
+
+.member-agent-behavior-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-2);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.member-self-agent-settings-head {
+  justify-content: space-between;
+}
+
+.member-self-agent-list {
+  display: grid;
+  gap: 8px;
+}
+
+.member-self-agent-row {
+  flex-wrap: wrap;
+  justify-content: space-between;
+  padding: 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.member-agent-summary {
+  flex: 1 1 auto;
+}
+
+.member-self-agent-actions {
+  flex: 0 0 auto;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+.member-block-confirm {
+  margin-top: 8px;
+}
+
+.members-empty.compact {
+  padding: 18px 12px;
+}
+
+/* Right-aligned cluster in the list header: count badge, +invite, refresh. */
+.member-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Self-contained circular icon button for the list header. Deliberately
+   does NOT extend .primary/.secondary — their inline-block + 10px padding
+   stretched the square into an ellipse. */
+/* Visual-only override. Size/layout (inline-flex, centring, 32×32 square,
+   padding) come from the dx Button `size: IconSm`; this class must NOT
+   set width/height/padding or it re-creates the dual-sizing conflict that
+   left the button 30w×36h (the `data-size=default` height + `:has(svg)`
+   .75rem padding won the cascade and squashed the icon). */
+.member-head-icon-btn {
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: var(--surface-2);
+  color: var(--text-2);
+  cursor: pointer;
+  transition: background 0.12s ease, color 0.12s ease, filter 0.12s ease;
+}
+
+.member-head-icon-btn:hover {
+  background: var(--surface-3);
+  color: var(--text);
+}
+
+.member-head-icon-btn .ui-icon {
+  width: 16px;
+  height: 16px;
+}
+
+/* Accent variant = the primary "invite" action. */
+.member-head-icon-btn-accent {
+  border-color: transparent;
+  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  color: var(--text-on-accent);
+}
+
+.member-head-icon-btn-accent:hover {
+  background: linear-gradient(135deg, var(--accent), var(--accent-2));
+  color: var(--text-on-accent);
+  filter: brightness(1.06);
+}
+
+/* Inline member search. Full-width, sits between header and rows. */
+.member-search-input {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.member-load-more {
+  display: flex;
+  justify-content: center;
+  padding-top: 4px;
+}
+
+.member-load-more button {
+  width: 100%;
+  font-size: 12px;
+}
+
+/* Invite modal reuses the shared .modal system; just a touch narrower. */
+.invite-modal {
+  width: min(440px, calc(100vw - 32px));
+}
+
+.invite-modal .modal-head h3 {
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.members-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 28px 16px;
+  text-align: center;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+}
+
+.members-empty-icon {
+  line-height: 1;
+  color: var(--text-3);
+  opacity: 0.8;
+}
+
+.members-empty-icon .ui-icon {
+  width: 30px;
+  height: 30px;
+}
+
+.members-empty-title {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.members-empty-hint {
+  max-width: 320px;
+  font-size: 12px;
+}

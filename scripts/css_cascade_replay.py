@@ -9,7 +9,7 @@ and they hide in states the screenshot never reaches. This harness compares
 How it works:
 
 1. The injection order is read from `src/app/mod.rs` (the `include_str!` list
-   inside `STYLE` / `DESIGN_STYLE` / `APP_OVERRIDES`), so the replay always
+   inside the `*_STYLE` layer constants), so the replay always
    uses the real order rather than a hand-maintained copy of it. The same
    extraction runs against a git ref for the "before" side.
 2. Every selector in either stylesheet is turned into a DOM probe: combinators
@@ -26,7 +26,7 @@ cascade decides and blind to nothing except pseudo-class states.
 
 Usage:
     python scripts/css_cascade_replay.py --before HEAD --out target/cascade
-    # then open <out>/cascade_replay.html and read `window.__report`
+    # then open <out>/cascade_replay.html and call runAt(330) / runAt(1280)
 """
 
 from __future__ import annotations
@@ -181,66 +181,93 @@ def probe_set(sets: list[list[tuple[str, str]]]) -> list[list[dict]]:
     return list(seen.values())
 
 
-PAGE = """<title>inkson cascade replay</title>
+PAGE = """<meta charset="utf-8">
+<title>inkson cascade replay</title>
 <style>
   html, body { margin: 0; padding: 0; }
-  #probes { position: absolute; left: -99999px; top: 0; width: 1200px; }
+  iframe { position: absolute; left: -99999px; top: 0; border: 0; }
   #out { font: 12px/1.5 monospace; white-space: pre-wrap; padding: 12px; }
 </style>
-<div id="out">measuring…</div>
-<div id="probes"></div>
+<div id="out">ready - call runAt(width)</div>
 <script id="data" type="application/json">__DATA__</script>
 <script>
 const DATA = JSON.parse(document.getElementById("data").textContent);
-const probesHost = document.getElementById("probes");
-const leaves = [];
-for (const chain of DATA.probes) {
-  let parent = probesHost;
-  let leaf = null;
-  for (const node of chain) {
-    const el = document.createElement(node.tag);
-    for (const cls of node.classes) el.classList.add(cls);
-    for (const [name, value] of Object.entries(node.attrs)) {
-      try { el.setAttribute(name, value); } catch (_) {}
+
+// Media queries resolve against the *viewport*, so each width gets its own
+// same-origin iframe rather than a resized browser window: that keeps the
+// replay independent of how the tool happens to size the pane.
+function buildFrame(width, theme, lang) {
+  const frame = document.createElement("iframe");
+  frame.style.width = width + "px";
+  frame.style.height = "900px";
+  document.body.appendChild(frame);
+  const doc = frame.contentDocument;
+  doc.open();
+  doc.write("<!doctype html><html><head></head><body></body></html>");
+  doc.close();
+  doc.documentElement.setAttribute("data-theme", theme);
+  doc.documentElement.setAttribute("data-lang", lang);
+  const leaves = [];
+  for (const chain of DATA.probes) {
+    let parent = doc.body;
+    let leaf = null;
+    for (const node of chain) {
+      const el = doc.createElement(node.tag);
+      for (const cls of node.classes) el.classList.add(cls);
+      for (const [name, value] of Object.entries(node.attrs)) {
+        try { el.setAttribute(name, value); } catch (_) {}
+      }
+      parent.appendChild(el);
+      parent = el;
+      leaf = el;
     }
-    parent.appendChild(el);
-    parent = el;
-    leaf = el;
+    leaves.push(leaf);
   }
-  leaves.push(leaf);
+  const sheet = doc.createElement("style");
+  doc.head.appendChild(sheet);
+  return { frame, doc, leaves, sheet };
 }
-const sheetA = document.createElement("style");
-const sheetB = document.createElement("style");
-document.head.appendChild(sheetA);
-document.head.appendChild(sheetB);
-function apply(which) {
-  sheetA.textContent = which === "a" ? DATA.a : "";
-  sheetB.textContent = which === "b" ? DATA.b : "";
-}
-function measure() {
+
+function measure(ctx, css) {
+  ctx.sheet.textContent = css;
+  const view = ctx.frame.contentWindow;
   const rows = [];
-  for (const leaf of leaves) {
-    const cs = getComputedStyle(leaf);
+  for (const leaf of ctx.leaves) {
+    const cs = view.getComputedStyle(leaf);
     const values = new Array(cs.length);
-    for (let i = 0; i < cs.length; i++) values[i] = cs[i] + "\\u0000" + cs.getPropertyValue(cs[i]);
+    for (let i = 0; i < cs.length; i++) {
+      // Property names are `[a-z-]+`, so the first "|" always splits
+      // the name from the value even when the value contains one.
+      values[i] = cs[i] + "|" + cs.getPropertyValue(cs[i]);
+    }
     rows.push(values);
   }
   return rows;
 }
-function runOnce(theme, lang) {
-  document.documentElement.setAttribute("data-theme", theme);
-  document.documentElement.setAttribute("data-lang", lang);
-  apply("a");
-  const a = measure();
-  apply("b");
-  const b = measure();
+
+function toMap(values) {
+  const map = new Map();
+  for (const entry of values) {
+    const cut = entry.indexOf("|");
+    map.set(entry.slice(0, cut), entry.slice(cut + 1));
+  }
+  return map;
+}
+
+function runOnce(width, theme, lang) {
+  const ctx = buildFrame(width, theme, lang);
+  const a = measure(ctx, DATA.a);
+  const b = measure(ctx, DATA.b);
+  ctx.frame.remove();
   const diffs = [];
   for (let i = 0; i < a.length; i++) {
-    const left = new Map(a[i].map((s) => { const k = s.indexOf("\\u0000"); return [s.slice(0, k), s.slice(k + 1)]; }));
-    const right = new Map(b[i].map((s) => { const k = s.indexOf("\\u0000"); return [s.slice(0, k), s.slice(k + 1)]; }));
+    const left = toMap(a[i]);
+    const right = toMap(b[i]);
     for (const [prop, value] of left) {
       const other = right.get(prop);
-      if (other !== value) diffs.push({ probe: DATA.labels[i], prop, before: value, after: other });
+      if (other !== value) {
+        diffs.push({ probe: DATA.labels[i], prop, before: value, after: other });
+      }
     }
     for (const [prop, value] of right) {
       if (!left.has(prop)) diffs.push({ probe: DATA.labels[i], prop, before: undefined, after: value });
@@ -248,33 +275,31 @@ function runOnce(theme, lang) {
   }
   return diffs;
 }
-function runAll() {
-  const report = { width: window.innerWidth, height: window.innerHeight, probes: leaves.length, runs: {} };
+
+function runAt(width) {
+  const runs = {};
   for (const [theme, lang] of [["light", "en"], ["dark", "zh"]]) {
-    report.runs[theme] = runOnce(theme, lang);
+    runs[theme] = runOnce(width, theme, lang);
   }
-  apply("b");
-  window.__report = report;
-  const total = Object.values(report.runs).reduce((n, d) => n + d.length, 0);
-  const lines = [`viewport ${report.width}x${report.height}  probes ${report.probes}  diffs ${total}`];
-  for (const [theme, diffs] of Object.entries(report.runs)) {
-    lines.push(`--- ${theme}: ${diffs.length} diff(s)`);
+  window.__report = { width, probes: DATA.probes.length, runs };
+  const lines = [];
+  for (const [theme, diffs] of Object.entries(runs)) {
+    lines.push(`${width}px ${theme}: ${diffs.length} diff(s)`);
     const grouped = new Map();
     for (const d of diffs) {
-      const key = d.probe;
-      if (!grouped.has(key)) grouped.set(key, []);
-      grouped.get(key).push(`${d.prop}: ${d.before} -> ${d.after}`);
+      if (!grouped.has(d.probe)) grouped.set(d.probe, []);
+      grouped.get(d.probe).push(`${d.prop}: ${d.before} -> ${d.after}`);
     }
     for (const [probe, items] of grouped) {
       lines.push(`  ${probe}`);
       for (const item of items) lines.push(`      ${item}`);
     }
   }
-  document.getElementById("out").textContent = lines.join("\\n");
-  return total;
+  const text = lines.join(String.fromCharCode(10));
+  document.getElementById("out").textContent = text;
+  return text;
 }
-window.runAll = runAll;
-runAll();
+window.runAt = runAt;
 </script>
 """
 

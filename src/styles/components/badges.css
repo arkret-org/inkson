@@ -1,0 +1,267 @@
+/* Status vocabulary: `.pill`, `.badge`, the security-state badge, the write-state
+ * badge, identity tier badges and label chips.
+ */
+.write-state-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.write-state-badge.is-icon-only {
+  width: 20px;
+  height: 20px;
+  justify-content: center;
+  padding: 0;
+}
+.write-state-badge.is-icon-only:hover,
+.write-state-badge.is-icon-only:focus-within {
+  width: auto;
+  padding: 2px 8px;
+}
+.write-state-label {
+  display: none;
+  min-width: 0;
+}
+.write-state-badge:hover .write-state-label,
+.write-state-badge:focus-within .write-state-label {
+  display: inline;
+}
+.write-state-icon {
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  font-size: 9px;
+  font-weight: 900;
+  line-height: 1;
+}
+.write-state-icon::before,
+.write-state-icon::after {
+  box-sizing: border-box;
+}
+.write-state-icon.is-queued,
+.write-state-icon.is-submitted,
+.write-state-icon.is-pending {
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  animation: message-send-spin 760ms linear infinite;
+}
+.write-state-icon.is-optimistic {
+  border: 2px dashed currentColor;
+}
+.write-state-icon.is-accepted {
+  border: 2px solid currentColor;
+}
+.write-state-icon.is-accepted::after {
+  content: "";
+  width: 4px;
+  height: 4px;
+  border-radius: 999px;
+  background: currentColor;
+}
+.write-state-icon.is-synced {
+  border: 2px solid currentColor;
+}
+.write-state-icon.is-synced::after {
+  content: "";
+  width: 5px;
+  height: 8px;
+  margin-top: -2px;
+  border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  transform: rotate(45deg);
+}
+.write-state-icon.is-soft-failed,
+.write-state-icon.is-conflict,
+.write-state-icon.is-quarantined,
+.write-state-icon.is-failed {
+  background: currentColor;
+  color: var(--surface);
+}
+.write-state-icon.is-soft-failed::before,
+.write-state-icon.is-quarantined::before,
+.write-state-icon.is-failed::before {
+  content: "!";
+  color: var(--surface);
+}
+.write-state-icon.is-conflict::before {
+  content: "x";
+  color: var(--surface);
+  font-size: 10px;
+  line-height: 1;
+}
+/* ===== 7. COMMON COMPONENTS ======================================= */
+
+.security-state-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  flex: 0 0 auto;
+  min-width: 0;
+  height: 22px;
+  padding: 0 7px;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: 0;
+  white-space: nowrap;
+  box-sizing: border-box;
+  vertical-align: middle;
+}
+.security-state-badge .ui-icon {
+  width: 13px;
+  height: 13px;
+  flex: 0 0 auto;
+}
+.security-state-badge-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.security-state-badge--compact {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border-radius: 6px;
+  box-shadow: none;
+}
+.security-state-badge--compact .security-state-badge-label {
+  display: none;
+}
+.topbar-context > .security-state-badge {
+  overflow: visible;
+  text-overflow: clip;
+}
+.strand-title-with-security,
+.discussion-track-name-row {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+}
+.strand-title-with-security .strand-title-text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.discussion-track-name-row {
+  align-items: center;
+}
+.discussion-track-name-row .discussion-track-name {
+  min-width: 0;
+}
+.card-detail-title-row > .security-state-badge--compact,
+.discussion-title-row > .security-state-badge--compact {
+  margin-top: 2px;
+}
+
+/* ----- 7.3 Pills / Badges ----- */
+
+.pill {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 10.5px; font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--neutral-soft);
+  color: var(--text-2);
+  letter-spacing: 0.02em;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+.pill.dot::before {
+  content: "";
+  width: 6px; height: 6px; border-radius: 50%;
+  background: currentColor; opacity: 0.85;
+}
+.pill.success { background: var(--success-soft); color: var(--success-ink); }
+.pill.warning { background: var(--warning-soft); color: var(--warning-ink); }
+.pill.danger  { background: var(--danger-soft);  color: var(--danger-ink); }
+.pill.info    { background: var(--info-soft);    color: var(--info-ink); }
+.pill.accent  { background: var(--accent-soft);  color: var(--accent-ink); }
+.pill.muted   { background: var(--surface-2);    color: var(--text-2); }
+.pill.xs { font-size: 9.5px; padding: 1px 6px; }
+
+.badge {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 16px; height: 16px;
+  background: var(--accent); color: white;
+  font-size: 10px; font-weight: 700;
+  border-radius: 999px;
+  padding: 0 5px;
+}
+.badge.dim { background: var(--surface-3); color: var(--text-2); }
+.badge.danger { background: var(--danger); }
+.badge.success { background: var(--success); }
+.badge.warning { background: var(--warning); }
+/* Semantic tone variants. Both spellings exist because some surfaces name
+   the tone (`badge-warning`) and some name the colour (`badge amber`); they
+   resolve to the same tokens and are defined here once. */
+.badge-info,
+.badge.blue { background: var(--info-soft); color: var(--info-ink); }
+.badge-success,
+.badge.green { background: var(--success-soft); color: var(--success-ink); }
+.badge-error,
+.badge.red { background: var(--danger-soft); color: var(--danger-ink); }
+.badge-warning,
+.badge.amber { background: var(--warning-soft); color: var(--warning-ink); }
+/* Device-list verification shield: a touch wider so the glyph + label
+   ("Verified" / "Unverified") read as a pill rather than a count bubble. */
+.device-verification-badge { gap: 3px; min-width: 0; }
+
+/* Member visual indicators (A1): agent/bot badge surfaced in member
+   lists, @mention picker rows, and chat sender attribution wherever a
+   DID identified by selector mention metadata is rendered. */
+.member-badge { font-weight: 600; letter-spacing: 0.02em; }
+.member-badge-agent {
+  background: var(--accent-2);
+  color: var(--text-on-accent);
+}
+
+.actor-identity-label {
+  display: inline-flex;
+  min-width: 0;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+.actor-identity-primary {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.actor-identity-self-badge,
+.actor-identity-agent-badge {
+  flex: 0 0 auto;
+}
+.actor-identity-selector {
+  color: var(--text-2);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+/* identity-handles.md §3.8.2 step 5 — a member label that came from a
+   fallback rung MUST NOT look identical to a resolved one. The badge next to
+   it names the rung; these carry the visual weight difference. */
+.identity-verified { color: inherit; }
+.identity-cached,
+.identity-name-only { color: var(--text-2); font-style: italic; }
+.identity-unresolved { color: var(--text-2); font-style: italic; opacity: 0.85; }
+.identity-tier-badge {
+  background: var(--surface-3);
+  color: var(--text-2);
+  font-weight: 500;
+}
+.lbl.bug         { background: #fee2e2; color: #991b1b; }
+.lbl.feature     { background: #ddd6fe; color: #5b21b6; }
+.lbl.legal       { background: #fef3c7; color: #92400e; }
+.lbl.docs        { background: #dcfce7; color: #166534; }
+[data-theme="dark"] .lbl.bug        { background: #4a1818; color: #fecaca; }
+[data-theme="dark"] .lbl.feature    { background: #2a1c4d; color: #ddd6fe; }
+[data-theme="dark"] .lbl.legal      { background: #3e2a06; color: #fde68a; }
+[data-theme="dark"] .lbl.docs       { background: #0d2e1a; color: #bbf7d0; }

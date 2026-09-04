@@ -167,37 +167,77 @@ pub(crate) fn account_sync_ready(cursor: &str) -> bool {
     !cursor.trim().is_empty()
 }
 
-// Each stylesheet below is assembled from semantic section files via `concat!`.
-// Injection order is explicit here rather than encoded in file-name prefixes.
-const STYLE: &str = concat!(
-    include_str!("../styles/app/base-auth-layout.css"),
-    include_str!("../styles/app/accessibility-responsive-print.css"),
-    include_str!("../styles/app/app-theme-shell.css"),
-    include_str!("../styles/app/workflow-card-detail.css"),
-    include_str!("../styles/app/workflow-card-assignees.css"),
-    include_str!("../styles/app/rich-text-editor.css"),
-    include_str!("../styles/app/workflow-editor-settings.css"),
-    include_str!("../styles/app/shell-contacts-settings.css"),
+// The stylesheets are four ordered layers, and the order below IS the
+// contract; nothing is encoded in file-name prefixes.
+//
+//   `base/`       tokens first, then the element reset. `tokens.css` carries
+//                 custom-property declarations and nothing else, so there is
+//                 exactly one place a theme value can come from.
+//   `components/` product-neutral primitives (button, field, badge, surface,
+//                 modal, ...). A class defined here is defined once across the
+//                 whole layer.
+//   `features/`   one product surface per file, named after that surface. A
+//                 feature may scope a component (`.settings .btn`) or add a
+//                 modifier, but must not restate a component's own rule.
+//   `adaptive/`   cross-feature viewport, print, contrast and reduced-motion
+//                 overrides. It is last because a media query adds no
+//                 specificity: anywhere earlier and a plain rule after it wins,
+//                 which is how the tablet/mobile layer used to lose silently.
+//                 Media queries that only concern one feature stay in that
+//                 feature's file.
+const BASE_STYLE: &str = concat!(
+    include_str!("../styles/base/tokens.css"),
+    include_str!("../styles/base/reset.css"),
 );
 
-const DESIGN_STYLE: &str = concat!(
-    include_str!("../styles/design/tokens-reset-i18n.css"),
-    include_str!("../styles/design/controls-gallery-chrome.css"),
-    include_str!("../styles/design/common-components.css"),
-    include_str!("../styles/design/auth-kanban-strand-chat.css"),
-    include_str!("../styles/design/event-mobile-device-tables-call.css"),
-    include_str!("../styles/design/discovery-metrics-errors-doc-content.css"),
+const COMPONENT_STYLE: &str = concat!(
+    include_str!("../styles/components/surfaces.css"),
+    include_str!("../styles/components/controls.css"),
+    include_str!("../styles/components/forms.css"),
+    include_str!("../styles/components/badges.css"),
+    include_str!("../styles/components/avatar.css"),
+    include_str!("../styles/components/tables.css"),
+    include_str!("../styles/components/overlays.css"),
+    include_str!("../styles/components/feedback.css"),
+    include_str!("../styles/components/qr-share.css"),
+    include_str!("../styles/components/content-blocks.css"),
+    include_str!("../styles/components/rich-text-editor.css"),
+    include_str!("../styles/components/utilities.css"),
 );
 
-const APP_OVERRIDES: &str = concat!(
-    include_str!("../styles/app_overrides/theme-shell-overrides.css"),
-    include_str!("../styles/app_overrides/watch-handle-e2ee-tabs.css"),
-    include_str!("../styles/app_overrides/circle-composer-mentions.css"),
-    include_str!("../styles/app_overrides/sidebar-actions.css"),
-    include_str!("../styles/app_overrides/account-trigger-menu.css"),
-    include_str!("../styles/app_overrides/members-agents-admin.css"),
-    include_str!("../styles/app_overrides/sidecar-shell.css"),
-    include_str!("../styles/app_overrides/circle-realm.css"),
+const FEATURE_STYLE: &str = concat!(
+    include_str!("../styles/features/app-shell.css"),
+    include_str!("../styles/features/sidebar-nav.css"),
+    include_str!("../styles/features/topbar.css"),
+    include_str!("../styles/features/account-menu.css"),
+    include_str!("../styles/features/command-palette.css"),
+    include_str!("../styles/features/auth.css"),
+    include_str!("../styles/features/onboarding.css"),
+    include_str!("../styles/features/chat-shell.css"),
+    include_str!("../styles/features/chat-message.css"),
+    include_str!("../styles/features/chat-composer.css"),
+    include_str!("../styles/features/chat-sidecar.css"),
+    include_str!("../styles/features/circle.css"),
+    include_str!("../styles/features/kanban-board.css"),
+    include_str!("../styles/features/kanban-card-detail.css"),
+    include_str!("../styles/features/kanban-card-fields.css"),
+    include_str!("../styles/features/settings.css"),
+    include_str!("../styles/features/settings-security.css"),
+    include_str!("../styles/features/settings-devices.css"),
+    include_str!("../styles/features/setup.css"),
+    include_str!("../styles/features/contacts.css"),
+    include_str!("../styles/features/members-admin.css"),
+    include_str!("../styles/features/agents-admin.css"),
+    include_str!("../styles/features/realm-manage.css"),
+    include_str!("../styles/features/directory.css"),
+    include_str!("../styles/features/recovery.css"),
+    include_str!("../styles/features/file-transfer.css"),
+    include_str!("../styles/features/call.css"),
+);
+
+const ADAPTIVE_STYLE: &str = concat!(
+    include_str!("../styles/adaptive/viewport.css"),
+    include_str!("../styles/adaptive/accessibility-print.css"),
 );
 
 /// C3: yoface shared-component design tokens. The first layer is shadcn
@@ -205,11 +245,10 @@ const APP_OVERRIDES: &str = concat!(
 /// layer is the dioxus-components token aliases
 /// (`--primary-color-N/--focused-border-color/...`) used by `yoface::ui::*`
 /// `#[css_module]` styles. Values come from the inkson green palette (yoface
-/// tokens.css matches inkson design.css), so this keeps the existing
+/// tokens.css matches `styles/base/tokens.css`), so this keeps the existing
 /// `var(--dark,...)` / `var(--light,...)` and `[data-theme]` switches and the
-/// current inkson green appearance. Injection order stays before the three
-/// existing style blocks so later design.css/app_overrides can override these
-/// tokens.
+/// current inkson green appearance. Injection order stays before the four
+/// style layers so `base/tokens.css` can override these tokens.
 const DXC_THEME: &str = yoface::TOKENS_CSS;
 // CSS-module class hashes include the component source path. Keep the shared
 // button stylesheet available through yoface's stable `dx-button` class so a
@@ -889,9 +928,9 @@ fn AppBootstrap() -> Element {
     // (`light` | `night` | `system`) as an app/diagnostic signal (the e2e theme
     // assertions read it). All *styling* is driven off the *effective* canonical
     // `light`/`dark` value that `apply_document_root_theme` mirrors onto `<html>`:
-    // design.css / app_overrides tokens and the vendored dxc palette key on
-    // `:root` / `html[data-theme]`, and app.css's `--ak-*` + auth surfaces key on
-    // `[data-theme="dark"]` (the `<html>` ancestor). Nothing styling-related
+    // `styles/base/tokens.css` and the vendored dxc palette key on `:root` /
+    // `html[data-theme]`, and the `--ak-*` aliases plus the auth surfaces key
+    // on `[data-theme="dark"]` (the `<html>` ancestor). Nothing styling-related
     // depends on this attribute, so it stays the raw mode.
     let theme_attr = active_theme.as_str();
     let route_title = if routed_control_realm_id.is_some() {
@@ -1287,9 +1326,10 @@ fn AppBootstrap() -> Element {
                 }
                 style { "{DXC_THEME}" }
                 style { "{DXC_BUTTON_STYLE}" }
-                style { "{STYLE}" }
-                style { "{DESIGN_STYLE}" }
-                style { "{APP_OVERRIDES}" }
+                style { "{BASE_STYLE}" }
+                style { "{COMPONENT_STYLE}" }
+                style { "{FEATURE_STYLE}" }
+                style { "{ADAPTIVE_STYLE}" }
                 document::Title { "{document_title}" }
                 SessionSurface {
                     is_app_shell: matches!(auth_surface, AuthSurface::AppShell),
