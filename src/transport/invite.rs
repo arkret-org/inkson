@@ -291,7 +291,7 @@ impl crate::transport::TransportClient {
             .directory_resolve_handle(&body)
             .await
             .map_err(anyhow::Error::from)?;
-        Ok(outcome.into())
+        Ok(outcome)
     }
 
     pub async fn resolve_agent_selector_mention(
