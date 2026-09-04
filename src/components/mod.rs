@@ -78,7 +78,7 @@ pub use mls_backup_prompt::{
 };
 pub(crate) use mls_backup_prompt::{
     mark_mls_recovery_backup_configured, mls_recovery_backup_configured,
-    schedule_mls_private_plaintext_backup_after_encrypted_write,
+    schedule_mls_recovery_backups_after_encrypted_write,
 };
 pub use mls_unlock::{MlsRecoverySetupMissingBanner, MlsUnlockPrompt};
 pub use qr_share_panel::QrSharePanel;

@@ -862,7 +862,7 @@ pub(super) async fn dispatch_card_detail_update(
                         );
                         return;
                     };
-                    crate::components::schedule_mls_private_plaintext_backup_after_encrypted_write(
+                    crate::components::schedule_mls_recovery_backups_after_encrypted_write(
                         base_for_backup_trigger.clone(),
                         api_token.clone(),
                         backup_account_scope.authority.clone(),

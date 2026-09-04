@@ -175,7 +175,7 @@ pub fn MlsUnlockPrompt(
                                 history_count,
                                 "MLS unlock: starting local restore"
                             );
-                            let restore_result = match crate::hpke_backup::derive_recovery_keypair_from_recovery_key(&pass)
+                            let mut restore_result = match crate::hpke_backup::derive_recovery_keypair_from_recovery_key(&pass)
                                 .map_err(|err| anyhow::anyhow!("derive recovery key: {err}"))
                             {
                                 Ok((recovery_private_key, _)) => match active_policy.as_ref() {
@@ -203,6 +203,29 @@ pub fn MlsUnlockPrompt(
                                     &account_data,
                                     &authority,
                                 );
+                                if crate::views::recovery::save_generated_recovery_key_metadata_in_store(
+                                    &mut store,
+                                    &pass,
+                                )
+                                .is_none()
+                                {
+                                    restore_result = Err(ApiCallError::Failed(anyhow::anyhow!(
+                                        "recovery key public metadata could not be persisted"
+                                    )));
+                                } else if let Some(backup_id) = crate::mls::account_recovery::select_preferred_mls_account_secret_backup(
+                                    &payload,
+                                )
+                                .and_then(|backup| {
+                                    backup
+                                        .get("backup_id")
+                                        .and_then(serde_json::Value::as_str)
+                                        .map(str::to_owned)
+                                }) {
+                                    crate::components::mark_mls_recovery_backup_configured(
+                                        &mut store,
+                                        &backup_id,
+                                    );
+                                }
                             }
                             tracing::warn!(
                                 target: "mls_unlock",

@@ -89,6 +89,7 @@ pub fn build_passphrase_kdf_backup_body(
 pub fn build_passphrase_kdf_backup_successor_body(
     backup_id: &str,
     predecessor: &KeyBackup,
+    device_id: &str,
     root: &VaultKek,
     secret: &[u8],
     item: &SecretStorageContentIndex,
@@ -98,6 +99,7 @@ pub fn build_passphrase_kdf_backup_successor_body(
     let envelope = arkret_crypto::backup::build_key_backup_successor_envelope(
         arkret_sdk::BackupId::new(backup_id.to_owned())?,
         predecessor,
+        Some(arkret_sdk::DeviceId::new(device_id.to_owned())?),
         "kb_1",
         root,
         vec![plaintext_item(item, secret)?],

@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::sync::{LazyLock, Mutex};
 use std::time::Duration;
 
@@ -20,7 +21,8 @@ use crate::ui::textarea::Textarea;
 use crate::ui_signal::try_set_signal;
 
 const MLS_RECOVERY_BACKUP_STATE_KEY: &str = "mls.recovery_backup.v1";
-const MLS_PRIVATE_PLAINTEXT_BACKUP_DEBOUNCE: Duration = Duration::from_millis(1500);
+const MLS_RECOVERY_BACKUP_DEBOUNCE: Duration = Duration::from_millis(1500);
+const MLS_RECOVERY_BACKUP_MIN_INTERVAL: Duration = Duration::from_secs(10);
 /// Entry cap for the after-write backup probe single-flight set. Keyed by
 /// `(base_url, actor_id)`, so a single browser session only ever holds a couple
 /// of entries; the cap just bounds a pathological key space.
@@ -31,23 +33,19 @@ static MLS_BACKUP_AFTER_WRITE_PROBES: LazyLock<Mutex<crate::keyed_cooldown::Seen
             MLS_BACKUP_AFTER_WRITE_PROBE_MAX_ENTRIES,
         ))
     });
-/// The private-plaintext sidecar job debounces only: no min-interval, and a
-/// failed upload of the current digest is not retried (it re-arms solely when
-/// strictly newer material arrives). `retry_base`/`retry_cap` are therefore
-/// never exercised (the failure counter is never bumped) but must be set.
-const MLS_PRIVATE_PLAINTEXT_BACKUP_CONFIG: BackupSchedulerConfig = BackupSchedulerConfig {
-    debounce: MLS_PRIVATE_PLAINTEXT_BACKUP_DEBOUNCE,
-    min_interval: None,
-    retry_base: MLS_PRIVATE_PLAINTEXT_BACKUP_DEBOUNCE,
-    retry_cap: MLS_PRIVATE_PLAINTEXT_BACKUP_DEBOUNCE,
+/// The post-write recovery backup job debounces bursts and spaces successful
+/// uploads so ordinary writes do not compete with foreground authoring for the
+/// same account transport and PCR frontier. A failed upload is not retried
+/// until strictly newer material arrives.
+const MLS_RECOVERY_BACKUP_CONFIG: BackupSchedulerConfig = BackupSchedulerConfig {
+    debounce: MLS_RECOVERY_BACKUP_DEBOUNCE,
+    min_interval: Some(MLS_RECOVERY_BACKUP_MIN_INTERVAL),
+    retry_base: MLS_RECOVERY_BACKUP_DEBOUNCE,
+    retry_cap: MLS_RECOVERY_BACKUP_DEBOUNCE,
 };
 
-static MLS_PRIVATE_PLAINTEXT_BACKUP_SCHEDULER: BackupJobScheduler<
-    MlsPrivatePlaintextBackupPayload,
-> = BackupJobScheduler::new(
-    "mls_private_plaintext_backup",
-    MLS_PRIVATE_PLAINTEXT_BACKUP_CONFIG,
-);
+static MLS_RECOVERY_BACKUP_SCHEDULER: BackupJobScheduler<MlsRecoveryBackupPayload> =
+    BackupJobScheduler::new("mls_recovery_backup", MLS_RECOVERY_BACKUP_CONFIG);
 
 /// Download the recovery words as a plain-text file. Same goal as the copy
 /// button — guarantee the user captures all 24 words rather than relying on a
@@ -128,22 +126,29 @@ pub(crate) fn recovery_key_filename_from_handles(handles: &[String]) -> String {
     recovery_key_filename(&localpart)
 }
 
-/// Per-account payload carried by the shared scheduler. Credentials + the
-/// sidecar snapshot to upload + the cached predecessor body used to chain the
-/// next upload.
+type LocalAuthoritativeHistoryBackupRecords = Vec<(
+    arkret_sdk::HistoryEffectiveScope,
+    Vec<arkret_sdk::LocalAuthoritativeHistorySecret>,
+)>;
+
+/// Per-account payload carried by the shared scheduler. Credentials, the
+/// latest portable history and sidecar snapshots, and the cached sidecar tail
+/// used to chain the next upload.
 #[derive(Clone, Default)]
-struct MlsPrivatePlaintextBackupPayload {
+struct MlsRecoveryBackupPayload {
     base_url: String,
     token: String,
     authority: Option<arkret_sdk::AccountId>,
     principal_control_realm_id: Option<arkret_sdk::RealmId>,
     actor_id: String,
     device_id: String,
-    latest_sidecar_json: Vec<u8>,
+    recovery_public_key: Vec<u8>,
+    latest_history_records: LocalAuthoritativeHistoryBackupRecords,
+    latest_sidecar_json: Option<Vec<u8>>,
     cached_previous_body: Option<serde_json::Value>,
 }
 
-type MlsPrivatePlaintextBackupJob = BackupJob<MlsPrivatePlaintextBackupPayload>;
+type MlsRecoveryBackupJob = BackupJob<MlsRecoveryBackupPayload>;
 
 fn mls_backup_after_write_probe_key(base_url: &str, actor_id: &str) -> String {
     format!(
@@ -168,7 +173,51 @@ fn mark_mls_backup_after_write_probe_started(key: String) -> bool {
     }
 }
 
-pub(crate) fn schedule_mls_private_plaintext_backup_after_encrypted_write(
+fn sole_projected_principal_control_realm_id(
+    projections: &BTreeMap<String, serde_json::Value>,
+) -> anyhow::Result<arkret_sdk::RealmId> {
+    let candidates = projections
+        .iter()
+        .filter(|(_, projection)| {
+            crate::realm_tree::realm_projection_control_purpose(projection)
+                == Some("principal_control")
+        })
+        .map(|(realm_id, _)| realm_id)
+        .collect::<Vec<_>>();
+    let [realm_id] = candidates.as_slice() else {
+        anyhow::bail!(
+            "expected one accepted principal-control Realm projection, found {}",
+            candidates.len()
+        );
+    };
+    arkret_sdk::RealmId::new((*realm_id).clone()).map_err(|error| {
+        anyhow::anyhow!("projected principal-control Realm id is invalid: {error}")
+    })
+}
+
+fn recovery_backup_control_realm_id(
+    store: &LocalStateStore,
+    authority: &arkret_sdk::AccountId,
+    actor_id: &str,
+) -> anyhow::Result<arkret_sdk::RealmId> {
+    if let Some(evidence) = store.recovery_material_evidence() {
+        if evidence.account_id != *authority
+            || evidence.account_id.principal_id.as_str() != actor_id
+        {
+            anyhow::bail!("frozen recovery evidence belongs to a different account");
+        }
+        return Ok(evidence.principal_control_realm_id);
+    }
+
+    // A paired sibling device does not inherit the founding device's frozen
+    // PCR genesis evidence. Its account-scoped sync does carry accepted Realm
+    // projections, so use the sole create-locked principal-control Realm. The
+    // registered purpose + profile check is performed by the projection
+    // classifier; zero or multiple candidates remain fail-closed.
+    sole_projected_principal_control_realm_id(&store.load().realm_tree_projections)
+}
+
+pub(crate) fn schedule_mls_recovery_backups_after_encrypted_write(
     base_url: String,
     token: String,
     authority: arkret_sdk::AccountId,
@@ -183,58 +232,86 @@ pub(crate) fn schedule_mls_private_plaintext_backup_after_encrypted_write(
     {
         return;
     }
-    let (sidecar_json, principal_control_realm_id) = {
+    let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
+    let (sidecar_json, history_records, recovery_public_key, principal_control_realm_id) = {
         let store = state_store.read();
-        if !mls_recovery_backup_configured(&store) || store.private_plaintext_is_empty() {
+        if !mls_recovery_backup_configured(&store) {
             return;
         }
-        let Some(evidence) = store.recovery_material_evidence() else {
+        let principal_control_realm_id =
+            match recovery_backup_control_realm_id(&store, &authority, &actor_id) {
+                Ok(realm_id) => realm_id,
+                Err(error) => {
+                    tracing::warn!(%error, "MLS recovery backup control Realm is unavailable");
+                    return;
+                }
+            };
+        let Some(recovery_public_key) = crate::views::recovery::local_recovery_public_key(&store)
+        else {
             return;
         };
-        if evidence.account_id.principal_id.as_str() != actor_id
-            || evidence.device_id.as_str() != device_id
+        let history_records = match store
+            .local_authoritative_history_secrets_for_backup(secure_store.as_ref(), &authority)
         {
-            return;
-        }
+            Ok(records) => records,
+            Err(error) => {
+                tracing::warn!(%error, "local-authoritative MLS history backup snapshot failed");
+                return;
+            }
+        };
+        let sidecar_json =
+            (!store.private_plaintext_is_empty()).then(|| store.private_plaintext_snapshot_json());
         (
-            store.private_plaintext_snapshot_json(),
-            evidence.principal_control_realm_id,
+            sidecar_json,
+            history_records,
+            recovery_public_key,
+            principal_control_realm_id,
         )
     };
-    let digest = crate::canonical::sha256_digest(&sidecar_json);
+    if sidecar_json.is_none() && history_records.is_empty() {
+        return;
+    }
+    let digest_input = match serde_json::to_vec(&(&sidecar_json, &history_records)) {
+        Ok(input) => input,
+        Err(error) => {
+            tracing::warn!(%error, "MLS recovery backup digest input could not be encoded");
+            return;
+        }
+    };
+    let digest = crate::canonical::sha256_digest(&digest_input);
     let key = mls_backup_after_write_probe_key(&base_url, &actor_id);
-    let should_spawn = MLS_PRIVATE_PLAINTEXT_BACKUP_SCHEDULER.schedule(&key, digest, |payload| {
+    let should_spawn = MLS_RECOVERY_BACKUP_SCHEDULER.schedule(&key, digest, |payload| {
         payload.base_url = base_url;
         payload.token = token;
         payload.authority = Some(authority);
         payload.principal_control_realm_id = Some(principal_control_realm_id);
         payload.actor_id = actor_id;
         payload.device_id = device_id;
+        payload.recovery_public_key = recovery_public_key;
+        payload.latest_history_records = history_records;
         payload.latest_sidecar_json = sidecar_json;
         // `cached_previous_body` is preserved across reschedules.
     });
     if should_spawn {
         spawn(async move {
-            run_mls_private_plaintext_backup_job(key).await;
+            run_mls_recovery_backup_job(key).await;
         });
     }
 }
 
-async fn run_mls_private_plaintext_backup_job(key: String) {
+async fn run_mls_recovery_backup_job(key: String) {
     loop {
-        let Some(delay) =
-            MLS_PRIVATE_PLAINTEXT_BACKUP_SCHEDULER.next_delay(&key, chrono::Utc::now())
-        else {
+        let Some(delay) = MLS_RECOVERY_BACKUP_SCHEDULER.next_delay(&key, chrono::Utc::now()) else {
             return;
         };
         crate::runtime_helpers::sleep_for(delay).await;
-        let Some(job) = MLS_PRIVATE_PLAINTEXT_BACKUP_SCHEDULER.begin_attempt(&key) else {
+        let Some(job) = MLS_RECOVERY_BACKUP_SCHEDULER.begin_attempt(&key) else {
             return;
         };
         if job.last_uploaded_digest.as_deref() == Some(job.latest_digest.as_str()) {
             // Latest already uploaded: clear in-flight (re-arming only if newer
             // material slipped in) and stop this loop.
-            let _ = MLS_PRIVATE_PLAINTEXT_BACKUP_SCHEDULER.finish_rerun_if_newer(
+            let _ = MLS_RECOVERY_BACKUP_SCHEDULER.finish_rerun_if_newer(
                 &key,
                 &job.latest_digest,
                 |_| {},
@@ -242,33 +319,31 @@ async fn run_mls_private_plaintext_backup_job(key: String) {
             return;
         }
         let upload_digest = job.latest_digest.clone();
-        let rerun = match upload_mls_private_plaintext_backup_job_snapshot(job).await {
-            Ok((backup_id, body)) => {
+        let rerun = match upload_mls_recovery_backup_job_snapshot(job).await {
+            Ok((history_count, sidecar)) => {
                 tracing::debug!(
-                    backup_id = %backup_id,
-                    "MLS private plaintext sidecar backup uploaded after encrypted write"
+                    history_count,
+                    sidecar_backup_id = ?sidecar
+                        .as_ref()
+                        .map(|(backup_id, _)| backup_id.as_str()),
+                    "MLS recovery backups uploaded after encrypted write"
                 );
-                MLS_PRIVATE_PLAINTEXT_BACKUP_SCHEDULER.finish_rerun_if_newer(
-                    &key,
-                    &upload_digest,
-                    |job| {
+                MLS_RECOVERY_BACKUP_SCHEDULER.finish_rerun_if_newer(&key, &upload_digest, |job| {
+                    if let Some((_, body)) = sidecar {
                         job.payload.cached_previous_body = Some(body);
-                        job.last_uploaded_digest = Some(upload_digest.clone());
-                    },
-                )
+                    }
+                    job.last_uploaded_digest = Some(upload_digest.clone());
+                    job.last_upload_at = Some(chrono::Utc::now());
+                })
             }
             Err(err) => {
                 tracing::warn!(
                     error = %err,
-                    "MLS private plaintext sidecar backup after encrypted write failed"
+                    "MLS recovery backup after encrypted write failed"
                 );
                 // Debounce-only family: a failed upload of the current digest is
                 // NOT retried; re-arm only if strictly newer material arrived.
-                MLS_PRIVATE_PLAINTEXT_BACKUP_SCHEDULER.finish_rerun_if_newer(
-                    &key,
-                    &upload_digest,
-                    |_| {},
-                )
+                MLS_RECOVERY_BACKUP_SCHEDULER.finish_rerun_if_newer(&key, &upload_digest, |_| {})
             }
         };
         if !rerun {
@@ -277,16 +352,18 @@ async fn run_mls_private_plaintext_backup_job(key: String) {
     }
 }
 
-async fn upload_mls_private_plaintext_backup_job_snapshot(
-    job: MlsPrivatePlaintextBackupJob,
-) -> anyhow::Result<(String, serde_json::Value)> {
-    let MlsPrivatePlaintextBackupPayload {
+async fn upload_mls_recovery_backup_job_snapshot(
+    job: MlsRecoveryBackupJob,
+) -> anyhow::Result<(usize, Option<(String, serde_json::Value)>)> {
+    let MlsRecoveryBackupPayload {
         base_url,
         token,
         authority,
         principal_control_realm_id,
         actor_id,
         device_id,
+        recovery_public_key,
+        latest_history_records,
         latest_sidecar_json,
         cached_previous_body,
     } = job.payload;
@@ -296,26 +373,44 @@ async fn upload_mls_private_plaintext_backup_job_snapshot(
         .ok_or_else(|| anyhow::anyhow!("MLS backup job omitted frozen PCR authority"))?;
     with_authed_api(&base_url, token, |api| async move {
         let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-        let previous_body = match cached_previous_body {
-            Some(body) => Some(body),
-            None => {
-                crate::mls::account_recovery::fetch_mls_private_plaintext_backup_body(
-                    &api, &actor_id, &device_id,
-                )
-                .await?
-            }
-        };
-        crate::mls::account_recovery::upload_mls_private_plaintext_backup_with_previous(
+        let history_count = crate::mls::account_recovery::upload_local_authoritative_mls_history_records_with_recovery_public_key(
             &api,
-            secure_store.as_ref(),
+            latest_history_records,
             &authority,
             &principal_control_realm_id,
             &actor_id,
             &device_id,
-            &latest_sidecar_json,
-            previous_body.as_ref(),
+            &recovery_public_key,
         )
-        .await
+        .await?
+        .len();
+        let sidecar = if let Some(latest_sidecar_json) = latest_sidecar_json {
+            let previous_body = match cached_previous_body {
+                Some(body) => Some(body),
+                None => {
+                    crate::mls::account_recovery::fetch_mls_private_plaintext_backup_body(
+                        &api, &actor_id, &device_id,
+                    )
+                    .await?
+                }
+            };
+            Some(
+                crate::mls::account_recovery::upload_mls_private_plaintext_backup_with_previous(
+                    &api,
+                    secure_store.as_ref(),
+                    &authority,
+                    &principal_control_realm_id,
+                    &actor_id,
+                    &device_id,
+                    &latest_sidecar_json,
+                    previous_body.as_ref(),
+                )
+                .await?,
+            )
+        } else {
+            None
+        };
+        Ok::<_, anyhow::Error>((history_count, sidecar))
     })
     .await
     .map_err(|err| anyhow::anyhow!(err.display_diagnostic()))
@@ -1118,14 +1213,58 @@ pub fn MlsBackupPrompt(
 #[cfg(test)]
 mod tests {
     use super::{
-        BackupJob, MLS_PRIVATE_PLAINTEXT_BACKUP_DEBOUNCE, MLS_PRIVATE_PLAINTEXT_BACKUP_SCHEDULER,
+        BackupJob, MLS_RECOVERY_BACKUP_MIN_INTERVAL, MLS_RECOVERY_BACKUP_SCHEDULER,
         recovery_key_filename, recovery_key_filename_from_handles, recovery_localpart_from_handles,
+        sole_projected_principal_control_realm_id,
     };
 
+    fn principal_control_projection() -> serde_json::Value {
+        serde_json::json!({
+            "state_after": {
+                "events": [{
+                    "kind": arkret_sdk::EventKind::RealmCreate.as_str(),
+                    "payload": {
+                        "object": {
+                            "purpose": "principal_control",
+                            "schema_refs": [arkret_wire::ProfileId::PRINCIPAL_CONTROL_REALM_V1]
+                        }
+                    }
+                }]
+            }
+        })
+    }
+
     #[test]
-    fn changed_private_plaintext_backup_reruns_after_debounce() {
-        let key = "test-private-plaintext-rerun-after-change";
-        MLS_PRIVATE_PLAINTEXT_BACKUP_SCHEDULER.with_jobs_mut(|jobs| {
+    fn sibling_device_uses_the_only_projected_principal_control_realm() {
+        let realm_id = "ak:realm:AQ4lJ43jR05ytJIf7AGNbPU_MuY1FqT_ny_e8MhCCnwc".to_owned();
+        let projections =
+            std::collections::BTreeMap::from([(realm_id.clone(), principal_control_projection())]);
+
+        let selected = sole_projected_principal_control_realm_id(&projections)
+            .expect("one accepted principal-control projection is authoritative");
+        assert_eq!(selected.as_str(), realm_id);
+    }
+
+    #[test]
+    fn sibling_device_rejects_ambiguous_projected_principal_control_realms() {
+        let projections = std::collections::BTreeMap::from([
+            (
+                "ak:realm:AQ4lJ43jR05ytJIf7AGNbPU_MuY1FqT_ny_e8MhCCnwc".to_owned(),
+                principal_control_projection(),
+            ),
+            (
+                "ak:realm:AdM0E7Gz4z3xDbVnW7yQcEJnaVeXjYprj0Fb4b4kFXR0".to_owned(),
+                principal_control_projection(),
+            ),
+        ]);
+
+        assert!(sole_projected_principal_control_realm_id(&projections).is_err());
+    }
+
+    #[test]
+    fn changed_recovery_backup_reruns_after_success_interval() {
+        let key = "test-recovery-backup-rerun-after-change";
+        MLS_RECOVERY_BACKUP_SCHEDULER.with_jobs_mut(|jobs| {
             jobs.insert(
                 key.to_owned(),
                 BackupJob {
@@ -1138,21 +1277,22 @@ mod tests {
         });
 
         // A strictly NEWER digest ("new-sidecar") is pending, so finishing the
-        // attempt on the OLD digest re-arms the loop; the next wake-up is the
-        // plain debounce (no min-interval, no backoff for this family).
+        // attempt on the OLD digest re-arms the loop. A successful recovery
+        // upload also spaces the next run so foreground encrypted writes are
+        // not competing continuously with backup frontier reads.
         assert!(
-            MLS_PRIVATE_PLAINTEXT_BACKUP_SCHEDULER.finish_rerun_if_newer(
-                key,
-                "old-sidecar",
-                |job| job.last_uploaded_digest = Some("old-sidecar".to_owned()),
-            )
+            MLS_RECOVERY_BACKUP_SCHEDULER.finish_rerun_if_newer(key, "old-sidecar", |job| {
+                job.last_uploaded_digest = Some("old-sidecar".to_owned());
+                job.last_upload_at = Some(chrono::Utc::now());
+            },)
         );
-        assert_eq!(
-            MLS_PRIVATE_PLAINTEXT_BACKUP_SCHEDULER.next_delay(key, chrono::Utc::now()),
-            Some(MLS_PRIVATE_PLAINTEXT_BACKUP_DEBOUNCE)
-        );
+        let delay = MLS_RECOVERY_BACKUP_SCHEDULER
+            .next_delay(key, chrono::Utc::now())
+            .expect("scheduled recovery backup has a next delay");
+        assert!(delay >= MLS_RECOVERY_BACKUP_MIN_INTERVAL - std::time::Duration::from_secs(1));
+        assert!(delay <= MLS_RECOVERY_BACKUP_MIN_INTERVAL);
 
-        MLS_PRIVATE_PLAINTEXT_BACKUP_SCHEDULER.with_jobs_mut(|jobs| jobs.remove(key));
+        MLS_RECOVERY_BACKUP_SCHEDULER.with_jobs_mut(|jobs| jobs.remove(key));
     }
 
     #[test]

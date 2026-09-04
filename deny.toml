@@ -59,7 +59,7 @@ unknown-registry = "warn"
 unknown-git = "warn"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
 allow-git = [
-    "https://github.com/arkret-org/dioxus-components",
+    "https://github.com/DioxusLabs/components",
     # Shared Arkret frontend component crate, consumed straight from its
     # private repository instead of a sibling path dependency.
     "https://github.com/arkret-org/yoface",

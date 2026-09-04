@@ -2410,7 +2410,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                     }
                                     frontier_state.set(resp_event_id.clone());
                                     status_msg.set("Encrypted message sent".to_owned());
-                                    crate::components::schedule_mls_private_plaintext_backup_after_encrypted_write(
+                                    crate::components::schedule_mls_recovery_backups_after_encrypted_write(
                                         base_for_backup_trigger.clone(),
                                         token_for_backup_trigger.clone(),
                                         authority_for_sidecar.clone(),

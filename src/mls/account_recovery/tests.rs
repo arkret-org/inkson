@@ -14,11 +14,11 @@ use super::backup_body::{
     decrypt_mls_private_plaintext_backup, is_mls_account_secret_backup,
     is_mls_private_plaintext_backup,
 };
-use super::restore::mls_backup_prompt_required;
+use super::restore::{mls_backup_prompt_required, verify_active_backup_series};
 use super::selection::{
     backup_series_seq, mls_account_secret_backup_version, select_mls_account_secret_backup,
-    select_mls_history_backups, select_mls_private_plaintext_backup,
-    select_preferred_mls_account_secret_backup,
+    select_mls_account_secret_recovery_public_key_backup, select_mls_history_backups,
+    select_mls_private_plaintext_backup, select_preferred_mls_account_secret_backup,
 };
 use crate::key_backup::BackupKind;
 use crate::recovery_crypto::derive_vault_kek;
@@ -468,6 +468,7 @@ fn verify_series_chain_accepts_well_formed_successor() {
     let successor = build_mls_account_secret_backup_successor_body_with_kek_and_version(
         "ak:backup:01964137-0000-7000-8000-0000000000d2",
         &predecessor,
+        DEVICE,
         &derive_vault_kek(PASSPHRASE).unwrap(),
         ACCOUNT_SECRET,
         2,
@@ -501,6 +502,7 @@ fn private_plaintext_successor_is_sealed_with_final_series_metadata() {
     let successor = super::backup_body::build_mls_private_plaintext_backup_successor_body_with_kek(
         "ak:backup:01964137-0000-7000-8000-00000000caf1",
         &genesis,
+        DEVICE,
         &kek,
         br#"{"realm":{"strand":{"title":"successor"}}}"#,
         &frontier.frontier_digest,
@@ -779,6 +781,48 @@ fn select_account_secret_rejects_multiple_series_without_an_active_record() {
     });
 
     assert!(select_mls_account_secret_backup(&payload).is_none());
+}
+
+#[test]
+fn select_account_secret_accepts_the_only_series_without_a_pointer_projection() {
+    let backup = recovery_hpke_backup();
+    let payload = serde_json::json!({ "backups": [backup.clone()] });
+
+    let selected = select_mls_account_secret_recovery_public_key_backup(&payload)
+        .expect("sole series is unambiguous");
+    assert_eq!(selected["backup_id"], backup["backup_id"]);
+}
+
+#[test]
+fn select_account_secret_rejects_multiple_series_without_a_pointer_projection() {
+    let mut first = recovery_hpke_backup();
+    first["series_id"] = serde_json::json!(ACTIVE_SECRET_STORAGE_SERIES);
+    let mut second = recovery_hpke_backup();
+    second["backup_id"] = serde_json::json!("ak:backup:01964137-0000-7000-8000-0000000000f2");
+    second["series_id"] = serde_json::json!(STALE_SECRET_STORAGE_SERIES);
+    let payload = serde_json::json!({ "backups": [first, second] });
+
+    assert!(select_mls_account_secret_recovery_public_key_backup(&payload).is_none());
+}
+
+#[test]
+fn verify_account_secret_accepts_the_only_series_without_a_pointer_projection() {
+    let payload = serde_json::json!({ "backups": [recovery_hpke_backup()] });
+
+    verify_active_backup_series(&payload, BackupKind::SecretStorage.as_str())
+        .expect("sole series is authoritative and must verify");
+}
+
+#[test]
+fn verify_account_secret_rejects_multiple_series_without_a_pointer_projection() {
+    let mut first = recovery_hpke_backup();
+    first["series_id"] = serde_json::json!(ACTIVE_SECRET_STORAGE_SERIES);
+    let mut second = recovery_hpke_backup();
+    second["backup_id"] = serde_json::json!("ak:backup:01964137-0000-7000-8000-0000000000f2");
+    second["series_id"] = serde_json::json!(STALE_SECRET_STORAGE_SERIES);
+    let payload = serde_json::json!({ "backups": [first, second] });
+
+    assert!(verify_active_backup_series(&payload, BackupKind::SecretStorage.as_str()).is_err());
 }
 
 #[test]

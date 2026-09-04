@@ -1740,6 +1740,7 @@ pub(crate) async fn submit_mls_admission_for_invitee(
     actor_id: String,
     device_id: String,
     invitee_id: String,
+    target_device_id_override: Option<String>,
 ) -> anyhow::Result<Option<u64>> {
     let authoring_lock = mls_admission_authoring_lock(&realm_id);
     let _authoring_guard = authoring_lock.lock().await;
@@ -1797,15 +1798,23 @@ pub(crate) async fn submit_mls_admission_for_invitee(
         .as_ref()
         .map(|requester| requester.actor_id.to_string())
         .unwrap_or_else(|| actor_id.clone());
-    let claim_route = {
+    let claim_route = if let Some(target_device_id) = target_device_id_override {
+        anyhow::ensure!(
+            invitee_actor == arkret_sdk::ActorId::account(account.authority.clone()),
+            "device-targeted MLS admission is restricted to the active Account ActorId"
+        );
+        AcceptedInviteClaimRoute {
+            destination_id: account.authority.station_id.to_string(),
+            target_device_id: Some(target_device_id),
+        }
+    } else {
         let store = state_store.read();
-        accepted_invite_claim_route(&store, &realm_id, &invitee_id)
-    }
-    .ok_or_else(|| {
-        anyhow::anyhow!(
-            "accepted invite has no exact destination service and accepting-device route"
-        )
-    })?;
+        accepted_invite_claim_route(&store, &realm_id, &invitee_id).ok_or_else(|| {
+            anyhow::anyhow!(
+                "accepted invite has no exact destination service and accepting-device route"
+            )
+        })?
+    };
     let target_device_id = claim_target_device_id(&claim_route, pairwise_requester.is_some())?;
     let group_id = {
         let store = state_store.read();
@@ -2263,36 +2272,61 @@ pub(crate) async fn reconcile_mls_admissions_for_realm(
     // the commit + Welcome. Without a snapshot we are not an admit-capable
     // member and have nothing to reconcile.
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-    let group_member_ids: BTreeSet<String> = {
+    let (group_member_ids, group_device_ids): (BTreeSet<String>, BTreeSet<String>) = {
         let store = state_store.read();
-        match crate::mls::runtime::mls_group_member_actor_ids_for_effective_scope(
+        let Some(member_ids) = crate::mls::runtime::mls_group_member_actor_ids_for_effective_scope(
             &store,
             secure_store.as_ref(),
             &realm_id,
             None,
             &account.authority,
             &account.device_id,
-        ) {
-            Some(ids) => ids.into_iter().map(|actor| actor.to_string()).collect(),
-            None => {
-                // No local group roster: either no snapshot, the device
-                // snapshot secret could not be loaded, or the envelope failed
-                // to decrypt. Any of these silently aborts admission — surface
-                // it at WARN (wasm tracing is capped at WARN). (mls-admission-debug)
-                tracing::warn!(
-                    target: "mls_admission",
-                    realm = %short_protocol_id(&realm_id),
-                    actor = %short_protocol_id(&actor_id),
-                    device = %short_protocol_id(&device_id),
-                    has_snapshot = state_store.read().mls_snapshot_for(&realm_id).is_some(),
-                    "admission aborted: cannot read local MLS group roster (snapshot/secret/decrypt) — no member can be admitted"
-                );
-                return Ok(MlsAdmissionReconcileOutcome::default());
-            }
-        }
+        ) else {
+            // No local group roster: either no snapshot, the device
+            // snapshot secret could not be loaded, or the envelope failed
+            // to decrypt. Any of these silently aborts admission — surface
+            // it at WARN (wasm tracing is capped at WARN). (mls-admission-debug)
+            tracing::warn!(
+                target: "mls_admission",
+                realm = %short_protocol_id(&realm_id),
+                actor = %short_protocol_id(&actor_id),
+                device = %short_protocol_id(&device_id),
+                has_snapshot = state_store.read().mls_snapshot_for(&realm_id).is_some(),
+                "admission aborted: cannot read local MLS group roster (snapshot/secret/decrypt) — no member can be admitted"
+            );
+            return Ok(MlsAdmissionReconcileOutcome::default());
+        };
+        let Some(device_ids) = crate::mls::runtime::mls_group_member_device_ids_for_effective_scope(
+            &store,
+            secure_store.as_ref(),
+            &realm_id,
+            None,
+            &account.authority,
+            &account.device_id,
+        ) else {
+            tracing::warn!(
+                target: "mls_admission",
+                realm = %short_protocol_id(&realm_id),
+                "admission aborted: cannot read local MLS endpoint roster"
+            );
+            return Ok(MlsAdmissionReconcileOutcome::default());
+        };
+        (
+            member_ids
+                .into_iter()
+                .map(|actor| actor.to_string())
+                .collect(),
+            device_ids
+                .into_iter()
+                .map(|device| device.to_string())
+                .collect(),
+        )
     };
-    // Joined Realm members not yet represented in the MLS group, excluding self.
-    let pending: Vec<String> = {
+    // Joined Realm members not yet represented in the MLS group, plus current
+    // same-account devices that need their own endpoint leaf. Actor membership
+    // and endpoint admission are intentionally separate: deduplicating by
+    // ActorId would strand every fresh device without a Welcome.
+    let mut pending: Vec<(String, Option<String>)> = {
         let store = state_store.read();
         admission_joined_members_for_realm(&store, &realm_id)
             .into_iter()
@@ -2302,8 +2336,18 @@ pub(crate) async fn reconcile_mls_admissions_for_realm(
                     && !is_local_account_actor(id, &actor_id)
                     && !group_member_ids.contains(id)
             })
+            .map(|actor_id| (actor_id, None))
             .collect()
     };
+    let self_actor = arkret_sdk::ActorId::account(account.authority.clone()).to_string();
+    let http = api.sdk_http_client()?;
+    let active_devices = crate::transport::keys::list_devices(&http).await?.devices;
+    pending.extend(active_devices.into_iter().filter_map(|device| {
+        (device.status == arkret_sdk::DeviceSummaryStatus::Active
+            && device.device_id != account.device_id
+            && !group_device_ids.contains(device.device_id.as_str()))
+        .then(|| (self_actor.clone(), Some(device.device_id.to_string())))
+    }));
     if pending.is_empty() {
         return Ok(MlsAdmissionReconcileOutcome::default());
     }
@@ -2312,14 +2356,17 @@ pub(crate) async fn reconcile_mls_admissions_for_realm(
         realm = %short_protocol_id(&realm_id),
         pending = %pending
             .iter()
-            .map(short_protocol_id)
+            .map(|(actor, device)| device.as_deref().map_or_else(
+                || short_protocol_id(actor),
+                |device| format!("{}@{}", short_protocol_id(actor), short_protocol_id(device)),
+            ))
             .collect::<Vec<_>>()
             .join(","),
         group_members = group_member_ids.len(),
         "admission reconcile: attempting to admit joined members not yet in MLS group"
     );
     let mut outcome = MlsAdmissionReconcileOutcome::default();
-    for invitee_id in pending {
+    for (invitee_id, target_device_id) in pending {
         match submit_mls_admission_for_invitee(
             api,
             state_store,
@@ -2327,6 +2374,7 @@ pub(crate) async fn reconcile_mls_admissions_for_realm(
             actor_id.clone(),
             device_id.clone(),
             invitee_id.clone(),
+            target_device_id.clone(),
         )
         .await
         {
@@ -2336,6 +2384,7 @@ pub(crate) async fn reconcile_mls_admissions_for_realm(
                     target: "mls_admission",
                     realm = %short_protocol_id(&realm_id),
                     invitee = %short_protocol_id(&invitee_id),
+                    target_device = ?target_device_id,
                     epoch,
                     "admission succeeded: Welcome produced for invitee"
                 );
@@ -2345,6 +2394,7 @@ pub(crate) async fn reconcile_mls_admissions_for_realm(
                     target: "mls_admission",
                     realm = %short_protocol_id(&realm_id),
                     invitee = %short_protocol_id(&invitee_id),
+                    target_device = ?target_device_id,
                     "admission no-op: realm not MLS-admittable from this device"
                 );
             }
@@ -2360,6 +2410,7 @@ pub(crate) async fn reconcile_mls_admissions_for_realm(
                     target: "mls_admission",
                     realm = %short_protocol_id(&realm_id),
                     invitee = %short_protocol_id(&invitee_id),
+                    target_device = ?target_device_id,
                     %error,
                     "admission deferred: claim/commit/welcome step failed (bounded retry scheduled)"
                 );

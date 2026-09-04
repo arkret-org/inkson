@@ -128,9 +128,9 @@ pub struct RestoreReport {
     pub first_error: Option<String>,
 }
 
-fn verify_active_backup_series(list_payload: &Value, backup_kind: &str) -> Result<()> {
+pub(super) fn verify_active_backup_series(list_payload: &Value, backup_kind: &str) -> Result<()> {
     let Some(active_series) =
-        super::selection::active_series_id_for_backup_class(list_payload, backup_kind)
+        super::selection::selectable_series_id_for_backup_class(list_payload, backup_kind)
     else {
         return Err(anyhow!(
             "{backup_kind} active-series pointer is unavailable"
@@ -413,7 +413,7 @@ async fn hydrate_mls_restore_payload_with_unlock_proof(
             .unwrap_or_default();
         if matches!(backup_kind, "secret_storage" | "mls_history") {
             let active_series =
-                super::selection::active_series_id_for_backup_class(&payload, backup_kind);
+                super::selection::selectable_series_id_for_backup_class(&payload, backup_kind);
             if entry.get("series_id").and_then(Value::as_str) != active_series {
                 continue;
             }
@@ -497,7 +497,7 @@ pub async fn fetch_mls_history_restore_payload_with_unlock_proof(
             backups.push(entry);
             continue;
         }
-        let active_series = super::selection::active_series_id_for_backup_class(
+        let active_series = super::selection::selectable_series_id_for_backup_class(
             list_payload,
             crate::key_backup::BackupKind::MlsHistory.as_str(),
         );

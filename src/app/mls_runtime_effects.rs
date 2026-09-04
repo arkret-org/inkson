@@ -474,11 +474,12 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
         // the MLS group so their `ak.mls.welcome` is finally produced. Closes
         // the invite-time race where admission ran before the invitee had
         // published a KeyPackage: re-runs when the durable Realm projection
-        // changes, so a member who publishes their KeyPackage after joining is
-        // picked up without tying an admission network pass to an opaque
-        // account cursor re-mint.
+        // changes. Account sync is also a wake-up axis because a same-account
+        // fresh device adds no Realm membership Event: its accepted device
+        // authorization is what must trigger a targeted Add/Welcome attempt.
         let admit_state_store = state_store;
         let admit_realm_live_epoch = realm_live_epoch;
+        let admit_account_cursor = sync_cursor;
         let mut admit_in_flight = mls_admission_reconcile_in_flight;
         let mut admit_pending = mls_admission_reconcile_pending;
         let mut admit_retry_attempt = mls_admission_retry_attempt;
@@ -506,9 +507,12 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
                 return;
             }
             // Durable Realm changes are the admission freshness axis. The
-            // account cursor is a resume checkpoint and may also advance for
-            // typing/receipts/calls, none of which can create MLS candidates.
+            // account cursor additionally wakes same-account endpoint
+            // admission after a device authorization. It remains only a
+            // scheduling hint; reconciliation re-reads the durable device list
+            // and accepted Realm history before authoring anything.
             let _ = admit_realm_live_epoch();
+            let _ = admit_account_cursor();
             let _ = admit_pending();
             let candidate_realms = {
                 // Do not subscribe to every local-store write. The explicit

@@ -12,7 +12,7 @@ use super::backup_body::{
 /// `list_key_backups`-shaped payload, if present. Newer `series_seq` wins,
 /// followed by the creation timestamp.
 pub fn select_mls_private_plaintext_backup(list_payload: &Value) -> Option<Value> {
-    let active_series = active_series_id_for_backup_class(
+    let active_series = selectable_series_id_for_backup_class(
         list_payload,
         crate::key_backup::BackupKind::SecretStorage.as_str(),
     );
@@ -88,6 +88,20 @@ pub(super) fn active_series_id_for_backup_class<'a>(
     }
 }
 
+pub(super) fn selectable_series_id_for_backup_class<'a>(
+    list_payload: &'a Value,
+    backup_kind: &str,
+) -> Option<&'a str> {
+    active_series_id_for_backup_class(list_payload, backup_kind).or_else(|| {
+        let mut matching = iter_backup_bodies(list_payload)
+            .filter(|body| body.get("backup_kind").and_then(Value::as_str) == Some(backup_kind))
+            .filter_map(|body| body.get("series_id").and_then(Value::as_str))
+            .filter(|series_id| !series_id.is_empty());
+        let sole = matching.next()?;
+        matching.all(|series_id| series_id == sole).then_some(sole)
+    })
+}
+
 fn matches_active_series(body: &Value, active_series: Option<&str>) -> bool {
     match active_series {
         Some(series_id) => !series_id.is_empty() && backup_series_id(body) == series_id,
@@ -125,9 +139,10 @@ pub fn mls_account_secret_backup_version(body: &Value) -> u32 {
 /// timestamp); `created_at` is only a last-resort tiebreak.
 ///
 /// A verified active-series record (key-management.md section 7.6) selects the
-/// only eligible series. Missing active-series metadata fails closed.
+/// only eligible series. When the projection is absent, one non-empty series
+/// is unambiguous; multiple series fail closed until a pointer is available.
 pub fn select_mls_account_secret_backup(list_payload: &Value) -> Option<Value> {
-    let active_series = active_series_id_for_backup_class(
+    let active_series = selectable_series_id_for_backup_class(
         list_payload,
         crate::key_backup::BackupKind::SecretStorage.as_str(),
     );
@@ -153,7 +168,7 @@ pub fn select_mls_account_secret_backup(list_payload: &Value) -> Option<Value> {
 /// passphrase-free fresh-device recovery path). Newest by
 /// `(secret_version, series_seq, created_at)`.
 pub fn select_mls_account_secret_recovery_public_key_backup(list_payload: &Value) -> Option<Value> {
-    let active_series = active_series_id_for_backup_class(
+    let active_series = selectable_series_id_for_backup_class(
         list_payload,
         crate::key_backup::BackupKind::SecretStorage.as_str(),
     );
@@ -183,7 +198,7 @@ pub fn select_preferred_mls_account_secret_backup(list_payload: &Value) -> Optio
 /// Pure body-selection: collect every `mls_history` backup body from a
 /// `list_key_backups`-shaped payload.
 pub fn select_mls_history_backups(list_payload: &Value) -> Vec<Value> {
-    let active_series = active_series_id_for_backup_class(
+    let active_series = selectable_series_id_for_backup_class(
         list_payload,
         crate::key_backup::BackupKind::MlsHistory.as_str(),
     );
@@ -235,7 +250,7 @@ pub(super) fn latest_mls_history_backups_by_scope(list_payload: &Value) -> Vec<V
 /// items. Chain verification must retain those intermediate links even when
 /// the selected decrypt target is an account-secret envelope.
 pub(super) fn all_mls_account_secret_backups(list_payload: &Value) -> Vec<Value> {
-    let active_series = active_series_id_for_backup_class(
+    let active_series = selectable_series_id_for_backup_class(
         list_payload,
         crate::key_backup::BackupKind::SecretStorage.as_str(),
     );

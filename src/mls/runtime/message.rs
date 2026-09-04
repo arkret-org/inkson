@@ -1336,6 +1336,35 @@ pub(crate) fn mls_group_member_actor_ids_for_effective_scope(
     group.member_actor_ids().ok()
 }
 
+/// Active human-device leaves for one effective MLS scope. Realm membership is
+/// actor-scoped, but each authorized endpoint needs its own leaf and Welcome.
+/// Keep this projection separate from `member_actor_ids`, which intentionally
+/// deduplicates multiple devices belonging to the same Account ActorId.
+pub(crate) fn mls_group_member_device_ids_for_effective_scope(
+    state_store: &crate::state::LocalStateStore,
+    secure_store: &dyn SecureKeyStore,
+    realm_id: &str,
+    circle_id: Option<&str>,
+    authority: &AccountId,
+    device_id: &DeviceId,
+) -> Option<Vec<DeviceId>> {
+    let snapshot = state_store.mls_snapshot_for_effective_scope(realm_id, circle_id)?;
+    let secret = load_device_snapshot_secret(secure_store, authority, device_id).ok()?;
+    let group = crate::mls::persistence::restore_envelope(&snapshot, &secret, 0).ok()?;
+    Some(
+        group
+            .verified_leaf_bindings()
+            .ok()?
+            .into_iter()
+            .filter_map(|binding| match binding.endpoint {
+                arkret_sdk::MlsEndpointIdentity::HumanDevice { device_id, .. } => Some(device_id),
+                arkret_sdk::MlsEndpointIdentity::AgentRuntime { .. }
+                | arkret_sdk::MlsEndpointIdentity::MinimalMetadataPairwise { .. } => None,
+            })
+            .collect(),
+    )
+}
+
 /// Cryptographic signing-principal projection, not a Realm membership roster.
 pub fn mls_group_member_principal_ids_for_effective_scope(
     state_store: &crate::state::LocalStateStore,

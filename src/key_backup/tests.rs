@@ -10,6 +10,7 @@ use crate::recovery_crypto::{VAULT_SALT_LEN, VaultKek, derive_vault_kek_with_sal
 const BACKUP_ID: &str = "ak:backup:01964137-0000-7000-8000-00000000beef";
 const ACTOR: &str = "did:web:alice.example";
 const DEVICE: &str = "ak:device:01964137-0000-7000-8000-000000000001";
+const SECOND_DEVICE: &str = "ak:device:01964137-0000-7000-8000-000000000002";
 const DEVICE_AUTHORIZE_EVENT: &str = "ak:event:AcIMom-0qqAXx_hmDJfxxaUJb_oJ64S3ARW1-WKFDCoD";
 const REALM_ID: &str = "ak:realm:ASlHbbnJj2aIvNxwyukjGz90ltQwXHCbjIihxsRDrRR5";
 
@@ -145,6 +146,47 @@ fn build_recovery_vault_backup_body_seals_per_spec() {
     let envelope = validate_wire_envelope(&body, BackupKind::SecretStorage)
         .expect("secret_storage recovery vault envelope should validate");
     assert_eq!(envelope.backup_id.as_str(), BACKUP_ID);
+}
+
+#[test]
+fn successor_binds_the_current_device_without_breaking_the_series() {
+    let root = test_root();
+    let predecessor =
+        build_recovery_vault_backup_body(BACKUP_ID, ACTOR, DEVICE, &root, b"first").unwrap();
+    let successor = build_passphrase_kdf_backup_successor_body(
+        "ak:backup:01964137-0000-7000-8000-00000000bef0",
+        &predecessor,
+        SECOND_DEVICE,
+        &root,
+        b"second",
+        &SecretStorageContentIndex {
+            item_kind: SecretStorageItemKind::PrivateAccountState,
+            realm_id: None,
+            from_epoch: None,
+            to_epoch: None,
+            secret_id: Some("inkson_recovery_vault_payload".to_owned()),
+            secret_version: None,
+            extra: Default::default(),
+        },
+        &arkret_sdk::Hash::new(format!("sha256:{}", "11".repeat(32))).unwrap(),
+        2,
+    )
+    .unwrap();
+
+    assert_eq!(
+        successor.device_id.as_ref().unwrap().as_str(),
+        SECOND_DEVICE
+    );
+    assert_eq!(successor.series_id, predecessor.series_id);
+    assert_eq!(successor.series_seq, predecessor.series_seq + 1);
+    assert_eq!(
+        successor.supersedes_id.as_ref(),
+        Some(&predecessor.backup_id)
+    );
+    let opened =
+        open_passphrase_kdf_backup_body(b"correct horse battery staple", &wire(&successor))
+            .expect("current-device successor must remain decryptable");
+    assert_eq!(plaintext_secret(&opened), b"second");
 }
 
 #[test]

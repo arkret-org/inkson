@@ -345,14 +345,6 @@ garth = { path = "../garth", default-features = false, features = ["native", "ro
 # Pinned to the same version cotest uses so a registry/resource bump
 # lands in one place.
 
-# arkret fork of DioxusLabs/components, branched off the same revision cargo
-# already resolved. The only delta is an idempotency guard in
-# `primitives/src/js/focus-trap.js`: `DialogRoot` injects that script per
-# Dialog instance and dioxus re-executes it across mounts, but as a classic
-# script its top-level `class FocusTrap` re-declaration threw
-# `SyntaxError: 'FocusTrap' has already been declared`, corrupting the dialog
-# focus-trap eval closure (`FnOnce called more than once` -> CLOSURE_DTORS
-# out-of-bounds -> wasm heap corruption). See the fork branch for the full note.
 jsonschema = { workspace = true, default-features = false, features = ["resolve-file"] }
 regex = { workspace = true }
 
@@ -386,6 +378,3 @@ debug = 0
 strip = "debuginfo"
 incremental = false
 debug-assertions = false
-# Pinned by rev; bump deliberately when upgrading.
-[patch."https://github.com/DioxusLabs/components"]
-dioxus-primitives = { git = "https://github.com/arkret-org/dioxus-components", rev = "3510aeee2d14f0ca2c11682c9b826650cb557d2f" }

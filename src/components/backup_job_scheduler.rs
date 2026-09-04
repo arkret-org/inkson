@@ -1,6 +1,6 @@
 //! Generic single-flight, debounced, backoff-retried backup-job scheduler.
 //!
-//! The private-plaintext backup uploader uses a process-global
+//! Recovery backup uploaders use a process-global
 //! `BTreeMap<key, Job>` behind a `Mutex`, a
 //! `scheduled` / `in_flight` single-flight pair, digest-based dedupe
 //! (`last_uploaded_digest == latest_digest`), a debounce window, and a
@@ -11,8 +11,9 @@
 //!   * the digest it dedupes on; and
 //!   * the actual network upload.
 //!
-//! The per-account private-plaintext sidecar job debounces only and does not
-//! retry a failed upload; strictly newer material re-arms it.
+//! The per-account post-write recovery job debounces, applies its configured
+//! success interval, and does not retry a failed upload; strictly newer
+//! material re-arms it.
 //!
 //! Backoff note: `garth::RetrySchedule` is a *stateful* ladder that advances on each
 //! `next_delay()` call. This scheduler instead recomputes the wait each loop

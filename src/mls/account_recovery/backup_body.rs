@@ -116,6 +116,7 @@ pub fn build_mls_account_secret_backup_body_with_kek_and_version(
 pub fn build_mls_account_secret_backup_successor_body_with_kek_and_version(
     backup_id: &str,
     predecessor: &KeyBackup,
+    device_id: &str,
     kek: &VaultKek,
     account_secret: &str,
     account_secret_version: u32,
@@ -125,6 +126,7 @@ pub fn build_mls_account_secret_backup_successor_body_with_kek_and_version(
     crate::key_backup::build_passphrase_kdf_backup_successor_body(
         backup_id,
         predecessor,
+        device_id,
         kek,
         account_secret.as_bytes(),
         &SecretStorageContentIndex {
@@ -229,6 +231,7 @@ pub fn build_mls_private_plaintext_backup_body_with_kek(
 pub fn build_mls_private_plaintext_backup_successor_body_with_kek(
     backup_id: &str,
     predecessor: &KeyBackup,
+    device_id: &str,
     kek: &VaultKek,
     sidecar_json: &[u8],
     frontier_digest: &arkret_sdk::Hash,
@@ -237,6 +240,7 @@ pub fn build_mls_private_plaintext_backup_successor_body_with_kek(
     crate::key_backup::build_passphrase_kdf_backup_successor_body(
         backup_id,
         predecessor,
+        device_id,
         kek,
         sidecar_json,
         &SecretStorageContentIndex {
