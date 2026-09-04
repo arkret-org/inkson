@@ -136,6 +136,7 @@ fn durable_sent_item_repairs_optimistic_operation_by_local_id() {
             realm_id,
             QueuedRecord::SdkEvent(Box::new(queued)),
             Vec::new(),
+            chrono::Utc::now(),
         )
         .unwrap();
     // A CAS re-author can change the queue transaction id, but the holder-local
@@ -465,6 +466,7 @@ fn pending_chat_projection_ignores_sent_items_and_other_conversations() {
                 .unwrap(),
             )),
             Vec::new(),
+            chrono::Utc::now(),
         )
         .unwrap();
 
@@ -494,6 +496,7 @@ fn pending_chat_projection_ignores_sent_items_and_other_conversations() {
                 .unwrap(),
             )),
             Vec::new(),
+            chrono::Utc::now(),
         )
         .unwrap();
 
@@ -520,6 +523,7 @@ fn pending_chat_projection_ignores_sent_items_and_other_conversations() {
                 .unwrap(),
             )),
             Vec::new(),
+            chrono::Utc::now(),
         )
         .unwrap();
     // An acceptance now has to carry its ingress receipts: they are the
@@ -544,6 +548,7 @@ fn pending_chat_projection_ignores_sent_items_and_other_conversations() {
                 &lease,
                 issued_at + chrono::Duration::minutes(1),
             )],
+            issued_at,
         )
         .unwrap();
 
@@ -1155,6 +1160,7 @@ fn queued_mls_admission_round_trips_exact_welcome_material() {
             arkret_sdk::RealmId::new(realm_id.to_owned()).unwrap(),
             queued_record.clone(),
             Vec::new(),
+            chrono::Utc::now(),
         )
         .unwrap();
     let snapshot = finalization_queue.snapshot();

@@ -1390,6 +1390,7 @@ impl EventSubmitter {
                 actor_id,
                 QueuedRecord::RealmBootstrap(Box::new(queued)),
                 Vec::new(),
+                crate::clock::now_utc(),
             )
             .await?;
 
@@ -1403,7 +1404,7 @@ impl EventSubmitter {
         loop {
             let fence = self.resolve_queue_generation_fence(&outbound).await?;
             match outbound
-                .submit_next_with_fence(&submitter, &fence, chrono::Utc::now())
+                .submit_next_with_fence(&submitter, &fence, crate::clock::now_utc())
                 .await?
             {
                 OutboundEngineOutcome::Prepared(_) | OutboundEngineOutcome::Superseded { .. } => {
@@ -1527,6 +1528,7 @@ impl EventSubmitter {
                     actor_id,
                     QueuedRecord::RealmBootstrap(Box::new(queued)),
                     Vec::new(),
+                    crate::clock::now_utc(),
                 )
                 .await?;
         }
@@ -1540,7 +1542,7 @@ impl EventSubmitter {
         loop {
             let fence = self.resolve_queue_generation_fence(&outbound).await?;
             match outbound
-                .submit_next_with_fence(&submitter, &fence, chrono::Utc::now())
+                .submit_next_with_fence(&submitter, &fence, crate::clock::now_utc())
                 .await?
             {
                 OutboundEngineOutcome::Prepared(_) | OutboundEngineOutcome::Superseded { .. } => {
@@ -1690,7 +1692,7 @@ impl EventSubmitter {
         loop {
             let fence = self.resolve_queue_generation_fence(&outbound).await?;
             match outbound
-                .submit_next_with_fence(&submitter, &fence, chrono::Utc::now())
+                .submit_next_with_fence(&submitter, &fence, crate::clock::now_utc())
                 .await?
             {
                 OutboundEngineOutcome::Accepted(item) | OutboundEngineOutcome::Duplicate(item) => {
@@ -1780,7 +1782,7 @@ impl EventSubmitter {
             }
             let fence = self.resolve_queue_generation_fence(&outbound).await?;
             match outbound
-                .submit_next_with_fence_and_hook(&submitter, &fence, &hook, chrono::Utc::now())
+                .submit_next_with_fence_and_hook(&submitter, &fence, &hook, crate::clock::now_utc())
                 .await?
             {
                 OutboundEngineOutcome::Accepted(_)
@@ -2713,7 +2715,9 @@ impl EventSubmitter {
                     // accept that attempt; active dependencies remain
                     // protected by SendQueue::prune_terminal_before.
                     outbound
-                        .compact_terminal_before(chrono::Utc::now() + chrono::Duration::seconds(1))
+                        .compact_terminal_before(
+                            crate::clock::now_utc() + chrono::Duration::seconds(1),
+                        )
                         .await?;
                     let mut repaired = queued.clone();
                     repaired.authoring_idempotency_key =
@@ -2725,6 +2729,7 @@ impl EventSubmitter {
                             actor_id.clone(),
                             QueuedRecord::SdkEvent(Box::new(repaired)),
                             Vec::new(),
+                            crate::clock::now_utc(),
                         )
                         .await?;
                 }
@@ -2743,6 +2748,7 @@ impl EventSubmitter {
                     actor_id.clone(),
                     QueuedRecord::SdkEvent(Box::new(queued)),
                     Vec::new(),
+                    crate::clock::now_utc(),
                 )
                 .await?;
         }
@@ -2772,7 +2778,7 @@ impl EventSubmitter {
                 Err(error) => return Err(error),
             };
             match outbound
-                .submit_next_with_fence_and_hook(&submitter, &fence, &hook, chrono::Utc::now())
+                .submit_next_with_fence_and_hook(&submitter, &fence, &hook, crate::clock::now_utc())
                 .await?
             {
                 OutboundEngineOutcome::Accepted(item) | OutboundEngineOutcome::Duplicate(item)
