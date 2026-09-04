@@ -5,7 +5,9 @@ mod bootstrap;
 mod components;
 pub(crate) mod model;
 
-pub(crate) use bootstrap::{bootstrap_provisioned_agent, seal_agent_pcr_current};
+pub(crate) use bootstrap::{
+    bootstrap_provisioned_agent, seal_agent_pcr_current, seal_self_principal_event_current,
+};
 
 #[cfg(test)]
 mod tests;

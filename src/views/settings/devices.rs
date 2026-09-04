@@ -38,7 +38,7 @@ use dioxus_router::hooks::use_route;
 use serde_json::{Value, json};
 
 use crate::components::{EmptyState, EmptyStateKind, HelpTip, QrSharePanel, UiIcon};
-use crate::identity::device_pairing::author_pairing_request_body;
+use crate::identity::device_pairing::approve_device_pairing;
 use crate::operation::uuid_v7;
 use crate::routes::Route;
 use crate::state::LocalStateStore;
@@ -1335,15 +1335,7 @@ fn render_pair_strand(
                                     api_token,
                                     |api| async move {
                                         let request_payload = serde_json::to_value(request_payload)?;
-                                        let body = author_pairing_request_body(
-                                            &api,
-                                            &request_payload,
-                                        )
-                                        .await?;
-                                        let clients = crate::transport::EndpointClients::from_http(
-                                            api.sdk_http_client()?,
-                                        );
-                                        clients.keys().account_device_pair(&body).await
+                                        approve_device_pairing(&api, &request_payload).await
                                     },
                                 )
                                 .await

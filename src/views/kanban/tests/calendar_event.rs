@@ -515,6 +515,56 @@ fn calendar_overlay_replaces_the_whole_schedule_subtree() {
     assert_eq!(calendar.location, "Board room");
 }
 
+#[test]
+fn accepted_calendar_overlay_advances_the_local_schedule_frontier() {
+    let mut card = test_card(TEST_CALENDAR_STRAND_ID, "U");
+    card.calendar_schedule_basis_refs = vec![FRONTIER.to_owned()];
+    let columns = vec![KanbanColumn {
+        id: "ak:space:list-a".to_owned(),
+        title: "A".to_owned(),
+        rank: "U".to_owned(),
+        cards: vec![card],
+        state: SpaceContainerLifecycleState::Active,
+    }];
+    let event_id =
+        arkret_sdk::EventId::from_digest(arkret_sdk::canonical::DigestSuite::Sha256, [9_u8; 32]);
+    let expected_head = event_id.event_digest().to_string();
+    let accepted = RawOperationRecord {
+        operation_id: "ak:operation:0196419b-0000-7000-8000-00000000ca11".to_owned(),
+        realm_id: Some(TEST_REALM_ID.to_owned()),
+        received_at: chrono::Utc::now(),
+        payload: json!({
+            "kind": "ak.strand.update",
+            "operation_id": "ak:operation:0196419b-0000-7000-8000-00000000ca11",
+            "event_id": event_id,
+            "write_state": "synced",
+            "causal_refs": [FRONTIER],
+            "body": {
+                "strand_id": TEST_CALENDAR_STRAND_ID,
+                "patch": {
+                    "metadata.fields.calendar": {
+                        "$op": "set",
+                        "value": {
+                            "start": "2026-06-20T11:00:00",
+                            "end": "2026-06-20T12:00:00",
+                            "timezone": "Asia/Shanghai",
+                            "tzdb_version": "2025a",
+                            "all_day": false,
+                            "status": "confirmed"
+                        }
+                    }
+                }
+            }
+        }),
+    };
+
+    let overlaid = overlay_local_card_update_records(columns, &[accepted], None);
+    assert_eq!(
+        overlaid[0].cards[0].calendar_schedule_basis_refs,
+        vec![expected_head]
+    );
+}
+
 fn rsvp_head(digest_byte: u8, basis: &str, status: &str) -> RsvpHeadProjectionView {
     let source_event_id = arkret_sdk::EventId::from_digest(
         arkret_sdk::canonical::DigestSuite::Sha256,

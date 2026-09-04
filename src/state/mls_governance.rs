@@ -86,6 +86,54 @@ impl LocalStateStore {
             .map_err(|error| format!("persist MLS governance checkpoint: {error}"))
     }
 
+    /// Install a newly verified full governance closure over the currently
+    /// pinned one. This is used after a locally authored Control Seal: the
+    /// complete target closure has been resolved and cryptographically
+    /// verified, so advancing the pin is valid only when it retains every
+    /// byte-exact Seal and Event trusted by the previous checkpoint.
+    pub fn advance_verified_mls_governance_checkpoint(
+        &mut self,
+        realm_id: &str,
+        checkpoint: arkret_sdk::MlsGovernanceVerificationCheckpoint,
+    ) -> Result<(), String> {
+        self.ensure_cached_loaded();
+        checkpoint
+            .validate_checkpoint()
+            .map_err(|error| format!("invalid advanced MLS governance checkpoint: {error}"))?;
+        if checkpoint.realm_id.as_str() != realm_id {
+            return Err("advanced MLS governance checkpoint belongs to another Realm".to_owned());
+        }
+        if let Some(existing) = self.cached.mls_governance_checkpoints.get(realm_id) {
+            existing
+                .validate_checkpoint()
+                .map_err(|error| format!("invalid existing MLS governance checkpoint: {error}"))?;
+            if existing == &checkpoint {
+                return Ok(());
+            }
+            if !existing.accepted_seals.iter().all(|trusted| {
+                checkpoint
+                    .accepted_seals
+                    .iter()
+                    .any(|candidate| candidate == trusted)
+            }) || !existing.accepted_events.iter().all(|trusted| {
+                checkpoint
+                    .accepted_events
+                    .iter()
+                    .any(|candidate| candidate == trusted)
+            }) {
+                return Err(
+                    "advanced MLS governance checkpoint does not extend the pinned closure"
+                        .to_owned(),
+                );
+            }
+        }
+        self.cached
+            .mls_governance_checkpoints
+            .insert(realm_id.to_owned(), checkpoint);
+        self.flush()
+            .map_err(|error| format!("persist advanced MLS governance checkpoint: {error}"))
+    }
+
     pub fn cache_verified_mls_governance_proof(
         &mut self,
         request: arkret_sdk::MlsGovernanceProofRequestBody,

@@ -90,17 +90,6 @@ impl KeysEndpoints<'_> {
             .map_err(|error| anyhow::anyhow!("ack device messages: {error}"))
     }
 
-    pub async fn account_device_pair(
-        &self,
-        body: &arkret_sdk::AccountDevicePairRequestBody,
-    ) -> anyhow::Result<arkret_sdk::AccountDevicePairOutcome> {
-        self.transport
-            .http()
-            .account_device_pair(body)
-            .await
-            .map_err(anyhow::Error::from)
-    }
-
     /// Stage a new device's key server-side, returning the short pairing handle
     /// + code (`ak.open.device_pairing.command.stage.v1`).
     pub async fn device_pairing_stage(

@@ -1,7 +1,88 @@
 //! Server-mediated, out-of-band device-pairing helpers
 //! (`crypto-media/device-lifecycle.md` §2.1.1).
 
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
+
+const PENDING_DEVICE_PAIRING_VERIFICATION_KEY: &str = "pending-device-pairing-verification.v1";
+
+/// Target-owned material retained across the OIDC navigation that follows a
+/// staged device pairing.  This record is not authority: it only selects the
+/// pending signer and the exact accepted Event that must be verified before
+/// that signer can be promoted into an account namespace.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct PendingDevicePairingVerification {
+    pub principal_did: arkret_sdk::Did,
+    pub account_id: arkret_sdk::AccountId,
+    pub request_id: arkret_sdk::DevicePairingRequestId,
+    pub pairing_code: arkret_sdk::DevicePairingCode,
+    pub device_id: arkret_sdk::DeviceId,
+    pub target_attestation: arkret_sdk::DevicePairingTargetAttestation,
+}
+
+impl PendingDevicePairingVerification {
+    pub(crate) fn validate_for_handoff(
+        &self,
+        handoff: &crate::state::PendingAccountHandoff,
+    ) -> anyhow::Result<()> {
+        let principal_id = handoff
+            .bound_principal_id
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("pairing handoff is not bound to a principal"))?;
+        let principal_did = handoff
+            .bound_principal_did
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("pairing handoff omitted the principal DID"))?;
+        let expected_account =
+            arkret_sdk::AccountId::new(principal_id.clone(), handoff.audience_id.clone());
+        if &self.principal_did != principal_did
+            || self.account_id != expected_account
+            || self.device_id.as_str() != handoff.device_id
+            || self.target_attestation.device_id != self.device_id
+        {
+            anyhow::bail!("pending device pairing does not match the bound account handoff");
+        }
+        arkret_sdk::signatures::device_pairing::verify_device_pairing_target_attestation(
+            &self.target_attestation,
+        )?;
+        Ok(())
+    }
+}
+
+pub(crate) async fn persist_pending_device_pairing_verification(
+    pending: &crate::secure_key_store::PendingLocalStore,
+    secure_store: &dyn crate::secure_key_store::SecureKeyStore,
+    verification: &PendingDevicePairingVerification,
+) -> anyhow::Result<()> {
+    let encoded = serde_json::to_string(verification)?;
+    pending
+        .save_secret_durable(
+            secure_store,
+            PENDING_DEVICE_PAIRING_VERIFICATION_KEY,
+            &encoded,
+        )
+        .await?;
+    Ok(())
+}
+
+pub(crate) fn load_pending_device_pairing_verification(
+    pending: &crate::secure_key_store::PendingLocalStore,
+    secure_store: &dyn crate::secure_key_store::SecureKeyStore,
+) -> anyhow::Result<Option<PendingDevicePairingVerification>> {
+    pending
+        .load_secret(secure_store, PENDING_DEVICE_PAIRING_VERIFICATION_KEY)?
+        .map(|encoded| serde_json::from_str(&encoded).map_err(anyhow::Error::from))
+        .transpose()
+}
+
+pub(crate) fn clear_pending_device_pairing_verification(
+    pending: &crate::secure_key_store::PendingLocalStore,
+    secure_store: &dyn crate::secure_key_store::SecureKeyStore,
+) -> anyhow::Result<()> {
+    pending.delete_secret(secure_store, PENDING_DEVICE_PAIRING_VERIFICATION_KEY)?;
+    Ok(())
+}
 
 pub async fn sign_target_attestation(
     signer: &crate::event_signer::InksonEventSigner,
@@ -225,12 +306,56 @@ pub async fn author_pairing_request_body(
     Ok(request)
 }
 
+/// Submit the target-bound authorize Event and immediately publish the
+/// approving device's human-PCR successor Seal.  A durable gate outcome alone
+/// is not an installable device authority: device-lifecycle §5.4.1 requires
+/// the target to observe this exact Event under an accepted covering Seal.
+pub async fn approve_device_pairing(
+    api: &crate::transport::TransportClient,
+    payload: &Value,
+) -> anyhow::Result<arkret_sdk::AccountDevicePairOutcome> {
+    let body = author_pairing_request_body(api, payload).await?;
+    let authorize_event = body.authorize_event.event.clone();
+    let http = api.sdk_http_client()?;
+    let outcome = http.account_device_pair(&body).await?;
+    if outcome.authorized_event_ref != authorize_event.event_id {
+        anyhow::bail!("device-pair gate returned another authorize Event reference");
+    }
+    let signer = crate::event_signer::active_signer()
+        .ok_or_else(|| anyhow::anyhow!("active pairing signer is unavailable"))?;
+    let principal = arkret_sdk::Did::new(signer.signer_did().to_owned())?;
+    crate::views::agents::seal_self_principal_event_current(
+        api,
+        &principal,
+        &authorize_event.realm_id,
+        &authorize_event.event_id,
+    )
+    .await?;
+    Ok(outcome)
+}
+
 /// Target-device fence before treating an `authorized` status as success.
 /// The status row is only an index; trust comes from the exact accepted Event
 /// and its target-owned attestation binding.
 pub async fn verify_authorized_pairing_event(
     http: &arkret_sdk::http_client::Client,
     principal: &arkret_sdk::Did,
+    outcome: &arkret_sdk::DevicePairingStatusOutcome,
+    attestation: &arkret_sdk::DevicePairingTargetAttestation,
+) -> anyhow::Result<arkret_sdk::Event> {
+    let principal_actor = arkret_sdk::project_did_to_core_id(principal)?;
+    let authority = crate::secure_key_store::active_device_seed_scope()
+        .filter(|scope| scope.authority.principal_id == principal_actor)
+        .map(|scope| scope.authority)
+        .ok_or_else(|| anyhow::anyhow!("pairing verification has no matching active account"))?;
+    verify_authorized_pairing_event_for_authority(http, principal, &authority, outcome, attestation)
+        .await
+}
+
+pub async fn verify_authorized_pairing_event_for_authority(
+    http: &arkret_sdk::http_client::Client,
+    principal: &arkret_sdk::Did,
+    authority: &arkret_sdk::AccountId,
     outcome: &arkret_sdk::DevicePairingStatusOutcome,
     attestation: &arkret_sdk::DevicePairingTargetAttestation,
 ) -> anyhow::Result<arkret_sdk::Event> {
@@ -261,6 +386,9 @@ pub async fn verify_authorized_pairing_event(
         .find(|event| &event.event_id == event_ref)
         .ok_or_else(|| anyhow::anyhow!("authorized device Event is not accepted"))?;
     let principal_actor = arkret_sdk::project_did_to_core_id(principal)?;
+    if authority.principal_id != principal_actor {
+        anyhow::bail!("pairing authority does not match the target principal");
+    }
     if event.kind != arkret_sdk::EventKind::DeviceAuthorize
         || event.actor_id.signing_principal_id() != &principal_actor
     {
@@ -268,7 +396,8 @@ pub async fn verify_authorized_pairing_event(
             "authorized pairing status does not reference this principal's authorize Event"
         );
     }
-    let pcr = crate::identity::principal_control::resolve_accepted(http, &principal_actor).await?;
+    let pcr =
+        crate::identity::principal_control::resolve_accepted_for_authority(http, authority).await?;
     if event.realm_id != pcr {
         anyhow::bail!("authorized pairing Event is outside the principal control Realm");
     }

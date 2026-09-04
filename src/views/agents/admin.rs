@@ -918,6 +918,7 @@ fn spawn_set_agent_enabled(
                 &agent_actor_id,
                 key_state.principal_control_realm_id.as_str(),
                 state_store,
+                None,
             )
             .await?;
             // The lifecycle Event rides its own request body rather than the
@@ -960,6 +961,7 @@ fn spawn_set_agent_enabled(
                 &agent_actor_id,
                 key_state.principal_control_realm_id.as_str(),
                 state_store,
+                None,
             )
             .await
             .err()
@@ -1638,12 +1640,31 @@ fn spawn_provision_agent(
         let state_store_for_seal = state_store;
         let account_for_seal = account.clone();
         if let Err(error) = with_authed_api(&base, api_token.clone(), move |api| async move {
-            super::bootstrap::seal_agent_pcr_current(
-                &api,
+            let signer = crate::event_signer::active_signer()
+                .ok_or_else(|| anyhow::anyhow!("active controller signer is unavailable"))?;
+            let signer_scope = crate::secure_key_store::active_device_seed_scope();
+            let device_id = super::bootstrap::controller_signer_device_id(
+                account_for_seal.did(),
+                &account_for_seal.authority,
+                signer.as_ref(),
+                signer_scope.as_ref(),
+            )?;
+            let submitter = api.event_submitter()?;
+            let http = api.sdk_http_client()?;
+            let agent_actor_id = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+                agent_id_for_seal,
+                account_for_seal.authority.station_id.clone(),
+            ));
+            super::bootstrap::ensure_agent_pcr_seal_current(
+                &submitter,
+                &http,
+                signer.as_ref(),
+                account_for_seal.did(),
+                device_id.as_str(),
+                &agent_actor_id,
+                pcr_realm_for_seal.as_str(),
                 state_store_for_seal,
-                &account_for_seal,
-                &agent_id_for_seal,
-                &pcr_realm_for_seal,
+                Some(&frozen_genesis),
             )
             .await
             .map(|_| ())

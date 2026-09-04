@@ -691,6 +691,22 @@ pub fn LoginPanel(
             } else {
                 false
             };
+            let pending_pairing_candidate = if resume_account_handoff {
+                match pending_handoff
+                    .as_ref()
+                    .map(|handoff| pending_pairing_for_handoff(secure_store.as_ref(), handoff))
+                {
+                    Some(Ok(candidate)) => candidate,
+                    Some(Err(error)) => {
+                        is_busy.set(false);
+                        auth_status.set(error);
+                        return;
+                    }
+                    None => None,
+                }
+            } else {
+                None
+            };
             #[allow(clippy::expect_used)]
             let device = if resume_account_handoff {
                 pending_device.expect("resumable handoff has a device id")
@@ -715,6 +731,8 @@ pub fn LoginPanel(
                 == Some(garth::RegistrationCheckpointDisposition::ContinuesIdentityCreation)
             {
                 (None, None)
+            } else if let Some(pairing) = pending_pairing_candidate {
+                (Some(pairing.principal_did), Some(pairing.device_id))
             } else {
                 (
                     returning_principal,
@@ -726,12 +744,24 @@ pub fn LoginPanel(
             };
             let pending_store =
                 crate::secure_key_store::PendingLocalStore::new(pending_device_id.clone());
-            if !resume_account_handoff
-                && let Err(error) = pending_store.delete(secure_store.as_ref())
-            {
-                is_busy.set(false);
-                auth_status.set(format!("Could not rotate the pending sign-in key: {error}"));
-                return;
+            if !resume_account_handoff {
+                if let Err(error) =
+                    crate::identity::device_pairing::clear_pending_device_pairing_verification(
+                        &pending_store,
+                        secure_store.as_ref(),
+                    )
+                {
+                    is_busy.set(false);
+                    auth_status.set(format!(
+                        "Could not clear the previous pending device pairing: {error}"
+                    ));
+                    return;
+                }
+                if let Err(error) = pending_store.delete(secure_store.as_ref()) {
+                    is_busy.set(false);
+                    auth_status.set(format!("Could not rotate the pending sign-in key: {error}"));
+                    return;
+                }
             }
             if let Err(error) = pending_store
                 .save_device_id_durable(secure_store.as_ref())
@@ -1321,6 +1351,26 @@ fn returning_device_id(
     Ok(Some(stored_device_id.to_string()))
 }
 
+fn pending_pairing_for_handoff(
+    secure_store: &dyn crate::secure_key_store::SecureKeyStore,
+    handoff: &crate::state::PendingAccountHandoff,
+) -> Result<Option<crate::identity::device_pairing::PendingDevicePairingVerification>, String> {
+    let device_id = arkret_sdk::DeviceId::new(handoff.device_id.clone())
+        .map_err(|error| format!("Validate pending pairing device id: {error}"))?;
+    let pending = crate::secure_key_store::PendingLocalStore::new(device_id);
+    let verification = crate::identity::device_pairing::load_pending_device_pairing_verification(
+        &pending,
+        secure_store,
+    )
+    .map_err(|error| format!("Load pending device pairing: {error}"))?;
+    if let Some(verification) = verification.as_ref() {
+        verification
+            .validate_for_handoff(handoff)
+            .map_err(|error| format!("Validate pending device pairing: {error}"))?;
+    }
+    Ok(verification)
+}
+
 pub(crate) struct PreparedCompletedLoginKeys {
     user_store: crate::secure_key_store::UserLocalStore,
     pending_store: crate::secure_key_store::PendingLocalStore,
@@ -1403,6 +1453,11 @@ pub(crate) fn commit_completed_login_dpop_key(
         prepared.device_id.as_str(),
     )
     .map_err(|error| format!("bind account device signer principal: {error}"))?;
+    crate::identity::device_pairing::clear_pending_device_pairing_verification(
+        &prepared.pending_store,
+        secure_store,
+    )
+    .map_err(|error| format!("consume pending device-pairing verification: {error}"))?;
     prepared
         .pending_store
         .delete(secure_store)
@@ -1954,6 +2009,34 @@ pub(crate) async fn issue_bound_handoff_session(
             "Account handoff expired before returning-device session exchange.".to_owned(),
         ));
     }
+    let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
+    let user_store =
+        crate::secure_key_store::UserLocalStore::new(authority.clone(), device_id.clone())
+            .map_err(|error| format!("Open returning-device secure scope: {error}"))?;
+    let durable_signing_seed = user_store
+        .load_signing_seed(secure_store.as_ref())
+        .map_err(|error| format!("Load returning-device signer: {error}"))?;
+    let pending_pairing = if durable_signing_seed.is_none() {
+        pending_pairing_for_handoff(secure_store.as_ref(), pending_handoff)?
+    } else {
+        None
+    };
+    let signing_seed = match durable_signing_seed.as_ref() {
+        Some(material) => material.seed,
+        None => {
+            let pairing = pending_pairing.as_ref().ok_or_else(|| {
+                "Returning-device signer is unavailable and no exact pending pairing exists."
+                    .to_owned()
+            })?;
+            let pending =
+                crate::secure_key_store::PendingLocalStore::new(pairing.device_id.clone());
+            pending
+                .load_signing_seed(secure_store.as_ref())
+                .map_err(|error| format!("Load pending paired-device signer: {error}"))?
+                .ok_or_else(|| "Pending paired-device signer is unavailable.".to_owned())?
+                .seed
+        }
+    };
     let request = match crate::identity::account_auth::load_prepared_returning_session_request(
         pending_handoff,
     )
@@ -1965,16 +2048,8 @@ pub(crate) async fn issue_bound_handoff_session(
             // returning-device state before authoring the protocol request.
             // The pending-login DPoP key proves the fresh AccountHandoff; it
             // must never be mistaken for the durable accepted-device signer.
-            let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-            let user_store =
-                crate::secure_key_store::UserLocalStore::new(authority.clone(), device_id.clone())
-                    .map_err(|error| format!("Open returning-device secure scope: {error}"))?;
-            let signing_seed = user_store
-                .load_signing_seed(secure_store.as_ref())
-                .map_err(|error| format!("Load returning-device signer: {error}"))?
-                .ok_or_else(|| "Returning-device signer is unavailable.".to_owned())?;
             crate::event_signer::activate_device_signer_from_seed_for_device(
-                signing_seed.seed,
+                signing_seed,
                 Some(secure_store.as_ref()),
                 Some(device_id.as_str()),
             )
@@ -2099,6 +2174,38 @@ pub(crate) async fn issue_bound_handoff_session(
     let principal_http = authed_principal
         .sdk_http_client()
         .map_err(|error| format!("Build authenticated Station client: {error}"))?;
+    if let Some(pairing) = pending_pairing.as_ref() {
+        let status_http = TransportClient::unauthenticated(station_url)
+            .map_err(|error| format!("Build pairing status client: {error}"))?
+            .sdk_http_client()
+            .map_err(|error| format!("Build pairing status HTTP client: {error}"))?;
+        let status = status_http
+            .device_pairing_status(&arkret_sdk::DevicePairingStatusRequestBody {
+                device_pairing_request_id: pairing.request_id.clone(),
+                pairing_code: pairing.pairing_code.clone(),
+            })
+            .await
+            .map_err(|error| format!("Read accepted device-pairing status: {error}"))?;
+        if status.state != arkret_sdk::DevicePairingState::Authorized {
+            return Err(ReturningSessionExchangeError::Fatal(
+                "The paired-device session was issued before its staged request reported authorized."
+                    .to_owned(),
+            ));
+        }
+        crate::identity::device_pairing::verify_authorized_pairing_event_for_authority(
+            &principal_http,
+            &pairing.principal_did,
+            &pairing.account_id,
+            &status,
+            &pairing.target_attestation,
+        )
+        .await
+        .map_err(|error| {
+            ReturningSessionExchangeError::Fatal(format!(
+                "Verify accepted paired-device authorization Event: {error}"
+            ))
+        })?;
+    }
     let account = crate::transport::account::account_me(&principal_http)
         .await
         .map_err(|error| format!("Station rejected the returning session: {error}"))?;

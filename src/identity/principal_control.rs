@@ -18,12 +18,27 @@ pub(crate) async fn resolve_accepted<P: std::fmt::Display + ?Sized>(
         "principal-control operation does not target the active account"
     );
 
-    let request = arkret_sdk::PrincipalResolutionAuditRequest::new(active.authority.clone());
+    resolve_accepted_for_authority(http, &active.authority).await
+}
+
+/// Resolve an accepted PCR for an explicitly authenticated account authority.
+///
+/// Device-pairing completion uses this before the pending signer is promoted
+/// into the process-wide active account scope. The authenticated Station
+/// client and the exact handoff-bound AccountId are the authority at this
+/// boundary; requiring an already-promoted local scope would invert the
+/// device-lifecycle verification order.
+pub(crate) async fn resolve_accepted_for_authority(
+    http: &arkret_sdk::http_client::Client,
+    authority: &arkret_sdk::AccountId,
+) -> anyhow::Result<arkret_sdk::RealmId> {
+    let request = arkret_sdk::PrincipalResolutionAuditRequest::new(authority.clone());
     let evidence = http.principal_resolution_audit(&request).await?;
     anyhow::ensure!(
-        evidence.account_id == active.authority,
+        evidence.account_id == *authority,
         "principal resolution audit changed the selected account authority"
     );
+
     anyhow::ensure!(
         evidence.principal_genesis_event.realm_id == evidence.principal_control_realm_id
             && evidence.current_resolution_event.realm_id == evidence.principal_control_realm_id

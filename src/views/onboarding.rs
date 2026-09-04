@@ -499,7 +499,6 @@ struct DeviceSetupPairingRequest {
     device_id: arkret_sdk::DeviceId,
     deep_link: String,
     target_attestation: arkret_sdk::DevicePairingTargetAttestation,
-    pending_key: bool,
 }
 
 fn device_pairing_handoff_token(
@@ -548,15 +547,15 @@ async fn stage_device_setup_pairing(
     let retained = user_store
         .load_device_id(secure_store.as_ref())?
         .zip(user_store.load_signing_seed(secure_store.as_ref())?);
-    let (target_device, signing_seed, pending_key) = if let Some((device, material)) = retained {
-        (device, material.seed, false)
+    let (target_device, signing_seed) = if let Some((device, material)) = retained {
+        (device, material.seed)
     } else {
         let pending_store = crate::secure_key_store::PendingLocalStore::new(handoff_device.clone());
         pending_store.activate();
         let material = pending_store
             .create_fresh_signing_seed_durable(secure_store.as_ref())
             .await?;
-        (handoff_device, material.seed, true)
+        (handoff_device, material.seed)
     };
     crate::event_signer::activate_device_signer_from_seed_for_device(
         signing_seed,
@@ -637,13 +636,30 @@ async fn stage_device_setup_pairing(
         &challenge_proof,
         &target_attestation,
     )?;
+    let principal_did = handoff
+        .bound_principal_did
+        .clone()
+        .ok_or_else(|| anyhow::anyhow!("bound account principal DID is missing"))?;
+    let pending_store = crate::secure_key_store::PendingLocalStore::new(target_device.clone());
+    crate::identity::device_pairing::persist_pending_device_pairing_verification(
+        &pending_store,
+        secure_store.as_ref(),
+        &crate::identity::device_pairing::PendingDevicePairingVerification {
+            principal_did,
+            account_id: authority,
+            request_id: stage.device_pairing_request_id.clone(),
+            pairing_code: stage.pairing_code.clone(),
+            device_id: target_device.clone(),
+            target_attestation: target_attestation.clone(),
+        },
+    )
+    .await?;
     Ok(DeviceSetupPairingRequest {
         request_id: stage.device_pairing_request_id,
         pairing_code: stage.pairing_code,
         device_id: target_device,
         deep_link,
         target_attestation,
-        pending_key,
     })
 }
 
@@ -651,10 +667,6 @@ async fn check_device_setup_pairing(
     handoff: &crate::state::PendingAccountHandoff,
     request: &DeviceSetupPairingRequest,
 ) -> anyhow::Result<arkret_sdk::DevicePairingState> {
-    let principal_did = handoff
-        .bound_principal_did
-        .clone()
-        .ok_or_else(|| anyhow::anyhow!("bound account principal DID is missing"))?;
     let http = crate::transport::TransportClient::unauthenticated(&handoff.station_url)?
         .sdk_http_client()?;
     let outcome = http
@@ -666,39 +678,20 @@ async fn check_device_setup_pairing(
     if outcome.state != arkret_sdk::DevicePairingState::Authorized {
         return Ok(outcome.state);
     }
-    crate::identity::device_pairing::verify_authorized_pairing_event(
-        &http,
-        &principal_did,
-        &outcome,
+    arkret_sdk::signatures::device_pairing::verify_device_pairing_target_attestation(
         &request.target_attestation,
-    )
-    .await?;
-    if request.pending_key {
-        let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-        let pending = crate::secure_key_store::PendingLocalStore::new(request.device_id.clone());
-        let authority = arkret_sdk::AccountId::new(
-            handoff
-                .bound_principal_id
-                .clone()
-                .context("bound account principal id is missing")?,
-            handoff.audience_id.clone(),
-        );
-        let user =
-            crate::secure_key_store::UserLocalStore::new(authority, request.device_id.clone())?;
-        pending
-            .copy_to_durable(secure_store.as_ref(), &user)
-            .await?;
-        let promoted_device = user
-            .load_device_id(secure_store.as_ref())?
-            .ok_or_else(|| anyhow::anyhow!("authorized device was not retained"))?;
-        if promoted_device != request.device_id {
-            anyhow::bail!("another local device identity occupies this account namespace");
-        }
-    }
-    crate::event_signer::bind_active_signer_principal_device_id(
-        &principal_did,
-        request.device_id.as_str(),
     )?;
+    let status_device = outcome
+        .device_id
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("authorized pairing status omitted device_id"))?;
+    if status_device != &request.device_id || status_device != &request.target_attestation.device_id
+    {
+        anyhow::bail!("authorized pairing status names another target device");
+    }
+    if outcome.authorized_event_ref.is_none() {
+        anyhow::bail!("authorized pairing status omitted authorized_event_ref");
+    }
     Ok(outcome.state)
 }
 
@@ -827,11 +820,8 @@ fn DeviceSetupRequired(
                         spawn(async move {
                             match check_device_setup_pairing(&handoff, &request).await {
                                 Ok(arkret_sdk::DevicePairingState::Authorized) => {
-                                    let principal = handoff.bound_principal_id.clone();
-                                    principal_id.set(principal);
-                                    device_id.set(request.device_id.to_string());
                                     pairing_status.set(
-                                        "Device authorization is accepted and verified. No session was issued; sign in again to request one."
+                                        "Device authorization is accepted. Sign in again to verify the accepted authorization Event before this device is installed."
                                             .to_owned(),
                                     );
                                 }

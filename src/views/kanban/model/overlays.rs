@@ -349,6 +349,11 @@ pub(crate) struct LocalCardUpdate {
     pub(crate) fields: Option<Value>,
     pub(crate) fields_replaces_all: bool,
     pub(crate) calendar: Option<CalendarCardFields>,
+    /// A locally visible/decryptable Calendar patch advances the client-side
+    /// schedule DAG even when the zero-knowledge server projection cannot
+    /// inspect the encrypted subtree.
+    pub(crate) schedule_revision_digest: Option<String>,
+    pub(crate) schedule_causal_refs: Vec<String>,
     pub(crate) state: CardState,
 }
 
@@ -480,6 +485,44 @@ pub(crate) fn local_card_update_from_raw_operation(
             fields_have_calendar_keys(fields)
                 .then(|| calendar_fields_from_metadata(fields, decrypt_ctx, &strand_id))
         });
+    let touches_calendar = patch.keys().any(|path| {
+        path == "metadata.fields.calendar"
+            || path.starts_with("metadata.fields.calendar.")
+            || matches!(
+                path.as_str(),
+                "metadata.fields.start"
+                    | "metadata.fields.end"
+                    | "metadata.fields.timezone"
+                    | "metadata.fields.tzdb_version"
+                    | "metadata.fields.all_day"
+                    | "metadata.fields.status"
+                    | "metadata.fields.recurrence"
+                    | "metadata.fields.location"
+                    | "metadata.fields.call_id"
+                    | "metadata.fields.attendees"
+            )
+    });
+    // Accepted optimistic rows retain their holder-local `operation_id` as
+    // the durable record key; reconciliation writes the authoritative,
+    // content-bound identity into `payload.event_id`.  Rows synthesized
+    // directly from Event sync use the Event id as the record key instead.
+    let schedule_event_id = payload
+        .get("event_id")
+        .and_then(Value::as_str)
+        .unwrap_or(record.operation_id.as_str());
+    let schedule_revision_digest = touches_calendar
+        .then(|| arkret_sdk::EventId::new(schedule_event_id.to_owned()).ok())
+        .flatten()
+        .map(|event_id| event_id.event_digest().to_string());
+    let schedule_causal_refs = payload
+        .get("causal_refs")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .filter_map(|value| arkret_sdk::Hash::new(value.to_owned()).ok())
+        .map(|value| value.to_string())
+        .collect();
 
     Some(LocalCardUpdate {
         strand_id,
@@ -490,6 +533,8 @@ pub(crate) fn local_card_update_from_raw_operation(
         fields,
         fields_replaces_all,
         calendar,
+        schedule_revision_digest,
+        schedule_causal_refs,
         state: raw_operation_card_state(payload),
     })
 }
@@ -561,6 +606,13 @@ pub(crate) fn apply_card_update_overlay(card: &mut KanbanCard, update: &LocalCar
         } else if let Some(fields) = update.fields.as_ref().and_then(Value::as_object) {
             apply_calendar_field_overlay(&mut card.calendar, fields, calendar);
         }
+    }
+    if let Some(revision) = update.schedule_revision_digest.as_ref() {
+        card.calendar_schedule_basis_refs
+            .retain(|head| !update.schedule_causal_refs.iter().any(|seen| seen == head));
+        card.calendar_schedule_basis_refs.push(revision.clone());
+        card.calendar_schedule_basis_refs.sort();
+        card.calendar_schedule_basis_refs.dedup();
     }
     card.state = update.state;
 }
