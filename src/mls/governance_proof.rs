@@ -19,7 +19,18 @@ pub(crate) fn bind_sidecar_scope(
     )
 }
 
-pub(crate) trait GovernanceProofStateStore: Clone + Send + Sync + 'static {
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) trait GovernanceProofStateStorePlatform: Send + Sync {}
+#[cfg(not(target_arch = "wasm32"))]
+impl<T: Send + Sync> GovernanceProofStateStorePlatform for T {}
+#[cfg(target_arch = "wasm32")]
+pub(crate) trait GovernanceProofStateStorePlatform {}
+#[cfg(target_arch = "wasm32")]
+impl<T> GovernanceProofStateStorePlatform for T {}
+
+pub(crate) trait GovernanceProofStateStore:
+    Clone + GovernanceProofStateStorePlatform + 'static
+{
     fn with_read<R>(&self, read: impl FnOnce(&crate::state::LocalStateStore) -> R) -> R;
     fn with_write<R>(&self, write: impl FnOnce(&mut crate::state::LocalStateStore) -> R) -> R;
 }

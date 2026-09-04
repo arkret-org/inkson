@@ -651,7 +651,7 @@ where
             &'a [arkret_sdk::GovernanceDependency],
         ) -> arkret_sdk::VerifyAgentHistoryKeyFuture<'a>
         + Clone
-        + Send
+        + arkret_sdk::VerifyAgentHistoryKeySend
         + 'static,
 {
     let frontier = http.seals_frontier(event.realm_id.clone()).await?.frontier;
