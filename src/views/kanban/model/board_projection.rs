@@ -815,7 +815,7 @@ mod tests {
     }
 
     fn sdk_realm_id() -> arkret_sdk::RealmId {
-        arkret_sdk::RealmId::new(REALM).unwrap()
+        crate::test_support::realm_id(REALM)
     }
 
     fn sdk_actor_id() -> arkret_sdk::DidCoreId {

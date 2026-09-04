@@ -338,13 +338,7 @@ async fn release_browser(scope: &str, owner_id: &str, fence: u64) -> anyhow::Res
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn authority(principal: &str, server: &str) -> arkret_sdk::AccountId {
-        arkret_sdk::AccountId::new(
-            arkret_sdk::DidCoreId::new(principal.to_owned()).unwrap(),
-            arkret_sdk::DidCoreId::new(server.to_owned()).unwrap(),
-        )
-    }
+    use crate::test_support as fixture;
 
     #[test]
     fn active_lease_blocks_and_expired_lease_advances_fence() {
@@ -373,7 +367,7 @@ mod tests {
     fn scope_binds_endpoint_authority_and_device() {
         let first = endpoint_scope(
             "https://one.example/",
-            &authority(
+            &fixture::authority_at_station(
                 "ak:did_core:web:alice.example",
                 "ak:did_core:web:one.example",
             ),
@@ -383,7 +377,7 @@ mod tests {
         .unwrap();
         let second = endpoint_scope(
             "https://two.example/",
-            &authority(
+            &fixture::authority_at_station(
                 "ak:did_core:web:alice.example",
                 "ak:did_core:web:two.example",
             ),

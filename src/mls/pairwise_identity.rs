@@ -131,15 +131,14 @@ mod tests {
     use super::*;
 
     fn realm(seed: char) -> arkret_sdk::RealmId {
-        arkret_sdk::RealmId::new(format!(
+        crate::test_support::realm_id(&format!(
             "ak:realm:A{}",
             std::iter::repeat_n(seed, 43).collect::<String>()
         ))
-        .unwrap()
     }
 
     fn device(seed: u8) -> arkret_sdk::DeviceId {
-        arkret_sdk::DeviceId::new(format!("ak:device:01964137-0000-7000-8000-{seed:012x}")).unwrap()
+        crate::test_support::device_id(&format!("ak:device:01964137-0000-7000-8000-{seed:012x}"))
     }
 
     #[test]

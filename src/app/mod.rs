@@ -9,7 +9,7 @@ use serde_json::Value;
 use crate::components::{SecurityStateBadge, SelfAttributionBadge, UiIcon};
 use crate::config::{ClientConfig, LocalConfigStore, normalize_server_url};
 use crate::conformance::profile_ready;
-use crate::i18n::{TextDirection, UiLocale};
+use crate::i18n::UiLocale;
 use crate::models::{
     RealmTreeNode, RealmTreeNodeKind, ServiceDescribe, missing_v1_station_requirements,
     projection_realm_id_for_known_node, service_supports_event_envelope_write_plane,
@@ -19,8 +19,8 @@ use crate::models::{
 // `crate::sync_engine` so the existing `crate::app::…` call sites keep
 // resolving without a sync_engine edit.
 pub(crate) use crate::realm_tree::{
-    descendant_node_ids, full_sync_projection_keep_set, realm_tree_items_with_pinned_realms,
-    realm_tree_node_is_direct_conversation, realm_tree_nodes_from_sync_realms_with_roles,
+    descendant_node_ids, full_sync_projection_keep_set, realm_tree_node_is_direct_conversation,
+    realm_tree_nodes_from_sync_realms_with_roles,
 };
 use crate::routes::Route;
 use crate::state::projection::ProjectionEvent;
@@ -100,6 +100,7 @@ mod session_boot;
 mod session_context;
 mod session_shell;
 mod shell_effects;
+mod shell_model;
 mod sidebar;
 mod sidebar_width;
 mod signal_products;
@@ -659,23 +660,17 @@ fn AppBootstrap() -> Element {
     // it on the first user-driven add-account / switch action.
     let profiles_signal = use_signal(crate::config::MultiProfileConfig::default);
 
-    let remembered_realm_id = selected_realm_id();
-    let effective_realm_id = routed_realm_id
-        .clone()
-        .filter(|realm_id| !principal_control_realm_ids.contains(realm_id))
-        .or_else(|| {
-            if remembered_realm_id.trim().is_empty() {
-                None
-            } else {
-                Some(remembered_realm_id.clone())
-            }
-        });
+    let shell_model::RealmSelection {
+        effective_realm_id,
+        remember: remember_routed_realm_id,
+    } = shell_model::resolve_realm_selection(
+        routed_realm_id.as_deref(),
+        &selected_realm_id(),
+        &principal_control_realm_ids,
+    );
     let active_realm_id = effective_realm_id.clone().unwrap_or_default();
-    if let Some(route_realm_id) = routed_realm_id.as_deref()
-        && !principal_control_realm_ids.contains(route_realm_id)
-        && remembered_realm_id != route_realm_id
-    {
-        selected_realm_id.set(route_realm_id.to_owned());
+    if let Some(route_realm_id) = remember_routed_realm_id {
+        selected_realm_id.set(route_realm_id);
     }
 
     let active_server_description = server_description();
@@ -721,40 +716,23 @@ fn AppBootstrap() -> Element {
     let principal_id_label = short_protocol_id(&principal_id_value);
     let device_id_label = short_protocol_id(&device_id_value);
     let personal_handles_value = personal_handles();
-    let account_handles_label =
-        account_handles_display(&personal_handles_value, &personal_handles_status());
-    let account_handles_title = if personal_handles_value.is_empty() {
-        account_handles_label.clone()
-    } else {
-        personal_handles_value.join(", ")
-    };
     let account_display_name = current_account_display_name();
     let device_display_name = current_device_display_name();
-    let account_label = if has_session {
-        if !account_display_name.trim().is_empty() {
-            account_display_name.clone()
-        } else {
-            personal_handles_value
-                .first()
-                .map(|handle| format!("@{handle}"))
-                .unwrap_or_else(|| actor_display_label(&state_store.read(), &principal_id_value))
-        }
-    } else {
-        "Not signed in".to_owned()
-    };
-    let account_detail = if has_session {
-        let device = if device_display_name.trim().is_empty() {
-            device_id_label.clone()
-        } else {
-            device_display_name.clone()
-        };
-        personal_handles_value
-            .first()
-            .map(|handle| format!("@{handle} · {device}"))
-            .unwrap_or(device)
-    } else {
-        "Refresh server metadata, then sign in".to_owned()
-    };
+    let shell_model::AccountIdentityLabels {
+        handles_label: account_handles_label,
+        handles_title: account_handles_title,
+        label: account_label,
+        detail: account_detail,
+    } = shell_model::account_identity_labels(shell_model::AccountIdentityInput {
+        has_session,
+        personal_handles: &personal_handles_value,
+        personal_handles_status: &personal_handles_status(),
+        account_display_name: &account_display_name,
+        device_display_name: &device_display_name,
+        device_id_label: &device_id_label,
+        principal_id_value: &principal_id_value,
+        store: &state_store.read(),
+    });
     // The actor-private mirror is authoritative when present (including an
     // explicit empty tombstone after clearing an avatar). Otherwise use the
     // public Actor Profile projection loaded from account/viewer.
@@ -834,37 +812,10 @@ fn AppBootstrap() -> Element {
     } else {
         Vec::new()
     };
-    // Control-plane and Direct Conversation Realms are never product
-    // navigation nodes. PCR ids come only from accepted create projections or
-    // the verified account-scoped recovery evidence; no DID-derived guess is
-    // permitted because Realm ids are Event-derived.
-    let hidden_realm_tree_node_ids: BTreeSet<String> = loaded_realm_tree_nodes
-        .iter()
-        .filter(|node| {
-            node.kind == RealmTreeNodeKind::Realm
-                && (realm_tree_node_is_direct_conversation(node)
-                    || principal_control_realm_ids.contains(&node.id))
-        })
-        .flat_map(|node| descendant_node_ids(&loaded_realm_tree_nodes, &node.id))
-        .collect();
-    let collaboration_realm_tree_nodes: Vec<_> = loaded_realm_tree_nodes
-        .iter()
-        .filter(|node| !hidden_realm_tree_node_ids.contains(node.id.as_str()))
-        .cloned()
-        .collect();
-    let selected_preview = loaded_realm_tree_nodes
-        .iter()
-        .find(|node| context_realm_id.as_deref() == Some(node.id.as_str()))
-        .cloned();
-    let active_projection_realm_id =
-        projection_realm_id_for_known_node(&loaded_realm_tree_nodes, &active_realm_id)
-            .unwrap_or_default();
     let pinned_realm_ids = {
         let store = state_store.read();
         pinned_realm_ids_from_store(&store)
     };
-    let realm_tree =
-        realm_tree_items_with_pinned_realms(&collaboration_realm_tree_nodes, &pinned_realm_ids);
     let realm_tree_projections = state_store.read().load().realm_tree_projections;
     // A persisted Realm-default MLS snapshot is authoritative local evidence
     // for previously created/joined encrypted Realms. It also repairs clients
@@ -879,131 +830,38 @@ fn AppBootstrap() -> Element {
     let collaboration_sidebar_query_value =
         collaboration_sidebar_query().trim().to_ascii_lowercase();
     let direct_sidebar_query_value = direct_sidebar_query().trim().to_ascii_lowercase();
+    let realm_remarks_for_sidebar = state_store.read().realm_remarks();
+    let shell_model::RealmNavigationModel {
+        collaboration_nodes: collaboration_realm_tree_nodes,
+        selected_preview,
+        active_projection_realm_id,
+        realm_tree,
+        filtered_realm_tree,
+        manage_realm_rows,
+        active_realm_security_encrypted,
+    } = shell_model::build_realm_navigation(shell_model::RealmNavigationInput {
+        loaded_nodes: &loaded_realm_tree_nodes,
+        principal_control_realm_ids: &principal_control_realm_ids,
+        context_realm_id: context_realm_id.as_deref(),
+        active_realm_id: &active_realm_id,
+        pinned_realm_ids: &pinned_realm_ids,
+        realm_tree_projections: &realm_tree_projections,
+        realm_ids_with_local_mls: &realm_ids_with_local_mls,
+        realm_remarks: &realm_remarks_for_sidebar,
+        collaboration_query: &collaboration_sidebar_query_value,
+    });
     // Render from an owned snapshot. Keeping a Signal read guard alive inside
     // the RSX iterator lets an async Direct Conversation open complete while
     // Dioxus is still reconciling that borrowed hook storage, which panics in
     // generational-box when the opening state is cleared.
     let own_agent_rows_for_sidebar = own_agent_rows.read().clone();
-    let realm_remarks_for_sidebar = state_store.read().realm_remarks();
     let contact_remarks_for_sidebar = state_store.read().active_contact_remarks();
-    let filtered_realm_tree: Vec<_> = realm_tree
-        .iter()
-        .filter(|item| {
-            let display_name = realm_remarks_for_sidebar
-                .get(&item.node.id)
-                .map(|remark| remark.display_name(&item.node.title).to_owned())
-                .unwrap_or_else(|| item.node.title.clone());
-            let kind_label = match item.node.kind {
-                RealmTreeNodeKind::Realm => "realm",
-                RealmTreeNodeKind::Space => "space",
-            };
-            sidebar_text_matches_query(
-                &collaboration_sidebar_query_value,
-                &[&item.node.id, &item.node.title, &display_name, kind_label],
-            )
-        })
-        .cloned()
-        .collect();
-    let manage_realm_rows: Vec<_> = collaboration_realm_tree_nodes
-        .iter()
-        .filter(|node| node.kind == RealmTreeNodeKind::Realm)
-        .map(|node| {
-            let display_name = realm_remarks_for_sidebar
-                .get(&node.id)
-                .map(|remark| remark.display_name(&node.title).to_owned())
-                .unwrap_or_else(|| node.title.clone());
-            let encrypted = realm_tree_projections
-                .get(&node.id)
-                .and_then(garth::realm_projection_security_state)
-                .unwrap_or_else(|| realm_ids_with_local_mls.contains(&node.id));
-            let space_count = descendant_node_ids(&collaboration_realm_tree_nodes, &node.id)
-                .len()
-                .saturating_sub(1);
-            RealmManageRow {
-                realm_id: node.id.clone(),
-                display_name,
-                title: node.title.clone(),
-                encrypted,
-                space_count,
-            }
-        })
-        .collect::<Vec<_>>();
-    let mut filtered_direct_contact_rows: Vec<_> = direct_contact_rows
-        .read()
-        .iter()
-        .filter(|contact| {
-            let peer_id = crate::models::contact_peer_id(contact);
-            let display_name = actor_display_label(&state_store.read(), peer_id.as_str());
-            let scopes = contact
-                .bidirectional_scopes
-                .iter()
-                .chain(contact.effective_scopes.iter().flatten())
-                .chain(contact.granted_to_peer_scopes.iter())
-                .chain(contact.granted_by_peer_scopes.iter())
-                .map(|scope| crate::models::contact_scope_wire(*scope))
-                .collect::<Vec<_>>()
-                .join(" ");
-            let agent_match = contact.contact_agent_projections.iter().any(|agent| {
-                sidebar_text_matches_query(
-                    &direct_sidebar_query_value,
-                    &[
-                        agent.actor_id.signing_principal_id().as_str(),
-                        agent.display_name.as_deref().unwrap_or_default(),
-                        agent.agent_slug.as_deref().unwrap_or_default(),
-                    ],
-                )
-            });
-            agent_match
-                || sidebar_text_matches_query(
-                    &direct_sidebar_query_value,
-                    &[
-                        peer_id.as_str(),
-                        crate::models::contact_state_wire(contact.state),
-                        &display_name,
-                        &scopes,
-                    ],
-                )
-        })
-        .cloned()
-        .collect();
-    filtered_direct_contact_rows.sort_by(|left, right| {
-        let left_peer = crate::models::contact_peer_id(left);
-        let right_peer = crate::models::contact_peer_id(right);
-        let left_remark = contact_remarks_for_sidebar.get(left_peer.as_str());
-        let right_remark = contact_remarks_for_sidebar.get(right_peer.as_str());
-        let left_pinned = left_remark.is_some_and(|remark| remark.pinned);
-        let right_pinned = right_remark.is_some_and(|remark| remark.pinned);
-        let left_label =
-            actor_display_label(&state_store.read(), left_peer.as_str()).to_ascii_lowercase();
-        let right_label =
-            actor_display_label(&state_store.read(), right_peer.as_str()).to_ascii_lowercase();
-        right_pinned
-            .cmp(&left_pinned)
-            .then_with(|| left_label.cmp(&right_label))
-            .then_with(|| left_peer.cmp(&right_peer))
-    });
-    let active_security_scope_id = if active_projection_realm_id.trim().is_empty() {
-        active_realm_id.as_str()
-    } else {
-        active_projection_realm_id.as_str()
-    };
-    // The Realm row and topbar must never disagree about the same Realm. Use
-    // the row's already-resolved Realm projection first; only fall back to a
-    // Space/Strand scope lookup while the Realm tree itself is still hydrating.
-    // Scope-first lookup allowed a partial board projection to turn an
-    // encrypted Realm into the topbar's `Unencrypted` false default.
-    let active_realm_security_encrypted = manage_realm_rows
-        .iter()
-        .find(|row| row.realm_id == active_realm_id)
-        .map(|row| row.encrypted)
-        .or_else(|| {
-            garth::security_projection_for_scope_id(
-                &realm_tree_projections,
-                active_security_scope_id,
-            )
-            .map(garth::realm_projection_is_encrypted)
-        })
-        .unwrap_or(false);
+    let filtered_direct_contact_rows = shell_model::filter_and_sort_direct_contacts(
+        &direct_contact_rows.read(),
+        &direct_sidebar_query_value,
+        &state_store.read(),
+        &contact_remarks_for_sidebar,
+    );
     let active_locale = locale();
     let active_direction = active_locale.direction();
     let direction_attr = active_direction.as_str();
@@ -1015,7 +873,18 @@ fn AppBootstrap() -> Element {
     let configured_stations = config_store.read().load().stations;
     let server_options = server_options_for(&base_url(), &configured_stations);
     let sidebar_style = format!("--sidebar-w: {:.0}px;", sidebar_width());
-    let theme_is_night = theme_renders_as_night(&active_theme, system_theme_is_night());
+    let shell_model::ShellChrome {
+        theme_toggle_icon,
+        theme_toggle_title,
+        shell_class,
+        auth_class,
+    } = shell_model::shell_chrome(
+        &active_theme,
+        system_theme_is_night(),
+        active_direction,
+        sidebar_is_collapsed,
+        sidebar_is_resizing,
+    );
     // The shell's `data-theme` carries the *raw* chosen mode
     // (`light` | `night` | `system`) as an app/diagnostic signal (the e2e theme
     // assertions read it). All *styling* is driven off the *effective* canonical
@@ -1025,12 +894,6 @@ fn AppBootstrap() -> Element {
     // `[data-theme="dark"]` (the `<html>` ancestor). Nothing styling-related
     // depends on this attribute, so it stays the raw mode.
     let theme_attr = active_theme.as_str();
-    let theme_toggle_icon = if theme_is_night { "sun" } else { "moon" };
-    let theme_toggle_title = if theme_is_night {
-        "Switch to light theme"
-    } else {
-        "Switch to night theme"
-    };
     let route_title = if routed_control_realm_id.is_some() {
         crate::i18n::tr("route.principal_control")
     } else {
@@ -1062,35 +925,9 @@ fn AppBootstrap() -> Element {
     } else {
         format!("{route_title} | Inkson | Arkret")
     };
-    let shell_class = format!(
-        "shell app{}{}{}",
-        if active_direction == TextDirection::Rtl {
-            " rtl"
-        } else {
-            ""
-        },
-        if sidebar_is_collapsed {
-            " sidebar-collapsed"
-        } else {
-            ""
-        },
-        if sidebar_is_resizing {
-            " sidebar-resizing"
-        } else {
-            ""
-        }
-    );
     // The auth surface and app shell are mounted through one stable component
     // boundary below. SessionSurface owns the small conditional template, so
     // neither surface's internal RSX can alter this parent template's shape.
-    let auth_class = format!(
-        "auth-shell{}",
-        if active_direction == TextDirection::Rtl {
-            " rtl"
-        } else {
-            ""
-        }
-    );
     let mut login_bootstrap_pending = bootstrap_pending;
     let mut callback_bootstrap_pending = bootstrap_pending;
     let login_session_boot_state = session_boot_state;

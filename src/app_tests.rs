@@ -6,31 +6,10 @@ fn test_client_config(
     device_id: impl AsRef<str>,
     credential: impl Into<String>,
 ) -> ClientConfig {
-    let principal = principal.as_ref();
-    let did = if let Some(rest) = principal.strip_prefix("ak:did_core:web:") {
-        arkret_sdk::Did::new(format!("did:web:{rest}")).unwrap()
-    } else {
-        arkret_sdk::Did::new(principal.to_owned()).unwrap()
-    };
-    let authority = arkret_sdk::AccountId::new(
-        arkret_sdk::project_did_to_core_id(&did).unwrap(),
-        arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example".to_owned()).unwrap(),
-    );
-    let account = crate::identity::active_account::ActiveAccountContext::new(
-        "ak:profile:019b0000-0000-7000-8000-000000000001".to_owned(),
-        authority,
-        arkret_sdk::PrincipalResolutionProjection {
-            did,
-            method_history_head: "head-1".to_owned(),
-            version_id: "1".to_owned(),
-            resolution_event_ref: format!("ak:event:{}", "A".repeat(44)),
-            updated_at: chrono::Utc::now(),
-        },
-        arkret_sdk::DeviceId::new(device_id.as_ref().to_owned()).unwrap(),
-        url::Url::parse(server_url).unwrap(),
+    ClientConfig::authenticated(
+        test_active_account(principal.as_ref(), server_url, device_id.as_ref()),
+        credential.into(),
     )
-    .unwrap();
-    ClientConfig::authenticated(account, credential.into())
 }
 
 fn test_active_account(
@@ -38,18 +17,14 @@ fn test_active_account(
     server_url: &str,
     device_id: &str,
 ) -> crate::config::ActiveAccountContext {
-    test_client_config(server_url, principal, device_id, String::new())
-        .active_account
-        .unwrap()
+    crate::test_support::AccountFixture::new(principal)
+        .server_url(server_url)
+        .device(device_id)
+        .build()
 }
 
 fn test_authority(principal: &str) -> arkret_sdk::AccountId {
-    test_active_account(
-        principal,
-        "https://local.host",
-        "ak:device:01964137-0000-7000-8000-000000000001",
-    )
-    .authority
+    crate::test_support::authority(principal)
 }
 
 #[test]

@@ -1090,18 +1090,14 @@ mod tests {
     }
 
     fn test_authority() -> arkret_sdk::AccountId {
-        arkret_sdk::AccountId::new(
-            crate::mls_api_helpers::principal_core_id(ACTOR).unwrap(),
-            arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap(),
-        )
+        crate::test_support::authority(ACTOR)
     }
 
     const ACTOR: &str = "did:web:alice.example";
     const DEVICE: &str = "ak:device:01904100-0000-7000-8000-000000000001";
 
     fn test_pcr() -> arkret_sdk::RealmId {
-        arkret_sdk::RealmId::new("ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19".to_owned())
-            .unwrap()
+        crate::test_support::realm_id("ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19")
     }
 
     fn test_account_secret() -> String {

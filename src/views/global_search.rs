@@ -453,18 +453,7 @@ mod tests {
     use serde_json::json;
 
     use super::*;
-
-    fn authority(actor: &str) -> arkret_sdk::AccountId {
-        arkret_sdk::AccountId {
-            principal_id: crate::mls_api_helpers::principal_core_id(actor).unwrap(),
-            station_id: arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example".to_owned())
-                .unwrap(),
-        }
-    }
-
-    fn device(value: &str) -> arkret_sdk::DeviceId {
-        arkret_sdk::DeviceId::new(value.to_owned()).unwrap()
-    }
+    use crate::test_support as fixture;
 
     #[test]
     fn result_snippet_prefers_body_then_summary_then_title() {
@@ -546,8 +535,8 @@ mod tests {
         let response = local_decrypted_index_search(
             &realms,
             &store,
-            &authority("did:web:alice.example"),
-            &device("ak:device:01904100-0000-7000-8000-000000000904"),
+            &fixture::authority("did:web:alice.example"),
+            &fixture::device_id("ak:device:01904100-0000-7000-8000-000000000904"),
             "LOCAL",
             &[],
             Some(&["message"]),
@@ -597,8 +586,8 @@ mod tests {
         let response = local_decrypted_index_search(
             &realms,
             &store,
-            &authority("did:web:alice.example"),
-            &device("ak:device:01904100-0000-7000-8000-000000000914"),
+            &fixture::authority("did:web:alice.example"),
+            &fixture::device_id("ak:device:01904100-0000-7000-8000-000000000914"),
             "message",
             &[],
             Some(&["message"]),
@@ -666,8 +655,8 @@ mod tests {
         let response = local_decrypted_index_search(
             &realms,
             &store,
-            &authority(actor_id),
-            &device("ak:device:01904100-0000-7000-8000-000000000938"),
+            &fixture::authority(actor_id),
+            &fixture::device_id("ak:device:01904100-0000-7000-8000-000000000938"),
             "sidecar-secret-search-needle",
             &[],
             Some(&["message"]),
@@ -714,8 +703,8 @@ mod tests {
         let not_messages = local_decrypted_index_search(
             &realms,
             &store,
-            &authority("did:web:alice.example"),
-            &device("ak:device:01904100-0000-7000-8000-000000000925"),
+            &fixture::authority("did:web:alice.example"),
+            &fixture::device_id("ak:device:01904100-0000-7000-8000-000000000925"),
             "needle",
             &[],
             Some(&["realm"]),
@@ -726,8 +715,8 @@ mod tests {
         let filtered = local_decrypted_index_search(
             &realms,
             &store,
-            &authority("did:web:alice.example"),
-            &device("ak:device:01904100-0000-7000-8000-000000000925"),
+            &fixture::authority("did:web:alice.example"),
+            &fixture::device_id("ak:device:01904100-0000-7000-8000-000000000925"),
             "needle",
             std::slice::from_ref(&second_realm_id),
             Some(&["message"]),

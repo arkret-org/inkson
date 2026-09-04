@@ -3,18 +3,7 @@
 use crate::mls::runtime::*;
 use crate::secure_key_store::MemorySecureKeyStore;
 use crate::state::isolated_store_for_tests as temp_state_store;
-
-fn authority(actor: &str) -> arkret_sdk::AccountId {
-    arkret_sdk::AccountId {
-        principal_id: crate::mls_api_helpers::principal_core_id(actor).unwrap(),
-        station_id: arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example".to_owned())
-            .unwrap(),
-    }
-}
-
-fn typed_device(device: &str) -> arkret_sdk::DeviceId {
-    arkret_sdk::DeviceId::new(device.to_owned()).unwrap()
-}
+use crate::test_support as fixture;
 
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
@@ -51,8 +40,8 @@ fn minimal_metadata_reaction_forces_commit_when_epoch_overdue() {
         &mut state,
         &secure,
         realm,
-        &authority(actor),
-        &typed_device(device),
+        &fixture::authority(actor),
+        &fixture::device_id(device),
     )
     .unwrap();
     super::seed_current_group_state_ref(&mut state, realm);
@@ -70,8 +59,8 @@ fn minimal_metadata_reaction_forces_commit_when_epoch_overdue() {
         &mut state,
         &secure,
         realm,
-        &authority(actor),
-        &typed_device(device),
+        &fixture::authority(actor),
+        &fixture::device_id(device),
         &target,
         chrono::Utc::now(),
         "👍",
@@ -114,8 +103,8 @@ fn non_minimal_reaction_never_forces_commit_and_persists_in_place() {
         &mut state,
         &secure,
         realm,
-        &authority(actor),
-        &typed_device(device),
+        &fixture::authority(actor),
+        &fixture::device_id(device),
     )
     .unwrap();
     super::seed_current_group_state_ref(&mut state, realm);
@@ -131,8 +120,8 @@ fn non_minimal_reaction_never_forces_commit_and_persists_in_place() {
         &mut state,
         &secure,
         realm,
-        &authority(actor),
-        &typed_device(device),
+        &fixture::authority(actor),
+        &fixture::device_id(device),
         &target,
         chrono::Utc::now(),
         "👍",

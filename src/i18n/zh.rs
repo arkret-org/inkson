@@ -2481,6 +2481,10 @@ fn prompt_copy_strings(dict: &mut TranslationDict) {
         "待处理的邀请只为你自己私密保存。等同意流程可用后,这里会出现审阅控件。",
     );
     dict.set("theme.switcher_aria_label", "主题");
+    dict.set("theme.switch_to_light", "切换到浅色主题");
+    dict.set("theme.switch_to_night", "切换到深色主题");
+    dict.set("account.not_signed_in", "尚未登录");
+    dict.set("account.refresh_then_sign_in", "先刷新服务器元数据，再登录");
     dict.set("visibility.pill_title", "谁可以找到并看到它");
     dict.set("moderation.workbench_aria_label", "内容处置");
     dict.set("moderation.decide_title", "记录一次处置");

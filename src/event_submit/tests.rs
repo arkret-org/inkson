@@ -646,10 +646,7 @@ const AUTHORITY_REALM: &str = "ak:realm:ATOz4l-vKJUCGZDmS_knGS9TjZ64pkOzx-HNGAgY
 const AUTHORITY_CONTROLLER: &str = "did:web:alice.example";
 const AUTHORITY_CONTROLLER_CORE: &str = "ak:did_core:web:alice.example";
 fn authority_controller_actor() -> arkret_sdk::ActorId {
-    arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
-        arkret_sdk::DidCoreId::new(AUTHORITY_CONTROLLER_CORE).unwrap(),
-        arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap(),
-    ))
+    crate::test_support::account_actor(AUTHORITY_CONTROLLER_CORE)
 }
 #[test]
 fn realm_create_authority_resolves_the_root_controller() {
@@ -792,9 +789,9 @@ fn dead_endpoint_submitter() -> EventSubmitter {
 }
 
 fn test_authority() -> arkret_sdk::AccountId {
-    arkret_sdk::AccountId::new(
-        arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example".to_owned()).unwrap(),
-        arkret_sdk::DidCoreId::new("ak:did_core:web:server.example".to_owned()).unwrap(),
+    crate::test_support::authority_at_station(
+        "ak:did_core:web:alice.example",
+        crate::test_support::SERVER_STATION_ID,
     )
 }
 

@@ -903,7 +903,7 @@ mod tests {
     use super::*;
 
     fn realm() -> arkret_sdk::RealmId {
-        arkret_sdk::RealmId::new("ak:realm:AZQnaSleDidYaYIvfwYy3au5gnd_DSinxyUHEl7ewtxk").unwrap()
+        crate::test_support::realm_id("ak:realm:AZQnaSleDidYaYIvfwYy3au5gnd_DSinxyUHEl7ewtxk")
     }
 
     fn actor() -> arkret_sdk::ActorId {

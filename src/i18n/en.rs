@@ -2933,6 +2933,13 @@ fn prompt_copy_strings(dict: &mut TranslationDict) {
     dict.set("quarantine.title", "Invite quarantine");
     dict.set("quarantine.status", "Pending invites are stored privately for you. Review controls appear once the consent flow is available.");
     dict.set("theme.switcher_aria_label", "Theme");
+    dict.set("theme.switch_to_light", "Switch to light theme");
+    dict.set("theme.switch_to_night", "Switch to night theme");
+    dict.set("account.not_signed_in", "Not signed in");
+    dict.set(
+        "account.refresh_then_sign_in",
+        "Refresh server metadata, then sign in",
+    );
     dict.set("visibility.pill_title", "Who can find and see this");
     dict.set("moderation.workbench_aria_label", "Moderation decisions");
     dict.set("moderation.decide_title", "Record a decision");

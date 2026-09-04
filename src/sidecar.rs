@@ -2143,10 +2143,7 @@ mod tests {
     use super::*;
 
     fn controller_account() -> arkret_sdk::AccountId {
-        arkret_sdk::AccountId::new(
-            crate::mls_api_helpers::principal_core_id("did:web:alice.example").unwrap(),
-            arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example".to_owned()).unwrap(),
-        )
+        crate::test_support::authority("did:web:alice.example")
     }
 
     fn account_data_namespace_key() -> [u8; 32] {

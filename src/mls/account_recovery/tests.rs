@@ -35,11 +35,7 @@ const STALE_SECRET_STORAGE_SERIES: &str = "ak:backup_series:01964137-1000-7000-8
 const ACTIVE_MLS_HISTORY_SERIES: &str = "ak:backup_series:01964137-1000-7000-8000-0000000000b1";
 
 fn authority() -> arkret_sdk::AccountId {
-    let did = arkret_sdk::Did::new(ACTOR).unwrap();
-    arkret_sdk::AccountId::new(
-        arkret_sdk::project_did_to_core_id(&did).unwrap(),
-        arkret_sdk::DidCoreId::new("ak:did_core:web:server.example").unwrap(),
-    )
+    crate::test_support::authority_at_station(ACTOR, crate::test_support::SERVER_STATION_ID)
 }
 
 fn backup_frontier_ref() -> arkret_sdk::KeyBackupFrontierRef {

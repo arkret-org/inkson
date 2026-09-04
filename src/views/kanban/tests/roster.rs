@@ -54,13 +54,6 @@ fn assignment_mutations_preserve_same_principal_accounts_at_different_stations()
 const ROSTER_ISSUER: &str = "ak:did_core:web:acme.example";
 const ROSTER_STATION: &str = "ak:did_core:web:principal.example";
 
-fn roster_account(principal: &str) -> arkret_sdk::AccountId {
-    arkret_sdk::AccountId::new(
-        arkret_sdk::DidCoreId::new(principal.to_owned()).unwrap(),
-        arkret_sdk::DidCoreId::new(ROSTER_STATION.to_owned()).unwrap(),
-    )
-}
-
 fn acme_policy() -> Vec<arkret_sdk::identity::HandleIssuerPolicyEntry> {
     vec![crate::views::member_display::test_issuer_policy(
         ROSTER_ISSUER,
@@ -86,7 +79,7 @@ fn realm_member_roster_reads_r32_wire_shape() {
     // `actor_id` + `membership` + optional `subject_account_id` /
     // `identity_event_ids` / `member_display_state_digest`. Handle
     // strings only appear inside signed handle_claim evidence.
-    let alice_subject = roster_account("ak:did_core:web:acme.example:principals:alice");
+    let alice_subject = fixture::authority("ak:did_core:web:acme.example:principals:alice");
     let projection = json!({
         "member_roster_entries": [
             {
@@ -219,7 +212,7 @@ fn realm_member_roster_drops_undisclosed_rows_carrying_claim_evidence() {
     // R3.2 dependentRequired: handle-claim evidence without
     // `subject_account_id` disclosure is a malformed entry, not a row to
     // render with the evidence silently ignored.
-    let subject = roster_account("ak:did_core:web:acme.example:principals:mallory");
+    let subject = fixture::authority("ak:did_core:web:acme.example:principals:mallory");
     let projection = json!({
         "member_roster_entries": [{
             "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:acme.example:users:mallory","station_id":ROSTER_STATION}},
@@ -301,8 +294,8 @@ fn member_display_label_uses_identity_name_when_no_verified_handle_exists() {
 
 #[test]
 fn member_display_label_prefers_inline_verified_handle_claim() {
-    let subject = roster_account("ak:did_core:web:acme.example:principals:alice");
-    let other = roster_account("ak:did_core:web:acme.example:principals:other");
+    let subject = fixture::authority("ak:did_core:web:acme.example:principals:alice");
+    let other = fixture::authority("ak:did_core:web:acme.example:principals:other");
     let row = RealmMemberRow {
         actor_id: crate::mls_api_helpers::local_account_actor_id(
             "ak:did_core:webvh:zQmPairwiseActor",
@@ -334,7 +327,7 @@ fn member_display_label_prefers_inline_verified_handle_claim() {
 
 #[test]
 fn member_display_label_rejects_unverified_or_untrusted_handle_claims() {
-    let subject = roster_account("ak:did_core:web:acme.example:principals:alice");
+    let subject = fixture::authority("ak:did_core:web:acme.example:principals:alice");
     let row = RealmMemberRow {
         actor_id: crate::mls_api_helpers::local_account_actor_id(
             "ak:did_core:webvh:zQmPairwiseActor",
@@ -396,7 +389,7 @@ fn member_display_label_rejects_unverified_or_untrusted_handle_claims() {
 
 #[test]
 fn member_display_label_uses_cached_directory_primary_handle() {
-    let subject = roster_account("ak:did_core:webvh:zQmPrincipal");
+    let subject = fixture::authority("ak:did_core:webvh:zQmPrincipal");
     let rendered = crate::views::member_display::resolve_subject_display(
         Some(&subject),
         &[],

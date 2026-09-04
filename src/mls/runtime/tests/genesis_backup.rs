@@ -3,18 +3,7 @@
 use crate::mls::runtime::*;
 use crate::secure_key_store::MemorySecureKeyStore;
 use crate::state::isolated_store_for_tests as temp_state_store;
-
-fn authority(actor: &str) -> arkret_sdk::AccountId {
-    arkret_sdk::AccountId {
-        principal_id: crate::mls_api_helpers::principal_core_id(actor).unwrap(),
-        station_id: arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example".to_owned())
-            .unwrap(),
-    }
-}
-
-fn device_id(value: &str) -> arkret_sdk::DeviceId {
-    arkret_sdk::DeviceId::new(value.to_owned()).unwrap()
-}
+use crate::test_support as fixture;
 
 fn genesis_governance_binding(group_id: &str) -> arkret_sdk::MlsGovernanceBindingPayload {
     let realm_id =
@@ -52,8 +41,8 @@ fn build_mls_genesis_payload_has_required_fields() {
         &mut state,
         &secure,
         realm,
-        &authority(actor),
-        &device_id(device),
+        &fixture::authority(actor),
+        &fixture::device_id(device),
     )
     .unwrap()
     .expect("creator snapshot should be created");
@@ -127,8 +116,8 @@ fn existing_epoch_zero_snapshot_restores_genesis_summary() {
         &mut state,
         &secure,
         realm,
-        &authority(actor),
-        &device_id(device),
+        &fixture::authority(actor),
+        &fixture::device_id(device),
     )
     .unwrap()
     .expect("creator snapshot should be created");
@@ -136,8 +125,8 @@ fn existing_epoch_zero_snapshot_restores_genesis_summary() {
         &state,
         &secure,
         realm,
-        &authority(actor),
-        &device_id(device),
+        &fixture::authority(actor),
+        &fixture::device_id(device),
     )
     .unwrap()
     .expect("epoch-0 snapshot restores summary");
@@ -163,8 +152,8 @@ fn only_unaccepted_epoch_zero_snapshot_can_be_recreated() {
         &mut state,
         &secure,
         realm,
-        &authority(actor),
-        &device_id(device),
+        &fixture::authority(actor),
+        &fixture::device_id(device),
     )
     .unwrap()
     .expect("creator snapshot should be created");
@@ -174,8 +163,8 @@ fn only_unaccepted_epoch_zero_snapshot_can_be_recreated() {
         &mut state,
         &secure,
         realm,
-        &authority(actor),
-        &device_id(device),
+        &fixture::authority(actor),
+        &fixture::device_id(device),
     )
     .expect("unaccepted epoch-0 state may be safely recreated");
     let replacement = state.mls_snapshot_for(realm).unwrap();
@@ -195,8 +184,8 @@ fn only_unaccepted_epoch_zero_snapshot_can_be_recreated() {
             &mut state,
             &secure,
             realm,
-            &authority(actor),
-            &device_id(device),
+            &fixture::authority(actor),
+            &fixture::device_id(device),
         )
         .is_err()
     );

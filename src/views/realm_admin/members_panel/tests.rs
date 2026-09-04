@@ -1,4 +1,5 @@
 use super::*;
+use crate::test_support as fixture;
 
 fn permission_checks(
     invite: anyhow::Result<bool>,
@@ -338,13 +339,6 @@ fn groups_agent_members_under_reported_controller() {
 
 const PANEL_ISSUER: &str = "ak:did_core:web:acme.example";
 
-fn panel_subject(principal: &str) -> arkret_sdk::AccountId {
-    arkret_sdk::AccountId::new(
-        arkret_sdk::DidCoreId::new(principal.to_owned()).unwrap(),
-        arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example".to_owned()).unwrap(),
-    )
-}
-
 fn acme_policy_events() -> serde_json::Value {
     serde_json::json!({"events": [{
         "kind": "ak.realm.policy_bundle",
@@ -363,7 +357,7 @@ fn acme_policy_events() -> serde_json::Value {
 fn projected_member_profiles_use_only_verified_canonical_identity_fields() {
     let realm_id = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
     let mut store = temp_store("projected-profiles");
-    let subject = panel_subject("ak:did_core:web:acme.example:users:alice");
+    let subject = fixture::authority("ak:did_core:web:acme.example:users:alice");
     store.save_realm_tree_projection(
         realm_id.to_owned(),
         serde_json::json!({
@@ -428,7 +422,7 @@ fn projected_member_profiles_drop_handle_from_untrusted_issuer() {
     // showing an unvetted handle.
     let realm_id = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
     let mut store = temp_store("projected-profiles-untrusted-issuer");
-    let subject = panel_subject("ak:did_core:web:acme.example:users:alice");
+    let subject = fixture::authority("ak:did_core:web:acme.example:users:alice");
     store.save_realm_tree_projection(
         realm_id.to_owned(),
         serde_json::json!({

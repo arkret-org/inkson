@@ -1,0 +1,314 @@
+use super::*;
+
+fn node(id: &str, title: &str, parent: Option<&str>) -> RealmTreeNode {
+    let kind = if id.starts_with("ak:space:") {
+        RealmTreeNodeKind::Space
+    } else {
+        RealmTreeNodeKind::Realm
+    };
+    RealmTreeNode {
+        id: id.to_owned(),
+        title: title.to_owned(),
+        description: None,
+        tags: Default::default(),
+        public: true,
+        category: None,
+        direct_conversation: false,
+        parent_space_id: parent.map(ToOwned::to_owned),
+        child_space_ids: Vec::new(),
+        kind,
+        realm_id: match kind {
+            RealmTreeNodeKind::Realm => id.to_owned(),
+            RealmTreeNodeKind::Space => parent
+                .map(ToOwned::to_owned)
+                .unwrap_or_else(|| REALM_A.to_owned()),
+        },
+    }
+}
+
+const REALM_A: &str = "ak:realm:AVFSR4O2uTcP6zGsyewp0OdaGeDZBXQAUZ9VIEKLSXYo";
+const REALM_B: &str = "ak:realm:AZQnaSleDidYaYIvfwYy3au5gnd_DSinxyUHEl7ewtxk";
+const CONTROL_REALM: &str = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
+
+fn navigation_input<'a>(
+    loaded: &'a [RealmTreeNode],
+    control: &'a BTreeSet<String>,
+    pinned: &'a BTreeSet<String>,
+    projections: &'a BTreeMap<String, Value>,
+    local_mls: &'a BTreeSet<String>,
+    remarks: &'a BTreeMap<String, RealmRemark>,
+    active_realm_id: &'a str,
+    query: &'a str,
+) -> RealmNavigationInput<'a> {
+    RealmNavigationInput {
+        loaded_nodes: loaded,
+        principal_control_realm_ids: control,
+        context_realm_id: None,
+        active_realm_id,
+        pinned_realm_ids: pinned,
+        realm_tree_projections: projections,
+        realm_ids_with_local_mls: local_mls,
+        realm_remarks: remarks,
+        collaboration_query: query,
+    }
+}
+
+#[test]
+fn routed_product_realm_replaces_the_remembered_selection() {
+    let control = BTreeSet::new();
+    let selection = resolve_realm_selection(Some(REALM_B), REALM_A, &control);
+    assert_eq!(selection.effective_realm_id.as_deref(), Some(REALM_B));
+    assert_eq!(selection.remember.as_deref(), Some(REALM_B));
+}
+
+#[test]
+fn routed_realm_already_remembered_writes_nothing_back() {
+    let control = BTreeSet::new();
+    let selection = resolve_realm_selection(Some(REALM_B), REALM_B, &control);
+    assert_eq!(selection.effective_realm_id.as_deref(), Some(REALM_B));
+    assert_eq!(selection.remember, None, "no redundant Signal write");
+}
+
+#[test]
+fn control_realm_route_neither_selects_nor_is_remembered() {
+    // A principal-control Realm reached by route must not become the product
+    // selection, and must not overwrite the Realm the user last worked in.
+    let control = BTreeSet::from([CONTROL_REALM.to_owned()]);
+    let selection = resolve_realm_selection(Some(CONTROL_REALM), REALM_A, &control);
+    assert_eq!(selection.effective_realm_id.as_deref(), Some(REALM_A));
+    assert_eq!(selection.remember, None);
+}
+
+#[test]
+fn blank_remembered_selection_without_a_route_stays_unset() {
+    let control = BTreeSet::new();
+    let selection = resolve_realm_selection(None, "   ", &control);
+    assert_eq!(selection.effective_realm_id, None);
+    assert_eq!(selection.remember, None);
+}
+
+#[test]
+fn control_and_direct_conversation_realms_are_hidden_with_their_subtrees() {
+    let mut direct = node(REALM_B, "Direct", None);
+    direct.direct_conversation = true;
+    let loaded = vec![
+        node(REALM_A, "Acme", None),
+        node(
+            "ak:space:01964137-0000-7000-8000-0000000000a1",
+            "Board",
+            Some(REALM_A),
+        ),
+        direct,
+        node(CONTROL_REALM, "Control", None),
+    ];
+    let control = BTreeSet::from([CONTROL_REALM.to_owned()]);
+    let (pinned, projections, local_mls, remarks) = Default::default();
+    let model = build_realm_navigation(navigation_input(
+        &loaded,
+        &control,
+        &pinned,
+        &projections,
+        &local_mls,
+        &remarks,
+        REALM_A,
+        "",
+    ));
+    let visible: Vec<&str> = model
+        .collaboration_nodes
+        .iter()
+        .map(|node| node.id.as_str())
+        .collect();
+    assert_eq!(
+        visible,
+        vec![REALM_A, "ak:space:01964137-0000-7000-8000-0000000000a1"]
+    );
+    assert_eq!(model.manage_realm_rows.len(), 1);
+    assert_eq!(model.manage_realm_rows[0].space_count, 1);
+}
+
+#[test]
+fn manage_rows_prefer_the_local_remark_over_the_public_title() {
+    let loaded = vec![node(REALM_A, "Public title", None)];
+    let control = BTreeSet::new();
+    let (pinned, projections, local_mls) = Default::default();
+    let mut remarks = BTreeMap::new();
+    let mut remark = RealmRemark::new(
+        crate::test_support::realm_id(REALM_A),
+        "2026-06-01T00:00:00.000Z".parse().unwrap(),
+    );
+    remark.local_name = "My name".to_owned();
+    remarks.insert(REALM_A.to_owned(), remark);
+    let model = build_realm_navigation(navigation_input(
+        &loaded,
+        &control,
+        &pinned,
+        &projections,
+        &local_mls,
+        &remarks,
+        REALM_A,
+        "",
+    ));
+    assert_eq!(model.manage_realm_rows[0].display_name, "My name");
+    assert_eq!(model.manage_realm_rows[0].title, "Public title");
+    // Filtering matches the remark as well as the public title.
+    for query in ["my name", "public"] {
+        let filtered = build_realm_navigation(navigation_input(
+            &loaded,
+            &control,
+            &pinned,
+            &projections,
+            &local_mls,
+            &remarks,
+            REALM_A,
+            query,
+        ));
+        assert_eq!(filtered.filtered_realm_tree.len(), 1, "query {query}");
+    }
+}
+
+#[test]
+fn a_local_mls_snapshot_keeps_the_realm_encrypted_without_a_projection() {
+    // Regression guard for the topbar/row disagreement: with no security state
+    // in the projection the row must still read encrypted from local MLS
+    // evidence rather than defaulting to unencrypted.
+    let loaded = vec![node(REALM_A, "Acme", None)];
+    let control = BTreeSet::new();
+    let (pinned, remarks) = Default::default();
+    let projections = BTreeMap::new();
+    let local_mls = BTreeSet::from([REALM_A.to_owned()]);
+    let model = build_realm_navigation(navigation_input(
+        &loaded,
+        &control,
+        &pinned,
+        &projections,
+        &local_mls,
+        &remarks,
+        REALM_A,
+        "",
+    ));
+    assert!(model.manage_realm_rows[0].encrypted);
+    assert!(model.active_realm_security_encrypted);
+}
+
+#[test]
+fn active_realm_security_falls_back_to_unencrypted_for_an_unknown_realm() {
+    let loaded = vec![node(REALM_A, "Acme", None)];
+    let control = BTreeSet::new();
+    let (pinned, projections, local_mls, remarks) = Default::default();
+    let model = build_realm_navigation(navigation_input(
+        &loaded,
+        &control,
+        &pinned,
+        &projections,
+        &local_mls,
+        &remarks,
+        REALM_B,
+        "",
+    ));
+    assert!(!model.active_realm_security_encrypted);
+    assert!(model.active_projection_realm_id.is_empty());
+}
+
+#[test]
+fn shell_chrome_carries_direction_and_sidebar_state_into_both_class_lists() {
+    let ltr = shell_chrome("night", false, TextDirection::Ltr, false, false);
+    assert_eq!(ltr.shell_class, "shell app");
+    assert_eq!(ltr.auth_class, "auth-shell");
+    assert_eq!(ltr.theme_toggle_icon, "sun");
+
+    let rtl = shell_chrome("light", false, TextDirection::Rtl, true, true);
+    assert_eq!(
+        rtl.shell_class,
+        "shell app rtl sidebar-collapsed sidebar-resizing"
+    );
+    assert_eq!(rtl.auth_class, "auth-shell rtl");
+    assert_eq!(rtl.theme_toggle_icon, "moon");
+}
+
+#[test]
+fn system_theme_decides_the_toggle_when_the_mode_is_system() {
+    assert_eq!(
+        shell_chrome("system", true, TextDirection::Ltr, false, false).theme_toggle_icon,
+        "sun"
+    );
+    assert_eq!(
+        shell_chrome("system", false, TextDirection::Ltr, false, false).theme_toggle_icon,
+        "moon"
+    );
+}
+
+#[test]
+fn theme_toggle_title_stays_the_english_default_the_e2e_suite_asserts() {
+    // `inkson.strands.account-settings.spec.ts` reads these exact titles.
+    assert_eq!(
+        shell_chrome("night", false, TextDirection::Ltr, false, false).theme_toggle_title,
+        "Switch to light theme"
+    );
+    assert_eq!(
+        shell_chrome("light", false, TextDirection::Ltr, false, false).theme_toggle_title,
+        "Switch to night theme"
+    );
+}
+
+#[test]
+fn signed_out_identity_labels_do_not_leak_a_principal_id() {
+    let store = crate::state::isolated_store_for_tests("shell-model-signed-out");
+    let labels = account_identity_labels(AccountIdentityInput {
+        has_session: false,
+        personal_handles: &[],
+        personal_handles_status: "unknown",
+        account_display_name: "",
+        device_display_name: "",
+        device_id_label: "ak:dev…001",
+        principal_id_value: "ak:did_core:web:alice.example",
+        store: &store,
+    });
+    assert_eq!(labels.label, "Not signed in");
+    assert_eq!(labels.detail, "Refresh server metadata, then sign in");
+    assert!(!labels.label.contains("alice.example"));
+}
+
+#[test]
+fn identity_labels_prefer_display_name_then_handle_then_protocol_id() {
+    let store = crate::state::isolated_store_for_tests("shell-model-ladder");
+    let handles = ["alice.example".to_owned()];
+    let with_name = account_identity_labels(AccountIdentityInput {
+        has_session: true,
+        personal_handles: &handles,
+        personal_handles_status: "verified",
+        account_display_name: "Alice",
+        device_display_name: "Laptop",
+        device_id_label: "ak:dev…001",
+        principal_id_value: "ak:did_core:web:alice.example",
+        store: &store,
+    });
+    assert_eq!(with_name.label, "Alice");
+    assert_eq!(with_name.detail, "@alice.example · Laptop");
+    assert_eq!(with_name.handles_title, "alice.example");
+
+    let without_name = account_identity_labels(AccountIdentityInput {
+        has_session: true,
+        personal_handles: &handles,
+        personal_handles_status: "verified",
+        account_display_name: "   ",
+        device_display_name: "",
+        device_id_label: "ak:dev…001",
+        principal_id_value: "ak:did_core:web:alice.example",
+        store: &store,
+    });
+    assert_eq!(without_name.label, "@alice.example");
+    assert_eq!(without_name.detail, "@alice.example · ak:dev…001");
+
+    let without_handle = account_identity_labels(AccountIdentityInput {
+        has_session: true,
+        personal_handles: &[],
+        personal_handles_status: "none",
+        account_display_name: "",
+        device_display_name: "Laptop",
+        device_id_label: "ak:dev…001",
+        principal_id_value: "ak:did_core:web:alice.example",
+        store: &store,
+    });
+    assert_eq!(without_handle.detail, "Laptop");
+    assert_eq!(without_handle.handles_title, without_handle.handles_label);
+}
