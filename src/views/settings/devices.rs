@@ -38,9 +38,7 @@ use dioxus_router::hooks::use_route;
 use serde_json::{Value, json};
 
 use crate::components::{EmptyState, EmptyStateKind, HelpTip, QrSharePanel, UiIcon};
-use crate::identity::device_pairing::{
-    PendingPairingRequest, author_pairing_request_body, parse_pending_pairing_requests,
-};
+use crate::identity::device_pairing::author_pairing_request_body;
 use crate::operation::uuid_v7;
 use crate::routes::Route;
 use crate::state::LocalStateStore;
@@ -89,23 +87,6 @@ struct ResolvedPairingApprovalPayload {
     device_pairing_request_id: arkret_sdk::DevicePairingRequestId,
 }
 
-#[derive(serde::Serialize)]
-#[serde(deny_unknown_fields)]
-struct PairingApprovalPayload {
-    schema: arkret_sdk::NonEmptyString,
-    principal_id: arkret_sdk::DidCoreId,
-    pairing_code: arkret_sdk::DevicePairingCode,
-    new_device_pubkey: arkret_sdk::PublicKey,
-    challenge_proof: arkret_sdk::DevicePairingChallengeProof,
-    server_challenge: PairingServerChallengeCarrier,
-    target_attestation: arkret_sdk::DevicePairingTargetAttestation,
-    display_name: arkret_sdk::NonEmptyString,
-    device_metadata: arkret_sdk::DeviceMetadata,
-    issued_at: chrono::DateTime<chrono::Utc>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    device_pairing_request_id: Option<arkret_sdk::DevicePairingRequestId>,
-}
-
 fn parse_devices(value: &Value) -> Vec<DeviceRow> {
     value
         .get("devices")
@@ -140,59 +121,6 @@ fn parse_devices(value: &Value) -> Vec<DeviceRow> {
                 .collect()
         })
         .unwrap_or_default()
-}
-
-/// Build the QR / paste payload that an already-authorized device approves.
-/// The new device owns `requesting_device_id` and its device-identity public
-/// key; the existing device turns this payload into
-/// `ak.gate.account.command.pair_device.v1`.
-fn build_pair_payload(
-    principal_id: &str,
-    requesting_device_id: &str,
-    public_key_material: &str,
-    pairing_code: &str,
-    challenge_proof: &arkret_sdk::DevicePairingChallengeProof,
-    server_challenge: &arkret_sdk::signatures::device_pairing::ServerDevicePairingChallenge,
-    target_attestation: &arkret_sdk::DevicePairingTargetAttestation,
-    device_pairing_request_id: &str,
-) -> anyhow::Result<String> {
-    let non_empty =
-        |value: &str| arkret_sdk::NonEmptyString::new(value.to_owned()).map_err(anyhow::Error::msg);
-    let payload = PairingApprovalPayload {
-        schema: non_empty(arkret_sdk::SchemaId::DEVICE_PAIRING_OPERATIONS_V1)?,
-        principal_id: arkret_sdk::DidCoreId::new(principal_id.to_owned())?,
-        pairing_code: arkret_sdk::DevicePairingCode::new(pairing_code.to_owned())
-            .map_err(anyhow::Error::msg)?,
-        new_device_pubkey: arkret_sdk::PublicKey {
-            kty: non_empty("OKP")?,
-            kid: non_empty(requesting_device_id)?,
-            algorithm: non_empty("Ed25519")?,
-            key: arkret_sdk::Base64UrlString::new(public_key_material.to_owned())
-                .map_err(anyhow::Error::msg)?,
-            key_digest: None,
-        },
-        challenge_proof: challenge_proof.clone(),
-        server_challenge: PairingServerChallengeCarrier {
-            client_nonce: server_challenge.client_nonce.clone(),
-            device_pairing_request_id: server_challenge.device_pairing_request_id.clone(),
-            expires_at: server_challenge.expires_at,
-            gate_audience_uri: server_challenge.gate_audience_uri.clone(),
-            pairing_code: server_challenge.pairing_code.clone(),
-            server_nonce: server_challenge.server_nonce.clone(),
-        },
-        target_attestation: target_attestation.clone(),
-        display_name: non_empty("New device")?,
-        device_metadata: arkret_sdk::DeviceMetadata {
-            platform: Some(non_empty("browser")?),
-            ..Default::default()
-        },
-        issued_at: chrono::Utc::now(),
-        device_pairing_request_id: (!device_pairing_request_id.trim().is_empty())
-            .then(|| arkret_sdk::DevicePairingRequestId::new(device_pairing_request_id.to_owned()))
-            .transpose()
-            .map_err(anyhow::Error::msg)?,
-    };
-    serde_json::to_string(&payload).map_err(anyhow::Error::from)
 }
 
 // Invariant assertions: each `expect` message names the check that
@@ -276,90 +204,6 @@ fn extract_device_pairing_target_attestation(
     serde_json::from_slice(&bytes).ok()
 }
 
-fn build_pairing_verification_content(
-    request_payload: &Value,
-    requesting_device_id: &str,
-    gate_audience: &str,
-    expires_at: &str,
-) -> anyhow::Result<arkret_sdk::KeyVerificationContent> {
-    let canonical = arkret_sdk::canonical::canonical_json_bytes(request_payload)
-        .unwrap_or_else(|_| request_payload.to_string().into_bytes());
-    let mut content = arkret_sdk::KeyVerificationContent::new(
-        arkret_sdk::DeviceMessageTransactionId::new(uuid_v7())?,
-        arkret_sdk::DeviceId::new(requesting_device_id.to_owned())?,
-    );
-    content.methods = Some(arkret_sdk::ProtocolKindList::new(vec![
-        arkret_sdk::ProtocolKind::new("ak.sas.v1").map_err(anyhow::Error::msg)?,
-        arkret_sdk::ProtocolKind::new("ak.qr.v1").map_err(anyhow::Error::msg)?,
-    ])?);
-    content.timestamp = Some(chrono::Utc::now());
-    content.expires_at =
-        Some(chrono::DateTime::parse_from_rfc3339(expires_at)?.with_timezone(&chrono::Utc));
-    content.purpose = Some(arkret_sdk::KeyVerificationPurpose::SamePrincipalDeviceAuthorization);
-    content.pairing_code = request_payload
-        .get("pairing_code")
-        .and_then(Value::as_str)
-        .map(arkret_sdk::KeyVerificationPairingCode::new)
-        .transpose()?;
-    if let Some(key) = request_payload.get("new_device_pubkey") {
-        content.new_device_pubkey = Some(arkret_sdk::KeyVerificationContentNewDevicePubkey {
-            kty: arkret_sdk::NonEmptyString::new(
-                key.get("kty")
-                    .and_then(Value::as_str)
-                    .ok_or_else(|| anyhow::anyhow!("new_device_pubkey.kty is required"))?
-                    .to_owned(),
-            )
-            .map_err(anyhow::Error::msg)?,
-            kid: arkret_sdk::DeviceId::new(
-                key.get("kid")
-                    .and_then(Value::as_str)
-                    .ok_or_else(|| anyhow::anyhow!("new_device_pubkey.kid is required"))?
-                    .to_owned(),
-            )?,
-            algorithm: arkret_sdk::NonEmptyString::new(
-                key.get("algorithm")
-                    .and_then(Value::as_str)
-                    .ok_or_else(|| anyhow::anyhow!("new_device_pubkey.algorithm is required"))?
-                    .to_owned(),
-            )
-            .map_err(anyhow::Error::msg)?,
-            key: arkret_sdk::Base64UrlString::new(
-                key.get("key")
-                    .and_then(Value::as_str)
-                    .ok_or_else(|| anyhow::anyhow!("new_device_pubkey.key is required"))?
-                    .to_owned(),
-            )
-            .map_err(anyhow::Error::msg)?,
-            key_digest: key
-                .get("key_digest")
-                .and_then(Value::as_str)
-                .map(|value| arkret_sdk::Hash::new(value.to_owned()))
-                .transpose()?,
-        });
-    }
-    content.gate_audience_uri = Some(
-        arkret_sdk::NonEmptyString::new(gate_audience.to_owned()).map_err(anyhow::Error::msg)?,
-    );
-    content.request_canonical_digest = Some(arkret_sdk::Hash::new(
-        arkret_sdk::canonical::sha256_digest(&canonical),
-    )?);
-    content.device_metadata = request_payload
-        .get("device_metadata")
-        .and_then(Value::as_object)
-        .map(|metadata| metadata.clone().into_iter().collect());
-    for field in [
-        "challenge_proof",
-        "server_challenge",
-        "target_attestation",
-        "device_pairing_request_id",
-    ] {
-        if let Some(value) = request_payload.get(field) {
-            content.extra.insert(field.to_owned(), value.clone());
-        }
-    }
-    Ok(content)
-}
-
 #[component]
 pub fn SettingsDevicesPanel(
     principal_id: Signal<String>,
@@ -394,9 +238,6 @@ pub fn SettingsDevicesPanel(
     let pair_request_id = use_signal(String::new);
     let pair_code = use_signal(String::new);
     let pair_action_busy = use_signal(|| false);
-    let mut pending_pair_requests = use_signal(Vec::<PendingPairingRequest>::new);
-    let mut pending_pair_status = use_signal(String::new);
-    let pending_pair_action = use_signal(String::new);
 
     // ── Accept (already-authorized device side) state ─────────────────
     let accept_input = use_signal(String::new);
@@ -472,20 +313,6 @@ pub fn SettingsDevicesPanel(
         });
     }
 
-    {
-        let state_store_for_pending = state_store;
-        use_effect(move || {
-            if !pair_mode {
-                return;
-            }
-            let rows =
-                parse_pending_pairing_requests(&state_store_for_pending.read().to_device_inbox());
-            let count = rows.len();
-            pending_pair_requests.set(rows);
-            pending_pair_status.set(format!("Loaded {count} to-device request(s)"));
-        });
-    }
-
     rsx! {
         div { class: "settings-content-stack", "data-testid": "settings-devices-panel",
             div { class: "event device-access-toolbar",
@@ -538,15 +365,11 @@ pub fn SettingsDevicesPanel(
                     authority.clone(),
                     base_url,
                     token,
-                    state_store,
                     pair_payload,
                     pair_status,
                     pair_request_id,
                     pair_code,
                     pair_action_busy,
-                    pending_pair_requests,
-                    pending_pair_status,
-                    pending_pair_action,
                     accept_input,
                     accept_status,
                     accept_resolved,
@@ -930,15 +753,11 @@ fn render_pair_strand(
     authority: arkret_sdk::AccountId,
     base_url: Signal<String>,
     token: Signal<String>,
-    mut state_store: SyncSignal<LocalStateStore>,
     mut pair_payload: Signal<String>,
     mut pair_status: Signal<String>,
     mut pair_request_id: Signal<String>,
     mut pair_code: Signal<String>,
     mut pair_action_busy: Signal<bool>,
-    mut pending_pair_requests: Signal<Vec<PendingPairingRequest>>,
-    mut pending_pair_status: Signal<String>,
-    mut pending_pair_action: Signal<String>,
     mut accept_input: Signal<String>,
     mut accept_status: Signal<String>,
     mut accept_resolved: Signal<String>,
@@ -954,9 +773,6 @@ fn render_pair_strand(
         serde_json::from_str::<ResolvedPairingApprovalPayload>(&accept_resolved_value)
             .ok()
             .map(|value| value.pairing_code.as_str().to_owned());
-    let pending_rows = pending_pair_requests();
-    let pending_status_value = pending_pair_status();
-    let pending_action_key = pending_pair_action();
     let accept_busy = accept_action_busy();
 
     // Render a QR for the current payload (if any). `qrcode` returns
@@ -980,189 +796,11 @@ fn render_pair_strand(
     };
 
     let payload_for_state = payload_value.clone();
-    let refresh_pending_requests = {
-        let state_store_for_refresh = state_store;
-        move |_| {
-            let rows =
-                parse_pending_pairing_requests(&state_store_for_refresh.read().to_device_inbox());
-            let count = rows.len();
-            pending_pair_requests.set(rows);
-            pending_pair_status.set(format!("Loaded {count} to-device request(s)"));
-        }
-    };
 
     rsx! {
         div { class: "device-pairing-layout",
-        // Role 1 — on an ALREADY-AUTHORIZED device: approve incoming requests.
-        // Listed first because this is the action a signed-in device performs;
-        // a global prompt also surfaces these without visiting this page.
-        div { class: "event pending-pairing-card", "data-testid": "pending-pairing-requests-card",
-            div { class: "event-head",
-                strong { "Requests to approve" }
-                span { class: "badge dim", "{pending_rows.len()} pending" }
-            }
-            div { class: "actions",
-                Button {
-                    variant: ButtonVariant::Secondary,
-                    "data-testid": "pending-pairing-refresh-button",
-                    disabled: !pending_action_key.is_empty(),
-                    onclick: refresh_pending_requests,
-                    "Refresh requests"
-                }
-            }
-            if pending_rows.is_empty() {
-                div {
-                    class: "muted",
-                    "data-testid": "pending-pairing-empty",
-                    "No pending pairing requests for this account."
-                }
-            } else {
-                div { class: "settings-list", "data-testid": "pending-pairing-list",
-                    for row in pending_rows {
-                        {
-                            let request_key = row.request_key.clone();
-                            let request_key_for_label = request_key.clone();
-                            let approve_payload = row.request_payload.clone();
-                            let approve_device = row.requesting_device_id.clone();
-                            let approve_code = row.pairing_code.clone();
-                            let reject_device = row.requesting_device_id.clone();
-                            let reject_code = row.pairing_code.clone();
-                            let reject_key = request_key.clone();
-                            let row_action_busy = !pending_action_key.is_empty();
-                            let row_approving = pending_action_key == request_key;
-                            let device_label = if row.display_name.trim().is_empty() {
-                                short_protocol_id(&row.requesting_device_id)
-                            } else {
-                                row.display_name.clone()
-                            };
-                            let platform = row.platform.clone();
-                            let code_label = if row.pairing_code.trim().is_empty() {
-                                "(no code)".to_owned()
-                            } else {
-                                row.pairing_code.clone()
-                            };
-                            rsx! {
-                                div {
-                                    class: "metric",
-                                    "data-testid": "pending-pairing-request",
-                                    "data-pairing-request-id": "{request_key_for_label}",
-                                    strong { "{device_label}" }
-                                    span { class: "muted mono", "{short_protocol_id(&row.requesting_device_id)}" }
-                                    if !platform.trim().is_empty() {
-                                        span { class: "muted", "Platform {platform}" }
-                                    }
-                                    span { class: "muted", "Compare this code on both devices" }
-                                    strong {
-                                        class: "device-pair-approval-code mono",
-                                        "data-testid": "pending-pairing-code",
-                                        "{code_label}"
-                                    }
-                                    span { class: "muted", "Expires {row.expires_at}" }
-                                    div { class: "actions",
-                                        Button {
-                                            variant: ButtonVariant::Secondary,
-                                            "data-testid": "reject-pairing-request-button",
-                                            disabled: row_action_busy,
-                                            onclick: move |_| {
-                                                if !pending_pair_action().is_empty() {
-                                                    return;
-                                                }
-                                                pending_pair_action.set(reject_key.clone());
-                                                state_store
-                                                    .write()
-                                                    .dismiss_pairing_to_device_message(
-                                                        &reject_device,
-                                                        &reject_code,
-                                                    );
-                                                let rows = parse_pending_pairing_requests(
-                                                    &state_store.read().to_device_inbox(),
-                                                );
-                                                let count = rows.len();
-                                                pending_pair_requests.set(rows);
-                                                pending_pair_status.set(format!(
-                                                    "Rejected request. {count} pending."
-                                                ));
-                                                pending_pair_action.set(String::new());
-                                            },
-                                            "Reject"
-                                        }
-                                        Button {
-                                            variant: ButtonVariant::Primary,
-                                            "data-testid": "approve-pairing-request-button",
-                                            disabled: row_action_busy,
-                                            onclick: move |_| {
-                                                if !pending_pair_action().is_empty() {
-                                                    return;
-                                                }
-                                                let base = base_url();
-                                                let api_token = token();
-                                                let request_key = request_key.clone();
-                                                let approve_payload = approve_payload.clone();
-                                                let approve_device = approve_device.clone();
-                                                let approve_code = approve_code.clone();
-                                                pending_pair_action.set(request_key.clone());
-                                                pending_pair_status.set(format!(
-                                                    "Approving to-device request {request_key}..."
-                                                ));
-                                                spawn(async move {
-                                                    match crate::transport::auth::with_authed_api(
-                                                        &base,
-                                                        api_token,
-                                                        |api| async move {
-                                                            let body = author_pairing_request_body(
-                                                                &api,
-                                                                &approve_payload,
-                                                            )
-                                                            .await?;
-                                                            let clients = crate::transport::EndpointClients::from_http(
-                                                                api.sdk_http_client()?,
-                                                            );
-                                                            clients.keys().account_device_pair(&body).await
-                                                        },
-                                                    )
-                                                    .await
-                                                    {
-                                                        Ok(value) => {
-                                                            let _ = value;
-                                                            state_store
-                                                                .write()
-                                                                .dismiss_pairing_to_device_message(
-                                                                    &approve_device,
-                                                                    &approve_code,
-                                                                );
-                                                            let rows = parse_pending_pairing_requests(
-                                                                &state_store.read().to_device_inbox(),
-                                                            );
-                                                            pending_pair_requests.set(rows);
-                                                            pending_pair_status.set(
-                                                                "To-device pairing request approved."
-                                                                    .to_owned(),
-                                                            );
-                                                        }
-                                                        Err(err) => {
-                                                            pending_pair_status.set(format!(
-                                                                "Approving to-device pairing request failed: {}",
-                                                                err.display()
-                                                            ));
-                                                        }
-                                                    }
-                                                    pending_pair_action.set(String::new());
-                                                });
-                                            },
-                                            if row_approving { "Approving…" } else { "Approve" }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            div { class: "muted device-pairing-inline-status", role: "status", "{pending_status_value}" }
-        }
-
-        // Role 2 — on the NEW device: create a request, then have an
-        // already-authorized device approve it (above) or scan/paste it.
+        // On the new device, create the out-of-band QR/link that an already
+        // authorized device must scan or open.
         div { class: "event pair-device-card", "data-testid": "pair-device-card",
             div { class: "event-head",
                 div {
@@ -1172,7 +810,7 @@ fn render_pair_strand(
                 span { class: "badge warning", "Approval required" }
             }
             p { class: "muted",
-                "Send a request to your other authorized devices. If one is online, it will usually show a confirmation prompt automatically."
+                "Generate a pairing QR code or link, then scan or open it on an already-authorized device. No automatic account notification is sent."
             }
             div { class: "actions",
                 Button {
@@ -1386,102 +1024,9 @@ fn render_pair_strand(
                             pair_request_id.set(request_id.clone());
                             pair_code.set(server_code.clone());
                             pair_status.set(
-                                "Approval requested. Confirm the code on another authorized device. If no prompt appears, use the QR code or link below."
+                                "Pairing link created. Scan or open it on an authorized device, then compare the code before approving."
                                     .to_owned(),
                             );
-
-                            // 3) Complementary best-effort to-device push so an
-                            // already-authorized sibling that is currently online
-                            // pops an approval prompt without scanning. Carries the
-                            // staged request id so approving via either path flips
-                            // the staged row for the new device's status poll.
-                            let payload = match build_pair_payload(
-                                &actor,
-                                &requesting_device_id,
-                                &public_key_material,
-                                &server_code,
-                                &challenge_proof,
-                                &challenge,
-                                &target_attestation,
-                                &request_id,
-                            ) {
-                                Ok(payload) => payload,
-                                Err(error) => {
-                                    pair_status.set(format!(
-                                        "Building typed pairing approval payload failed: {error}"
-                                    ));
-                                    pair_action_busy.set(false);
-                                    return;
-                                }
-                            };
-                            let request_body: Value = match serde_json::from_str(&payload) {
-                                Ok(value) => value,
-                                Err(err) => {
-                                    pair_status.set(format!(
-                                        "Building the approval notification failed: {err}"
-                                    ));
-                                    pair_action_busy.set(false);
-                                    return;
-                                }
-                            };
-                            let gate_audience = base.clone();
-                            let _ = with_authed_api(&base, api_token, |api| {
-                                let gate_audience = gate_audience.clone();
-                                let request_body = request_body.clone();
-                                let requesting_device_id = requesting_device_id.clone();
-                                let actor = actor.clone();
-                                async move {
-                                    let devices_value = serde_json::to_value(
-                                        &crate::transport::keys::list_devices(&api.sdk_http_client()?)
-                                            .await?,
-                                    )?;
-                                    let rows = parse_devices(&devices_value);
-                                    let expires_at = crate::clock::timestamp_in(10 * 60);
-                                    let content = build_pairing_verification_content(
-                                        &request_body,
-                                        &requesting_device_id,
-                                        &gate_audience,
-                                        &expires_at,
-                                    )?;
-                                    // Per-request idempotency seed keyed on the fresh
-                                    // `transaction_id` (deduplicates a true retry of
-                                    // the same content while keeping distinct presses
-                                    // distinct — the old deterministic key collided on
-                                    // repeat presses and drew 409 `duplicate_conflict`).
-                                    let request_txn = content.transaction_id.as_str().to_owned();
-                                    let http = api.sdk_http_client()?;
-                                    for row in rows {
-                                        if row.device_id == requesting_device_id
-                                            || row.verification_state != "verified"
-                                        {
-                                            continue;
-                                        }
-                                        let txn_id =
-                                            format!("ak.device.pair:{request_txn}:{}", row.device_id);
-                                        if let Err(error) =
-                                            crate::transport::keys::send_device_message::<
-                                                arkret_sdk::device_message_spec::KeyVerificationRequest,
-                                            >(
-                                                &http,
-                                                &txn_id,
-                                                &crate::mls_api_helpers::local_account_actor_id(&actor)?,
-                                                &row.device_id,
-                                                &expires_at,
-                                                content.clone(),
-                                            )
-                                            .await
-                                        {
-                                            tracing::debug!(
-                                                ?error,
-                                                target_device = %row.device_id,
-                                                "pairing to-device push failed (short-link path remains available)"
-                                            );
-                                        }
-                                    }
-                                    Ok::<_, anyhow::Error>(())
-                                }
-                            })
-                            .await;
                             pair_action_busy.set(false);
                         });
                     },
@@ -1625,10 +1170,8 @@ fn render_pair_strand(
             }
         }
 
-        // Role 3 — on an ALREADY-AUTHORIZED device that did NOT get the
-        // automatic prompt (offline at the time, or a cross-network add):
-        // scan/paste the short pairing link, resolve it, compare the code,
-        // then approve. This is the fallback for the auto-prompt in Role 1.
+        // Role 3 — on an ALREADY-AUTHORIZED device: scan/paste the out-of-band
+        // pairing link, resolve it, compare the code, then approve.
         div { class: "event accept-pairing-card", "data-testid": "accept-pairing-card",
             div { class: "event-head",
                 strong { "Approve using a link" }
@@ -1851,20 +1394,6 @@ mod tests {
         .unwrap()
     }
 
-    fn server_challenge() -> arkret_sdk::signatures::device_pairing::ServerDevicePairingChallenge {
-        arkret_sdk::signatures::device_pairing::ServerDevicePairingChallenge {
-            client_nonce: arkret_sdk::DevicePairingNonce::new("client-nonce-fixture-01").unwrap(),
-            device_pairing_request_id: arkret_sdk::DevicePairingRequestId::new(
-                "device_pairing_request:01964137-0000-7000-8000-0000000000c1".to_owned(),
-            )
-            .unwrap(),
-            expires_at: "2026-06-12T12:00:00Z".parse().unwrap(),
-            gate_audience_uri: "https://host.example".to_owned(),
-            pairing_code: arkret_sdk::DevicePairingCode::new("7H2K9M4Q".to_owned()).unwrap(),
-            server_nonce: arkret_sdk::DevicePairingNonce::new("server-nonce-fixture-01").unwrap(),
-        }
-    }
-
     fn target_attestation() -> arkret_sdk::DevicePairingTargetAttestation {
         serde_json::from_value(json!({
             "device_id": "ak:device:01964137-0000-7000-8000-0000000000c1",
@@ -1934,62 +1463,6 @@ mod tests {
     }
 
     #[test]
-    fn pair_payload_carries_required_fields() {
-        let raw = build_pair_payload(
-            "ak:did_core:web:alice",
-            "device-1",
-            "abc-123",
-            "7H2K9M4Q",
-            &challenge_proof(),
-            &server_challenge(),
-            &target_attestation(),
-            "device_pairing_request:01964137-0000-7000-8000-0000000000c1",
-        )
-        .unwrap();
-        let parsed: Value = serde_json::from_str(&raw).unwrap();
-        assert_eq!(
-            parsed["schema"],
-            arkret_sdk::SchemaId::DEVICE_PAIRING_OPERATIONS_V1
-        );
-        assert_eq!(parsed["principal_id"], "ak:did_core:web:alice");
-        assert_eq!(parsed["pairing_code"], "7H2K9M4Q");
-        assert_eq!(parsed["new_device_pubkey"]["kid"], "device-1");
-        // Spec-canonical field name is `key`, not `public_key` — the gate body
-        // denies unknown fields, so this must stay `key` (regression guard for
-        // the "unknown field `public_key`" pairing failure).
-        assert_eq!(parsed["new_device_pubkey"]["key"], "abc-123");
-        assert!(parsed["new_device_pubkey"].get("public_key").is_none());
-        assert_eq!(
-            parsed["challenge_proof"]["transcript"],
-            "ak.device-pairing.challenge.v1"
-        );
-        // The staged short-link request id threads through so the to-device
-        // approval path can flip the staged row to `authorized`.
-        assert_eq!(
-            parsed["device_pairing_request_id"],
-            "device_pairing_request:01964137-0000-7000-8000-0000000000c1"
-        );
-        assert!(parsed["issued_at"].as_str().is_some());
-    }
-
-    #[test]
-    fn build_pair_payload_omits_request_id_when_absent() {
-        let raw = build_pair_payload(
-            "ak:did_core:web:alice",
-            "device-1",
-            "abc-123",
-            "7H2K9M4Q",
-            &challenge_proof(),
-            &server_challenge(),
-            &target_attestation(),
-            "",
-        )
-        .unwrap();
-        let parsed: Value = serde_json::from_str(&raw).unwrap();
-        assert!(parsed.get("device_pairing_request_id").is_none());
-    }
-
-    #[test]
     fn extract_device_pairing_token_handles_link_and_bare() {
         let proof = challenge_proof();
         let attestation = target_attestation();
@@ -2009,51 +1482,6 @@ mod tests {
             Some("bare-token-xyz".to_owned())
         );
         assert_eq!(extract_device_pairing_token("   "), None);
-    }
-
-    #[test]
-    fn pairing_verification_content_carries_gate_payload() {
-        let request_payload = json!({
-            "pairing_code": "7H2K9M4Q",
-            "new_device_pubkey": {
-                "kid": "ak:device:01964137-0000-7000-8000-0000000000c2",
-                "algorithm": "Ed25519",
-                "public_key": "abc-123"
-            },
-            "challenge_proof": {
-                "transcript": "ak.device-pairing.challenge.v1",
-                "kid": "ak:device:01964137-0000-7000-8000-0000000000c1",
-                "signature_algorithm": "Ed25519",
-                "transcript_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-                "signature": "Y2hhbGxlbmdlLXNpZ25hdHVyZQ"
-            },
-            "device_metadata": {
-                "platform": "browser"
-            }
-        });
-        let content = build_pairing_verification_content(
-            &request_payload,
-            "ak:device:01964137-0000-7000-8000-0000000000c2",
-            "https://server.example",
-            "2026-06-12T12:00:00.000Z",
-        )
-        .unwrap();
-        let content = serde_json::to_value(content).unwrap();
-        assert_eq!(content["purpose"], "same_principal_device_authorization");
-        assert_eq!(
-            content["from_device_id"],
-            "ak:device:01964137-0000-7000-8000-0000000000c2"
-        );
-        assert_eq!(content["pairing_code"], "7H2K9M4Q");
-        assert_eq!(
-            content["challenge_proof"]["transcript"],
-            "ak.device-pairing.challenge.v1"
-        );
-        assert_eq!(
-            content["new_device_pubkey"]["public_key"],
-            request_payload["new_device_pubkey"]["public_key"]
-        );
-        assert!(content["request_canonical_digest"].as_str().is_some());
     }
 
     #[test]

@@ -13,10 +13,6 @@ pub(crate) mod backup_job_scheduler;
 /// the composer header, and the Strand detail view.
 pub mod circle_scope_picker;
 pub mod device_authorization_prompt;
-/// Global same-principal device-pairing approval modal. Mounted once near the
-/// app shell; surfaces incoming `same_principal_device_authorization` to-device
-/// requests so an authorized device can approve/reject with code comparison.
-pub mod device_pair_approval_prompt;
 pub mod did_resolution_health_banner;
 pub mod dismissible_popup;
 pub mod empty_state;
@@ -64,7 +60,6 @@ pub use circle_scope_picker::{
     CircleComposerBanner, CircleScopePicker, ConfidentialDiscussionOfBanner,
 };
 pub use device_authorization_prompt::DeviceAuthorizationPrompt;
-pub use device_pair_approval_prompt::DevicePairApprovalPrompt;
 pub use did_resolution_health_banner::{DidResolutionHealth, DidResolutionHealthBanner};
 pub use dismissible_popup::{DismissiblePopup, DismissiblePopupProps};
 pub use empty_state::{EmptyState, EmptyStateKind};

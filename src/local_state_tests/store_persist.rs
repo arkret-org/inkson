@@ -581,17 +581,9 @@ fn local_state_store_durably_deduplicates_device_message_envelopes() {
     );
     assert_eq!(writer.to_device_inbox().len(), 1);
     assert_eq!(writer.load().to_device_receipts.len(), 1);
-    assert_eq!(
-        writer.dismiss_pairing_to_device_message(
-            "ak:device:0196419b-0000-7000-8000-000000000001",
-            "7H2K9M4Q",
-        ),
-        1
-    );
-
     let mut reopened = LocalStateStore::with_path(path);
     assert_eq!(reopened.ingest_to_device_messages(&[message]), 0);
-    assert!(reopened.to_device_inbox().is_empty());
+    assert_eq!(reopened.to_device_inbox().len(), 1);
 
     let conflicting: arkret_sdk::DeviceMessageEnvelope =
         serde_json::from_value(serde_json::json!({
@@ -625,7 +617,7 @@ fn local_state_store_durably_deduplicates_device_message_envelopes() {
             .persist_error()
             .is_some_and(|error| error.contains("device_message_conflict"))
     );
-    assert!(reopened.to_device_inbox().is_empty());
+    assert_eq!(reopened.to_device_inbox().len(), 1);
 }
 
 #[test]

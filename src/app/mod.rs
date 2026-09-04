@@ -1517,14 +1517,6 @@ fn AppBootstrap() -> Element {
                         needs_device_authorization,
                     }
                 }
-                // device-lifecycle.md §2.1/§7 — surface an incoming same-principal
-                // pairing request on this (authorized) device so the user can
-                // compare the pairing code and approve/reject without navigating to
-                // the devices settings page.
-                crate::components::DevicePairApprovalPrompt {
-                    token,
-                    device_id,
-                }
                 crate::components::AgentRuntimeApprovalPrompt {
                     token,
                     principal_id,
