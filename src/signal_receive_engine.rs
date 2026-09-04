@@ -32,7 +32,7 @@ use std::time::Duration;
 
 use garth::{
     RetrySchedule, RunOptions, SignalReceiveHandlers, SignalRejection, SignalSink, SyncLoopControl,
-    TransportProvider, verified_checkpoint_actor_has_realm_action,
+    TransportProvider,
 };
 use serde_json::Value;
 
@@ -229,6 +229,12 @@ impl garth::SignalDecryptor for MlsSignalDecryptor {
     }
 }
 
+/// Read the two durable governance facts this Realm's Signal admission needs
+/// and hand the decision to Garth.
+///
+/// The store reads stay here because they are host state; the judgment
+/// (`signal.md` §1/§4) is protocol and lives in
+/// [`garth::admit_signal_governance`], so every client reaches the same verdict.
 async fn validate_signal_governance(
     state_store: &crate::runtime::input::StateStoreHandle,
     envelope: &arkret_wire::SignalEnvelope,
@@ -253,80 +259,9 @@ async fn validate_signal_governance(
     }
     let checkpoint = checkpoint
         .ok_or_else(|| anyhow::anyhow!("Signal requires a verified governance checkpoint"))?;
-    let verified_frontier = checkpoint
-        .basis
-        .leaves
-        .iter()
-        .map(|id| id.as_str())
-        .collect::<std::collections::BTreeSet<_>>();
-    if !observed.bottom_cells.is_empty()
-        || (!observed.frontier.is_empty()
-            && observed
-                .frontier
-                .iter()
-                .map(String::as_str)
-                .collect::<std::collections::BTreeSet<_>>()
-                != verified_frontier)
-    {
-        anyhow::bail!("Signal governance is conflicted or newer than the verified checkpoint");
-    }
-    let actor = envelope.sender_actor_id.canonical_key()?;
-    let member_subject = arkret_wire::cell::composite_subject(&[Value::String(actor.clone())])?;
-    let mut cells = vec![arkret_sdk::CellRef::new(arkret_wire::cell::subject_cell(
-        arkret_wire::CellFamilyId::MEMBER_STATE_V1,
-        &member_subject,
-    ))?];
-    if let arkret_sdk::ScopeRef::Circle { circle_id, .. } = &envelope.scope_ref {
-        let subject = arkret_wire::cell::composite_subject(&[
-            Value::String(circle_id.to_string()),
-            Value::String(actor),
-        ])?;
-        cells.push(arkret_sdk::CellRef::new(arkret_wire::cell::subject_cell(
-            arkret_wire::CellFamilyId::CIRCLE_MEMBER_V1,
-            &subject,
-        ))?);
-    }
-    let registry =
-        arkret_sdk::lattice_registry::try_build_sdk_cell_registry().map_err(anyhow::Error::msg)?;
-    let audits =
-        arkret_schema::CapabilityAuthorityAuditIndex::from_events(&checkpoint.accepted_events);
-    let historical = arkret_sdk::SealBasis {
-        leaves: vec![envelope.seal_ref.clone()],
-    };
-    for basis in [&checkpoint.basis, &historical] {
-        for cell in &cells {
-            let value = arkret_state::mls_governance_proof::materialize_registered_cell_value_at_basis_from_verified_checkpoint(
-                &checkpoint, basis, cell, &registry,
-                |event, digest_suite| arkret_schema::project_registered_cell_writes_with_authority_resolver(
-                    event, digest_suite, &|grant_id| audits.resolve(grant_id),
-                ).map_err(|error| error.to_string()),
-            )
-            .await?;
-            if value.as_str() != Some("join") {
-                anyhow::bail!(
-                    "Signal sender is not joined at both current and declared Seal bases"
-                );
-            }
-        }
-        if envelope.signal_class == arkret_wire::SignalClass::Moderation
-            && !verified_checkpoint_actor_has_realm_action(
-                &checkpoint,
-                basis,
-                &envelope.sender_actor_id,
-                arkret_wire::CapabilityActionId::CALL_MODERATE,
-                chrono::Utc::now(),
-                &registry,
-                &audits,
-            )
-            .await
-            .map_err(|error| anyhow::anyhow!("{error}"))?
-        {
-            anyhow::bail!(
-                "Signal moderation sender lacks independently verified call.moderate authority"
-            );
-        }
-    }
-    Ok(())
+    garth::admit_signal_governance(&checkpoint, &observed, envelope, crate::clock::now_utc())
+        .await
+        .map_err(|error| anyhow::anyhow!(error.to_string()))
 }
 
 /// Routes admitted plaintext to the three product consumers.
