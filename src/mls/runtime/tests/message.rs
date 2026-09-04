@@ -1,6 +1,7 @@
 //! Tests for welcome application, application-payload encrypt / decrypt, and
 //! §5.6 receive-chain persistence.
 
+use garth::mls::welcome_admission::{mls_group_id_for_realm, mls_welcome_message_matches_realm};
 use serde_json::json;
 
 use crate::mls::runtime::*;

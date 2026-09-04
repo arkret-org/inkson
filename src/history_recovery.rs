@@ -1,6 +1,11 @@
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use dioxus::prelude::{ReadableExt, SyncSignal, WritableExt};
+use garth::history_runtime::{
+    canonical_ranges_for_epochs, live_attempt_covers_epoch,
+    principal_signer_evidence_coordinates_from_event, ranges_cover,
+    verify_authorization_incarnation_is_retained_join,
+};
 
 use crate::secure_key_store::SecureKeyStore;
 use crate::state::LocalStateStore;
@@ -170,7 +175,7 @@ impl garth::ReceiptBoundHistoryTraversal for ReceiptTraversal<'_> {
                     "history traversal has no complete locally verified checkpoint".to_owned(),
                 )
             })?;
-        let base_verifier_store = self.state_store.clone();
+        let base_verifier_store = self.state_store;
         let base = arkret_sdk::derive_verified_mls_governance_checkpoint_at_basis(
             &existing,
             base_basis,
@@ -191,7 +196,7 @@ impl garth::ReceiptBoundHistoryTraversal for ReceiptTraversal<'_> {
         )
         .await
         .map_err(garth::Error::Protocol)?;
-        let cut_verifier_store = self.state_store.clone();
+        let cut_verifier_store = self.state_store;
         let checkpoint = arkret_sdk::verify_mls_governance_cut(
             &base,
             &cut.target_basis,
@@ -275,35 +280,6 @@ fn request_trust_bases(
         checkpoint.basis.clone(),
         checkpoint,
     ))
-}
-
-fn verify_authorization_incarnation_is_retained_join(
-    checkpoint: &arkret_sdk::MlsGovernanceVerificationCheckpoint,
-    scope: &arkret_sdk::HistoryEffectiveScope,
-    actor_id: &arkret_sdk::ActorId,
-    incarnation: &arkret_sdk::AuthorizationIncarnation,
-) -> anyhow::Result<u64> {
-    let group_id =
-        arkret_sdk::MlsGroupId::new(scope.canonical_mls_group_id()?).map_err(anyhow::Error::msg)?;
-    let join_epoch = arkret_sdk::direct_traversal::derive_history_join_epoch(
-        &checkpoint.accepted_events,
-        &arkret_sdk::direct_traversal::HistoryJoinEpochSubject {
-            mls_group_id: group_id,
-            requester_actor_id: actor_id.clone(),
-            authorization_incarnation: incarnation.clone(),
-        },
-    )?;
-    match (scope, incarnation) {
-        (
-            arkret_sdk::HistoryEffectiveScope::Realm { .. },
-            arkret_sdk::AuthorizationIncarnation::Realm { .. },
-        )
-        | (
-            arkret_sdk::HistoryEffectiveScope::Circle { .. },
-            arkret_sdk::AuthorizationIncarnation::Circle { .. },
-        ) => Ok(join_epoch),
-        _ => anyhow::bail!("history request scope and authorization incarnation branch differ"),
-    }
 }
 
 async fn current_ordinary_human_endpoint_authorization(
@@ -456,58 +432,6 @@ async fn create_or_resume_authored_request(
         .map_err(|error| anyhow::anyhow!(error.to_string()))
 }
 
-fn canonical_ranges_for_epochs(
-    epochs: impl IntoIterator<Item = u64>,
-) -> Vec<arkret_sdk::EpochRange> {
-    let epochs = epochs
-        .into_iter()
-        .collect::<std::collections::BTreeSet<_>>();
-    let mut ranges = Vec::<arkret_sdk::EpochRange>::new();
-    for epoch in epochs {
-        if let Some(last) = ranges.last_mut()
-            && last.to_epoch.checked_add(1) == Some(epoch)
-        {
-            last.to_epoch = epoch;
-            continue;
-        }
-        ranges.push(arkret_sdk::EpochRange {
-            from_epoch: epoch,
-            to_epoch: epoch,
-        });
-    }
-    ranges
-}
-
-fn live_attempt_covers_epoch(attempts: &[garth::DurableHistorySourceAttempt], epoch: u64) -> bool {
-    attempts
-        .iter()
-        .any(|attempt| live_ranges_cover_epoch(attempt.status, &attempt.covered_ranges, epoch))
-}
-
-fn live_ranges_cover_epoch(
-    status: garth::HistorySourceAttemptStatus,
-    ranges: &[arkret_sdk::EpochRange],
-    epoch: u64,
-) -> bool {
-    // history-visibility.md 6.2: a permanently_rejected attempt will never be
-    // accepted, so its coverage must not suppress the replacement manifest.
-    matches!(
-        status,
-        garth::HistorySourceAttemptStatus::Unfinished
-            | garth::HistorySourceAttemptStatus::Completed
-    ) && ranges
-        .iter()
-        .any(|range| range.from_epoch <= epoch && epoch <= range.to_epoch)
-}
-
-fn ranges_cover(outer: &[arkret_sdk::EpochRange], inner: &[arkret_sdk::EpochRange]) -> bool {
-    inner.iter().all(|needed| {
-        outer.iter().any(|available| {
-            available.from_epoch <= needed.from_epoch && needed.to_epoch <= available.to_epoch
-        })
-    })
-}
-
 fn scope_uses_exporter_history(
     state_store: SyncSignal<LocalStateStore>,
     scope: &arkret_sdk::HistoryEffectiveScope,
@@ -524,35 +448,6 @@ fn scope_uses_exporter_history(
             .circle_content_scheme(realm_id.as_str(), circle_id.as_str())
             .is_some_and(|scheme| scheme == "mls_exporter_aead_v1"),
     }
-}
-
-fn principal_signer_evidence_coordinates_from_event(
-    value: &serde_json::Value,
-    realm_id: &arkret_sdk::RealmId,
-    actor_id: &arkret_sdk::DidCoreId,
-    verification_method: &arkret_sdk::DidUrl,
-) -> anyhow::Result<Option<arkret_sdk::SignerEvidenceRef>> {
-    let Ok(event) = serde_json::from_value::<arkret_sdk::Event>(value.clone()) else {
-        return Ok(None);
-    };
-    if event.actor_id.signing_principal_id() != actor_id
-        || event.scope_ref.realm_id_opt() != Some(realm_id)
-    {
-        return Ok(None);
-    }
-    for proof in &event.proofs {
-        let arkret_sdk::EventProof::Producer(producer) = proof else {
-            continue;
-        };
-        let Some(evidence_ref) = &producer.signer_resolution_evidence_ref else {
-            continue;
-        };
-        if producer.verification_method == *verification_method {
-            evidence_ref.content_digest()?;
-            return Ok(Some(evidence_ref.clone()));
-        }
-    }
-    Ok(None)
 }
 
 fn current_member_signer_evidence_coordinates(
@@ -1763,63 +1658,6 @@ pub async fn acquire_and_verify_traversal(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn recovery_ranges_are_canonical_and_live_request_coverage_is_exact() {
-        let ranges = canonical_ranges_for_epochs([9, 7, 8, 12, 12]);
-        assert_eq!(
-            ranges,
-            vec![
-                arkret_sdk::EpochRange {
-                    from_epoch: 7,
-                    to_epoch: 9,
-                },
-                arkret_sdk::EpochRange {
-                    from_epoch: 12,
-                    to_epoch: 12,
-                },
-            ]
-        );
-        assert!(ranges_cover(
-            &ranges,
-            &[arkret_sdk::EpochRange {
-                from_epoch: 8,
-                to_epoch: 9,
-            }]
-        ));
-        assert!(!ranges_cover(
-            &ranges,
-            &[arkret_sdk::EpochRange {
-                from_epoch: 9,
-                to_epoch: 12,
-            }]
-        ));
-        assert!(live_ranges_cover_epoch(
-            garth::HistorySourceAttemptStatus::Unfinished,
-            &ranges,
-            8,
-        ));
-        assert!(live_ranges_cover_epoch(
-            garth::HistorySourceAttemptStatus::Completed,
-            &ranges,
-            12,
-        ));
-        assert!(!live_ranges_cover_epoch(
-            garth::HistorySourceAttemptStatus::Expired,
-            &ranges,
-            8,
-        ));
-        assert!(!live_ranges_cover_epoch(
-            garth::HistorySourceAttemptStatus::PermanentlyRejected,
-            &ranges,
-            8,
-        ));
-        assert!(!live_ranges_cover_epoch(
-            garth::HistorySourceAttemptStatus::Completed,
-            &ranges,
-            10,
-        ));
-    }
 
     #[tokio::test]
     async fn history_request_hpke_keys_are_durable_and_request_scoped() {

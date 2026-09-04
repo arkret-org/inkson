@@ -878,7 +878,7 @@ mod tests {
                 arkret_sdk::DidCoreId::new("ak:did_core:web:ps.example").unwrap(),
             )),
             mls_group_id: arkret_sdk::NonEmptyString::new(
-                crate::mls::runtime::mls_group_id_for_realm(realm_id)
+                garth::mls::welcome_admission::mls_group_id_for_realm(realm_id)
                     .expect("test Realm scope must derive a canonical MLS group id"),
             )
             .unwrap(),
@@ -980,7 +980,7 @@ mod tests {
         arkret_sdk::MlsProposalEnvelope,
         arkret_sdk::MlsGovernanceBindingPayload,
     ) {
-        let group_id = crate::mls::runtime::mls_group_id_for_realm(realm_id).unwrap();
+        let group_id = garth::mls::welcome_admission::mls_group_id_for_realm(realm_id).unwrap();
         let proposal_bytes = b"durable-add-proposal";
         (
             arkret_sdk::MlsProposalEnvelope {

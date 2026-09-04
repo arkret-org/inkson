@@ -333,7 +333,7 @@ fn did_webvh_version_sequence(version_id: &str) -> anyhow::Result<u64> {
 fn recovery_backup_classes_unlocked(
     restore_payload: &serde_json::Value,
 ) -> anyhow::Result<Vec<arkret_models_crypto::RecoveryBackupClassUnlocked>> {
-    let mut classes = super::selection::iter_backup_bodies(restore_payload)
+    let mut classes = garth::mls::backup_selection::iter_backup_bodies(restore_payload)
         .filter(|backup| {
             backup
                 .get("ciphertext")

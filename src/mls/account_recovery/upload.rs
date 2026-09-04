@@ -2,6 +2,7 @@
 
 use anyhow::{Result, anyhow};
 use arkret_wire::BackupRotationKind;
+use garth::mls::backup_selection::select_mls_private_plaintext_backup;
 use garth::mls::backup_series::fresh_backup_id;
 use serde_json::Value;
 
@@ -13,7 +14,6 @@ use super::backup_body::{
     build_mls_private_plaintext_backup_successor_body_with_kek,
 };
 use super::restore::fetch_mls_restore_payload;
-use super::selection::select_mls_private_plaintext_backup;
 use crate::recovery_crypto::derive_vault_kek;
 
 fn passphrase_is_blank(passphrase: &[u8]) -> bool {
@@ -251,13 +251,14 @@ async fn fetch_active_series_tail(
     backup_kind: BackupRotationKind,
 ) -> Result<Option<Value>> {
     let wire_kind = super::rotation_transaction::wire_backup_kind(backup_kind);
-    let series_id = match super::selection::selectable_series_id_for_backup_class(
+    let class = arkret_sdk::BackupKind::try_from(wire_kind).map_err(|error| anyhow!(error))?;
+    let series_id = match garth::mls::backup_selection::selectable_series_id_for_backup_class(
         list_payload,
-        wire_kind,
+        class,
     ) {
         Some(series_id) => series_id.to_owned(),
         None => {
-            let series_ids = super::selection::iter_backup_bodies(list_payload)
+            let series_ids = garth::mls::backup_selection::iter_backup_bodies(list_payload)
                 .filter(|body| body.get("backup_kind").and_then(Value::as_str) == Some(wire_kind))
                 .filter_map(|body| body.get("series_id").and_then(Value::as_str))
                 .collect::<std::collections::BTreeSet<_>>();
@@ -275,10 +276,10 @@ async fn fetch_active_series_tail(
             .to_owned()
         }
     };
-    let metadata = super::selection::iter_backup_bodies(list_payload)
+    let metadata = garth::mls::backup_selection::iter_backup_bodies(list_payload)
         .filter(|body| body.get("backup_kind").and_then(Value::as_str) == Some(wire_kind))
         .filter(|body| body.get("series_id").and_then(Value::as_str) == Some(series_id.as_str()))
-        .max_by_key(|body| super::selection::backup_series_seq(body))
+        .max_by_key(|body| garth::mls::backup_series::backup_series_seq(body))
         .ok_or_else(|| anyhow!("authoritative {wire_kind} series has no backup envelope"))?;
     if metadata.get("ciphertext").and_then(Value::as_str).is_some() {
         return Ok(Some(metadata.clone()));

@@ -27,7 +27,6 @@
 //! [`crate::runtime::projection::SignalProductSink`], while presence and typing
 //! bodies land in the bounded live projection the chat views read.
 
-use std::collections::BTreeMap;
 use std::sync::Mutex;
 use std::time::Duration;
 
@@ -44,11 +43,6 @@ use crate::runtime::projection::{SignalProductRouter, SignalProductSink};
 /// recover on the same human-scale cadence.
 const BACKOFF_FLOOR: Duration = Duration::from_secs(1);
 const BACKOFF_CEILING: Duration = Duration::from_secs(60);
-
-/// Upper bound on live presence/typing bodies retained for the chat views.
-/// Signals expire within 120 seconds at the very most (`signal.md` §2), so this
-/// is a memory guard against a hostile fanout, not a functional limit.
-const MAX_LIVE_PRESENCE_BODIES: usize = 512;
 
 /// Runtime inputs consumed by the Signal receive engine. UI frameworks stay in
 /// the app adapter that builds these handles.
@@ -87,14 +81,9 @@ pub struct SignalReceiveEngineContext {
 /// as-of basis. The source Station performs its own admission; destination
 /// relay authenticates that Station, not this device. This independent client
 /// check therefore remains mandatory even for a successfully relayed Signal.
+#[derive(Default)]
 pub struct DirectorySenderKeyResolver {
     state_store: Option<crate::runtime::input::StateStoreHandle>,
-}
-
-impl Default for DirectorySenderKeyResolver {
-    fn default() -> Self {
-        Self { state_store: None }
-    }
 }
 
 impl garth::SignalSenderKeyResolver for DirectorySenderKeyResolver {
@@ -340,86 +329,11 @@ async fn validate_signal_governance(
     Ok(())
 }
 
-/// One live presence/typing body plus the sequence it arrived with.
-#[derive(Clone, Debug, PartialEq)]
-struct LiveBody {
-    payload_sequence: u64,
-    expires_at: chrono::DateTime<chrono::Utc>,
-    body: Value,
-}
-
-/// Bounded set of unexpired `ak.presence` / `ak.typing` bodies.
-///
-/// The rail allows loss, duplication and reordering (`signal.md` §4.5), so the
-/// per-key sequence guard is what keeps a reordered older presence from
-/// overwriting a newer one. Everything here is memory-only: presence is a TTL
-/// projection, not durable state.
-#[derive(Debug, Default)]
-struct LivePresenceProjection {
-    bodies: BTreeMap<String, LiveBody>,
-}
-
-impl LivePresenceProjection {
-    /// Drop every body at or past its effective expiry. Returns `true` when
-    /// the stored set changed.
-    fn expire(&mut self, now: chrono::DateTime<chrono::Utc>) -> bool {
-        let before = self.bodies.len();
-        self.bodies.retain(|_, live| live.expires_at > now);
-        self.bodies.len() != before
-    }
-
-    /// Fold one body in. Returns `true` when the stored set changed and the
-    /// local projection must be rewritten.
-    fn apply(
-        &mut self,
-        key: String,
-        payload_sequence: u64,
-        expires_at: chrono::DateTime<chrono::Utc>,
-        body: Value,
-        now: chrono::DateTime<chrono::Utc>,
-    ) -> bool {
-        let mut changed = self.expire(now);
-        if expires_at <= now {
-            return changed;
-        }
-        if let Some(existing) = self.bodies.get(&key)
-            && existing.payload_sequence >= payload_sequence
-        {
-            return changed;
-        }
-        self.bodies.insert(
-            key,
-            LiveBody {
-                payload_sequence,
-                expires_at,
-                body,
-            },
-        );
-        changed = true;
-        while self.bodies.len() > MAX_LIVE_PRESENCE_BODIES {
-            let Some(soonest) = self
-                .bodies
-                .iter()
-                .min_by_key(|(_, live)| live.expires_at)
-                .map(|(key, _)| key.clone())
-            else {
-                break;
-            };
-            self.bodies.remove(&soonest);
-        }
-        changed
-    }
-
-    fn bodies(&self) -> Vec<Value> {
-        self.bodies.values().map(|live| live.body.clone()).collect()
-    }
-}
-
 /// Routes admitted plaintext to the three product consumers.
 struct InksonSignalSink {
     state_store: crate::runtime::input::StateStoreHandle,
     products: SignalProductRouter,
-    live: Mutex<LivePresenceProjection>,
+    live: Mutex<garth::LiveSignalProjection>,
 }
 
 impl SignalSink for InksonSignalSink {
@@ -561,43 +475,11 @@ impl InksonSignalSink {
 
     fn apply_live_body(&self, plaintext: &garth::SignalPlaintext) -> garth::Result<()> {
         let body = live_body_value(plaintext)?;
-        let target = match &plaintext.payload {
-            arkret_models_collaboration::signal_plaintext::SignalPlaintext::Presence(_) => "",
-            arkret_models_collaboration::signal_plaintext::SignalPlaintext::Typing(typing) => {
-                typing.strand_id.as_str()
-            }
-            _ => {
-                return Err(garth::Error::Protocol(
-                    "live Signal projection requires a presence or typing payload".to_owned(),
-                ));
-            }
-        };
-        let endpoint = serde_json::to_string(&plaintext.sender_endpoint).map_err(|error| {
-            garth::Error::Protocol(format!("serialize Signal sender endpoint: {error}"))
-        })?;
-        let key = format!(
-            "{}|{}|{}|{target}",
-            plaintext.kind, plaintext.actor_id, endpoint
-        );
         let now = crate::clock::now_utc();
         let Ok(mut live) = self.live.lock() else {
             return Ok(());
         };
-        if matches!(
-            &plaintext.sender_endpoint,
-            arkret_sdk::SignalSequenceEndpoint::AgentKey { .. }
-        ) {
-            let prefix = format!("{}|{}|", plaintext.kind, plaintext.actor_id);
-            live.bodies
-                .retain(|existing, _| !existing.starts_with(&prefix) || existing == &key);
-        }
-        if !live.apply(
-            key,
-            plaintext.payload_sequence,
-            plaintext.expires_at,
-            body,
-            now,
-        ) {
+        if !live.apply_plaintext(plaintext, body, now)? {
             return Ok(());
         }
         let bodies = live.bodies();
@@ -720,7 +602,7 @@ pub async fn run_signal_receive_engine(
     let sink = InksonSignalSink {
         state_store: ctx.state_store.clone(),
         products: ctx.products.clone(),
-        live: Mutex::new(LivePresenceProjection::default()),
+        live: Mutex::new(garth::LiveSignalProjection::new()),
     };
     let mut restart_backoff = RetrySchedule::new(BACKOFF_FLOOR, BACKOFF_CEILING);
     while provider.is_active() {
@@ -1030,85 +912,6 @@ mod tests {
         assert_eq!(
             body["expires_at"],
             json!(arkret_sdk::canonical::format_timestamp_canonical(at(30)))
-        );
-    }
-
-    #[test]
-    fn a_reordered_older_presence_does_not_overwrite_the_newer_one() {
-        let mut live = LivePresenceProjection::default();
-        let key = "ak.presence|did:web:alice.example|ak:device:one|".to_owned();
-
-        assert!(live.apply(key.clone(), 4, at(30), json!({"state": "online"}), at(0)));
-        assert!(!live.apply(key.clone(), 3, at(30), json!({"state": "dnd"}), at(0)));
-        assert_eq!(live.bodies(), vec![json!({"state": "online"})]);
-
-        assert!(live.apply(key, 5, at(30), json!({"state": "idle"}), at(0)));
-        assert_eq!(live.bodies(), vec![json!({"state": "idle"})]);
-    }
-
-    #[test]
-    fn expired_bodies_are_pruned_and_an_already_expired_one_is_never_stored() {
-        let mut live = LivePresenceProjection::default();
-        live.apply(
-            "ak.typing|a|d|s".to_owned(),
-            1,
-            at(5),
-            json!({"typing": true}),
-            at(0),
-        );
-
-        // The prune alone is a change, so the projection is rewritten without
-        // the stale body; the new body is itself already expired.
-        assert!(live.apply(
-            "ak.typing|b|d|s".to_owned(),
-            1,
-            at(6),
-            json!({"typing": true}),
-            at(10)
-        ));
-        assert!(live.bodies().is_empty());
-    }
-
-    /// A peer who stops typing sends nothing more, so only a clock edge can
-    /// clear their indicator (`signal.md` §7.4 makes the same point for
-    /// message-stream previews). The rail's keepalives supply that edge.
-    #[test]
-    fn an_idle_clock_edge_clears_a_body_whose_ttl_passed() {
-        let mut live = LivePresenceProjection::default();
-        live.apply(
-            "ak.typing|a|d|s".to_owned(),
-            1,
-            at(5),
-            json!({"typing": true}),
-            at(0),
-        );
-
-        assert!(!live.expire(at(4)), "nothing has expired yet");
-        assert_eq!(live.bodies().len(), 1);
-        assert!(live.expire(at(5)), "the effective expiry is exclusive");
-        assert!(live.bodies().is_empty());
-        assert!(!live.expire(at(9)), "a second sweep changes nothing");
-    }
-
-    #[test]
-    fn the_live_set_stays_bounded_by_evicting_the_soonest_expiry() {
-        let mut live = LivePresenceProjection::default();
-        for index in 0..(MAX_LIVE_PRESENCE_BODIES + 10) {
-            live.apply(
-                format!("ak.presence|actor-{index}|device|"),
-                1,
-                at(60 + index as i64),
-                json!({ "state": "online", "index": index }),
-                at(0),
-            );
-        }
-
-        assert_eq!(live.bodies().len(), MAX_LIVE_PRESENCE_BODIES);
-        // The ten shortest-lived entries were the ones dropped.
-        assert!(
-            live.bodies
-                .values()
-                .all(|body| body.expires_at >= at(60 + 10))
         );
     }
 }

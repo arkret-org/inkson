@@ -43,6 +43,15 @@ use std::time::Duration;
 
 use arkret_sdk::EventPayloadExt as _;
 use arkret_wire::{AccountDataKey, event_kind_str};
+use garth::sync_client::{
+    accepted_human_event_signing_device, account_updates_are_empty, advance_realm_profile_chain,
+    collect_member_identity_proof_devices_from_value, collect_persistent_proof_sender_devices,
+    collect_proof_sender_devices_from_value, discussion_state_event_is_ingestable,
+    for_each_projection_identity_event, membership_removal_frontier, projection_event_kind,
+    realm_membership_removal_basis, realm_profile_event_entry, realm_update_has_durable_projection,
+    response_revokes_local_device, sync_realm_state_events, sync_realm_timeline_events,
+    to_device_backfill_cursor, to_device_batch_safe_for_ingest_ack,
+};
 use garth::{
     AccountCommitOutcome, AccountPostCommitHook, AccountPostCommitOutcome, AccountStepCommitter,
     AccountStepHandlers, AccountStreamStep, RealmProjectionFrame, RunOptions, SyncLoopControl,
@@ -383,47 +392,6 @@ struct InksonAccountPostCommit {
     start_generation: u64,
 }
 
-fn account_updates_are_empty(updates: &arkret_sdk::SyncUpdates) -> bool {
-    updates.realm_updates.is_empty()
-        && updates.malformed_realm_ids.is_empty()
-        && updates.to_device.is_empty()
-        && updates.to_device_ack_token.is_none()
-        && !updates.to_device_limited
-        && updates.to_device_next_cursor.is_none()
-        && !updates.to_device_lost
-        && updates.device_lists.changed_ids.is_empty()
-        && updates.device_lists.left_ids.is_empty()
-        && updates.account_data.is_empty()
-        && updates.station_cas_account_data.is_empty()
-        && updates.notifications.is_empty()
-        && updates.agent_signer_evidence.is_empty()
-        && !updates.partial
-}
-
-fn realm_update_has_durable_projection(update: &arkret_sdk::RealmUpdate) -> bool {
-    let entry = &update.entry;
-    entry.timeline.is_some()
-        || entry.state_at_window_start.is_some()
-        || entry.state.is_some()
-        || entry.state_after.is_some()
-        || entry.account_data.is_some()
-        || entry.summary.is_some()
-        || entry.member_roster.is_some()
-        || entry.unread_notifications.is_some()
-        || entry.event_states.is_some()
-        || entry.bottoms.is_some()
-}
-
-fn to_device_backfill_cursor(updates: &arkret_sdk::SyncUpdates) -> Option<String> {
-    // client-sync.md §10.0: account subscribe is the primary receive path.
-    // The standalone queue endpoint is only a continuation path when the
-    // account frame explicitly reports a limited batch.
-    updates
-        .to_device_limited
-        .then(|| updates.to_device_next_cursor.clone())
-        .flatten()
-}
-
 fn scope_rotate_realm_ids(
     response: &AccountSyncStep,
     state_store: &LocalStateStore,
@@ -642,89 +610,6 @@ pub async fn run_sync_engine(
             reason: error.to_string(),
         }),
     }
-}
-
-/// Accepted leave/ban membership frontier for one effective scope.
-///
-/// The Realm-default scope takes every accepted `ak.member.state` transition to
-/// `leave`/`ban`. A Circle scope additionally takes the `ak.circle.member.state`
-/// transitions naming that Circle, because a Realm departure removes the
-/// principal from every Circle in it while a Circle departure does not touch
-/// the Realm roster.
-fn membership_removal_frontier(
-    projection: &Value,
-    circle_id: Option<&str>,
-) -> Vec<arkret_sdk::EventId> {
-    let mut membership_frontier = sync_realm_state_events(projection)
-        .into_iter()
-        .filter(|event| {
-            let kind = event
-                .get("kind")
-                .or_else(|| event.get("event_kind"))
-                .and_then(Value::as_str);
-            let payload = event
-                .get("payload")
-                .or_else(|| event.get("content"))
-                .unwrap_or(&Value::Null);
-            match kind {
-                Some(kind) if kind == arkret_sdk::EventKind::MemberState.as_str() => true,
-                Some(kind) if kind == arkret_sdk::EventKind::CircleMemberState.as_str() => {
-                    circle_id.is_some_and(|circle_id| {
-                        payload.get("circle_id").and_then(Value::as_str) == Some(circle_id)
-                    })
-                }
-                _ => false,
-            }
-        })
-        .filter(|event| {
-            let payload = event
-                .get("payload")
-                .or_else(|| event.get("content"))
-                .unwrap_or(&Value::Null);
-            matches!(
-                payload
-                    .get("membership")
-                    .or_else(|| payload.get("target_state"))
-                    .or_else(|| payload.get("state"))
-                    .and_then(Value::as_str),
-                Some("leave" | "ban")
-            )
-        })
-        .filter_map(|event| {
-            event
-                .get("event_id")
-                .and_then(Value::as_str)
-                .and_then(|event_id| arkret_sdk::EventId::new(event_id.to_owned()).ok())
-        })
-        .collect::<Vec<_>>();
-    membership_frontier.sort();
-    membership_frontier.dedup();
-    membership_frontier
-}
-
-fn realm_membership_removal_basis(
-    projection: &Value,
-) -> Option<(BTreeSet<arkret_sdk::ActorId>, Vec<arkret_sdk::EventId>)> {
-    // A truncated roster is not negative membership evidence.  Waiting for a
-    // complete projection is required before comparing it with the MLS tree.
-    if projection
-        .get("member_roster_entries_limited")
-        .and_then(Value::as_bool)
-        != Some(false)
-    {
-        return None;
-    }
-    let active_members = projection
-        .get("member_roster_entries")?
-        .as_array()?
-        .iter()
-        .filter(|member| member.get("membership").and_then(Value::as_str) == Some("join"))
-        .map(|member| {
-            serde_json::from_value::<arkret_sdk::ActorId>(member.get("actor_id")?.clone()).ok()
-        })
-        .collect::<Option<BTreeSet<_>>>()?;
-    let membership_frontier = membership_removal_frontier(projection, None);
-    (!membership_frontier.is_empty()).then_some((active_members, membership_frontier))
 }
 
 /// Outstanding MLS Remove obligations of one Circle scope, derived exclusively
@@ -1449,7 +1334,10 @@ pub(crate) async fn prefetch_persistent_event_sender_keys<
     state_store: S,
     is_minimal_metadata_realm: impl Fn(&str) -> bool,
 ) -> bool {
-    let pairs = collect_persistent_proof_sender_devices(response, &is_minimal_metadata_realm);
+    let pairs = collect_persistent_proof_sender_devices(
+        &response.realm_projections,
+        &is_minimal_metadata_realm,
+    );
     prefetch_persistent_event_sender_key_pairs(api, pairs, did_cache, state_store).await
 }
 
@@ -1478,61 +1366,6 @@ async fn prefetch_member_identity_proof_keys<
         state_store,
     )
     .await
-}
-
-/// Recursively scan a projection `Value` for `ak.member.identity.update`
-/// proofs, extracting `(controller_principal_id, device_id)` from each
-/// `member_identity.proof.verification_method`. Depth-bounded to mirror the
-/// persistent-event scanner.
-fn collect_member_identity_proof_devices_from_value(
-    value: &Value,
-    depth: usize,
-    out: &mut BTreeSet<(String, String)>,
-) {
-    const MAX_DEPTH: usize = 12;
-    if depth > MAX_DEPTH {
-        return;
-    }
-    match value {
-        Value::Object(map) => {
-            // A `member_identity` object carries `actor_id` + `proof`.
-            if let Some(proof) = map.get("proof").and_then(Value::as_object)
-                && let Some(vm) = proof.get("verification_method").and_then(Value::as_str)
-                && let Some((controller, device)) = split_verification_method(vm)
-            {
-                // Bind to the object's own actor_id when present (defence in
-                // depth: the controller already equals the asserter at verify
-                // time, but we prefetch whatever the proof names so resolution
-                // can run).
-                out.insert((controller, device));
-            }
-            for nested in map.values() {
-                collect_member_identity_proof_devices_from_value(nested, depth + 1, out);
-            }
-        }
-        Value::Array(items) => {
-            for item in items {
-                collect_member_identity_proof_devices_from_value(item, depth + 1, out);
-            }
-        }
-        _ => {}
-    }
-}
-
-/// Split a `did:method:identifier#device` verification-method URL into its
-/// controller DID and device fragment. Returns `None` when there is no
-/// fragment (no device selector).
-fn split_verification_method(verification_method: &str) -> Option<(String, String)> {
-    let (controller, fragment) = verification_method.split_once('#')?;
-    let controller = controller
-        .split_once('?')
-        .map_or(controller, |(head, _)| head)
-        .trim();
-    let device = fragment.trim();
-    if controller.is_empty() || device.is_empty() {
-        return None;
-    }
-    Some((controller.to_owned(), device.to_owned()))
 }
 
 pub(crate) async fn prefetch_persistent_event_sender_keys_from_values<
@@ -1639,112 +1472,6 @@ fn refresh_projection_events_from_sync_response(
     }
 }
 
-fn collect_persistent_proof_sender_devices(
-    response: &AccountSyncStep,
-    is_minimal_metadata_realm: &impl Fn(&str) -> bool,
-) -> Vec<(String, String)> {
-    let mut pairs = BTreeSet::<(String, String)>::new();
-    for (realm_id, body) in &response.realm_projections {
-        // §2.10.3 — a minimal-metadata Realm's content authorship never forms
-        // a directory pair; its authors verify against the MLS LeafNode.
-        if is_minimal_metadata_realm(realm_id) {
-            continue;
-        }
-        collect_proof_sender_devices_from_value(body, 0, &mut pairs);
-    }
-    pairs.into_iter().collect()
-}
-
-fn collect_proof_sender_devices_from_value(
-    value: &Value,
-    depth: usize,
-    pairs: &mut BTreeSet<(String, String)>,
-) {
-    if depth > 32 {
-        return;
-    }
-    match value {
-        Value::Object(object) => {
-            if let Some((actor, device)) = proof_bearing_sender_device(object) {
-                pairs.insert((actor, device));
-            }
-            for child in object.values() {
-                collect_proof_sender_devices_from_value(child, depth + 1, pairs);
-            }
-        }
-        Value::Array(values) => {
-            for child in values {
-                collect_proof_sender_devices_from_value(child, depth + 1, pairs);
-            }
-        }
-        _ => {}
-    }
-}
-
-fn proof_bearing_sender_device(
-    object: &serde_json::Map<String, Value>,
-) -> Option<(String, String)> {
-    let proofs = object
-        .get("proofs")
-        .and_then(Value::as_array)
-        .filter(|proofs| !proofs.is_empty())?;
-    let actor = object
-        .get("actor_id")
-        .or_else(|| object.get("sender_actor_id"))
-        .and_then(|value| serde_json::from_value::<arkret_sdk::ActorId>(value.clone()).ok())?;
-    // Delegated Events keep the accountable principal
-    // in `actor_id`, while `executed_by` identifies the runtime that actually
-    // signed the envelope. Keep this selector byte-aligned with the chat proof
-    // verifier when that signer is a real directory-backed device. Independent
-    // Agent MLS endpoints use their authenticated LeafNode key instead
-    // and deliberately do not form a device-directory lookup here.
-    let proof_subject = object
-        .get("executed_by")
-        .and_then(|value| serde_json::from_value::<arkret_sdk::ActorId>(value.clone()).ok())
-        .unwrap_or(actor);
-    let account_id = proof_subject.as_account_id()?;
-    let proof_controller = proofs.iter().find_map(|proof| {
-        let method = proof.get("verification_method").and_then(Value::as_str)?;
-        let controller = {
-            let no_query = method.split_once('?').map_or(method, |(head, _)| head);
-            no_query.split_once('#').map_or(no_query, |(head, _)| head)
-        };
-        let controller = arkret_sdk::Did::new(controller.to_owned()).ok()?;
-        let controller_core = arkret_sdk::project_did_to_core_id(&controller).ok()?;
-        (controller_core == account_id.principal_id).then_some(controller)
-    })?;
-    let device = object
-        .get("device_id")
-        .or_else(|| object.get("sender_device_id"))
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|device| !device.is_empty())
-        .map(str::to_owned)
-        .or_else(|| {
-            proof_sender_device_from_verification_method(object, proof_controller.as_str())
-        })?;
-    Some((account_id.to_string(), device))
-}
-
-fn proof_sender_device_from_verification_method(
-    object: &serde_json::Map<String, Value>,
-    actor: &str,
-) -> Option<String> {
-    object
-        .get("proofs")
-        .and_then(Value::as_array)?
-        .iter()
-        .filter_map(|proof| proof.get("verification_method").and_then(Value::as_str))
-        .find_map(|method| {
-            let no_query = method
-                .split_once('?')
-                .map(|(head, _)| head)
-                .unwrap_or(method);
-            let (controller, fragment) = no_query.split_once('#')?;
-            (controller == actor && fragment.starts_with("ak:device:")).then(|| fragment.to_owned())
-        })
-}
-
 fn rotate_live_device_id_after_revocation(
     live_device_id: &crate::runtime::input::ValueCell<String>,
 ) {
@@ -1799,7 +1526,7 @@ pub fn apply_response(response: &AccountSyncStep, is_full_sync: bool, ctx: &Sync
         }
     }
 
-    if response_revokes_local_device(response, &principal_id, &ctx.device_id) {
+    if response_revokes_local_device(&response.realm_projections, &principal_id, &ctx.device_id) {
         state_store.write(|store| store.clear_device_scoped());
         rotate_live_device_id_after_revocation(&ctx.live_device_id);
         ctx.session
@@ -2088,17 +1815,6 @@ async fn process_to_device_delivery(
     Ok(())
 }
 
-/// Raw inbox durability is enough for ordinary device messages, but an MLS
-/// Welcome is destructive-consumer state: acknowledging it before the MLS
-/// runtime imports and durably snapshots the group makes the only join secret
-/// disappear from the server queue. The Welcome bootstrap owns that ACK after
-/// successful apply (or an explicitly verified stale replay).
-fn to_device_batch_safe_for_ingest_ack(messages: &[arkret_sdk::DeviceMessageEnvelope]) -> bool {
-    !messages
-        .iter()
-        .any(|message| message.kind.as_str() == event_kind_str::MLS_WELCOME)
-}
-
 fn to_device_batch_allows_cursor_advance(
     _messages: &[arkret_sdk::DeviceMessageEnvelope],
     _limited: bool,
@@ -2107,50 +1823,6 @@ fn to_device_batch_allows_cursor_advance(
     // This predicate is retained at projection call sites to document that
     // all durably-ingested batches, including limited pages, may checkpoint.
     true
-}
-
-fn sync_realm_state_events(body: &Value) -> Vec<Value> {
-    body.get("state")
-        .and_then(|state| state.get("events"))
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default()
-}
-
-fn response_revokes_local_device(
-    response: &AccountSyncStep,
-    principal_id: &arkret_sdk::DidCoreId,
-    device_id: &str,
-) -> bool {
-    let device_id = device_id.trim();
-    if device_id.is_empty() {
-        return false;
-    }
-    response.realm_projections.values().any(|body| {
-        sync_realm_state_events(body).iter().any(|event| {
-            let kind = event
-                .get("kind")
-                .and_then(Value::as_str)
-                .unwrap_or_default();
-            let Some(payload) = event.get("payload") else {
-                return false;
-            };
-            kind == event_kind_str::DEVICE_REVOKE
-                && payload.get("principal_id").and_then(Value::as_str)
-                    == Some(principal_id.as_str())
-                && payload.get("device_id").and_then(Value::as_str) == Some(device_id)
-        })
-    })
-}
-
-/// Discussion message events ride a SEPARATE projection array from the kanban
-/// state log: `timeline.events[]` (see `chat_messages_from_sync_realms_*`).
-fn sync_realm_timeline_events(body: &Value) -> Vec<Value> {
-    body.get("timeline")
-        .and_then(|timeline| timeline.get("events"))
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default()
 }
 
 /// Fold the realm's discussion timeline into the shared `raw_operations` log so
@@ -2197,32 +1869,6 @@ pub(crate) fn ingest_moderation_events(
         }
     }
     changed
-}
-
-fn discussion_state_control_event_kind(event: &Value) -> Option<&str> {
-    event
-        .get("kind")
-        .or_else(|| event.get("event_kind"))
-        .or_else(|| event.get("type"))
-        .or_else(|| event.get("op_type"))
-        .or_else(|| event.get("event_type"))
-        .and_then(Value::as_str)
-}
-
-fn discussion_state_event_is_ingestable(event: &Value) -> bool {
-    matches!(
-        discussion_state_control_event_kind(event),
-        Some(
-            event_kind_str::MESSAGE_CREATE
-                | event_kind_str::MESSAGE_REVISE
-                | event_kind_str::MESSAGE_REDACT
-                | event_kind_str::REACTION_ADD
-                | event_kind_str::REACTION_REMOVE
-                | event_kind_str::PIN_ADD
-                | event_kind_str::PIN_REMOVE
-                | event_kind_str::PIN_REORDER
-        )
-    )
 }
 
 fn ingest_discussion_state_events_from_projection(
@@ -2400,17 +2046,6 @@ struct LocalMembershipMetadata {
     created_at: String,
 }
 
-fn accepted_human_event_signing_device(event: &arkret_sdk::Event) -> Option<arkret_sdk::DeviceId> {
-    let proof = event.proofs.iter().find_map(|proof| proof.as_producer())?;
-    let (controller, fragment) = proof.verification_method.as_str().split_once('#')?;
-    let controller = arkret_sdk::Did::new(controller.to_owned()).ok()?;
-    let controller = arkret_sdk::project_did_to_core_id(&controller).ok()?;
-    if &controller != event.actor_id.signing_principal_id() {
-        return None;
-    }
-    arkret_sdk::DeviceId::new(fragment.to_owned()).ok()
-}
-
 fn membership_operation_from_event(event: &arkret_sdk::Event) -> Option<RawOperationRecord> {
     let local_event = LocalMembershipEvent::from_sdk_event(event)?;
     let operation_id = event.event_id.as_str().to_owned();
@@ -2516,55 +2151,6 @@ pub(crate) fn ingest_default_strand_events(
 }
 
 const LOCAL_REALM_PROFILE_PAYLOAD: &str = "_inkson_realm_profile_payload";
-
-fn realm_profile_event_entry(event: &arkret_sdk::Event) -> Option<(String, Value, Value)> {
-    if event.kind != arkret_sdk::EventKind::RealmProfile {
-        return None;
-    }
-    let payload = serde_json::to_value(&event.payload).ok()?;
-    serde_json::from_value::<arkret_sdk::RealmProfile>(payload.clone()).ok()?;
-    let guards = event
-        .preconditions
-        .iter()
-        .filter(|guard| guard.cell_id.as_str() == arkret_wire::REALM_PROFILE_CELL)
-        .collect::<Vec<_>>();
-    let [guard] = guards.as_slice() else {
-        return None;
-    };
-    if guard.predicate.op != arkret_sdk::PredicateOp::HeadEq {
-        return None;
-    }
-    Some((
-        event.event_id.to_string(),
-        guard.predicate.value.clone()?,
-        payload,
-    ))
-}
-
-fn advance_realm_profile_chain(
-    start: Value,
-    entries: &[(String, Value, Value)],
-) -> Option<(Value, usize)> {
-    let mut current = start;
-    let mut remaining = (0..entries.len()).collect::<Vec<_>>();
-    let mut consumed = 0;
-    loop {
-        let candidates = remaining
-            .iter()
-            .copied()
-            .filter(|index| entries[*index].1 == current)
-            .collect::<Vec<_>>();
-        match candidates.as_slice() {
-            [] => return Some((current, consumed)),
-            [next] => {
-                current = entries[*next].2.clone();
-                remaining.retain(|index| index != next);
-                consumed += 1;
-            }
-            _ => return None,
-        }
-    }
-}
 
 fn apply_realm_profile_events<'a>(
     store: &mut LocalStateStore,
@@ -2717,14 +2303,6 @@ fn ingest_member_identity_events_from_projection(
     }
 }
 
-fn projection_event_kind(event: &Value) -> &str {
-    event
-        .get("kind")
-        .and_then(Value::as_str)
-        .or_else(|| event.get("type").and_then(Value::as_str))
-        .unwrap_or("")
-}
-
 /// Read the stable actor id from the event, falling back to the roster entry.
 fn projection_event_actor_id(event: &Value, fallback: Option<&Value>) -> Option<String> {
     let from = |value: &Value| {
@@ -2733,36 +2311,6 @@ fn projection_event_actor_id(event: &Value, fallback: Option<&Value>) -> Option<
             .and_then(crate::state::projection::message_ops::actor_principal_from_value)
     };
     from(event).or_else(|| fallback.and_then(from))
-}
-
-/// Visit every identity-carrying event in one Realm projection `body`, in the
-/// two shapes inkson receives them:
-///
-/// - the canonical top-level `state[]` event log;
-/// - inline `identity_events[]` on each member roster entry, where the entry is passed as the actor
-///   fallback.
-fn for_each_projection_identity_event(body: &Value, mut visit: impl FnMut(&Value, Option<&Value>)) {
-    for event in &sync_realm_state_events(body) {
-        visit(event, None);
-    }
-    for source in [
-        body.get("members"),
-        body.get("summary").and_then(|s| s.get("members")),
-    ]
-    .into_iter()
-    .flatten()
-    {
-        let Some(items) = source.as_array() else {
-            continue;
-        };
-        for entry in items {
-            if let Some(events) = entry.get("identity_events").and_then(Value::as_array) {
-                for event in events {
-                    visit(event, Some(entry));
-                }
-            }
-        }
-    }
 }
 
 /// Principals whose device-list / generation frontier moved in this projection.
@@ -3050,32 +2598,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn realm_profile_chain_settles_independently_of_delivery_order() {
-        let initial = json!({
-            "schema": "ak.schema.realm_profile.v1",
-            "title": "Initial"
-        });
-        let updated = json!({
-            "schema": "ak.schema.realm_profile.v1",
-            "title": "Updated",
-            "summary": "Visible"
-        });
-        let cleared = json!({
-            "schema": "ak.schema.realm_profile.v1",
-            "title": "Updated"
-        });
-        let entries = vec![
-            ("event-c".to_owned(), updated.clone(), cleared.clone()),
-            ("event-a".to_owned(), Value::Null, initial.clone()),
-            ("event-b".to_owned(), initial, updated),
-        ];
-
-        let settled = advance_realm_profile_chain(Value::Null, &entries).unwrap();
-
-        assert_eq!(settled, (cleared, 3));
-    }
-
-    #[test]
     fn local_device_revocation_rotates_the_live_device_id() {
         let revoked = "ak:device:0196419b-0000-7000-8000-000000000001".to_owned();
         let value = Rc::new(RefCell::new(revoked.clone()));
@@ -3093,43 +2615,6 @@ mod tests {
         let replacement = live_device_id.get();
         assert_ne!(replacement, revoked);
         assert!(crate::config::is_valid_device_id(&replacement));
-    }
-
-    #[test]
-    fn realm_mls_removal_basis_requires_complete_roster_and_accepted_frontier() {
-        let removal_event = "ak:event:AXYOPItXAzTTu_rqIAINR7C7AvNSR5bjjBslclmJ9ZVt";
-        let projection = json!({
-            "member_roster_entries_limited": false,
-            "member_roster_entries": [{
-                "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:webvh:z6mkfixture:alice.example","station_id":"ak:did_core:web:principal.example"}},
-                "membership": "join"
-            }],
-            "state": {"events": [{
-                "event_id": removal_event,
-                "kind": "ak.member.state",
-                "payload": {
-                    "member_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:webvh:z6mkfixture:bob.example","station_id":"ak:did_core:web:principal.example"}},
-                    "membership": "ban"
-                }
-            }]}
-        });
-
-        let (active, frontier) = realm_membership_removal_basis(&projection).unwrap();
-        assert_eq!(
-            active,
-            BTreeSet::from([crate::mls_api_helpers::local_account_actor_id(
-                "ak:did_core:webvh:z6mkfixture:alice.example"
-            )
-            .unwrap()])
-        );
-        assert_eq!(
-            frontier,
-            vec![arkret_sdk::EventId::new(removal_event.to_owned()).unwrap()]
-        );
-
-        let mut truncated = projection;
-        truncated["member_roster_entries_limited"] = json!(true);
-        assert!(realm_membership_removal_basis(&truncated).is_none());
     }
 
     #[test]
@@ -3182,63 +2667,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn frontier_only_account_step_is_projection_empty() {
-        let mut response = empty_response("ak:cursor:idle");
-        assert!(account_updates_are_empty(&response.updates));
-
-        response.updates.partial = true;
-        assert!(!account_updates_are_empty(&response.updates));
-    }
-
-    /// Restates `circle_scan_ignores_ephemeral_only_realm_updates`.
-    ///
-    /// Its premise died with the plaintext rail: a Realm sync entry can no
-    /// longer carry an `ephemeral` bucket at all — the SDK type rejects the
-    /// member outright. What survives is the rule the test was protecting: a
-    /// sync entry with no durable projection must not trigger a Circle scan.
-    #[test]
-    fn circle_scan_ignores_realm_updates_without_a_durable_projection() {
-        let realm_id = sdk_realm_id();
-        assert!(
-            serde_json::from_value::<arkret_sdk::RealmSyncEntry>(json!({
-                "ephemeral": {"events": []}
-            }))
-            .is_err(),
-            "the deleted plaintext ephemeral bucket must not decode on a Realm sync entry"
-        );
-        let projection_empty = arkret_sdk::RealmUpdate {
-            realm_id: realm_id.clone(),
-            entry: serde_json::from_value(json!({})).expect("empty Realm update"),
-        };
-        assert!(!realm_update_has_durable_projection(&projection_empty));
-
-        let durable = arkret_sdk::RealmUpdate {
-            realm_id,
-            entry: serde_json::from_value(json!({
-                "state": {"events": [serde_json::to_value(sdk_event(
-                    "ak.circle.member.remove",
-                    json!({"circle_id": "ak:circle:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-"})
-                )).unwrap()]}
-            }))
-            .expect("durable Realm update"),
-        };
-        assert!(realm_update_has_durable_projection(&durable));
-    }
-
-    #[test]
-    fn standalone_to_device_pull_requires_limited_account_batch() {
-        let mut response = empty_response("ak:cursor:to-device");
-        response.updates.to_device_next_cursor = Some("ak:cursor:page-2".to_owned());
-        assert_eq!(to_device_backfill_cursor(&response.updates), None);
-
-        response.updates.to_device_limited = true;
-        assert_eq!(
-            to_device_backfill_cursor(&response.updates).as_deref(),
-            Some("ak:cursor:page-2")
-        );
-    }
-
     fn temp_store(tag: &str) -> LocalStateStore {
         let path = std::env::temp_dir().join(format!(
             "inkson-engine-{tag}-{}.json",
@@ -3271,60 +2699,6 @@ mod tests {
             payload,
         )
         .unwrap()
-    }
-
-    #[test]
-    fn minimal_metadata_realms_never_form_directory_prefetch_pairs() {
-        // §2.10.3 / SPI-INK-001: a proof-bearing persistent event inside a
-        // minimal-metadata Realm must not contribute an `(actor, device)`
-        // `keys/query` prefetch pair; the same shape in an ordinary Realm
-        // does. This is the receiver-side "principal_directory_queries = 0"
-        // guarantee — no pair, no query.
-        let pairwise_envelope = json!({
-            "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:key:z6MkpairwiseAlice","station_id":"ak:did_core:web:principal.example"}},
-            "device_id": "ak:device:0196419b-0000-7000-8000-0000000000aa",
-            "proofs": [{
-                "verification_method": "did:key:z6MkpairwiseAlice#z6MkpairwiseAuthorKey"
-            }],
-        });
-        let directory_envelope = json!({
-            "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:bob.example","station_id":"ak:did_core:web:principal.example"}},
-            "device_id": "ak:device:0196419b-0000-7000-8000-0000000000bb",
-            "proofs": [{
-                "verification_method": "did:web:bob.example#key-1"
-            }],
-        });
-        let minimal_realm = "ak:realm:AR6sSnzYzneKDHwNTaEOztzBtLnt8geLs44CLQ9Bw2WW";
-        let ordinary_realm = "ak:realm:Af9zSmEjGsepWRH4BZAZH6au69G5_e_iQ6s383Z9--fe";
-        let mut response = empty_response("ak:cursor:minimal-metadata");
-        response.realm_projections.insert(
-            minimal_realm.to_owned(),
-            json!({ "events": [pairwise_envelope] }),
-        );
-        response.realm_projections.insert(
-            ordinary_realm.to_owned(),
-            json!({ "events": [directory_envelope] }),
-        );
-
-        let pairs = collect_persistent_proof_sender_devices(&response, &|realm_id: &str| {
-            realm_id == minimal_realm
-        });
-        assert_eq!(
-            pairs,
-            vec![(
-                crate::mls_api_helpers::local_account_actor_id("did:web:bob.example")
-                    .unwrap()
-                    .as_account_id()
-                    .unwrap()
-                    .to_string(),
-                "ak:device:0196419b-0000-7000-8000-0000000000bb".to_owned()
-            )]
-        );
-
-        // Control: without the minimal-metadata classification both realms
-        // would have contributed pairs.
-        let all = collect_persistent_proof_sender_devices(&response, &|_: &str| false);
-        assert_eq!(all.len(), 2);
     }
 
     #[tokio::test]
@@ -3635,20 +3009,6 @@ mod tests {
     }
 
     #[test]
-    fn mls_welcome_requires_consumer_ack_after_group_state_is_durable() {
-        assert!(!to_device_batch_safe_for_ingest_ack(&[to_device_message(
-            "ak.mls.welcome"
-        )]));
-        assert!(!to_device_batch_safe_for_ingest_ack(&[
-            to_device_message("ak.key.verification.request"),
-            to_device_message("ak.mls.welcome"),
-        ]));
-        assert!(to_device_batch_safe_for_ingest_ack(&[to_device_message(
-            "ak.key.verification.request"
-        )]));
-    }
-
-    #[test]
     fn sync_state_events_ingest_kanban_strand_updates_as_synced_raw_operations() {
         let temp = std::env::temp_dir().join(format!(
             "inkson-sync-state-events-{}.json",
@@ -3791,90 +3151,6 @@ mod tests {
     }
 
     #[test]
-    fn persistent_proof_sender_device_collection_dedupes_nested_events() {
-        let mut response = empty_response("cursor-1");
-        response.realm_projections.insert(
-            "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19".to_owned(),
-            json!({
-                "timeline": {
-                    "events": [
-                        {
-                            "event": {
-                                "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:alice.example","station_id":"ak:did_core:web:principal.example"}},
-                                "device_id": "ak:device:01904100-0000-7000-8000-000000000001",
-                                "proofs": [{"verification_method": "did:web:alice.example#ak:device:01904100-0000-7000-8000-000000000001"}]
-                            }
-                        },
-                        {
-                            "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:alice.example","station_id":"ak:did_core:web:principal.example"}},
-                            "device_id": "ak:device:01904100-0000-7000-8000-000000000001",
-                            "proofs": [{"verification_method": "did:web:alice.example#ak:device:01904100-0000-7000-8000-000000000001"}]
-                        },
-                        {
-                            "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:bob.example","station_id":"ak:did_core:web:principal.example"}},
-                            "proofs": [{"verification_method": "did:web:bob.example#device"}]
-                        },
-                        {
-                            "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:carol.example","station_id":"ak:did_core:web:principal.example"}},
-                            "proofs": [{"verification_method": "did:web:carol.example#ak:device:01904100-0000-7000-8000-000000000002"}]
-                        }
-                    ]
-                }
-            }),
-        );
-        assert_eq!(
-            collect_persistent_proof_sender_devices(&response, &|_: &str| false),
-            vec![
-                (
-                    crate::mls_api_helpers::local_account_actor_id("did:web:alice.example")
-                        .unwrap()
-                        .as_account_id()
-                        .unwrap()
-                        .to_string(),
-                    "ak:device:01904100-0000-7000-8000-000000000001".to_owned()
-                ),
-                (
-                    crate::mls_api_helpers::local_account_actor_id("did:web:carol.example")
-                        .unwrap()
-                        .as_account_id()
-                        .unwrap()
-                        .to_string(),
-                    "ak:device:01904100-0000-7000-8000-000000000002".to_owned()
-                )
-            ]
-        );
-    }
-
-    #[test]
-    fn service_executor_does_not_fabricate_an_account_device_query() {
-        let controller = "ak:did_core:web:bob.example";
-        let agent = "ak:did_core:web:bob.example:agent:assistant";
-        let agent_full = "did:web:bob.example:agent:assistant";
-        let device = "ak:device:01904100-0000-7000-8000-0000000000aa";
-        let mut response = empty_response("cursor-agent");
-        response.realm_projections.insert(
-            "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19".to_owned(),
-            json!({
-                "timeline": {
-                    "events": [{
-                        "actor_id": {"kind":"account","account_id":{
-                            "principal_id":controller,
-                            "station_id":"ak:did_core:web:principal.example"
-                        }},
-                        "executed_by": {"kind":"service","service_id":agent},
-                        "device_id": device,
-                        "proofs": [{
-                            "verification_method": format!("{agent_full}#{device}")
-                        }]
-                    }]
-                }
-            }),
-        );
-
-        assert!(collect_persistent_proof_sender_devices(&response, &|_: &str| false).is_empty());
-    }
-
-    #[test]
     fn notification_projection_filters_invites_by_typed_membership() {
         let mut store = temp_store("invite-membership-projection");
         let actor_id = "ak:did_core:web:bob.example";
@@ -4012,65 +3288,5 @@ mod tests {
                 "ak:did_core:web:subject.example".to_owned(),
             ]
         );
-    }
-
-    #[test]
-    fn accepted_device_revoke_targets_current_local_device() {
-        let actor = arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example".to_owned()).unwrap();
-        let device = "ak:device:0196419b-0000-7000-8000-000000000001";
-        let mut response = empty_response("ak:cursor:device-revoke");
-        response.realm_projections.insert(
-            "ak:realm:AQM8rE4gp8l4axkSbbb9_dkqwWE8ZPYHwFsC24o2mrIL".to_owned(),
-            json!({
-                "state": { "events": [{
-                    "event_id": "ak:event:AV624IkuHj3HmxAYE6uyYmBa4Est3gGGdnOsjn71z5L2",
-                    "kind": "ak.device.revoke",
-                    "payload": {
-                        "principal_id": actor.as_str(),
-                        "device_id": device,
-                        "revoked_by": "ak:device:0196419b-0000-7000-8000-000000000004",
-                        "revoked_at": "2026-07-14T02:00:00.000Z",
-                        "reason": "device_loss"
-                    }
-                }]}
-            }),
-        );
-
-        assert!(response_revokes_local_device(&response, &actor, device));
-        assert!(!response_revokes_local_device(
-            &response,
-            &actor,
-            "ak:device:0196419b-0000-7000-8000-0000000000ff"
-        ));
-        let other_actor =
-            arkret_sdk::DidCoreId::new("ak:did_core:web:mallory.example".to_owned()).unwrap();
-        assert!(!response_revokes_local_device(
-            &response,
-            &other_actor,
-            device
-        ));
-    }
-
-    #[test]
-    fn malformed_or_non_state_device_revoke_does_not_trigger_local_wipe() {
-        let actor = arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example".to_owned()).unwrap();
-        let device = "ak:device:0196419b-0000-7000-8000-000000000001";
-        let mut response = empty_response("ak:cursor:malformed-device-revoke");
-        response.realm_projections.insert(
-            "ak:realm:AQM8rE4gp8l4axkSbbb9_dkqwWE8ZPYHwFsC24o2mrIL".to_owned(),
-            json!({
-                "state": { "events": [{
-                    "kind": "ak.device.revoke",
-                    "principal_id": actor.as_str(),
-                    "device_id": device
-                }]},
-                "timeline": { "events": [{
-                    "kind": "ak.device.revoke",
-                    "payload": { "principal_id": actor.as_str(), "device_id": device }
-                }]}
-            }),
-        );
-
-        assert!(!response_revokes_local_device(&response, &actor, device));
     }
 }

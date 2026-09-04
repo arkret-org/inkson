@@ -2,18 +2,18 @@
 //! sidecar.
 
 use anyhow::{Result, anyhow};
+use garth::mls::backup_selection::{
+    all_mls_account_secret_backups, is_mls_history_backup, latest_mls_history_backups_by_scope,
+    mls_account_secret_backup_version, select_mls_account_secret_backup,
+    select_mls_account_secret_recovery_public_key_backup, select_mls_history_backups,
+    select_mls_private_plaintext_backup, select_preferred_mls_account_secret_backup,
+};
 use garth::mls::backup_series::verify_series_chain;
 use serde_json::{Value, json};
 
 use super::backup_body::{
     decrypt_mls_account_secret_backup, decrypt_mls_private_plaintext_backup,
     open_mls_account_secret_recovery_public_key_backup,
-};
-use super::selection::{
-    all_mls_account_secret_backups, is_mls_history_backup, latest_mls_history_backups_by_scope,
-    mls_account_secret_backup_version, select_mls_account_secret_backup,
-    select_mls_account_secret_recovery_public_key_backup, select_mls_history_backups,
-    select_mls_private_plaintext_backup, select_preferred_mls_account_secret_backup,
 };
 
 fn mls_history_recipient_method(body: &Value) -> Option<arkret_sdk::KeyBackupRecipientMethod> {
@@ -129,21 +129,22 @@ pub struct RestoreReport {
 }
 
 pub(super) fn verify_active_backup_series(list_payload: &Value, backup_kind: &str) -> Result<()> {
+    let class = arkret_sdk::BackupKind::try_from(backup_kind).map_err(|error| anyhow!(error))?;
     let Some(active_series) =
-        super::selection::selectable_series_id_for_backup_class(list_payload, backup_kind)
+        garth::mls::backup_selection::selectable_series_id_for_backup_class(list_payload, class)
     else {
         return Err(anyhow!(
             "{backup_kind} active-series pointer is unavailable"
         ));
     };
-    let bodies = super::selection::iter_backup_bodies(list_payload)
+    let bodies = garth::mls::backup_selection::iter_backup_bodies(list_payload)
         .filter(|body| body.get("backup_kind").and_then(Value::as_str) == Some(backup_kind))
         .filter(|body| body.get("series_id").and_then(Value::as_str) == Some(active_series))
         .cloned()
         .collect::<Vec<_>>();
     let Some(tail) = bodies
         .iter()
-        .max_by_key(|body| super::selection::backup_series_seq(body))
+        .max_by_key(|body| garth::mls::backup_series::backup_series_seq(body))
     else {
         return Err(anyhow!(
             "authoritative {backup_kind} series has no envelopes"
@@ -164,7 +165,7 @@ pub(super) fn observe_active_series_versions(
     let expected_actor = arkret_sdk::ActorId::account(authority.clone());
     // Validate both pointers and envelopes before advancing any rollback floor.
     // A shared principal at another Station is a distinct backup owner.
-    for body in super::selection::iter_backup_bodies(list_payload) {
+    for body in garth::mls::backup_selection::iter_backup_bodies(list_payload) {
         if backup_actor(body)? != expected_actor {
             return Err(anyhow!("backup envelope actor binding mismatch"));
         }
@@ -411,9 +412,10 @@ async fn hydrate_mls_restore_payload_with_unlock_proof(
             .get("backup_kind")
             .and_then(Value::as_str)
             .unwrap_or_default();
-        if matches!(backup_kind, "secret_storage" | "mls_history") {
-            let active_series =
-                super::selection::selectable_series_id_for_backup_class(&payload, backup_kind);
+        if let Ok(class) = arkret_sdk::BackupKind::try_from(backup_kind) {
+            let active_series = garth::mls::backup_selection::selectable_series_id_for_backup_class(
+                &payload, class,
+            );
             if entry.get("series_id").and_then(Value::as_str) != active_series {
                 continue;
             }
@@ -497,9 +499,9 @@ pub async fn fetch_mls_history_restore_payload_with_unlock_proof(
             backups.push(entry);
             continue;
         }
-        let active_series = super::selection::selectable_series_id_for_backup_class(
+        let active_series = garth::mls::backup_selection::selectable_series_id_for_backup_class(
             list_payload,
-            crate::key_backup::BackupKind::MlsHistory.as_str(),
+            crate::key_backup::BackupKind::MlsHistory,
         );
         if entry.get("series_id").and_then(Value::as_str) != active_series {
             continue;

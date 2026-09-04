@@ -521,9 +521,6 @@ fn device_authorization_required_allows_only_verified_device() {
 
 #[test]
 fn recovery_setup_prompt_waits_for_server_state() {
-    assert!(!recovery_setup_prompt_required(None));
-    assert!(!recovery_setup_prompt_required(Some(true)));
-    assert!(recovery_setup_prompt_required(Some(false)));
     assert!(recovery_setup_prompt_required_for_local_state(
         Some(false),
         false
