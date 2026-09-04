@@ -25,6 +25,7 @@ button, input, textarea, select { font: inherit; }
 .auth-restore-indicator { width: 100%; height: 4px; border-radius: 999px; overflow: hidden; background: color-mix(in srgb, var(--text-3) 18%, transparent); }
 .auth-restore-indicator::before { content: ""; display: block; width: 38%; height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--accent), var(--accent-2)); animation: auth-restore-slide 1.1s ease-in-out infinite; }
 @keyframes auth-restore-slide { 0% { transform: translateX(-110%); } 100% { transform: translateX(270%); } }
+.shell { min-height: 100vh; display: grid; grid-template-columns: 288px minmax(0, 1fr) 340px; }
 .shell.rtl { direction: rtl; grid-template-columns: 340px minmax(0, 1fr) 288px; }
 .shell.rtl .sidebar { grid-column: 3; }
 .shell.rtl .main { grid-column: 2; }
@@ -32,6 +33,7 @@ button, input, textarea, select { font: inherit; }
 .shell.rtl .actions { direction: rtl; }
 .shell.rtl .event-head, .shell.rtl .topbar { flex-direction: row-reverse; }
 .shell.rtl .realm-tree-node-button, .shell.rtl input, .shell.rtl textarea { text-align: right; }
+.sidebar { background: var(--nav-bg); color: var(--nav-text); padding: 22px; display: grid; grid-template-rows: auto auto 1fr auto; gap: 18px; }
 .search { display: grid; gap: 8px; }
 .search input:not([type="checkbox"]):not([type="radio"]), .settings input:not([type="checkbox"]):not([type="radio"]), .workflow-form input:not([type="checkbox"]):not([type="radio"]), .composer textarea, .composer input:not([type="checkbox"]):not([type="radio"]) { width: 100%; box-sizing: border-box; border: 1px solid var(--border); border-radius: 6px; padding: 7px 12px; background: var(--surface-solid); color: var(--text); }
 .settings select, .workflow-form select, .event select, .actions select { min-height: 40px; box-sizing: border-box; border: 1px solid var(--border); border-radius: 6px; padding: 8px 36px 8px 12px; background: var(--surface-solid); color: var(--text); line-height: 1.35; }
@@ -47,11 +49,16 @@ button, input, textarea, select { font: inherit; }
 .blocklist-applies-grid { display: flex; flex-wrap: wrap; gap: 8px 16px; }
 .blocklist-applies-grid .metric { display: inline-flex; align-items: center; gap: 6px; padding: 6px 10px; }
 .primary, .secondary { border: 0; border-radius: 6px; padding: 10px 12px; cursor: pointer; display: inline-block; text-decoration: none; text-align: center; }
+.primary { background: var(--accent-strong); color: var(--text-on-accent); }
+.secondary { background: var(--surface-3); color: var(--text); }
 a.primary, a.secondary { line-height: 1.5; }
+.main { padding: 24px; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; gap: 16px; min-width: 0; }
+.title { font-size: 28px; font-weight: 750; overflow-wrap: anywhere; }
 .timeline { display: grid; gap: 10px; align-content: start; overflow: auto; }
 .event { background: var(--surface-solid); border: 1px solid var(--border); border-radius: 8px; padding: 14px; display: grid; gap: 6px; }
 .composer { background: var(--surface-solid); border-top: 1px solid var(--border); padding: 14px; display: grid; gap: 10px; border-radius: 8px; }
 .composer textarea { min-height: 88px; resize: vertical; }
+.panel { border-left: 1px solid var(--border); background: var(--surface-2); padding: 22px; display: grid; gap: 16px; align-content: start; overflow: auto; min-width: 0; }
 .section { display: grid; gap: 10px; }
 .section h2 { margin: 0; font-size: 16px; }
 .metric-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }

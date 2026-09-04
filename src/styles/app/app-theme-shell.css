@@ -4,9 +4,6 @@
  * canonical theme tokens from app_overrides/theme-shell-overrides.css
  * so both light and dark themes resolve from one palette. */
 .shell {
-  min-height: 100vh;
-  display: grid;
-  grid-template-columns: 288px minmax(0, 1fr) 340px;
   --ak-bg: var(--bg);
   --ak-bg-soft: var(--surface-2);
   --ak-bg-end: var(--bg-elev);
@@ -32,10 +29,6 @@
 .sidebar {
   background: var(--ak-nav);
   color: var(--nav-text);
-  padding: 22px;
-  display: grid;
-  grid-template-rows: auto auto 1fr auto;
-  gap: 18px;
   border-right: 1px solid var(--nav-border);
 }
 .brand {
@@ -82,11 +75,6 @@
   background: color-mix(in srgb, var(--accent) 18%, transparent);
 }
 .main {
-  padding: 24px;
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto;
-  gap: 16px;
-  min-width: 0;
   background: transparent;
 }
 .topbar {
@@ -103,10 +91,8 @@
   backdrop-filter: blur(16px);
 }
 .title {
-  font-size: 30px;
-  font-weight: 750;
-  overflow-wrap: anywhere;
   color: var(--ak-ink);
+  font-size: 30px;
   line-height: 1.12;
 }
 .muted,
@@ -131,15 +117,8 @@
   font-weight: 650;
 }
 .panel {
-  border-left: 1px solid var(--border);
-  background: var(--ak-surface-raised);
-  padding: 22px;
-  display: grid;
-  gap: 16px;
-  align-content: start;
-  overflow: auto;
-  min-width: 0;
   border-color: var(--ak-line);
+  background: var(--ak-surface-raised);
   color: var(--ak-ink);
 }
 .search input:not([type="checkbox"]):not([type="radio"]),
@@ -186,9 +165,9 @@
   color: var(--text-on-accent);
 }
 .secondary {
+  border: 1px solid var(--ak-line-strong);
   background: var(--ak-surface);
   color: var(--ak-ink);
-  border: 1px solid var(--ak-line-strong);
 }
 .write-state-badge {
   display: inline-flex;
