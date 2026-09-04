@@ -36,9 +36,14 @@ pub fn consent_grant(
         evidence_ref: None,
         reason: None,
     };
-    Ok(TypedOperationBuilder::new::<
-        arkret_sdk::event_spec::ConsentGrant,
-    >(holder_pcr_realm_id, holder, payload))
+    Ok(
+        TypedOperationBuilder::new::<arkret_sdk::event_spec::ConsentGrant>(
+            holder_pcr_realm_id,
+            holder,
+            payload,
+        )
+        .authorization_ref(arkret_wire::REALM_AUTHORITY_ROOT_CELL),
+    )
 }
 
 /// Build a canonical `ak.consent.revoke` Control Move.
@@ -71,9 +76,14 @@ pub fn consent_revoke(
         revoked_at: Some(crate::clock::now_utc_millis()),
         reason: None,
     };
-    Ok(TypedOperationBuilder::new::<
-        arkret_sdk::event_spec::ConsentRevoke,
-    >(holder_pcr_realm_id, holder, payload))
+    Ok(
+        TypedOperationBuilder::new::<arkret_sdk::event_spec::ConsentRevoke>(
+            holder_pcr_realm_id,
+            holder,
+            payload,
+        )
+        .authorization_ref(arkret_wire::REALM_AUTHORITY_ROOT_CELL),
+    )
 }
 
 /// Recover the `consent_id` a consent cell is keyed on from its `cell_id`.

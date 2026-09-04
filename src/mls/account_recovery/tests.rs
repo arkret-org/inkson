@@ -755,6 +755,33 @@ fn select_account_secret_fails_closed_when_active_series_is_missing() {
 }
 
 #[test]
+fn select_account_secret_infers_the_only_series_without_an_active_record() {
+    let backup = wrap();
+    let payload = serde_json::json!({
+        "active_series": [],
+        "backups": [backup.clone()]
+    });
+
+    let found = select_mls_account_secret_backup(&payload).expect("unique series is unambiguous");
+    assert_eq!(found["backup_id"], backup["backup_id"]);
+}
+
+#[test]
+fn select_account_secret_rejects_multiple_series_without_an_active_record() {
+    let mut first = wrap();
+    first["series_id"] = serde_json::json!(ACTIVE_SECRET_STORAGE_SERIES);
+    let mut second = wrap();
+    second["backup_id"] = serde_json::json!("ak:backup:01964137-0000-7000-8000-0000000000a3");
+    second["series_id"] = serde_json::json!(STALE_SECRET_STORAGE_SERIES);
+    let payload = serde_json::json!({
+        "active_series": [],
+        "backups": [first, second]
+    });
+
+    assert!(select_mls_account_secret_backup(&payload).is_none());
+}
+
+#[test]
 fn select_history_backups_filters_by_class() {
     let payload = serde_json::json!({
         "active_series": [

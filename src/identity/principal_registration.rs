@@ -911,6 +911,7 @@ mod tests {
             trust_domain: "ak:trust_domain:principal.example".to_owned(),
             bound_principal_id: None,
             bound_principal_did: None,
+            bound_device_entry_state: None,
         }
     }
 

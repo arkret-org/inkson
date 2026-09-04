@@ -54,7 +54,7 @@ pub(super) fn active_series_id_for_backup_class<'a>(
     list_payload: &'a Value,
     backup_kind: &str,
 ) -> Option<&'a str> {
-    list_payload
+    let recorded = list_payload
         .get("active_series")
         .and_then(Value::as_array)
         .and_then(|records| {
@@ -66,7 +66,26 @@ pub(super) fn active_series_id_for_backup_class<'a>(
         })
         .and_then(|record| record.get("active_series_id"))
         .and_then(Value::as_str)
-        .filter(|series_id| !series_id.is_empty())
+        .filter(|series_id| !series_id.is_empty());
+    if recorded.is_some() {
+        return recorded;
+    }
+
+    // device-lifecycle.md section 12 only requires an authoritative active-
+    // series record when one backup class has multiple series. With exactly
+    // one series there is no choice to arbitrate, so infer that unique id.
+    // Missing metadata still fails closed as soon as two distinct series are
+    // visible.
+    let mut series_ids = iter_backup_bodies(list_payload)
+        .filter(|body| body.get("backup_kind").and_then(Value::as_str) == Some(backup_kind))
+        .filter_map(|body| body.get("series_id").and_then(Value::as_str))
+        .filter(|series_id| !series_id.is_empty());
+    let first = series_ids.next()?;
+    if series_ids.any(|series_id| series_id != first) {
+        None
+    } else {
+        Some(first)
+    }
 }
 
 fn matches_active_series(body: &Value, active_series: Option<&str>) -> bool {

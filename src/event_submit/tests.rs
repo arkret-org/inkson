@@ -696,6 +696,12 @@ fn realm_owner_coverage_gates_the_root_claim() {
     assert!(!realm_owner_covers_event_kind("ak.rsvp.set"));
     assert!(!realm_owner_covers_event_kind("ak.realm.create"));
     assert!(!realm_owner_covers_event_kind("ak.not.a.kind"));
+
+    // Consent writes are root-control-only and therefore deliberately not in
+    // the ordinary owner aggregate. They still require the same root claim.
+    assert!(!realm_owner_covers_event_kind("ak.consent.grant"));
+    assert!(realm_authority_root_covers_event_kind("ak.consent.grant"));
+    assert!(realm_authority_root_covers_event_kind("ak.consent.revoke"));
 }
 
 #[test]
@@ -711,6 +717,11 @@ fn realm_authority_root_claim_stamps_only_the_matching_controller() {
     );
     let rsvp = sdk_intent_with_kind(AUTHORITY_REALM, "ak.rsvp.set", AUTHORITY_CONTROLLER);
     assert_eq!(realm_authority_root_claim(&rsvp, Some(&root)), None);
+    let consent = sdk_intent_with_kind(AUTHORITY_REALM, "ak.consent.grant", AUTHORITY_CONTROLLER);
+    assert_eq!(
+        realm_authority_root_claim(&consent, Some(&root)),
+        Some(arkret_sdk::AuthorizationRef::new(arkret_wire::REALM_AUTHORITY_ROOT_CELL).unwrap())
+    );
     assert_eq!(
         realm_authority_root_claim(&event("did:web:bob.example"), Some(&root)),
         None

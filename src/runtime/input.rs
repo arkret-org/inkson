@@ -76,11 +76,11 @@ pub struct StateStoreHandle {
     #[cfg(not(target_arch = "wasm32"))]
     read: Arc<ReadStore>,
     #[cfg(target_arch = "wasm32")]
-    read: Rc<ReadStore>,
+    read: send_wrapper::SendWrapper<Rc<ReadStore>>,
     #[cfg(not(target_arch = "wasm32"))]
     write: Arc<WriteStore>,
     #[cfg(target_arch = "wasm32")]
-    write: Rc<WriteStore>,
+    write: send_wrapper::SendWrapper<Rc<WriteStore>>,
 }
 
 impl StateStoreHandle {
@@ -101,8 +101,8 @@ impl StateStoreHandle {
         write: impl Fn(&mut dyn FnMut(&mut LocalStateStore)) + 'static,
     ) -> Self {
         Self {
-            read: Rc::new(read),
-            write: Rc::new(write),
+            read: send_wrapper::SendWrapper::new(Rc::new(read)),
+            write: send_wrapper::SendWrapper::new(Rc::new(write)),
         }
     }
 

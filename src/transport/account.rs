@@ -1335,20 +1335,28 @@ pub async fn grant_consent(
         expires_at,
     )?
     .build_sdk_event("inkson")?;
+    let signed_event = submitter.author_for_direct_submission(&event).await?;
+    let seal_context = crate::transport::contacts::prepare_principal_successor_seal(
+        submitter.http(),
+        &signed_event,
+    )
+    .await?;
     let body = arkret_sdk::ConsentGrantRequestBody {
-        grant_event: arkret_wire::EventInitialSubmission::online(
-            submitter
-                .author_for_direct_submission(&event)
-                .await?
-                .into_event(),
-        ),
+        grant_event: arkret_wire::EventInitialSubmission::online(signed_event.event().clone()),
     };
     let path = format!("{}/cells/grant", arkret_wire::PATH_SELF_CONSENT);
-    submitter
+    let view = submitter
         .http()
         .post(&path, &body)
         .await
-        .map_err(anyhow::Error::from)
+        .map_err(anyhow::Error::from)?;
+    crate::transport::contacts::submit_principal_successor_seal(
+        submitter.http(),
+        seal_context,
+        &signed_event,
+    )
+    .await?;
+    Ok(view)
 }
 
 /// Revoke scoped consent from `peer`. Spec OpenAPI
@@ -1368,6 +1376,12 @@ pub async fn revoke_consent(
     let holder_did = did_for_request_field("holder", holder)?;
     let principal_control_realm_id =
         crate::identity::principal_control::resolve_accepted(submitter.http(), &holder_did).await?;
+    wait_for_consent_dots_in_seal(
+        submitter.http(),
+        &principal_control_realm_id,
+        &cell.active_grant_dots,
+    )
+    .await?;
     let event = crate::operation::ak_ops::consent_revoke(
         principal_control_realm_id.as_str(),
         holder.trim(),
@@ -1375,20 +1389,79 @@ pub async fn revoke_consent(
         &cell.active_grant_dots,
     )?
     .build_sdk_event("inkson")?;
+    let signed_event = submitter.author_for_direct_submission(&event).await?;
+    let seal_context = crate::transport::contacts::prepare_principal_successor_seal(
+        submitter.http(),
+        &signed_event,
+    )
+    .await?;
     let body = arkret_sdk::ConsentRevokeRequestBody {
-        revoke_event: arkret_wire::EventInitialSubmission::online(
-            submitter
-                .author_for_direct_submission(&event)
-                .await?
-                .into_event(),
-        ),
+        revoke_event: arkret_wire::EventInitialSubmission::online(signed_event.event().clone()),
     };
     let path = format!("{}/cells/revoke", arkret_wire::PATH_SELF_CONSENT);
-    submitter
+    let view = submitter
         .http()
         .post(&path, &body)
         .await
-        .map_err(anyhow::Error::from)
+        .map_err(anyhow::Error::from)?;
+    crate::transport::contacts::submit_principal_successor_seal(
+        submitter.http(),
+        seal_context,
+        &signed_event,
+    )
+    .await?;
+    Ok(view)
+}
+
+/// A revoke is an observe-remove Move: its frozen Seal basis must cover every
+/// add dot it names. Event admission can complete just before the successor
+/// control Seal is materialized. New clients submit that Seal synchronously,
+/// while the wait also keeps an immediate Revoke safe when following a grant
+/// accepted by an older client.
+async fn wait_for_consent_dots_in_seal(
+    http: &arkret_sdk::http_client::Client,
+    realm_id: &arkret_sdk::RealmId,
+    dots: &[String],
+) -> anyhow::Result<()> {
+    const ATTEMPTS: usize = 40;
+    const DELAY: std::time::Duration = std::time::Duration::from_millis(250);
+
+    let digests = dots
+        .iter()
+        .map(|dot| {
+            let (event_id, _) = dot
+                .rsplit_once(':')
+                .ok_or_else(|| anyhow::anyhow!("consent dot has no write index: {dot}"))?;
+            Ok(arkret_sdk::EventId::new(event_id.to_owned())?.event_digest())
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
+
+    for attempt in 0..ATTEMPTS {
+        let covered = async {
+            let frontier = http.seals_frontier(realm_id.clone()).await?.frontier;
+            let seals = http
+                .seals_resolve(&arkret_sdk::SelfSealResolveRequestBody {
+                    realm_id: realm_id.clone(),
+                    seal_refs: frontier.seal_basis.leaves,
+                    history_traversal_access: None,
+                })
+                .await?
+                .seals;
+            Ok::<_, arkret_sdk::http_client::Error>(digests.iter().all(|digest| {
+                seals.iter().any(|seal| {
+                    seal.delta.contains(digest) || seal.covered_event_digests.contains(digest)
+                })
+            }))
+        }
+        .await;
+        if matches!(covered, Ok(true)) {
+            return Ok(());
+        }
+        if attempt + 1 < ATTEMPTS {
+            crate::runtime_helpers::sleep_for(DELAY).await;
+        }
+    }
+    anyhow::bail!("consent grant dots were not covered by the accepted Seal frontier in time")
 }
 
 /// Open an outbound consent request: ask `holder` to grant the

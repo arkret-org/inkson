@@ -1204,6 +1204,7 @@ fn fresh_pending_login_never_moves_previous_account_onboarding_fields() {
         trust_domain: "ak:trust_domain:auth.example".to_owned(),
         bound_principal_id: None,
         bound_principal_did: None,
+        bound_device_entry_state: None,
     };
     store
         .set_pending_account_handoff(Some(handoff.clone()))
@@ -1308,6 +1309,7 @@ fn accepted_context_promotion_moves_the_unfinished_handoff_with_its_registration
         trust_domain: "ak:trust_domain:auth.example".to_owned(),
         bound_principal_id: None,
         bound_principal_did: None,
+        bound_device_entry_state: None,
     };
     let recovery_key = crate::recovery_crypto::generate_recovery_key().unwrap();
     let checkpoint = crate::identity::principal_registration::prepare_registration_checkpoint(
@@ -1402,6 +1404,7 @@ fn returning_login_clears_consumed_handoff_from_anonymous_namespace() {
                 arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example".to_owned()).unwrap(),
             ),
             bound_principal_did: Some(arkret_sdk::Did::new(principal.to_owned()).unwrap()),
+            bound_device_entry_state: Some(crate::state::BoundDeviceEntryState::NoReturningDevice),
         }))
         .unwrap();
 

@@ -212,12 +212,15 @@ pub async fn author_pairing_request_body(
     let http = api.sdk_http_client()?;
     let realm_id =
         crate::identity::principal_control::resolve_accepted(&http, &principal_actor).await?;
+    let submitter = api.event_submitter()?;
+    submitter
+        .ensure_realm_governance_checkpoint(realm_id.as_str())
+        .await?;
     let authorize = crate::operation::TypedOperationBuilder::new::<
         arkret_sdk::event_spec::DeviceAuthorize,
     >(realm_id.as_str(), principal.as_str(), authorize_payload)
     .created_at(created_at)
     .build_sdk_event("inkson-device-pairing")?;
-    let submitter = api.event_submitter()?;
     let authorized = submitter
         .author_independent_events(vec![authorize.into_intent()])
         .await?;

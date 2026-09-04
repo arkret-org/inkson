@@ -37,6 +37,15 @@ pub(super) fn realm_owner_covers_event_kind(kind: &str) -> bool {
         .is_some_and(|descriptor| descriptor.target_event_kinds.contains(&kind))
 }
 
+/// Whether a direct controller-authored Event may claim the Realm authority
+/// root. Root-control-only actions are intentionally absent from the ordinary
+/// `ak.realm.owner` aggregate: the root cell is their sole authority, not one
+/// possible owner capability. They still must be stamped with that root claim.
+pub(super) fn realm_authority_root_covers_event_kind(kind: &str) -> bool {
+    arkret_schema::capability_action(kind).is_some_and(|descriptor| descriptor.root_control_only)
+        || realm_owner_covers_event_kind(kind)
+}
+
 /// Return the registered authority-root claim for direct Realm-root authoring.
 #[allow(clippy::expect_used)]
 pub(super) fn realm_authority_root_claim(
@@ -46,7 +55,7 @@ pub(super) fn realm_authority_root_claim(
     if intent.authorization_ref().is_some()
         || intent.executed_by().is_some()
         || intent.applet_id().is_some()
-        || !realm_owner_covers_event_kind(intent.kind().as_str())
+        || !realm_authority_root_covers_event_kind(intent.kind().as_str())
     {
         return None;
     }

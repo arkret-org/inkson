@@ -77,7 +77,7 @@ fn scope_label(scope: &str) -> &'static str {
     }
 }
 
-/// Parse a TTL token such as `30d` / `12h` / `90m` into a duration. Returns
+/// Parse a TTL token such as `30d` / `12h` / `90m` / `5s` into a duration. Returns
 /// `None` for an empty / unparseable value (treated as no expiry window).
 fn parse_ttl(raw: &str) -> Option<chrono::Duration> {
     let raw = raw.trim();
@@ -90,6 +90,7 @@ fn parse_ttl(raw: &str) -> Option<chrono::Duration> {
         "" | "d" | "D" => Some(chrono::Duration::days(amount)),
         "h" | "H" => Some(chrono::Duration::hours(amount)),
         "m" | "M" => Some(chrono::Duration::minutes(amount)),
+        "s" | "S" => Some(chrono::Duration::seconds(amount)),
         "w" | "W" => Some(chrono::Duration::weeks(amount)),
         _ => None,
     }
@@ -106,18 +107,29 @@ fn parse_valid_until(raw: &str) -> Option<chrono::DateTime<chrono::Utc>> {
         .map(|dt| dt.with_timezone(&chrono::Utc))
 }
 
-fn parse_consent_rows(value: &arkret_sdk::ConsentCellList) -> Vec<ConsentRow> {
+fn parse_consent_rows(value: &arkret_sdk::ConsentCellList, holder: &str) -> Vec<ConsentRow> {
     value
         .consent_cell_views
         .iter()
         .map(|cell| ConsentRow {
-            holder: "self".to_owned(),
-            peer: serde_json::to_string(&cell.peer).unwrap_or_else(|_| "invalid-peer".to_owned()),
+            // The self list endpoint is holder-scoped; ConsentCellView
+            // deliberately does not mirror that authenticated holder.
+            holder: holder.to_owned(),
+            peer: match &cell.peer {
+                arkret_sdk::ConsentPeer::Actor { actor_id } => {
+                    actor_id.signing_principal_id().as_str().to_owned()
+                }
+                arkret_sdk::ConsentPeer::PairwisePrincipal { principal_id } => {
+                    principal_id.as_str().to_owned()
+                }
+            },
             scope: cell.consent_scope.as_str().to_owned(),
-            state: serde_json::to_value(cell.state)
-                .ok()
-                .and_then(|v| v.as_str().map(ToOwned::to_owned))
-                .unwrap_or_else(|| "pending".to_owned()),
+            state: match cell.state {
+                arkret_sdk::ConsentState::Active => "active",
+                arkret_sdk::ConsentState::NoConsent if !cell.revoked_dots.is_empty() => "revoked",
+                arkret_sdk::ConsentState::NoConsent => "pending",
+            }
+            .to_owned(),
             expires_at: cell
                 .expires_at
                 .map(arkret_sdk::canonical::format_timestamp_canonical),
@@ -175,6 +187,7 @@ pub fn ConsentSettingsPanel(principal_id: Signal<String>, token: Signal<String>)
             }
             loaded_generation.set(generation);
             let base = base.clone();
+            let holder = principal_id();
             load_error.set(None);
             spawn(async move {
                 match with_authed_sdk_client(&base, api_token, |http| async move {
@@ -183,7 +196,7 @@ pub fn ConsentSettingsPanel(principal_id: Signal<String>, token: Signal<String>)
                 .await
                 {
                     Ok(list) => {
-                        rows.set(parse_consent_rows(&list));
+                        rows.set(parse_consent_rows(&list, &holder));
                     }
                     Err(err) => {
                         load_error.set(Some(err.display()));

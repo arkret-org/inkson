@@ -860,10 +860,11 @@ fn DeviceSetupRequired(
                     // secondary choice, and only after the bound handoff
                     // already reached a typed admission outcome.
                     let handoff = state_store.read().pending_account_handoff();
-                    let (correlation, bound) = handoff.as_ref().map_or_else(
+                    let (correlation, bound, no_returning_device) = handoff.as_ref().map_or_else(
                         || {
                             (
                                 crate::identity::account_auth::transition::LoginCorrelation::default(),
+                                false,
                                 false,
                             )
                         },
@@ -871,6 +872,10 @@ fn DeviceSetupRequired(
                             (
                                 crate::identity::account_auth::transition::LoginCorrelation::for_handoff(handoff),
                                 handoff.bound_principal_id.is_some(),
+                                matches!(
+                                    handoff.bound_device_entry_state.as_ref(),
+                                    Some(crate::state::BoundDeviceEntryState::NoReturningDevice)
+                                ),
                             )
                         },
                     );
@@ -878,6 +883,7 @@ fn DeviceSetupRequired(
                         crate::identity::account_auth::transition::RecoveryEntryReason::UserSelectedInDeviceSetup,
                         &correlation,
                         bound,
+                        no_returning_device,
                     ) {
                         recovery_selected.set(true);
                     } else {
@@ -4703,6 +4709,7 @@ mod tests {
             trust_domain: "ak:trust_domain:auth.example".to_owned(),
             bound_principal_id: None,
             bound_principal_did: None,
+            bound_device_entry_state: None,
         }
     }
 }

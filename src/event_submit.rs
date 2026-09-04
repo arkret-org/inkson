@@ -3102,7 +3102,7 @@ impl EventSubmitter {
         if intent.authorization_ref().is_some()
             || intent.executed_by().is_some()
             || intent.applet_id().is_some()
-            || !realm_owner_covers_event_kind(intent.kind().as_str())
+            || !realm_authority_root_covers_event_kind(intent.kind().as_str())
         {
             return intent;
         }

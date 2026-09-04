@@ -95,8 +95,17 @@ pub(super) fn onboarding_surface(
                 )
             }) {
                 OnboardingSurface::IdentityCreation
-            } else {
+            } else if matches!(
+                handoff.bound_device_entry_state.as_ref(),
+                Some(crate::state::BoundDeviceEntryState::NoReturningDevice)
+            ) {
                 OnboardingSurface::DeviceSetupRequired
+            } else {
+                // ReturningDevice must resume session issuance and
+                // LocalEvidenceUnavailable must remain in diagnostics. An old
+                // checkpoint with no closed normalization result also fails
+                // closed here; none of these may open Recovery.
+                OnboardingSurface::ServerStateConflict
             };
         }
         let Some(server_state) = handoff.identity_creation_state else {

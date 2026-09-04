@@ -104,6 +104,8 @@ pub(super) fn ChatEffects(
     {
         let realm = selected_realm_id.clone();
         use_effect(move || {
+            let _live_epoch = realm_live_epoch();
+            let _sync_cursor = sync_cursor();
             let strand = selected_channel();
             let snapshot = state_store.read().load();
             let scope = shared_pin_scope_for_message(&realm, &strand);

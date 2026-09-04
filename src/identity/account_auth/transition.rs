@@ -524,27 +524,20 @@ pub fn record_recovery_surface_opened(
     reason: RecoveryEntryReason,
     correlation: &LoginCorrelation,
     bound_handoff: bool,
+    no_returning_device: bool,
 ) -> bool {
-    let admission_observed = correlation
-        .handoff_request_id
-        .as_deref()
-        .is_some_and(|request_id| {
-            observed_admission_outcomes()
-                .iter()
-                .any(|seen| seen == request_id)
-        });
-    if bound_handoff && !admission_observed {
+    if bound_handoff && !no_returning_device {
         record_login_transition(
             LoginStage::DeviceSetup,
             "login_transition_invariant",
             LoginStage::LoginDiagnostics,
-            "bound_handoff_reached_recovery_without_admission_outcome",
+            "bound_handoff_reached_recovery_without_no_returning_device",
             Some(LoginTransitionOutcome::Contradiction),
             correlation,
         );
         debug_assert!(
             false,
-            "a bound account handoff must reach a typed admission outcome before any recovery surface"
+            "a bound account handoff must durably record NoReturningDevice before any recovery surface"
         );
         return false;
     }
@@ -725,6 +718,7 @@ mod tests {
                 RecoveryEntryReason::UserSelectedInDeviceSetup,
                 &correlation,
                 false,
+                false,
             ),
             "an unbound handoff has no admission outcome to wait for"
         );
@@ -733,6 +727,7 @@ mod tests {
         assert!(record_recovery_surface_opened(
             RecoveryEntryReason::UserSelectedInDeviceSetup,
             &correlation,
+            true,
             true,
         ));
     }

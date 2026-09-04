@@ -1148,6 +1148,28 @@ fn local_evidence_unavailable_code(reason: &LocalEvidenceUnavailableReason) -> &
     }
 }
 
+fn bound_device_entry_state_for_route(
+    route: &AuthenticatedAccountRoute,
+) -> Option<crate::state::BoundDeviceEntryState> {
+    match route {
+        AuthenticatedAccountRoute::ReturningSession(device_id) => {
+            Some(crate::state::BoundDeviceEntryState::ReturningDevice {
+                device_id: device_id.to_string(),
+            })
+        }
+        AuthenticatedAccountRoute::DeviceSetupRequired => {
+            Some(crate::state::BoundDeviceEntryState::NoReturningDevice)
+        }
+        AuthenticatedAccountRoute::Diagnostics(reason) => Some(
+            crate::state::BoundDeviceEntryState::LocalEvidenceUnavailable {
+                reason: local_evidence_unavailable_code(reason).to_owned(),
+            },
+        ),
+        AuthenticatedAccountRoute::IdentityCreation
+        | AuthenticatedAccountRoute::IdentityCreationBusy => None,
+    }
+}
+
 /// Record the one authoritative routing decision taken after the Account
 /// Authority answered, so a later surface can always be traced back to the
 /// disposition and the normalization outcome that selected it.
@@ -1320,6 +1342,7 @@ fn pending_handoff_from_authority(
         trust_domain: trust_domain.to_owned(),
         bound_principal_id,
         bound_principal_did,
+        bound_device_entry_state: None,
     }
 }
 
@@ -1734,7 +1757,7 @@ async fn finish_oidc_callback(
                 &gate_account_base_url,
             )
         });
-    if let (Some(pending_handoff), Some(expected_principal), Some(returning_device)) = (
+    if let (Some(mut pending_handoff), Some(expected_principal), Some(returning_device)) = (
         resumable_handoff,
         scaffold.expected_principal_did.as_ref(),
         scaffold.expected_device_id.as_ref(),
@@ -1767,6 +1790,9 @@ async fn finish_oidc_callback(
             }
             Err(ReturningSessionExchangeError::DeviceSetupRequired(error)) => {
                 tracing::warn!(%error, "resumed returning-device exchange requires device setup");
+                pending_handoff.bound_device_entry_state =
+                    Some(crate::state::BoundDeviceEntryState::NoReturningDevice);
+                persist_pending_account_handoff_durably(&mut state_store, &pending_handoff).await?;
                 let _ = clear_persisted_oidc_scaffold(&scaffold.expected_state);
                 return Ok(OidcCallbackOutcome::Onboarding {
                     preferred_locale: None,
@@ -1823,7 +1849,7 @@ async fn finish_oidc_callback(
         scaffold.expected_principal_did.as_ref(),
         scaffold.expected_device_id.as_ref(),
     );
-    let pending_handoff = pending_handoff_from_authority(
+    let mut pending_handoff = pending_handoff_from_authority(
         &station_url,
         &gate_account_base_url,
         &principal_audience,
@@ -1834,24 +1860,14 @@ async fn finish_oidc_callback(
         &handoff,
         &disposition,
     );
+    pending_handoff.bound_device_entry_state = bound_device_entry_state_for_route(&account_route);
     crate::identity::account_auth::persist_account_handoff_grant(
         &pending_handoff,
         &handoff.account_handoff_grant,
     )
     .await
     .map_err(|error| format!("Persist account handoff credential failed: {error}"))?;
-    let handoff_barrier = {
-        let mut store = state_store.write();
-        persist_pending_account_handoff(&mut store, pending_handoff.clone())
-            .map_err(|error| format!("Persist account handoff checkpoint failed: {error}"))?;
-        store.begin_durable_flush().map_err(|error| {
-            format!("Prepare account handoff durability barrier failed: {error}")
-        })?
-    };
-    handoff_barrier
-        .wait()
-        .await
-        .map_err(|error| format!("Durably persist account handoff checkpoint failed: {error}"))?;
+    persist_pending_account_handoff_durably(&mut state_store, &pending_handoff).await?;
     record_authenticated_account_route(&pending_handoff, &disposition, &account_route);
     if let (
         AuthenticatedAccountRoute::ReturningSession(returning_device),
@@ -1881,6 +1897,9 @@ async fn finish_oidc_callback(
                     device_id = %returning_device,
                     "returning-device authority rejected the durable device; entering device setup"
                 );
+                pending_handoff.bound_device_entry_state =
+                    Some(crate::state::BoundDeviceEntryState::NoReturningDevice);
+                persist_pending_account_handoff_durably(&mut state_store, &pending_handoff).await?;
             }
             Err(ReturningSessionExchangeError::Blocked(reason, message)) => {
                 let _ = clear_persisted_oidc_scaffold(&scaffold.expected_state);
@@ -2303,6 +2322,24 @@ fn persist_pending_account_handoff(
     crate::identity::account_auth::persist_reconciled_handoff(store, pending_handoff)
 }
 
+async fn persist_pending_account_handoff_durably(
+    state_store: &mut SyncSignal<LocalStateStore>,
+    pending_handoff: &crate::state::PendingAccountHandoff,
+) -> Result<(), String> {
+    let barrier = {
+        let mut store = state_store.write();
+        persist_pending_account_handoff(&mut store, pending_handoff.clone())
+            .map_err(|error| format!("Persist account handoff checkpoint failed: {error}"))?;
+        store.begin_durable_flush().map_err(|error| {
+            format!("Prepare account handoff durability barrier failed: {error}")
+        })?
+    };
+    barrier
+        .wait()
+        .await
+        .map_err(|error| format!("Durably persist account handoff checkpoint failed: {error}"))
+}
+
 #[cfg(test)]
 mod tests {
     use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -2405,6 +2442,7 @@ mod tests {
             trust_domain: "ak:trust_domain:auth.example".to_owned(),
             bound_principal_id: None,
             bound_principal_did: None,
+            bound_device_entry_state: None,
         }
     }
 

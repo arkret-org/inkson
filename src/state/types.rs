@@ -607,6 +607,21 @@ where
     )?))
 }
 
+/// Closed result of the client-local accepted-device normalization performed
+/// for a bound account handoff (account-lifecycle.md section 2.1.2).
+///
+/// This is local durable state, not a wire claim. Persisting it prevents a
+/// page reload from turning `LocalEvidenceUnavailable` into recovery, or from
+/// forgetting the exact `NoReturningDevice` decision required before the user
+/// may explicitly choose Recovery.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum BoundDeviceEntryState {
+    ReturningDevice { device_id: String },
+    NoReturningDevice,
+    LocalEvidenceUnavailable { reason: String },
+}
+
 /// Public-only checkpoint for a client-authored principal registration.
 /// Recovery words and every derived private seed are deliberately absent; a
 /// resumed bootstrap must ask the user to re-enter the cold recovery secret.
@@ -666,6 +681,10 @@ pub struct PendingAccountHandoff {
     /// and object identity use `bound_principal_id`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bound_principal_did: Option<arkret_sdk::Did>,
+    /// Durable result of the local evidence normalization for a bound account.
+    /// Old checkpoints omit it and therefore fail closed at Recovery entry.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bound_device_entry_state: Option<BoundDeviceEntryState>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

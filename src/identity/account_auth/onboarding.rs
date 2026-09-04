@@ -401,6 +401,7 @@ mod tests {
             trust_domain: "ak:trust_domain:auth.example".to_owned(),
             bound_principal_id: None,
             bound_principal_did: None,
+            bound_device_entry_state: None,
         };
         let recovery_key = crate::recovery_crypto::generate_recovery_key().unwrap();
         let checkpoint = crate::identity::principal_registration::prepare_registration_checkpoint(
