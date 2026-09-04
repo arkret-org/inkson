@@ -641,6 +641,10 @@ pub(crate) fn project_board(
     project_board_with_projection(ops, &[], &[], preferred_board_id, realm_id, decrypt_ctx)
 }
 
+/// Default-actor form of [`project_board_with_projection_for_actor`].
+/// Only the projection tests need it: production always knows the signed-in
+/// actor, because the board marks the viewer's own RSVP head.
+#[cfg(test)]
 pub(crate) fn project_board_with_projection(
     ops: &[RawOperationRecord],
     projected_containers: &[crate::state::projection_views::SpaceContainerProjectionView],

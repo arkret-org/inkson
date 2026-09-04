@@ -68,14 +68,13 @@ fn member_permission_aggregation_marks_all_errors_fail_closed() {
     assert!(load.all_checks_failed);
 }
 
+/// Roster key for a test principal. Agent and human actors share the same
+/// `ActorId::Account` shape — an agent is an account at the same Station, not
+/// a different actor kind — so there is one branch, not two identical ones.
 fn actor_key(id: &str) -> String {
     let principal = arkret_sdk::DidCoreId::new(id).unwrap();
     let station = arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap();
-    if id.contains("agent") {
-        arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(principal, station)).to_string()
-    } else {
-        arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(principal, station)).to_string()
-    }
+    arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(principal, station)).to_string()
 }
 
 fn member(id: &str) -> MemberProfile {

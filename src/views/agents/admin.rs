@@ -507,8 +507,7 @@ mod directory_refresh_tests {
             .with_timezone(&chrono::Utc);
 
         assert!(
-            apply_renewed_pairing(&mut rows, outcome.agent_id.as_str(), &outcome, now.clone(),)
-                .is_err()
+            apply_renewed_pairing(&mut rows, outcome.agent_id.as_str(), &outcome, now,).is_err()
         );
         reconcile_refreshed_pairing(
             &mut rows,

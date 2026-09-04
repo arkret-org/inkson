@@ -135,6 +135,9 @@ pub(crate) fn collect_content_text(value: &Value, lines: &mut Vec<String>) {
     }
 }
 
+/// Default-actor form of [`card_from_strand_projection_for_actor`].
+/// Test-only, for the same reason.
+#[cfg(test)]
 pub(crate) fn card_from_strand_projection(
     strand: &crate::state::projection_views::StrandProjectionView,
     decrypt_ctx: Option<&MlsDecryptCtx<'_>>,

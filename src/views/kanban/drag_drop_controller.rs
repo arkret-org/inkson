@@ -607,7 +607,7 @@ pub(super) fn submit_kanban_card_create(
                     serde_json::Value::Null,
                     json!({"list_space_id": list_for_position, "rank": rank_for_position}),
                 )
-                .and_then(|builder| builder.build_sdk_event("inkson").map_err(Into::into))
+                .and_then(|builder| builder.build_sdk_event("inkson"))
                 {
                     Ok(event) => event,
                     Err(error) => {
