@@ -2,9 +2,18 @@
 //! (`crypto-media/device-lifecycle.md` §2.1.1).
 
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 const PENDING_DEVICE_PAIRING_VERIFICATION_KEY: &str = "pending-device-pairing-verification.v1";
+
+/// App-local out-of-band handoff. Protocol-owned server fields stay inside
+/// the SDK bootstrap instead of being copied into another wire-shaped DTO.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ResolvedPairingApproval {
+    pub bootstrap: arkret_sdk::DevicePairingBootstrap,
+    pub challenge_proof: arkret_sdk::DevicePairingChallengeProof,
+    pub target_attestation: arkret_sdk::DevicePairingTargetAttestation,
+}
 
 /// Target-owned material retained across the OIDC navigation that follows a
 /// staged device pairing.  This record is not authority: it only selects the
@@ -139,64 +148,24 @@ pub async fn sign_target_attestation(
 /// target never authors or supplies this Event.
 pub async fn author_pairing_request_body(
     api: &crate::transport::TransportClient,
-    payload: &Value,
+    payload: &ResolvedPairingApproval,
 ) -> anyhow::Result<arkret_sdk::AccountDevicePairRequestBody> {
-    let attestation: arkret_sdk::DevicePairingTargetAttestation = serde_json::from_value(
-        payload
-            .get("target_attestation")
-            .cloned()
-            .ok_or_else(|| anyhow::anyhow!("pairing payload is missing target_attestation"))?,
-    )?;
+    let attestation = payload.target_attestation.clone();
     arkret_sdk::signatures::device_pairing::verify_device_pairing_target_attestation(&attestation)?;
-    let challenge_proof: arkret_sdk::DevicePairingChallengeProof = serde_json::from_value(
-        payload
-            .get("challenge_proof")
-            .cloned()
-            .ok_or_else(|| anyhow::anyhow!("pairing payload is missing challenge_proof"))?,
-    )?;
+    let challenge_proof = payload.challenge_proof.clone();
     if challenge_proof.transcript_digest != attestation.pairing_challenge_transcript_digest {
         anyhow::bail!(
             "pairing challenge proof and target attestation describe different transcripts"
         );
     }
-    let new_device_pubkey: arkret_sdk::PublicKey = serde_json::from_value(
-        payload
-            .get("new_device_pubkey")
-            .cloned()
-            .ok_or_else(|| anyhow::anyhow!("pairing payload is missing new_device_pubkey"))?,
-    )?;
+    let new_device_pubkey = payload.bootstrap.new_device_pubkey.clone();
     if new_device_pubkey.kid.as_str() != attestation.device_id.as_str() {
         anyhow::bail!("pairing public key and target attestation name different devices");
     }
-    let challenge = payload
-        .get("server_challenge")
-        .and_then(Value::as_object)
-        .ok_or_else(|| anyhow::anyhow!("server-mediated pairing omitted its exact challenge"))?;
-    let server_challenge = arkret_sdk::signatures::device_pairing::ServerDevicePairingChallenge {
-        client_nonce: arkret_sdk::DevicePairingNonce::new(required_string(
-            challenge,
-            "client_nonce",
-        )?)
-        .map_err(anyhow::Error::msg)?,
-        device_pairing_request_id: arkret_sdk::DevicePairingRequestId::new(required_string(
-            challenge,
-            "device_pairing_request_id",
-        )?)
-        .map_err(anyhow::Error::msg)?,
-        expires_at: required_string(challenge, "expires_at")?
-            .parse::<chrono::DateTime<chrono::Utc>>()?,
-        gate_audience_uri: required_string(challenge, "gate_audience_uri")?,
-        pairing_code: arkret_sdk::DevicePairingCode::new(required_string(
-            challenge,
-            "pairing_code",
-        )?)
-        .map_err(anyhow::Error::msg)?,
-        server_nonce: arkret_sdk::DevicePairingNonce::new(required_string(
-            challenge,
-            "server_nonce",
-        )?)
-        .map_err(anyhow::Error::msg)?,
-    };
+    let server_challenge =
+        arkret_sdk::signatures::device_pairing::ServerDevicePairingChallenge::from_bootstrap(
+            &payload.bootstrap,
+        );
     arkret_sdk::signatures::device_pairing::verify_server_device_pairing_challenge(
         &new_device_pubkey,
         &server_challenge,
@@ -263,44 +232,14 @@ pub async fn author_pairing_request_body(
         .next()
         .ok_or_else(|| anyhow::anyhow!("device authorize Event was not prepared"))?;
 
-    let pairing_code = arkret_sdk::DevicePairingCode::new(
-        payload
-            .get("pairing_code")
-            .and_then(Value::as_str)
-            .ok_or_else(|| anyhow::anyhow!("pairing payload is missing pairing_code"))?
-            .to_owned(),
-    )
-    .map_err(anyhow::Error::msg)?;
-    let display_name = payload
-        .get("display_name")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(|value| arkret_sdk::NonEmptyString::new(value.to_owned()))
-        .transpose()
-        .map_err(anyhow::Error::msg)?;
-    let device_metadata = payload
-        .get("device_metadata")
-        .map(|value| serde_json::from_value(value.clone()))
-        .transpose()?;
-    let device_pairing_request_id = arkret_sdk::DevicePairingRequestId::new(
-        payload
-            .get("device_pairing_request_id")
-            .and_then(Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .ok_or_else(|| anyhow::anyhow!("pairing payload is missing device_pairing_request_id"))?
-            .to_owned(),
-    )
-    .map_err(anyhow::Error::msg)?;
     let request = arkret_sdk::AccountDevicePairRequestBody {
-        pairing_code,
+        pairing_code: payload.bootstrap.pairing_code.clone(),
         new_device_pubkey,
         challenge_proof,
         authorize_event,
-        display_name,
-        device_metadata,
-        device_pairing_request_id,
+        display_name: payload.bootstrap.display_name.clone(),
+        device_metadata: payload.bootstrap.device_metadata.clone(),
+        device_pairing_request_id: payload.bootstrap.device_pairing_request_id.clone(),
     };
     attestation.validate_against_pair_request(&request, authorize_digest_suite)?;
     Ok(request)
@@ -312,7 +251,7 @@ pub async fn author_pairing_request_body(
 /// the target to observe this exact Event under an accepted covering Seal.
 pub async fn approve_device_pairing(
     api: &crate::transport::TransportClient,
-    payload: &Value,
+    payload: &ResolvedPairingApproval,
 ) -> anyhow::Result<arkret_sdk::AccountDevicePairOutcome> {
     let body = author_pairing_request_body(api, payload).await?;
     let authorize_event = body.authorize_event.event.clone();
@@ -438,12 +377,4 @@ pub async fn verify_authorized_pairing_event_for_authority(
         anyhow::bail!("authorized pairing Event does not match the target attestation");
     }
     Ok(event)
-}
-
-fn required_string(object: &serde_json::Map<String, Value>, field: &str) -> anyhow::Result<String> {
-    object
-        .get(field)
-        .and_then(Value::as_str)
-        .map(ToOwned::to_owned)
-        .ok_or_else(|| anyhow::anyhow!("pairing server challenge omitted `{field}`"))
 }

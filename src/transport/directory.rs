@@ -347,7 +347,7 @@ pub async fn resolve_handle(
         .directory_resolve_handle(&body)
         .await
         .map_err(anyhow::Error::from)?;
-    Ok(outcome.into())
+    Ok(outcome)
 }
 
 /// Per arkret-spec @ b56cab1 — `ak.find.directory.read.list_handles_for_subject.v1`.

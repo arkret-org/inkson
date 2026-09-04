@@ -836,32 +836,13 @@ mod tests {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(transparent)]
-pub struct SnapshotBootstrapJson(pub arkret_sdk::SnapshotBootstrap);
-
-impl From<arkret_sdk::SnapshotBootstrap> for SnapshotBootstrapJson {
-    fn from(value: arkret_sdk::SnapshotBootstrap) -> Self {
-        Self(value)
-    }
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct BackfillView {
-    #[serde(default)]
-    pub events: Vec<arkret_sdk::EventReadRow>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub snapshot_bootstrap: Option<SnapshotBootstrapJson>,
-    pub prev_cursor: Option<String>,
-    pub next_cursor: Option<String>,
-    // Spec `EventsQueryOutcome.has_more` (was the soland-local `limited`).
-    #[serde(default)]
-    pub has_more: bool,
-}
+pub struct BackfillView(pub arkret_sdk::EventsQueryOutcome);
 
 impl BackfillView {
     /// Require a complete accepted Event log for reducers, authority decisions,
     /// completeness verification, and cryptographic operations.
     pub fn complete_events(&self, purpose: &str) -> anyhow::Result<Vec<arkret_sdk::Event>> {
-        require_complete_event_rows(&self.events, purpose)
+        require_complete_event_rows(&self.0.events, purpose)
     }
 
     /// Serialize only complete Events for a non-authoritative display
@@ -873,7 +854,8 @@ impl BackfillView {
     /// Reducers, MLS recovery and authorization continue to use
     /// `complete_events` and therefore fail closed on either incomplete row.
     pub fn display_event_values(&self) -> anyhow::Result<Vec<Value>> {
-        self.events
+        self.0
+            .events
             .iter()
             .filter_map(|row| match row {
                 arkret_sdk::EventReadRow::Event(event) => {
@@ -902,13 +884,13 @@ mod backfill_display_tests {
             "reducer_input": false
         }))
         .expect("valid RedactedEventView row");
-        let backfill = BackfillView {
+        let backfill = BackfillView(arkret_sdk::EventsQueryOutcome {
             events: vec![redacted],
             snapshot_bootstrap: None,
             prev_cursor: None,
             next_cursor: None,
             has_more: false,
-        };
+        });
 
         assert!(backfill.display_event_values().unwrap().is_empty());
         assert!(backfill.complete_events("authority replay").is_err());
@@ -942,19 +924,23 @@ pub(crate) fn require_complete_event_rows(
 
 impl From<arkret_sdk::EventsQueryOutcome> for BackfillView {
     fn from(outcome: arkret_sdk::EventsQueryOutcome) -> Self {
-        Self {
-            events: outcome.events,
-            snapshot_bootstrap: outcome.snapshot_bootstrap.map(Into::into),
-            prev_cursor: outcome.prev_cursor,
-            next_cursor: outcome.next_cursor,
-            has_more: outcome.has_more,
-        }
+        Self(outcome)
     }
 }
 
 // `ak.self.snapshot.read.manifest_head.v1` returns the full signed
 // `ak.schema.snapshot.v1` manifest. See `api::TransportClient::snapshot_head`.
 
+/// Structured mention node embedded in message body. Spec
+/// `models/strand-and-message.md §9.4` + `identity/identity-handles.md §3.8`.
+///
+/// The former hand-rolled weakly-typed mirror (all-`String`
+/// fields) duplicated the SDK's authoritative strongly-typed model
+/// (`Did` / `Handle` / `DateTime<Utc>`) and had already drifted in field
+/// declaration order. Re-export the SDK type; `subject_id` (principal
+/// DID) remains the ONLY authoritative field — the `*_at_time` fields
+/// are compose-time audit metadata only.
+pub use arkret_models_collaboration::events_payloads::mention::Mention;
 pub use arkret_models_collaboration::governance::authorization::AuthzCheckOutcome;
 /// `ak.self.authz.invites` decodes into the SDK's authoritative
 /// `AuthzInviteList` (`invites: Vec<Invite>`, `next_cursor`, `has_more`); the
@@ -977,54 +963,10 @@ pub use arkret_models_collaboration::sync_frames::account_sync::{
     DeviceMessagesGetOutcome, DeviceMessagesSendOutcome,
 };
 pub use arkret_models_crypto::{KeysClaimOutcome, KeysQueryOutcome, KeysUploadOutcome};
+// ── Directory ───────────────────────────────────────────────────
+pub use arkret_models_discovery::DirectoryHandleResolutionOutcome as ResolveHandleView;
 pub use arkret_models_integration::OkOutcome;
 pub use arkret_models_integration::models_push::PushRegisterDeviceOutcome;
-
-// ── Directory ───────────────────────────────────────────────────
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct ResolveHandleView {
-    pub account_id: arkret_sdk::AccountId,
-    pub handle: String,
-    #[serde(default)]
-    pub verified: bool,
-    #[serde(default)]
-    pub claims: Option<Vec<arkret_models_identity::HandleClaim>>,
-    #[serde(default)]
-    pub source_refs: Vec<arkret_sdk::EventId>,
-    #[serde(default)]
-    pub expires_at: Option<chrono::DateTime<chrono::Utc>>,
-}
-
-impl ResolveHandleView {
-    pub fn subject_id(&self) -> &arkret_sdk::DidCoreId {
-        &self.account_id.principal_id
-    }
-}
-
-impl From<arkret_models_discovery::DirectoryHandleResolutionOutcome> for ResolveHandleView {
-    fn from(outcome: arkret_models_discovery::DirectoryHandleResolutionOutcome) -> Self {
-        Self {
-            account_id: outcome.account_id,
-            handle: outcome.handle,
-            verified: outcome.verified,
-            claims: outcome.claims,
-            source_refs: outcome.source_refs,
-            expires_at: outcome.expires_at,
-        }
-    }
-}
-
-/// Structured mention node embedded in message body. Spec
-/// `models/strand-and-message.md §9.4` + `identity/identity-handles.md §3.8`.
-///
-/// The former hand-rolled weakly-typed mirror (all-`String`
-/// fields) duplicated the SDK's authoritative strongly-typed model
-/// (`Did` / `Handle` / `DateTime<Utc>`) and had already drifted in field
-/// declaration order. Re-export the SDK type; `subject_id` (principal
-/// DID) remains the ONLY authoritative field — the `*_at_time` fields
-/// are compose-time audit metadata only.
-pub use arkret_models_collaboration::events_payloads::mention::Mention;
 
 // ── Realm / Space Management ────────────────────────────────────
 

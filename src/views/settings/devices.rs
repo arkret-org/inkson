@@ -58,35 +58,6 @@ struct DeviceRow {
     authorized_at: String,
 }
 
-#[derive(Clone, serde::Deserialize, serde::Serialize)]
-#[serde(deny_unknown_fields)]
-struct PairingServerChallengeCarrier {
-    client_nonce: arkret_sdk::DevicePairingNonce,
-    device_pairing_request_id: arkret_sdk::DevicePairingRequestId,
-    expires_at: chrono::DateTime<chrono::Utc>,
-    gate_audience_uri: String,
-    pairing_code: arkret_sdk::DevicePairingCode,
-    server_nonce: arkret_sdk::DevicePairingNonce,
-}
-
-/// Closed handoff material recovered by the approving device before it authors
-/// the accepted-device authorization Event.  Keeping this typed prevents the
-/// UI from becoming a second, permissive pairing-wire implementation.
-#[derive(Clone, serde::Deserialize, serde::Serialize)]
-#[serde(deny_unknown_fields)]
-struct ResolvedPairingApprovalPayload {
-    pairing_code: arkret_sdk::DevicePairingCode,
-    new_device_pubkey: arkret_sdk::PublicKey,
-    challenge_proof: arkret_sdk::DevicePairingChallengeProof,
-    target_attestation: arkret_sdk::DevicePairingTargetAttestation,
-    server_challenge: PairingServerChallengeCarrier,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    display_name: Option<arkret_sdk::NonEmptyString>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    device_metadata: Option<arkret_sdk::DeviceMetadata>,
-    device_pairing_request_id: arkret_sdk::DevicePairingRequestId,
-}
-
 fn parse_devices(value: &Value) -> Vec<DeviceRow> {
     value
         .get("devices")
@@ -769,10 +740,11 @@ fn render_pair_strand(
     let pair_code_value = pair_code();
     let pair_busy = pair_action_busy();
     let accept_resolved_value = accept_resolved();
-    let resolved_code =
-        serde_json::from_str::<ResolvedPairingApprovalPayload>(&accept_resolved_value)
-            .ok()
-            .map(|value| value.pairing_code.as_str().to_owned());
+    let resolved_code = serde_json::from_str::<
+        crate::identity::device_pairing::ResolvedPairingApproval,
+    >(&accept_resolved_value)
+    .ok()
+    .map(|value| value.bootstrap.pairing_code.as_str().to_owned());
     let accept_busy = accept_action_busy();
 
     // Render a QR for the current payload (if any). `qrcode` returns
@@ -1256,22 +1228,10 @@ fn render_pair_strand(
                                         accept_action_busy.set(false);
                                         return;
                                     }
-                                    let request_payload = ResolvedPairingApprovalPayload {
-                                        pairing_code: bootstrap.pairing_code,
-                                        new_device_pubkey: bootstrap.new_device_pubkey,
+                                    let request_payload = crate::identity::device_pairing::ResolvedPairingApproval {
+                                        bootstrap,
                                         challenge_proof,
                                         target_attestation,
-                                        server_challenge: PairingServerChallengeCarrier {
-                                            client_nonce: server_challenge.client_nonce,
-                                            device_pairing_request_id: server_challenge.device_pairing_request_id,
-                                            expires_at: server_challenge.expires_at,
-                                            gate_audience_uri: server_challenge.gate_audience_uri,
-                                            pairing_code: server_challenge.pairing_code,
-                                            server_nonce: server_challenge.server_nonce,
-                                        },
-                                        display_name: bootstrap.display_name,
-                                        device_metadata: bootstrap.device_metadata,
-                                        device_pairing_request_id: bootstrap.device_pairing_request_id,
                                     };
                                     match serde_json::to_string(&request_payload) {
                                         Ok(payload) => accept_resolved.set(payload),
@@ -1315,7 +1275,7 @@ fn render_pair_strand(
                             if accept_action_busy() {
                                 return;
                             }
-                            let request_payload: ResolvedPairingApprovalPayload =
+                            let request_payload: crate::identity::device_pairing::ResolvedPairingApproval =
                                 match serde_json::from_str(&accept_resolved()) {
                                     Ok(value) => value,
                                     Err(err) => {
@@ -1334,7 +1294,6 @@ fn render_pair_strand(
                                     &base,
                                     api_token,
                                     |api| async move {
-                                        let request_payload = serde_json::to_value(request_payload)?;
                                         approve_device_pairing(&api, &request_payload).await
                                     },
                                 )

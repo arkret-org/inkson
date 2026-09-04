@@ -1370,9 +1370,7 @@ where
                 .map(|manifest| -> anyhow::Result<_> {
                     Ok(arkret_sdk::VerifiedHistoryManifest {
                         response_id: manifest.response_id,
-                        source_actor_id: crate::mls_api_helpers::local_account_actor_id(
-                            manifest.source_actor_id.as_str(),
-                        )?,
+                        source_actor_id: manifest.source_actor_id,
                         source_sender_domain: manifest.source_sender_domain,
                         manifest_digest: manifest.manifest_digest,
                         manifest_admission_digest: manifest.manifest_admission_digest,
@@ -1424,10 +1422,7 @@ where
                         request_id,
                         garth::DurableVerifiedHistoryManifest {
                             response_id: manifest.response_id,
-                            source_actor_id: manifest
-                                .source_actor_id
-                                .signing_principal_id()
-                                .clone(),
+                            source_actor_id: manifest.source_actor_id,
                             source_sender_domain: manifest.source_sender_domain,
                             manifest_digest: manifest.manifest_digest,
                             manifest_admission_digest: manifest.manifest_admission_digest,

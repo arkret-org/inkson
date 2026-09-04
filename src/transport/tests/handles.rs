@@ -110,7 +110,7 @@ fn handle_resolution_exposes_exact_station_bound_account() {
     .unwrap();
 
     assert_eq!(
-        resolved.subject_id().as_str(),
+        resolved.account_id.principal_id.as_str(),
         "ak:did_core:web:bob.example"
     );
     assert_eq!(
