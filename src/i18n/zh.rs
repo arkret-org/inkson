@@ -410,6 +410,226 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("settings.search.placeholder", "搜索设置…");
     // T1.3 - event signature / proof mode status display.
     dict.set("settings.proof_mode.label", "事件签名");
+
+    // Settings surfaces wired in the `views/settings/mod.rs` sweep:
+    // server information, local stores, storage diagnostics, encryption,
+    // MIMI interop, notifications, push, privacy/presence, read receipts,
+    // remarks, handle, appearance and session diagnostics.
+    dict.set("settings.server.context", "服务器上下文");
+    dict.set("settings.server.station", "Station");
+    dict.set("settings.server.session", "会话");
+    dict.set("settings.server.session_authenticated", "已认证");
+    dict.set("settings.server.push", "推送");
+    dict.set("settings.avatar.account_alt", "账号头像");
+    dict.set("settings.avatar.edit_dialog", "编辑头像");
+    dict.set("settings.avatar.selected_alt", "已选头像");
+    dict.set("settings.avatar.cleared_synced", "已从同步偏好中清除头像");
+    dict.set("settings.avatar.restored_synced", "已从同步偏好中恢复头像");
+    dict.set("settings.avatar.removing", "正在从公开资料中移除头像。");
+    dict.set(
+        "settings.avatar.removed",
+        "头像已移除；正在向其他设备同步该清除。",
+    );
+    dict.set("settings.local_stores.title", "本地存储");
+    dict.set("settings.local_stores.badge", "状态");
+    dict.set("settings.local_stores.config_store", "配置存储");
+    dict.set("settings.local_stores.state_store", "状态存储");
+    dict.set("settings.local_stores.active", "运行中");
+    dict.set("settings.local_stores.config_size", "配置大小");
+    dict.set("settings.local_stores.approx_bytes", "约 {bytes} 字节");
+    dict.set("settings.local_stores.platform", "平台");
+    dict.set("settings.local_stores.platform_web", "Web（localStorage）");
+    dict.set("settings.local_stores.platform_native", "原生（文件系统）");
+    dict.set("settings.storage_risks.title", "存储诊断");
+    dict.set(
+        "settings.storage_risks.bounded_projection",
+        "有界的 localStorage 投影 ",
+    );
+    dict.set(
+        "settings.storage_risks.bounded_projection_hint",
+        "localStorage 只承载很小的 root/config 投影。账号状态、E2EE 明文、会话凭据与密钥材料都放在受保护的 IndexedDB 层。",
+    );
+    dict.set("settings.storage_risks.badge_bounded", "有界");
+    dict.set(
+        "settings.storage_risks.protected_e2ee",
+        "受保护的 E2EE 存储 ",
+    );
+    dict.set(
+        "settings.storage_risks.protected_e2ee_hint",
+        "E2EE 明文缓存与账号机密状态使用不可导出的 SubtleCrypto 包装密钥加密存放在 IndexedDB 中，且从不镜像到 localStorage。",
+    );
+    dict.set("settings.storage_risks.single_tab", "单个活动浏览器标签页 ");
+    dict.set(
+        "settings.storage_risks.single_tab_hint",
+        "Inkson 每个浏览器配置只允许一个活动标签页，使 IndexedDB、设备密钥、MLS 状态、游标与出站写入只有一个所有者。",
+    );
+    dict.set("settings.storage_risks.badge_info", "提示");
+    dict.set("settings.storage_risks.filesystem", "文件系统存储 ");
+    dict.set(
+        "settings.storage_risks.filesystem_hint",
+        "使用原生文件系统存储，数据跨会话保留。请确保文件权限设置正确以保障安全。",
+    );
+    dict.set("settings.storage_risks.badge_ok", "正常");
+    dict.set("settings.encryption.badge", "MLS / E2EE");
+    dict.set(
+        "settings.encryption.always_on",
+        "加密 Realm 始终启用端到端加密。可在下方管理你的恢复密钥。",
+    );
+    dict.set("settings.key_backup.title", "高级密钥备份诊断");
+    dict.set("settings.key_backup.badge", "开发者工具");
+    dict.set(
+        "settings.key_backup.body",
+        "上方的加密历史恢复会自动创建密钥备份信封。恢复备份 id 在创建备份时生成，不需要手工输入。",
+    );
+    dict.set(
+        "settings.key_backup.open_recovery_hint",
+        "调试某个具体备份信封时请打开「恢复」页面。",
+    );
+    dict.set("settings.key_backup.open_recovery", "恢复与备份");
+    dict.set(
+        "settings.key_backup.contract",
+        "契约：ak.schema.key_backup.v1，位于 /_arkret/self/keys/backups/*。加密历史恢复的设置不需要它。",
+    );
+    dict.set("settings.mimi.title", "MIMI 互操作检查");
+    dict.set("settings.mimi.refresh_directory", "刷新目录");
+    dict.set("settings.mimi.identifier_query", "标识符查询");
+    dict.set("settings.mimi.submit_message", "提交测试消息");
+    dict.set("settings.mimi.proxy_download", "代理下载");
+    dict.set("settings.mimi.directory_badge", "能力");
+    dict.set("settings.mimi.receipt_title", "回执");
+    dict.set("settings.mimi.receipt_badge", "最近一次操作");
+    dict.set("settings.mimi.not_loaded", "尚未加载");
+    dict.set("settings.mimi.no_receipt", "暂无 MIMI 操作回执");
+    dict.set("settings.notifications.defaults_title", "全局通知默认值");
+    dict.set("settings.notifications.defaults_badge", "已同步");
+    dict.set(
+        "settings.notifications.defaults_body",
+        "除非你在下方添加按 Realm 的覆盖，否则对所有 Realm 生效。",
+    );
+    dict.set("settings.notifications.sound_on", " 声音提醒");
+    dict.set("settings.notifications.sound_off", " 声音提醒已关闭");
+    dict.set("settings.notifications.sound_enabled", "声音提醒已开启。");
+    dict.set("settings.notifications.sound_disabled", "声音提醒已关闭。");
+    dict.set("settings.notifications.sound_test", "测试声音");
+    dict.set(
+        "settings.notifications.sound_test_played",
+        "已播放声音提醒测试。",
+    );
+    dict.set(
+        "settings.notifications.sound_test_blocked",
+        "请先开启声音提醒再测试。",
+    );
+    dict.set("settings.notifications.dnd", " 免打扰");
+    dict.set("settings.notifications.dnd_off", "关闭");
+    dict.set("settings.notifications.dnd_now", "现在");
+    dict.set("settings.notifications.overrides_title", "按 Realm 覆盖");
+    dict.set(
+        "settings.notifications.overrides_body",
+        "选择一个 Realm 及其通知程度。这只会为该 Realm 覆盖上方的全局默认值。",
+    );
+    dict.set("settings.notifications.no_realms", "暂无可选的 Realm");
+    dict.set("settings.notifications.select_realm", "选择一个 Realm…");
+    dict.set("settings.notifications.notify_label", "通知我");
+    dict.set("settings.notifications.level_all", "所有消息");
+    dict.set("settings.notifications.add_override", "添加覆盖");
+    dict.set(
+        "settings.notifications.overrides_empty",
+        "还没有按 Realm 的覆盖。未配置的 Realm 沿用全局默认值。",
+    );
+    dict.set("settings.notifications.clear_overrides", "清除所有覆盖");
+    dict.set("settings.push.title", "推送投递");
+    dict.set("settings.push.badge", "配置");
+    dict.set("settings.push.body", "推送通知偏好与网关注册。");
+    dict.set("settings.push.current", "当前：{state}");
+    dict.set("settings.push.not_registered", "未注册");
+    dict.set("settings.privacy.badge", "可见性控制");
+    dict.set("settings.privacy.presence_visibility", "在线状态可见性");
+    dict.set(
+        "settings.privacy.presence_visibility.public",
+        "共同 Realm 中的所有人",
+    );
+    dict.set(
+        "settings.privacy.presence_visibility.contacts_only",
+        "仅联系人",
+    );
+    dict.set(
+        "settings.privacy.presence_visibility.nobody",
+        "任何人都不可见（显示为离线）",
+    );
+    dict.set("settings.privacy.status_title", "我的状态");
+    dict.set("settings.privacy.status_badge", "手动在线状态");
+    dict.set("settings.privacy.presence_state.auto", "自动");
+    dict.set("settings.privacy.presence_state.online", "在线");
+    dict.set("settings.privacy.presence_state.idle", "空闲");
+    dict.set("settings.privacy.presence_state.dnd", "免打扰（忙碌）");
+    dict.set(
+        "settings.privacy.status_message_placeholder",
+        "状态消息（例如：会议中）",
+    );
+    dict.set("settings.privacy.status_expiry.never", "不自动清除");
+    dict.set("settings.privacy.status_expiry.30m", "30 分钟后清除");
+    dict.set("settings.privacy.status_expiry.1h", "1 小时后清除");
+    dict.set("settings.privacy.status_expiry.today", "今天结束时清除");
+    dict.set("settings.privacy.status_save", "保存状态");
+    dict.set("settings.privacy.status_clear", "清除");
+    dict.set("settings.privacy.status_invalid", "状态消息无效：{error}");
+    dict.set(
+        "settings.privacy.status_state_unknown",
+        "状态取值不在协议的封闭集合内。",
+    );
+    dict.set("settings.privacy.status_cleared", "状态已清除。");
+    dict.set("settings.privacy.status_saved", "状态已保存。");
+    dict.set("settings.read_receipts.default_badge", "默认");
+    dict.set("settings.read_receipts.send_default", " 默认发送已读回执");
+    dict.set(
+        "settings.read_receipts.display_default",
+        " 默认显示他人的已读回执",
+    );
+    dict.set("settings.read_receipts.realm_exceptions", "Realm 例外");
+    dict.set("settings.read_receipts.badge_sending", "发送中");
+    dict.set("settings.read_receipts.badge_skipping", "已跳过");
+    dict.set("settings.read_receipts.locked", "已被 Realm 策略锁定");
+    dict.set("settings.read_receipts.switch_to_skip", "改为跳过");
+    dict.set("settings.read_receipts.switch_to_send", "改为发送");
+    dict.set("settings.read_receipts.inherit_default", "继承默认值");
+    dict.set("settings.read_receipts.add_skip", "添加（跳过）");
+    dict.set("settings.read_receipts.add_send", "添加（发送）");
+    dict.set("settings.remarks.badge_private", "私有");
+    dict.set("settings.realm_remarks.title", "Realm 备注");
+    dict.set(
+        "settings.realm_remarks.empty",
+        "还没有备注。可在下方添加，用来区分同名的 Realm。",
+    );
+    dict.set(
+        "settings.realm_remarks.local_name_private",
+        "本地名称（私有）",
+    );
+    dict.set("settings.realm_remarks.local_name", "本地名称");
+    dict.set("settings.realm_remarks.add", "添加备注");
+    dict.set("settings.contact_petnames.title", "联系人昵称");
+    dict.set(
+        "settings.contact_petnames.body",
+        "昵称在所有 Realm 中是全局的。请在已接受的真人联系人行中添加或编辑；任意 DID 与 Realm 成员不能设置昵称。",
+    );
+    dict.set("settings.contact_petnames.empty", "尚未保存联系人昵称。");
+    dict.set("settings.handle.title", "Handle");
+    dict.set("settings.handle.managed_badge", "由你的组织管理");
+    dict.set(
+        "settings.handle.managed_body",
+        "你的 handle 由所属组织管理。本客户端不能直接设置或修改，请通过组织的签发方申请变更。",
+    );
+    dict.set("settings.handle.issuer_link", "在组织的签发方管理 handle");
+    dict.set(
+        "settings.handle.issuer_link_unavailable",
+        "签发方链接不可用",
+    );
+    dict.set("settings.theme.badge", "外观");
+    dict.set("settings.theme.light", "浅色主题");
+    dict.set("settings.theme.night", "深色主题");
+    dict.set("settings.theme.system", "跟随系统");
+    dict.set("settings.theme.current", "当前：{theme}");
+    dict.set("settings.language.title", "语言");
+    dict.set("settings.session_diagnostics.title", "会话诊断");
     dict.set("settings.proof_mode.real_ed25519", "真实 Ed25519");
     dict.set("settings.proof_mode.external_signer", "外部 signer");
     dict.set(
