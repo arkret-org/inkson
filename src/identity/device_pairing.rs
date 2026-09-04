@@ -402,10 +402,12 @@ pub async fn verify_authorized_pairing_event_for_authority(
         anyhow::bail!("authorized pairing Event is outside the principal control Realm");
     }
     crate::event_submit::verify_event_is_covered_by_accepted_seal(http, &event, |_, _, _, _| {
-        Err(arkret_sdk::WireError::Protocol(
-            "pairing bootstrap cannot trust Agent evidence without a pinned external authority"
-                .to_owned(),
-        ))
+        Box::pin(async {
+            Err(arkret_sdk::WireError::Protocol(
+                "pairing bootstrap cannot trust Agent evidence without a pinned external authority"
+                    .to_owned(),
+            ))
+        })
     })
     .await?;
     let payload: arkret_sdk::DeviceAuthorizePayload =

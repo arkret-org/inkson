@@ -188,7 +188,7 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
                         let outcome = crate::history_recovery::converge_member_history_recovery(
                             recovery_store,
                             &api,
-                            secure_store.as_ref(),
+                            secure_store,
                             &authority,
                             &did,
                             &device,

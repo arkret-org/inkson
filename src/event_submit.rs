@@ -278,24 +278,28 @@ impl EventOutboundSubmitter<'_> {
     }
 
     async fn verify_covering_seal(&self, event: &arkret_sdk::Event) -> anyhow::Result<()> {
-        let state_store = self.state_store.as_ref();
+        let state_store = self.state_store.clone();
         let digest_suite = verify_event_is_covered_by_accepted_seal(
             &self.owner.http,
             event,
-            |event, digest_suite, evidence, dependencies| {
-                let state_store = state_store.ok_or_else(|| {
-                    arkret_sdk::WireError::Protocol(
-                        "Agent Event verification requires a durable governance trust store"
-                            .to_owned(),
+            move |event, digest_suite, evidence, dependencies| {
+                let state_store = state_store.clone();
+                Box::pin(async move {
+                    let state_store = state_store.as_ref().ok_or_else(|| {
+                        arkret_sdk::WireError::Protocol(
+                            "Agent Event verification requires a durable governance trust store"
+                                .to_owned(),
+                        )
+                    })?;
+                    crate::mls::governance_proof::verify_agent_history_key(
+                        state_store,
+                        event,
+                        digest_suite,
+                        evidence,
+                        dependencies,
                     )
-                })?;
-                crate::mls::governance_proof::verify_agent_history_key(
-                    state_store,
-                    event,
-                    digest_suite,
-                    evidence,
-                    dependencies,
-                )
+                    .await
+                })
             },
         )
         .await?;
@@ -640,13 +644,15 @@ pub(crate) async fn verify_event_is_covered_by_accepted_seal<VerifyAgentHistoryK
     verify_agent_history_key: VerifyAgentHistoryKey,
 ) -> anyhow::Result<arkret_sdk::DigestSuite>
 where
-    VerifyAgentHistoryKey: Fn(
-            &arkret_sdk::Event,
+    VerifyAgentHistoryKey: for<'a> Fn(
+            &'a arkret_sdk::Event,
             arkret_sdk::DigestSuite,
-            &arkret_sdk::AuthenticatedSignerResolutionEvidence,
-            &[arkret_sdk::GovernanceDependency],
-        ) -> Result<arkret_sdk::signatures::PublicKeyMaterial, arkret_sdk::WireError>
-        + Copy,
+            &'a arkret_sdk::AuthenticatedSignerResolutionEvidence,
+            &'a [arkret_sdk::GovernanceDependency],
+        ) -> arkret_sdk::VerifyAgentHistoryKeyFuture<'a>
+        + Clone
+        + Send
+        + 'static,
 {
     let frontier = http.seals_frontier(event.realm_id.clone()).await?.frontier;
     let resolved = crate::mls::governance_acquisition::resolve_mls_governance_checkpoint_with_http(

@@ -127,15 +127,16 @@ pub async fn ensure_principal_bootstrap_governance_checkpoint(
             "resolved PCR governance closure does not contain the byte-exact bootstrap Seal"
         );
     }
+    let verifier_store = state_store.clone();
     let verified = arkret_sdk::verify_mls_governance_closure(
         &bootstrap_seal.realm_id,
         &resolved.target_basis,
         &resolved.seals,
         &resolved.events,
         &resolved.dependencies,
-        |event, digest_suite, evidence, dependencies| {
+        move |event, digest_suite, evidence, dependencies| {
             crate::mls::governance_proof::verify_agent_history_key(
-                state_store,
+                &verifier_store,
                 event,
                 digest_suite,
                 evidence,
