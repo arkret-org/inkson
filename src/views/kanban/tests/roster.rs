@@ -325,6 +325,53 @@ fn member_display_label_prefers_inline_verified_handle_claim() {
     );
 }
 
+/// `identity-handles.md` §3.2 compares the whole `AccountId`. A claim bound to
+/// the same principal at another Station is not evidence about this member, so
+/// the inline path must decline it and let the display degrade rather than
+/// show a handle that belongs to a different subject.
+#[test]
+fn inline_handle_claim_for_another_station_is_not_this_members_handle() {
+    let principal = "ak:did_core:web:acme.example:principals:alice";
+    let here = fixture::authority_at_station(principal, "ak:did_core:web:station-a.example");
+    let elsewhere = fixture::authority_at_station(principal, "ak:did_core:web:station-b.example");
+    assert_eq!(here.principal_id, elsewhere.principal_id);
+    assert_ne!(here.station_id, elsewhere.station_id);
+
+    let row_with = |subject: &arkret_sdk::AccountId| RealmMemberRow {
+        actor_id: crate::mls_api_helpers::local_account_actor_id(
+            "ak:did_core:webvh:zQmPairwiseActor",
+        )
+        .unwrap(),
+        membership: Some(arkret_sdk::MembershipState::Join),
+        identity_event_ids: vec![],
+        member_display_state_digest: None,
+        subject_account_id: Some(here.clone()),
+        handle_claims: vec![verified_claim(subject, "alice:acme.example")],
+        handle_claims_limited: false,
+    };
+
+    // Positive control first: the same fixture with a matching subject does
+    // resolve, so the None below means the Station differed.
+    assert_eq!(
+        crate::views::member_display::inline_primary_handle(
+            &row_with(&here),
+            &acme_policy(),
+            Some(TEST_REALM_ID),
+        )
+        .as_ref()
+        .map(arkret_sdk::Handle::canonical),
+        Some("alice:acme.example")
+    );
+    assert!(
+        crate::views::member_display::inline_primary_handle(
+            &row_with(&elsewhere),
+            &acme_policy(),
+            Some(TEST_REALM_ID),
+        )
+        .is_none()
+    );
+}
+
 #[test]
 fn member_display_label_rejects_unverified_or_untrusted_handle_claims() {
     let subject = fixture::authority("ak:did_core:web:acme.example:principals:alice");
