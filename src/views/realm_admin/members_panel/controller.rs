@@ -1,7 +1,7 @@
 //! Network commands for the Realm members panel.
 //!
-//! The panel's writes (invite, cancel, revoke, kick, ban, leave, agent add and
-//! agent behavior) all follow the same shape: build a request from plain data,
+//! The panel's writes (invite, cancel, revoke, kick, ban, leave, agent add,
+//! agent remove and agent behavior) all follow the same shape: build a request from plain data,
 //! submit it, then fold the outcome back into local state and one status
 //! line. Keeping them here means the component only decides *when* a command
 //! runs, never how it is issued or how its failure is reported.
@@ -255,6 +255,11 @@ pub(super) enum RealmMembersCommand {
         target_id: String,
         target_label: String,
     },
+    /// Controller takes one of its own agents back out of the Realm.
+    RemoveOwnedAgent {
+        target_id: String,
+        target_label: String,
+    },
     /// Cancel (direct invitee known) or revoke (token / 3PID) a pending invite.
     TerminatePendingInvite {
         invite_id: String,
@@ -286,6 +291,13 @@ pub(super) struct RealmMembersController {
     pub(super) invite_modal_open: Signal<bool>,
     pub(super) agent_add_modal_open: Signal<bool>,
     pub(super) selected_contacts: Signal<BTreeSet<String>>,
+    pub(super) owned_agents: Signal<Vec<MemberAgentRow>>,
+    pub(super) permissions: Signal<RealmMemberCapabilities>,
+    /// The caller's accepted contacts, loaded the first time the invite modal
+    /// opens and not again.
+    pub(super) invite_contacts: Signal<Vec<crate::models::ContactListRow>>,
+    pub(super) invite_contacts_loaded: Signal<bool>,
+    pub(super) invite_contacts_status: Signal<String>,
     pub(super) state_store: SyncSignal<LocalStateStore>,
 }
 
@@ -327,6 +339,13 @@ impl RealmMembersController {
                 target_label,
             } => {
                 self.add_owned_agent(context, api_token, target_id, target_label)
+                    .await
+            }
+            RealmMembersCommand::RemoveOwnedAgent {
+                target_id,
+                target_label,
+            } => {
+                self.remove_owned_agent(context, api_token, target_id, target_label)
                     .await
             }
             RealmMembersCommand::TerminatePendingInvite {
@@ -528,6 +547,56 @@ impl RealmMembersController {
             Err(err) => self
                 .status_msg
                 .set(format!("agent add failed: {}", err.display())),
+        }
+    }
+
+    /// Take a controller-owned agent back out of the Realm.
+    ///
+    /// The mirror of `add_owned_agent`, down to clearing the sync cursor so
+    /// the roster re-hydrates; it differs from an admin kick in its transition
+    /// reason and in who is allowed to ask for it.
+    async fn remove_owned_agent(
+        mut self,
+        context: RealmWriteContext,
+        api_token: String,
+        target_id: String,
+        target_label: String,
+    ) {
+        let RealmWriteContext {
+            base_url,
+            realm_id,
+            actor_id,
+        } = context;
+        let request_realm = realm_id.clone();
+        match crate::transport::auth::with_event_submitter(&base_url, api_token, |sub| async move {
+            crate::transport::realm_write::transition_member_state(
+                &sub,
+                &request_realm,
+                &actor_id,
+                &target_id,
+                Some("join"),
+                "leave",
+                "controller_remove_agent",
+            )
+            .await
+        })
+        .await
+        {
+            Ok(resp) => {
+                let suffix = self.note_pending_mls_binding(
+                    &realm_id,
+                    format!("mls-binding:{}", resp.event_id),
+                    None,
+                    "mls_member_remove",
+                    "epoch_update_required: membership frontier changed; MLS Remove commit                      required",
+                );
+                self.sync_cursor.set(String::new());
+                self.status_msg
+                    .set(format!("removed agent {target_label} from Realm{suffix}"));
+            }
+            Err(err) => self
+                .status_msg
+                .set(format!("agent remove failed: {}", err.display())),
         }
     }
 

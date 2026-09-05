@@ -24,9 +24,11 @@ use crate::views::helpers::{active_sync_token, actor_display_label, short_protoc
 
 pub(super) mod admission;
 mod controller;
+mod effects;
 mod model;
 
 use controller::*;
+use effects::use_realm_members_effects;
 use model::*;
 
 #[component]
@@ -367,13 +369,13 @@ pub fn RealmMembersPanel(
 ) -> Element {
     // A4 — base_url / state_store from session context instead of props.
     let base_url = crate::app::SessionContext::base_url_string();
-    let mut state_store = crate::app::SessionContext::get().state_store;
+    let state_store = crate::app::SessionContext::get().state_store;
     let mut invite_target = use_signal(String::new);
     let mut status_msg = use_signal(String::new);
     let mut members = use_signal(Vec::<MemberProfile>::new);
-    let mut owned_agents = use_signal(Vec::<MemberAgentRow>::new);
+    let owned_agents = use_signal(Vec::<MemberAgentRow>::new);
     let block_confirm_id = use_signal(|| Option::<String>::None);
-    let mut permissions = use_signal(RealmMemberCapabilities::default);
+    let permissions = use_signal(RealmMemberCapabilities::default);
     let mut member_roster_section = use_signal(|| MemberRosterSection::Members);
     // Invite is now a modal launched from the list header "+" button.
     let mut invite_modal_open = use_signal(|| false);
@@ -386,9 +388,9 @@ pub fn RealmMembersPanel(
     // U3 - "Add from contacts" picker state. `invite_contacts` holds the user's
     // accepted contacts (lazily loaded when the modal opens); `selected_contacts`
     // is the multi-select set of DIDs to invite via the consent-grant path.
-    let mut invite_contacts = use_signal(Vec::<crate::models::ContactListRow>::new);
-    let mut invite_contacts_loaded = use_signal(|| false);
-    let mut invite_contacts_status = use_signal(String::new);
+    let invite_contacts = use_signal(Vec::<crate::models::ContactListRow>::new);
+    let invite_contacts_loaded = use_signal(|| false);
+    let invite_contacts_status = use_signal(String::new);
     let mut selected_contacts = use_signal(std::collections::BTreeSet::<String>::new);
 
     // Every membership write goes through this one bundle, so the rsx below
@@ -403,6 +405,11 @@ pub fn RealmMembersPanel(
         invite_modal_open,
         agent_add_modal_open,
         selected_contacts,
+        owned_agents,
+        permissions,
+        invite_contacts,
+        invite_contacts_loaded,
+        invite_contacts_status,
         state_store,
     };
     let write_context = RealmWriteContext {
@@ -411,143 +418,12 @@ pub fn RealmMembersPanel(
         actor_id: principal_id.clone(),
     };
 
-    // Lazily hydrate the contacts list the first time the invite modal opens.
-    {
-        let base = base_url.clone();
-        use_effect(move || {
-            if !invite_modal_open() || invite_contacts_loaded() {
-                return;
-            }
-            invite_contacts_loaded.set(true);
-            let api_token = token();
-            let base = base.clone();
-            invite_contacts_status.set(crate::i18n::tr("realm_admin.invite_loading_contacts"));
-            spawn(async move {
-                match crate::transport::auth::with_authed_sdk_client(
-                    &base,
-                    api_token,
-                    |http| async move { crate::transport::account::contacts(&http).await },
-                )
-                .await
-                {
-                    Ok(response) => {
-                        let accepted: Vec<crate::models::ContactListRow> = response
-                            .contacts
-                            .into_iter()
-                            .filter(|c| c.state == arkret_sdk::ContactState::Accepted)
-                            .collect();
-                        state_store
-                            .write()
-                            .replace_accepted_human_contacts(&accepted);
-                        let count = accepted.len();
-                        invite_contacts.set(accepted);
-                        invite_contacts_status.set(if count == 0 {
-                            crate::i18n::tr("realm_admin.invite_no_contacts")
-                        } else {
-                            String::new()
-                        });
-                    }
-                    Err(err) => invite_contacts_status.set(
-                        crate::i18n::tr("realm_admin.invite_contacts_failed")
-                            .replace("{error}", &err.display()),
-                    ),
-                }
-            });
-        });
-    }
-
-    {
-        let selected_realm_for_hydration = selected_realm_id.clone();
-        use_effect(move || {
-            let next = projected_member_profiles_for_realm(
-                &state_store.read(),
-                &selected_realm_for_hydration,
-            );
-            if members() != next {
-                members.set(next);
-            }
-        });
-    }
-
-    {
-        let base = base_url.clone();
-        let realm = selected_realm_id.clone();
-        let fallback_controller_principal_id = principal_id.clone();
-        use_effect(move || {
-            let api_token = token();
-            if api_token.trim().is_empty() {
-                owned_agents.set(Vec::new());
-                return;
-            }
-            let base = base.clone();
-            let realm = realm.clone();
-            let fallback_controller_principal_id = fallback_controller_principal_id.clone();
-            spawn(async move {
-                let result = crate::transport::auth::with_authed_sdk_client(
-                    &base,
-                    api_token,
-                    |http| async move {
-                        fetch_owned_agent_rows(&http, &realm, &fallback_controller_principal_id)
-                            .await
-                    },
-                )
-                .await;
-                if let Ok(rows) = result {
-                    owned_agents.set(rows);
-                }
-            });
-        });
-    }
-
-    {
-        let base = base_url.clone();
-        let actor = principal_id.clone();
-        let realm = selected_realm_id.clone();
-        use_effect(move || {
-            let api_token = token();
-            if api_token.trim().is_empty() || actor.trim().is_empty() || realm.trim().is_empty() {
-                permissions.set(RealmMemberCapabilities {
-                    loaded: true,
-                    ..RealmMemberCapabilities::default()
-                });
-                return;
-            }
-            permissions.set(RealmMemberCapabilities::default());
-            let base = base.clone();
-            let actor = actor.clone();
-            let realm = realm.clone();
-            spawn(async move {
-                match with_authed_api(&base, api_token, |api| async move {
-                    Ok::<_, anyhow::Error>(
-                        fetch_realm_member_capabilities(&api, &actor, &realm).await,
-                    )
-                })
-                .await
-                {
-                    Ok(checks) => {
-                        let load = aggregate_realm_member_permissions(&checks);
-                        if load.all_checks_failed {
-                            status_msg.set(
-                                "member action permission check failed; write controls hidden"
-                                    .to_owned(),
-                            );
-                        }
-                        permissions.set(load.capabilities);
-                    }
-                    Err(error) => {
-                        permissions.set(RealmMemberCapabilities {
-                            loaded: true,
-                            ..RealmMemberCapabilities::default()
-                        });
-                        status_msg.set(format!(
-                            "member action permission check failed: {}",
-                            error.display()
-                        ));
-                    }
-                }
-            });
-        });
-    }
+    use_realm_members_effects(
+        controller,
+        base_url.clone(),
+        principal_id.clone(),
+        selected_realm_id.clone(),
+    );
 
     let member_permissions = permissions();
     let can_invite = member_permissions.can_invite;
@@ -1264,72 +1140,19 @@ pub fn RealmMembersPanel(
                                                                                     size: ButtonSize::Sm,
                                                                                     "data-testid": "member-agent-remove-from-realm",
                                                                                     onclick: {
-                                                                                        let base = base_url.clone();
-                                                                                        let realm = selected_realm_id.clone();
-                                                                                        let target = owned_agent_actor_key(&agent_id).unwrap_or_default();
+                                                                                        let context = write_context.clone();
+                                                                                        let target_id = owned_agent_actor_key(&agent_id).unwrap_or_default();
                                                                                         let target_label = agent_title.clone();
-                                                                                        let actor_principal_id = principal_id.clone();
                                                                                         move |_| {
-                                                                                            let base = base.clone();
-                                                                                            let realm = realm.clone();
-                                                                                            let target = target.clone();
-                                                                                            let target_label = target_label.clone();
-                                                                                            let actor_id = actor_principal_id.clone();
-                                                                                            let api_token = token();
-                                                                                            spawn(async move {
-                                                                                                let realm_for_api = realm.clone();
-                                                                                                match crate::transport::auth::with_event_submitter(
-                                                                                                    &base,
-                                                                                                    api_token,
-                                                                                                    |sub| async move {
-                                                                                                        crate::transport::realm_write::transition_member_state(
-                                                                                                            &sub,
-                                                                                                            &realm_for_api,
-                                                                                                            &actor_id,
-                                                                                                            &target,
-                                                                                                            Some("join"),
-                                                                                                            "leave",
-                                                                                                            "controller_remove_agent",
-                                                                                                        )
-                                                                                                        .await
-                                                                                                    },
-                                                                                                )
-                                                                                                .await
-                                                                                                {
-                                                                                                    Ok(resp) => {
-                                                                                                        let mls_encrypted = state_store
-                                                                                                            .read()
-                                                                                                            .realm_projection_is_mls_encrypted(&realm);
-                                                                                                        if mls_encrypted {
-                                                                                                            state_store.write().record_move_submission(
-                                                                                                                format!("mls-binding:{}", resp.event_id),
-                                                                                                                realm.clone(),
-                                                                                                                "mls_member_remove",
-                                                                                                                MoveSubmissionState::PendingMlsBinding,
-                                                                                                                Some("epoch_update_required: membership frontier changed; MLS Remove commit required".to_owned()),
-                                                                                                                None,
-                                                                                                            );
-                                                                                                        }
-                                                                                                        sync_cursor.set(String::new());
-                                                                                                        let suffix = if mls_encrypted {
-                                                                                                            "; epoch_update_required"
-                                                                                                        } else {
-                                                                                                            ""
-                                                                                                        };
-                                                                                                        status_msg.set(format!(
-                                                                                                            "removed agent {} from Realm{}",
-                                                                                                            target_label,
-                                                                                                            suffix
-                                                                                                        ));
-                                                                                                    }
-                                                                                                    Err(err) => status_msg.set(format!(
-                                                                                                        "agent remove failed: {}",
-                                                                                                        err.display()
-                                                                                                    )),
-                                                                                                }
-                                                                                            });
+                                                                                            controller.dispatch(
+                                                                                                context.clone(),
+                                                                                                RealmMembersCommand::RemoveOwnedAgent {
+                                                                                                    target_id: target_id.clone(),
+                                                                                                    target_label: target_label.clone(),
+                                                                                                },
+                                                                                            );
                                                                                         }
-                                                                                    },
+                                                                                        },
                                                                                     "Remove"
                                                                                 }
                                                                             }
