@@ -326,12 +326,15 @@ fn member_handle_cache_records_fresh_negative_lookup() {
 /// Nothing here is assembled locally.
 #[test]
 fn witness_attestations_are_built_from_the_sdk_witness_projection() {
-    let items = vec![arkret_sdk::SnapshotMaterializedItem::object(
-        "realm".to_owned(),
-        "ak:realm:AZEvldDJcWI9IRHqP2BMibDDfc59Ax_LwrbsrQmeD6Ml".to_owned(),
-        json!({ "title": "Witnessed Realm" }),
-        snapshot_event_id("0000000000a2"),
-    )];
+    // `snapshot-schema.md` section 3: items are reducer cells, never rendered
+    // objects. The Realm genesis log is an ordered_log cell every Realm writes.
+    let items = vec![
+        arkret_sdk::SnapshotMaterializedItem::value(
+            arkret_sdk::CellRef::new("ak:cell:ak.component.realm.create.v1:null").unwrap(),
+            json!([]),
+        )
+        .unwrap(),
+    ];
     let (mut manifest, _chunks) = snapshot_manifest_for_items(items);
     // A non-witness-quorum manifest carries no attestations at all.
     manifest.validate_witness_attestation_shape().unwrap();

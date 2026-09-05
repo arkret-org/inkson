@@ -54,15 +54,15 @@ fn snapshot_contract_manifest_payload() -> serde_json::Value {
     let realm_id =
         arkret_sdk::RealmId::new("ak:realm:AeI0Z4D734iPt9RpF51PAg0CRjLSQmxPqv9NgUmBJiQi").unwrap();
     let service_id = arkret_sdk::DidCoreId::new("ak:did_core:web:server.local").unwrap();
-    let items = vec![arkret_sdk::SnapshotMaterializedItem::object(
-        "realm".to_owned(),
-        realm_id.to_string(),
-        json!({
-            "id": realm_id.to_string(),
-            "title": "Contract Snapshot Realm"
-        }),
-        snapshot_contract_event_id("0000000000c1"),
-    )];
+    // `snapshot-schema.md` section 3: items are reducer cells, never rendered
+    // objects. The Realm genesis log is an ordered_log cell every Realm writes.
+    let items = vec![
+        arkret_sdk::SnapshotMaterializedItem::value(
+            arkret_sdk::CellRef::new("ak:cell:ak.component.realm.create.v1:null").unwrap(),
+            json!([]),
+        )
+        .unwrap(),
+    ];
     let state_digest = arkret_sdk::state_digest_from_items(&items).unwrap();
     let built = arkret_sdk::build_snapshot_chunks(
         &snapshot_id,
