@@ -926,7 +926,7 @@ fn invite_helpers_emit_canonical_kinds() {
     // governance-objects.md section 5.3: the create atomically opens the invite
     // lifecycle and claims the invitee's Realm live-target slot. The slot value
     // is the create Event id verbatim, in `ak:event:` form, and the Move
-    // asserts `head_eq:"__unset__"` on it so two concurrent invites for one
+    // asserts `head_eq: null` on it so two concurrent invites for one
     // account contend on the same cell.
     let live_target_cell =
         arkret_sdk::invite_live_target_cell(&invitee_account_id).expect("registered subject rule");
@@ -942,7 +942,7 @@ fn invite_helpers_emit_canonical_kinds() {
     );
     assert_eq!(
         create.intent().preconditions(),
-        &[arkret_sdk::InviteLiveTargetSlot::Unset
+        &[arkret_sdk::InviteLiveTargetSlot::Free
             .precondition(&invitee_account_id)
             .expect("registered contract")]
     );
