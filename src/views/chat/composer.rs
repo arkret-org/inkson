@@ -2,6 +2,8 @@ use arkret_wire::event_kind_str;
 
 use super::*;
 
+mod commands;
+
 #[derive(Clone, PartialEq)]
 pub(super) struct ChatComposerContext {
     pub embedded: bool,
@@ -119,7 +121,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
     // helpers below only render or forward its canonical text.
     let principal_id = principal_id.as_str().to_owned();
     let base_url = crate::app::SessionContext::base_url_string();
-    let mut sidecar_session = use_context::<crate::sidecar::HostedSidecarStateContext>().0;
+    let sidecar_session = use_context::<crate::sidecar::HostedSidecarStateContext>().0;
     let mut state_store = crate::app::SessionContext::get().state_store;
     let messages_snapshot = (controller.messages)();
     let messages_for_composer_lookup = &messages_snapshot;
@@ -390,88 +392,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                             compose_upload_status.set(
                                 crate::i18n::tr("compose.upload_progress"),
                             );
-                            spawn(async move {
-                                let api = match crate::transport::auth::authed_api_with_sync(
-                                    &base,
-                                    api_token,
-                                    None,
-                                ) {
-                                    Ok(api) => api,
-                                    Err(err) => {
-                                        compose_upload_status.set(format!(
-                                            "{}: {err}",
-                                            crate::i18n::tr("compose.upload_error"),
-                                        ));
-                                        return;
-                                    }
-                                };
-                                let clients = match api.sdk_http_client() {
-                                    Ok(http) => crate::transport::EndpointClients::from_http(http),
-                                    Err(err) => {
-                                        compose_upload_status.set(format!(
-                                            "{}: {err}",
-                                            crate::i18n::tr("compose.upload_error"),
-                                        ));
-                                        return;
-                                    }
-                                };
-                                let mut ok_count = 0usize;
-                                let mut last_error: Option<String> = None;
-                                for file in files {
-                                    let filename = file.name();
-                                    let content_type = file
-                                        .content_type()
-                                        .unwrap_or_else(|| "application/octet-stream".to_owned());
-                                    let bytes = match file.read_bytes().await {
-                                        Ok(b) => b.to_vec(),
-                                        Err(err) => {
-                                            last_error = Some(format!("{err}"));
-                                            continue;
-                                        }
-                                    };
-                                    match clients
-                                        .blob()
-                                        .upload_bytes_scoped(
-                                            bytes,
-                                            &content_type,
-                                            Some(&realm),
-                                            Some(&filename),
-                                        )
-                                        .await
-                                    {
-                                        Ok(resp) => {
-                                            let current = chat_draft();
-                                            let needs_space = !current.is_empty()
-                                                && !current.ends_with(' ')
-                                                && !current.ends_with('\n');
-                                            let attachment = format!(
-                                                "{}[Attachment: {}]",
-                                                if needs_space { " " } else { "" },
-                                                resp.blob_ref
-                                            );
-                                            chat_draft.set(format!("{current}{attachment}"));
-                                            ok_count += 1;
-                                        }
-                                        Err(err) => {
-                                            last_error = Some(err.to_string());
-                                        }
-                                    }
-                                }
-                                if let Some(err) = last_error {
-                                    compose_upload_status.set(format!(
-                                        "{}: {err}",
-                                        crate::i18n::tr("compose.upload_error"),
-                                    ));
-                                } else if ok_count > 0 {
-                                    compose_upload_status.set(format!(
-                                        "{ok_count} attachment(s) uploaded"
-                                    ));
-                                } else {
-                                    compose_upload_status.set(
-                                        crate::i18n::tr("compose.upload_error"),
-                                    );
-                                }
-                            });
+                            commands::upload_dropped_attachments(controller, base, api_token, realm, files);
                         }
                     },
                     Textarea {
@@ -567,41 +488,17 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                 };
                                 let typing_store =
                                     crate::app::runtime_adapter::state_store_handle(state_store);
+                                let typing_target = commands::TypingSignalTarget {
+                                    base_url: base.clone(),
+                                    realm_id: realm.clone(),
+                                    strand_id: strand_id.clone(),
+                                    authority: authority.clone(),
+                                    device_id: device.clone(),
+                                    material,
+                                    store: typing_store,
+                                };
                                 typing_throttle.on_keystroke(move |is_typing| {
-                                    let base = base.clone();
-                                    let typing_store = typing_store.clone();
-                                    let realm = realm.clone();
-                                    let authority = authority.clone();
-                                    let device = device.clone();
-                                    let strand_id = strand_id.clone();
-                                    let material = material.clone();
-                                    let api_token = token();
-                                    spawn(async move {
-                                        let _ = crate::transport::auth::with_event_submitter(
-                                            &base,
-                                            api_token,
-                                            |sub| async move {
-                                                sub.send_scope_signal(
-                                                    arkret_sdk::ScopeRef::Realm {
-                                                        realm_id: arkret_sdk::RealmId::new(
-                                                            realm.clone(),
-                                                        )?,
-                                                    },
-                                                    &authority,
-                                                    &device,
-                                                    &material,
-                                                    &crate::signal::SignalPayload::Typing {
-                                                        strand_id: arkret_sdk::StrandId::new(
-                                                            strand_id.clone(),
-                                                        )?,
-                                                        typing: is_typing,
-                                                    },
-                                                    &typing_store,
-                                                )
-                                                .await
-                                            },
-                                        ).await;
-                                    });
+                                    commands::send_typing_signal(typing_target.clone(), token(), is_typing);
                                 });
                             }
                         },
@@ -1007,57 +904,17 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                         });
                                         poll_draft.set(None);
 
-                                        let base = base.clone();
-                                        let api_token = token();
-                                        let poll_id_for_status = poll_id.clone();
-                                        let realm_for_sidecar = realm.clone();
-                                        let strand_for_sidecar = selected_strand.clone();
-                                        let mut state_store_for_sidecar = state_store;
-                                        spawn(async move {
-                                            match crate::transport::auth::with_authed_api(
-                                                &base,
-                                                api_token,
-                                                |api| async move { api.event_submitter()?.submit_sdk_event(&op).await },
-                                            )
-                                            .await
-                                            {
-                                                Ok(accepted) => {
-                                                    if let (Some(message_id), Some(content)) = (
-                                                        crate::messaging::polls::poll_message_ref(
-                                                            &poll_kind,
-                                                            &accepted.event_id,
-                                                        ),
-                                                        poll_content,
-                                                    ) {
-                                                        state_store_for_sidecar
-                                                            .write()
-                                                            .save_private_plaintext(
-                                                                &realm_for_sidecar,
-                                                                &strand_for_sidecar,
-                                                                &format!(
-                                                                    "message-content:{message_id}"
-                                                                ),
-                                                                &content,
-                                                            );
-                                                    }
-                                                    if let Some(found) = messages.write().iter_mut().find(|candidate| candidate.matches_id_or_protocol(&poll_id_for_status)) {
-                                                        found.pending = false;
-                                                        found.failed = false;
-                                                        found.error = None;
-                                                    }
-                                                    status_msg.set("Poll sent".to_owned());
-                                                }
-                                                Err(error) => {
-                                                    let error_text = error.display();
-                                                    if let Some(found) = messages.write().iter_mut().find(|candidate| candidate.matches_id_or_protocol(&poll_id_for_status)) {
-                                                        found.pending = false;
-                                                        found.failed = true;
-                                                        found.error = Some(format!("Poll send failed: {error_text}"));
-                                                    }
-                                                    status_msg.set(format!("Poll send failed: {error_text}"));
-                                                }
-                                            }
-                                        });
+                                        commands::send_poll(
+                                            controller,
+                                            base.clone(),
+                                            token(),
+                                            op,
+                                            poll_kind,
+                                            poll_content,
+                                            poll_id.clone(),
+                                            realm.clone(),
+                                            selected_strand.clone(),
+                                        );
                                     }
                                 },
                                 "Send poll"
@@ -1144,57 +1001,17 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                         });
                                         poll_draft.set(None);
 
-                                        let base = base.clone();
-                                        let api_token = token();
-                                        let poll_id_for_status = poll_id.clone();
-                                        let realm_for_sidecar = realm.clone();
-                                        let strand_for_sidecar = selected_strand.clone();
-                                        let mut state_store_for_sidecar = state_store;
-                                        spawn(async move {
-                                            match crate::transport::auth::with_authed_api(
-                                                &base,
-                                                api_token,
-                                                |api| async move { api.event_submitter()?.submit_sdk_event(&op).await },
-                                            )
-                                            .await
-                                            {
-                                                Ok(accepted) => {
-                                                    if let (Some(message_id), Some(content)) = (
-                                                        crate::messaging::polls::poll_message_ref(
-                                                            &poll_kind,
-                                                            &accepted.event_id,
-                                                        ),
-                                                        poll_content,
-                                                    ) {
-                                                        state_store_for_sidecar
-                                                            .write()
-                                                            .save_private_plaintext(
-                                                                &realm_for_sidecar,
-                                                                &strand_for_sidecar,
-                                                                &format!(
-                                                                    "message-content:{message_id}"
-                                                                ),
-                                                                &content,
-                                                            );
-                                                    }
-                                                    if let Some(found) = messages.write().iter_mut().find(|candidate| candidate.matches_id_or_protocol(&poll_id_for_status)) {
-                                                        found.pending = false;
-                                                        found.failed = false;
-                                                        found.error = None;
-                                                    }
-                                                    status_msg.set("Poll sent".to_owned());
-                                                }
-                                                Err(error) => {
-                                                    let error_text = error.display();
-                                                    if let Some(found) = messages.write().iter_mut().find(|candidate| candidate.matches_id_or_protocol(&poll_id_for_status)) {
-                                                        found.pending = false;
-                                                        found.failed = true;
-                                                        found.error = Some(format!("Poll send failed: {error_text}"));
-                                                    }
-                                                    status_msg.set(format!("Poll send failed: {error_text}"));
-                                                }
-                                            }
-                                        });
+                                        commands::send_poll(
+                                            controller,
+                                            base.clone(),
+                                            token(),
+                                            op,
+                                            poll_kind,
+                                            poll_content,
+                                            poll_id.clone(),
+                                            realm.clone(),
+                                            selected_strand.clone(),
+                                        );
                                     }
                                 },
                                 "Send"
@@ -1290,123 +1107,30 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                         source_realm_id = %realm,
                                         source_strand_id = %channel.strand_id,
                                     );
-                                    let base = base.clone();
-                                    let api_token = token();
-                                    let realm = realm.clone();
-                                    let actor = actor.clone();
-                                    let strand_id = channel.strand_id.clone();
-                                    let body_for_resolution = body.clone();
-                                    let own_controller_handle = own_controller_handle.clone();
-                                    let wait_for = active_sync_token(sync_cursor());
-                                    let mut resolved_mentions = mentions;
-                                    let inserted_candidates_for_sidecar = inserted_candidates;
-                                    let participants_for_sidecar =
-                                        participants_for_plaintext_sidecar.clone();
-                                    let roster_accounts =
-                                        roster_accounts_for_plaintext_sidecar.clone();
-                                    spawn(async move {
-                                        for mention in resolve_agent_selector_mentions(
+                                    commands::route_to_owned_agent_sidecar(
+                                        controller,
+                                        sidecar_session,
+                                        sidecar_route_pending,
+                                        commands::OwnedAgentSidecarRoute {
+                                            base_url: base.clone(),
+                                            api_token: token(),
+                                            wait_for: active_sync_token(sync_cursor()),
+                                            trace_id,
+                                            realm_id: realm.clone(),
+                                            strand_id: channel.strand_id.clone(),
+                                            actor: actor.clone(),
+                                            authority: authority_for_sidecar.clone(),
+                                            controller_did: did_for_sidecar.clone(),
+                                            device_id: device_id_for_sidecar.clone(),
                                             mentions_enabled,
-                                            &base,
-                                            api_token.clone(),
-                                            wait_for,
-                                            &resolved_mentions,
-                                            &body_for_resolution,
-                                            &realm,
-                                            &actor,
-                                            own_controller_handle.as_deref(),
-                                            &roster_accounts,
-                                        )
-                                        .await
-                                        {
-                                            push_unique_mention_node(
-                                                &mut resolved_mentions,
-                                                mention,
-                                            );
-                                        }
-                                        let addressed_agent_ids = owned_agent_ids_from_composer(
-                                            mentions_enabled,
-                                            &body_for_resolution,
-                                            &resolved_mentions,
-                                            &inserted_candidates_for_sidecar,
-                                            &actor,
-                                        );
-                                        let sidecar_outcome = ensure_owned_agent_sidecar(
-                                            &base,
-                                            api_token.clone(),
-                                            &trace_id,
-                                            &authority_for_sidecar,
-                                            &did_for_sidecar,
-                                            &device_id_for_sidecar,
-                                            &realm,
-                                            &strand_id,
-                                            &addressed_agent_ids,
-                                            state_store,
-                                        )
-                                        .await;
-                                        match sidecar_outcome {
-                                            Ok(Some(sidecar)) => {
-                                                let OwnedAgentSidecarEnsureResult {
-                                                    sidecar_id,
-                                                    view: sidecar_view,
-                                                } = sidecar;
-                                                let addressed_agent_ids = owned_agent_ids_from_mentions(
-                                                    &resolved_mentions,
-                                                    &actor,
-                                                );
-                                                let native_scope = arkret_sdk::ScopeRef::Sidecar {
-                                                    realm_id: sidecar_view.sidecar.realm_id.clone(),
-                                                    sidecar_id: sidecar_id.clone(),
-                                                };
-                                                let native_mls_ready = sidecar_view
-                                                    .mls_context
-                                                    .mls_group_id
-                                                    .as_ref()
-                                                    .is_some_and(|group_id| {
-                                                        state_store
-                                                            .read()
-                                                            .mls_snapshot_for_scope_and_group(
-                                                                &native_scope,
-                                                                group_id.as_str(),
-                                                            )
-                                                            .is_some()
-                                                    });
-                                                let addressed_agent_label = sidecar_agent_label(
-                                                    &addressed_agent_ids,
-                                                    &participants_for_sidecar,
-                                                );
-                                                status_msg
-                                                    .set("Native Sidecar reserved".to_owned());
-                                                sidecar_session.set(Some(crate::sidecar::HostedSidecarState {
-                                                    trace_id,
-                                                    controller_account_id: sidecar_view
-                                                        .sidecar
-                                                        .controller_account_id
-                                                        .clone(),
-                                                    addressed_agent_ids,
-                                                    addressed_agent_label,
-                                                    source_realm_id: realm.clone(),
-                                                    source_strand_id: strand_id.clone(),
-                                                    sidecar_id,
-                                                    access_readiness: sidecar_view.access_readiness,
-                                                    pending_access_reconciliations: sidecar_view.pending_access_reconciliations.clone(),
-                                                    mls_context: sidecar_view.mls_context,
-                                                    native_mls_ready,
-                                                    display_mode: arkret_sdk::AgentSidecarDisplayMode::ContextMerged,
-                                                    migrated_draft: body_for_resolution,
-                                                    opened_at: chrono::Utc::now(),
-                                                }));
-                                            }
-                                            Ok(None) => status_msg.set(
-                                                "Could not resolve an owned agent for the private sidecar."
-                                                    .to_owned(),
-                                            ),
-                                            Err(error) => status_msg.set(format!(
-                                                "Could not open private AI sidecar: {error:#}"
-                                            )),
-                                        }
-                                        sidecar_route_pending.set(false);
-                                    });
+                                            mentions,
+                                            body: body.clone(),
+                                            own_controller_handle: own_controller_handle.clone(),
+                                            roster_accounts: roster_accounts_for_plaintext_sidecar.clone(),
+                                            inserted_candidates,
+                                            participants: participants_for_plaintext_sidecar.clone(),
+                                        },
+                                    );
                                     return;
                                 }
                                 let local_id = new_chat_local_id();
@@ -1752,123 +1476,30 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                         source_realm_id = %realm,
                                         source_strand_id = %strand_id,
                                     );
-                                    let base = base.clone();
-                                    let api_token = token();
-                                    let wait_for = active_sync_token(sync_cursor());
-                                    let realm_for_sidecar = realm.clone();
-                                    let actor_for_sidecar = actor.clone();
-                                    let strand_for_sidecar = strand_id.clone();
-                                    let body_for_resolution = body.clone();
-                                    let own_controller_handle = own_controller_handle.clone();
-                                    let mut resolved_mentions = mentions;
-                                    let inserted_candidates_for_sidecar = inserted_candidates;
-                                    let participants_for_sidecar =
-                                        participants_for_encrypted_sidecar.clone();
-                                    let roster_accounts =
-                                        roster_accounts_for_encrypted_sidecar.clone();
-                                    spawn(async move {
-                                        for mention in resolve_agent_selector_mentions(
+                                    commands::route_to_owned_agent_sidecar(
+                                        controller,
+                                        sidecar_session,
+                                        sidecar_route_pending,
+                                        commands::OwnedAgentSidecarRoute {
+                                            base_url: base.clone(),
+                                            api_token: token(),
+                                            wait_for: active_sync_token(sync_cursor()),
+                                            trace_id,
+                                            realm_id: realm.clone(),
+                                            strand_id: strand_id.clone(),
+                                            actor: actor.clone(),
+                                            authority: authority_for_sidecar.clone(),
+                                            controller_did: did_for_sidecar.clone(),
+                                            device_id: device_id_for_sidecar.clone(),
                                             mentions_enabled,
-                                            &base,
-                                            api_token.clone(),
-                                            wait_for,
-                                            &resolved_mentions,
-                                            &body_for_resolution,
-                                            &realm_for_sidecar,
-                                            &actor_for_sidecar,
-                                            own_controller_handle.as_deref(),
-                                            &roster_accounts,
-                                        )
-                                        .await
-                                        {
-                                            push_unique_mention_node(
-                                                &mut resolved_mentions,
-                                                mention,
-                                            );
-                                        }
-                                        let addressed_agent_ids = owned_agent_ids_from_composer(
-                                            mentions_enabled,
-                                            &body_for_resolution,
-                                            &resolved_mentions,
-                                            &inserted_candidates_for_sidecar,
-                                            &actor_for_sidecar,
-                                        );
-                                        let sidecar_outcome = ensure_owned_agent_sidecar(
-                                            &base,
-                                            api_token.clone(),
-                                            &trace_id,
-                                            &authority_for_sidecar,
-                                            &did_for_sidecar,
-                                            &device_id_for_sidecar,
-                                            &realm_for_sidecar,
-                                            &strand_for_sidecar,
-                                            &addressed_agent_ids,
-                                            state_store,
-                                        )
-                                        .await;
-                                        match sidecar_outcome {
-                                            Ok(Some(sidecar)) => {
-                                                let OwnedAgentSidecarEnsureResult {
-                                                    sidecar_id,
-                                                    view: sidecar_view,
-                                                } = sidecar;
-                                                let addressed_agent_ids = owned_agent_ids_from_mentions(
-                                                    &resolved_mentions,
-                                                    &actor_for_sidecar,
-                                                );
-                                                let native_scope = arkret_sdk::ScopeRef::Sidecar {
-                                                    realm_id: sidecar_view.sidecar.realm_id.clone(),
-                                                    sidecar_id: sidecar_id.clone(),
-                                                };
-                                                let native_mls_ready = sidecar_view
-                                                    .mls_context
-                                                    .mls_group_id
-                                                    .as_ref()
-                                                    .is_some_and(|group_id| {
-                                                        state_store
-                                                            .read()
-                                                            .mls_snapshot_for_scope_and_group(
-                                                                &native_scope,
-                                                                group_id.as_str(),
-                                                            )
-                                                            .is_some()
-                                                    });
-                                                let addressed_agent_label = sidecar_agent_label(
-                                                    &addressed_agent_ids,
-                                                    &participants_for_sidecar,
-                                                );
-                                                status_msg
-                                                    .set("Native Sidecar reserved".to_owned());
-                                                sidecar_session.set(Some(crate::sidecar::HostedSidecarState {
-                                                    trace_id,
-                                                    controller_account_id: sidecar_view
-                                                        .sidecar
-                                                        .controller_account_id
-                                                        .clone(),
-                                                    addressed_agent_ids,
-                                                    addressed_agent_label,
-                                                    source_realm_id: realm_for_sidecar.clone(),
-                                                    source_strand_id: strand_for_sidecar.clone(),
-                                                    sidecar_id,
-                                                    access_readiness: sidecar_view.access_readiness,
-                                                    pending_access_reconciliations: sidecar_view.pending_access_reconciliations.clone(),
-                                                    mls_context: sidecar_view.mls_context,
-                                                    native_mls_ready,
-                                                    display_mode: arkret_sdk::AgentSidecarDisplayMode::ContextMerged,
-                                                    migrated_draft: body_for_resolution,
-                                                    opened_at: chrono::Utc::now(),
-                                                }));
-                                            }
-                                            Ok(None) => status_msg.set(
-                                                "Could not resolve an owned agent for the private sidecar."
-                                                    .to_owned(),
-                                            ),
-                                            Err(error) => status_msg.set(format!(
-                                                "Could not open private AI sidecar: {error:#}"
-                                            )),
-                                        }
-                                        sidecar_route_pending.set(false);
-                                    });
+                                            mentions,
+                                            body: body.clone(),
+                                            own_controller_handle: own_controller_handle.clone(),
+                                            roster_accounts: roster_accounts_for_encrypted_sidecar.clone(),
+                                            inserted_candidates,
+                                            participants: participants_for_encrypted_sidecar.clone(),
+                                        },
+                                    );
                                     return;
                                 }
                                 if let Some(session) = active_sidecar_for_send {
