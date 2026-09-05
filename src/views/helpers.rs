@@ -6,7 +6,23 @@ use dioxus::prelude::*;
 // existing `views::helpers::short_protocol_id` call sites keep resolving.
 pub use yoface::utils::text::short_protocol_id;
 
-pub(crate) use super::member_display::actor_display_label;
+pub(crate) use super::member_display::{account_display_label, actor_display_label};
+
+/// Display label for one Contact peer.
+///
+/// Contact rows carry the peer's exact `AccountId`, so this goes through
+/// [`account_display_label`] and the Directory handle cache stays addressed by
+/// the complete account. Only a `service` peer, which has no account subject,
+/// falls back to the principal-only ladder.
+pub(crate) fn contact_peer_label(
+    store: &crate::state::LocalStateStore,
+    contact: &crate::models::ContactListRow,
+) -> String {
+    match crate::models::contact_peer_account_id(contact) {
+        Some(account_id) => account_display_label(store, &account_id),
+        None => actor_display_label(store, crate::models::contact_peer_id(contact).as_str()),
+    }
+}
 
 /// Render an account's handles as one `@a, @b` label, or `fallback` when the
 /// account has none.
@@ -297,7 +313,9 @@ pub fn handle_claim_rows(
 #[component]
 pub fn WhyThisHandlePanel(
     token: String,
-    subject_id: String,
+    /// Exact subject account. `discovery-directory.md` only admits a complete
+    /// `AccountId` here; the panel never assembles one from a principal.
+    subject_account_id: arkret_sdk::AccountId,
     /// Optional Realm id to scope disclosure policy.
     #[props(default)]
     realm_id: Option<String>,
@@ -312,12 +330,12 @@ pub fn WhyThisHandlePanel(
     let on_load = {
         let base_url = base_url.clone();
         let token = token.clone();
-        let subject_id = subject_id.clone();
+        let subject_account_id = subject_account_id.clone();
         let realm_id = realm_id.clone();
         move |_| {
             let base_url = base_url.clone();
             let token = token.clone();
-            let subject_id = subject_id.clone();
+            let subject_account_id = subject_account_id.clone();
             let realm_id = realm_id.clone();
             spawn(async move {
                 status.set("Resolving visible handle claims…".to_owned());
@@ -325,7 +343,7 @@ pub fn WhyThisHandlePanel(
                     clients
                         .directory()
                         .list_handles_for_subject(
-                            &subject_id,
+                            &subject_account_id,
                             realm_id.as_deref(),
                             Some(arkret_models_discovery::DirectoryIntent::Lookup),
                         )

@@ -69,6 +69,17 @@ pub fn contact_peer_id(contact: &ContactListRow) -> arkret_sdk::DidCoreId {
         .clone()
 }
 
+/// The peer's exact account, for surfaces that address a Contact as a
+/// Directory subject. `None` for a `service` actor, which has no account
+/// subject at all. Both components stay together: the same principal at
+/// another Station is a different subject.
+pub fn contact_peer_account_id(contact: &ContactListRow) -> Option<arkret_sdk::AccountId> {
+    match contact.peer.contact_actor_id() {
+        arkret_sdk::ActorId::Account { account_id } => Some(account_id),
+        arkret_sdk::ActorId::Service { .. } => None,
+    }
+}
+
 pub fn contact_scope_wire(scope: ContactScope) -> &'static str {
     match scope {
         ContactScope::Invite => "invite",

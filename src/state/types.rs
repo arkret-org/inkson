@@ -181,11 +181,15 @@ impl StoredNotification {
 /// Realm-scoped cache for `ak.find.directory.read.list_handles_for_subject.v1`.
 ///
 /// Handles are display evidence, not identity keys. Cache entries are
-/// therefore bound to the visible subject DID, the Realm context, and the
-/// roster `member_display_state_digest` when the server provided one.
+/// therefore bound to the exact subject `AccountId`, the Realm context, and
+/// the roster `member_display_state_digest` when the server provided one.
+/// `identity/identity-handles.md` §3.2 and `discovery/discovery-directory.md`
+/// both require the subject to be compared component-by-component, so a bare
+/// principal is never a cache key: the same principal at two Stations is two
+/// subjects.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MemberHandleCacheEntry {
-    pub subject_id: String,
+    pub subject_account_id: arkret_sdk::AccountId,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub realm_id: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

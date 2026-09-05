@@ -268,7 +268,7 @@ pub(super) fn filter_and_sort_direct_contacts(
         .iter()
         .filter(|contact| {
             let peer_id = crate::models::contact_peer_id(contact);
-            let display_name = actor_display_label(store, peer_id.as_str());
+            let display_name = crate::views::helpers::contact_peer_label(store, contact);
             let scopes = contact
                 .bidirectional_scopes
                 .iter()
@@ -310,8 +310,10 @@ pub(super) fn filter_and_sort_direct_contacts(
         let right_pinned = contact_remarks
             .get(right_peer.as_str())
             .is_some_and(|remark| remark.pinned);
-        let left_label = actor_display_label(store, left_peer.as_str()).to_ascii_lowercase();
-        let right_label = actor_display_label(store, right_peer.as_str()).to_ascii_lowercase();
+        let left_label =
+            crate::views::helpers::contact_peer_label(store, left).to_ascii_lowercase();
+        let right_label =
+            crate::views::helpers::contact_peer_label(store, right).to_ascii_lowercase();
         right_pinned
             .cmp(&left_pinned)
             .then_with(|| left_label.cmp(&right_label))

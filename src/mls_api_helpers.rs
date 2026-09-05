@@ -41,12 +41,19 @@ pub(crate) fn principal_core_id(principal_id: &str) -> anyhow::Result<arkret_sdk
     arkret_sdk::project_did_to_core_id(&did).map_err(anyhow::Error::msg)
 }
 
-/// Complete account actor for a principal authored at the selected Station.
-pub(crate) fn local_account_actor_id(value: &str) -> anyhow::Result<arkret_sdk::ActorId> {
-    Ok(arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+/// Complete account for a principal authored at the selected Station. Valid
+/// only for identities that really are hosted here — the active account and
+/// locally authored actors. Never use it to guess a remote subject's Station.
+pub(crate) fn local_account_id(value: &str) -> anyhow::Result<arkret_sdk::AccountId> {
+    Ok(arkret_sdk::AccountId::new(
         principal_core_id(value)?,
         crate::operation::authoring_station_id()?,
-    )))
+    ))
+}
+
+/// Complete account actor for a principal authored at the selected Station.
+pub(crate) fn local_account_actor_id(value: &str) -> anyhow::Result<arkret_sdk::ActorId> {
+    Ok(arkret_sdk::ActorId::account(local_account_id(value)?))
 }
 
 #[cfg(test)]

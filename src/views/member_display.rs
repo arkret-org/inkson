@@ -53,10 +53,17 @@ pub(crate) struct ResolvedMemberDisplay {
     pub subject_id: Option<String>,
 }
 
+/// One pending `ak.find.directory.read.list_handles_for_subject.v1` fetch.
+///
+/// `client-sync.md` §8.1 only allows this query when the roster disclosed the
+/// member's exact `subject_account_id` (or the decrypted MemberIdentity
+/// disclosed an account-branch `subject_actor_id`); the Realm `actor_id`, a
+/// pairwise principal and any single-component assembly are all forbidden as
+/// query input, so the request carries the complete `AccountId`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct MemberHandleLookupRequest {
     pub request_key: String,
-    pub subject_id: String,
+    pub subject_account_id: AccountId,
     pub realm_id: String,
     pub member_display_state_digest: Option<String>,
 }
@@ -308,30 +315,32 @@ pub(crate) fn member_lookup_subject(
         })
 }
 
-fn member_handle_lookup_subject(
+/// The only admissible subject for a Directory handle query on a roster row.
+///
+/// `client-sync.md` §8.1: when the roster did not disclose
+/// `subject_account_id` and the MemberIdentity `subject_actor_id` is absent or
+/// on the `service` branch, there is no query input at all — the client MUST
+/// wait for subject disclosure or use inline evidence, and MUST NOT fall back
+/// to the Realm `actor_id`, a pairwise principal, or a locally assembled
+/// account id. Returning `None` degrades the row to the §3.8.2 step 4 ladder.
+pub(crate) fn member_handle_lookup_account(
     row: &RealmMemberRow,
     identity: Option<&arkret_sdk::MemberIdentity>,
-) -> Option<String> {
-    member_lookup_subject(row, identity)
-        // The roster actor is already disclosed to this Realm member. It may
-        // also be the account's principal DID (the common non-pairwise case),
-        // so it is a valid candidate for the subject -> handle query. The
-        // Directory still has to return a verified claim for this exact DID
-        // under the Realm context; a pairwise actor simply yields no claim.
-        .or_else(|| {
-            principal_core_subject(row.actor_id.signing_principal_id().as_str())
-        })
+) -> Option<AccountId> {
+    row.subject_account_id.clone().or_else(|| {
+        identity.and_then(|identity| identity.subject_actor_id.as_account_id().cloned())
+    })
 }
 
 pub(crate) fn member_handle_fetch_key(
     realm_id: &str,
-    subject_id: &str,
+    subject_account_id: &AccountId,
     digest: Option<&str>,
 ) -> String {
     format!(
         "{}\u{1f}{}\u{1f}{}",
         realm_id.trim(),
-        subject_id.trim(),
+        subject_account_id,
         digest.unwrap_or_default().trim()
     )
 }
@@ -349,28 +358,44 @@ pub(crate) fn missing_member_handle_lookups(
             continue;
         }
         let identity = store.resolved_member_identity(realm_id, &row.actor_id);
-        let Some(subject_id) = member_handle_lookup_subject(row, identity.as_ref()) else {
+        let Some(subject_account_id) = member_handle_lookup_account(row, identity.as_ref()) else {
             continue;
         };
         let digest = row.member_display_state_digest.clone();
         if store
-            .cached_member_handle_lookup(&subject_id, Some(realm_id), digest.as_deref())
+            .cached_member_handle_lookup(&subject_account_id, Some(realm_id), digest.as_deref())
             .is_some()
         {
             continue;
         }
-        let request_key = member_handle_fetch_key(realm_id, &subject_id, digest.as_deref());
+        let request_key = member_handle_fetch_key(realm_id, &subject_account_id, digest.as_deref());
         if in_flight.contains(&request_key) {
             continue;
         }
         requests.push(MemberHandleLookupRequest {
             request_key,
-            subject_id,
+            subject_account_id,
             realm_id: realm_id.to_owned(),
             member_display_state_digest: digest,
         });
     }
     requests
+}
+
+/// Whether a `list_handles_for_subject` answer may be used for the request
+/// that produced it.
+///
+/// `discovery/discovery-directory.md` requires the response `account_id` to be
+/// the exact subject that was asked about and forbids merging the same
+/// principal's account at another Station. The comparison is therefore over
+/// the whole `AccountId`; a mismatching answer is unusable and is recorded as
+/// a negative entry under the requested subject rather than re-keyed onto the
+/// account that answered.
+pub(crate) fn member_handle_response_matches_request(
+    response: &arkret_models_discovery::DirectorySubjectHandleList,
+    request: &MemberHandleLookupRequest,
+) -> bool {
+    response.account_id == request.subject_account_id
 }
 
 pub(crate) async fn fetch_and_cache_member_handle(
@@ -379,16 +404,14 @@ pub(crate) async fn fetch_and_cache_member_handle(
     mut state_store: SyncSignal<LocalStateStore>,
     request: MemberHandleLookupRequest,
 ) {
-    let subject_id = request.subject_id.clone();
-    let realm_id = request.realm_id.clone();
     let result = crate::transport::auth::with_endpoint_clients(&base_url, api_token, None, {
-        let subject_id = subject_id.clone();
-        let realm_id = realm_id.clone();
+        let subject_account_id = request.subject_account_id.clone();
+        let realm_id = request.realm_id.clone();
         move |clients| async move {
             clients
                 .directory()
                 .list_handles_for_subject(
-                    &subject_id,
+                    &subject_account_id,
                     Some(&realm_id),
                     Some(arkret_models_discovery::DirectoryIntent::Lookup),
                 )
@@ -397,7 +420,7 @@ pub(crate) async fn fetch_and_cache_member_handle(
     })
     .await;
     match result {
-        Ok(response) if response.account_id.principal_id.as_str() == request.subject_id => {
+        Ok(response) if member_handle_response_matches_request(&response, &request) => {
             let primary = response
                 .primary_handle
                 .as_ref()
@@ -409,7 +432,7 @@ pub(crate) async fn fetch_and_cache_member_handle(
                 .filter_map(|claim| claim.claim.expires_at.as_ref().cloned())
                 .min();
             state_store.write().save_member_handle_lookup(
-                response.account_id.principal_id.as_str().to_owned(),
+                &request.subject_account_id,
                 Some(request.realm_id),
                 request.member_display_state_digest,
                 primary,
@@ -419,10 +442,10 @@ pub(crate) async fn fetch_and_cache_member_handle(
             );
         }
         Ok(_) => {
-            // A reverse lookup is useful only for the exact already-known
-            // subject. Never cache a server response under a different DID.
+            // See [`member_handle_response_matches_request`]: an answer about
+            // another account is unusable for this subject.
             state_store.write().save_member_handle_lookup(
-                request.subject_id,
+                &request.subject_account_id,
                 Some(request.realm_id),
                 request.member_display_state_digest,
                 None,
@@ -433,7 +456,7 @@ pub(crate) async fn fetch_and_cache_member_handle(
         }
         Err(error) if !error.is_auth_expired() => {
             state_store.write().save_member_handle_lookup(
-                request.subject_id,
+                &request.subject_account_id,
                 Some(request.realm_id),
                 request.member_display_state_digest,
                 None,
@@ -591,10 +614,13 @@ pub(crate) fn resolve_member_display_with_policies(
 ) -> ResolvedMemberDisplay {
     let identity = store.resolved_member_identity(realm_id, &row.actor_id);
     let subject_id = member_lookup_subject(row, identity.as_ref());
-    let handle_lookup_subject = member_handle_lookup_subject(row, identity.as_ref());
+    let handle_lookup_account = member_handle_lookup_account(row, identity.as_ref());
     // §3.8.2 step 4a input: the last verified primary handle this client saw
     // for the subject, either the active account's own persisted handle or a
-    // fresh Directory `list_handles_for_subject` result.
+    // fresh Directory `list_handles_for_subject` result. The Directory cache
+    // is addressed by the exact `AccountId` only; a row without a disclosed
+    // subject has no cache key and degrades instead of borrowing another
+    // Station's account.
     let cached_handle = [
         subject_id.as_deref(),
         Some(row.actor_id.signing_principal_id().as_str()),
@@ -603,7 +629,7 @@ pub(crate) fn resolve_member_display_with_policies(
     .flatten()
     .find_map(|principal_id| store.primary_handle_for_principal_id(principal_id))
     .or_else(|| {
-        handle_lookup_subject.as_deref().and_then(|subject| {
+        handle_lookup_account.as_ref().and_then(|subject| {
             store
                 .cached_member_handle_lookup(
                     subject,
@@ -654,6 +680,22 @@ pub(crate) fn resolve_member_display_with_policies(
 /// the ladder is [`resolve_subject_display`] with no exact account id, so it
 /// starts at the §3.8.2 step 4 fallbacks.
 pub(crate) fn actor_display_label(store: &LocalStateStore, principal_id: &str) -> String {
+    account_label_ladder(store, principal_id, None)
+}
+
+/// [`actor_display_label`] for a surface that holds the peer's exact
+/// `AccountId`. Only this form may read the Directory handle cache: the cache
+/// is keyed by the complete account, because `discovery-directory.md` forbids
+/// answering for one Station's account with another Station's claims.
+pub(crate) fn account_display_label(store: &LocalStateStore, account_id: &AccountId) -> String {
+    account_label_ladder(store, account_id.principal_id.as_str(), Some(account_id))
+}
+
+fn account_label_ladder(
+    store: &LocalStateStore,
+    principal_id: &str,
+    account_id: Option<&AccountId>,
+) -> String {
     if let Some(petname) = store
         .active_contact_remark(principal_id)
         .and_then(|remark| {
@@ -666,9 +708,11 @@ pub(crate) fn actor_display_label(store: &LocalStateStore, principal_id: &str) -
     let cached_handle = store
         .primary_handle_for_principal_id(principal_id)
         .or_else(|| {
-            store
-                .cached_member_handle_lookup(principal_id, None, None)
-                .and_then(|entry| entry.primary_handle)
+            account_id.and_then(|account_id| {
+                store
+                    .cached_member_handle_lookup(account_id, None, None)
+                    .and_then(|entry| entry.primary_handle)
+            })
         })
         .as_deref()
         .and_then(parse_handle);

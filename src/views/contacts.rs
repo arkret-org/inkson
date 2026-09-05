@@ -22,7 +22,7 @@ use crate::ui::checkbox::Checkbox;
 use crate::ui::input::Input;
 use crate::ui::label::Label;
 use crate::ui::textarea::Textarea;
-use crate::views::helpers::{actor_display_label, short_protocol_id};
+use crate::views::helpers::short_protocol_id;
 
 /// Maximum length of the optional contact-request greeting (protocol contract:
 /// `message` is `1..2000`).
@@ -231,7 +231,7 @@ fn ContactRow(
     let peer_principal = crate::models::contact_peer_id(&contact).to_string();
     let peer = contact.peer.contact_actor_id().to_string();
     let state = contact.state;
-    let peer_label = actor_display_label(&state_store.read(), &peer_principal);
+    let peer_label = crate::views::helpers::contact_peer_label(&state_store.read(), &contact);
     let existing_remark = state_store.read().contact_remark(&peer_principal);
     let mut petname_input = use_signal(|| {
         existing_remark

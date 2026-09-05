@@ -300,12 +300,19 @@ impl Default for LocalStateStore {
     }
 }
 
-fn member_handle_cache_key(subject_id: &str, realm_id: Option<&str>) -> String {
+/// Cache key for one subject's Directory handle evidence in one display
+/// context. The subject half is the canonical JCS form of the exact
+/// `AccountId`, so the same principal at two Stations can never share an
+/// entry.
+fn member_handle_cache_key(
+    subject_account_id: &arkret_sdk::AccountId,
+    realm_id: Option<&str>,
+) -> String {
     let realm = realm_id
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .unwrap_or("*");
-    format!("{realm}\u{1f}{subject_id}")
+    format!("{realm}\u{1f}{subject_account_id}")
 }
 
 impl LocalStateStore {

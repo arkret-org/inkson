@@ -297,10 +297,8 @@ pub(super) fn ContactsManagePage(
         .iter()
         .filter(|contact| {
             let scopes = contact_manage_scope_summary(contact);
-            let display_name = crate::views::helpers::actor_display_label(
-                &state_store.read(),
-                crate::models::contact_peer_id(contact).as_str(),
-            );
+            let display_name =
+                crate::views::helpers::contact_peer_label(&state_store.read(), contact);
             let state = crate::models::contact_state_wire(contact.state);
             sidebar_text_matches_query(
                 &normalized_query,
@@ -348,9 +346,9 @@ pub(super) fn ContactsManagePage(
                                 for contact in filtered_rows {
                                     {
                                         let peer = crate::models::contact_peer_id(&contact).to_string();
-                                        let peer_label = crate::views::helpers::actor_display_label(
+                                        let peer_label = crate::views::helpers::contact_peer_label(
                                             &state_store.read(),
-                                            &peer,
+                                            &contact,
                                         );
                                         let scopes_label = contact_manage_scope_summary(&contact);
                                         let direct_label = contact

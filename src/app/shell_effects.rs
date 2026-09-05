@@ -41,6 +41,7 @@ pub(super) fn ShellEffects(state: ShellEffectState) -> Element {
     let SessionContext {
         mut state_store,
         base_url,
+        active_account,
         ..
     } = SessionContext::get();
     let navigator = use_navigator();
@@ -258,6 +259,12 @@ pub(super) fn ShellEffects(state: ShellEffectState) -> Element {
         use_effect(move || {
             let lookup_base_url = base_url();
             let lookup_actor = crate::app::principal_id_owned(principal_id());
+            // The active account's own authority is already an exact
+            // `AccountId`; the Directory subject query never assembles one.
+            let lookup_account_id = active_account
+                .read()
+                .as_ref()
+                .map(|account| account.authority.clone());
             let lookup_token = token();
             let key = format!(
                 "{}|{}|{}",
@@ -269,16 +276,17 @@ pub(super) fn ShellEffects(state: ShellEffectState) -> Element {
                 return;
             }
             personal_handles_lookup_key.set(key);
-            if lookup_token.trim().is_empty() || lookup_actor.trim().is_empty() {
+            let subject_account_id = lookup_account_id
+                .filter(|_| !lookup_token.trim().is_empty() && !lookup_actor.trim().is_empty());
+            let Some(subject_account_id) = subject_account_id else {
                 account_primary_handle.set(String::new());
                 personal_handles.set(Vec::new());
                 personal_handles_status.set("No authenticated session".to_owned());
                 return;
-            }
+            };
             personal_handles_status.set("Loading handles".to_owned());
             let base = lookup_base_url.clone();
-            let actor = lookup_actor.clone();
-            let lookup_subject = actor.clone();
+            let lookup_subject = lookup_actor.clone();
             let api_token = lookup_token.clone();
             let existing_personal_handles = personal_handles();
             let mut handle_store = state_store;
@@ -289,7 +297,7 @@ pub(super) fn ShellEffects(state: ShellEffectState) -> Element {
                     |http| async move {
                         crate::transport::directory::list_handles_for_subject(
                             &http,
-                            &actor,
+                            &subject_account_id,
                             None,
                             Some(arkret_models_discovery::DirectoryIntent::Lookup),
                         )
@@ -355,17 +363,17 @@ pub(super) fn ShellEffects(state: ShellEffectState) -> Element {
         use_effect(move || {
             let lookup_base_url = base_url();
             let lookup_token = token();
+            // A Directory subject query needs the peer exact `AccountId`;
+            // the Contact row already carries it, so nothing is assembled from
+            // a principal here. `service` actors have no account subject.
             let mut peers = direct_contact_rows
                 .read()
                 .iter()
-                .map(|contact| {
-                    crate::models::contact_peer_id(contact)
-                        .as_str()
-                        .trim()
-                        .to_owned()
+                .filter_map(|contact| match contact.peer.contact_actor_id() {
+                    arkret_sdk::ActorId::Account { account_id } => Some(account_id),
+                    arkret_sdk::ActorId::Service { .. } => None,
                 })
-                .filter(|peer| peer.starts_with("did:"))
-                .collect::<BTreeSet<_>>();
+                .collect::<BTreeSet<arkret_sdk::AccountId>>();
             if lookup_token.trim().is_empty() || peers.is_empty() {
                 if !contact_handles_lookup_key().is_empty() {
                     contact_handles_lookup_key.set(String::new());
@@ -377,7 +385,7 @@ pub(super) fn ShellEffects(state: ShellEffectState) -> Element {
                     .read()
                     .cached_member_handle_lookup(peer, None, None)
                     .is_none()
-                    && !contact_handles_fetching.read().contains(peer)
+                    && !contact_handles_fetching.read().contains(&peer.to_string())
             });
             if peers.is_empty() {
                 if !contact_handles_lookup_key().is_empty() {
@@ -385,7 +393,11 @@ pub(super) fn ShellEffects(state: ShellEffectState) -> Element {
                 }
                 return;
             }
-            let peer_key = peers.iter().cloned().collect::<Vec<_>>().join(",");
+            let peer_key = peers
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(",");
             let key = format!(
                 "{}|{}|{}",
                 lookup_base_url,
@@ -397,21 +409,22 @@ pub(super) fn ShellEffects(state: ShellEffectState) -> Element {
             }
             contact_handles_lookup_key.set(key);
             for peer in &peers {
-                contact_handles_fetching.write().insert(peer.clone());
+                contact_handles_fetching.write().insert(peer.to_string());
             }
             let base = lookup_base_url.clone();
             let api_token = lookup_token.clone();
             spawn(async move {
-                for subject_id in peers {
+                for subject_account_id in peers {
+                    let fetching_key = subject_account_id.to_string();
                     let result = crate::transport::auth::with_directory_sdk_client(
                         &base,
                         api_token.clone(),
                         {
-                            let subject_id = subject_id.clone();
+                            let subject_account_id = subject_account_id.clone();
                             move |http| async move {
                                 crate::transport::directory::list_handles_for_subject(
                                     &http,
-                                    &subject_id,
+                                    &subject_account_id,
                                     None,
                                     Some(arkret_models_discovery::DirectoryIntent::Lookup),
                                 )
@@ -421,7 +434,7 @@ pub(super) fn ShellEffects(state: ShellEffectState) -> Element {
                     )
                     .await;
                     match result {
-                        Ok(res) => {
+                        Ok(res) if res.account_id == subject_account_id => {
                             try_set_signal(directory_handles_available, true);
                             let primary = res
                                 .primary_handle
@@ -436,7 +449,7 @@ pub(super) fn ShellEffects(state: ShellEffectState) -> Element {
                             state_store_for_contact_handles
                                 .write()
                                 .save_member_handle_lookup(
-                                    res.account_id.principal_id.as_str().to_owned(),
+                                    &subject_account_id,
                                     None,
                                     None,
                                     primary,
@@ -445,12 +458,29 @@ pub(super) fn ShellEffects(state: ShellEffectState) -> Element {
                                     earliest_expiry,
                                 );
                         }
+                        Ok(_) => {
+                            // The answer is about a different account, so it is
+                            // recorded as unusable for the requested subject and
+                            // never re-keyed onto the account that answered.
+                            try_set_signal(directory_handles_available, true);
+                            state_store_for_contact_handles
+                                .write()
+                                .save_member_handle_lookup(
+                                    &subject_account_id,
+                                    None,
+                                    None,
+                                    None,
+                                    0,
+                                    None,
+                                    None,
+                                );
+                        }
                         Err(err) if !err.is_auth_expired() => {
                             try_set_signal(directory_handles_available, false);
                             state_store_for_contact_handles
                                 .write()
                                 .save_member_handle_lookup(
-                                    subject_id.clone(),
+                                    &subject_account_id,
                                     None,
                                     None,
                                     None,
@@ -461,7 +491,7 @@ pub(super) fn ShellEffects(state: ShellEffectState) -> Element {
                         }
                         Err(_) => {}
                     }
-                    contact_handles_fetching.write().remove(&subject_id);
+                    contact_handles_fetching.write().remove(&fetching_key);
                 }
             });
         });

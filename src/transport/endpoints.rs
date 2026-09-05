@@ -432,11 +432,16 @@ pub struct DirectoryEndpoints<'a> {
 impl DirectoryEndpoints<'_> {
     pub async fn list_handles_for_subject(
         &self,
-        subject: &str,
+        subject_account_id: &arkret_sdk::AccountId,
         realm_id: Option<&str>,
         intent: Option<arkret_models_discovery::DirectoryIntent>,
     ) -> anyhow::Result<arkret_models_discovery::DirectorySubjectHandleList> {
-        super::directory::list_handles_for_subject(self.transport.http(), subject, realm_id, intent)
-            .await
+        super::directory::list_handles_for_subject(
+            self.transport.http(),
+            subject_account_id,
+            realm_id,
+            intent,
+        )
+        .await
     }
 }

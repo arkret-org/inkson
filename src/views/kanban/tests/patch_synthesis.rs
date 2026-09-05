@@ -531,8 +531,12 @@ fn card_synthesis_author_prefers_cached_member_primary_handle() {
     });
     let rows = realm_member_roster(Some(&projection));
     let mut store = isolated_store_for_tests("synthesis-primary-handle");
+    let subject_account = arkret_sdk::AccountId::new(
+        arkret_sdk::DidCoreId::new(subject).unwrap(),
+        arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap(),
+    );
     store.save_member_handle_lookup(
-        subject,
+        &subject_account,
         Some(TEST_REALM_ID.to_owned()),
         Some(digest.to_owned()),
         Some("abbc:auth.local.host".to_owned()),
@@ -556,8 +560,12 @@ fn card_synthesis_author_prefers_cached_member_primary_handle() {
     );
 }
 
+/// The roster row must disclose `subject_account_id` for the cached Directory
+/// handle to apply: `client-sync.md` §8.1 forbids using the Realm `actor_id`
+/// as a handle-query subject, so the cache is addressed by the disclosed
+/// account only.
 #[test]
-fn late_join_synthesis_author_resolves_handle_from_roster_actor_id() {
+fn late_join_synthesis_author_resolves_handle_from_disclosed_subject_account() {
     let actor = "ak:did_core:webvh:zQmHistoricalAuthor";
     let mut card = test_card(
         "ak:strand:AFjQnGmj11wy2rA2YjgbfhdhIJlFu9cPeZN5Ld0XzQp4",
@@ -573,13 +581,21 @@ fn late_join_synthesis_author_resolves_handle_from_roster_actor_id() {
                 "principal_id": actor,
                 "station_id": "ak:did_core:web:principal.example"
             }},
-            "membership": "join"
+            "membership": "join",
+            "subject_account_id": {
+                "principal_id": actor,
+                "station_id": "ak:did_core:web:principal.example"
+            }
         }]
     });
     let rows = realm_member_roster(Some(&projection));
     let mut store = isolated_store_for_tests("late-join-synthesis-author");
+    let subject_account = arkret_sdk::AccountId::new(
+        arkret_sdk::DidCoreId::new(actor).unwrap(),
+        arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap(),
+    );
     store.save_member_handle_lookup(
-        actor,
+        &subject_account,
         Some(TEST_REALM_ID.to_owned()),
         None,
         Some("alice:local.host".to_owned()),
