@@ -678,13 +678,151 @@ fn local_terminal_invite_ids_for_realm(
                 Some(event_kind_str::INVITE_ACCEPT) if raw_operation_is_accepted_fact(payload) => {
                     raw_operation_invite_ref(payload)
                 }
-                Some(event_kind_str::INVITE_CANCEL | event_kind_str::INVITE_REVOKE) => {
+                Some(event_kind_str::INVITE_CANCEL) => raw_operation_invite_ref(payload),
+                // `send_failed` is the one `ak.invite.revoke` target that is not
+                // terminal: the invite stays inside the live set and keeps the
+                // Realm live-target slot claimed
+                // (`governance-objects.md` section 5.3). Hiding it here would
+                // tell the operator the account is free to re-invite when it
+                // still needs a revoke first.
+                Some(event_kind_str::INVITE_REVOKE)
+                    if raw_operation_invite_target_state(payload).as_deref()
+                        != Some(INVITE_STATE_SEND_FAILED) =>
+                {
                     raw_operation_invite_ref(payload)
                 }
                 _ => None,
             }
         })
         .collect()
+}
+
+/// The `ak.component.invite.lifecycle.v1` state of one Invite, folded out of
+/// the local Realm operation log.
+///
+/// The live set is `{pending, send_failed}` and the two recover differently
+/// from `invite_live_target_occupied`: `pending` only needs its private
+/// delivery re-dispatched, while `send_failed` has no edge back to `pending`
+/// and must be revoked before a replacement invite can exist
+/// (`governance-objects.md` section 5.3).
+fn local_invite_lifecycle_state(
+    records: &[RawOperationRecord],
+    realm_id: &str,
+    invite_id: &str,
+) -> Option<String> {
+    let mut state = None;
+    for record in records {
+        if !raw_operation_realm_matches_exact(record, realm_id) {
+            continue;
+        }
+        let payload = &record.payload;
+        match raw_operation_payload_kind(payload).as_deref() {
+            Some(event_kind_str::INVITE_CREATE)
+                if trimmed_string(payload.get("invite_id").or_else(|| payload.get("id")))
+                    .as_deref()
+                    == Some(invite_id) =>
+            {
+                state = Some("pending".to_owned());
+            }
+            Some(event_kind_str::INVITE_ACCEPT)
+                if raw_operation_is_accepted_fact(payload)
+                    && raw_operation_invite_ref(payload).as_deref() == Some(invite_id) =>
+            {
+                state = Some("accepted".to_owned());
+            }
+            Some(event_kind_str::INVITE_CANCEL | event_kind_str::INVITE_REVOKE)
+                if raw_operation_invite_ref(payload).as_deref() == Some(invite_id) =>
+            {
+                state = raw_operation_invite_target_state(payload);
+            }
+            _ => {}
+        }
+    }
+    state
+}
+
+const INVITE_STATE_SEND_FAILED: &str = "send_failed";
+
+/// Recover from `invite_live_target_occupied` (`governance-objects.md` §5.3).
+///
+/// The Realm already holds a live directed invite for this account and the
+/// submitted create was refused with zero writes. The client **MUST NOT**
+/// re-sign the same create under a fresh `event_id`: the slot subject is
+/// derived from the invitee account, so a new Event collides with the same
+/// cell. It acts on the occupant instead, using the stable identity the
+/// rejection echoed.
+///
+/// `pending` (and, for a third-party invite, `claimed`) means the governance
+/// decision already exists and only its private delivery is missing, so the
+/// delivery is re-dispatched under the occupant's own `create_event_id` — the
+/// stable idempotency key, not the id of the Event that was just refused.
+/// `send_failed` still occupies the slot and has no edge back to `pending`, so
+/// it must be revoked before a replacement invite can be created; that revoke
+/// carries the slot's `head_eq` and is what frees the account.
+async fn recover_from_occupied_live_target(
+    api: &crate::transport::TransportClient,
+    realm_id: &str,
+    actor: &str,
+    invitee: &crate::transport::InviteeResolution,
+    invitee_label: &str,
+    occupied: &arkret_sdk::InviteLiveTargetOccupiedProblem,
+    occupant_state: Option<&str>,
+) -> String {
+    let invite_id = occupied.invite_id().as_str().to_owned();
+    let create_event_id = occupied.create_event_id().as_str().to_owned();
+    match occupant_state {
+        Some(INVITE_STATE_SEND_FAILED) => {
+            match crate::operation::ak_ops::invite_revoke(
+                realm_id,
+                actor,
+                &invite_id,
+                Some(invitee.account_id().principal_id.as_str()),
+                "revoked",
+                "delivery_target_unreachable",
+            )
+            .and_then(|builder| builder.build_sdk_event("inkson"))
+            {
+                Ok(revoke) => match api.event_submitter() {
+                    Ok(submitter) => match submitter.submit_sdk_event(&revoke).await {
+                        Ok(_) => format!(
+                            "{invitee_label} had an undeliverable invite ({}); it was revoked. Send the invite again.",
+                            short_protocol_id(&invite_id)
+                        ),
+                        Err(error) => format!(
+                            "invite failed: {invitee_label} has an undeliverable invite ({}) that could not be revoked: {}",
+                            short_protocol_id(&invite_id),
+                            crate::api_error::display_user_facing(&error)
+                        ),
+                    },
+                    Err(error) => format!(
+                        "invite failed: {}",
+                        crate::api_error::display_user_facing(&error)
+                    ),
+                },
+                Err(error) => format!("invite failed: {error:#}"),
+            }
+        }
+        _ => match api
+            .dispatch_accepted_invite(&create_event_id, invitee)
+            .await
+        {
+            Ok(_) => format!(
+                "{invitee_label} already has a live invite ({}); its private delivery was re-sent.",
+                short_protocol_id(&invite_id)
+            ),
+            Err(error) => format!(
+                "invite failed: {invitee_label} already has a live invite ({}) and re-delivery failed: {error}",
+                short_protocol_id(&invite_id)
+            ),
+        },
+    }
+}
+
+fn raw_operation_invite_target_state(payload: &Value) -> Option<String> {
+    raw_operation_path_string(payload, &["body", "target_state"])
+        .or_else(|| raw_operation_path_string(payload, &["payload", "target_state"]))
+        .or_else(|| trimmed_string(payload.get("target_state")))
+        .or_else(|| trimmed_string(payload.get("state")))
 }
 
 fn group_members_with_owned_agents(
@@ -3602,10 +3740,38 @@ pub fn RealmMembersPanel(
                                                                     short_protocol_id(&op_id)
                                                                 ));
                                                             }
-                                                            Err(error) => status_msg.set(format!(
-                                                                "invite failed: {}",
-                                                                crate::api_error::display_user_facing(&error)
-                                                            )),
+                                                            Err(error) => {
+                                                                // A live-target collision is not a
+                                                                // generic failure: re-signing the same
+                                                                // create under a new event_id would
+                                                                // hit the same slot again.
+                                                                let occupied = crate::api_error::invite_live_target_occupied_details(&error);
+                                                                let message = match occupied {
+                                                                    Some(occupied) => {
+                                                                        let local_state = state_store.read().load();
+                                                                        let occupant_state = local_invite_lifecycle_state(
+                                                                            &local_state.raw_operations,
+                                                                            &realm,
+                                                                            occupied.invite_id().as_str(),
+                                                                        );
+                                                                        recover_from_occupied_live_target(
+                                                                            &api,
+                                                                            &realm,
+                                                                            &actor,
+                                                                            &invitee,
+                                                                            &invitee_label,
+                                                                            &occupied,
+                                                                            occupant_state.as_deref(),
+                                                                        )
+                                                                        .await
+                                                                    }
+                                                                    None => format!(
+                                                                        "invite failed: {}",
+                                                                        crate::api_error::display_user_facing(&error)
+                                                                    ),
+                                                                };
+                                                                status_msg.set(message);
+                                                            }
                                                         }
                                                     }
                                                     Err(error) => status_msg.set(format!("invalid server URL: {error}")),

@@ -53,6 +53,16 @@ fn queued_space_operation_body(
 }
 
 /// Queued op-log record written by `submit_kanban_card_create`.
+///
+/// `body` is the ONLY part of this row that ever reaches the wire, and it is
+/// the typed `ak.strand.create` payload — which carries no placement. `cell`
+/// and `effect` are holder-local columns of the durable op log: they name the
+/// position cell this write is heading for and remember the column the user
+/// dropped the card into, so the board can render the card during the round
+/// trip and so the follow-up `ak.strand.move` has its target. Neither is ever
+/// copied into a payload; `strand.schema.json` forbids `board_space_id` /
+/// `list_space_id` / `rank` on a Strand, and placement has exactly one command
+/// surface, `ak.strand.move` / `ak.strand.reorder`.
 #[derive(Serialize)]
 struct QueuedCardCreateRecord<'a> {
     kind: &'static str,
@@ -487,7 +497,11 @@ pub(super) fn submit_kanban_card_create(
     // migrates it to the accepted event-derived id.
     let subject = event.local_object_handle().to_owned();
     let cell_id = strand_position_cell_id(&command.board_space_id, &subject);
-    let value = json!({
+    // Holder-local `effect` (see [`QueuedCardCreateRecord`]): the intended
+    // placement, kept beside the queued write so the board can show the card
+    // before the follow-up `ak.strand.move` is authored. It is never serialized
+    // into the create payload.
+    let effect = json!({
         "board_space_id": command.board_space_id,
         "list_space_id": command.list_space_id,
         "title": command.title,
@@ -509,7 +523,7 @@ pub(super) fn submit_kanban_card_create(
         actor_id: &actor_id,
         created_at: arkret_sdk::canonical::format_timestamp_canonical(event.created_at()),
         cell: cell_id,
-        effect: value,
+        effect,
         wire_kind: &wire_kind,
         body,
         // A create payload carries no object id, so the record has to say

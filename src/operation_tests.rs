@@ -484,35 +484,18 @@ fn strand_update_builders_match_registered_object_patch_schema() {
     let realm_id = "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-";
     let actor = "did:web:alice.example";
     let strand_id = "ak:strand:AQM8rE4gp8l4axkSbbb9_dkqwWE8ZPYHwFsC24o2mrIL";
-    let board_space_id = "ak:space:AVFSR4O2uTcP6zGsyewp0OdaGeDZBXQAUZ9VIEKLSXYo";
-    let list_space_id = "ak:space:AeWYNl1hiGDuy4WCQ03g5lgs2NZzf_SFYgjsfhG-t9cg";
 
-    let events = [
-        ak_ops::strand_update_patch(
-            realm_id,
-            actor,
-            strand_id,
-            json!({
-                "title": { "$op": "set", "value": "Launch checklist" },
-                "fields.due_at": { "$op": "set", "value": "2026-05-20" },
-            }),
-        )
-        .expect("builds")
-        .build("node"),
-        ak_ops::strand_position_update(
-            realm_id,
-            actor,
-            strand_id,
-            json!({
-                "strand_id": strand_id,
-                "board_space_id": board_space_id,
-                "list_space_id": list_space_id,
-                "rank": "U",
-            }),
-        )
-        .expect("builds")
-        .build("node"),
-    ];
+    let events = [ak_ops::strand_update_patch(
+        realm_id,
+        actor,
+        strand_id,
+        json!({
+            "title": { "$op": "set", "value": "Launch checklist" },
+            "fields.due_at": { "$op": "set", "value": "2026-05-20" },
+        }),
+    )
+    .expect("builds")
+    .build("node")];
 
     for event in &events {
         assert_eq!(event.kind().as_str(), "ak.strand.update");
@@ -887,13 +870,14 @@ fn invite_helpers_emit_canonical_kinds() {
     let invite_id = "ak:invite:AY6DJbBwavsGTQuBZZiqqw9MVcqPZ8QX8invQ3i2kpi7";
     let introduction_evidence_digest =
         crate::canonical::canonical_sha256(&json!({"kind": "explicit_address"})).unwrap();
+    let invitee_account_id = arkret_sdk::AccountId::new(
+        arkret_sdk::DidCoreId::new("ak:did_core:web:bob.example").unwrap(),
+        arkret_sdk::DidCoreId::new("ak:did_core:web:server.example").unwrap(),
+    );
     let create = ak_ops::invite_create_structured(
         "ak:realm:AT3p9polsnQ_WOix32QZimMdE2zPe62HptJu2PaO3V1h",
         "did:web:alice.example",
-        arkret_sdk::AccountId::new(
-            arkret_sdk::DidCoreId::new("ak:did_core:web:bob.example").unwrap(),
-            arkret_sdk::DidCoreId::new("ak:did_core:web:server.example").unwrap(),
-        ),
+        invitee_account_id.clone(),
         Some("member"),
         &introduction_evidence_digest,
     )
@@ -938,27 +922,46 @@ fn invite_helpers_emit_canonical_kinds() {
     // registry can derive the writes at all.
     let writes =
         crate::operation::project_registered_cell_writes(&created, arkret_sdk::DigestSuite::Sha256)
-            .expect("direct invite create must carry both registered FSM writes");
+            .expect("direct invite create must carry both registered writes");
+    // governance-objects.md section 5.3: the create atomically opens the invite
+    // lifecycle and claims the invitee's Realm live-target slot. The slot value
+    // is the create Event id verbatim, in `ak:event:` form, and the Move
+    // asserts `head_eq:"__unset__"` on it so two concurrent invites for one
+    // account contend on the same cell.
+    let live_target_cell =
+        arkret_sdk::invite_live_target_cell(&invitee_account_id).expect("registered subject rule");
     assert_eq!(
         writes
             .iter()
             .map(|write| write.cell_id.as_str())
             .collect::<Vec<_>>(),
-        vec![format!(
-            "ak:cell:ak.component.invite.lifecycle.v1:{derived_invite_id}"
-        )]
+        vec![
+            format!("ak:cell:ak.component.invite.lifecycle.v1:{derived_invite_id}"),
+            live_target_cell.as_str().to_owned(),
+        ]
+    );
+    assert_eq!(
+        create.intent().preconditions(),
+        &[arkret_sdk::InviteLiveTargetSlot::Unset
+            .precondition(&invitee_account_id)
+            .expect("registered contract")]
     );
 
+    // Third-party form: the Invite stores no account, so the payload carries
+    // none and the accept derives no live-target release write.
     let accept = ak_ops::invite_accept(
         "ak:realm:AT3p9polsnQ_WOix32QZimMdE2zPe62HptJu2PaO3V1h",
         "did:web:bob.example",
         invite_id,
+        None,
     )
     .expect("builds")
     .build("node");
     assert_eq!(accept.kind().as_str(), "ak.invite.accept");
     assert_eq!(accept.payload()["invite_id"], invite_id);
     assert!(!accept.payload().contains_key("state"));
+    assert!(!accept.payload().contains_key("invitee_account_id"));
+    assert!(accept.intent().preconditions().is_empty());
     assert_registered_payload_valid(&accept);
     let accept_writes = crate::operation::pre_authoring_cell_writes(
         accept.intent(),
@@ -966,6 +969,42 @@ fn invite_helpers_emit_canonical_kinds() {
     )
     .expect("invite accept must atomically advance invite and member FSMs");
     assert_eq!(accept_writes.len(), 2);
+
+    // Directed form: the third write releases the slot, and its `head_eq` is
+    // the stored `ak:event:` create id — never the `ak:invite:` spelling of the
+    // same 33-octet token, which would never compare equal.
+    let directed_accept = ak_ops::invite_accept(
+        "ak:realm:AT3p9polsnQ_WOix32QZimMdE2zPe62HptJu2PaO3V1h",
+        "did:web:bob.example",
+        invite_id,
+        Some(invitee_account_id.clone()),
+    )
+    .expect("builds")
+    .build("node");
+    assert_registered_payload_valid(&directed_accept);
+    let directed_accept_writes = crate::operation::pre_authoring_cell_writes(
+        directed_accept.intent(),
+        arkret_sdk::DigestSuite::Sha256,
+    )
+    .expect("a directed accept also releases the live-target slot");
+    assert_eq!(directed_accept_writes.len(), 3);
+    let expected_head_eq = arkret_sdk::InviteLiveTargetSlot::held_by_invite(
+        &arkret_sdk::InviteId::new(invite_id.to_owned()).unwrap(),
+    )
+    .head_eq_value()
+    .expect("registered contract");
+    assert!(
+        expected_head_eq
+            .as_str()
+            .is_some_and(|value| value.starts_with("ak:event:"))
+    );
+    assert_eq!(
+        directed_accept.intent().preconditions()[0]
+            .predicate
+            .value
+            .as_ref(),
+        Some(&expected_head_eq)
+    );
 
     let cancel = ak_ops::invite_cancel(
         "ak:realm:AT3p9polsnQ_WOix32QZimMdE2zPe62HptJu2PaO3V1h",
@@ -992,12 +1031,16 @@ fn invite_helpers_emit_canonical_kinds() {
     assert_eq!(cancel.payload()["target_state"], "revoked");
     assert!(!cancel.payload().contains_key("state"));
     assert_registered_payload_valid(&cancel);
-    let pre_state_error = crate::operation::pre_authoring_cell_writes(
+    // Pre-authoring projects the write set only. `pre_state_requirements` are
+    // the admitting receiver's step over the snapshot it froze
+    // (`event-and-patch.md` 2.4.2), and this client holds no such snapshot,
+    // so the cancel MUST author cleanly here and be judged below.
+    let authoring_writes = crate::operation::pre_authoring_cell_writes(
         cancel.intent(),
         arkret_sdk::DigestSuite::Sha256,
     )
-    .expect_err("direct cancel must be bound to accepted frozen invite state");
-    assert_eq!(pre_state_error.reason_code(), "invite_kind_requires_revoke");
+    .expect("a direct cancel authors its lifecycle and slot-release writes");
+    assert_eq!(authoring_writes.len(), 2);
     let lifecycle_cell = arkret_sdk::CellRef::new(format!(
         "ak:cell:ak.component.invite.lifecycle.v1:{invite_id}"
     ))
@@ -1016,16 +1059,28 @@ fn invite_helpers_emit_canonical_kinds() {
         &frozen_pre_state,
     )
     .expect("cancel must atomically advance invite and member FSMs");
-    assert_eq!(cancel_writes.len(), 1);
+    assert_eq!(cancel_writes.len(), 2);
     assert_eq!(
-        cancel_writes
-            .iter()
-            .map(|write| write.cell_id.as_str())
-            .collect::<Vec<_>>(),
-        vec![format!(
-            "ak:cell:ak.component.invite.lifecycle.v1:{invite_id}"
-        )]
+        cancel_writes[0].cell_id.as_str(),
+        format!("ak:cell:ak.component.invite.lifecycle.v1:{invite_id}")
     );
+    assert!(
+        cancel_writes[1]
+            .cell_id
+            .as_str()
+            .starts_with("ak:cell:ak.component.invite.live_target.v1:")
+    );
+    // The receiver is where `invite_kind_requires_revoke` belongs: a target
+    // Invite with no stored invitee is a token / 3PID Invite, which only
+    // `ak.invite.revoke` may terminate.
+    let empty_pre_state = arkret_sdk::schema::FrozenPreState::new();
+    let unbound = arkret_sdk::schema::project_registered_cell_writes_with_pre_state(
+        &cancelled,
+        arkret_sdk::canonical::DigestSuite::Sha256,
+        &empty_pre_state,
+    )
+    .expect_err("a cancel against an Invite with no stored invitee must fail closed");
+    assert_eq!(unbound.reason_code(), "invite_kind_requires_revoke");
     // `event-envelope.schema.json` restricts the enum to rejected / revoked on
     // this kind, so the builder refuses anything else rather than shipping an
     // Event that would be rejected at admission.

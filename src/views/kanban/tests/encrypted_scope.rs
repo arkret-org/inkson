@@ -888,26 +888,6 @@ async fn encrypted_write_rejects_did_for_a_different_active_identity() {
 }
 
 #[test]
-fn encrypted_scope_allows_structural_strand_position_update() {
-    let event = crate::operation::ak_ops::strand_position_update(
-        TEST_REALM_ID,
-        "ak:did_core:web:alice.example",
-        DEMO_STRAND_LEGAL_REVIEW_ID,
-        json!({
-            "board_space_id": "ak:space:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-",
-            "list_space_id": "ak:space:AQM8rE4gp8l4axkSbbb9_dkqwWE8ZPYHwFsC24o2mrIL",
-            "rank": "U",
-        }),
-    )
-    .expect("builds")
-    .build("inkson");
-
-    assert_eq!(event.kind().as_str(), "ak.strand.update");
-    assert!(!kanban_event_carries_plaintext_private_content(&event));
-    assert!(kanban_plaintext_block_reason(Some(true), &event).is_none());
-}
-
-#[test]
 fn encrypted_scope_allows_content_only_metadata_create_payloads() {
     let strand = crate::operation::ak_ops::kanban_card_strand_create(
         TEST_REALM_ID,

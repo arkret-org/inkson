@@ -62,7 +62,7 @@ pub mod message_streams;
 pub mod moderation;
 pub mod notifications;
 pub mod onboarding;
-/// Actor-private invite-quarantine status surface.
+/// Actor-private holder-quarantine review surface, split by `surface_kind`.
 pub mod quarantine;
 /// Receiver-side projection of other members' `ak.receipt.read` Signals
 /// (`read-receipts.md` §2). Shared read hints only; this actor's own private
@@ -122,7 +122,7 @@ pub enum AppView {
     /// setup surface. (claude-design `desktop/onboarding.html`, identity-did §3 +
     /// identity-handles + device-lifecycle §1-§13)
     Onboarding,
-    /// Actor-private invite-quarantine status surface.
+    /// Actor-private holder-quarantine review surface, split by `surface_kind`.
     Quarantine,
     /// A6.1 — global cross-Space message search panel. Triggered by
     /// the `topbar-search-button`, `Cmd+F` (Ctrl+F off-mac), or by

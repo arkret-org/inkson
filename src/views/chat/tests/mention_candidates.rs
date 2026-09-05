@@ -5,7 +5,9 @@ use super::*;
 #[test]
 fn mention_candidate_for_own_agent_uses_me_alias() {
     let controller = SpaceParticipant {
-        actor_id: None,
+        actor_id: Some(local_fixture_actor(
+            "ak:did_core:web:example.com:users:alice",
+        )),
         principal_id: arkret_sdk::DidCoreId::new(
             "ak:did_core:web:example.com:users:alice".to_owned(),
         )
@@ -44,8 +46,14 @@ fn mention_candidate_for_own_agent_uses_me_alias() {
     assert_eq!(candidate.display_name, "Summary Assistant");
     assert_eq!(candidate.insert_label(), "me/summary");
     assert_eq!(
-        candidate.controller_subject_id,
-        "ak:did_core:web:example.com:users:alice"
+        candidate.subject_account_id,
+        local_fixture_account("ak:did_core:web:agents.example:summary")
+    );
+    assert_eq!(
+        candidate.controller_subject_account_id,
+        Some(local_fixture_account(
+            "ak:did_core:web:example.com:users:alice"
+        ))
     );
     assert_eq!(candidate.controller_handle_at_time, "alice:example.com");
     assert_eq!(candidate.agent_slug_at_time, "summary");
@@ -54,7 +62,9 @@ fn mention_candidate_for_own_agent_uses_me_alias() {
 #[test]
 fn mention_candidate_for_current_user_uses_structured_me_alias() {
     let participant = SpaceParticipant {
-        actor_id: None,
+        actor_id: Some(local_fixture_actor(
+            "ak:did_core:web:example.com:users:alice",
+        )),
         principal_id: arkret_sdk::DidCoreId::new(
             "ak:did_core:web:example.com:users:alice".to_owned(),
         )
@@ -74,7 +84,10 @@ fn mention_candidate_for_current_user_uses_structured_me_alias() {
         participant.principal_id.as_str(),
     )
     .expect("current-user mention candidate");
-    assert_eq!(candidate.subject_id, participant.principal_id.as_str());
+    assert_eq!(
+        candidate.subject_account_id,
+        local_fixture_account(participant.principal_id.as_str())
+    );
     assert_eq!(candidate.insert_label(), "me");
     assert_eq!(candidate.subtitle, "You");
 
@@ -86,8 +99,8 @@ fn mention_candidate_for_current_user_uses_structured_me_alias() {
     );
     let mention = mentions[0].as_mention().expect("structured self mention");
     assert_eq!(
-        mention.subject_id.as_str(),
-        "ak:did_core:web:example.com:users:alice"
+        mention.subject_account_id,
+        local_fixture_account("ak:did_core:web:example.com:users:alice")
     );
     assert_eq!(mention.mention_text_original.as_deref(), Some("@me"));
 
@@ -97,8 +110,8 @@ fn mention_candidate_for_current_user_uses_structured_me_alias() {
         .as_mention()
         .expect("typed structured self mention");
     assert_eq!(
-        typed_mention.subject_id.as_str(),
-        "ak:did_core:web:example.com:users:alice"
+        typed_mention.subject_account_id,
+        local_fixture_account("ak:did_core:web:example.com:users:alice")
     );
     assert_eq!(typed_mention.mention_text_original.as_deref(), Some("@me"));
 
@@ -116,12 +129,11 @@ fn mention_candidate_for_current_user_uses_structured_me_alias() {
 #[test]
 fn resolved_owned_agent_chip_suppresses_duplicate_directory_lookup() {
     let controller = "ak:did_core:web:example.com:users:alice";
-    let mention = arkret_sdk::Mention::new(
-        crate::mls_api_helpers::principal_core_id("ak:did_core:web:agents.example:summary")
-            .unwrap(),
-    )
+    let mention = arkret_sdk::Mention::new(local_fixture_account(
+        "ak:did_core:web:agents.example:summary",
+    ))
     .with_agent_selector_metadata(
-        crate::mls_api_helpers::principal_core_id(controller).unwrap(),
+        local_fixture_account(controller),
         arkret_sdk::Handle::parse("alice:example.com").unwrap(),
         "summary",
     )
@@ -179,7 +191,7 @@ fn owned_agent_inventory_enriches_existing_realm_member_metadata() {
 fn explicit_member_click_builds_user_and_owned_agent_mentions() {
     let principal_id = "ak:did_core:web:example.com:users:alice";
     let member = SpaceParticipant {
-        actor_id: None,
+        actor_id: Some(local_fixture_actor("ak:did_core:web:example.com:users:bob")),
         principal_id: arkret_sdk::DidCoreId::new(
             "ak:did_core:web:example.com:users:bob".to_owned(),
         )
@@ -201,7 +213,10 @@ fn explicit_member_click_builds_user_and_owned_agent_mentions() {
         Some("alice:example.com"),
     )
     .expect("explicit member mention");
-    assert_eq!(clicked_member.subject_id, member.principal_id.as_str());
+    assert_eq!(
+        clicked_member.subject_account_id,
+        local_fixture_account(member.principal_id.as_str())
+    );
     assert!(!clicked_member.is_agent);
 
     let unannotated_owned_agent = SpaceParticipant {
@@ -229,7 +244,10 @@ fn explicit_member_click_builds_user_and_owned_agent_mentions() {
     .expect("explicit owned-agent mention");
     assert_eq!(clicked_agent.insert_label(), "me/summary");
     assert!(clicked_agent.is_agent);
-    assert_eq!(clicked_agent.controller_subject_id, principal_id);
+    assert_eq!(
+        clicked_agent.controller_subject_account_id,
+        Some(local_fixture_account(principal_id))
+    );
     assert_eq!(clicked_agent.agent_slug_at_time, "summary");
 
     let before_handle_load = owned_agent_mention_candidate(
@@ -471,7 +489,7 @@ fn sidecar_presence_excludes_realm_humans_and_foreign_agents() {
 #[test]
 fn mention_candidate_without_handle_is_not_displayed_as_did() {
     let participant = SpaceParticipant {
-        actor_id: None,
+        actor_id: Some(local_fixture_actor("ak:did_core:web:bob.example")),
         principal_id: arkret_sdk::DidCoreId::new("ak:did_core:web:bob.example".to_owned()).unwrap(),
         display_name: Some("Bob Example".to_owned()),
         handle_label: None,
@@ -522,7 +540,10 @@ fn mention_candidate_uses_cached_member_handle() {
     let candidate =
         mention_candidate_for_participant(bob, &participants, "ak:did_core:web:alice.example")
             .expect("member mention candidate");
-    assert_eq!(candidate.subject_id, "ak:did_core:web:bob.example");
+    assert_eq!(
+        candidate.subject_account_id,
+        local_fixture_account("ak:did_core:web:bob.example")
+    );
     assert_eq!(candidate.display_name, "bob:local.host");
     assert_eq!(candidate.insert_label(), "bob:local.host");
     assert_eq!(candidate.subtitle, "");
@@ -574,5 +595,118 @@ fn unresolved_historical_sender_uses_the_shared_protocol_id_fallback() {
     assert_eq!(
         sender_display_label(sender, "ak:did_core:web:alice.example", "Alice", &[]),
         crate::views::helpers::short_protocol_id(sender)
+    );
+}
+
+/// `identity-handles.md` §3.8 — a mention chip carries the complete account.
+/// The same principal joined from another Station is a different subject, so
+/// the two candidates never collapse and neither one can be built without a
+/// resolvable Station.
+#[test]
+fn mention_candidate_keeps_same_principal_accounts_at_different_stations_apart() {
+    let principal = "ak:did_core:web:bob.example";
+    let local = SpaceParticipant {
+        actor_id: Some(local_fixture_actor(principal)),
+        principal_id: arkret_sdk::DidCoreId::new(principal.to_owned()).unwrap(),
+        display_name: None,
+        handle_label: Some("bob:local.host".to_owned()),
+        display_name_rank: 0,
+        role: SpaceParticipantRole::Member,
+        is_self: false,
+        is_agent: false,
+        agent_metadata: None,
+    };
+    let remote = SpaceParticipant {
+        actor_id: Some(arkret_sdk::ActorId::account(fixture_account(
+            principal,
+            REMOTE_STATION_ID,
+        ))),
+        ..local.clone()
+    };
+    let participants = vec![local.clone(), remote.clone()];
+    let requester = "ak:did_core:web:alice.example";
+
+    let local_candidate = mention_candidate_for_participant(&local, &participants, requester)
+        .expect("local member mention candidate");
+    let remote_candidate = mention_candidate_for_participant(&remote, &participants, requester)
+        .expect("remote member mention candidate");
+
+    assert_eq!(
+        local_candidate.subject_account_id.principal_id,
+        remote_candidate.subject_account_id.principal_id
+    );
+    assert_ne!(
+        local_candidate.subject_account_id,
+        remote_candidate.subject_account_id
+    );
+
+    // Inserting one chip must not hide the other, and the composer must emit
+    // two distinct mention nodes.
+    let mut picker = crate::messaging::mentions::MentionPickerState::new();
+    assert!(picker.insert(local_candidate.clone()));
+    let candidates = [local_candidate.clone(), remote_candidate.clone()];
+    let offered = picker.filter(&candidates);
+    assert_eq!(offered.len(), 1);
+    assert_eq!(
+        offered[0].subject_account_id,
+        remote_candidate.subject_account_id
+    );
+
+    let mentions = composer_mention_nodes(
+        true,
+        "ping both",
+        &[local_candidate.clone(), remote_candidate.clone()],
+        requester,
+    );
+    let subjects = mentions
+        .iter()
+        .filter_map(MentionNode::as_mention)
+        .map(|mention| mention.subject_account_id.clone())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        subjects,
+        vec![
+            local_candidate.subject_account_id,
+            remote_candidate.subject_account_id
+        ]
+    );
+}
+
+/// A roster row without a membership identity is not an owned-Agent inventory
+/// row, so its Station is unknown: it MUST NOT become a mention chip rather
+/// than be completed by guessing a Station.
+#[test]
+fn mention_candidate_fails_closed_without_a_resolvable_account() {
+    let participant = SpaceParticipant {
+        actor_id: None,
+        principal_id: arkret_sdk::DidCoreId::new("ak:did_core:web:bob.example".to_owned()).unwrap(),
+        display_name: None,
+        handle_label: Some("bob:local.host".to_owned()),
+        display_name_rank: 0,
+        role: SpaceParticipantRole::Member,
+        is_self: false,
+        is_agent: false,
+        agent_metadata: None,
+    };
+
+    assert!(participant_mention_account(&participant).is_none());
+    assert!(
+        mention_candidate_for_participant(
+            &participant,
+            std::slice::from_ref(&participant),
+            "ak:did_core:web:alice.example",
+        )
+        .is_none()
+    );
+    assert!(
+        mention_candidate_for_explicit_target(
+            &participant,
+            std::slice::from_ref(&participant),
+            "ak:did_core:web:alice.example",
+            &std::collections::BTreeSet::new(),
+            None,
+            None,
+        )
+        .is_none()
     );
 }

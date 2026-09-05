@@ -68,17 +68,31 @@ pub(crate) fn agent_metadata_from_mentions(
         .filter_map(MentionNode::as_mention)
     {
         let agent_slug = mention.agent_slug_at_time.as_deref().unwrap_or_default();
-        let Some(controller_subject_id) = mention.controller_subject_id.as_ref() else {
+        let Some(controller_subject_account_id) = mention.controller_subject_account_id.as_ref()
+        else {
             continue;
         };
-        if agent_slug.is_empty()
-            || controller_subject_id.as_str().trim().is_empty()
-            || arkret_models_identity::validate_agent_slug(agent_slug).is_err()
+        if agent_slug.is_empty() || arkret_models_identity::validate_agent_slug(agent_slug).is_err()
+        {
+            continue;
+        }
+        // This map only ever enriches the selected account's own Agent
+        // inventory, which lives at this client's authoring Station. A mention
+        // whose subject or controller is hosted elsewhere carries no metadata
+        // for that inventory and is skipped.
+        let Ok(local_station) = crate::operation::authoring_station_id() else {
+            continue;
+        };
+        if mention.subject_account_id.station_id != local_station
+            || controller_subject_account_id.station_id != local_station
         {
             continue;
         }
         let next = AgentParticipantMetadata {
-            controller_principal_id: controller_subject_id.as_str().trim().to_owned(),
+            controller_principal_id: controller_subject_account_id
+                .principal_id
+                .as_str()
+                .to_owned(),
             controller_handle: mention
                 .controller_handle_at_time
                 .as_ref()
@@ -88,11 +102,11 @@ pub(crate) fn agent_metadata_from_mentions(
             agent_slug: agent_slug.trim().to_owned(),
             display_name: clean_participant_display_name(
                 mention.display_name_at_time.as_deref().unwrap_or_default(),
-                Some(mention.subject_id.as_str()),
+                Some(mention.subject_account_id.principal_id.as_str()),
             )
             .unwrap_or_default(),
         };
-        out.entry(mention.subject_id.as_str().trim().to_owned())
+        out.entry(mention.subject_account_id.principal_id.as_str().to_owned())
             .and_modify(|existing| merge_agent_metadata(existing, next.clone()))
             .or_insert(next);
     }

@@ -110,11 +110,16 @@ fn apply_space_update_to_view(
     }
 }
 
-/// Build the base [`StrandProjectionView`] from a `ak.strand.create` op. Mirrors
-/// soland's `apply_strand_create` field extraction (title from
-/// `metadata.title`, position from the `ak.component.strand.position.v1`
-/// component / `fields`), tolerating both the canonical envelope
-/// (`object.metadata.*`) and the local optimistic shape (`object.*`).
+/// Build the base [`StrandProjectionView`] from a `ak.strand.create` op.
+///
+/// A create carries NO Board / List placement. `strand.schema.json` forbids
+/// `board_space_id` / `list_space_id` / `rank` inside `metadata.fields`, and
+/// `strand_create_payload` is `additionalProperties: false`, so a create can
+/// carry a position neither as a metadata field nor as a `components[]` entry.
+/// The `ak.component.strand.position.v1` cell's only command surface is
+/// `ak.strand.move` / `ak.strand.reorder`, folded by [`apply_move_to_view`] /
+/// [`apply_reorder_to_view`]. Between the accepted create and its first Move a
+/// Strand is a legal UNPLACED object: it exists, and it is in no List.
 fn strand_view_from_create_op(
     record: &RawOperationRecord,
 ) -> Option<crate::state::projection_views::StrandProjectionView> {
@@ -148,21 +153,6 @@ fn strand_view_from_create_op(
 
     let title = metadata_str(&["title"]).unwrap_or_else(|| strand_id.clone());
     let summary = metadata_str(&["summary"]);
-
-    let position = strand_position_component(Some(body));
-    let field_str = |keys: &[&str]| -> Option<String> {
-        for key in keys {
-            if let Some(value) = json_path_string(position, &[key])
-                .or_else(|| object_fields.and_then(|fields| json_path_string(Some(fields), &[key])))
-            {
-                return Some(value);
-            }
-        }
-        None
-    };
-    let board_space_id = field_str(&["board_space_id"]);
-    let list_space_id = field_str(&["list_space_id"]);
-    let rank = field_str(&["rank"]);
 
     let fields = object_fields
         .and_then(Value::as_object)
@@ -206,9 +196,12 @@ fn strand_view_from_create_op(
         content,
         encrypted_content,
         tracks,
-        board_space_id,
-        list_space_id,
-        rank,
+        // Unplaced until a Move folds in: the create Event has no placement to
+        // read, and inventing one here would re-open the create-time carrier
+        // the Strand schema closed.
+        board_space_id: None,
+        list_space_id: None,
+        rank: None,
         assigned_actor_ids: Vec::new(),
         assigned_to_relations: Vec::new(),
         fields,
@@ -418,14 +411,6 @@ pub(crate) fn strand_views_from_projection_and_ops(
             event_kind_str::STRAND_CREATE => {
                 if let Some(mut view) = strand_view_from_create_op(record) {
                     view.strand_id = resolve_event_derived_target_alias(&aliases, &view.strand_id);
-                    view.board_space_id = view
-                        .board_space_id
-                        .as_deref()
-                        .map(|id| resolve_event_derived_target_alias(&aliases, id));
-                    view.list_space_id = view
-                        .list_space_id
-                        .as_deref()
-                        .map(|id| resolve_event_derived_target_alias(&aliases, id));
                     if let Some(current) = by_id.get_mut(&view.strand_id) {
                         // The endpoint row is the authoritative current
                         // structural/metadata view. It intentionally omits
@@ -685,6 +670,15 @@ pub(crate) fn project_board_with_projection_for_actor(
         decrypt_ctx,
         self_actor_id,
     );
+    // A card's first placement is its own `ak.strand.move`, authored only AFTER
+    // the create receipt names the Strand. Between the click and that receipt
+    // the fold above legitimately has no List for the new Strand, so without
+    // this overlay the card would vanish until the round trip completes. The
+    // overlay reads the write's holder-local `effect` — see
+    // [`local_card_create_from_raw_operation`] — never a placement smuggled
+    // into the create payload.
+    let columns =
+        overlay_local_card_create_records(columns, ops, board_id.as_deref().unwrap_or_default());
     let columns = overlay_local_card_update_records(columns, ops, decrypt_ctx);
     let columns = overlay_local_card_assignment_records(columns, ops);
     (columns, board_options, board_id)
@@ -741,15 +735,15 @@ mod tests {
         )
     }
 
-    /// Mirrors the real canonical `ak.strand.create` envelope: position lives in
-    /// `payload.object.metadata.fields.{board_space_id,list_space_id,rank}`.
+    /// Mirrors the real canonical `ak.strand.create` envelope. It names the
+    /// card and NOTHING about where the card sits: `strand.schema.json` forbids
+    /// `board_space_id` / `list_space_id` / `rank` in `metadata.fields`, so a
+    /// conforming create cannot carry placement. Use
+    /// [`strand_create_and_place_events`] whenever the card must land in a list.
     fn strand_create_event(
         id: &str,
         actor: &str,
         title: &str,
-        board: &str,
-        list: &str,
-        rank: &str,
         created_at: &str,
     ) -> arkret_sdk::Event {
         let mut object = arkret_sdk::StrandCreateObject::new(
@@ -757,10 +751,7 @@ mod tests {
             crate::mls_api_helpers::local_account_actor_id(actor).unwrap(),
         )
         .with_metadata_title(title)
-        .with_metadata_field("rank", json!(rank))
-        .with_metadata_field("strand_kind", json!("card"))
-        .with_metadata_field("board_space_id", json!(board))
-        .with_metadata_field("list_space_id", json!(list));
+        .with_metadata_field("strand_kind", json!("card"));
         object.created_at = created_at.parse().unwrap();
         sdk_event(
             &event_id_naming(id, "ak:strand:"),
@@ -772,17 +763,48 @@ mod tests {
         )
     }
 
+    /// The authored card flow: `ak.strand.create` names the Strand, then the
+    /// first `ak.strand.move` places it. The Move is authored only once the
+    /// create receipt has named the Strand, so it is always strictly later.
+    fn strand_create_and_place_events(
+        id: &str,
+        actor: &str,
+        title: &str,
+        board: &str,
+        list: &str,
+        rank: &str,
+        created_at: &str,
+    ) -> Vec<arkret_sdk::Event> {
+        vec![
+            strand_create_event(id, actor, title, created_at),
+            strand_move_event(id, board, list, rank, &one_second_after(created_at)),
+        ]
+    }
+
+    /// Timestamp for the placement Move that follows a create at `created_at`.
+    /// The fold orders operations by `received_at`, so the first placement has
+    /// to be observably later than the create it places.
+    fn one_second_after(created_at: &str) -> String {
+        let when = chrono::DateTime::parse_from_rfc3339(created_at)
+            .expect("fixture timestamp is RFC3339")
+            .checked_add_signed(chrono::Duration::seconds(1))
+            .expect("fixture timestamp does not overflow")
+            .with_timezone(&chrono::Utc);
+        arkret_sdk::canonical::format_timestamp_canonical(when)
+    }
+
     fn strand_move_event(
         id: &str,
         board: &str,
         target_list: &str,
         rank: &str,
+        created_at: &str,
     ) -> arkret_sdk::Event {
         sdk_event(
             &event_id_naming(id, "ak:strand:"),
             arkret_sdk::EventKind::StrandMove.as_str(),
             3,
-            "2026-06-28T01:00:00.000Z",
+            created_at,
             json!({
                 "board_space_id": board,
                 "strand_id": id,
@@ -868,19 +890,19 @@ mod tests {
         // Each create names its object by `retype(event_id)`, and carries no
         // `object.id` — the shape an authored create actually has.
         let card = "ak:strand:AbZt0K_NvenxSDAkOnSDRtorrvUXhGqxSoqT2bFL7m8H";
-        let events = vec![
+        let mut events = vec![
             space_create_event(BOARD, "board", "Board1", None),
             space_create_event(LIST_A, "list", "Todos", Some(BOARD)),
-            strand_create_event(
-                card,
-                "ak:did_core:webvh:z6mkfixture:alice.example",
-                "golden card",
-                BOARD,
-                LIST_A,
-                "U",
-                "2026-07-08T00:00:02.000Z",
-            ),
         ];
+        events.extend(strand_create_and_place_events(
+            card,
+            "ak:did_core:webvh:z6mkfixture:alice.example",
+            "golden card",
+            BOARD,
+            LIST_A,
+            "U",
+            "2026-07-08T00:00:02.000Z",
+        ));
         let direct_ops = kanban_operations_from_events(&events);
         let (direct_columns, ..) = project_board(&direct_ops, BOARD, REALM, None);
 
@@ -968,28 +990,28 @@ mod tests {
     /// their own card).
     #[test]
     fn two_members_card_creates_both_project_into_the_shared_list() {
-        let events = vec![
+        let mut events = vec![
             space_create_event(BOARD, "board", "Board1", None),
             space_create_event(LIST_A, "list", "Todos", Some(BOARD)),
-            strand_create_event(
-                "ak:strand:AaDn_ypTG8vV4ToKfz6JtG2xnepF9QDlafPZCT-UYPyR",
-                "ak:did_core:web:alice.example",
-                "alice card",
-                BOARD,
-                LIST_A,
-                "U",
-                "2026-06-28T00:01:00.000Z",
-            ),
-            strand_create_event(
-                "ak:strand:AfHHAbZEhEweHE9b7WfITgHFGzMsezbGka7mm16yesUQ",
-                "ak:did_core:web:bob.example",
-                "bob card",
-                BOARD,
-                LIST_A,
-                "V",
-                "2026-06-28T00:02:00.000Z",
-            ),
         ];
+        events.extend(strand_create_and_place_events(
+            "ak:strand:AaDn_ypTG8vV4ToKfz6JtG2xnepF9QDlafPZCT-UYPyR",
+            "ak:did_core:web:alice.example",
+            "alice card",
+            BOARD,
+            LIST_A,
+            "U",
+            "2026-06-28T00:01:00.000Z",
+        ));
+        events.extend(strand_create_and_place_events(
+            "ak:strand:AfHHAbZEhEweHE9b7WfITgHFGzMsezbGka7mm16yesUQ",
+            "ak:did_core:web:bob.example",
+            "bob card",
+            BOARD,
+            LIST_A,
+            "V",
+            "2026-06-28T00:02:00.000Z",
+        ));
         let ops = kanban_operations_from_events(&events);
         let (columns, options, board_id) = project_board(&ops, BOARD, REALM, None);
 
@@ -1008,21 +1030,27 @@ mod tests {
     #[test]
     fn strand_move_relocates_card_to_target_list() {
         let strand = "ak:strand:AbUSKDI2pz1ELsNdkqfrIZykyrA9jKL9yISLtXB_6qU5";
-        let events = vec![
+        let mut events = vec![
             space_create_event(BOARD, "board", "Board1", None),
             space_create_event(LIST_A, "list", "Todos", Some(BOARD)),
             space_create_event(LIST_B, "list", "Doing", Some(BOARD)),
-            strand_create_event(
-                strand,
-                "ak:did_core:web:alice.example",
-                "moving card",
-                BOARD,
-                LIST_A,
-                "U",
-                "2026-06-28T00:01:00.000Z",
-            ),
-            strand_move_event(strand, BOARD, LIST_B, "U"),
         ];
+        events.extend(strand_create_and_place_events(
+            strand,
+            "ak:did_core:web:alice.example",
+            "moving card",
+            BOARD,
+            LIST_A,
+            "U",
+            "2026-06-28T00:01:00.000Z",
+        ));
+        events.push(strand_move_event(
+            strand,
+            BOARD,
+            LIST_B,
+            "U",
+            "2026-06-28T01:00:00.000Z",
+        ));
         let ops = kanban_operations_from_events(&events);
         let (columns, ..) = project_board(&ops, BOARD, REALM, None);
 
@@ -1042,20 +1070,20 @@ mod tests {
     #[test]
     fn strand_archive_marks_card_archived_for_maintenance_drawer() {
         let strand = "ak:strand:AdVU7b0NwVjyucaE-ZRGksbrifDFqHbytR9znwTjsAwy";
-        let events = vec![
+        let mut events = vec![
             space_create_event(BOARD, "board", "Board1", None),
             space_create_event(LIST_A, "list", "Todos", Some(BOARD)),
-            strand_create_event(
-                strand,
-                "ak:did_core:web:alice.example",
-                "doomed card",
-                BOARD,
-                LIST_A,
-                "U",
-                "2026-06-28T00:01:00.000Z",
-            ),
-            strand_archive_event(strand),
         ];
+        events.extend(strand_create_and_place_events(
+            strand,
+            "ak:did_core:web:alice.example",
+            "doomed card",
+            BOARD,
+            LIST_A,
+            "U",
+            "2026-06-28T00:01:00.000Z",
+        ));
+        events.push(strand_archive_event(strand));
         let ops = kanban_operations_from_events(&events);
         let (columns, ..) = project_board(&ops, BOARD, REALM, None);
         let todos = columns
@@ -1088,52 +1116,73 @@ mod tests {
         }
     }
 
-    /// The local `ak.strand.create` op (from `submit_kanban_card_create`) carries the
-    /// canonical create body (`body.object.metadata.fields.*`) PLUS a top-level
-    /// `effect`; folding it must surface the card immediately (optimistic). The
-    /// Strand is `retype(event_id)` of the FINAL create, which does not exist
-    /// yet, so the record keys the card by the write's holder-local handle.
+    /// The queued `ak.strand.create` row `submit_kanban_card_create` writes.
+    ///
+    /// Its `body` is the real wire payload and therefore carries NO placement:
+    /// the card is placed by the `ak.strand.move` authored after the create
+    /// receipt. `effect` is the holder-local column that remembers where the
+    /// user dropped the card, so the board can render it during the round trip.
+    /// The Strand is `retype(event_id)` of the FINAL create, which does not
+    /// exist yet, so the row keys the card by the write's holder-local handle.
+    fn queued_card_create_op(
+        operation_id: &str,
+        received_at: &str,
+        list_space_id: &str,
+        title: &str,
+        rank: &str,
+    ) -> RawOperationRecord {
+        local_op(
+            operation_id,
+            received_at,
+            json!({
+                "kind": "ak.strand.create",
+                "operation_id": operation_id,
+                "actor_id": "ak:did_core:web:alice.example",
+                "created_at": received_at,
+                "cell": format!("ak:cell:ak.component.strand.position.v1:{BOARD}:{operation_id}"),
+                "effect": {
+                    "board_space_id": BOARD,
+                    "list_space_id": list_space_id,
+                    "title": title,
+                    "rank": rank,
+                    "strand_kind": "card",
+                    "strand_id": operation_id,
+                },
+                "wire_kind": "ak.strand.create",
+                "body": {
+                    "object": {
+                        "realm_id": REALM,
+                        "created_by": "ak:did_core:web:alice.example",
+                        "metadata": {
+                            "title": title,
+                            "fields": { "strand_kind": "card" }
+                        }
+                    }
+                },
+                "local_target_ref": operation_id,
+                "write_state": "queued",
+            }),
+        )
+    }
+
+    /// The window this projection exists for: the create is queued, its first
+    /// `ak.strand.move` cannot be authored yet (the Strand has no canonical id
+    /// until the receipt lands) and the server projection knows nothing. The
+    /// card MUST still appear in the column the user dropped it into.
     #[test]
     fn local_optimistic_card_create_op_projects_into_its_list() {
         let ops = [
             kanban_operations_from_events(&[
                 space_create_event(BOARD, "board", "Board1", None),
                 space_create_event(LIST_A, "list", "Todos", Some(BOARD)),
+                space_create_event(LIST_B, "list", "Doing", Some(BOARD)),
             ]),
-            vec![local_op(
+            vec![queued_card_create_op(
                 "op-create-1",
                 "2026-06-28T00:05:00.000Z",
-                json!({
-                    "kind": "ak.strand.create",
-                    "operation_id": "op-create-1",
-                    "actor_id": "ak:did_core:web:alice.example",
-                    "created_at": "2026-06-28T00:05:00.000Z",
-                    "wire_kind": "ak.strand.create",
-                    "write_state": "queued",
-                    "local_target_ref": "op-create-1",
-                    "effect": {
-                        "strand_id": "op-create-1",
-                        "board_space_id": BOARD,
-                        "list_space_id": LIST_A,
-                        "title": "queued card",
-                        "rank": "U",
-                    },
-                    "body": {
-                        "object": {
-                            "realm_id": REALM,
-                            "created_by": "ak:did_core:web:alice.example",
-                            "metadata": {
-                                "title": "queued card",
-                                "fields": {
-                                    "strand_kind": "card",
-                                    "board_space_id": BOARD,
-                                    "list_space_id": LIST_A,
-                                    "rank": "U",
-                                }
-                            }
-                        }
-                    },
-                }),
+                LIST_A,
+                "queued card",
+                "U",
             )],
         ]
         .concat();
@@ -1142,12 +1191,88 @@ mod tests {
             .iter()
             .find(|column| column.title == "Todos")
             .unwrap();
+        let doing = columns
+            .iter()
+            .find(|column| column.title == "Doing")
+            .unwrap();
         assert_eq!(
             todos.cards.len(),
             1,
-            "optimistic create folds into the list"
+            "optimistic create lands in the dropped-on list before its Move exists"
         );
         assert_eq!(todos.cards[0].title, "queued card");
+        assert_eq!(todos.cards[0].id, "op-create-1");
+        assert!(
+            doing.cards.is_empty(),
+            "the optimistic card belongs to exactly one column"
+        );
+    }
+
+    /// A create Event on its own places nothing. Without the queued write's
+    /// holder-local `effect` — i.e. for any create observed from the log,
+    /// local or remote — the Strand stays unplaced until an `ak.strand.move`
+    /// is folded. This is the read-side half of the create-time-placement
+    /// decision: no create payload member may reintroduce a position.
+    #[test]
+    fn strand_create_without_move_places_no_card() {
+        let strand = "ak:strand:AZ4uMkJmy1EmXWTZbtWEDsSNwt-63nCC5vNVKUCLdG9U";
+        let ops = kanban_operations_from_events(&[
+            space_create_event(BOARD, "board", "Board1", None),
+            space_create_event(LIST_A, "list", "Todos", Some(BOARD)),
+            strand_create_event(
+                strand,
+                "ak:did_core:web:alice.example",
+                "unplaced card",
+                "2026-06-28T00:01:00.000Z",
+            ),
+        ]);
+        let views = strand_views_from_ops(&ops);
+        let view = views
+            .iter()
+            .find(|view| view.strand_id == strand)
+            .expect("the create still names a Strand");
+        assert_eq!(view.title, "unplaced card");
+        assert_eq!(view.board_space_id, None);
+        assert_eq!(view.list_space_id, None);
+        assert_eq!(view.rank, None);
+
+        let (columns, ..) = project_board(&ops, BOARD, REALM, None);
+        let todos = columns
+            .iter()
+            .find(|column| column.title == "Todos")
+            .unwrap();
+        assert!(
+            todos.cards.is_empty(),
+            "an unplaced Strand belongs to no List"
+        );
+    }
+
+    /// The same create, now with its placement Move: the card appears, proving
+    /// the Move is the only placement carrier the fold honours.
+    #[test]
+    fn strand_move_places_a_created_card() {
+        let strand = "ak:strand:AZ4uMkJmy1EmXWTZbtWEDsSNwt-63nCC5vNVKUCLdG9U";
+        let mut events = vec![
+            space_create_event(BOARD, "board", "Board1", None),
+            space_create_event(LIST_A, "list", "Todos", Some(BOARD)),
+        ];
+        events.extend(strand_create_and_place_events(
+            strand,
+            "ak:did_core:web:alice.example",
+            "placed card",
+            BOARD,
+            LIST_A,
+            "U",
+            "2026-06-28T00:01:00.000Z",
+        ));
+        let ops = kanban_operations_from_events(&events);
+        let (columns, ..) = project_board(&ops, BOARD, REALM, None);
+        let todos = columns
+            .iter()
+            .find(|column| column.title == "Todos")
+            .unwrap();
+        assert_eq!(todos.cards.len(), 1);
+        assert_eq!(todos.cards[0].title, "placed card");
     }
 
     /// Live incident (2026-08-19): final authoring changes a create's
@@ -1223,27 +1348,32 @@ mod tests {
             "local_operation_idempotency_alias".to_owned(),
             json!(list_operation_alias),
         );
-        // The submitted card payload may still reference the optimistic List
-        // id when both creates were authored close together. The accepted List
-        // alias must migrate this relation as well as the List row itself.
         let mut canonical_card_create = strand_create_event(
             canonical_card,
             "ak:did_core:web:alice.example",
             "same card",
-            BOARD,
-            temporary_list,
-            "U",
             "2026-06-28T00:02:00.000Z",
         );
         canonical_card_create.unsigned.insert(
             "local_operation_idempotency_alias".to_owned(),
             json!(card_operation_alias),
         );
+        // The placement Move may still reference the optimistic List id when
+        // both writes were authored close together. The accepted List alias
+        // must migrate this placement as well as the List row itself.
+        let canonical_card_place = strand_move_event(
+            canonical_card,
+            BOARD,
+            temporary_list,
+            "U",
+            "2026-06-28T00:02:01.000Z",
+        );
 
         let mut ops = kanban_operations_from_events(&[
             space_create_event(BOARD, "board", "Board1", None),
             canonical_list_create,
             canonical_card_create,
+            canonical_card_place,
         ]);
         ops.push(local_op(
             list_operation_alias,
@@ -1271,18 +1401,25 @@ mod tests {
                 "operation_id": card_operation_alias,
                 "local_target_ref": temporary_card,
                 "write_state": "queued",
+                // Holder-local placement of the optimistic card, keyed by the
+                // still-optimistic List handle: both sides of the alias have to
+                // migrate, or the accepted card and its optimistic twin end up
+                // in two different columns.
+                "effect": {
+                    "board_space_id": BOARD,
+                    "list_space_id": temporary_list,
+                    "title": "same card",
+                    "rank": "U",
+                    "strand_kind": "card",
+                    "strand_id": temporary_card,
+                },
                 "body": {
                     "object": {
                         "schema": "ak.schema.strand.v1",
                         "realm_id": REALM,
                         "metadata": {
                             "title": "same card",
-                            "fields": {
-                                "strand_kind": "card",
-                                "board_space_id": BOARD,
-                                "list_space_id": temporary_list,
-                                "rank": "U",
-                            }
+                            "fields": { "strand_kind": "card" }
                         }
                     }
                 },
@@ -1307,20 +1444,21 @@ mod tests {
     #[test]
     fn local_optimistic_cas_move_op_relocates_card() {
         let strand = "ak:strand:AehHUAw7pG3uDCWpiYTXKGpYyIQ9S_ZjiBFq0AkbTrVN";
-        let mut ops = kanban_operations_from_events(&[
+        let mut events = vec![
             space_create_event(BOARD, "board", "Board1", None),
             space_create_event(LIST_A, "list", "Todos", Some(BOARD)),
             space_create_event(LIST_B, "list", "Doing", Some(BOARD)),
-            strand_create_event(
-                strand,
-                "ak:did_core:web:alice.example",
-                "moving card",
-                BOARD,
-                LIST_A,
-                "U",
-                "2026-06-28T00:01:00.000Z",
-            ),
-        ]);
+        ];
+        events.extend(strand_create_and_place_events(
+            strand,
+            "ak:did_core:web:alice.example",
+            "moving card",
+            BOARD,
+            LIST_A,
+            "U",
+            "2026-06-28T00:01:00.000Z",
+        ));
+        let mut ops = kanban_operations_from_events(&events);
         ops.push(local_op(
             "op-move-1",
             "2026-06-28T00:06:00.000Z",
@@ -1510,20 +1648,21 @@ mod tests {
         .unwrap()
         .payload()
         .clone();
-        let mut ops = kanban_operations_from_events(&[
+        let mut events = vec![
             space_create_event(BOARD, "board", "Board1", None),
             space_create_event(LIST_A, "list", "Todos", Some(BOARD)),
             space_create_event(LIST_B, "list", "Doing", Some(BOARD)),
-            strand_create_event(
-                strand,
-                "ak:did_core:web:alice.example",
-                "moving card",
-                BOARD,
-                LIST_A,
-                "U",
-                "2026-06-28T00:01:00.000Z",
-            ),
-        ]);
+        ];
+        events.extend(strand_create_and_place_events(
+            strand,
+            "ak:did_core:web:alice.example",
+            "moving card",
+            BOARD,
+            LIST_A,
+            "U",
+            "2026-06-28T00:01:00.000Z",
+        ));
+        let mut ops = kanban_operations_from_events(&events);
         ops.push(local_op_from_builder(
             "op-move-real",
             "2026-06-28T00:06:00.000Z",

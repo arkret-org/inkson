@@ -21,6 +21,7 @@ pub mod websocket_rail;
 pub use blob::BlobEndpoints;
 pub use context::{RequestContext, TransportClient};
 pub use endpoints::EndpointClients;
+pub use invite::InviteeResolution;
 pub use media::MediaEndpoints;
 
 #[cfg(test)]

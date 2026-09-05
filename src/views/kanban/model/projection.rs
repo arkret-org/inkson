@@ -243,20 +243,17 @@ pub(crate) fn columns_from_lifecycle_projection_for_actor(
             .then(left.id.cmp(&right.id))
     });
 
+    // Placement comes from the projection row's own columns only — see
+    // [`strand_projection_placement_string`]. A Strand with no List is not a
+    // broken row: it is a created-but-not-yet-moved card, and it belongs in no
+    // column until its first `ak.strand.move` is observed.
     for strand in strands.iter().filter(|strand| {
-        strand_projection_field_string(
-            strand,
-            strand.board_space_id.as_deref(),
-            &["board_space_id"],
-        )
-        .as_deref()
+        strand_projection_placement_string(strand.board_space_id.as_deref()).as_deref()
             == Some(board_id.as_str())
     }) {
-        let Some(list_space_id) = strand_projection_field_string(
-            strand,
-            strand.list_space_id.as_deref(),
-            &["list_space_id"],
-        ) else {
+        let Some(list_space_id) =
+            strand_projection_placement_string(strand.list_space_id.as_deref())
+        else {
             continue;
         };
         if let Some(column) = cols.iter_mut().find(|col| col.id == list_space_id) {

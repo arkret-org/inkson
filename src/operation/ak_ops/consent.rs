@@ -7,28 +7,57 @@
 
 use super::{TypedOperationBuilder, did_id};
 
+/// Build the `{kind:"actor"}` consent peer for an ordinary Account
+/// counterparty.
+///
+/// Spec `zh/identity/consent-model.md` section 6.1 query step 1 matches this
+/// branch on the **complete** ActorId, so the counterparty's own Station is
+/// part of the value, not something the granter may leave implicit: a grant
+/// written against the wrong Station simply never matches. `station_id` is
+/// therefore explicit, defaulting to this client's authoring Station only for
+/// a counterparty hosted here.
+///
+/// There is deliberately no string-shaped path into the
+/// `{kind:"pairwise_principal"}` branch. That branch names a Realm-local
+/// ephemeral pairwise actor, which only exists as a `(realm_id, principal_id)`
+/// pair inside a minimal-metadata Realm; callers obtain one from a real
+/// pairwise identity or read it back from an existing cell, never by guessing
+/// a kind from the shape of a DID.
+pub fn consent_actor_peer(
+    principal_id: &str,
+    station_id: Option<&str>,
+) -> anyhow::Result<arkret_sdk::ConsentPeer> {
+    let station_id = match station_id.map(str::trim).filter(|value| !value.is_empty()) {
+        Some(station_id) => did_id(station_id)?,
+        None => crate::operation::authoring_station_id()?,
+    };
+    Ok(arkret_sdk::ConsentPeer::Actor {
+        actor_id: arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+            did_id(principal_id)?,
+            station_id,
+        )),
+    })
+}
+
 /// Build a canonical `ak.consent.grant` Control Move in the holder's principal
 /// control Realm.
 ///
 /// `consent_id` is the cell subject: the same value must be reused by every later
 /// grant or revoke on that cell, so callers pass one they already hold rather than
-/// letting this mint a fresh one per call.
+/// letting this mint a fresh one per call. `peer` is the exact closed
+/// `consent_peer` this cell freezes; both kinds go through unchanged, because
+/// the two are separate identities and the builder is not allowed to pick one.
 pub fn consent_grant(
     holder_pcr_realm_id: &str,
     holder: &str,
     consent_id: &arkret_sdk::ConsentId,
-    peer: &str,
+    peer: &arkret_sdk::ConsentPeer,
     consent_scope: &str,
     expires_at: Option<chrono::DateTime<chrono::Utc>>,
 ) -> anyhow::Result<TypedOperationBuilder> {
     let payload = arkret_sdk::ConsentGrantPayload {
         consent_id: consent_id.clone(),
-        peer: arkret_sdk::ConsentPeer::Actor {
-            actor_id: arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
-                did_id(peer)?,
-                crate::operation::authoring_station_id()?,
-            )),
-        },
+        peer: peer.clone(),
         consent_scope: consent_scope.trim().parse()?,
         not_before: None,
         expires_at,

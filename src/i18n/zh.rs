@@ -83,6 +83,10 @@ fn add_r3_error_keys_zh(dict: &mut TranslationDict) {
         "error.call.desktop_media_unavailable",
         "此版本的桌面端通话功能尚未就绪。请改用网页版发起本次通话。",
     );
+    dict.set(
+        "error.invite.live_target_occupied",
+        "该用户在此 Realm 中已有一条有效邀请，未重复创建。",
+    );
 
     dict.set(
         "error.recovery.witness_revoke_lagging",
@@ -2468,7 +2472,7 @@ fn route_label_strings(dict: &mut TranslationDict) {
     dict.set("route.devices", "设备");
     dict.set("route.devices_pair", "添加设备");
     dict.set("route.onboarding", "新人引导");
-    dict.set("route.quarantine", "邀请隔离区");
+    dict.set("route.quarantine", "待你决定");
     dict.set("route.applets", "小程序");
 
     dict.set("route.settings.server", "账号与服务器");
@@ -2696,11 +2700,28 @@ fn prompt_copy_strings(dict: &mut TranslationDict) {
         "audit.empty_message",
         "目前还没有任何记录。只有在设置要求记录的 Realm 中才会出现。",
     );
-    dict.set("quarantine.title", "邀请隔离区");
+    dict.set("quarantine.title", "待你决定");
     dict.set(
         "quarantine.status",
-        "待处理的邀请只为你自己私密保存。等同意流程可用后,这里会出现审阅控件。",
+        "等你决定的事项只为你自己私密保存。等同意流程可用后,这里会出现审阅控件。",
     );
+    dict.set("quarantine.invite_delivery_title", "邀请");
+    dict.set(
+        "quarantine.invite_delivery_hint",
+        "有人邀请你加入一个 Realm。同意会建立一条 consent 授权;是否接受这封邀请本身,你仍可另行决定。",
+    );
+    dict.set("quarantine.consent_request_title", "联系许可请求");
+    dict.set(
+        "quarantine.consent_request_hint",
+        "有人请求你允许他联系你。同意只会建立一条 consent 授权,没有别的对象要接受;对方之后会自己再来。",
+    );
+    dict.set("quarantine.empty", "目前没有需要你决定的事项。");
+    dict.set("quarantine.scope_label", "请求用于");
+    dict.set(
+        "consent.grant.grantee_station_label",
+        "被授权方 Station DID（留空表示本 Station）",
+    );
+    dict.set("quarantine.expires_label", "超时丢弃");
     dict.set("theme.switcher_aria_label", "主题");
     dict.set("common.delete", "删除");
     dict.set("app.boot.opening_secure_storage", "正在打开安全存储");

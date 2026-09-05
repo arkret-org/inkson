@@ -203,6 +203,25 @@ pub fn is_identity_creation_challenge_expired_error(error: &anyhow::Error) -> bo
     })
 }
 
+/// The closed `invite_live_target_occupied` details, when this is that error.
+///
+/// `governance-objects.md` section 5.3: the Realm already holds a live directed
+/// invite for the account, so the submitted create was refused with zero writes
+/// and never entered canonical history. The client MUST NOT re-sign the same
+/// create under a fresh `event_id` — it would hit the same slot again. The
+/// returned `create_event_id` is both the occupying invite's stable idempotency
+/// key and the exact `head_eq` value a release Move must carry.
+pub(crate) fn invite_live_target_occupied_details(
+    error: &anyhow::Error,
+) -> Option<arkret_sdk::InviteLiveTargetOccupiedProblem> {
+    api_error_status_and_envelope(error).and_then(|(_, envelope)| {
+        envelope
+            .invite_live_target_occupied_details()
+            .ok()
+            .flatten()
+    })
+}
+
 /// True when the error envelope says the persisted coauth session grant
 /// itself is terminal (revoked, expired, locked, suspended, or otherwise
 /// not active). Soland currently maps these through `capability_denied`

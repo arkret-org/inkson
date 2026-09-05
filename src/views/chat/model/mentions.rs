@@ -3,8 +3,8 @@ use super::*;
 /// §3.8.2 (YG-MENT-2) — resolve the *current* display label for a
 /// structured actor mention via the shared SDK `render_mention()` helper.
 ///
-/// The authoritative `target` (principal `subject_id`) drives §3.2.1
-/// primary-handle selection. `handle_at_time` / `display_name_at_time`
+/// The authoritative `subject_account_id` (a complete `AccountId`) drives
+/// §3.2.1 primary-handle selection. `handle_at_time` / `display_name_at_time`
 /// are audit metadata and feed ONLY the degraded fallback ladder — they
 /// are NEVER used as the current display value directly.
 ///
@@ -27,7 +27,7 @@ pub(crate) fn mention_label_from_node(mention: &MentionNode) -> Option<String> {
     let mention = mention.as_mention()?;
     let display_name = mention.display_name_at_time.as_deref();
     let rendered = crate::views::helpers::render_actor_mention(
-        mention.subject_id.as_str(),
+        &mention.subject_account_id,
         &[],  // claim_set_snapshot — TODO roster handle-claim evidence
         &[],  // accepted_issuer_ids — TODO Realm policy
         None, // context (target Realm id)

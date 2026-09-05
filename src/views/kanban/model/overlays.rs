@@ -719,6 +719,18 @@ pub(crate) fn overlay_local_card_create_records(
     columns
 }
 
+/// Optimistic placement for a card whose create is still in flight.
+///
+/// The intended placement comes from `payload.effect`, a HOLDER-LOCAL column of
+/// the queued op-log row written by `submit_kanban_card_create`. It is NOT part
+/// of `ak.strand.create` and MUST never be copied onto the wire: the create
+/// payload is `additionalProperties: false` around the Strand object, and
+/// `strand.schema.json` forbids `board_space_id` / `list_space_id` / `rank` in
+/// `metadata.fields`. It exists only so the client can render the card in the
+/// column the user dropped it into during the window between the create receipt
+/// and the first `ak.strand.move` — the Event that actually places it. A row
+/// without `effect` (every canonical, backfilled create) yields no overlay,
+/// which is correct: a created Strand is unplaced until a Move says otherwise.
 pub(crate) fn local_card_create_from_raw_operation(
     record: &RawOperationRecord,
 ) -> Option<LocalCardCreate> {
@@ -733,33 +745,14 @@ pub(crate) fn local_card_create_from_raw_operation(
     }
 
     let effect = payload.get("effect");
-    let body = payload.get("body").or_else(|| payload.get("payload"));
-    let position_component = strand_position_component(body);
     let strand_id = raw_operation_create_target_id(payload)
-        .or_else(|| json_path_string(effect, &["strand_id"]))
-        .or_else(|| json_path_string(body, &["strand_id"]))
-        .or_else(|| json_path_string(body, &["object", "id"]))?;
-    let board_space_id = json_path_string(effect, &["board_space_id"])
-        .or_else(|| json_path_string(position_component, &["board_space_id"]))
-        .or_else(|| json_path_string(body, &["object", "fields", "board_space_id"]))
-        .or_else(|| json_path_string(body, &["fields", "board_space_id"]))?;
-    let list_space_id = json_path_string(effect, &["list_space_id"])
-        .or_else(|| json_path_string(position_component, &["list_space_id"]))
-        .or_else(|| json_path_string(body, &["object", "fields", "list_space_id"]))
-        .or_else(|| json_path_string(body, &["fields", "list_space_id"]))?;
-    let title = json_path_string(effect, &["title"])
-        .or_else(|| json_path_string(body, &["object", "title"]))
-        .or_else(|| json_path_string(body, &["title"]))
-        .unwrap_or_else(|| strand_id.clone());
-    let rank = json_path_string(effect, &["rank"])
-        .or_else(|| json_path_string(position_component, &["rank"]))
-        .or_else(|| json_path_string(body, &["object", "fields", "rank"]))
-        .or_else(|| json_path_string(body, &["rank"]))
-        .unwrap_or_else(|| "U".to_owned());
+        .or_else(|| json_path_string(effect, &["strand_id"]))?;
+    let board_space_id = json_path_string(effect, &["board_space_id"])?;
+    let list_space_id = json_path_string(effect, &["list_space_id"])?;
+    let title = json_path_string(effect, &["title"]).unwrap_or_else(|| strand_id.clone());
+    let rank = json_path_string(effect, &["rank"]).unwrap_or_else(|| "U".to_owned());
     let description = json_path_string(effect, &["description"])
         .or_else(|| json_path_string(effect, &["summary"]))
-        .or_else(|| json_path_string(body, &["object", "summary"]))
-        .or_else(|| json_path_string(body, &["summary"]))
         .unwrap_or_default();
 
     Some(LocalCardCreate {
@@ -1023,17 +1016,6 @@ pub(crate) fn resolve_event_derived_target_alias(
         current = next.clone();
     }
     current
-}
-
-pub(crate) fn strand_position_component(body: Option<&Value>) -> Option<&Value> {
-    body?
-        .get("components")?
-        .as_array()?
-        .iter()
-        .find(|component| {
-            component.get("family").and_then(Value::as_str)
-                == Some(arkret_wire::CellFamilyId::STRAND_POSITION_V1)
-        })
 }
 
 pub(crate) fn json_path_string(value: Option<&Value>, path: &[&str]) -> Option<String> {

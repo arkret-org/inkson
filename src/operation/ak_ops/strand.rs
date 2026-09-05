@@ -155,24 +155,6 @@ pub fn strand_update_patch(
     )
 }
 
-/// Strand position update (kanban card position) via the canonical
-/// `object_patch_payload` shape.
-pub fn strand_position_update(
-    realm_id: &str,
-    actor: &str,
-    strand_id: &str,
-    position_value: Value,
-) -> anyhow::Result<TypedOperationBuilder> {
-    strand_update_patch(
-        realm_id,
-        actor,
-        strand_id,
-        json!({
-            "position": { "$op": "set", "value": position_value },
-        }),
-    )
-}
-
 /// Strand position CAS update. The server reducer compares
 /// `expected_position` to the cell's current value; on mismatch the
 /// response is `cas_conflict` and the client should rebase against the

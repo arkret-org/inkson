@@ -124,12 +124,13 @@ pub fn parse_agent_selector_mention_tokens(input: &str) -> Vec<AgentSelectorMent
 ///
 /// Typed actor handles (`@alice:example.com`) are intentionally NOT
 /// materialised into [`MentionNode::Mention`] here: a `Mention`'s
-/// authoritative `subject_id` MUST be a directory-attested principal DID
-/// (`identity-handles.md §80`), which a synchronous text parser cannot
-/// produce. Fabricating one client-side from the handle string would write a
-/// non-verifiable `did:web` identifier into the wire `mentions[]` field. Actor
-/// mentions therefore only enter the wire via the mention picker, whose chips
-/// already carry a resolved `subject_id` (see `chat::mod` send path).
+/// authoritative `subject_account_id` MUST be a directory-attested complete
+/// `AccountId` (`identity-handles.md §3.8`), which a synchronous text parser
+/// cannot produce — it has neither the principal nor the Station component.
+/// Fabricating one client-side from the handle string would write a
+/// non-verifiable identity into the wire `mentions[]` field. Actor mentions
+/// therefore only enter the wire via the mention picker, whose chips already
+/// carry a resolved `subject_account_id` (see `chat::mod` send path).
 pub fn parse_mention_nodes(input: &str) -> Vec<MentionNode> {
     let mut mentions = Vec::new();
     for token in input.split_whitespace() {
@@ -142,15 +143,12 @@ pub fn parse_mention_nodes(input: &str) -> Vec<MentionNode> {
     }
 
     mentions.sort_by(|left, right| {
-        left.target_id().cmp(right.target_id()).then(
+        left.target().cmp(&right.target()).then(
             left.mention_text_original()
                 .cmp(&right.mention_text_original()),
         )
     });
-    mentions.dedup_by(|left, right| {
-        left.as_mention().is_some() == right.as_mention().is_some()
-            && left.target_id() == right.target_id()
-    });
+    mentions.dedup_by(|left, right| left.target() == right.target());
     mentions
 }
 
@@ -175,10 +173,11 @@ pub struct RenderedMention {
 /// §3.8.2 mention render path (YG-MENT-2).
 ///
 /// Resolves the *current* display value for an actor mention from the
-/// authoritative `subject_id` — it MUST NOT use the audit-only
+/// authoritative `subject_account_id` — it MUST NOT use the audit-only
 /// `handle_at_time` / `display_name_at_time` as the current value (those
 /// are passed only as the degraded fallback inputs the ladder steps down
-/// to).
+/// to). The mention node already carries the Station component, so this path
+/// never infers one.
 ///
 /// Step 1: Realm-scoped projection runs §3.2.1 primary handle selection
 /// over `claim_set_snapshot` (the roster handle-claim evidence) +
@@ -191,7 +190,7 @@ pub struct RenderedMention {
 /// `claim_set_snapshot` — `TODO`: plumb the live result back into
 /// this synchronous render call once the directory cache lands.
 pub fn render_actor_mention(
-    subject_id: &str,
+    subject_account_id: &arkret_sdk::AccountId,
     claim_set_snapshot: &[arkret_models_identity::HandleClaim],
     handle_issuer_policy: &[arkret_sdk::identity::HandleIssuerPolicyEntry],
     context: Option<&str>,
@@ -200,30 +199,17 @@ pub fn render_actor_mention(
 ) -> RenderedMention {
     use crate::views::member_display::{MemberDisplayTier, resolve_subject_display};
 
-    // A malformed subject_id can't be resolved, and neither can one this
-    // client cannot pair with a Station: §3.2.1 Step 0 keys on the exact
-    // account, so there is no candidate set to filter.
-    let account_id = arkret_sdk::DidCoreId::new(subject_id.trim().to_owned())
-        .ok()
-        .and_then(|subject| {
-            claim_set_snapshot
-                .iter()
-                .find(|claim| claim.claim.subject_account_id.principal_id == subject)
-                .map(|claim| claim.claim.subject_account_id.clone())
-                .or_else(|| {
-                    crate::operation::authoring_station_id()
-                        .ok()
-                        .map(|station_id| arkret_sdk::AccountId::new(subject, station_id))
-                })
-        });
+    // §3.2.1 Step 0 keys on the exact account, which the mention node carries
+    // in full. Nothing here may fall back to a bare principal or manufacture a
+    // Station.
     let rendered = resolve_subject_display(
-        account_id.as_ref(),
+        Some(subject_account_id),
         claim_set_snapshot,
         handle_issuer_policy,
         context,
         cached_handle,
         display_name_at_time,
-        &short_protocol_id(subject_id),
+        &short_protocol_id(subject_account_id.principal_id.as_str()),
     );
     let (label, tier_class) = match rendered.tier {
         MemberDisplayTier::Verified => (format!("@{}", rendered.label), "mention-verified"),
@@ -526,16 +512,23 @@ mod tests {
         assert!(mentions.is_empty());
     }
 
+    fn mention_test_account(principal: &str, station: &str) -> arkret_sdk::AccountId {
+        arkret_sdk::AccountId::new(
+            crate::mls_api_helpers::principal_core_id(principal).unwrap(),
+            arkret_sdk::DidCoreId::new(station.to_owned()).unwrap(),
+        )
+    }
+
     #[test]
     fn render_actor_mention_runs_3_2_1_for_verified_handle() {
         let now = chrono::Utc::now();
+        let alice = mention_test_account(
+            "did:web:acme.example:principals:alice",
+            "ak:did_core:web:station.acme.example",
+        );
         let claim = verified_handle_claim(
             "alice:acme.example",
-            arkret_sdk::AccountId::new(
-                crate::mls_api_helpers::principal_core_id("did:web:acme.example:principals:alice")
-                    .unwrap(),
-                arkret_sdk::DidCoreId::new("ak:did_core:web:station.acme.example").unwrap(),
-            ),
+            alice.clone(),
             crate::mls_api_helpers::principal_core_id("did:web:issuer.acme.example").unwrap(),
             // `verified_handle_claim` freezes `fresh_until` at issued_at + 5
             // minutes, and §3.2.1 rejects any candidate whose freshness window
@@ -551,8 +544,8 @@ mod tests {
             issuer_class: arkret_sdk::identity::HandleIssuerAuthorityClass::DomainAuthority,
         }];
         let rendered = render_actor_mention(
-            "ak:did_core:web:acme.example:principals:alice",
-            &[claim],
+            &alice,
+            &[claim.clone()],
             &accepted,
             None,
             None,
@@ -562,33 +555,40 @@ mod tests {
         assert_eq!(rendered.label, "@alice:acme.example");
         assert_eq!(rendered.tier_class, "mention-verified");
         assert!(!rendered.degraded);
+
+        // §3.8 — the same principal at another Station is a different account,
+        // so Alice's claim MUST NOT be projected onto it.
+        let alice_elsewhere = mention_test_account(
+            "did:web:acme.example:principals:alice",
+            "ak:did_core:web:other-station.acme.example",
+        );
+        let other = render_actor_mention(
+            &alice_elsewhere,
+            &[claim],
+            &accepted,
+            None,
+            None,
+            Some("Alice (stale)"),
+        );
+        assert_ne!(other.tier_class, "mention-verified");
+        assert!(other.degraded);
     }
 
     #[test]
     fn render_actor_mention_falls_back_to_name_then_did() {
+        let bob = mention_test_account(
+            "did:web:acme.example:principals:bob",
+            "ak:did_core:web:station.acme.example",
+        );
         // No claims → degraded ladder. display_name_at_time is the
         // name-only fallback (audit metadata used ONLY as fallback).
-        let name_only = render_actor_mention(
-            "ak:did_core:web:acme.example:principals:bob",
-            &[],
-            &[],
-            None,
-            None,
-            Some("Bob"),
-        );
+        let name_only = render_actor_mention(&bob, &[], &[], None, None, Some("Bob"));
         assert_eq!(name_only.label, "Bob");
         assert_eq!(name_only.tier_class, "mention-name-only");
         assert!(name_only.degraded);
 
         // Nothing at all → unresolved (truncated DID).
-        let unresolved = render_actor_mention(
-            "ak:did_core:web:acme.example:principals:bob",
-            &[],
-            &[],
-            None,
-            None,
-            None,
-        );
+        let unresolved = render_actor_mention(&bob, &[], &[], None, None, None);
         assert_eq!(unresolved.tier_class, "mention-unresolved");
         assert!(unresolved.degraded);
     }
@@ -637,14 +637,11 @@ mod tests {
     fn render_actor_mention_uses_local_cache_before_name() {
         use arkret_sdk::Handle;
         let cached = Handle::parse("bob:acme.example").unwrap();
-        let rendered = render_actor_mention(
-            "ak:did_core:web:acme.example:principals:bob",
-            &[],
-            &[],
-            None,
-            Some(&cached),
-            Some("Bob"),
+        let bob = mention_test_account(
+            "did:web:acme.example:principals:bob",
+            "ak:did_core:web:station.acme.example",
         );
+        let rendered = render_actor_mention(&bob, &[], &[], None, Some(&cached), Some("Bob"));
         assert_eq!(rendered.label, "@bob:acme.example");
         assert_eq!(rendered.tier_class, "mention-cached");
         assert!(rendered.degraded);

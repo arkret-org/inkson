@@ -24,6 +24,30 @@ mod sender_display;
 mod sidecar_restore;
 mod sidecar_routing;
 
+/// Station this client authors at under test (`operation::authoring_station_id`
+/// default). Mention subjects are complete accounts, so fixtures must name a
+/// Station explicitly.
+pub(super) const LOCAL_STATION_ID: &str = "ak:did_core:web:principal.example";
+pub(super) const REMOTE_STATION_ID: &str = "ak:did_core:web:remote-station.example";
+
+/// Complete account for a fixture principal at `station`.
+pub(super) fn fixture_account(principal_id: &str, station: &str) -> arkret_sdk::AccountId {
+    arkret_sdk::AccountId::new(
+        crate::mls_api_helpers::principal_core_id(principal_id).expect("fixture principal id"),
+        arkret_sdk::DidCoreId::new(station.to_owned()).expect("fixture station id"),
+    )
+}
+
+/// Complete account for a fixture principal hosted by this client's Station.
+pub(super) fn local_fixture_account(principal_id: &str) -> arkret_sdk::AccountId {
+    fixture_account(principal_id, LOCAL_STATION_ID)
+}
+
+/// Membership identity for a fixture principal hosted by this client's Station.
+pub(super) fn local_fixture_actor(principal_id: &str) -> arkret_sdk::ActorId {
+    arkret_sdk::ActorId::account(local_fixture_account(principal_id))
+}
+
 fn sidecar_projection_message(id: &str, strand_id: &str, body: &str) -> ChatMessage {
     sidecar_projection_message_for_realm(
         "ak:realm:AKOOF3y2qB7XA-na-H-ZVZqMxf852TBtYhWuYm5iO_yw",

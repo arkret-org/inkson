@@ -5,10 +5,10 @@ use crate::components::ActorIdentityLabel;
 use crate::views::helpers::{MentionNode, short_protocol_id};
 
 pub(super) fn push_unique_mention_node(mentions: &mut Vec<MentionNode>, mention: MentionNode) {
-    if !mentions.iter().any(|existing| {
-        existing.as_mention().is_some() == mention.as_mention().is_some()
-            && existing.target_id() == mention.target_id()
-    }) {
+    if !mentions
+        .iter()
+        .any(|existing| existing.target() == mention.target())
+    {
         mentions.push(mention);
     }
 }

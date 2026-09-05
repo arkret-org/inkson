@@ -67,16 +67,12 @@ fn agent_metadata_from_mentions_recovers_selector_audit_metadata() {
         failed: false,
         error: None,
         mentions: vec![MentionNode::mention(
-            arkret_sdk::Mention::new(
-                crate::mls_api_helpers::principal_core_id("ak:did_core:web:agents.example:summary")
-                    .unwrap(),
-            )
+            arkret_sdk::Mention::new(local_fixture_account(
+                "ak:did_core:web:agents.example:summary",
+            ))
             .with_display_name_at_time("Summary Assistant")
             .with_agent_selector_metadata(
-                crate::mls_api_helpers::principal_core_id(
-                    "ak:did_core:web:example.com:users:alice",
-                )
-                .unwrap(),
+                local_fixture_account("ak:did_core:web:example.com:users:alice"),
                 arkret_sdk::Handle::parse("alice:example.com").unwrap(),
                 "summary",
             )
@@ -152,20 +148,19 @@ fn mention_audit_metadata_cannot_promote_or_rebind_an_agent() {
 #[test]
 fn owned_agent_ids_only_select_current_controllers_agents() {
     let controller = "ak:did_core:web:example.com:users:alice";
-    let own_agent = arkret_sdk::Mention::new(
-        crate::mls_api_helpers::principal_core_id("ak:did_core:web:agents.example:summary")
-            .unwrap(),
-    )
+    let own_agent = arkret_sdk::Mention::new(local_fixture_account(
+        "ak:did_core:web:agents.example:summary",
+    ))
     .with_agent_selector_metadata(
-        crate::mls_api_helpers::principal_core_id(controller).unwrap(),
+        local_fixture_account(controller),
         arkret_sdk::Handle::parse("alice:example.com").unwrap(),
         "summary",
     );
-    let other_agent = arkret_sdk::Mention::new(
-        crate::mls_api_helpers::principal_core_id("ak:did_core:web:agents.example:review").unwrap(),
-    )
+    let other_agent = arkret_sdk::Mention::new(local_fixture_account(
+        "ak:did_core:web:agents.example:review",
+    ))
     .with_agent_selector_metadata(
-        crate::mls_api_helpers::principal_core_id("ak:did_core:web:example.com:users:bob").unwrap(),
+        local_fixture_account("ak:did_core:web:example.com:users:bob"),
         arkret_sdk::Handle::parse("bob:example.com").unwrap(),
         "review",
     );
@@ -186,12 +181,12 @@ fn owned_agent_ids_only_select_current_controllers_agents() {
 fn composer_owned_agent_ids_keep_verified_picker_agent_before_handle_loads() {
     let controller = "ak:did_core:web:example.com:users:alice";
     let picker = vec![crate::messaging::mentions::MentionCandidate {
-        subject_id: "ak:did_core:web:agents.example:summary".to_owned(),
+        subject_account_id: local_fixture_account("ak:did_core:web:agents.example:summary"),
         display_name: "Summary Assistant".to_owned(),
         insert_label: "me/summary".to_owned(),
         subtitle: "Your agent".to_owned(),
         is_agent: true,
-        controller_subject_id: controller.to_owned(),
+        controller_subject_account_id: Some(local_fixture_account(controller)),
         controller_handle_at_time: String::new(),
         agent_slug_at_time: "summary".to_owned(),
     }];
@@ -228,12 +223,12 @@ fn owned_agent_mentions_do_not_reopen_sidecar_from_private_composer() {
 fn direct_chat_disables_mention_ui_triggers_and_send_metadata() {
     let principal_id = "ak:did_core:web:example.com:users:alice";
     let stale_picker = vec![crate::messaging::mentions::MentionCandidate {
-        subject_id: "ak:did_core:web:example.com:users:bob".to_owned(),
+        subject_account_id: local_fixture_account("ak:did_core:web:example.com:users:bob"),
         display_name: "Bob".to_owned(),
         insert_label: "bob:example.com".to_owned(),
         subtitle: String::new(),
         is_agent: false,
-        controller_subject_id: String::new(),
+        controller_subject_account_id: None,
         controller_handle_at_time: String::new(),
         agent_slug_at_time: String::new(),
     }];

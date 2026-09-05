@@ -2228,6 +2228,10 @@ fn add_r3_error_keys(dict: &mut TranslationDict) {
         "error.call.desktop_media_unavailable",
         "Desktop calling isn't ready in this build yet. Use the web app to place this call.",
     );
+    dict.set(
+        "error.invite.live_target_occupied",
+        "This person already has a live invite to this Realm, so a second one wasn't created.",
+    );
 
     // Recovery.
     dict.set(
@@ -2969,7 +2973,7 @@ fn route_label_strings(dict: &mut TranslationDict) {
     dict.set("route.devices", "Devices");
     dict.set("route.devices_pair", "Add a device");
     dict.set("route.onboarding", "Onboarding");
-    dict.set("route.quarantine", "Invite Quarantine");
+    dict.set("route.quarantine", "Pending Review");
     dict.set("route.applets", "Applets");
 
     dict.set("route.settings.server", "Account & server");
@@ -3217,8 +3221,28 @@ fn prompt_copy_strings(dict: &mut TranslationDict) {
     );
     dict.set("audit.empty_title", "No audit records yet");
     dict.set("audit.empty_message", "Nothing has been recorded yet. Records appear only for Realms whose settings ask for them.");
-    dict.set("quarantine.title", "Invite quarantine");
-    dict.set("quarantine.status", "Pending invites are stored privately for you. Review controls appear once the consent flow is available.");
+    dict.set("quarantine.title", "Pending review");
+    dict.set("quarantine.status", "Items waiting for your decision are stored privately for you. Review controls appear once the consent flow is available.");
+    dict.set("quarantine.invite_delivery_title", "Invitations");
+    dict.set(
+        "quarantine.invite_delivery_hint",
+        "Someone invited you to a Realm. Accepting builds a consent grant; you may still decide about the invitation itself separately.",
+    );
+    dict.set(
+        "quarantine.consent_request_title",
+        "Contact permission requests",
+    );
+    dict.set(
+        "quarantine.consent_request_hint",
+        "Someone asked for your permission to reach you. Accepting builds a consent grant and nothing else; they retry on their own afterwards.",
+    );
+    dict.set("quarantine.empty", "Nothing is waiting for your decision.");
+    dict.set("quarantine.scope_label", "Requested for");
+    dict.set(
+        "consent.grant.grantee_station_label",
+        "Grantee Station DID (blank = this Station)",
+    );
+    dict.set("quarantine.expires_label", "Discarded after");
     dict.set("theme.switcher_aria_label", "Theme");
     dict.set("common.delete", "Delete");
     dict.set("app.boot.opening_secure_storage", "Opening secure storage");

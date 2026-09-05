@@ -202,6 +202,14 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
         );
     let participants_for_plaintext_sidecar = participants_for_messages.clone();
     let participants_for_encrypted_sidecar = participants_for_messages.clone();
+    // Agent selector resolution returns principal DIDs; the persisted mention
+    // needs the complete AccountId, which only the Realm roster attests.
+    let roster_accounts = super::roster_account_index(&participants_for_messages);
+    let roster_accounts_for_plaintext_sidecar = roster_accounts.clone();
+    let roster_accounts_for_encrypted_sidecar = roster_accounts.clone();
+    let roster_accounts_for_retry = roster_accounts.clone();
+    let roster_accounts_for_sidecar_session = roster_accounts.clone();
+    let roster_accounts_for_send = roster_accounts;
     let composer_placeholder = chat_composer_placeholder(mentions_enabled);
 
     {
@@ -631,11 +639,18 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                         ))
                                         .collect();
                                 candidates.sort_by_key(|candidate| {
-                                    if candidate.subject_id.trim() == principal_id.trim() {
+                                    if candidate.subject_account_id.principal_id.as_str()
+                                        == principal_id.trim()
+                                    {
                                         0u8
                                     } else if candidate.is_agent
-                                        && candidate.controller_subject_id.trim()
-                                            == principal_id.trim()
+                                        && candidate
+                                            .controller_subject_account_id
+                                            .as_ref()
+                                            .is_some_and(|controller| {
+                                                controller.principal_id.as_str()
+                                                    == principal_id.trim()
+                                            })
                                     {
                                         1u8
                                     } else {
@@ -663,18 +678,22 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                                     let candidate_label =
                                                         format!("@{}", candidate.insert_label());
                                                     let candidate_is_self =
-                                                        candidate.subject_id.trim() == principal_id.trim();
+                                                        candidate.subject_account_id.principal_id.as_str()
+                                                            == principal_id.trim();
                                                     let candidate_agent_slug = candidate
                                                         .is_agent
                                                         .then(|| candidate.agent_slug_at_time.clone());
                                                     rsx! {
                                                         Button {
                                                             variant: ButtonVariant::Secondary,
-                                                            key: "{candidate.subject_id}",
+                                                            key: "{candidate.subject_account_id.principal_id}@{candidate.subject_account_id.station_id}",
                                                             r#type: "button",
                                                             class: "mention-suggestion",
                                                             "data-testid": "mention-suggestion",
-                                                            "data-mention-subject-id": "{candidate.subject_id}",
+                                                            // Both components are exposed separately: the
+                                                            // subject identity is the pair, never one of them.
+                                                            "data-mention-principal-id": "{candidate.subject_account_id.principal_id}",
+                                                            "data-mention-station-id": "{candidate.subject_account_id.station_id}",
                                                             title: "@{candidate.insert_label()}",
                                                             onclick: {
                                                                 let candidate = candidate.clone();
@@ -825,7 +844,8 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                 div {
                                     class: "mention-chip",
                                     "data-testid": "mention-chip",
-                                    "data-mention-subject-id": "{chip.subject_id}",
+                                    "data-mention-principal-id": "{chip.subject_account_id.principal_id}",
+                                    "data-mention-station-id": "{chip.subject_account_id.station_id}",
                                     span { "@{chip.insert_label()}" }
                                     if !chip.subtitle.is_empty() {
                                         span { class: "mention-chip-subtitle", "{chip.subtitle}" }
@@ -834,8 +854,10 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                         variant: ButtonVariant::Secondary,
                                         r#type: "button",
                                         onclick: {
-                                            let subject_id = chip.subject_id.clone();
-                                            move |_| mention_picker_state.write().remove(&subject_id)
+                                            let subject_account_id = chip.subject_account_id.clone();
+                                            move |_| mention_picker_state
+                                                .write()
+                                                .remove(&subject_account_id)
                                         },
                                         "\u{00d7}"
                                     }
@@ -1280,6 +1302,8 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                     let inserted_candidates_for_sidecar = inserted_candidates;
                                     let participants_for_sidecar =
                                         participants_for_plaintext_sidecar.clone();
+                                    let roster_accounts =
+                                        roster_accounts_for_plaintext_sidecar.clone();
                                     spawn(async move {
                                         for mention in resolve_agent_selector_mentions(
                                             mentions_enabled,
@@ -1291,6 +1315,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                             &realm,
                                             &actor,
                                             own_controller_handle.as_deref(),
+                                            &roster_accounts,
                                         )
                                         .await
                                         {
@@ -1456,6 +1481,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                     plaintext_services_for_policy(projection.as_ref(), &service_id);
                                 let wait_for = active_sync_token(sync_cursor());
                                 let actor_for_retry = actor.clone();
+                                let roster_accounts = roster_accounts_for_retry.clone();
                                 spawn(async move {
                                     let mut mentions = mentions;
                                     for mention in resolve_agent_selector_mentions(
@@ -1468,6 +1494,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                         &realm,
                                         &actor,
                                         own_controller_handle.as_deref(),
+                                        &roster_accounts,
                                     )
                                     .await
                                     {
@@ -1737,6 +1764,8 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                     let inserted_candidates_for_sidecar = inserted_candidates;
                                     let participants_for_sidecar =
                                         participants_for_encrypted_sidecar.clone();
+                                    let roster_accounts =
+                                        roster_accounts_for_encrypted_sidecar.clone();
                                     spawn(async move {
                                         for mention in resolve_agent_selector_mentions(
                                             mentions_enabled,
@@ -1748,6 +1777,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                             &realm_for_sidecar,
                                             &actor_for_sidecar,
                                             own_controller_handle.as_deref(),
+                                            &roster_accounts,
                                         )
                                         .await
                                         {
@@ -1886,6 +1916,8 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                         &session.source_realm_id,
                                         &session.source_strand_id,
                                     );
+                                    let roster_accounts =
+                                        roster_accounts_for_sidecar_session.clone();
                                     spawn(async move {
                                         let mut resolved_mentions = mentions;
                                         for mention in resolve_agent_selector_mentions(
@@ -1898,6 +1930,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                             &session.source_realm_id,
                                             &actor,
                                             own_controller_handle.as_deref(),
+                                            &roster_accounts,
                                         )
                                         .await
                                         {
@@ -2013,6 +2046,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                 let base_for_backup_trigger = base.clone();
                                 let token_for_backup_trigger = api_token.clone();
                                 let actor_for_backup_trigger = actor.clone();
+                                let roster_accounts = roster_accounts_for_send.clone();
                                 spawn(async move {
                                 let mut mentions = mentions;
                                 for mention in resolve_agent_selector_mentions(
@@ -2025,6 +2059,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                     &realm,
                                     &actor,
                                     own_controller_handle.as_deref(),
+                                    &roster_accounts,
                                 )
                                 .await
                                 {

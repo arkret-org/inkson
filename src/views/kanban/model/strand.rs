@@ -1,5 +1,23 @@
 use super::*;
 
+/// Read a placement slot (`board_space_id` / `list_space_id` / `rank`) off a
+/// Strand projection row.
+///
+/// Placement is derived truth for the `ak.component.strand.position.v1` cell,
+/// so it reaches the client on the row's own top-level columns — from the
+/// server projection, or from a locally folded `ak.strand.move` /
+/// `ak.strand.reorder`. Unlike [`strand_projection_field_string`] this NEVER
+/// falls back to the open `metadata.fields` map: `strand.schema.json` forbids
+/// these three names there exactly so a second placement source cannot exist,
+/// and honouring one on read would let a non-conforming producer place cards
+/// through a carrier the schema rejects.
+pub(crate) fn strand_projection_placement_string(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
+
 pub(crate) fn strand_projection_field_string(
     strand: &crate::state::projection_views::StrandProjectionView,
     top_level: Option<&str>,
@@ -206,8 +224,7 @@ pub(crate) fn card_from_strand_projection_for_actor(
         .unwrap_or(KANBAN_SYNTHESIS_CONTENT_PATH);
     KanbanCard {
         id: strand.strand_id.clone(),
-        rank: strand_projection_field_string(strand, strand.rank.as_deref(), &["rank"])
-            .unwrap_or_default(),
+        rank: strand_projection_placement_string(strand.rank.as_deref()).unwrap_or_default(),
         title: title.clone(),
         description: summary,
         description_body: private_strand_field_text(

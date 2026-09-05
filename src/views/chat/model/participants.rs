@@ -452,11 +452,64 @@ pub(crate) fn agent_selector_label(participant: &SpaceParticipant) -> Option<Str
     ))
 }
 
+/// Complete account a roster row can be mentioned at, or `None`.
+///
+/// A membership row already carries its exact `ActorId`; a `service` actor has
+/// no account and can never be a mention subject. An inventory-only row has no
+/// membership identity at all — it exists solely because the selected account
+/// owns that Agent, which this client hosts at its own authoring Station, so
+/// that is the account. Anything else fails closed: no candidate, therefore no
+/// chip and no mention node (`identity-handles.md §3.8`).
+pub(crate) fn participant_mention_account(
+    participant: &SpaceParticipant,
+) -> Option<arkret_sdk::AccountId> {
+    if let Some(actor_id) = participant.actor_id.as_ref() {
+        return actor_id.as_account_id().cloned();
+    }
+    if !participant.is_agent {
+        return None;
+    }
+    crate::operation::authoring_station_id()
+        .ok()
+        .map(|station_id| arkret_sdk::AccountId::new(participant.principal_id.clone(), station_id))
+}
+
+/// Complete controller account behind an Agent row, for the mention node's
+/// audit metadata. Resolved from the roster, or from the selected account when
+/// the Agent is one of its own; never manufactured from a bare principal.
+fn controller_mention_account(
+    controller_principal_id: &str,
+    participants: &[SpaceParticipant],
+    principal_id: &str,
+) -> Option<arkret_sdk::AccountId> {
+    let controller_principal_id = controller_principal_id.trim();
+    if controller_principal_id.is_empty() {
+        return None;
+    }
+    let from_roster = participants
+        .iter()
+        .filter(|candidate| !candidate.is_agent)
+        .filter(|candidate| {
+            same_principal_core(candidate.principal_id.as_str(), controller_principal_id)
+        })
+        .find_map(participant_mention_account);
+    if from_roster.is_some() {
+        return from_roster;
+    }
+    if !same_principal_core(controller_principal_id, principal_id) {
+        return None;
+    }
+    crate::mls_api_helpers::local_account_actor_id(principal_id)
+        .ok()
+        .and_then(|actor| actor.as_account_id().cloned())
+}
+
 pub(crate) fn mention_candidate_for_participant(
     participant: &SpaceParticipant,
     participants: &[SpaceParticipant],
     principal_id: &str,
 ) -> Option<crate::messaging::mentions::MentionCandidate> {
+    let subject_account_id = participant_mention_account(participant)?;
     if participant.is_agent {
         let display_name = agent_display_label(participant);
         let metadata = participant.agent_metadata.as_ref();
@@ -471,7 +524,7 @@ pub(crate) fn mention_candidate_for_participant(
         });
         let controller_label = agent_controller_label(participant, participants);
         return Some(crate::messaging::mentions::MentionCandidate {
-            subject_id: participant.principal_id.to_string(),
+            subject_account_id,
             display_name,
             insert_label: selector.unwrap_or_else(|| {
                 mention_label_for_participant(participant)
@@ -481,9 +534,13 @@ pub(crate) fn mention_candidate_for_participant(
                 .map(|label| format!("agent of {label}"))
                 .unwrap_or_else(|| "agent".to_owned()),
             is_agent: true,
-            controller_subject_id: metadata
-                .map(|metadata| metadata.controller_principal_id.clone())
-                .unwrap_or_default(),
+            controller_subject_account_id: metadata.and_then(|metadata| {
+                controller_mention_account(
+                    &metadata.controller_principal_id,
+                    participants,
+                    principal_id,
+                )
+            }),
             controller_handle_at_time: metadata
                 .map(|metadata| metadata.controller_handle.clone())
                 .unwrap_or_default(),
@@ -497,12 +554,12 @@ pub(crate) fn mention_candidate_for_participant(
         let display_name = participant_sender_label(participant)
             .unwrap_or_else(|| short_principal_label(participant.principal_id.as_str()));
         return Some(crate::messaging::mentions::MentionCandidate {
-            subject_id: participant.principal_id.to_string(),
+            subject_account_id,
             display_name,
             insert_label: "me".to_owned(),
             subtitle: "You".to_owned(),
             is_agent: false,
-            controller_subject_id: String::new(),
+            controller_subject_account_id: None,
             controller_handle_at_time: String::new(),
             agent_slug_at_time: String::new(),
         });
@@ -511,12 +568,12 @@ pub(crate) fn mention_candidate_for_participant(
     let handle_label = mention_label_for_participant(participant)?;
     let display_name = handle_label.clone();
     Some(crate::messaging::mentions::MentionCandidate {
-        subject_id: participant.principal_id.to_string(),
+        subject_account_id,
         display_name,
         insert_label: handle_label,
         subtitle: String::new(),
         is_agent: false,
-        controller_subject_id: String::new(),
+        controller_subject_account_id: None,
         controller_handle_at_time: String::new(),
         agent_slug_at_time: String::new(),
     })
@@ -542,15 +599,16 @@ pub(crate) fn mention_candidate_for_explicit_target(
         return None;
     }
     mention_candidate_for_participant(participant, participants, principal_id).or_else(|| {
+        let subject_account_id = participant_mention_account(participant)?;
         let fallback_label = participant_sender_label(participant)
             .unwrap_or_else(|| short_principal_label(participant.principal_id.as_str()));
         Some(crate::messaging::mentions::MentionCandidate {
-            subject_id: participant.principal_id.to_string(),
+            subject_account_id,
             display_name: fallback_label.clone(),
             insert_label: fallback_label,
             subtitle: String::new(),
             is_agent: false,
-            controller_subject_id: String::new(),
+            controller_subject_account_id: None,
             controller_handle_at_time: String::new(),
             agent_slug_at_time: String::new(),
         })
@@ -571,13 +629,24 @@ pub(crate) fn owned_agent_mention_candidate(
     if agent_id.is_empty() || principal_id.is_empty() {
         return None;
     }
+    // The selected account's own Agents are hosted by this client's authoring
+    // Station; both accounts are resolved in full before a chip exists.
+    let station_id = crate::operation::authoring_station_id().ok()?;
+    let subject_account_id = arkret_sdk::AccountId::new(
+        arkret_sdk::DidCoreId::new(agent_id.to_owned()).ok()?,
+        station_id,
+    );
+    let controller_subject_account_id =
+        crate::mls_api_helpers::local_account_actor_id(principal_id)
+            .ok()
+            .and_then(|actor| actor.as_account_id().cloned())?;
     Some(crate::messaging::mentions::MentionCandidate {
-        subject_id: agent_id.to_owned(),
+        subject_account_id,
         display_name: agent_slug.to_owned(),
         insert_label: format!("me/{agent_slug}"),
         subtitle: "Your agent".to_owned(),
         is_agent: true,
-        controller_subject_id: principal_id.to_owned(),
+        controller_subject_account_id: Some(controller_subject_account_id),
         controller_handle_at_time: own_controller_handle
             .map(str::trim)
             .filter(|handle| !handle.is_empty())

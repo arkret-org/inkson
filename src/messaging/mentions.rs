@@ -9,9 +9,14 @@
 use serde::{Deserialize, Serialize};
 
 /// One row in the mention picker dropdown.
+///
+/// The subject is carried as the complete `AccountId` the roster resolved, so
+/// a chip can never be turned into a mention node that is missing its Station
+/// component (`identity-handles.md §3.8`). A participant this client cannot
+/// resolve to a whole account produces no candidate at all.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MentionCandidate {
-    pub subject_id: String,
+    pub subject_account_id: arkret_sdk::AccountId,
     pub display_name: String,
     #[serde(default)]
     pub insert_label: String,
@@ -19,8 +24,11 @@ pub struct MentionCandidate {
     pub subtitle: String,
     #[serde(default)]
     pub is_agent: bool,
+    /// Complete controller account for an agent candidate; `None` for a
+    /// non-agent row and for an agent whose controller account is not yet
+    /// resolved.
     #[serde(default)]
-    pub controller_subject_id: String,
+    pub controller_subject_account_id: Option<arkret_sdk::AccountId>,
     #[serde(default)]
     pub controller_handle_at_time: String,
     #[serde(default)]
@@ -79,20 +87,25 @@ impl MentionPickerState {
         self.active_range = Some((start, end));
     }
 
-    /// Filter `candidates` down to those whose `display_name` or `subject_id`
-    /// matches the current query (case-insensitive substring). The popover is
-    /// scroll-bounded by CSS, so the model keeps every match available; this
-    /// matters for controllers with more than a handful of Agents.
+    /// Filter `candidates` down to those whose `display_name` or subject
+    /// principal matches the current query (case-insensitive substring). The
+    /// popover is scroll-bounded by CSS, so the model keeps every match
+    /// available; this matters for controllers with more than a handful of
+    /// Agents.
+    ///
+    /// Query matching is a text search over what the user can see, never an
+    /// identity comparison: exclusion of already-inserted chips runs over the
+    /// complete `AccountId`.
     pub fn filter<'a>(&self, candidates: &'a [MentionCandidate]) -> Vec<&'a MentionCandidate> {
         let q = self.query.trim().to_ascii_lowercase();
-        let inserted: std::collections::BTreeSet<&str> = self
+        let inserted: std::collections::BTreeSet<&arkret_sdk::AccountId> = self
             .inserted
             .iter()
-            .map(|c| c.subject_id.as_str())
+            .map(|c| &c.subject_account_id)
             .collect();
         candidates
             .iter()
-            .filter(|c| !inserted.contains(c.subject_id.as_str()))
+            .filter(|c| !inserted.contains(&c.subject_account_id))
             .filter(|c| {
                 if q.is_empty() {
                     true
@@ -100,7 +113,11 @@ impl MentionPickerState {
                     c.display_name.to_ascii_lowercase().contains(&q)
                         || c.insert_label.to_ascii_lowercase().contains(&q)
                         || c.subtitle.to_ascii_lowercase().contains(&q)
-                        || c.subject_id.to_ascii_lowercase().contains(&q)
+                        || c.subject_account_id
+                            .principal_id
+                            .as_str()
+                            .to_ascii_lowercase()
+                            .contains(&q)
                 }
             })
             .collect()
@@ -112,7 +129,7 @@ impl MentionPickerState {
         if self
             .inserted
             .iter()
-            .any(|existing| existing.subject_id == candidate.subject_id)
+            .any(|existing| existing.subject_account_id == candidate.subject_account_id)
         {
             return false;
         }
@@ -120,9 +137,10 @@ impl MentionPickerState {
         true
     }
 
-    /// Drop the chip with the given subject ID, if present.
-    pub fn remove(&mut self, subject_id: &str) {
-        self.inserted.retain(|c| c.subject_id != subject_id);
+    /// Drop the chip addressing the given account, if present.
+    pub fn remove(&mut self, subject_account_id: &arkret_sdk::AccountId) {
+        self.inserted
+            .retain(|c| &c.subject_account_id != subject_account_id);
     }
 
     /// Clear all picker state — typically called when the user has
@@ -218,14 +236,24 @@ pub fn replace_active_mention_token(
 mod tests {
     use super::*;
 
+    const STATION: &str = "ak:did_core:web:station.example";
+    const OTHER_STATION: &str = "ak:did_core:web:other-station.example";
+
+    fn account(principal: &str, station: &str) -> arkret_sdk::AccountId {
+        arkret_sdk::AccountId::new(
+            arkret_sdk::DidCoreId::new(principal.to_owned()).unwrap(),
+            arkret_sdk::DidCoreId::new(station.to_owned()).unwrap(),
+        )
+    }
+
     fn alice() -> MentionCandidate {
         MentionCandidate {
-            subject_id: "ak:did_core:web:alice.example".into(),
+            subject_account_id: account("ak:did_core:web:alice.example", STATION),
             display_name: "Alice".into(),
             insert_label: String::new(),
             subtitle: String::new(),
             is_agent: false,
-            controller_subject_id: String::new(),
+            controller_subject_account_id: None,
             controller_handle_at_time: String::new(),
             agent_slug_at_time: String::new(),
         }
@@ -233,12 +261,12 @@ mod tests {
 
     fn bob() -> MentionCandidate {
         MentionCandidate {
-            subject_id: "ak:did_core:web:bob.example".into(),
+            subject_account_id: account("ak:did_core:web:bob.example", STATION),
             display_name: "Bob".into(),
             insert_label: String::new(),
             subtitle: String::new(),
             is_agent: false,
-            controller_subject_id: String::new(),
+            controller_subject_account_id: None,
             controller_handle_at_time: String::new(),
             agent_slug_at_time: String::new(),
         }
@@ -251,7 +279,10 @@ mod tests {
         let candidates = vec![alice(), bob()];
         let filtered = state.filter(&candidates);
         assert_eq!(filtered.len(), 1);
-        assert_eq!(filtered[0].subject_id, "ak:did_core:web:alice.example");
+        assert_eq!(
+            filtered[0].subject_account_id,
+            account("ak:did_core:web:alice.example", STATION)
+        );
     }
 
     #[test]
@@ -261,12 +292,15 @@ mod tests {
         let candidates = vec![
             alice(),
             MentionCandidate {
-                subject_id: "ak:did_core:web:agents.example:summary".into(),
+                subject_account_id: account("ak:did_core:web:agents.example:summary", STATION),
                 display_name: "Summary Assistant".into(),
                 insert_label: "alice:example.com/summary".into(),
                 subtitle: "agent of alice:example.com".into(),
                 is_agent: true,
-                controller_subject_id: "ak:did_core:web:example.com:users:alice".into(),
+                controller_subject_account_id: Some(account(
+                    "ak:did_core:web:example.com:users:alice",
+                    STATION,
+                )),
                 controller_handle_at_time: "alice:example.com".into(),
                 agent_slug_at_time: "summary".into(),
             },
@@ -274,8 +308,8 @@ mod tests {
         let filtered = state.filter(&candidates);
         assert_eq!(filtered.len(), 1);
         assert_eq!(
-            filtered[0].subject_id,
-            "ak:did_core:web:agents.example:summary"
+            filtered[0].subject_account_id,
+            account("ak:did_core:web:agents.example:summary", STATION)
         );
         assert_eq!(filtered[0].insert_label(), "alice:example.com/summary");
     }
@@ -287,19 +321,52 @@ mod tests {
         let candidates = vec![alice(), bob()];
         let filtered = state.filter(&candidates);
         assert_eq!(filtered.len(), 1);
-        assert_eq!(filtered[0].subject_id, "ak:did_core:web:bob.example");
+        assert_eq!(
+            filtered[0].subject_account_id,
+            account("ak:did_core:web:bob.example", STATION)
+        );
+    }
+
+    /// `identity-handles.md §3.8` — chip identity is the whole account. The
+    /// same principal hosted by another Station is a different candidate: it
+    /// stays selectable, inserts separately, and is removed independently.
+    #[test]
+    fn picker_treats_the_same_principal_at_another_station_as_a_distinct_candidate() {
+        let mut elsewhere = alice();
+        elsewhere.subject_account_id = account("ak:did_core:web:alice.example", OTHER_STATION);
+
+        let mut state = MentionPickerState::new();
+        assert!(state.insert(alice()));
+        assert!(state.insert(elsewhere.clone()));
+        assert_eq!(state.inserted.len(), 2);
+
+        let candidates = vec![alice(), elsewhere.clone()];
+        assert!(state.filter(&candidates).is_empty());
+
+        state.remove(&elsewhere.subject_account_id);
+        assert_eq!(state.inserted.len(), 1);
+        assert_eq!(
+            state.inserted[0].subject_account_id,
+            account("ak:did_core:web:alice.example", STATION)
+        );
     }
 
     #[test]
     fn picker_keeps_all_owned_agent_matches_available() {
         let candidates = (0..12)
             .map(|index| MentionCandidate {
-                subject_id: format!("ak:did_core:web:agents.example:agent-{index}"),
+                subject_account_id: account(
+                    &format!("ak:did_core:web:agents.example:agent-{index}"),
+                    STATION,
+                ),
                 display_name: format!("agent-{index}"),
                 insert_label: format!("me/agent-{index}"),
                 subtitle: "Your agent".to_owned(),
                 is_agent: true,
-                controller_subject_id: "ak:did_core:web:alice.example".to_owned(),
+                controller_subject_account_id: Some(account(
+                    "ak:did_core:web:alice.example",
+                    STATION,
+                )),
                 controller_handle_at_time: "alice:example.com".to_owned(),
                 agent_slug_at_time: format!("agent-{index}"),
             })

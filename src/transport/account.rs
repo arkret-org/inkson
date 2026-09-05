@@ -1280,19 +1280,19 @@ pub async fn tombstone_contact(
 
 /// Read one holder-private consent cell. Spec OpenAPI
 /// `ak.self.consent.resource.get.v1`.
+///
+/// The cell is addressed by its exact frozen `consent_peer`, both kinds
+/// included. Nothing here reconstructs a peer from a bare DID: an ordinary
+/// Account peer carries its complete ActorId and a Realm-local ephemeral
+/// pairwise peer its `(realm_id, principal_id)` pair, and the two never
+/// address each other's cell.
 pub async fn consent_cell(
     http: &arkret_sdk::http_client::Client,
     _holder: &str,
-    peer: &str,
+    peer: &arkret_sdk::ConsentPeer,
     scope: &str,
 ) -> anyhow::Result<arkret_sdk::ConsentCellView> {
-    let peer = arkret_sdk::ConsentPeer::Actor {
-        actor_id: arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
-            crate::mls_api_helpers::principal_core_id(peer)?,
-            crate::operation::authoring_station_id()?,
-        )),
-    };
-    let peer = serde_json::to_string(&peer)?;
+    let peer = serde_json::to_string(peer)?;
     let path = format!(
         "{}/cell?peer={}&consent_scope={}",
         arkret_wire::PATH_SELF_CONSENT,
@@ -1313,7 +1313,7 @@ pub async fn consent_cell(
 pub async fn grant_consent(
     submitter: &crate::event_submit::EventSubmitter,
     holder: &str,
-    peer: &str,
+    peer: &arkret_sdk::ConsentPeer,
     scope: &str,
     expires_at: Option<chrono::DateTime<chrono::Utc>>,
 ) -> anyhow::Result<arkret_sdk::ConsentCellView> {
@@ -1368,7 +1368,7 @@ pub async fn grant_consent(
 pub async fn revoke_consent(
     submitter: &crate::event_submit::EventSubmitter,
     holder: &str,
-    peer: &str,
+    peer: &arkret_sdk::ConsentPeer,
     scope: &str,
 ) -> anyhow::Result<arkret_sdk::ConsentCellView> {
     let cell = consent_cell(submitter.http(), holder, peer, scope).await?;
@@ -1465,8 +1465,13 @@ async fn wait_for_consent_dots_in_seal(
 }
 
 /// Open an outbound consent request: ask `holder` to grant the
-/// authenticated actor the given scope. The response is deliberately opaque.
-/// Spec OpenAPI `ak.self.consent.command.request.v1`.
+/// authenticated actor the given scope. `scope` is the consent-model section 4
+/// enum **minus `invite`** — an invite belongs to invite delivery and the
+/// registered body rejects it — so an out-of-range value fails here rather than
+/// reaching the Station. The response is deliberately opaque: admission to the
+/// holder's quarantine cell, an anti-abuse drop, an unknown holder and a policy
+/// deny all return the same bytes. Spec OpenAPI
+/// `ak.self.consent.command.request.v1`.
 pub async fn request_consent(
     http: &arkret_sdk::http_client::Client,
     holder: &str,

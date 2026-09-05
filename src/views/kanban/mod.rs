@@ -2205,11 +2205,13 @@ pub fn KanbanPanel(
                                         "aria-label": "Save card",
                                         onclick: {
                                             // Card create submits a real
-                                            // ak.strand.create envelope. The
-                                            // initial Board/List placement
-                                            // rides in the strand.position
-                                            // component so the projection can
-                                            // materialise it in this column.
+                                            // ak.strand.create envelope, which
+                                            // carries NO placement. The first
+                                            // Board/List placement is a
+                                            // separate ak.strand.move that
+                                            // `submit_kanban_card_create`
+                                            // authors once the create receipt
+                                            // names the Strand.
                                             let base = base_url.clone();
                                             let col_id = column.id.clone();
                                             let realm = selected_realm_id.clone();
@@ -2238,9 +2240,13 @@ pub fn KanbanPanel(
                                                     None,
                                                 )
                                                 .unwrap_or_else(|_| "U".to_owned());
-                                                // The create command appends an `ak.strand.create`
-                                                // appends the `ak.strand.create` op (write_state queued),
-                                                // which the `columns` memo folds over the current baseline.
+                                                // The create command appends the `ak.strand.create`
+                                                // op (write_state queued), which the `columns` memo
+                                                // folds over the current baseline. `rank` and the
+                                                // two Space ids ride the row's holder-local
+                                                // `effect` only: they are the optimistic overlay's
+                                                // placement and the input to the follow-up Move,
+                                                // never members of the create payload.
                                                 // No `strand_id` here: the card Strand is named by
                                                 // its own create Event, so the command boundary
                                                 // fills the subject in once the envelope exists.

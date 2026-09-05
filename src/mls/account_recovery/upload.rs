@@ -349,7 +349,8 @@ pub async fn upload_mls_account_secret_backup_with_passphrase(
         .ok_or_else(|| anyhow!("active device signer is required"))?;
     let account_body = if let Some(previous) = previous_account_backup.as_ref() {
         let predecessor = typed_backup_predecessor(previous)?;
-        let frontier = current_backup_frontier_ref(api, control_realm, authority, device_id).await?;
+        let frontier =
+            current_backup_frontier_ref(api, control_realm, authority, device_id).await?;
         build_mls_account_secret_backup_successor_body_with_kek_and_version(
             &account_backup_id,
             &predecessor,
@@ -734,7 +735,8 @@ pub async fn upload_mls_private_plaintext_backup_with_previous(
         .ok_or_else(|| anyhow!("active device signer is required"))?;
     let body = if let Some(previous) = previous_backup.as_ref() {
         let predecessor = typed_backup_predecessor(previous)?;
-        let frontier = current_backup_frontier_ref(api, control_realm, authority, device_id).await?;
+        let frontier =
+            current_backup_frontier_ref(api, control_realm, authority, device_id).await?;
         build_mls_private_plaintext_backup_successor_body_with_kek(
             &backup_id,
             &predecessor,

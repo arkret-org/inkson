@@ -167,21 +167,18 @@ fn chat_message_create_operation_embeds_audience_mentions_in_content_only() {
 #[test]
 fn chat_message_create_operation_embeds_agent_selector_mention_metadata() {
     let mentions = vec![MentionNode::mention(
-        arkret_sdk::Mention::new(
-            crate::mls_api_helpers::principal_core_id("ak:did_core:web:agent.example").unwrap(),
-        )
-        .with_agent_selector_metadata(
-            crate::mls_api_helpers::principal_core_id("ak:did_core:web:example.com:users:alice")
-                .unwrap(),
-            arkret_sdk::Handle::parse("alice:example.com").unwrap(),
-            "summary",
-        )
-        .with_mention_text_original("@alice:example.com/summary")
-        .with_resolved_at(
-            chrono::DateTime::parse_from_rfc3339("2026-06-11T00:00:00.000Z")
-                .unwrap()
-                .with_timezone(&chrono::Utc),
-        ),
+        arkret_sdk::Mention::new(local_fixture_account("ak:did_core:web:agent.example"))
+            .with_agent_selector_metadata(
+                local_fixture_account("ak:did_core:web:example.com:users:alice"),
+                arkret_sdk::Handle::parse("alice:example.com").unwrap(),
+                "summary",
+            )
+            .with_mention_text_original("@alice:example.com/summary")
+            .with_resolved_at(
+                chrono::DateTime::parse_from_rfc3339("2026-06-11T00:00:00.000Z")
+                    .unwrap()
+                    .with_timezone(&chrono::Utc),
+            ),
     )];
     let op = production_chat_message_create_operation(
         "ak:realm:AT3p9polsnQ_WOix32QZimMdE2zPe62HptJu2PaO3V1h",
@@ -197,12 +194,15 @@ fn chat_message_create_operation_embeds_agent_selector_mention_metadata() {
     let mention = &op.payload()["content"]["mentions"][0];
     assert_eq!(mention["kind"].as_str(), Some("mention"));
     assert_eq!(
-        mention["subject_id"].as_str(),
-        Some("ak:did_core:web:agent.example")
+        mention["subject_account_id"],
+        serde_json::to_value(local_fixture_account("ak:did_core:web:agent.example")).unwrap()
     );
     assert_eq!(
-        mention["controller_subject_id"].as_str(),
-        Some("ak:did_core:web:example.com:users:alice")
+        mention["controller_subject_account_id"],
+        serde_json::to_value(local_fixture_account(
+            "ak:did_core:web:example.com:users:alice"
+        ))
+        .unwrap()
     );
     assert_eq!(
         mention["controller_handle_at_time"].as_str(),

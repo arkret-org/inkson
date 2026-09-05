@@ -17,7 +17,10 @@ fn parses_message_event_with_operation_body_shape() {
             "message_id": "chat-msg-local",
             "mentions": [{
                 "kind": "mention",
-                "subject_id": "ak:did_core:web:bob.example",
+                "subject_account_id": {
+                    "principal_id": "ak:did_core:web:bob.example",
+                    "station_id": "ak:did_core:web:principal.example"
+                },
                 "mention_text_original": "@bob"
             }]
         }
@@ -46,8 +49,8 @@ fn parses_message_event_with_operation_body_shape() {
     assert_eq!(message.content_format, None);
     assert_eq!(message.sender, "ak:did_core:web:alice.example");
     assert_eq!(
-        message.mentions[0].target_id(),
-        "ak:did_core:web:bob.example"
+        message.mentions[0].target(),
+        arkret_sdk::MentionTarget::Subject(&local_fixture_account("ak:did_core:web:bob.example"))
     );
 }
 

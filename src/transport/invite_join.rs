@@ -8,12 +8,20 @@ impl crate::transport::TransportClient {
     /// Returns the submit result together with the Realm title the directory
     /// resolve disclosed, so the caller can seed local title hints without a
     /// second lookup.
+    ///
+    /// `invitee_account_id` is `Some` exactly for a directed invite, whose
+    /// acceptance also releases the inviter Realm's live-target slot for that
+    /// account and therefore needs the account the slot subject is derived
+    /// from. A third-party invite stores no account and MUST omit it, or the
+    /// registered `stored_field_matches_payload` pre-state requirement rejects
+    /// the Move (`governance-objects.md` section 5.3).
     pub async fn accept_realm_invite(
         &self,
         realm_id: &str,
         actor_id: &str,
         invite_id: &str,
         invite_token: Option<&str>,
+        invitee_account_id: Option<arkret_sdk::AccountId>,
     ) -> anyhow::Result<(SubmitEventResult, Option<String>)> {
         let http = self.sdk_http_client()?;
         let mut retry = arkret_retry::RetrySchedule::arkret_default();
@@ -48,8 +56,13 @@ impl crate::transport::TransportClient {
         // Only now construct the unsigned intent. A transient Directory
         // barrier therefore cannot create, sign, or replay an InviteAccept
         // Event against a predecessor basis that did not cover the Invite.
-        let event = crate::operation::ak_ops::invite_accept(realm_id, actor_id, invite_id)?
-            .build_sdk_event("inkson")?;
+        let event = crate::operation::ak_ops::invite_accept(
+            realm_id,
+            actor_id,
+            invite_id,
+            invitee_account_id,
+        )?
+        .build_sdk_event("inkson")?;
         let event = stamp_invite_join_seal_basis(event, candidate)?;
         let submit = self
             .submit_built_event_via_join_candidate(candidate, &event)

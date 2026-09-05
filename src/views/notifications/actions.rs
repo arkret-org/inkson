@@ -474,12 +474,22 @@ fn accept_invite_notification(
                     delivery_cell = Some(content);
                 }
             }
+            // This notification is raised from a directed private invite
+            // delivery, so the Invite stores this account and the accept both
+            // joins the Realm and releases the inviter Realm's live-target slot
+            // for it. A third-party invite reaches acceptance through
+            // `ak.invite.claim` instead and carries no account here.
+            let invitee_account_id = arkret_sdk::AccountId::new(
+                account.principal_id.clone(),
+                crate::operation::authoring_station_id()?,
+            );
             let (submit, accepted_title) = api
                 .accept_realm_invite(
                     &accepted_realm_for_api,
                     account.principal_id.as_str(),
                     &invite_id,
                     invite_token.as_deref(),
+                    Some(invitee_account_id),
                 )
                 .await?;
             // The accepted Event is the authoritative join boundary, but the

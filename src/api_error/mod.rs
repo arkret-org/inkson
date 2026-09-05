@@ -141,6 +141,9 @@ pub(crate) fn user_facing_error_key(error: &anyhow::Error) -> Option<&'static st
         if reason == ReasonCode::MLS_GOVERNANCE_BINDING_STALE {
             return Some("error.call.mls_governance_binding_stale");
         }
+        if reason == ReasonCode::INVITE_LIVE_TARGET_OCCUPIED {
+            return Some("error.invite.live_target_occupied");
+        }
         if matches!(
             reason,
             r if r == ReasonCode::PAIRING_REQUEST_EXPIRED
