@@ -10,7 +10,7 @@ use std::sync::{Mutex, OnceLock as SyncOnceLock, PoisonError};
 use std::time::Duration;
 
 #[cfg(test)]
-use arkret_sdk::ErrorEnvelope;
+use arkret_sdk::Problem;
 use arkret_sdk::events::{CbaEffectPlane, cba_cell_family_plane};
 use arkret_wire::{CapabilityActionId, event_kind_str};
 #[cfg(test)]

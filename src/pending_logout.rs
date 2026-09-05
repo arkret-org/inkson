@@ -439,7 +439,7 @@ mod tests {
         ] {
             let error = arkret_sdk::http_client::Error::Api {
                 status,
-                error: Box::new(arkret_sdk::ErrorEnvelope::new(code, "terminal")),
+                error: Box::new(arkret_sdk::Problem::from_code(code, "terminal")),
             };
             assert!(
                 account_logout_error_is_terminal(&error),
@@ -458,7 +458,7 @@ mod tests {
         ] {
             let error = arkret_sdk::http_client::Error::Api {
                 status,
-                error: Box::new(arkret_sdk::ErrorEnvelope::new(code, "retryable")),
+                error: Box::new(arkret_sdk::Problem::from_code(code, "retryable")),
             };
             assert!(
                 !account_logout_error_is_terminal(&error),

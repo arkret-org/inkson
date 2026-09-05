@@ -14,7 +14,7 @@ fn problem_body(status: StatusCode, code: &str, detail: &str) -> Vec<u8> {
     .unwrap()
 }
 
-fn decode_problem(status: StatusCode, code: &str, detail: &str) -> arkret_sdk::ErrorEnvelope {
+fn decode_problem(status: StatusCode, code: &str, detail: &str) -> arkret_sdk::Problem {
     decode_arkret_error(status, &problem_body(status, code, detail))
 }
 
@@ -41,16 +41,16 @@ fn decodes_canonical_problem_details() {
     .unwrap();
     let decoded = decode_arkret_error(StatusCode::CONFLICT, &body);
     assert_eq!(decoded.code(), "expected_head_mismatch");
-    assert_eq!(decoded.message(), "expected_head mismatch");
+    assert_eq!(decoded.detail, "expected_head mismatch");
     assert_eq!(decoded.retry_after_ms(), Some(250));
-    assert_eq!(decoded.details()["scope"], "repo");
+    assert_eq!(decoded.extensions["scope"], "repo");
 }
 
 #[test]
 fn non_problem_response_falls_back_to_http_status() {
     let fallback = decode_arkret_error(StatusCode::SERVICE_UNAVAILABLE, b"busy");
     assert_eq!(fallback.code(), "http_status");
-    assert!(fallback.message().contains("503 Service Unavailable"));
+    assert!(fallback.detail.contains("503 Service Unavailable"));
 }
 
 #[test]
@@ -67,13 +67,10 @@ fn decodes_canonical_error_envelope_with_request_id() {
     let decoded = decode_arkret_error(StatusCode::FORBIDDEN, &body);
 
     assert_eq!(decoded.code(), "capability_denied");
+    assert_eq!(decoded.detail, "actor is not a member of the event Space");
     assert_eq!(
-        decoded.message(),
-        "actor is not a member of the event Space"
-    );
-    assert_eq!(
-        decoded.request_id,
-        "ak:request:01964137-0000-7000-8000-000000000010"
+        decoded.instance.as_deref(),
+        Some("ak:request:01964137-0000-7000-8000-000000000010")
     );
 }
 

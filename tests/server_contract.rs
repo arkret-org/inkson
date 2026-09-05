@@ -522,7 +522,7 @@ fn inkson_accepts_server_contract_payloads() {
         ),
     );
     assert_eq!(error.code(), "expected_head_mismatch");
-    assert_eq!(error.message(), "expected_head mismatch");
+    assert_eq!(error.detail, "expected_head mismatch");
 }
 
 #[test]
@@ -945,11 +945,11 @@ fn decoder_handles_problem_and_non_problem() {
     assert_eq!(decoded.code(), "expected_head_mismatch");
     assert_eq!(decoded.retry_after_ms(), Some(250));
     assert_eq!(
-        decoded.details()["cell"],
+        decoded.extensions["cell"],
         "ak:cell:ak.component.strand.position.v1:demo"
     );
 
     let fallback = decode_arkret_error(StatusCode::SERVICE_UNAVAILABLE, b"<html>busy</html>");
     assert_eq!(fallback.code(), "http_status");
-    assert!(fallback.message().contains("503"));
+    assert!(fallback.detail.contains("503"));
 }

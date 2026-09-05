@@ -110,7 +110,7 @@ fn classify_returning_session_exchange_error(error: garth::Error) -> ReturningSe
         garth::Error::Http(_) => ReturningSessionExchangeError::Retryable(message),
         garth::Error::Api { status, error }
             if *status >= 500
-                || error.error.error_code()
+                || error.error_code()
                     == Some(
                         arkret_sdk::error_codes::ErrorCode::SessionGrantReplayIndeterminate,
                     ) =>
@@ -118,12 +118,12 @@ fn classify_returning_session_exchange_error(error: garth::Error) -> ReturningSe
             ReturningSessionExchangeError::Retryable(message)
         }
         garth::Error::Api { error, .. }
-            if error.error.error_code()
+            if error.error_code()
                 == Some(arkret_sdk::error_codes::ErrorCode::DeviceUnauthorized) =>
         {
             ReturningSessionExchangeError::DeviceSetupRequired(message)
         }
-        garth::Error::Api { error, .. } => match error.error.error_code() {
+        garth::Error::Api { error, .. } => match error.error_code() {
             Some(arkret_sdk::error_codes::ErrorCode::PrincipalUnknown) => {
                 ReturningSessionExchangeError::Fatal(format!(
                     "{message}. No new identity was created. Use recovery or diagnostics to inspect this bound account."
@@ -2586,7 +2586,7 @@ mod tests {
     fn api_exchange_error(status: u16, code: &str) -> garth::Error {
         garth::Error::Api {
             status,
-            error: Box::new(arkret_sdk::ErrorEnvelope::new(code, "fixture")),
+            error: Box::new(arkret_sdk::Problem::from_code(code, "fixture")),
         }
     }
 

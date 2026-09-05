@@ -578,7 +578,7 @@ mod tests {
     fn api_error(status: u16, code: &str) -> anyhow::Error {
         anyhow::Error::new(arkret_sdk::http_client::Error::Api {
             status,
-            error: Box::new(arkret_wire::ErrorEnvelope::new(code, "test error")),
+            error: Box::new(arkret_wire::Problem::from_code(code, "test error")),
         })
     }
 

@@ -340,8 +340,7 @@ async fn fetch_proof_with_retry(
 fn projection_pending(error: &http_client::Error) -> bool {
     match error {
         http_client::Error::Api { status: 409, error } => {
-            error.code() == "state_mismatch"
-                && error.message().to_ascii_lowercase().contains("bottom")
+            error.code() == "state_mismatch" && error.detail.to_ascii_lowercase().contains("bottom")
         }
         http_client::Error::Api { status: 503, error } => {
             error.code() == arkret_sdk::error_codes::ErrorCode::FRONTIER_UNAVAILABLE

@@ -1549,10 +1549,10 @@ fn account_data_conflict_snapshot(
     let arkret_sdk::http_client::Error::Api { status: 409, error } = error else {
         return Ok(None);
     };
-    if error.error.code != "cas_conflict" {
+    if error.code() != "cas_conflict" {
         return Ok(None);
     }
-    account_data_snapshot_from_details(type_key, &error.error.details).map(Some)
+    account_data_snapshot_from_details(type_key, &error.extensions).map(Some)
 }
 
 pub(crate) async fn account_data_snapshot(
@@ -1570,7 +1570,7 @@ pub(crate) async fn account_data_snapshot(
             })
         }
         Err(arkret_sdk::http_client::Error::Api { status: 404, error }) => {
-            account_data_snapshot_from_details(type_key, &error.error.details)
+            account_data_snapshot_from_details(type_key, &error.extensions)
         }
         Err(error) => Err(error.into()),
     }
@@ -1914,10 +1914,10 @@ mod tests {
         let error = arkret_sdk::http_client::Error::Api {
             status: 409,
             error: Box::new(
-                arkret_wire::ErrorEnvelope::new("cas_conflict", "expected_revision does not match")
-                    .with_detail("account_data_key", json!("ak.client.ui_state"))
-                    .with_detail("current_revision", json!(8))
-                    .with_detail("current_entry", current_entry),
+                arkret_wire::Problem::from_code("cas_conflict", "expected_revision does not match")
+                    .with_extension("account_data_key", json!("ak.client.ui_state"))
+                    .with_extension("current_revision", json!(8))
+                    .with_extension("current_entry", current_entry),
             ),
         };
 
@@ -1936,10 +1936,10 @@ mod tests {
         let error = arkret_sdk::http_client::Error::Api {
             status: 409,
             error: Box::new(
-                arkret_wire::ErrorEnvelope::new("cas_conflict", "expected_revision does not match")
-                    .with_detail("account_data_key", json!("ak.client.ui_state"))
-                    .with_detail("current_revision", json!(8))
-                    .with_detail(
+                arkret_wire::Problem::from_code("cas_conflict", "expected_revision does not match")
+                    .with_extension("account_data_key", json!("ak.client.ui_state"))
+                    .with_extension("current_revision", json!(8))
+                    .with_extension(
                         "current_entry",
                         json!({
                             "account_data_key": "ak.client.ui_state",

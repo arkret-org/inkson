@@ -2,7 +2,7 @@
 //! session-loss / device-authorization / cursor / frontier / rate-limit /
 //! visibility-policy predicates, and the `wait_for` sync-token normalizer.
 
-use arkret_sdk::ErrorEnvelope;
+use arkret_sdk::Problem;
 use reqwest::StatusCode;
 
 use super::api_error_status_and_envelope;
@@ -49,9 +49,9 @@ pub(crate) fn is_invite_lifecycle_frontier_pending_error(error: &anyhow::Error) 
 pub fn is_mls_keypackage_not_found_error(error: &anyhow::Error) -> bool {
     api_error_status_and_envelope(error).is_some_and(|(_, envelope)| {
         envelope.code() == "mls_keypackage_not_found"
-            || envelope.message().contains("mls_keypackage_not_found")
+            || envelope.detail.contains("mls_keypackage_not_found")
             || envelope
-                .details()
+                .extensions
                 .get("reason_code")
                 .and_then(serde_json::Value::as_str)
                 == Some("mls_keypackage_not_found")
@@ -166,7 +166,7 @@ pub fn is_device_not_authorized_error(error: &anyhow::Error) -> bool {
 pub fn is_pcr_genesis_already_accepted_error(error: &anyhow::Error) -> bool {
     api_error_status_and_envelope(error).is_some_and(|(_, envelope)| {
         let reason = envelope
-            .details()
+            .extensions
             .get("reason_code")
             .and_then(serde_json::Value::as_str);
         matches!(
@@ -176,10 +176,10 @@ pub fn is_pcr_genesis_already_accepted_error(error: &anyhow::Error) -> bool {
                     | arkret_sdk::error_codes::ReasonCode::PCR_GENESIS_NOT_FIRST
             )
         ) || envelope
-            .message()
+            .detail
             .contains(arkret_sdk::error_codes::ReasonCode::PCR_GENESIS_CONFLICT)
             || envelope
-                .message()
+                .detail
                 .contains(arkret_sdk::error_codes::ReasonCode::PCR_GENESIS_NOT_FIRST)
     })
 }
@@ -191,14 +191,14 @@ pub fn is_pcr_genesis_already_accepted_error(error: &anyhow::Error) -> bool {
 pub fn is_identity_creation_challenge_expired_error(error: &anyhow::Error) -> bool {
     api_error_status_and_envelope(error).is_some_and(|(status, envelope)| {
         let reason = envelope
-            .details()
+            .extensions
             .get("reason_code")
             .and_then(serde_json::Value::as_str);
         status == StatusCode::CONFLICT
             && envelope.code() == arkret_sdk::error_codes::ErrorCode::FAILED_PRECONDITION
             && (reason == Some("identity_creation_challenge_expired")
                 || envelope
-                    .message()
+                    .detail
                     .contains("reason_code=identity_creation_challenge_expired"))
     })
 }
@@ -247,9 +247,9 @@ pub fn is_terminal_session_grant_refresh_error(error: &anyhow::Error) -> bool {
     })
 }
 
-fn is_terminal_session_grant_api_error(status: StatusCode, envelope: &ErrorEnvelope) -> bool {
+fn is_terminal_session_grant_api_error(status: StatusCode, envelope: &Problem) -> bool {
     let code = envelope.code();
-    let message = envelope.message().to_ascii_lowercase();
+    let message = envelope.detail.to_ascii_lowercase();
     (status == StatusCode::FORBIDDEN || status == StatusCode::UNAUTHORIZED)
         && (code == arkret_sdk::error_codes::ErrorCode::CAPABILITY_DENIED
             || code.ends_with(".capability_denied")
@@ -309,10 +309,10 @@ pub fn actor_seq_cas_conflict_details(
         })
         .then(|| {
             serde_json::to_value(
-                api_error_status_and_envelope(error)
+                &api_error_status_and_envelope(error)
                     .expect("checked above")
                     .1
-                    .details(),
+                    .extensions,
             )
             .ok()
             .and_then(|value| serde_json::from_value(value).ok())
@@ -350,12 +350,12 @@ pub(crate) fn is_mls_governance_binding_stale_error(error: &anyhow::Error) -> bo
     api_error_status_and_envelope(error).is_some_and(|(status, envelope)| {
         let outer_code = envelope.code() == arkret_sdk::error_codes::ErrorCode::FAILED_PRECONDITION;
         let stable_reason = envelope
-            .details()
+            .extensions
             .get("reason_code")
             .and_then(serde_json::Value::as_str)
             == Some(arkret_sdk::error_codes::ReasonCode::MLS_GOVERNANCE_BINDING_STALE)
             || envelope
-                .message()
+                .detail
                 .contains(arkret_sdk::error_codes::ReasonCode::MLS_GOVERNANCE_BINDING_STALE);
         status == StatusCode::CONFLICT && outer_code && stable_reason
     })
@@ -368,14 +368,14 @@ pub fn is_plaintext_visibility_policy_error(error: &anyhow::Error) -> bool {
             && (code == arkret_sdk::error_codes::ErrorCode::POLICY_DENIED
                 || code == arkret_sdk::error_codes::ErrorCode::CAPABILITY_DENIED
                 || code.ends_with(".capability_denied"))
-            && envelope.message().contains("plaintext_visible_services")
+            && envelope.detail.contains("plaintext_visible_services")
     })
 }
 
 pub fn is_space_membership_denied_error(error: &anyhow::Error) -> bool {
     api_error_status_and_envelope(error).is_some_and(|(status, envelope)| {
         let code = envelope.code();
-        let message = envelope.message().to_ascii_lowercase();
+        let message = envelope.detail.to_ascii_lowercase();
         status == StatusCode::FORBIDDEN
             && (code == arkret_sdk::error_codes::ErrorCode::CAPABILITY_DENIED
                 || code.ends_with(".capability_denied"))
@@ -411,7 +411,7 @@ mod tests {
     fn api_error(status: u16, code: &str) -> anyhow::Error {
         anyhow::Error::new(arkret_sdk::http_client::Error::Api {
             status,
-            error: Box::new(arkret_sdk::ErrorEnvelope::new(
+            error: Box::new(arkret_sdk::Problem::from_code(
                 code,
                 "recovery policy Seal coverage is pending",
             )),

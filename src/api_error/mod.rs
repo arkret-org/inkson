@@ -1,4 +1,4 @@
-use arkret_sdk::ErrorEnvelope;
+use arkret_sdk::Problem;
 use reqwest::StatusCode;
 use serde_json::Value;
 
@@ -10,12 +10,12 @@ pub use classify::*;
 #[error("Arkret API returned {status}: {error}")]
 pub struct TransportClientError {
     pub status: StatusCode,
-    pub error: ErrorEnvelope,
+    pub error: Problem,
 }
 
 pub(crate) fn api_error_status_and_envelope(
     error: &anyhow::Error,
-) -> Option<(StatusCode, &ErrorEnvelope)> {
+) -> Option<(StatusCode, &Problem)> {
     for cause in error.chain() {
         if let Some(api_error) = cause.downcast_ref::<TransportClientError>() {
             return Some((api_error.status, &api_error.error));
@@ -50,7 +50,7 @@ pub(crate) fn display_with_reason_detail(error: &anyhow::Error) -> String {
         return rendered;
     };
     let Some(detail) = envelope
-        .details()
+        .extensions
         .get("reason_detail")
         .and_then(Value::as_str)
         .filter(|detail| !detail.trim().is_empty())
@@ -128,7 +128,7 @@ pub(crate) fn user_facing_error_key(error: &anyhow::Error) -> Option<&'static st
     // api-conventions.md §5 registers `reason_code`; a bare `reason` would be a
     // second dispatch track and is deliberately not read.
     let reason = envelope
-        .details()
+        .extensions
         .get("reason_code")
         .and_then(Value::as_str);
     if let Some(reason) = reason {
@@ -259,7 +259,7 @@ pub(crate) fn user_facing_error_key(error: &anyhow::Error) -> Option<&'static st
 }
 
 /// Decode a canonical RFC 9457 Arkret Problem response into an SDK
-/// [`ErrorEnvelope`]. If it does not match the single current wire shape, we
+/// [`Problem`]. If it does not match the single current wire shape, we
 /// synthesise a minimal envelope tagged
 /// `ak.error.http_status` so downstream code always has something
 /// well-formed to surface.
@@ -270,11 +270,11 @@ pub(crate) fn user_facing_error_key(error: &anyhow::Error) -> Option<&'static st
 /// it up without each call site needing to wire its own UI. The
 /// obligations array is pulled from
 /// the envelope's `details["obligations"]` slot if present.
-pub fn decode_arkret_error(status: StatusCode, bytes: &[u8]) -> ErrorEnvelope {
-    let envelope = if let Ok(plain) = serde_json::from_slice::<ErrorEnvelope>(bytes) {
+pub fn decode_arkret_error(status: StatusCode, bytes: &[u8]) -> Problem {
+    let envelope = if let Ok(plain) = serde_json::from_slice::<Problem>(bytes) {
         plain
     } else {
-        ErrorEnvelope::new(
+        Problem::from_code(
             "http_status",
             format!("HTTP request failed with status {status}"),
         )
@@ -282,13 +282,13 @@ pub fn decode_arkret_error(status: StatusCode, bytes: &[u8]) -> ErrorEnvelope {
 
     maybe_dispatch_policy_deny(status, &envelope);
     let reason = envelope
-        .details()
+        .extensions
         .get("reason_code")
         .and_then(|v| v.as_str());
     crate::components::maybe_dispatch_circle_error(envelope.code(), reason);
     tracing::warn!(
         target: "inkson.api",
-        request_id = %envelope.request_id,
+        request_id = envelope.instance.as_deref().unwrap_or("-"),
         status = %status.as_u16(),
         code = %envelope.code(),
         "arkret error envelope decoded"
@@ -302,7 +302,7 @@ pub fn decode_arkret_error(status: StatusCode, bytes: &[u8]) -> ErrorEnvelope {
 ///
 /// Skips auth-expired codes (those have their own session-death
 /// redirect path) and any non-403 statuses.
-pub(crate) fn maybe_dispatch_policy_deny(status: StatusCode, envelope: &ErrorEnvelope) {
+pub(crate) fn maybe_dispatch_policy_deny(status: StatusCode, envelope: &Problem) {
     if status != StatusCode::FORBIDDEN {
         return;
     }
@@ -314,14 +314,14 @@ pub(crate) fn maybe_dispatch_policy_deny(status: StatusCode, envelope: &ErrorEnv
     // per the signed-transcript shape) or under a top-level
     // `obligations` field on the envelope itself. We honour both.
     let obligations: Vec<Value> = envelope
-        .details()
+        .extensions
         .get("obligations")
         .and_then(|v| v.as_array())
         .cloned()
         .unwrap_or_default();
     crate::components::push_policy_deny_toast(
         code.to_owned(),
-        envelope.message().to_owned(),
+        envelope.detail.to_owned(),
         obligations,
     );
 }
@@ -332,11 +332,11 @@ mod tests {
 
     #[test]
     fn diagnostic_display_includes_returned_reason_detail() {
-        let envelope = ErrorEnvelope::new(
+        let envelope = Problem::from_code(
             "direct_conversation_unavailable",
             "direct conversation is unavailable",
         )
-        .with_detail(
+        .with_extension(
             "reason_detail",
             Value::String("owned Agent controller binding is stale".to_owned()),
         );
@@ -354,7 +354,7 @@ mod tests {
     fn api_error_display_is_unchanged_without_reason_detail() {
         let error = anyhow::Error::new(arkret_sdk::http_client::Error::Api {
             status: 412,
-            error: Box::new(ErrorEnvelope::new(
+            error: Box::new(Problem::from_code(
                 "direct_conversation_unavailable",
                 "direct conversation is unavailable",
             )),
@@ -374,11 +374,11 @@ mod tests {
 
     #[test]
     fn user_facing_display_hides_raw_envelope_and_reason_detail() {
-        let envelope = ErrorEnvelope::new(
+        let envelope = Problem::from_code(
             "direct_conversation_unavailable",
             "direct conversation is unavailable",
         )
-        .with_detail(
+        .with_extension(
             "reason_detail",
             Value::String("owned Agent controller binding is stale".to_owned()),
         );
@@ -425,11 +425,11 @@ mod tests {
 
     #[test]
     fn user_facing_key_maps_typed_reason_codes() {
-        let envelope = ErrorEnvelope::new(
+        let envelope = Problem::from_code(
             arkret_sdk::error_codes::ErrorCode::FAILED_PRECONDITION,
             "security_frontier_digest is stale",
         )
-        .with_detail(
+        .with_extension(
             "reason_code",
             Value::String(
                 arkret_sdk::error_codes::ReasonCode::MLS_GOVERNANCE_BINDING_STALE.to_owned(),
@@ -462,8 +462,8 @@ mod tests {
         let bottom = anyhow::Error::new(arkret_sdk::http_client::Error::Api {
             status: 409,
             error: Box::new(
-                ErrorEnvelope::new(ErrorCode::STATE_MISMATCH, "realm cell is in Bottom state")
-                    .with_detail(
+                Problem::from_code(ErrorCode::STATE_MISMATCH, "realm cell is in Bottom state")
+                    .with_extension(
                         "reason_code",
                         Value::String(ReasonCode::CELL_IN_BOTTOM_STATE.to_owned()),
                     ),
@@ -515,7 +515,7 @@ mod tests {
     fn sdk_api_error(status: u16, code: &str) -> anyhow::Error {
         anyhow::Error::new(arkret_sdk::http_client::Error::Api {
             status,
-            error: Box::new(ErrorEnvelope::new(code, code)),
+            error: Box::new(Problem::from_code(code, code)),
         })
     }
 
@@ -570,11 +570,11 @@ mod tests {
 
     #[test]
     fn mls_stale_classifier_accepts_canonical_typed_reason() {
-        let envelope = ErrorEnvelope::new(
+        let envelope = Problem::from_code(
             arkret_sdk::error_codes::ErrorCode::FAILED_PRECONDITION,
             "security_frontier_digest is stale",
         )
-        .with_detail(
+        .with_extension(
             "reason_code",
             Value::String(
                 arkret_sdk::error_codes::ReasonCode::MLS_GOVERNANCE_BINDING_STALE.to_owned(),
@@ -590,7 +590,7 @@ mod tests {
 
     #[test]
     fn mls_stale_classifier_rejects_wrong_outer_code() {
-        let envelope = ErrorEnvelope::new(
+        let envelope = Problem::from_code(
             arkret_sdk::error_codes::ErrorCode::POLICY_VIOLATION,
             arkret_sdk::error_codes::ReasonCode::MLS_GOVERNANCE_BINDING_STALE,
         );
@@ -604,7 +604,7 @@ mod tests {
 
     #[test]
     fn mls_stale_classifier_rejects_unrelated_policy_violation() {
-        let envelope = ErrorEnvelope::new(
+        let envelope = Problem::from_code(
             arkret_sdk::error_codes::ErrorCode::POLICY_VIOLATION,
             "ordinary policy denial",
         );
@@ -620,7 +620,7 @@ mod tests {
     fn identity_creation_expired_classifier_accepts_coauth_wire_message() {
         let error = anyhow::Error::new(arkret_sdk::http_client::Error::Api {
             status: 409,
-            error: Box::new(ErrorEnvelope::new(
+            error: Box::new(Problem::from_code(
                 arkret_sdk::error_codes::ErrorCode::FAILED_PRECONDITION,
                 "reason_code=identity_creation_challenge_expired; lease, fence, reservation, or challenge is stale",
             )),

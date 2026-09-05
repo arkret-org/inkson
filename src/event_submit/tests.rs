@@ -1438,19 +1438,19 @@ fn actor_seq_cas_conflict_classifier_is_narrow() {
     let details = serde_json::to_value(details).unwrap();
     let cas: anyhow::Error = TransportClientError {
         status: StatusCode::CONFLICT,
-        error: ErrorEnvelope::new(
+        error: Problem::from_code(
             "cas_conflict",
             "actor_seq is older than the accepted actor frontier",
         )
-        .with_detail("accepted", details["accepted"].clone())
-        .with_detail("current_frontier", details["current_frontier"].clone()),
+        .with_extension("accepted", details["accepted"].clone())
+        .with_extension("current_frontier", details["current_frontier"].clone()),
     }
     .into();
     assert!(crate::api_error::is_actor_seq_cas_conflict_error(&cas));
 
     let different_conflict: anyhow::Error = TransportClientError {
         status: StatusCode::CONFLICT,
-        error: ErrorEnvelope::new("cas_conflict", "expected head mismatch"),
+        error: Problem::from_code("cas_conflict", "expected head mismatch"),
     }
     .into();
     assert!(!crate::api_error::is_actor_seq_cas_conflict_error(

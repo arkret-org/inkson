@@ -187,7 +187,7 @@ mod tests {
     fn resolve_api_error(status: u16, code: &str) -> anyhow::Error {
         anyhow::Error::new(arkret_sdk::http_client::Error::Api {
             status,
-            error: Box::new(arkret_sdk::ErrorEnvelope::new(code, code)),
+            error: Box::new(arkret_sdk::Problem::from_code(code, code)),
         })
     }
 
