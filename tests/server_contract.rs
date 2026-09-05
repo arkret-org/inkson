@@ -54,15 +54,15 @@ fn snapshot_contract_manifest_payload() -> serde_json::Value {
     let realm_id =
         arkret_sdk::RealmId::new("ak:realm:AeI0Z4D734iPt9RpF51PAg0CRjLSQmxPqv9NgUmBJiQi").unwrap();
     let service_id = arkret_sdk::DidCoreId::new("ak:did_core:web:server.local").unwrap();
-    let items = vec![arkret_sdk::SnapshotMaterializedItem {
-        kind: "realm".to_owned(),
-        id: realm_id.to_string(),
-        object: json!({
+    let items = vec![arkret_sdk::SnapshotMaterializedItem::object(
+        "realm".to_owned(),
+        realm_id.to_string(),
+        json!({
             "id": realm_id.to_string(),
             "title": "Contract Snapshot Realm"
         }),
-        source_event_id: snapshot_contract_event_id("0000000000c1"),
-    }];
+        snapshot_contract_event_id("0000000000c1"),
+    )];
     let state_digest = arkret_sdk::state_digest_from_items(&items).unwrap();
     let built = arkret_sdk::build_snapshot_chunks(
         &snapshot_id,

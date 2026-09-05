@@ -326,12 +326,12 @@ fn member_handle_cache_records_fresh_negative_lookup() {
 /// Nothing here is assembled locally.
 #[test]
 fn witness_attestations_are_built_from_the_sdk_witness_projection() {
-    let items = vec![arkret_sdk::SnapshotMaterializedItem {
-        kind: "realm".to_owned(),
-        id: "ak:realm:AZEvldDJcWI9IRHqP2BMibDDfc59Ax_LwrbsrQmeD6Ml".to_owned(),
-        object: json!({ "title": "Witnessed Realm" }),
-        source_event_id: snapshot_event_id("0000000000a2"),
-    }];
+    let items = vec![arkret_sdk::SnapshotMaterializedItem::object(
+        "realm".to_owned(),
+        "ak:realm:AZEvldDJcWI9IRHqP2BMibDDfc59Ax_LwrbsrQmeD6Ml".to_owned(),
+        json!({ "title": "Witnessed Realm" }),
+        snapshot_event_id("0000000000a2"),
+    )];
     let (mut manifest, _chunks) = snapshot_manifest_for_items(items);
     // A non-witness-quorum manifest carries no attestations at all.
     manifest.validate_witness_attestation_shape().unwrap();
