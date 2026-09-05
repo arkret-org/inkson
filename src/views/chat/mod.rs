@@ -423,7 +423,7 @@ async fn resolve_agent_selector_mentions(
         // to do was a guess with two failure modes the ruling names: it
         // silently excluded an authorized agent that is not a Realm member,
         // and it had no answer when the same principal held accounts on two
-        // Stations. Ruling `review/spec-done/2026-09-05-1310`.
+        // Stations. Ruling `review/spec-done/2026-09-05-1310-agent-selector-mention-has-no-normative-station-source.md`.
         let subject_account_id = outcome.subject_account_id.clone();
         // The controller half is optional audit metadata and its authoritative
         // source is the verified controller handle claim, not the roster. When
