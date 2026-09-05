@@ -13,17 +13,44 @@
 
 use inkson::operation::LocalOperation;
 
+/// The `did:key` multibase of a Principal Control Realm's inception root key.
+///
+/// Mirrors `event_builders::test_inception_root_key_multibase` for the same
+/// reason [`test_notary`] is duplicated: these tests are built only from
+/// `inkson`'s public surface.
+pub fn test_inception_root_key_multibase(principal_did: &str) -> String {
+    arkret_sdk::ed25519_pubkey_to_did_key_multibase(
+        arkret_signatures::development_verifying_key(&format!("{principal_did}#inception-root"))
+            .as_bytes(),
+    )
+}
+
+/// The Realm's designated notary, on the shared development key derivation.
+///
+/// Nothing here verifies a notary signature: the value rides inside the Realm
+/// genesis object and is only ever digested. The key is still a real Ed25519
+/// verification key rather than a constant byte pattern, because a made-up one
+/// is not a curve point at all — `[7u8; 32]`, which this used to publish, does
+/// not decompress. That only stayed invisible because
+/// `NotarySignerDescriptor::validate` checks length and encoding without
+/// decompressing, so the fixture would have reached a real verifier and failed
+/// for the wrong reason. The private half is
+/// `arkret_signatures::development_signing_key("{signer_did}#notary")`, so a
+/// case that does need this notary to sign can get there without a new
+/// constant.
 pub fn test_notary(signer_did: &str) -> arkret_sdk::NotaryValue {
     let did = arkret_sdk::Did::new(signer_did.to_owned()).expect("test notary DID is canonical");
     let actor_id =
         arkret_sdk::project_did_to_core_id(&did).expect("test notary DID projects to a core id");
-    let public_key = [7_u8; 32];
+    let verification_method = arkret_sdk::DidUrl::new(format!("{signer_did}#notary"))
+        .expect("test notary method is canonical");
+    let public_key =
+        arkret_signatures::development_verifying_key(verification_method.as_str()).to_bytes();
     let descriptor = arkret_sdk::NotarySignerDescriptor {
         actor_id: arkret_sdk::ActorId::Service {
             service_id: actor_id,
         },
-        verification_method: arkret_sdk::DidUrl::new(format!("{signer_did}#notary"))
-            .expect("test notary method is canonical"),
+        verification_method,
         key_kind: arkret_sdk::NotaryKeyKind::Ed25519Raw32,
         jose_algorithm: arkret_sdk::NotaryJoseAlgorithm::Ed25519,
         frozen_public_key_b64u: arkret_sdk::base64url_encode(public_key),

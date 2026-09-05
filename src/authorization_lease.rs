@@ -1050,7 +1050,7 @@ mod tests {
         let did = arkret_sdk::Did::new("did:web:alice.example").unwrap();
         let notary = crate::event_builders::agent_inception_notary(
             &did,
-            &arkret_sdk::ed25519_pubkey_to_did_key_multibase(&[7_u8; 32]),
+            &crate::event_builders::test_inception_root_key_multibase(did.as_str()),
         )
         .unwrap();
         let genesis = arkret_sdk::RealmGenesis::principal_control(
@@ -1164,7 +1164,9 @@ mod tests {
                 },
                 crate::event_builders::agent_inception_notary(
                     &arkret_sdk::Did::new("did:web:agent.example").unwrap(),
-                    &arkret_sdk::ed25519_pubkey_to_did_key_multibase(&[7_u8; 32]),
+                    &crate::event_builders::test_inception_root_key_multibase(
+                        "did:web:agent.example",
+                    ),
                 )
                 .unwrap(),
                 "did:web:alice.example",

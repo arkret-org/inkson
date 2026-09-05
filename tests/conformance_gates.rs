@@ -742,7 +742,7 @@ fn realm_bootstrap_carries_alias_as_a_facet_event_not_on_the_closed_realm_object
 fn agent_pcr_prepare_builds_an_exact_ref_free_create() {
     select_authoring_station();
     let agent_did = arkret_sdk::Did::new("did:web:agent.example").unwrap();
-    let root_public_key = arkret_sdk::ed25519_pubkey_to_did_key_multibase(&[7_u8; 32]);
+    let root_public_key = common::test_inception_root_key_multibase(agent_did.as_str());
     let events = common::author_unit(
         event_builders::build_agent_pcr_bootstrap_steps(
             agent_did.as_str(),

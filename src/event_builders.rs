@@ -388,17 +388,40 @@ pub(crate) fn parse_wire_enum<T: serde::de::DeserializeOwned>(
         .map_err(|err| anyhow::anyhow!("invalid {field} {value:?}: {err}"))
 }
 
+/// The `did:key` multibase of a Principal Control Realm's inception root key.
+///
+/// A real Ed25519 verification key on the shared development derivation. The
+/// constant this replaced, `[7u8; 32]`, does not decompress to a curve point,
+/// so `decode_ed25519_multibase` handed `agent_inception_notary` a frozen key
+/// no signature could ever be checked against.
+#[cfg(test)]
+pub(crate) fn test_inception_root_key_multibase(principal_did: &str) -> String {
+    arkret_sdk::ed25519_pubkey_to_did_key_multibase(
+        arkret_signatures::development_verifying_key(&format!("{principal_did}#inception-root"))
+            .as_bytes(),
+    )
+}
+
+/// The Realm's designated notary, on the shared development key derivation.
+///
+/// See `tests/common/mod.rs::test_notary`: the two fixtures are deliberate
+/// duplicates because the integration tests are built only from this crate's
+/// public surface. The key is a real Ed25519 verification key — a constant byte
+/// pattern such as `[7u8; 32]` does not decompress to a curve point, and
+/// `NotarySignerDescriptor::validate` does not catch that today.
 #[cfg(test)]
 pub(crate) fn test_single_signer_notary(
     signer_did: &str,
 ) -> anyhow::Result<arkret_sdk::NotaryValue> {
     let did = arkret_sdk::Did::new(signer_did.to_owned())?;
     let actor_id = arkret_sdk::ActorId::service(arkret_sdk::project_did_to_core_id(&did)?);
-    let public_key = [7_u8; 32];
+    let verification_method =
+        arkret_sdk::DidUrl::new(format!("{signer_did}#notary")).map_err(anyhow::Error::msg)?;
+    let public_key =
+        arkret_signatures::development_verifying_key(verification_method.as_str()).to_bytes();
     let descriptor = arkret_sdk::NotarySignerDescriptor {
         actor_id,
-        verification_method: arkret_sdk::DidUrl::new(format!("{signer_did}#notary"))
-            .map_err(anyhow::Error::msg)?,
+        verification_method,
         key_kind: arkret_sdk::NotaryKeyKind::Ed25519Raw32,
         jose_algorithm: arkret_sdk::NotaryJoseAlgorithm::Ed25519,
         frozen_public_key_b64u: arkret_sdk::base64url_encode(public_key),
@@ -1736,7 +1759,7 @@ mod notary_derivation_tests {
 
     fn agent_notary() -> arkret_sdk::NotaryValue {
         let did = arkret_sdk::Did::new("did:web:agent.example").unwrap();
-        let root = arkret_sdk::ed25519_pubkey_to_did_key_multibase(&[7_u8; 32]);
+        let root = test_inception_root_key_multibase(did.as_str());
         agent_inception_notary(&did, &root).unwrap()
     }
 

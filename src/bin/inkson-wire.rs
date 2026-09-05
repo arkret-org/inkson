@@ -693,17 +693,23 @@ fn control_proposal_ack(input: Value) -> Result<Value> {
     let proposal_digest =
         arkret_sdk::Hash::new(event.event_digest_with_digest_suite(input.digest_suite)?)
             .context("construct proposal Event digest")?;
-    let notary_public_key = [2_u8; 32];
+    // The notary this Ack names is a development identity on the shared
+    // derivation, not a constant: `[2u8; 32]` is not an Ed25519 curve point, and
+    // `NotarySignerDescriptor::validate` does not decompress, so publishing one
+    // produced an authority set no verifier could ever resolve.
+    let notary_verification_method =
+        arkret_sdk::DidUrl::new("did:web:server.local#notary".to_owned())
+            .map_err(anyhow::Error::msg)?;
+    let notary_public_key =
+        arkret_signatures::development_verifying_key(notary_verification_method.as_str())
+            .to_bytes();
     let authority_set_ref = arkret_sdk::Hash::new(
         arkret_sdk::canonical::canonical_sha256(&arkret_sdk::NotaryValue::single_signer(
             arkret_sdk::NotarySignerDescriptor {
                 actor_id: arkret_sdk::ActorId::service(arkret_sdk::DidCoreId::new(
                     "ak:did_core:web:server.local".to_owned(),
                 )?),
-                verification_method: arkret_sdk::DidUrl::new(
-                    "did:web:server.local#notary".to_owned(),
-                )
-                .map_err(anyhow::Error::msg)?,
+                verification_method: notary_verification_method,
                 key_kind: arkret_sdk::NotaryKeyKind::Ed25519Raw32,
                 jose_algorithm: arkret_sdk::NotaryJoseAlgorithm::Ed25519,
                 frozen_public_key_b64u: arkret_sdk::base64url_encode(notary_public_key),
