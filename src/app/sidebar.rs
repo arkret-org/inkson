@@ -529,11 +529,13 @@ pub(super) fn delete_sidebar_contact(
     mut direct_contacts_loaded: Signal<bool>,
 ) {
     let peer_label = serde_json::from_str::<arkret_sdk::ActorId>(&peer)
-        .map(|actor| {
-            crate::views::helpers::actor_display_label(
-                &state_store.read(),
-                actor.signing_principal_id().as_str(),
-            )
+        .map(|actor| match actor {
+            arkret_sdk::ActorId::Account { account_id } => {
+                crate::views::helpers::account_display_label(&state_store.read(), &account_id)
+            }
+            arkret_sdk::ActorId::Service { service_id } => {
+                crate::views::helpers::actor_display_label(&state_store.read(), service_id.as_str())
+            }
         })
         .unwrap_or_else(|_| crate::views::helpers::short_protocol_id(&peer));
     crate::components::feedback::toast_info(

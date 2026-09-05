@@ -72,18 +72,21 @@ impl LocalStateStore {
     /// Return a fresh cached primary handle lookup for a subject in a Realm
     /// display context. `Some(entry)` with `entry.primary_handle == None` is
     /// a fresh negative cache entry; callers should not immediately re-query.
+    ///
+    /// The subject is the exact `AccountId`; `discovery/discovery-directory.md`
+    /// forbids merging the same principal's other Station account, so there is
+    /// no principal-only lookup form.
     pub fn cached_member_handle_lookup(
         &self,
-        subject_id: &str,
+        subject_account_id: &arkret_sdk::AccountId,
         realm_id: Option<&str>,
         member_display_state_digest: Option<&str>,
     ) -> Option<MemberHandleCacheEntry> {
-        let subject_id = subject_id.trim();
-        if subject_id.is_empty() {
+        if subject_account_id.validate().is_err() {
             return None;
         }
         let state = self.load();
-        let key = member_handle_cache_key(subject_id, realm_id);
+        let key = member_handle_cache_key(subject_account_id, realm_id);
         let entry = state.member_handle_cache.get(&key)?;
         if entry.cache_expires_at <= Utc::now() {
             return None;
@@ -106,7 +109,7 @@ impl LocalStateStore {
     /// negative-cache TTL so a render loop does not hammer the Directory.
     pub fn save_member_handle_lookup(
         &mut self,
-        subject_id: impl Into<String>,
+        subject_account_id: &arkret_sdk::AccountId,
         realm_id: Option<String>,
         member_display_state_digest: Option<String>,
         primary_handle: Option<String>,
@@ -115,9 +118,7 @@ impl LocalStateStore {
         earliest_claim_expires_at: Option<DateTime<Utc>>,
     ) {
         self.ensure_cached_loaded();
-        let subject_id = subject_id.into();
-        let subject_id = subject_id.trim();
-        if subject_id.is_empty() {
+        if subject_account_id.validate().is_err() {
             return;
         }
         let realm_id = realm_id
@@ -140,7 +141,7 @@ impl LocalStateStore {
             cache_expires_at = claim_expiry;
         }
         let entry = MemberHandleCacheEntry {
-            subject_id: subject_id.to_owned(),
+            subject_account_id: subject_account_id.clone(),
             realm_id: realm_id.clone(),
             primary_handle,
             claims_count,
@@ -151,7 +152,7 @@ impl LocalStateStore {
                 .map(|value| value.trim().to_owned())
                 .filter(|value| !value.is_empty()),
         };
-        let key = member_handle_cache_key(subject_id, realm_id.as_deref());
+        let key = member_handle_cache_key(subject_account_id, realm_id.as_deref());
         self.cached.member_handle_cache.insert(key, entry);
         let _ = self.flush();
     }

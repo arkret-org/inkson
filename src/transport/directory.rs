@@ -362,21 +362,27 @@ pub async fn resolve_handle(
 /// which fails closed unless every `claims[].subject` byte-equals the
 /// response `subject`.
 ///
+/// `discovery-directory.md` makes the exact `AccountId` the only admissible
+/// query input: both components are compared literally and the same
+/// principal's account at another Station MUST NOT be merged in. The caller
+/// therefore supplies the complete account; this function never assembles one
+/// from a principal plus the local Station.
+///
 /// `realm_id` / `intent` scope the disclosure policy; pass `None` for
 /// an unscoped lookup. `TODO`: thread `requester` /
 /// `proof_challenge` / `proofs` for proof-gated disclosure.
 pub async fn list_handles_for_subject(
     http: &arkret_sdk::http_client::Client,
-    subject: &str,
+    subject_account_id: &arkret_sdk::AccountId,
     realm_id: Option<&str>,
     intent: Option<arkret_models_discovery::DirectoryIntent>,
 ) -> anyhow::Result<arkret_models_discovery::DirectorySubjectHandleList> {
     use arkret_models_discovery::DirectoryListHandlesForSubjectRequestBody;
 
-    let subject_id = crate::mls_api_helpers::principal_core_id(subject)
-        .map_err(|err| anyhow::anyhow!("invalid subject DID `{subject}`: {err}"))?;
-    let account_id =
-        arkret_sdk::AccountId::new(subject_id, crate::operation::authoring_station_id()?);
+    subject_account_id
+        .validate()
+        .map_err(|err| anyhow::anyhow!("invalid subject account id: {err}"))?;
+    let account_id = subject_account_id.clone();
     let realm = match realm_id.map(str::trim).filter(|s| !s.is_empty()) {
         Some(r) => Some(
             arkret_sdk::RealmId::new(r)

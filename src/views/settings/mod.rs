@@ -3005,9 +3005,11 @@ pub fn SettingsPanel(
                     if can_list_handles_for_subject {
                         // YG-HC-2 / YG-DIR-1/2 — own visible handle claims +
                         // §3.2.1 primary handle via list_handles_for_subject.
+                        // The subject is this account authority, an exact
+                        // `AccountId`, never a principal plus a guessed Station.
                         crate::views::helpers::WhyThisHandlePanel {
                             token: token(),
-                            subject_id: principal_id(),
+                            subject_account_id: account_authority(),
                         }
                     }
                 }

@@ -325,6 +325,53 @@ fn member_display_label_prefers_inline_verified_handle_claim() {
     );
 }
 
+/// `identity-handles.md` §3.2 compares the whole `AccountId`. A claim bound to
+/// the same principal at another Station is not evidence about this member, so
+/// the inline path must decline it and let the display degrade rather than
+/// show a handle that belongs to a different subject.
+#[test]
+fn inline_handle_claim_for_another_station_is_not_this_members_handle() {
+    let principal = "ak:did_core:web:acme.example:principals:alice";
+    let here = fixture::authority_at_station(principal, "ak:did_core:web:station-a.example");
+    let elsewhere = fixture::authority_at_station(principal, "ak:did_core:web:station-b.example");
+    assert_eq!(here.principal_id, elsewhere.principal_id);
+    assert_ne!(here.station_id, elsewhere.station_id);
+
+    let row_with = |subject: &arkret_sdk::AccountId| RealmMemberRow {
+        actor_id: crate::mls_api_helpers::local_account_actor_id(
+            "ak:did_core:webvh:zQmPairwiseActor",
+        )
+        .unwrap(),
+        membership: Some(arkret_sdk::MembershipState::Join),
+        identity_event_ids: vec![],
+        member_display_state_digest: None,
+        subject_account_id: Some(here.clone()),
+        handle_claims: vec![verified_claim(subject, "alice:acme.example")],
+        handle_claims_limited: false,
+    };
+
+    // Positive control first: the same fixture with a matching subject does
+    // resolve, so the None below means the Station differed.
+    assert_eq!(
+        crate::views::member_display::inline_primary_handle(
+            &row_with(&here),
+            &acme_policy(),
+            Some(TEST_REALM_ID),
+        )
+        .as_ref()
+        .map(arkret_sdk::Handle::canonical),
+        Some("alice:acme.example")
+    );
+    assert!(
+        crate::views::member_display::inline_primary_handle(
+            &row_with(&elsewhere),
+            &acme_policy(),
+            Some(TEST_REALM_ID),
+        )
+        .is_none()
+    );
+}
+
 #[test]
 fn member_display_label_rejects_unverified_or_untrusted_handle_claims() {
     let subject = fixture::authority("ak:did_core:web:acme.example:principals:alice");
@@ -433,8 +480,12 @@ fn resolved_member_display_uses_persisted_current_account_handle() {
     );
 }
 
+/// `client-sync.md` §8.1: a roster row that did not disclose
+/// `subject_account_id` has no admissible handle-query input at all. The Realm
+/// `actor_id` MUST NOT be used as one, so the row raises no Directory lookup
+/// and simply degrades on the §3.8.2 step 4 ladder.
 #[test]
-fn member_handle_lookup_keeps_authoritative_subject_separate_from_actor_candidate() {
+fn member_handle_lookup_never_falls_back_to_the_realm_actor_id() {
     let row = RealmMemberRow {
         actor_id: crate::mls_api_helpers::local_account_actor_id("ak:did_core:webvh:zQmPrincipal")
             .unwrap(),
@@ -447,6 +498,7 @@ fn member_handle_lookup_keeps_authoritative_subject_separate_from_actor_candidat
     };
 
     assert!(crate::views::member_display::member_lookup_subject(&row, None).is_none());
+    assert!(crate::views::member_display::member_handle_lookup_account(&row, None).is_none());
 
     let store = isolated_store_for_tests("actor-subject-handle-candidate");
     let requests = crate::views::member_display::missing_member_handle_lookups(
@@ -455,12 +507,156 @@ fn member_handle_lookup_keeps_authoritative_subject_separate_from_actor_candidat
         std::slice::from_ref(&row),
         &std::collections::BTreeSet::new(),
     );
-    assert_eq!(requests.len(), 1);
-    assert_eq!(
-        requests[0].subject_id,
-        row.actor_id.signing_principal_id().as_str()
+    assert!(requests.is_empty());
+}
+
+/// A disclosed subject drives the lookup, and the request carries the exact
+/// `AccountId` rather than a bare principal.
+#[test]
+fn member_handle_lookup_uses_the_disclosed_subject_account() {
+    let subject = fixture::authority_at_station(
+        "ak:did_core:webvh:zQmDisclosedSubject",
+        "ak:did_core:web:station-a.example",
     );
+    let row = RealmMemberRow {
+        actor_id: crate::mls_api_helpers::local_account_actor_id("ak:did_core:webvh:zQmPrincipal")
+            .unwrap(),
+        membership: Some(arkret_sdk::MembershipState::Join),
+        identity_event_ids: vec![],
+        member_display_state_digest: None,
+        subject_account_id: Some(subject.clone()),
+        handle_claims: Vec::new(),
+        handle_claims_limited: false,
+    };
+
+    let store = isolated_store_for_tests("disclosed-subject-handle-candidate");
+    let requests = crate::views::member_display::missing_member_handle_lookups(
+        &store,
+        TEST_REALM_ID,
+        std::slice::from_ref(&row),
+        &std::collections::BTreeSet::new(),
+    );
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].subject_account_id, subject);
     assert_eq!(requests[0].realm_id, TEST_REALM_ID);
+    assert_eq!(
+        requests[0].request_key,
+        crate::views::member_display::member_handle_fetch_key(TEST_REALM_ID, &subject, None)
+    );
+}
+
+/// Response half of the same ruling: a Directory answer about the same
+/// principal at another Station is not an answer about this subject, so it is
+/// rejected outright rather than cached under the requested account.
+#[test]
+fn directory_answer_for_another_station_is_not_a_match() {
+    let principal = "ak:did_core:webvh:zQmAnsweringPrincipal";
+    let at_station_a =
+        fixture::authority_at_station(principal, "ak:did_core:web:station-a.example");
+    let at_station_b =
+        fixture::authority_at_station(principal, "ak:did_core:web:station-b.example");
+    let request = crate::views::member_display::MemberHandleLookupRequest {
+        request_key: crate::views::member_display::member_handle_fetch_key(
+            TEST_REALM_ID,
+            &at_station_a,
+            None,
+        ),
+        subject_account_id: at_station_a.clone(),
+        realm_id: TEST_REALM_ID.to_owned(),
+        member_display_state_digest: None,
+    };
+    let answer =
+        |account_id: arkret_sdk::AccountId| arkret_models_discovery::DirectorySubjectHandleList {
+            account_id,
+            claims: Vec::new(),
+            primary_handle: Some(arkret_sdk::Handle::parse("bob:elsewhere.example").unwrap()),
+            as_of: chrono::Utc::now(),
+            next_cursor: None,
+            has_more: false,
+        };
+
+    assert!(
+        crate::views::member_display::member_handle_response_matches_request(
+            &answer(at_station_a),
+            &request
+        )
+    );
+    assert!(
+        !crate::views::member_display::member_handle_response_matches_request(
+            &answer(at_station_b),
+            &request
+        )
+    );
+}
+
+/// Negative case locked by
+/// `review/spec-done/2026-09-04-2153-member-roster-subject-carrier-prose-and-schema-disagree.md`:
+/// one principal with accounts at two Stations is two subjects. A handle
+/// cached for the Station-B account MUST NOT decorate the Station-A member
+/// row, and the row MUST still raise its own lookup instead of reusing that
+/// entry. The row degrades to the name-only / truncated-DID rung rather than
+/// showing the other account's handle.
+#[test]
+fn cached_handle_for_another_station_never_reaches_the_member_row() {
+    let principal = "ak:did_core:webvh:zQmSharedPrincipal";
+    let at_station_a =
+        fixture::authority_at_station(principal, "ak:did_core:web:station-a.example");
+    let at_station_b =
+        fixture::authority_at_station(principal, "ak:did_core:web:station-b.example");
+    let row = RealmMemberRow {
+        actor_id: arkret_sdk::ActorId::account(at_station_a.clone()),
+        membership: Some(arkret_sdk::MembershipState::Join),
+        identity_event_ids: vec![],
+        member_display_state_digest: None,
+        subject_account_id: Some(at_station_a.clone()),
+        handle_claims: Vec::new(),
+        handle_claims_limited: false,
+    };
+
+    let mut store = isolated_store_for_tests("cross-station-handle-cache");
+    store.save_member_handle_lookup(
+        &at_station_b,
+        Some(TEST_REALM_ID.to_owned()),
+        None,
+        Some("bob:elsewhere.example".to_owned()),
+        1,
+        None,
+        None,
+    );
+
+    let display = crate::views::member_display::resolve_member_display(&store, TEST_REALM_ID, &row);
+    assert_eq!(display.primary_handle, None);
+    assert_ne!(display.label, "bob:elsewhere.example");
+    assert_eq!(
+        display.tier,
+        crate::views::member_display::MemberDisplayTier::Unresolved
+    );
+
+    // The Station-B entry is not a hit for the Station-A subject, so the row
+    // still needs its own Directory lookup.
+    let requests = crate::views::member_display::missing_member_handle_lookups(
+        &store,
+        TEST_REALM_ID,
+        std::slice::from_ref(&row),
+        &std::collections::BTreeSet::new(),
+    );
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].subject_account_id, at_station_a);
+
+    // Once the Station-A subject itself has evidence the row renders it, which
+    // proves the miss above came from the Station split and not from the row
+    // being unable to read the cache at all.
+    store.save_member_handle_lookup(
+        &at_station_a,
+        Some(TEST_REALM_ID.to_owned()),
+        None,
+        Some("alice:example.com".to_owned()),
+        1,
+        None,
+        None,
+    );
+    let display = crate::views::member_display::resolve_member_display(&store, TEST_REALM_ID, &row);
+    assert_eq!(display.primary_handle.as_deref(), Some("alice:example.com"));
 }
 
 #[test]

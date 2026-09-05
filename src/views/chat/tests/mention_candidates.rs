@@ -514,8 +514,12 @@ fn mention_candidate_without_handle_is_not_displayed_as_did() {
 fn mention_candidate_uses_cached_member_handle() {
     let temp = std::env::temp_dir().join(format!("inkson-chat-mention-handle-{}", uuid_v7()));
     let mut store = LocalStateStore::with_path(temp);
+    let bob_account = arkret_sdk::AccountId::new(
+        arkret_sdk::DidCoreId::new("ak:did_core:web:bob.example").unwrap(),
+        arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap(),
+    );
     store.save_member_handle_lookup(
-        "ak:did_core:web:bob.example",
+        &bob_account,
         Some("ak:realm:A_UALC69_WeDbu3WQ3suidUfmxa1MAW5tIIxjRS1C9yE".to_owned()),
         None,
         Some("bob:local.host".to_owned()),
@@ -525,7 +529,8 @@ fn mention_candidate_uses_cached_member_handle() {
     );
     let projection = json!({"member_roster_entries": [{
         "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:bob.example","station_id":"ak:did_core:web:principal.example"}},
-        "membership": "join"
+        "membership": "join",
+        "subject_account_id": {"principal_id":"ak:did_core:web:bob.example","station_id":"ak:did_core:web:principal.example"}
     }]});
     let participants = space_participants(
         Some(&projection),
@@ -555,8 +560,12 @@ fn late_join_discussion_sender_resolves_cached_member_handle() {
     let realm = "ak:realm:AhbOTVxMlBQEJeDfw_EHOeGGCT2uJ17cMT4QctC7CaFI";
     let temp = std::env::temp_dir().join(format!("inkson-chat-late-join-{}", uuid_v7()));
     let mut store = LocalStateStore::with_path(temp);
+    let sender_account = arkret_sdk::AccountId::new(
+        arkret_sdk::DidCoreId::new(sender).unwrap(),
+        arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap(),
+    );
     store.save_member_handle_lookup(
-        sender,
+        &sender_account,
         Some(realm.to_owned()),
         None,
         Some("alice:local.host".to_owned()),
@@ -569,7 +578,11 @@ fn late_join_discussion_sender_resolves_cached_member_handle() {
             "principal_id": sender,
             "station_id": "ak:did_core:web:principal.example"
         }},
-        "membership": "join"
+        "membership": "join",
+        "subject_account_id": {
+            "principal_id": sender,
+            "station_id": "ak:did_core:web:principal.example"
+        }
     }]});
     let participants = space_participants(
         Some(&projection),

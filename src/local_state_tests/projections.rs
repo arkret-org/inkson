@@ -203,14 +203,22 @@ fn minimal_metadata_projection_detected_from_genesis_schema_refs() {
     ));
 }
 
+/// Build the exact subject account a Directory handle lookup is keyed by.
+fn subject_account(principal: &str, station: &str) -> arkret_sdk::AccountId {
+    test_authority_at_server(principal, station)
+}
+
 #[test]
 fn member_handle_cache_is_realm_and_digest_scoped() {
     let path = temp_state_path("member-handle-cache");
     let mut store = LocalStateStore::with_path(path);
-    let subject = "did:webvh:zQmMember";
+    let subject = subject_account(
+        "ak:did_core:webvh:zQmMember",
+        "ak:did_core:web:station-a.example",
+    );
     let realm = "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-";
     store.save_member_handle_lookup(
-        subject,
+        &subject,
         Some(realm.to_owned()),
         Some("sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_owned()),
         Some("Alice:Example.COM".to_owned()),
@@ -221,7 +229,7 @@ fn member_handle_cache_is_realm_and_digest_scoped() {
 
     let entry = store
         .cached_member_handle_lookup(
-            subject,
+            &subject,
             Some(realm),
             Some("sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
         )
@@ -230,7 +238,7 @@ fn member_handle_cache_is_realm_and_digest_scoped() {
     assert!(
         store
             .cached_member_handle_lookup(
-                subject,
+                &subject,
                 Some(realm),
                 Some("sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"),
             )
@@ -239,10 +247,47 @@ fn member_handle_cache_is_realm_and_digest_scoped() {
     assert!(
         store
             .cached_member_handle_lookup(
-                subject,
+                &subject,
                 Some("ak:realm:AQM8rE4gp8l4axkSbbb9_dkqwWE8ZPYHwFsC24o2mrIL"),
                 Some("sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
             )
+            .is_none()
+    );
+}
+
+/// `discovery/discovery-directory.md` forbids merging the same principal's
+/// account at another Station, so the handle cache MUST NOT answer for a
+/// second Station out of the first Station's entry. This is the store half of
+/// the ruling recorded in
+/// `review/spec-done/2026-09-04-2153-member-roster-subject-carrier-prose-and-schema-disagree.md`.
+#[test]
+fn member_handle_cache_never_crosses_stations_for_one_principal() {
+    let path = temp_state_path("member-handle-cache-station-isolation");
+    let mut store = LocalStateStore::with_path(path);
+    let realm = "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-";
+    let principal = "ak:did_core:webvh:zQmTwoStations";
+    let at_station_a = subject_account(principal, "ak:did_core:web:station-a.example");
+    let at_station_b = subject_account(principal, "ak:did_core:web:station-b.example");
+    store.save_member_handle_lookup(
+        &at_station_a,
+        Some(realm.to_owned()),
+        None,
+        Some("alice:example.com".to_owned()),
+        1,
+        None,
+        None,
+    );
+
+    assert_eq!(
+        store
+            .cached_member_handle_lookup(&at_station_a, Some(realm), None)
+            .and_then(|entry| entry.primary_handle)
+            .as_deref(),
+        Some("alice:example.com")
+    );
+    assert!(
+        store
+            .cached_member_handle_lookup(&at_station_b, Some(realm), None)
             .is_none()
     );
 }
@@ -251,9 +296,12 @@ fn member_handle_cache_is_realm_and_digest_scoped() {
 fn member_handle_cache_records_fresh_negative_lookup() {
     let path = temp_state_path("member-handle-negative-cache");
     let mut store = LocalStateStore::with_path(path);
-    let subject = "did:webvh:zQmNoVisibleHandle";
+    let subject = subject_account(
+        "ak:did_core:webvh:zQmNoVisibleHandle",
+        "ak:did_core:web:station-a.example",
+    );
     store.save_member_handle_lookup(
-        subject,
+        &subject,
         Some("ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-".to_owned()),
         None,
         None,
@@ -264,7 +312,7 @@ fn member_handle_cache_records_fresh_negative_lookup() {
 
     let entry = store
         .cached_member_handle_lookup(
-            subject,
+            &subject,
             Some("ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-"),
             None,
         )
