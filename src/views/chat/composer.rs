@@ -115,14 +115,14 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
         mentions_enabled,
         token,
         sync_cursor,
-        mut frontier_state,
+        frontier_state,
     } = context;
     // The component boundary retains the validated identifier type. The view
     // helpers below only render or forward its canonical text.
     let principal_id = principal_id.as_str().to_owned();
     let base_url = crate::app::SessionContext::base_url_string();
     let sidecar_session = use_context::<crate::sidecar::HostedSidecarStateContext>().0;
-    let mut state_store = crate::app::SessionContext::get().state_store;
+    let state_store = crate::app::SessionContext::get().state_store;
     let messages_snapshot = (controller.messages)();
     let messages_for_composer_lookup = &messages_snapshot;
     let selected_channel_value = active_sidecar_session
@@ -1181,20 +1181,11 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                 let api_token = token();
                                 let actor = actor.clone();
                                 let strand_id = channel.strand_id.clone();
-                                let message_id = local_id.clone();
                                 let reply_to = reply_to_message();
                                 // Clear the picker chip list now that
                                 // we've folded the mentions into the
                                 // pending send state.
                                 mention_picker_state.write().clear();
-                                let realm_for_record = realm.clone();
-                                let actor_for_store = actor.clone();
-                                let body_for_store = body.clone();
-                                let body_for_restore = body.clone();
-                                let body_for_resolve = body.clone();
-                                let strand_id_for_store = strand_id.clone();
-                                let message_id_for_store = message_id.clone();
-                                let reply_to_for_store = reply_to.clone();
                                 let projection = state_store
                                     .read()
                                     .load()
@@ -1204,187 +1195,27 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                 let plaintext_services =
                                     plaintext_services_for_policy(projection.as_ref(), &service_id);
                                 let wait_for = active_sync_token(sync_cursor());
-                                let actor_for_retry = actor.clone();
                                 let roster_accounts = roster_accounts_for_retry.clone();
-                                spawn(async move {
-                                    let mut mentions = mentions;
-                                    for mention in resolve_agent_selector_mentions(
-                                        mentions_enabled,
-                                        &base,
-                                        api_token.clone(),
-                                        wait_for.clone(),
-                                        &mentions,
-                                        &body_for_resolve,
-                                        &realm,
-                                        &actor,
-                                        own_controller_handle.as_deref(),
-                                        &roster_accounts,
-                                    )
-                                    .await
-                                    {
-                                        push_unique_mention_node(&mut mentions, mention);
-                                    }
-                                    if let Some(found) = messages
-                                        .write()
-                                        .iter_mut()
-                                        .find(|candidate| candidate.matches_id_or_protocol(&local_id))
-                                    {
-                                        found.mentions = mentions.clone();
-                                    }
-                                    let content = match chat_content_block_for_body_with_upload(
-                                        &base,
-                                        api_token.clone(),
-                                        wait_for.clone(),
-                                        &realm,
-                                        &body_for_resolve,
-                                    )
-                                    .await
-                                    {
-                                        Ok(content) => content,
-                                        Err(error) => {
-                                            if let Some(found) = messages
-                                                .write()
-                                                .iter_mut()
-                                                .find(|candidate| {
-                                                    candidate.matches_id_or_protocol(&local_id)
-                                                })
-                                            {
-                                                found.pending = false;
-                                                found.failed = true;
-                                                found.error =
-                                                    Some(format!("send failed: {error:#}"));
-                                            }
-                                            status_msg.set(format!("send failed: {error:#}"));
-                                            return;
-                                        }
-                                    };
-                                    let op = match chat_message_create_operation_with_content(
-                                        &realm,
-                                        &actor,
-                                        &strand_id,
-                                        &message_id,
-                                        &body_for_resolve,
-                                        content,
-                                        &mentions,
-                                        reply_to.as_deref(),
-                                    ) {
-                                        Ok(op) => op.with_local_operation_id(
-                                            crate::operation::LocalOperationId::from_holder_key(
-                                                local_id.clone(),
-                                            ),
-                                        ),
-                                        Err(error) => {
-                                            if let Some(found) = messages
-                                                .write()
-                                                .iter_mut()
-                                                .find(|candidate| {
-                                                    candidate.matches_id_or_protocol(&local_id)
-                                                })
-                                            {
-                                                found.pending = false;
-                                                found.failed = true;
-                                                found.error =
-                                                    Some(format!("send failed: {error:#}"));
-                                            }
-                                            status_msg.set(format!("send failed: {error:#}"));
-                                            return;
-                                        }
-                                    };
-                                    // The §4.5 mention-routing sidecar exists so an
-                                    // encrypted Realm can route a notification
-                                    // without revealing the mentioned DID. A
-                                    // plaintext send already carries `mentions`
-                                    // in the clear, so it gets no sidecar.
-                                    let mention_values_for_store = mention_nodes_to_values(&mentions);
-                                    match submit_chat_operation_with_auth_refresh(
-                                        &base,
-                                        &actor_for_retry,
-                                        &realm,
+                                commands::send_plaintext_message(
+                                    controller,
+                                    frontier_state,
+                                    commands::PlaintextSendRequest {
+                                        base_url: base,
                                         api_token,
                                         wait_for,
-                                        &plaintext_services,
-                                        &op,
-                                    ).await {
-                                        Ok(resp) => {
-                                            match serde_json::to_value(
-                                                AcceptedChatMessageOperation {
-                                                    event_id: &resp.event_id,
-                                                    kind: event_kind_str::MESSAGE_CREATE,
-                                                    actor_id: &actor_for_store,
-                                                    body: &body_for_store,
-                                                    content: &op.payload()["content"],
-                                                    strand_id: &strand_id_for_store,
-                                                    message_id: &message_id_for_store,
-                                                    mentions: &mention_values_for_store,
-                                                    reply_to: reply_to_for_store.as_deref(),
-                                                    status: &resp.status,
-                                                },
-                                            ) {
-                                                Ok(raw_operation) => state_store
-                                                    .write()
-                                                    .append_raw_operation(
-                                                    op.local_operation_id().to_string(),
-                                                    Some(realm_for_record),
-                                                    raw_operation,
-                                                ),
-                                                Err(error) => tracing::error!(
-                                                    %error,
-                                                    event_id = %resp.event_id,
-                                                    "accepted chat operation could not be cached"
-                                                ),
-                                            }
-                                            if let Some(found) = messages
-                                                .write()
-                                                .iter_mut()
-                                                .find(|candidate| {
-                                                    candidate.matches_id_or_protocol(&local_id)
-                                                })
-                                            {
-                                                found.id = resp.event_id.clone();
-                                                found.pending = false;
-                                                found.failed = false;
-                                                found.error = None;
-                                            }
-                                            frontier_state.set(resp.event_id.clone());
-                                            status_msg.set("Message sent".to_owned());
-                                        }
-                                        Err(error) => {
-                                            tracing::warn!(
-                                                event_id = %local_id,
-                                                error = %format!("{error:#}"),
-                                                "chat send did not reach an accepted result"
-                                            );
-                                            if crate::event_submit::is_durably_queued_error(&error) {
-                                                status_msg.set(crate::i18n::tr(
-                                                    "chat.outbox.queued_offline",
-                                                ));
-                                                return;
-                                            }
-                                            let membership_denied =
-                                                is_space_membership_denied_error(&error);
-                                            let message = chat_send_error_message(&error);
-                                            if membership_denied {
-                                                messages
-                                                    .write()
-                                                    .retain(|candidate| candidate.id != local_id);
-                                                if chat_draft().trim().is_empty() {
-                                                    chat_draft.set(body_for_restore.clone());
-                                                }
-                                            } else if let Some(found) = messages
-                                                .write()
-                                                .iter_mut()
-                                                .find(|candidate| {
-                                                    candidate.matches_id_or_protocol(&local_id)
-                                                })
-                                            {
-                                                found.pending = false;
-                                                found.failed = true;
-                                                found.error = Some(message.clone());
-                                            }
-                                            status_msg.set(format!("Message send failed: {message}"));
-                                        }
-                                    }
-                                });
+                                        realm_id: realm,
+                                        strand_id,
+                                        actor,
+                                        local_id,
+                                        body,
+                                        reply_to,
+                                        mentions,
+                                        mentions_enabled,
+                                        own_controller_handle,
+                                        roster_accounts,
+                                        plaintext_services,
+                                    },
+                                );
                                 chat_draft.set(String::new());
                                 reply_to_message.set(None);
                             }
@@ -1549,90 +1380,26 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                     );
                                     let roster_accounts =
                                         roster_accounts_for_sidecar_session.clone();
-                                    spawn(async move {
-                                        let mut resolved_mentions = mentions;
-                                        for mention in resolve_agent_selector_mentions(
-                                            mentions_enabled,
-                                            &base,
-                                            api_token.clone(),
+                                    commands::send_sidecar_message(
+                                        controller,
+                                        commands::SidecarSendRequest {
+                                            base_url: base,
+                                            api_token,
                                             wait_for,
-                                            &resolved_mentions,
-                                            &body,
-                                            &session.source_realm_id,
-                                            &actor,
-                                            own_controller_handle.as_deref(),
-                                            &roster_accounts,
-                                        )
-                                        .await
-                                        {
-                                            push_unique_mention_node(
-                                                &mut resolved_mentions,
-                                                mention,
-                                            );
-                                        }
-                                        let view = match crate::transport::auth::authed_api_with_sync(
-                                            &base,
-                                            api_token.clone(),
-                                            None,
-                                        )
-                                        .and_then(|api| api.sdk_http_client())
-                                        {
-                                            Ok(http) => http
-                                                .agent_sidecar_get(&session.sidecar_id)
-                                                .await
-                                                .map_err(anyhow::Error::from),
-                                            Err(error) => Err(error),
-                                        };
-                                        let outcome = match view {
-                                            Ok(view) => super::submit_source_routed_sidecar_message(
-                                                &base,
-                                                api_token,
-                                                &actor,
-                                                &authority_for_sidecar,
-                                                &device_id_for_sidecar,
-                                                &session.source_realm_id,
-                                                &session.source_strand_id,
-                                                &source_strand_id,
-                                                source_event_id.as_deref(),
-                                                &body,
-                                                &resolved_mentions,
-                                                &session.addressed_agent_ids,
-                                                state_store,
-                                                &view,
-                                            )
-                                            .await,
-                                            Err(error) => Err(error),
-                                        };
-                                        match outcome {
-                                            Ok(routed) => {
-                                                if let Some(found) = messages
-                                                    .write()
-                                                    .iter_mut()
-                                                    .find(|candidate| {
-                                                        candidate.matches_id_or_protocol(&local_id)
-                                                    })
-                                                {
-                                                    found.id = routed.event_id;
-                                                    found.pending = false;
-                                                    found.failed = false;
-                                                    found.error = None;
-                                                    found.mentions = resolved_mentions;
-                                                }
-                                                status_msg
-                                                    .set("Private Sidecar message sent".to_owned());
-                                            }
-                                            Err(error) => fail_optimistic_chat_send(
-                                                messages,
-                                                chat_draft,
-                                                status_msg,
-                                                &local_id,
-                                                &body,
-                                                format!(
-                                                    "Private Sidecar message was not sent: {error:#}"
-                                                ),
-                                            ),
-                                        }
-                                    });
+                                            session,
+                                            sidecar_strand_id: source_strand_id,
+                                            source_event_id,
+                                            actor,
+                                            authority: authority_for_sidecar,
+                                            device_id: device_id_for_sidecar,
+                                            local_id,
+                                            body,
+                                            mentions,
+                                            mentions_enabled,
+                                            own_controller_handle,
+                                            roster_accounts,
+                                        },
+                                    );
                                     return;
                                 }
                                 // P2: preserve the composer's reply target on the
@@ -1674,443 +1441,29 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                 let wait_for = active_sync_token(sync_cursor());
                                 let backup_trigger_signal =
                                     crate::components::try_needs_mls_backup_signal();
-                                let base_for_backup_trigger = base.clone();
-                                let token_for_backup_trigger = api_token.clone();
-                                let actor_for_backup_trigger = actor.clone();
                                 let roster_accounts = roster_accounts_for_send.clone();
-                                spawn(async move {
-                                let mut mentions = mentions;
-                                for mention in resolve_agent_selector_mentions(
-                                    mentions_enabled,
-                                    &base,
-                                    api_token.clone(),
-                                    wait_for.clone(),
-                                    &mentions,
-                                    &body,
-                                    &realm,
-                                    &actor,
-                                    own_controller_handle.as_deref(),
-                                    &roster_accounts,
-                                )
-                                .await
-                                {
-                                    push_unique_mention_node(&mut mentions, mention);
-                                }
-                                if let Some(found) = messages
-                                    .write()
-                                    .iter_mut()
-                                    .find(|candidate| candidate.id == message_id)
-                                {
-                                    found.mentions = mentions.clone();
-                                }
-                                // Encrypt the canonical Content Block JSON with
-                                // its structured mention nodes. The UI-only
-                                // `@me` alias has already resolved to the real
-                                // controller handle before this content enters
-                                // MLS ciphertext.
-                                let actor_mentions = mentions
-                                    .iter()
-                                    .filter_map(|mention| mention.as_mention().cloned())
-                                    .collect::<Vec<_>>();
-                                let audience_mentions = mentions
-                                    .iter()
-                                    .filter_map(|mention| mention.as_audience_mention().cloned())
-                                    .collect::<Vec<_>>();
-                                let mut secure_content_block =
-                                    match chat_content_block_for_body(&body) {
-                                        Ok(content) => content,
-                                        Err(err) => {
-                                            fail_optimistic_chat_send(
-                                                messages,
-                                                chat_draft,
-                                                status_msg,
-                                                &message_id,
-                                                &body,
-                                                format!("Send Secure rejected message content: {err:#}"),
-                                            );
-                                            return;
-                                        }
-                                    };
-                                if !actor_mentions.is_empty() {
-                                    secure_content_block = match secure_content_block
-                                        .with_mentions(actor_mentions)
-                                    {
-                                        Ok(content) => content,
-                                        Err(err) => {
-                                            fail_optimistic_chat_send(
-                                                messages,
-                                                chat_draft,
-                                                status_msg,
-                                                &message_id,
-                                                &body,
-                                                format!("Send Secure could not encode mentions: {err}"),
-                                            );
-                                            return;
-                                        }
-                                    };
-                                }
-                                if !audience_mentions.is_empty() {
-                                    secure_content_block = match secure_content_block
-                                        .with_audience_mentions(audience_mentions)
-                                    {
-                                        Ok(content) => content,
-                                        Err(err) => {
-                                            fail_optimistic_chat_send(
-                                                messages,
-                                                chat_draft,
-                                                status_msg,
-                                                &message_id,
-                                                &body,
-                                                format!("Send Secure could not encode audience mentions: {err}"),
-                                            );
-                                            return;
-                                        }
-                                    };
-                                }
-                                let secure_content_value = match sdk_payload_value(
-                                    secure_content_block.to_value(),
-                                    "chat encrypted content block serialize",
-                                ) {
-                                    Ok(value) => value,
-                                    Err(err) => {
-                                        fail_optimistic_chat_send(
-                                            messages,
-                                            chat_draft,
-                                            status_msg,
-                                            &message_id,
-                                            &body,
-                                            format!("Send Secure could not encode message content: {err:#}"),
-                                        );
-                                        return;
-                                    }
-                                };
-                                let secure_content_bytes = match serde_json::to_vec(&secure_content_value) {
-                                    Ok(bytes) => bytes,
-                                    Err(err) => {
-                                        fail_optimistic_chat_send(
-                                            messages,
-                                            chat_draft,
-                                            status_msg,
-                                            &message_id,
-                                            &body,
-                                            format!("Send Secure could not encode message content: {err}"),
-                                        );
-                                        return;
-                                    }
-                                };
-                                let content_for_sidecar = match String::from_utf8(
-                                    secure_content_bytes.clone(),
-                                ) {
-                                    Ok(content) => content,
-                                    Err(err) => {
-                                        fail_optimistic_chat_send(
-                                            messages,
-                                            chat_draft,
-                                            status_msg,
-                                            &message_id,
-                                            &body,
-                                            format!("Send Secure could not preserve message content: {err}"),
-                                        );
-                                        return;
-                                    }
-                                };
-                                let seal_view = state_store.read().seal_view_for_realm(&realm);
-                                // Shared MLS core: encrypt → forced ak.mls.commit
-                                // envelope (governance / prev→post epoch /
-                                // Security Frontier) → spec
-                                // `ak.schema.encrypted_envelope.v1` wrap →
-                                // `ak.schema.encrypted_envelopeis mirrors the
-                                // shared secure send builder.
-                                let secure_build = match crate::views::secure_send::build_secure_send(
-                                    state_store,
-                                    &seal_view,
-                                    &realm,
-                                    &authority_for_sidecar,
-                                    &actor,
-                                    &did,
-                                    &strand_id,
-                                    &message_id,
-                                    reply_to.as_deref(),
-                                    &secure_content_bytes,
-                                    None,
-                                    None,
-                                    None,
-                                )
-                                .await
-                                {
-                                    Ok(build) => build,
-                                    Err(message) => {
-                                        fail_optimistic_chat_send(
-                                            messages,
-                                            chat_draft,
-                                            status_msg,
-                                            &message_id,
-                                            &body,
-                                            message,
-                                        );
-                                        return;
-                                    }
-                                };
-                                let base = base.clone();
-                                let realm_for_record = realm.clone();
-                                let device_for_sidecar_backup = did.clone();
-                                // X9: capture identifiers needed by the
-                                // encrypted Ok(resp) arm to (A) clear the
-                                // optimistic bubble's `pending` flag and (B)
-                                // persist the message plaintext into the
-                                // author-owned sidecar so reload / a new
-                                // device can render the author's own
-                                // (otherwise undecryptable) messages.
-                                let message_id_for_lookup = message_id.clone();
-                                // X10.6: also persisted into the raw_operation
-                                // record below so the tab-switch / reload
-                                // rebuild can reconstruct the sidecar key.
-                                // Used as the fallback when the accepted event
-                                // id cannot derive a protocol message id.
-                                let message_id_for_record = message_id.clone();
-                                let actor_for_record = actor.clone();
-                                // The synced event carries this exact strand_id
-                                // string (the payload was built with
-                                // `strand_id_value(&strand_id)`, which wraps it
-                                // verbatim), so the read-side sidecar lookup
-                                // keyed on the event's `strand_id` matches.
-                                let strand_id_for_sidecar = strand_id.clone();
-                                let strand_id_for_record = strand_id.clone();
-                                let content_for_sidecar = content_for_sidecar.clone();
-                                // P2: recoverable draft — if the encrypted send
-                                // fails we restore the composer text instead of
-                                // losing it.
-                                let body_for_restore = body.clone();
-                                let message_id_for_failure = message_id.clone();
-                                // Capture the message op id BEFORE the build is
-                                // moved into the shared submitter — the encrypted
-                                // raw_operation record (X10.6 sidecar re-key) is
-                                // keyed on it.
-                                let msg_local_op_id =
-                                    secure_build.message_local_operation_id.to_string();
-                                spawn(async move {
-                                    let Ok(api) = authed_api_with_sync(&base, api_token.clone(), wait_for) else {
-                                        // P2: auth/API init failed — without this
-                                        // arm the optimistic bubble spun forever
-                                        // and no status was shown.
-                                        fail_optimistic_chat_send(
-                                            messages,
-                                            chat_draft,
-                                            status_msg,
-                                            &message_id_for_failure,
-                                            &body_for_restore,
-                                            "Send Secure failed: could not start an authenticated session".to_owned(),
-                                        );
-                                        return;
-                                    };
-                                    // Shared submit: forced ak.mls.commit first
-                                    // (persist-on-accept snapshot + §7.10 backup
-                                    // schedule + move record), then the encrypted
-                                    // ak.message.create.
-                                    let outcome = crate::views::secure_send::submit_secure_send(
-                                        &api,
-                                        state_store,
-                                        secure_build,
-                                        &realm_for_record,
-                                        None,
-                                    )
-                                    .await;
-                                    let resp = match outcome {
-                                        crate::views::secure_send::SecureSendOutcome::Sent {
-                                            event_id,
-                                            status,
-                                        } => (event_id, status),
-                                        crate::views::secure_send::SecureSendOutcome::CommitFailed {
-                                            message,
-                                        }
-                                        | crate::views::secure_send::SecureSendOutcome::MessageFailed {
-                                            message,
-                                        } => {
-                                            // P2: reconcile the optimistic bubble so
-                                            // it doesn't spin forever, and keep the
-                                            // draft recoverable.
-                                            fail_optimistic_chat_send(
-                                                messages,
-                                                chat_draft,
-                                                status_msg,
-                                                &message_id_for_failure,
-                                                &body_for_restore,
-                                                message,
-                                            );
-                                            return;
-                                        }
-                                    };
-                                    let (resp_event_id, resp_status) = resp;
-                                    // The read-side projection derives the
-                                    // protocol message id from the accepted
-                                    // event id
-                                    // (`MessageId::from_event_id`), so the
-                                    // author sidecar and the raw-op record
-                                    // must key on that same derived id.
-                                    // Keying on the pre-submit local id
-                                    // orphaned the plaintext and left the
-                                    // author's own message undecryptable on
-                                    // echo / reload.
-                                    let protocol_message_id =
-                                        arkret_sdk::EventId::new(resp_event_id.clone())
-                                            .ok()
-                                            .map(|event_id| {
-                                                arkret_sdk::MessageId::from_event_id(&event_id)
-                                                    .as_str()
-                                                    .to_owned()
-                                            })
-                                            .unwrap_or_else(|| message_id_for_record.clone());
-                                    {
-                                        let mut store = state_store.write();
-                                        // X10.6: persist the message identity
-                                        // (message_id + strand_id + actor), NOT the
-                                        // plaintext body, into the raw_operation
-                                        // record so the tab-switch / reload rebuild
-                                        // can reconstruct the sidecar key
-                                        // `message:{message_id}` under `strand_id`.
-                                        // `message_id` is the protocol id derived
-                                        // from the accepted event id, matching the
-                                        // read-side projection
-                                        // (`message_protocol_message_id_from_candidates`
-                                        // derives from `event_id` first).
-                                        // The body lives only in the account-private
-                                        // `mls_private_plaintext` sidecar saved just
-                                        // below. `encrypted_content` marks the row as
-                                        // E2EE for readers with no sidecar (another
-                                        // device / member).
-                                        store.append_raw_operation(
-                                            msg_local_op_id.clone(),
-                                            Some(realm_for_record.clone()),
-                                            json!({
-                                                "event_id": resp_event_id.clone(),
-                                                "kind": event_kind_str::MESSAGE_CREATE,
-                                                "actor_id": actor_for_record.clone(),
-                                                "strand_id": strand_id_for_record.clone(),
-                                                "message_id": protocol_message_id.clone(),
-                                                "encrypted_content": true,
-                                                "status": resp_status.clone(),
-                                            }),
-                                        );
-                                        // BUG B (X9): persist the message plaintext
-                                        // into the author-owned sidecar so reload / a
-                                        // new device can render the author's own
-                                        // encrypted messages (OpenMLS forbids an
-                                        // author from decrypting their own
-                                        // ciphertext). Keyed by
-                                        // `message:{protocol_message_id}` under the
-                                        // discussion strand — the same derived id the
-                                        // read side looks up — sharing the
-                                        // `mls_private_plaintext` map that the X5.3
-                                        // cross-device backup already snapshots.
-                                        store.save_private_plaintext(
-                                            &realm_for_record,
-                                            &strand_id_for_sidecar,
-                                            &format!("message:{protocol_message_id}"),
-                                            &content_for_sidecar,
-                                        );
-                                    }
-                                    // The optimistic row is allowed to settle
-                                    // only after both durable stores contain
-                                    // the accepted message identity and the
-                                    // author-owned plaintext. A hard reload
-                                    // immediately after the UI reports success
-                                    // must not race either IndexedDB write.
-                                    let durable_result: anyhow::Result<()> = async {
-                                        let account_barrier =
-                                            state_store.read().begin_durable_flush()?;
-                                        let e2ee_write = state_store
-                                            .read()
-                                            .e2ee_plaintext_cache_secure_write()?;
-                                        account_barrier.wait().await?;
-                                        if let Some((key, Some(json))) = e2ee_write {
-                                            crate::secure_key_store::default_secure_key_store(
-                                                "inkson",
-                                            )
-                                            .store_secret_durable(&key, &json)
-                                            .await?;
-                                        }
-                                        Ok(())
-                                    }
-                                    .await;
-                                    if let Err(error) = durable_result {
-                                        let message = format!(
-                                            "Encrypted message was accepted, but local recovery state could not be persisted: {error}"
-                                        );
-                                        if let Some(found) = messages
-                                            .write()
-                                            .iter_mut()
-                                            .find(|candidate| {
-                                                candidate.matches_id_or_protocol(
-                                                    &message_id_for_lookup,
-                                                )
-                                            })
-                                        {
-                                            found.pending = false;
-                                            found.failed = true;
-                                            found.error = Some(message.clone());
-                                        }
-                                        status_msg.set(message);
-                                        return;
-                                    }
-                                    // BUG A (X9): clear the optimistic bubble's
-                                    // `pending` spinner now that the server accepted
-                                    // the encrypted message (mirrors the plaintext
-                                    // path). Reconcile the local id to the server
-                                    // event_id so the synced copy dedups against this
-                                    // echo.
-                                    if let Some(found) = messages
-                                        .write()
-                                        .iter_mut()
-                                        .find(|candidate| {
-                                            candidate.matches_id_or_protocol(
-                                                &message_id_for_lookup,
-                                            )
-                                        })
-                                    {
-                                        found.id = resp_event_id.clone();
-                                        found.protocol_message_id =
-                                            Some(protocol_message_id.clone());
-                                        found.pending = false;
-                                        found.failed = false;
-                                        found.error = None;
-                                    }
-                                    frontier_state.set(resp_event_id.clone());
-                                    status_msg.set("Encrypted message sent".to_owned());
-                                    crate::components::schedule_mls_recovery_backups_after_encrypted_write(
-                                        base_for_backup_trigger.clone(),
-                                        token_for_backup_trigger.clone(),
-                                        authority_for_sidecar.clone(),
-                                        actor_for_backup_trigger.clone(),
-                                        device_for_sidecar_backup.to_string(),
-                                        state_store,
-                                    );
-
-                                    // X11.2 — first-write trigger. After this
-                                    // encrypted send landed, auto-back up the
-                                    // account secret when possible; otherwise
-                                    // fall back to the prompt. Best-effort.
-                                    if let Some(signal) = backup_trigger_signal {
-                                        crate::components::maybe_auto_backup_mls_after_encrypted_write(
-                                            base_for_backup_trigger.clone(),
-                                            token_for_backup_trigger.clone(),
-                                            authority_for_sidecar.clone(),
-                                            actor_for_backup_trigger.clone(),
-                                            device_for_sidecar_backup.to_string(),
-                                            crate::app::runtime_adapter::state_store_handle(
-                                                state_store,
-                                            ),
-                                            signal,
-                                        )
-                                        .await;
-                                    }
-
-                                    // Audit RYW receipts are issued by the Events API
-                                    // node, witness, or bound audit service after an
-                                    // accepted audit access/release Event. An end-user
-                                    // client MUST NOT manufacture one after an ordinary
-                                    // message send, including inside a Direct Conversation.
-                                });
-                                });
+                                commands::send_encrypted_message(
+                                    controller,
+                                    frontier_state,
+                                    commands::EncryptedSendRequest {
+                                        base_url: base,
+                                        api_token,
+                                        wait_for,
+                                        realm_id: realm,
+                                        strand_id,
+                                        actor,
+                                        authority: authority_for_sidecar,
+                                        device_id: did,
+                                        message_id,
+                                        body,
+                                        reply_to,
+                                        mentions,
+                                        mentions_enabled,
+                                        own_controller_handle,
+                                        roster_accounts,
+                                        backup_trigger_signal,
+                                    },
+                                );
                             }
                         },
                         if sidecar_route_pending() {
