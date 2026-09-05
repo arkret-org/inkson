@@ -26,6 +26,22 @@ pub(super) fn ChatEffects(
     let base_url = crate::app::SessionContext::base_url_string();
     let mut state_store = crate::app::SessionContext::get().state_store;
     let did_cache = use_context::<Signal<arkret_sdk::identity::DidResolutionCache>>();
+    use_member_handle_cache(
+        controller,
+        base_url.clone(),
+        selected_realm_id.clone(),
+        token,
+        sync_cursor,
+        realm_live_epoch,
+        state_store,
+    );
+    use_eligible_circle_scopes(
+        controller,
+        base_url.clone(),
+        selected_realm_id.clone(),
+        principal_id.clone(),
+        token,
+    );
     let selected_channel_value = (controller.selected_channel)();
     let event_sink = ChatProjectionSink::new(controller);
 
@@ -907,4 +923,143 @@ pub(super) fn ChatEffects(
     }
 
     rsx! {}
+}
+
+/// Fill the Directory handle cache for everyone on the Realm roster.
+///
+/// Re-runs when the account cursor or the Realm's live epoch moves, because
+/// either can add a member. `member_handle_fetching` is the in-flight set: a
+/// re-render while a lookup is outstanding must not issue the same Directory
+/// request again.
+fn use_member_handle_cache(
+    controller: ChatController,
+    base_url: String,
+    realm_id: String,
+    token: Signal<String>,
+    sync_cursor: Signal<String>,
+    realm_live_epoch: Signal<u64>,
+    state_store: SyncSignal<crate::state::LocalStateStore>,
+) {
+    let mut member_handle_fetching = controller.member_handle_fetching;
+    use_effect(move || {
+        let _account_cursor = sync_cursor();
+        let _realm_epoch = realm_live_epoch();
+        let api_token = token();
+        if base_url.trim().is_empty() || realm_id.trim().is_empty() || api_token.trim().is_empty() {
+            return;
+        }
+        let projection = state_store
+            .read()
+            .load()
+            .realm_tree_projections
+            .get(&realm_id)
+            .cloned();
+        let rows = crate::views::member_display::realm_member_roster(projection.as_ref());
+        if rows.is_empty() {
+            return;
+        }
+        let fetches = {
+            let store = state_store.read();
+            let in_flight = member_handle_fetching.read();
+            crate::views::member_display::missing_member_handle_lookups(
+                &store, &realm_id, &rows, &in_flight,
+            )
+        };
+        for request in fetches {
+            let request_key = request.request_key.clone();
+            member_handle_fetching.write().insert(request_key.clone());
+            let base = base_url.clone();
+            let credential = api_token.clone();
+            let store = state_store;
+            let mut fetching = member_handle_fetching;
+            spawn(async move {
+                crate::views::member_display::fetch_and_cache_member_handle(
+                    base, credential, store, request,
+                )
+                .await;
+                fetching.write().remove(&request_key);
+            });
+        }
+    });
+}
+
+/// Load the Circles a new Strand may be scoped to.
+///
+/// Keyed on (server, actor, Realm) so a credential or context change retries
+/// and nothing else does. The two guard Signals are read with `peek` because
+/// this effect writes both of them: subscribing to them would make the load
+/// re-trigger itself.
+fn use_eligible_circle_scopes(
+    controller: ChatController,
+    base_url: String,
+    realm_id: String,
+    actor: String,
+    token: Signal<String>,
+) {
+    let mut eligible_circle_scopes = controller.eligible_circle_scopes;
+    let mut key_seen = controller.eligible_circle_scope_request_key_seen;
+    let mut in_flight = controller.eligible_circle_scope_request_in_flight;
+    use_effect(move || {
+        let credential = token();
+        let base = base_url.clone();
+        let realm = realm_id.clone();
+        let request_key = format!("{base}\u{1f}{actor}\u{1f}{realm}");
+        if !should_start_circle_scope_request(
+            &credential,
+            key_seen.peek().as_str(),
+            *in_flight.peek(),
+            &request_key,
+        ) {
+            return;
+        }
+        key_seen.set(request_key.clone());
+        in_flight.set(true);
+        spawn(async move {
+            let outcome =
+                crate::transport::auth::with_authed_api(&base, credential, |api| async move {
+                    api.http()
+                        .circle_list(&realm)
+                        .await
+                        .map_err(anyhow::Error::from)
+                })
+                .await;
+            match outcome {
+                Ok(list) => {
+                    let summaries = crate::circle::ordinary_circle_views(list)
+                        .into_iter()
+                        .filter(|circle| {
+                            circle.state == arkret_sdk::CircleState::Active
+                                && circle.viewer_membership
+                                    == Some(arkret_sdk::CircleMembership::Join)
+                        })
+                        .map(|circle| CircleSummary {
+                            id: circle.circle_id.to_string(),
+                            realm_id: circle.realm_id.to_string(),
+                            title: circle.title,
+                            short_name: circle.display.short_name,
+                            color_token: format!("{:?}", circle.display.color_token),
+                            symbol: format!("{:?}", circle.display.symbol),
+                            member_count: u32::try_from(circle.member_ids.len())
+                                .unwrap_or(u32::MAX),
+                            state: circle.state,
+                            viewer_is_member: true,
+                        })
+                        .collect();
+                    eligible_circle_scopes.set(summaries);
+                }
+                Err(error) => {
+                    if key_seen.peek().as_str() == request_key {
+                        // Permit a later credential/context change to retry,
+                        // but do not immediately self-trigger this effect.
+                        key_seen.set(String::new());
+                    }
+                    tracing::warn!(
+                        error = %error.display(),
+                        "Circle scope picker load failed"
+                    );
+                }
+            }
+            in_flight.set(false);
+        });
+    });
 }

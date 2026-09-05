@@ -223,6 +223,19 @@ pub(super) struct ChatController {
     pub account_display_name: Signal<String>,
     pub track_filter: Signal<String>,
     pub left_panel_open: Signal<bool>,
+    /// Circles the signed-in account may scope a new Strand to. Loaded once
+    /// per (server, actor, Realm); the two keys below are the guard that keeps
+    /// the load from re-triggering its own effect.
+    pub eligible_circle_scopes: Signal<Vec<crate::circle::CircleSummary>>,
+    pub eligible_circle_scope_request_key_seen: Signal<String>,
+    pub eligible_circle_scope_request_in_flight: Signal<bool>,
+    pub new_channel_scope: Signal<crate::circle::CircleScope>,
+    pub sidecar_publish_open: Signal<bool>,
+    pub sidecar_publish_draft: Signal<String>,
+    pub sidecar_publish_pending: Signal<bool>,
+    /// Member handle lookups already in flight, so a re-render does not issue
+    /// the same Directory request twice.
+    pub member_handle_fetching: Signal<std::collections::BTreeSet<String>>,
 }
 
 impl ChatController {
@@ -1206,6 +1219,235 @@ impl ChatController {
             }
         });
     }
+
+    /// Submit an already-built `ak.strand.create`, then adopt the Strand the
+    /// server named.
+    ///
+    /// The Strand is named by its own create Event, so its id exists only once
+    /// that Event is accepted; until then the write is known by its
+    /// holder-local operation id.
+    pub fn create_strand(
+        mut self,
+        base_url: String,
+        api_token: String,
+        wait_for: Option<String>,
+        realm_id: String,
+        operation: crate::operation::LocalOperation,
+        draft: StrandCreateDraft,
+    ) {
+        let mut state_store = crate::app::SessionContext::get().state_store;
+        let mut frontier_state = draft.frontier_state;
+        spawn(async move {
+            let api = match authed_api_with_sync(&base_url, api_token, wait_for) {
+                Ok(api) => api,
+                Err(error) => {
+                    self.status_msg.set(format!("Invalid server URL: {error}"));
+                    return;
+                }
+            };
+            let submitted = match api.event_submitter() {
+                Ok(sub) => sub.submit_sdk_event(&operation).await,
+                Err(err) => Err(err),
+            };
+            let submitted = match submitted {
+                Ok(submitted) => submitted,
+                Err(error) => {
+                    self.status_msg
+                        .set(format!("Strand create failed: {error}"));
+                    return;
+                }
+            };
+            let strand_id = match arkret_sdk::EventId::new(submitted.event_id.clone()) {
+                Ok(event_id) => arkret_sdk::StrandId::from_event_id(&event_id).into_string(),
+                Err(error) => {
+                    self.status_msg.set(format!(
+                        "Strand created but its accepted id is invalid: {error}"
+                    ));
+                    return;
+                }
+            };
+            self.channels.write().push(ChannelEntity {
+                strand_id: strand_id.clone(),
+                name: draft.title.clone(),
+                kind: "discussion".to_owned(),
+                category: draft.category.clone(),
+                topic: draft.topic.clone(),
+                unread: 0,
+                is_default: false,
+                is_private_sidecar: false,
+                security_encrypted: None,
+                scope_circle: draft.scope_circle,
+            });
+            self.select_channel(strand_id.clone());
+            frontier_state.set(submitted.event_id.clone());
+            {
+                let mut store = state_store.write();
+                // Keep POST /events sync_token out of the persisted
+                // account-subscribe cursor; the background sync loop must
+                // resume only from /account/subscribe cursors.
+                store.append_raw_operation(
+                    operation.local_operation_id().to_string(),
+                    Some(realm_id),
+                    json!({
+                        "strand_id": strand_id,
+                        "kind": event_kind_str::STRAND_CREATE,
+                        "title": draft.title,
+                        "category": draft.category,
+                        "summary": draft.topic,
+                        "create_card": draft.create_card,
+                        "object": operation.payload()["object"].clone(),
+                        "event_id": submitted.event_id,
+                    }),
+                );
+            }
+            self.status_msg.set("Strand created".to_owned());
+            self.new_channel_name.set(String::new());
+            self.new_channel_topic.set(String::new());
+            self.new_channel_create_card.set(false);
+            self.new_channel_scope
+                .set(crate::circle::CircleScope::Realm);
+            self.create_dialog_open.set(false);
+        });
+    }
+
+    /// Persist the optimistic watch-level change, rolling `strand_watch_level`
+    /// back to `previous` if the Event is not accepted.
+    pub fn set_strand_watch_level(
+        mut self,
+        base_url: String,
+        api_token: String,
+        wait_for: Option<String>,
+        operation: crate::operation::LocalOperation,
+        previous: WatchLevel,
+    ) {
+        spawn(async move {
+            let submitted = match authed_api_with_sync(&base_url, api_token, wait_for) {
+                Ok(api) => match api.event_submitter() {
+                    Ok(sub) => sub.submit_sdk_event(&operation).await,
+                    Err(err) => Err(err),
+                },
+                Err(_) => {
+                    self.strand_watch_level.set(previous);
+                    self.status_msg
+                        .set(crate::i18n::tr("chat.watch_level.failed"));
+                    return;
+                }
+            };
+            match submitted {
+                Ok(_) => self
+                    .status_msg
+                    .set(crate::i18n::tr("chat.watch_level.saved")),
+                Err(_) => {
+                    // Rollback on failure.
+                    self.strand_watch_level.set(previous);
+                    self.status_msg
+                        .set(crate::i18n::tr("chat.watch_level.failed"));
+                }
+            }
+        });
+    }
+
+    /// Publish a private sidecar message into the shared Strand.
+    ///
+    /// A durably queued submit is retried twice before it is reported as
+    /// queued rather than failed — the Event is accepted locally either way,
+    /// and telling the author it failed would invite a duplicate.
+    pub fn publish_sidecar_to_shared_strand(
+        mut self,
+        base_url: String,
+        api_token: String,
+        operation: crate::operation::LocalOperation,
+    ) {
+        spawn(async move {
+            let result =
+                crate::transport::auth::with_authed_api(&base_url, api_token, |api| async move {
+                    let submitter = api.event_submitter()?;
+                    let mut attempt = 0_u8;
+                    loop {
+                        match submitter.submit_sdk_event(&operation).await {
+                            Ok(result) => {
+                                break Ok(Some(result));
+                            }
+                            Err(error)
+                                if crate::event_submit::is_durably_queued_error(&error)
+                                    && attempt < 2 =>
+                            {
+                                attempt += 1;
+                                crate::runtime_helpers::sleep_for(
+                                    std::time::Duration::from_millis(1_100),
+                                )
+                                .await;
+                            }
+                            Err(error) if crate::event_submit::is_durably_queued_error(&error) => {
+                                break Ok(None);
+                            }
+                            Err(error) => break Err(error),
+                        }
+                    }
+                })
+                .await;
+            self.sidecar_publish_pending.set(false);
+            match result {
+                Ok(Some(_)) => {
+                    self.sidecar_publish_open.set(false);
+                    self.sidecar_publish_draft.set(String::new());
+                    self.status_msg.set("Published to shared Strand".to_owned());
+                }
+                Ok(None) => {
+                    self.sidecar_publish_open.set(false);
+                    self.sidecar_publish_draft.set(String::new());
+                    self.status_msg
+                        .set("Shared publish queued for retry".to_owned());
+                }
+                Err(error) => self
+                    .status_msg
+                    .set(format!("Shared publish failed: {}", error.display())),
+            }
+        });
+    }
+
+    /// Author the Circle + Strand unit that promotes a message into a private
+    /// discussion.
+    ///
+    /// The two ids fall out of their own create Events, so the promoted
+    /// indicator is only set once the whole unit lands; a half-applied promote
+    /// rolls the indicator back rather than presenting itself as success.
+    pub fn promote_private_discussion(
+        mut self,
+        base_url: String,
+        api_token: String,
+        source_id: String,
+        steps: Vec<crate::event_submit::EventUnitStep>,
+    ) {
+        spawn(async move {
+            let outcome =
+                crate::transport::auth::with_authed_api(&base_url, api_token, |api| async move {
+                    let submitter = api.event_submitter()?;
+                    let authored = submitter.author_event_unit(steps).await?;
+                    let ids = crate::messaging::discussion_promote::promote_ids(&authored)?;
+                    submitter
+                        .submit_signed_sdk_events_batch(&authored, None)
+                        .await?;
+                    Ok(ids)
+                })
+                .await;
+            match outcome {
+                Ok(ids) => {
+                    self.promoted_targets
+                        .write()
+                        .insert(source_id, ids.discussion_strand_id);
+                }
+                Err(err) => {
+                    tracing::warn!("discussion promote failed: {}", err.display());
+                    self.promoted_targets.write().remove(&source_id);
+                    self.status_msg.set(format!(
+                        "Private discussion creation failed: {}",
+                        err.display()
+                    ));
+                }
+            }
+        });
+    }
 }
 
 fn mark_message_command_succeeded(messages: &mut Signal<Vec<ChatMessage>>, message_id: &str) {
@@ -1234,6 +1476,16 @@ fn mark_message_command_failed(
         message.failed = true;
         message.error = Some(error);
     }
+}
+
+/// What a Strand create still needs once the server has named the Strand.
+pub(super) struct StrandCreateDraft {
+    pub title: String,
+    pub category: String,
+    pub topic: Option<String>,
+    pub create_card: bool,
+    pub scope_circle: Option<StrandScopeCircle>,
+    pub frontier_state: Signal<String>,
 }
 
 pub(super) fn use_chat_controller(
@@ -1309,5 +1561,13 @@ pub(super) fn use_chat_controller(
         account_display_name: use_signal(String::new),
         track_filter: use_signal(|| "discussion_only".to_owned()),
         left_panel_open: use_signal(|| true),
+        eligible_circle_scopes: use_signal(Vec::new),
+        eligible_circle_scope_request_key_seen: use_signal(String::new),
+        eligible_circle_scope_request_in_flight: use_signal(|| false),
+        new_channel_scope: use_signal(crate::circle::CircleScope::default),
+        sidecar_publish_open: use_signal(|| false),
+        sidecar_publish_draft: use_signal(String::new),
+        sidecar_publish_pending: use_signal(|| false),
+        member_handle_fetching: use_signal(std::collections::BTreeSet::new),
     }
 }

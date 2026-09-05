@@ -101,7 +101,7 @@ impl MentionInsertRequest {
 // feed), mirroring `kanban::kanban_operations_from_events`.
 use composer::{ChatComposer, ChatComposerContext};
 use controller::{
-    ChatCommandContext, ChatController, ChatProjectionEvent, ChatProjectionSink,
+    ChatCommandContext, ChatController, ChatProjectionEvent, ChatProjectionSink, StrandCreateDraft,
     use_chat_controller,
 };
 use effects::ChatEffects;
@@ -1469,57 +1469,6 @@ pub fn ChatPanel(
     let mut migrated_draft_applied_for = use_signal(String::new);
     let mut sidecar_exchange_fold_basis_seen = use_signal(String::new);
     let sidecar_close_retry_epoch = use_signal(|| 0_u64);
-    let mut member_handle_fetching = use_signal(std::collections::BTreeSet::<String>::new);
-    {
-        let handle_base_url = base_url.clone();
-        let handle_realm_id = selected_realm_id.clone();
-        use_effect(move || {
-            let _account_cursor = sync_cursor();
-            let _realm_epoch = realm_live_epoch();
-            let api_token = token();
-            if handle_base_url.trim().is_empty()
-                || handle_realm_id.trim().is_empty()
-                || api_token.trim().is_empty()
-            {
-                return;
-            }
-            let projection = state_store
-                .read()
-                .load()
-                .realm_tree_projections
-                .get(&handle_realm_id)
-                .cloned();
-            let rows = crate::views::member_display::realm_member_roster(projection.as_ref());
-            if rows.is_empty() {
-                return;
-            }
-            let fetches = {
-                let store = state_store.read();
-                let in_flight = member_handle_fetching.read();
-                crate::views::member_display::missing_member_handle_lookups(
-                    &store,
-                    &handle_realm_id,
-                    &rows,
-                    &in_flight,
-                )
-            };
-            for request in fetches {
-                let request_key = request.request_key.clone();
-                member_handle_fetching.write().insert(request_key.clone());
-                let base = handle_base_url.clone();
-                let credential = api_token.clone();
-                let store = state_store;
-                let mut fetching = member_handle_fetching;
-                spawn(async move {
-                    crate::views::member_display::fetch_and_cache_member_handle(
-                        base, credential, store, request,
-                    )
-                    .await;
-                    fetching.write().remove(&request_key);
-                });
-            }
-        });
-    }
     {
         let state_store = state_store;
         use_effect(move || {
@@ -1555,7 +1504,7 @@ pub fn ChatPanel(
         });
     }
     let ChatController {
-        mut channels,
+        channels,
         selected_channel,
         messages,
         draft: _,
@@ -1601,88 +1550,21 @@ pub fn ChatPanel(
         presence_announce_key_seen: _,
         presence_heartbeat_tick: _,
         mut promote_discussion_draft,
-        mut promoted_targets,
+        promoted_targets: _,
         latest_read_cursor: _,
         blocked_show_anyway: _,
         account_display_name,
         mut track_filter,
         mut left_panel_open,
+        eligible_circle_scopes,
+        eligible_circle_scope_request_key_seen: _,
+        eligible_circle_scope_request_in_flight: _,
+        mut new_channel_scope,
+        mut sidecar_publish_open,
+        mut sidecar_publish_draft,
+        mut sidecar_publish_pending,
+        member_handle_fetching: _,
     } = controller;
-    let mut eligible_circle_scopes = use_signal(Vec::<CircleSummary>::new);
-    let mut eligible_circle_scope_request_key_seen = use_signal(String::new);
-    let mut eligible_circle_scope_request_in_flight = use_signal(|| false);
-    let mut new_channel_scope = use_signal(CircleScope::default);
-    let mut sidecar_publish_open = use_signal(|| false);
-    let mut sidecar_publish_draft = use_signal(String::new);
-    let mut sidecar_publish_pending = use_signal(|| false);
-    {
-        let base = base_url.clone();
-        let realm = selected_realm_id.clone();
-        let actor = principal_id.clone();
-        use_effect(move || {
-            let credential = token();
-            let base = base.clone();
-            let realm = realm.clone();
-            let request_key = format!("{base}\u{1f}{actor}\u{1f}{realm}");
-            if !should_start_circle_scope_request(
-                &credential,
-                eligible_circle_scope_request_key_seen.peek().as_str(),
-                *eligible_circle_scope_request_in_flight.peek(),
-                &request_key,
-            ) {
-                return;
-            }
-            eligible_circle_scope_request_key_seen.set(request_key.clone());
-            eligible_circle_scope_request_in_flight.set(true);
-            spawn(async move {
-                let outcome =
-                    crate::transport::auth::with_authed_api(&base, credential, |api| async move {
-                        api.http()
-                            .circle_list(&realm)
-                            .await
-                            .map_err(anyhow::Error::from)
-                    })
-                    .await;
-                match outcome {
-                    Ok(list) => {
-                        let summaries = crate::circle::ordinary_circle_views(list)
-                            .into_iter()
-                            .filter(|circle| {
-                                circle.state == arkret_sdk::CircleState::Active
-                                    && circle.viewer_membership
-                                        == Some(arkret_sdk::CircleMembership::Join)
-                            })
-                            .map(|circle| CircleSummary {
-                                id: circle.circle_id.to_string(),
-                                realm_id: circle.realm_id.to_string(),
-                                title: circle.title,
-                                short_name: circle.display.short_name,
-                                color_token: format!("{:?}", circle.display.color_token),
-                                symbol: format!("{:?}", circle.display.symbol),
-                                member_count: u32::try_from(circle.member_ids.len())
-                                    .unwrap_or(u32::MAX),
-                                state: circle.state,
-                                viewer_is_member: true,
-                            })
-                            .collect();
-                        eligible_circle_scopes.set(summaries);
-                    }
-                    Err(error) => {
-                        if eligible_circle_scope_request_key_seen.peek().as_str() == request_key {
-                            // Permit a later credential/context change to retry,
-                            // but do not immediately self-trigger this effect.
-                            eligible_circle_scope_request_key_seen.set(String::new());
-                        }
-                        tracing::warn!(
-                            error = %error.display(),
-                            "Circle scope picker load failed"
-                        );
-                    }
-                }
-                eligible_circle_scope_request_in_flight.set(false);
-            });
-        });
-    }
     let blocked_actor_id_set: std::collections::BTreeSet<String> = state_store
         .read()
         .client_blocklist()
@@ -2461,75 +2343,21 @@ pub fn ChatPanel(
                                         let base = base.clone();
                                         let realm = realm.clone();
                                         status_msg.set("Creating Strand".to_owned());
-                                        let sdk_op = op;
-                                        spawn(async move {
-                                            match authed_api_with_sync(&base, api_token.clone(), wait_for) {
-                                                Ok(api) => match match api.event_submitter() {
-                                                        Ok(sub) => sub.submit_sdk_event(&sdk_op).await,
-                                                        Err(err) => Err(err),
-                                                    }
-                                                    {
-                                                        Ok(submitted) => {
-                                                            let strand_id = match arkret_sdk::EventId::new(
-                                                                submitted.event_id.clone(),
-                                                            ) {
-                                                                Ok(event_id) => arkret_sdk::StrandId::from_event_id(
-                                                                    &event_id,
-                                                                )
-                                                                .into_string(),
-                                                                Err(error) => {
-                                                                    status_msg.set(format!(
-                                                                        "Strand created but its accepted id is invalid: {error}"
-                                                                    ));
-                                                                    return;
-                                                                }
-                                                            };
-                                                            channels.write().push(ChannelEntity {
-                                                                strand_id: strand_id.clone(),
-                                                                name: title.clone(),
-                                                                kind: "discussion".to_owned(),
-                                                                category: category.clone(),
-                                                                topic: channel_topic.clone(),
-                                                                unread: 0,
-                                                                is_default: false,
-                                                                is_private_sidecar: false,
-                                                                security_encrypted: None,
-                                                                scope_circle: selected_scope_circle.clone(),
-                                                            });
-                                                            controller.select_channel(strand_id.clone());
-                                                            frontier_state.set(submitted.event_id.clone());
-                                                            {
-                                                                let mut store = state_store.write();
-                                                                // Keep POST /events sync_token out of the persisted
-                                                                // account-subscribe cursor; the background sync loop
-                                                                // must resume only from /account/subscribe cursors.
-                                                                store.append_raw_operation(
-                                                                    sdk_op.local_operation_id().to_string(),
-                                                                    Some(realm.clone()),
-                                                                    json!({
-                                                                        "strand_id": strand_id,
-                                                                        "kind": event_kind_str::STRAND_CREATE,
-                                                                        "title": title,
-                                                                        "category": category,
-                                                                        "summary": channel_topic,
-                                                                        "create_card": create_card,
-                                                                        "object": sdk_op.payload()["object"].clone(),
-                                                                        "event_id": submitted.event_id,
-                                                                    }),
-                                                                );
-                                                            }
-                                                            status_msg.set("Strand created".to_owned());
-                                                            new_channel_name.set(String::new());
-                                                            new_channel_topic.set(String::new());
-                                                            new_channel_create_card.set(false);
-                                                            new_channel_scope.set(CircleScope::Realm);
-                                                            create_dialog_open.set(false);
-                                                        }
-                                                        Err(error) => status_msg.set(format!("Strand create failed: {error}")),
-                                                    },
-                                                    Err(error) => status_msg.set(format!("Invalid server URL: {error}")),
-                                                }
-                                            });
+                                        controller.create_strand(
+                                            base,
+                                            api_token,
+                                            wait_for,
+                                            realm,
+                                            op,
+                                            StrandCreateDraft {
+                                                title,
+                                                category,
+                                                topic: channel_topic,
+                                                create_card,
+                                                scope_circle: selected_scope_circle,
+                                                frontier_state,
+                                            },
+                                        );
                                         }
                                     },
                                 {crate::i18n::tr("chat.button.create")}
@@ -2706,27 +2534,7 @@ pub fn ChatPanel(
                                                                             }
                                                                         };
                                                                         let base = base_for_click.clone();
-                                                                        spawn(async move {
-                                                                            match authed_api_with_sync(&base, api_token, wait_for) {
-                                                                                Ok(api) => match match api.event_submitter() {
-                                                                                        Ok(sub) => sub.submit_sdk_event(&watch_op).await,
-                                                                                        Err(err) => Err(err),
-                                                                                    } {
-                                                                                    Ok(_) => {
-                                                                                        status_msg.set(crate::i18n::tr("chat.watch_level.saved"));
-                                                                                    }
-                                                                                    Err(_) => {
-                                                                                        // Rollback on failure.
-                                                                                        strand_watch_level.set(prev);
-                                                                                        status_msg.set(crate::i18n::tr("chat.watch_level.failed"));
-                                                                                    }
-                                                                                },
-                                                                                Err(_) => {
-                                                                                    strand_watch_level.set(prev);
-                                                                                    status_msg.set(crate::i18n::tr("chat.watch_level.failed"));
-                                                                                }
-                                                                            }
-                                                                        });
+                                                                        controller.set_strand_watch_level(base, api_token, wait_for, watch_op, prev);
                                                                     },
                                                                     "{option_label}"
                                                                 }
@@ -3125,71 +2933,7 @@ pub fn ChatPanel(
                                             sidecar_publish_pending.set(true);
                                             let credential = token();
                                             let base = base.clone();
-                                            spawn(async move {
-                                                let result =
-                                                    crate::transport::auth::with_authed_api(
-                                                        &base,
-                                                        credential,
-                                                        |api| async move {
-                                                            let submitter = api.event_submitter()?;
-                                                            let mut attempt = 0_u8;
-                                                            loop {
-                                                                match submitter
-                                                                    .submit_sdk_event(&operation)
-                                                                    .await
-                                                                {
-                                                                    Ok(result) => {
-                                                                        break Ok(Some(result));
-                                                                    }
-                                                                    Err(error)
-                                                                        if crate::event_submit::is_durably_queued_error(
-                                                                            &error,
-                                                                        ) && attempt < 2 =>
-                                                                    {
-                                                                        attempt += 1;
-                                                                        crate::runtime_helpers::sleep_for(
-                                                                            std::time::Duration::from_millis(
-                                                                                1_100,
-                                                                            ),
-                                                                        )
-                                                                        .await;
-                                                                    }
-                                                                    Err(error)
-                                                                        if crate::event_submit::is_durably_queued_error(
-                                                                            &error,
-                                                                        ) =>
-                                                                    {
-                                                                        break Ok(None);
-                                                                    }
-                                                                    Err(error) => break Err(error),
-                                                                }
-                                                            }
-                                                        },
-                                                    )
-                                                    .await;
-                                                sidecar_publish_pending.set(false);
-                                                match result {
-                                                    Ok(Some(_)) => {
-                                                        sidecar_publish_open.set(false);
-                                                        sidecar_publish_draft.set(String::new());
-                                                        status_msg.set(
-                                                            "Published to shared Strand".to_owned(),
-                                                        );
-                                                    }
-                                                    Ok(None) => {
-                                                        sidecar_publish_open.set(false);
-                                                        sidecar_publish_draft.set(String::new());
-                                                        status_msg.set(
-                                                            "Shared publish queued for retry"
-                                                                .to_owned(),
-                                                        );
-                                                    }
-                                                    Err(error) => status_msg.set(format!(
-                                                        "Shared publish failed: {}",
-                                                        error.display()
-                                                    )),
-                                                }
-                                            });
+                                            controller.publish_sidecar_to_shared_strand(base, credential, operation);
                                         }
                                     },
                                     "Confirm shared publish"
@@ -3268,53 +3012,7 @@ pub fn ChatPanel(
                                         let base = base.clone();
                                         let api_token = token();
                                         let source_id_for_rollback = source_id.clone();
-                                        spawn(async move {
-                                            // Experimental discussion promote is
-                                            // hidden from the default local UI
-                                            // until soland's reducer is enabled.
-                                            // stop at the first
-                                            // failed op and roll back the
-                                            // optimistic promoted indicator so
-                                            // a half-applied promote is not
-                                            // presented as success.
-                                            let outcome = crate::transport::auth::with_authed_api(
-                                                &base,
-                                                api_token,
-                                                |api| async move {
-                                                    let submitter = api.event_submitter()?;
-                                                    let authored =
-                                                        submitter.author_event_unit(steps).await?;
-                                                    let ids = crate::messaging::discussion_promote::promote_ids(
-                                                        &authored,
-                                                    )?;
-                                                    submitter
-                                                        .submit_signed_sdk_events_batch(&authored, None)
-                                                        .await?;
-                                                    Ok(ids)
-                                                },
-                                            ).await;
-                                            match outcome {
-                                                Ok(ids) => {
-                                                    promoted_targets.write().insert(
-                                                        source_id_for_rollback.clone(),
-                                                        ids.discussion_strand_id,
-                                                    );
-                                                }
-                                                Err(err) => {
-                                                    tracing::warn!(
-                                                        "discussion promote failed: {}",
-                                                        err.display()
-                                                    );
-                                                    promoted_targets
-                                                        .write()
-                                                        .remove(&source_id_for_rollback);
-                                                    status_msg.set(format!(
-                                                        "Private discussion creation failed: {}",
-                                                        err.display()
-                                                    ));
-                                                }
-                                            }
-                                        });
+                                        controller.promote_private_discussion(base, api_token, source_id_for_rollback, steps);
                                     }
                                 },
                                 "Create private discussion"
