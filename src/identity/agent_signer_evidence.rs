@@ -548,8 +548,8 @@ async fn materialize_verified_cache_entry(
     verification_context: CachedAgentSignerEvidenceContext,
 ) -> Option<CachedAgentSignerEvidence> {
     let admission = admission_evidence(&evidence);
-    let snapshot = &admission.agent_authority_snapshot;
-    let binding = &snapshot.core.signing_key_binding;
+    let snapshot = &admission.agent_authority_state_evidence;
+    let binding = &snapshot.state.signing_key_binding;
     let gate = &admission.controller_account_gate_attestation;
     let (outer_source_id, outer_verification_method) = match &evidence {
         AgentSignerEvidence::CurrentAdmission {
@@ -606,7 +606,7 @@ async fn materialize_verified_cache_entry(
         }
     }
     for proof in &snapshot
-        .core
+        .state
         .agent_lifecycle_witness
         .accepted_status_event
         .proofs
@@ -661,11 +661,11 @@ fn verify_seal_signature(
     entry: &CachedAgentSignerEvidence,
     seal: &arkret_sdk::Seal,
 ) -> Result<(), AgentEvidenceRejectedReason> {
-    let snapshot = authority_snapshot(&entry.evidence);
+    let snapshot = authority_state_evidence(&entry.evidence);
     let allowed = [
-        snapshot.core.authority_id.as_str(),
+        snapshot.state.authority_id.as_str(),
         snapshot
-            .core
+            .state
             .signing_key_binding
             .controller_principal_id
             .as_str(),
@@ -708,8 +708,8 @@ fn verify_seal_signature(
 
 fn authorization_record_digests(evidence: &AgentSignerEvidence) -> Option<(Hash, Hash)> {
     let binding = signing_key_binding(evidence);
-    authority_snapshot(evidence)
-        .core
+    authority_state_evidence(evidence)
+        .state
         .key_state_witness
         .cell_value
         .iter()
@@ -732,7 +732,7 @@ fn verify_lifecycle_reducer(
     entry: &CachedAgentSignerEvidence,
     witness: &arkret_sdk::AgentLifecycleWitness,
 ) -> Result<(), AgentEvidenceRejectedReason> {
-    let snapshot = authority_snapshot(&entry.evidence);
+    let snapshot = authority_state_evidence(&entry.evidence);
     let event = &witness.accepted_status_event;
     let Some(controller_principal_id) = event
         .executed_by
@@ -742,7 +742,7 @@ fn verify_lifecycle_reducer(
         return Err(AgentEvidenceRejectedReason::SigningKeyMismatch);
     };
     if &witness.agent_id != event.actor_id.signing_principal_id()
-        || event.realm_id != snapshot.core.principal_control_realm_id
+        || event.realm_id != snapshot.state.principal_control_realm_id
         || arkret_sdk::signed_event_digest_claim(event)
             .ok()
             .is_none_or(|digest| {
@@ -858,8 +858,8 @@ fn common_validation_context<'a>(
     binding_digest: &'a Hash,
 ) -> Option<AgentEvidenceCommonContext<'a>> {
     let admission = admission_evidence(&entry.evidence);
-    let snapshot = &admission.agent_authority_snapshot;
-    let binding = &snapshot.core.signing_key_binding;
+    let snapshot = &admission.agent_authority_state_evidence;
+    let binding = &snapshot.state.signing_key_binding;
     let gate = &admission.controller_account_gate_attestation;
     Some(AgentEvidenceCommonContext {
         signer_id: &binding.agent_id,
@@ -869,7 +869,7 @@ fn common_validation_context<'a>(
         agent_key_authorize_event_id: &binding.agent_key_authorize_event_id,
         authorize_public_key_digest: public_key_digest,
         authorize_signing_key_binding_digest: binding_digest,
-        expected_authority_id: &snapshot.core.authority_id,
+        expected_authority_id: &snapshot.state.authority_id,
         expected_authority_verification_method: &snapshot.lease.verification_method,
         expected_account_authority_id: &gate.authority_id,
         expected_account_authority_verification_method: &gate.verification_method,
@@ -1076,16 +1076,18 @@ fn admission_evidence(evidence: &AgentSignerEvidence) -> &arkret_sdk::AgentAdmis
     }
 }
 
-fn authority_snapshot(evidence: &AgentSignerEvidence) -> &arkret_sdk::AgentAuthoritySnapshot {
-    &admission_evidence(evidence).agent_authority_snapshot
+fn authority_state_evidence(
+    evidence: &AgentSignerEvidence,
+) -> &arkret_sdk::AgentAuthorityStateEvidence {
+    &admission_evidence(evidence).agent_authority_state_evidence
 }
 
 fn signing_key_binding(evidence: &AgentSignerEvidence) -> &arkret_sdk::AgentSigningKeyBinding {
-    &authority_snapshot(evidence).core.signing_key_binding
+    &authority_state_evidence(evidence).state.signing_key_binding
 }
 
 fn seal_lineage(evidence: &AgentSignerEvidence) -> &[arkret_sdk::Seal] {
-    &authority_snapshot(evidence).core.seal_lineages
+    &authority_state_evidence(evidence).state.seal_lineages
 }
 
 fn historical_receipt(

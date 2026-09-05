@@ -666,8 +666,8 @@ pub fn ordinary_agent_mls_author_view(
                     admission_evidence, ..
                 } => {
                     &admission_evidence
-                        .agent_authority_snapshot
-                        .core
+                        .agent_authority_state_evidence
+                        .state
                         .signing_key_binding
                 }
             };

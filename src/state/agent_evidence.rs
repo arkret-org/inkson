@@ -84,7 +84,7 @@ impl LocalStateStore {
             "agent_id": binding.agent_id,
             "verification_method": binding.verification_method,
             "authorization_event_id": binding.agent_key_authorize_event_id,
-            "state_root": agent_signer_evidence_snapshot(&entry.evidence).core.frontier_state_root,
+            "state_root": agent_signer_evidence_authority_state(&entry.evidence).state.frontier_state_root,
             "frontier": agent_signer_evidence_frontier(&entry.evidence),
             "verification_context": &entry.verification_context,
         }))
@@ -107,39 +107,41 @@ impl LocalStateStore {
     }
 }
 
-fn agent_signer_evidence_snapshot(
+fn agent_signer_evidence_authority_state(
     evidence: &arkret_sdk::AgentSignerEvidence,
-) -> &arkret_sdk::AgentAuthoritySnapshot {
+) -> &arkret_sdk::AgentAuthorityStateEvidence {
     match evidence {
         arkret_sdk::AgentSignerEvidence::CurrentAdmission {
             admission_evidence, ..
         }
         | arkret_sdk::AgentSignerEvidence::HistoricalEvent {
             admission_evidence, ..
-        } => &admission_evidence.agent_authority_snapshot,
+        } => &admission_evidence.agent_authority_state_evidence,
     }
 }
 
 fn agent_signer_evidence_binding(
     evidence: &arkret_sdk::AgentSignerEvidence,
 ) -> &arkret_sdk::AgentSigningKeyBinding {
-    &agent_signer_evidence_snapshot(evidence)
-        .core
+    &agent_signer_evidence_authority_state(evidence)
+        .state
         .signing_key_binding
 }
 
 fn agent_signer_evidence_frontier(
     evidence: &arkret_sdk::AgentSignerEvidence,
 ) -> &arkret_sdk::SealId {
-    &agent_signer_evidence_snapshot(evidence)
-        .core
+    &agent_signer_evidence_authority_state(evidence)
+        .state
         .frontier_seal_id
 }
 
 fn agent_signer_evidence_lineage(
     evidence: &arkret_sdk::AgentSignerEvidence,
 ) -> &[arkret_sdk::Seal] {
-    &agent_signer_evidence_snapshot(evidence).core.seal_lineages
+    &agent_signer_evidence_authority_state(evidence)
+        .state
+        .seal_lineages
 }
 
 fn seal_lineage_covers(lineage: &[arkret_sdk::Seal], descendant: &str, ancestor: &str) -> bool {
