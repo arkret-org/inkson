@@ -74,16 +74,16 @@ pub async fn refresh_pending_onboarding(
     let grant = super::load_account_handoff_grant(&handoff)?
         .ok_or_else(|| anyhow::anyhow!("account handoff credential is unavailable"))?;
     let snapshot = account_client(&handoff, &dpop, grant)?
-        .auth_account_onboarding_snapshot()
+        .auth_account_onboarding_state()
         .await?;
     snapshot.validate()?;
-    let reconciled = reconcile_snapshot(handoff, snapshot)?;
+    let reconciled = reconcile_onboarding_state(handoff, snapshot)?;
     persist_reconciled_handoff(&mut state_store.write(), reconciled)
 }
 
-fn reconcile_snapshot(
+fn reconcile_onboarding_state(
     mut handoff: PendingAccountHandoff,
-    snapshot: arkret_sdk::AccountOnboardingSnapshot,
+    snapshot: arkret_sdk::AccountOnboardingState,
 ) -> anyhow::Result<PendingAccountHandoff> {
     if snapshot.handoff_request_id.to_string() != handoff.request_id {
         anyhow::bail!("onboarding snapshot belongs to a different account handoff");
@@ -464,12 +464,12 @@ mod tests {
     }
 
     #[test]
-    fn bound_snapshot_keeps_distinct_stable_id_and_did() {
+    fn bound_onboarding_state_keeps_distinct_stable_id_and_did() {
         let (_store, handoff, checkpoint) =
             bound_continuation_fixture(PendingPrincipalRegistrationStage::RegisterRequestPrepared);
         let did = checkpoint.did.clone();
         let core_id = arkret_sdk::project_did_to_core_id(&did).unwrap();
-        let snapshot = arkret_sdk::AccountOnboardingSnapshot {
+        let snapshot = arkret_sdk::AccountOnboardingState {
             handoff_request_id: arkret_sdk::RequestId::new(handoff.request_id.clone()).unwrap(),
             account_subject: handoff.account_subject.clone().unwrap(),
             observed_at: chrono::Utc::now(),
@@ -480,7 +480,7 @@ mod tests {
             goal: arkret_sdk::AccountOnboardingGoal::CompleteIdentity,
         };
 
-        let reconciled = reconcile_snapshot(handoff, snapshot).unwrap();
+        let reconciled = reconcile_onboarding_state(handoff, snapshot).unwrap();
 
         assert_eq!(reconciled.bound_principal_id.as_ref(), Some(&core_id));
         assert_eq!(reconciled.bound_principal_did.as_ref(), Some(&did));
