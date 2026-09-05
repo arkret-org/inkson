@@ -73,7 +73,7 @@ fn creator_snapshot_bootstrap_makes_space_encryptable() {
             }]
         }),
     );
-    let summary = ensure_creator_mls_snapshot(
+    let summary = ensure_creator_mls_checkpoint(
         &mut state,
         &secure,
         realm,
@@ -85,7 +85,7 @@ fn creator_snapshot_bootstrap_makes_space_encryptable() {
     let summary = summary.expect("missing creator snapshot should be created");
     assert_eq!(summary.realm_id, realm);
     assert_eq!(summary.epoch, 0);
-    assert!(state.mls_snapshot_for(realm).is_some());
+    assert!(state.mls_checkpoint_for(realm).is_some());
     super::seed_current_group_state_ref(&mut state, realm);
     // Ordinary application messages ride epoch 0; no commit event or
     // post-commit snapshot is returned.
@@ -102,7 +102,7 @@ fn creator_snapshot_bootstrap_makes_space_encryptable() {
     assert_eq!(encrypted.2.len(), 1);
     assert!(encrypted.3.is_none());
     assert!(encrypted.4.is_none());
-    assert_eq!(state.mls_snapshot_for(realm).unwrap().epoch, 0);
+    assert_eq!(state.mls_checkpoint_for(realm).unwrap().epoch, 0);
     let encrypted_again = encrypt_values_with_device_snapshot(
         &mut state,
         &secure,
@@ -116,7 +116,7 @@ fn creator_snapshot_bootstrap_makes_space_encryptable() {
     assert_eq!(encrypted_again.2.len(), 1);
     assert!(encrypted_again.3.is_none());
     assert!(encrypted_again.4.is_none());
-    assert_eq!(state.mls_snapshot_for(realm).unwrap().epoch, 0);
+    assert_eq!(state.mls_checkpoint_for(realm).unwrap().epoch, 0);
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -131,7 +131,7 @@ fn complete_membership_hint_does_not_alias_same_principal_at_another_station() {
     super::seed_genesis_governance_proof(&mut state, realm);
     super::seed_human_creator_authorization(principal, device.as_str());
     seed_complete_rfc9420_projection(&mut state, realm, principal);
-    ensure_creator_mls_snapshot(&mut state, &secure, realm, &authority, &device).unwrap();
+    ensure_creator_mls_checkpoint(&mut state, &secure, realm, &authority, &device).unwrap();
     super::seed_current_group_state_ref(&mut state, realm);
     assert_eq!(
         realm_mls_roster_matches_complete_membership_hint(
@@ -219,7 +219,7 @@ fn message_encrypt_carries_metadata_plaintext_on_the_same_epoch() {
     super::seed_genesis_governance_proof(&mut state, realm);
     super::seed_human_creator_authorization(actor, device);
     seed_complete_rfc9420_projection(&mut state, realm, actor);
-    ensure_creator_mls_snapshot(
+    ensure_creator_mls_checkpoint(
         &mut state,
         &secure,
         realm,
@@ -233,7 +233,7 @@ fn message_encrypt_carries_metadata_plaintext_on_the_same_epoch() {
     let effective_scope = arkret_sdk::ScopeRef::Realm {
         realm_id: arkret_sdk::RealmId::new(realm).unwrap(),
     };
-    let snapshot = state.mls_snapshot_for_scope(&effective_scope).unwrap();
+    let snapshot = state.mls_checkpoint_for_scope(&effective_scope).unwrap();
     let group_state_ref = state
         .mls_group_state_ref_for_scope(&effective_scope, &snapshot.group_id, snapshot.epoch)
         .unwrap();
@@ -273,7 +273,10 @@ fn message_encrypt_carries_metadata_plaintext_on_the_same_epoch() {
     assert!(snapshot.is_none());
     // Both application messages advanced the §5.6 observed counter.
     assert_eq!(
-        state.mls_snapshot_for(realm).unwrap().app_messages_observed,
+        state
+            .mls_checkpoint_for(realm)
+            .unwrap()
+            .app_messages_observed,
         2
     );
 }
@@ -290,7 +293,7 @@ fn replacement_sender_domain_blocks_before_counter_advance() {
     super::seed_genesis_governance_proof(&mut state, realm);
     super::seed_human_creator_authorization(actor, device);
     seed_complete_rfc9420_projection(&mut state, realm, actor);
-    ensure_creator_mls_snapshot(
+    ensure_creator_mls_checkpoint(
         &mut state,
         &secure,
         realm,
@@ -303,7 +306,7 @@ fn replacement_sender_domain_blocks_before_counter_advance() {
         realm_id: arkret_sdk::RealmId::new(realm).unwrap(),
     };
     super::seed_current_group_state_ref(&mut state, realm);
-    let before = state.mls_snapshot_for_scope(&effective_scope).unwrap();
+    let before = state.mls_checkpoint_for_scope(&effective_scope).unwrap();
     let group_state_ref = arkret_sdk::EventId::new(
         "ak:event:ARELvWOpF6BRrks3DlbQy-9XIE6aAQQumDQp7fA4ApeM".to_owned(),
     )
@@ -329,7 +332,10 @@ fn replacement_sender_domain_blocks_before_counter_advance() {
         error,
         MlsRuntimeError::EncryptionTransitionPending
     ));
-    assert_eq!(state.mls_snapshot_for_scope(&effective_scope), Some(before));
+    assert_eq!(
+        state.mls_checkpoint_for_scope(&effective_scope),
+        Some(before)
+    );
 }
 
 /// client-sync.md §8.1: once a complete roster hint exposes a mismatch with
@@ -347,7 +353,7 @@ fn encrypted_write_blocks_complete_roster_ahead_of_local_group() {
 
     super::seed_genesis_governance_proof(&mut state, realm);
     super::seed_human_creator_authorization(actor, device);
-    ensure_creator_mls_snapshot(
+    ensure_creator_mls_checkpoint(
         &mut state,
         &secure,
         realm,
@@ -387,7 +393,7 @@ fn encrypted_write_blocks_complete_roster_ahead_of_local_group() {
         error,
         MlsRuntimeError::EncryptionTransitionPending
     ));
-    assert_eq!(state.mls_snapshot_for(realm).unwrap().epoch, 0);
+    assert_eq!(state.mls_checkpoint_for(realm).unwrap().epoch, 0);
 }
 
 /// A roster-only account-sync frame can arrive before the Realm's create /
@@ -403,7 +409,7 @@ fn encrypted_write_blocks_until_content_scheme_projection_arrives() {
 
     super::seed_genesis_governance_proof(&mut state, realm);
     super::seed_human_creator_authorization(actor, device);
-    ensure_creator_mls_snapshot(
+    ensure_creator_mls_checkpoint(
         &mut state,
         &secure,
         realm,
@@ -437,7 +443,7 @@ fn encrypted_write_blocks_until_content_scheme_projection_arrives() {
     .unwrap_err();
 
     assert!(matches!(error, MlsRuntimeError::EncryptionPolicyPending));
-    assert_eq!(state.mls_snapshot_for(realm).unwrap().epoch, 0);
+    assert_eq!(state.mls_checkpoint_for(realm).unwrap().epoch, 0);
 }
 
 /// §2.10 history sharing: authoring `mls_exporter_aead_v1` content MUST retain
@@ -457,7 +463,7 @@ async fn authoring_exporter_aead_content_requires_accepted_transition_evidence()
     let realm = "ak:realm:Ae6wQDaXscJ6lZGbcWqFv_CW7o0_w5CGmtuB6TvlwNh2";
     super::seed_genesis_governance_proof(&mut state, realm);
     super::seed_human_creator_authorization(actor, device);
-    ensure_creator_mls_snapshot(
+    ensure_creator_mls_checkpoint(
         &mut state,
         &secure,
         realm,
@@ -469,9 +475,9 @@ async fn authoring_exporter_aead_content_requires_accepted_transition_evidence()
     let scope = arkret_sdk::ScopeRef::Realm {
         realm_id: arkret_sdk::RealmId::new(realm.to_owned()).unwrap(),
     };
-    let group_id = state.mls_snapshot_for(realm).unwrap().group_id;
+    let group_id = state.mls_checkpoint_for(realm).unwrap().group_id;
     let scope_group_key =
-        crate::state::mls_scope_snapshot_key_for_group(&scope, &group_id).unwrap();
+        crate::state::mls_scope_checkpoint_key_for_group(&scope, &group_id).unwrap();
     let history_store = crate::secure_key_store::default_secure_key_store("inkson");
     let history_key = crate::secure_key_store::mls_history_secret_store_key(&scope_group_key);
     let _ = history_store.delete_secret(&history_key);
@@ -581,7 +587,9 @@ fn two_member_group_with_bob_snapshot(
         &secret,
         &salt,
     );
-    state.save_mls_snapshot(realm.to_owned(), envelope).unwrap();
+    state
+        .save_mls_checkpoint(realm.to_owned(), envelope)
+        .unwrap();
     (alice_group, endpoints)
 }
 
@@ -595,7 +603,7 @@ fn historical_author_view_survives_epoch_rotation() {
     let bob_device = "ak:device:01904100-0000-7000-8000-0000000000c2";
     let (mut alice_group, leaf_endpoints) =
         two_member_group_with_bob_snapshot(&mut state, &secure, realm, bob_actor, bob_device);
-    let epoch_one_snapshot = state.mls_snapshot_for(realm).unwrap();
+    let epoch_one_snapshot = state.mls_checkpoint_for(realm).unwrap();
     let epoch_one_ref =
         arkret_sdk::EventId::new("ak:event:AR9d8WoyQJCOjt6n46diPUzg9zsrG9OZ9TAgE1rz6tJa").unwrap();
     state
@@ -619,7 +627,7 @@ fn historical_author_view_survives_epoch_rotation() {
     )
     .expect("current epoch author view");
 
-    let secret = load_device_snapshot_secret(
+    let secret = load_device_checkpoint_secret(
         &secure,
         &fixture::authority(bob_actor),
         &fixture::device_id(bob_device),
@@ -655,7 +663,9 @@ fn historical_author_view_survives_epoch_rotation() {
             epoch_two_ref,
         )
         .unwrap();
-    state.save_mls_snapshot(realm, epoch_two_snapshot).unwrap();
+    state
+        .save_mls_checkpoint(realm, epoch_two_snapshot)
+        .unwrap();
 
     let historical_view = minimal_metadata_author_view(
         &state,
@@ -709,7 +719,7 @@ fn receive_chain_persists_across_restart_and_plaintext_is_never_at_rest() {
 
     let (mut alice_group, _) =
         two_member_group_with_bob_snapshot(&mut state, &secure, realm, bob_actor, bob_device);
-    let base_envelope = state.mls_snapshot_for(realm).unwrap();
+    let base_envelope = state.mls_checkpoint_for(realm).unwrap();
 
     let m1_header = test_message_header(&alice_group, realm);
     let m1 = alice_group
@@ -734,7 +744,7 @@ fn receive_chain_persists_across_restart_and_plaintext_is_never_at_rest() {
     )
     .expect("bob decrypts m1");
     assert_eq!(plain1, br#"{"body":"m1"}"#);
-    let advanced = state.mls_snapshot_for(realm).unwrap();
+    let advanced = state.mls_checkpoint_for(realm).unwrap();
     assert_eq!(advanced.epoch, base_envelope.epoch);
     assert_ne!(advanced.ciphertext_hex, base_envelope.ciphertext_hex);
     assert_eq!(advanced.app_messages_observed, 1);
@@ -757,7 +767,7 @@ fn receive_chain_persists_across_restart_and_plaintext_is_never_at_rest() {
     // "Restart": a brand-new store over the same backing file must see
     // the advanced receive chain (NOT the pre-decrypt snapshot).
     let restarted = crate::state::LocalStateStore::with_path(path.clone());
-    let reloaded = restarted.mls_snapshot_for(realm).unwrap();
+    let reloaded = restarted.mls_checkpoint_for(realm).unwrap();
     assert_eq!(reloaded.ciphertext_hex, advanced.ciphertext_hex);
     // E2EE-at-rest: the plaintext cache is stripped before persist, so after a
     // real restart m1 is NOT recoverable — its ratchet key was consumed and its
@@ -792,7 +802,7 @@ fn receive_chain_persists_across_restart_and_plaintext_is_never_at_rest() {
     assert_eq!(plain2, br#"{"body":"m2"}"#);
     assert_eq!(
         restarted
-            .mls_snapshot_for(realm)
+            .mls_checkpoint_for(realm)
             .unwrap()
             .app_messages_observed,
         2
@@ -812,10 +822,10 @@ fn circle_scoped_decrypt_uses_and_advances_only_the_circle_snapshot() {
 
     let (mut alice_group, _) =
         two_member_group_with_bob_snapshot(&mut state, &secure, realm, bob_actor, bob_device);
-    let circle_snapshot = state.mls_snapshot_for(realm).unwrap();
-    state.drop_mls_snapshot_for_test(realm);
+    let circle_snapshot = state.mls_checkpoint_for(realm).unwrap();
+    state.drop_mls_checkpoint_for_test(realm);
     state
-        .save_mls_snapshot_for_effective_scope(
+        .save_mls_checkpoint_for_effective_scope(
             realm.to_owned(),
             Some(circle),
             circle_snapshot.clone(),
@@ -852,9 +862,9 @@ fn circle_scoped_decrypt_uses_and_advances_only_the_circle_snapshot() {
     )
     .expect("Circle-scoped message decrypts with the Circle snapshot");
     assert_eq!(plaintext, br#"{"body":"sidecar"}"#);
-    assert!(state.mls_snapshot_for(realm).is_none());
+    assert!(state.mls_checkpoint_for(realm).is_none());
     let advanced = state
-        .mls_snapshot_for_effective_scope(realm, Some(circle))
+        .mls_checkpoint_for_effective_scope(realm, Some(circle))
         .unwrap();
     assert_ne!(advanced.ciphertext_hex, circle_snapshot.ciphertext_hex);
     assert_eq!(advanced.app_messages_observed, 1);
@@ -937,7 +947,7 @@ fn author_own_ciphertext_stays_soft_failure_without_state_regression() {
     super::seed_genesis_governance_proof(&mut state, realm);
     super::seed_human_creator_authorization(actor, device);
     seed_complete_rfc9420_projection(&mut state, realm, actor);
-    ensure_creator_mls_snapshot(
+    ensure_creator_mls_checkpoint(
         &mut state,
         &secure,
         realm,
@@ -958,7 +968,7 @@ fn author_own_ciphertext_stays_soft_failure_without_state_regression() {
     .unwrap();
     let payload: arkret_sdk::EncryptedPayload =
         serde_json::from_value(encrypted_values[0].clone()).unwrap();
-    let after_send = state.mls_snapshot_for(realm).unwrap();
+    let after_send = state.mls_checkpoint_for(realm).unwrap();
 
     let decrypted = decrypt_application_payload_for_effective_scope_internal(
         &state,
@@ -978,7 +988,7 @@ fn author_own_ciphertext_stays_soft_failure_without_state_regression() {
             .is_none()
     );
     assert_eq!(
-        state.mls_snapshot_for(realm).unwrap().ciphertext_hex,
+        state.mls_checkpoint_for(realm).unwrap().ciphertext_hex,
         after_send.ciphertext_hex
     );
 }
@@ -1012,8 +1022,8 @@ fn plaintext_cache_outlives_group_state() {
     .expect("first decrypt");
     assert_eq!(first, br#""cached""#);
 
-    state.drop_mls_snapshot_for_test(realm);
-    assert!(state.mls_snapshot_for(realm).is_none());
+    state.drop_mls_checkpoint_for_test(realm);
+    assert!(state.mls_checkpoint_for(realm).is_none());
     let cached = decrypt_application_payload_for_effective_scope_internal(
         &state,
         &secure,
@@ -1042,7 +1052,7 @@ fn encrypted_write_with_snapshot_requires_existing_device_secret() {
         b"deterministic-salt",
     );
     state
-        .save_mls_snapshot(
+        .save_mls_checkpoint(
             "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
             envelope,
         )
@@ -1106,7 +1116,7 @@ fn encrypted_write_uses_device_key_snapshot_when_ready() {
         b"deterministic-salt",
     );
     let mut state = temp_state_store("ready-encrypt");
-    state.save_mls_snapshot(realm, envelope).unwrap();
+    state.save_mls_checkpoint(realm, envelope).unwrap();
     super::seed_current_group_state_ref(&mut state, realm);
     seed_complete_rfc9420_projection(&mut state, realm, actor);
 
@@ -1125,7 +1135,7 @@ fn encrypted_write_uses_device_key_snapshot_when_ready() {
     assert_eq!(member_ids.len(), 1);
     assert_eq!(encrypted_values.len(), 1);
     assert!(encrypted_values[0].get("ciphertext").is_some());
-    assert!(state.mls_snapshot_for(realm).is_some());
+    assert!(state.mls_checkpoint_for(realm).is_some());
 }
 
 /// X14 — persist-on-accept contract for forced commits: the stored snapshot
@@ -1168,7 +1178,7 @@ fn minimal_overdue_epoch_blocks_before_counter_advance() {
     // Genesis installs the epoch-0 snapshot.
     super::seed_genesis_governance_proof(&mut state, realm);
     super::seed_human_creator_authorization(actor, device);
-    ensure_creator_mls_snapshot(
+    ensure_creator_mls_checkpoint(
         &mut state,
         &secure,
         realm,
@@ -1177,11 +1187,11 @@ fn minimal_overdue_epoch_blocks_before_counter_advance() {
     )
     .unwrap()
     .expect("creator snapshot created");
-    let before = state.mls_snapshot_for(realm).unwrap();
-    let mut overdue = state.mls_snapshot_for(realm).unwrap();
+    let before = state.mls_checkpoint_for(realm).unwrap();
+    let mut overdue = state.mls_checkpoint_for(realm).unwrap();
     overdue.epoch_started_at = chrono::Utc::now() - chrono::Duration::hours(2);
-    state.save_mls_snapshot(realm, overdue).unwrap();
-    let overdue_snapshot = state.mls_snapshot_for(realm).unwrap();
+    state.save_mls_checkpoint(realm, overdue).unwrap();
+    let overdue_snapshot = state.mls_checkpoint_for(realm).unwrap();
 
     let error = encrypt_values_with_device_snapshot(
         &mut state,
@@ -1197,7 +1207,7 @@ fn minimal_overdue_epoch_blocks_before_counter_advance() {
         error,
         MlsRuntimeError::EncryptionTransitionPending
     ));
-    assert_eq!(state.mls_snapshot_for(realm), Some(overdue_snapshot));
+    assert_eq!(state.mls_checkpoint_for(realm), Some(overdue_snapshot));
     assert_eq!(before.app_messages_observed, 0);
 }
 
@@ -1394,7 +1404,7 @@ fn retired_direct_welcome_envelope_does_not_persist_snapshot_or_consume_keypacka
             .is_some_and(|reason| reason.contains("mls_group_id"))
     );
     assert!(
-        state.mls_snapshot_for(realm).is_none(),
+        state.mls_checkpoint_for(realm).is_none(),
         "a retired direct Welcome envelope must never persist joined MLS state"
     );
     // The KeyPackage identity state (init private key) is RETAINED after a

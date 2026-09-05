@@ -46,7 +46,10 @@ pub(crate) fn prepare_rotation_backup_material(
     actor_id: &str,
     device_id: &str,
     recovery_words: &str,
-    snapshots: &std::collections::BTreeMap<String, crate::mls::persistence::MlsSnapshotEnvelope>,
+    snapshots: &std::collections::BTreeMap<
+        String,
+        crate::mls::persistence::MlsLocalCheckpointEnvelope,
+    >,
     list_payload: &Value,
     signer: &std::sync::Arc<crate::event_signer::InksonEventSigner>,
     trust_anchor: &ControllerBackupTrustAnchor,
@@ -132,7 +135,10 @@ pub(crate) async fn execute_device_revoke_security_rotation(
     current_device_id: &str,
     target_device_id: &str,
     recovery_words: &str,
-    snapshots: &std::collections::BTreeMap<String, crate::mls::persistence::MlsSnapshotEnvelope>,
+    snapshots: &std::collections::BTreeMap<
+        String,
+        crate::mls::persistence::MlsLocalCheckpointEnvelope,
+    >,
 ) -> Result<CompletedSecurityRotation> {
     if current_device_id == target_device_id {
         return Err(anyhow!("a device cannot revoke itself"));
@@ -546,8 +552,8 @@ struct StagedRotationSecret {
     previous_version: u32,
     new_version: u32,
     new_secret: String,
-    rewrapped_snapshots:
-        std::collections::BTreeMap<String, crate::mls::persistence::MlsSnapshotEnvelope>,
+    rewrapped_checkpoints:
+        std::collections::BTreeMap<String, crate::mls::persistence::MlsLocalCheckpointEnvelope>,
 }
 
 impl StagedRotationSecret {
@@ -559,7 +565,7 @@ impl StagedRotationSecret {
             previous_version: rotation.previous_version,
             new_version: rotation.new_version,
             new_secret: rotation.new_secret.clone(),
-            rewrapped_snapshots: rotation.rewrapped_snapshots.clone(),
+            rewrapped_checkpoints: rotation.rewrapped_checkpoints.clone(),
         })
     }
 
@@ -568,7 +574,7 @@ impl StagedRotationSecret {
             previous_version: self.previous_version,
             new_version: self.new_version,
             new_secret: self.new_secret,
-            rewrapped_snapshots: self.rewrapped_snapshots,
+            rewrapped_checkpoints: self.rewrapped_checkpoints,
             failed_realms: Vec::new(),
         }
     }

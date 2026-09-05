@@ -242,7 +242,7 @@ fn card_builder_reads_author_plaintext_from_sidecar_without_mls_group() {
     let card = card_from_strand_projection(&strand_view, Some(&ctx));
     assert_eq!(card.synthesis, "recovered synthesis");
     // Sanity: there is genuinely no MLS group to decrypt from.
-    assert!(store.mls_snapshot_for(realm).is_none());
+    assert!(store.mls_checkpoint_for(realm).is_none());
 }
 
 /// E2EE locked vs unlocked on the SAME canonical path.

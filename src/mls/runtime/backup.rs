@@ -7,7 +7,7 @@
 pub fn mls_restore_epoch_floor(state_store: &crate::state::LocalStateStore, realm_id: &str) -> u64 {
     let seal_epoch = seal_view_epoch_floor(state_store, realm_id);
     let local_epoch = state_store
-        .mls_snapshot_for(realm_id)
+        .mls_checkpoint_for(realm_id)
         .map(|snapshot| snapshot.epoch)
         .unwrap_or(0);
     seal_epoch.max(local_epoch)

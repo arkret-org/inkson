@@ -78,7 +78,7 @@ pub(crate) fn pending_mls_coverage_repairs(
         .into_iter()
         .filter(|circle_id| {
             store
-                .mls_snapshot_for_effective_scope(realm_id, circle_id.as_deref())
+                .mls_checkpoint_for_effective_scope(realm_id, circle_id.as_deref())
                 .is_some()
         })
         .collect()
@@ -131,7 +131,7 @@ pub(crate) async fn ensure_mls_governance_coverage(
             .mls_coverage_stale_reason(realm_id, circle_id)
             .is_none()
             || store
-                .mls_snapshot_for_effective_scope(realm_id, circle_id)
+                .mls_checkpoint_for_effective_scope(realm_id, circle_id)
                 .is_none()
     }) {
         return Ok(false);
@@ -164,7 +164,7 @@ pub(crate) async fn ensure_mls_governance_coverage(
     });
 
     let snapshot = state_store
-        .read(|store| store.mls_snapshot_for_effective_scope(realm_id, circle_id))
+        .read(|store| store.mls_checkpoint_for_effective_scope(realm_id, circle_id))
         .ok_or_else(|| "MLS coverage repair requires a local group snapshot".to_owned())?;
     let leaves = state_store.read(|store| {
         crate::mls::governance_proof::current_security_frontier_leaves(
@@ -248,7 +248,7 @@ pub(crate) async fn ensure_mls_governance_coverage(
             .map_err(|error| {
                 format!("MLS coverage repair accepted but reference persistence failed: {error}")
             })?;
-        store.save_mls_snapshot_for_effective_scope(
+        store.save_mls_checkpoint_for_effective_scope(
             realm_id.to_owned(),
             circle_id,
             next_snapshot,

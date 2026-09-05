@@ -61,7 +61,7 @@ pub use types::*;
 
 mod mls_sidecar;
 pub(crate) use mls_sidecar::{
-    PendingHistorySecrets, mls_scope_snapshot_key, mls_scope_snapshot_key_for_group,
+    PendingHistorySecrets, mls_scope_checkpoint_key, mls_scope_checkpoint_key_for_group,
 };
 
 mod history_candidates;
@@ -543,7 +543,7 @@ impl LocalStateStore {
     }
 
     /// Drain the receive-chain overlay into `cached`. `&mut`
-    /// writers that touch `mls_snapshots` / `mls_decrypted_plaintext` call
+    /// writers that touch `mls_local_checkpoints` / `mls_decrypted_plaintext` call
     /// this FIRST so their own write is ordered after (and therefore
     /// supersedes) any decrypt write-backs recorded so far. Safe to call
     /// from any `&mut self` context; no flush of its own (the caller's

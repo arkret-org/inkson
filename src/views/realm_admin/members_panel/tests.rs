@@ -160,8 +160,8 @@ fn temp_store(name: &str) -> LocalStateStore {
     LocalStateStore::with_path(path)
 }
 
-fn dummy_mls_snapshot(realm_id: &str) -> crate::mls::persistence::MlsSnapshotEnvelope {
-    crate::mls::persistence::MlsSnapshotEnvelope {
+fn dummy_mls_checkpoint(realm_id: &str) -> crate::mls::persistence::MlsLocalCheckpointEnvelope {
+    crate::mls::persistence::MlsLocalCheckpointEnvelope {
         realm_id: realm_id.to_owned(),
         group_id: "test-group".to_owned(),
         epoch: 0,
@@ -821,7 +821,7 @@ fn queued_invite_accept_does_not_promote_join_but_realm_remains_reconcilable() {
         }),
     );
     store
-        .save_mls_snapshot(realm_id.to_owned(), dummy_mls_snapshot(realm_id))
+        .save_mls_checkpoint(realm_id.to_owned(), dummy_mls_checkpoint(realm_id))
         .unwrap();
     store.append_raw_operation(
         "ak:event:A4CYJzQmAt__oBoyRdn8Kbzp9uK8Qv1wxZwStS_7lUHA".to_owned(),
@@ -968,7 +968,7 @@ fn admission_candidates_exclude_direct_conversation_realms() {
         Some(arkret_sdk::CollaborationRealmRole::DirectConversation),
     );
     store
-        .save_mls_snapshot(realm_id.to_owned(), dummy_mls_snapshot(realm_id))
+        .save_mls_checkpoint(realm_id.to_owned(), dummy_mls_checkpoint(realm_id))
         .unwrap();
 
     assert!(

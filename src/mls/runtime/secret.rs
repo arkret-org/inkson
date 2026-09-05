@@ -13,7 +13,7 @@ pub use garth::mls::device_secret::{
     account_mls_secret_key, account_mls_secret_key_for_version, account_mls_secret_verified,
     delete_mls_key_package_identity_state, delete_mls_pairwise_key_package_publish_marker,
     ensure_account_mls_secret_durable, ensure_existing_account_mls_secret_durable,
-    load_account_mls_secret, load_device_hpke_private_key, load_device_snapshot_secret,
+    load_account_mls_secret, load_device_checkpoint_secret, load_device_hpke_private_key,
     load_mls_key_package_identity_state, load_mls_key_package_inventory,
     load_mls_pairwise_key_package_publish_marker, load_or_create_account_mls_secret,
     mark_account_mls_secret_verified, mls_key_package_consume_request_key,
@@ -60,9 +60,9 @@ pub fn commit_account_mls_secret_rotation(
     authority: &AccountId,
     rotation: &AccountMlsSecretRotation,
 ) -> Result<(), SecureKeyStoreError> {
-    for (realm_id, envelope) in &rotation.rewrapped_snapshots {
+    for (realm_id, envelope) in &rotation.rewrapped_checkpoints {
         state_store
-            .save_mls_snapshot(realm_id.clone(), envelope.clone())
+            .save_mls_checkpoint(realm_id.clone(), envelope.clone())
             .map_err(SecureKeyStoreError::Backend)?;
     }
     store_account_mls_secret_version(

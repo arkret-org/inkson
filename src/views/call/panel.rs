@@ -278,7 +278,7 @@ pub fn CallPanel(
                     known_participant_identities,
                     known_participant_devices,
                     governance_evidence,
-                    realm_mls_snapshot,
+                    realm_mls_checkpoint,
                     route_origins,
                 ) = {
                     let store = state_store.read();
@@ -296,7 +296,7 @@ pub fn CallPanel(
                             &realm_id,
                             media_plaintext_confirmed(),
                         ),
-                        store.mls_snapshot_for(&realm_id),
+                        store.mls_checkpoint_for(&realm_id),
                         crate::media::service_route::media_service_route_origins(
                             &snapshot, &realm_id,
                         ),
@@ -362,7 +362,7 @@ pub fn CallPanel(
                     &join,
                     &account.authority,
                     &account.device_id,
-                    realm_mls_snapshot,
+                    realm_mls_checkpoint,
                 )
                 .await
                 {
@@ -742,7 +742,7 @@ pub fn CallPanel(
                                             known_participant_identities,
                                             known_participant_devices,
                                             governance_evidence,
-                                            realm_mls_snapshot,
+                                            realm_mls_checkpoint,
                                             route_origins,
                                         ) = {
                                             let store = state_store.read();
@@ -763,7 +763,7 @@ pub fn CallPanel(
                                                     &realm_id,
                                                     media_plaintext_confirmed(),
                                                 ),
-                                                store.mls_snapshot_for(&realm_id),
+                                                store.mls_checkpoint_for(&realm_id),
                                                 crate::media::service_route::media_service_route_origins(
                                                     &snapshot, &realm_id,
                                                 ),
@@ -809,7 +809,7 @@ pub fn CallPanel(
                                                 &join,
                                                 &account.authority,
                                                 &account.device_id,
-                                                realm_mls_snapshot,
+                                                realm_mls_checkpoint,
                                             )
                                             .await
                                             {

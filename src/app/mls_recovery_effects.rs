@@ -109,13 +109,14 @@ pub(super) fn MlsRecoveryEffects(state: MlsRecoveryEffectState) -> Element {
             // false and this effect would never re-fire to surface the
             // backup prompt once the secret appears. Two changes fix that:
             //   1. Read a `state_store` signal in the *synchronous* effect body
-            //      (`has_local_mls_snapshot`) so Dioxus re-runs this effect when the first
+            //      (`has_local_mls_checkpoint`) so Dioxus re-runs this effect when the first
             //      encrypted write saves a snapshot.
             //   2. Fold the local account-secret presence into the detection key (`sec=`) so the
             //      `seen` guard no longer matches once the secret flips false→true, letting the
             //      detection re-run and re-evaluate the backup prompt.
             let state_for_detection_key = state_store_for_detection.read();
-            let has_local_mls_snapshot = !state_for_detection_key.mls_snapshots().is_empty();
+            let has_local_mls_checkpoint =
+                !state_for_detection_key.mls_local_checkpoints().is_empty();
             let has_encrypted_realm_projection =
                 local_state_has_encrypted_realm(&state_for_detection_key);
             let local_mls_epoch_floor = local_mls_epoch_floor_all(&state_for_detection_key);
@@ -135,7 +136,7 @@ pub(super) fn MlsRecoveryEffects(state: MlsRecoveryEffectState) -> Element {
             )
             .unwrap_or(false);
             let detection_key = format!(
-                "{generation}|{base}|{actor}|{device}|sec={has_local_account_secret}|verified={local_account_secret_verified}|snap={has_local_mls_snapshot}|enc={has_encrypted_realm_projection}|epoch={local_mls_epoch_floor}|rk={recovery_key_fingerprint}|recovery={account_recovery_configured_value:?}"
+                "{generation}|{base}|{actor}|{device}|sec={has_local_account_secret}|verified={local_account_secret_verified}|snap={has_local_mls_checkpoint}|enc={has_encrypted_realm_projection}|epoch={local_mls_epoch_floor}|rk={recovery_key_fingerprint}|recovery={account_recovery_configured_value:?}"
             );
             if seen_detection_key().as_deref() == Some(detection_key.as_str()) {
                 return;
@@ -150,7 +151,7 @@ pub(super) fn MlsRecoveryEffects(state: MlsRecoveryEffectState) -> Element {
             let seen_detection_key_for_result = seen_detection_key;
             let should_wait_for_projection = should_wait_for_backup_projection(
                 has_local_account_secret,
-                has_local_mls_snapshot,
+                has_local_mls_checkpoint,
                 has_encrypted_realm_projection,
             );
 
@@ -367,10 +368,10 @@ pub(super) fn MlsRecoveryEffects(state: MlsRecoveryEffectState) -> Element {
 
 fn should_wait_for_backup_projection(
     has_local_account_secret: bool,
-    has_local_mls_snapshot: bool,
+    has_local_mls_checkpoint: bool,
     has_encrypted_realm_projection: bool,
 ) -> bool {
-    has_local_account_secret || has_local_mls_snapshot || has_encrypted_realm_projection
+    has_local_account_secret || has_local_mls_checkpoint || has_encrypted_realm_projection
 }
 
 #[cfg(test)]

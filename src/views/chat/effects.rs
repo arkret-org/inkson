@@ -874,7 +874,7 @@ pub(super) fn ChatEffects(
         use_effect(move || {
             let snapshot_missing = state_store
                 .read()
-                .mls_snapshot_for(&realm_for_crypto)
+                .mls_checkpoint_for(&realm_for_crypto)
                 .is_none();
             // Only mutate when we'd actually move someone from Decrypting
             // into KeyMissing — Decrypting → Plaintext requires a real

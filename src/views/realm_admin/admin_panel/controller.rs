@@ -347,7 +347,7 @@ impl RealmAdminController {
                     if let Err(error) = self
                         .state_store
                         .write()
-                        .save_mls_snapshot(realm_id.clone(), snapshot)
+                        .save_mls_checkpoint(realm_id.clone(), snapshot)
                     {
                         self.status_msg
                             .set(format!("MLS snapshot persist failed: {error}"));

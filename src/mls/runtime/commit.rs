@@ -4,7 +4,7 @@ use arkret_sdk::{AccountId, DeviceId};
 
 use super::{
     MlsRuntimeError, canonical_mls_remove_membership_frontier, idle_self_update_jitter_passed,
-    load_device_snapshot_secret, should_force_epoch_advance,
+    load_device_checkpoint_secret, should_force_epoch_advance,
 };
 use crate::secure_key_store::SecureKeyStore;
 
@@ -38,7 +38,7 @@ pub fn force_epoch_rotation_commit(
 ) -> Result<
     (
         arkret_sdk::MlsCommitEnvelope,
-        crate::mls::persistence::MlsSnapshotEnvelope,
+        crate::mls::persistence::MlsLocalCheckpointEnvelope,
         arkret_sdk::MlsGovernanceBindingPayload,
     ),
     MlsRuntimeError,
@@ -63,7 +63,7 @@ pub fn force_epoch_rotation_commit_for_effective_scope(
 ) -> Result<
     (
         arkret_sdk::MlsCommitEnvelope,
-        crate::mls::persistence::MlsSnapshotEnvelope,
+        crate::mls::persistence::MlsLocalCheckpointEnvelope,
         arkret_sdk::MlsGovernanceBindingPayload,
     ),
     MlsRuntimeError,
@@ -72,9 +72,9 @@ pub fn force_epoch_rotation_commit_for_effective_scope(
         .map(str::trim)
         .filter(|circle_id| !circle_id.is_empty());
     let snapshot = state_store
-        .mls_snapshot_for_effective_scope(realm_id, circle)
+        .mls_checkpoint_for_effective_scope(realm_id, circle)
         .ok_or(MlsRuntimeError::MissingWelcome)?;
-    let secret = load_device_snapshot_secret(secure_store, authority, device_id)
+    let secret = load_device_checkpoint_secret(secure_store, authority, device_id)
         .map_err(MlsRuntimeError::DeviceSecret)?;
     // COR-04: bind the commit to the Seal-view epoch floor so a stale / rolled-back
     // local snapshot can't silently fork the group from an outdated epoch.
@@ -131,7 +131,7 @@ pub(crate) fn build_mls_remove_members_commit_for_effective_scope_with_sidecar_b
 ) -> Result<
     (
         arkret_sdk::MlsRemoveMemberResult,
-        crate::mls::persistence::MlsSnapshotEnvelope,
+        crate::mls::persistence::MlsLocalCheckpointEnvelope,
         arkret_sdk::MlsGovernanceBindingPayload,
     ),
     MlsRuntimeError,
@@ -163,9 +163,9 @@ pub(crate) fn build_mls_remove_members_commit_for_effective_scope_with_sidecar_b
         },
     };
     let snapshot = state_store
-        .mls_snapshot_for_scope(&effective_scope)
+        .mls_checkpoint_for_scope(&effective_scope)
         .ok_or(MlsRuntimeError::MissingWelcome)?;
-    let secret = load_device_snapshot_secret(secure_store, authority, device_id)
+    let secret = load_device_checkpoint_secret(secure_store, authority, device_id)
         .map_err(MlsRuntimeError::DeviceSecret)?;
     // COR-04: bind the commit to the Seal-view epoch floor so a stale / rolled-back
     // local snapshot can't silently fork the group from an outdated epoch.
@@ -221,7 +221,7 @@ pub(crate) fn build_add_member_commit_for_effective_scope(
 ) -> Result<
     (
         arkret_sdk::MlsAddMemberResult,
-        crate::mls::persistence::MlsSnapshotEnvelope,
+        crate::mls::persistence::MlsLocalCheckpointEnvelope,
         arkret_sdk::MlsGovernanceBindingPayload,
     ),
     MlsRuntimeError,
@@ -253,7 +253,7 @@ pub(crate) fn build_add_member_commit_for_effective_scope_with_binding(
 ) -> Result<
     (
         arkret_sdk::MlsAddMemberResult,
-        crate::mls::persistence::MlsSnapshotEnvelope,
+        crate::mls::persistence::MlsLocalCheckpointEnvelope,
         arkret_sdk::MlsGovernanceBindingPayload,
     ),
     MlsRuntimeError,
@@ -279,9 +279,9 @@ pub(crate) fn build_add_member_commit_for_effective_scope_with_binding(
         },
     };
     let snapshot = state_store
-        .mls_snapshot_for_scope(&effective_scope)
+        .mls_checkpoint_for_scope(&effective_scope)
         .ok_or(MlsRuntimeError::MissingWelcome)?;
-    let secret = load_device_snapshot_secret(secure_store, authority, device_id)
+    let secret = load_device_checkpoint_secret(secure_store, authority, device_id)
         .map_err(MlsRuntimeError::DeviceSecret)?;
     // COR-04: bind the commit to the Seal-view epoch floor so a stale / rolled-back
     // local snapshot can't silently fork the group from an outdated epoch.
@@ -363,13 +363,13 @@ pub fn build_idle_self_update_commit(
 ) -> Result<
     Option<(
         arkret_sdk::MlsCommitEnvelope,
-        crate::mls::persistence::MlsSnapshotEnvelope,
+        crate::mls::persistence::MlsLocalCheckpointEnvelope,
         arkret_sdk::MlsGovernanceBindingPayload,
     )>,
     MlsRuntimeError,
 > {
     let snapshot = state_store
-        .mls_snapshot_for(realm_id)
+        .mls_checkpoint_for(realm_id)
         .ok_or(MlsRuntimeError::MissingWelcome)?;
     let is_minimal_metadata = state_store.realm_projection_is_minimal_metadata(realm_id);
     // §5.6 floor + normative pending-commit suppression (shared with the send
@@ -396,7 +396,7 @@ pub fn build_idle_self_update_commit(
     {
         return Ok(None);
     }
-    let secret = load_device_snapshot_secret(secure_store, authority, device_id)
+    let secret = load_device_checkpoint_secret(secure_store, authority, device_id)
         .map_err(MlsRuntimeError::DeviceSecret)?;
     // COR-04: bind the commit to the Seal-view epoch floor so a stale / rolled-back
     // local snapshot can't silently fork the group from an outdated epoch.

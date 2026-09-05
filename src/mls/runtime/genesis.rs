@@ -1,12 +1,12 @@
 //! Creator initial-group setup and the `ak.mls.genesis` event payload.
 
-use super::{MlsRuntimeError, load_device_snapshot_secret, load_or_create_account_mls_secret};
+use super::{MlsRuntimeError, load_device_checkpoint_secret, load_or_create_account_mls_secret};
 use crate::secure_key_store::SecureKeyStore;
 
 pub(crate) const EPOCH_ZERO_SNAPSHOT_GOVERNANCE_BINDING_MISMATCH: &str = "epoch-0 snapshot governance binding differs from the verified Genesis Seal proof; recreate local MLS state";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct InitialMlsSnapshotSummary {
+pub struct InitialMlsCheckpointSummary {
     pub realm_id: String,
     pub group_id: String,
     pub epoch: u64,
@@ -25,14 +25,14 @@ pub struct InitialMlsSnapshotSummary {
 /// The creator does not receive a Welcome for the group they create. Without
 /// this genesis snapshot, their first encrypted write would fail with
 /// `MissingWelcome` even though there is no Welcome to wait for.
-pub fn ensure_creator_mls_snapshot(
+pub fn ensure_creator_mls_checkpoint(
     state_store: &mut crate::state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
     authority: &arkret_sdk::AccountId,
     device_id: &arkret_sdk::DeviceId,
-) -> Result<Option<InitialMlsSnapshotSummary>, MlsRuntimeError> {
-    ensure_creator_mls_snapshot_for_effective_scope(
+) -> Result<Option<InitialMlsCheckpointSummary>, MlsRuntimeError> {
+    ensure_creator_mls_checkpoint_for_effective_scope(
         state_store,
         secure_store,
         realm_id,
@@ -42,15 +42,15 @@ pub fn ensure_creator_mls_snapshot(
     )
 }
 
-pub fn ensure_creator_mls_snapshot_for_effective_scope(
+pub fn ensure_creator_mls_checkpoint_for_effective_scope(
     state_store: &mut crate::state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
     circle_id: Option<&str>,
     authority: &arkret_sdk::AccountId,
     device_id: &arkret_sdk::DeviceId,
-) -> Result<Option<InitialMlsSnapshotSummary>, MlsRuntimeError> {
-    ensure_creator_mls_snapshot_for_effective_scope_with_binding(
+) -> Result<Option<InitialMlsCheckpointSummary>, MlsRuntimeError> {
+    ensure_creator_mls_checkpoint_for_effective_scope_with_binding(
         state_store,
         secure_store,
         realm_id,
@@ -61,7 +61,7 @@ pub fn ensure_creator_mls_snapshot_for_effective_scope(
     )
 }
 
-pub fn ensure_creator_mls_snapshot_for_effective_scope_with_binding(
+pub fn ensure_creator_mls_checkpoint_for_effective_scope_with_binding(
     state_store: &mut crate::state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
@@ -69,8 +69,8 @@ pub fn ensure_creator_mls_snapshot_for_effective_scope_with_binding(
     authority: &arkret_sdk::AccountId,
     device_id: &arkret_sdk::DeviceId,
     sidecar_binding: Option<arkret_sdk::SidecarMlsBinding>,
-) -> Result<Option<InitialMlsSnapshotSummary>, MlsRuntimeError> {
-    create_creator_mls_snapshot_for_effective_scope_with_binding(
+) -> Result<Option<InitialMlsCheckpointSummary>, MlsRuntimeError> {
+    create_creator_mls_checkpoint_for_effective_scope_with_binding(
         state_store,
         secure_store,
         realm_id,
@@ -90,14 +90,14 @@ pub fn ensure_creator_mls_snapshot_for_effective_scope_with_binding(
 /// emitted marker. This is the recovery path for a create task interrupted
 /// after the staged snapshot was persisted but before Genesis submission,
 /// while the verified Realm checkpoint subsequently moved forward.
-pub(crate) fn recreate_unaccepted_creator_mls_snapshot(
+pub(crate) fn recreate_unaccepted_creator_mls_checkpoint(
     state_store: &mut crate::state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
     authority: &arkret_sdk::AccountId,
     device_id: &arkret_sdk::DeviceId,
-) -> Result<InitialMlsSnapshotSummary, MlsRuntimeError> {
-    let snapshot = state_store.mls_snapshot_for(realm_id).ok_or_else(|| {
+) -> Result<InitialMlsCheckpointSummary, MlsRuntimeError> {
+    let snapshot = state_store.mls_checkpoint_for(realm_id).ok_or_else(|| {
         MlsRuntimeError::Genesis(
             "cannot rebase an unaccepted creator snapshot that is missing".to_owned(),
         )
@@ -119,7 +119,7 @@ pub(crate) fn recreate_unaccepted_creator_mls_snapshot(
         ));
     }
 
-    create_creator_mls_snapshot_for_effective_scope_with_binding(
+    create_creator_mls_checkpoint_for_effective_scope_with_binding(
         state_store,
         secure_store,
         realm_id,
@@ -136,7 +136,7 @@ pub(crate) fn recreate_unaccepted_creator_mls_snapshot(
     })
 }
 
-fn create_creator_mls_snapshot_for_effective_scope_with_binding(
+fn create_creator_mls_checkpoint_for_effective_scope_with_binding(
     state_store: &mut crate::state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
@@ -145,7 +145,7 @@ fn create_creator_mls_snapshot_for_effective_scope_with_binding(
     device_id: &arkret_sdk::DeviceId,
     sidecar_binding: Option<arkret_sdk::SidecarMlsBinding>,
     replace_unaccepted_epoch_zero: bool,
-) -> Result<Option<InitialMlsSnapshotSummary>, MlsRuntimeError> {
+) -> Result<Option<InitialMlsCheckpointSummary>, MlsRuntimeError> {
     let realm = realm_id.trim();
     if realm.is_empty() {
         return Err(MlsRuntimeError::Genesis(
@@ -174,11 +174,11 @@ fn create_creator_mls_snapshot_for_effective_scope_with_binding(
             },
         },
     };
-    let group_seed =
-        crate::state::mls_scope_snapshot_key(&effective_scope).map_err(MlsRuntimeError::Genesis)?;
+    let group_seed = crate::state::mls_scope_checkpoint_key(&effective_scope)
+        .map_err(MlsRuntimeError::Genesis)?;
     let group_id = arkret_sdk::base64url_encode(group_seed.as_bytes());
     if state_store
-        .mls_snapshot_for_scope_and_group(&effective_scope, &group_id)
+        .mls_checkpoint_for_scope_and_group(&effective_scope, &group_id)
         .is_some()
         && !replace_unaccepted_epoch_zero
     {
@@ -279,7 +279,7 @@ fn create_creator_mls_snapshot_for_effective_scope_with_binding(
         &secret,
         &salt,
     );
-    let summary = InitialMlsSnapshotSummary {
+    let summary = InitialMlsCheckpointSummary {
         realm_id: realm.to_owned(),
         group_id: post_state.group_id.clone(),
         epoch: post_state.epoch,
@@ -288,19 +288,19 @@ fn create_creator_mls_snapshot_for_effective_scope_with_binding(
         cipher_suite,
     };
     state_store
-        .save_mls_snapshot_for_scope(&effective_scope, snapshot)
+        .save_mls_checkpoint_for_scope(&effective_scope, snapshot)
         .map_err(MlsRuntimeError::Genesis)?;
     Ok(Some(summary))
 }
 
-pub fn initial_mls_snapshot_summary_from_existing(
+pub fn initial_mls_checkpoint_summary_from_existing(
     state_store: &crate::state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
     authority: &arkret_sdk::AccountId,
     device_id: &arkret_sdk::DeviceId,
-) -> Result<Option<InitialMlsSnapshotSummary>, MlsRuntimeError> {
-    initial_mls_snapshot_summary_from_existing_for_effective_scope(
+) -> Result<Option<InitialMlsCheckpointSummary>, MlsRuntimeError> {
+    initial_mls_checkpoint_summary_from_existing_for_effective_scope(
         state_store,
         secure_store,
         realm_id,
@@ -310,15 +310,15 @@ pub fn initial_mls_snapshot_summary_from_existing(
     )
 }
 
-pub fn initial_mls_snapshot_summary_from_existing_for_effective_scope(
+pub fn initial_mls_checkpoint_summary_from_existing_for_effective_scope(
     state_store: &crate::state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
     circle_id: Option<&str>,
     authority: &arkret_sdk::AccountId,
     device_id: &arkret_sdk::DeviceId,
-) -> Result<Option<InitialMlsSnapshotSummary>, MlsRuntimeError> {
-    initial_mls_snapshot_summary_from_existing_for_effective_scope_with_binding(
+) -> Result<Option<InitialMlsCheckpointSummary>, MlsRuntimeError> {
+    initial_mls_checkpoint_summary_from_existing_for_effective_scope_with_binding(
         state_store,
         secure_store,
         realm_id,
@@ -329,7 +329,7 @@ pub fn initial_mls_snapshot_summary_from_existing_for_effective_scope(
     )
 }
 
-pub fn initial_mls_snapshot_summary_from_existing_for_effective_scope_with_binding(
+pub fn initial_mls_checkpoint_summary_from_existing_for_effective_scope_with_binding(
     state_store: &crate::state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
@@ -337,7 +337,7 @@ pub fn initial_mls_snapshot_summary_from_existing_for_effective_scope_with_bindi
     authority: &arkret_sdk::AccountId,
     device_id: &arkret_sdk::DeviceId,
     sidecar_binding: Option<arkret_sdk::SidecarMlsBinding>,
-) -> Result<Option<InitialMlsSnapshotSummary>, MlsRuntimeError> {
+) -> Result<Option<InitialMlsCheckpointSummary>, MlsRuntimeError> {
     let realm = realm_id.trim();
     if realm.is_empty() {
         return Err(MlsRuntimeError::Genesis(
@@ -367,19 +367,19 @@ pub fn initial_mls_snapshot_summary_from_existing_for_effective_scope_with_bindi
         },
     };
     let expected_group_id = arkret_sdk::base64url_encode(
-        crate::state::mls_scope_snapshot_key(&effective_scope)
+        crate::state::mls_scope_checkpoint_key(&effective_scope)
             .map_err(MlsRuntimeError::Genesis)?
             .as_bytes(),
     );
     let Some(snapshot) =
-        state_store.mls_snapshot_for_scope_and_group(&effective_scope, &expected_group_id)
+        state_store.mls_checkpoint_for_scope_and_group(&effective_scope, &expected_group_id)
     else {
         return Ok(None);
     };
     if snapshot.epoch != 0 {
         return Ok(None);
     }
-    let secret = load_device_snapshot_secret(secure_store, authority, device_id)
+    let secret = load_device_checkpoint_secret(secure_store, authority, device_id)
         .map_err(MlsRuntimeError::DeviceSecret)?;
     // COR-04: genesis path — the snapshot is asserted to be epoch 0 just above, so
     // a Seal-view floor would be meaningless; floor 0 is intentional.
@@ -412,7 +412,7 @@ pub fn initial_mls_snapshot_summary_from_existing_for_effective_scope_with_bindi
     let (group_info_bytes, ratchet_tree_bytes) = group
         .public_group_state_bytes()
         .map_err(|err| MlsRuntimeError::Genesis(format!("export public group state: {err}")))?;
-    Ok(Some(InitialMlsSnapshotSummary {
+    Ok(Some(InitialMlsCheckpointSummary {
         realm_id: realm.to_owned(),
         group_id,
         epoch: group.epoch(),
@@ -436,7 +436,7 @@ pub fn initial_mls_snapshot_summary_from_existing_for_effective_scope_with_bindi
 /// `created_at` uses the same RFC3339 (seconds, UTC `Z`) format the event
 /// builder stamps on SDK events.
 pub fn build_mls_genesis_payload(
-    summary: &InitialMlsSnapshotSummary,
+    summary: &InitialMlsCheckpointSummary,
     governance_binding: &arkret_sdk::MlsGovernanceBindingPayload,
 ) -> Result<arkret_sdk::MlsGenesisPayload, MlsRuntimeError> {
     let group_info_digest = crate::canonical::sha256_digest(&summary.group_info_bytes);
@@ -476,7 +476,7 @@ pub fn build_mls_genesis_payload(
 /// group-state-material query.
 pub async fn upload_mls_genesis_public_material(
     api: &crate::transport::TransportClient,
-    summary: &InitialMlsSnapshotSummary,
+    summary: &InitialMlsCheckpointSummary,
 ) -> Result<(), MlsRuntimeError> {
     for (label, bytes) in [
         ("GroupInfo", &summary.group_info_bytes),

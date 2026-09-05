@@ -20,15 +20,15 @@ fn mls_snapshot_persists_and_round_trips_through_store() {
     );
     {
         let mut writer = LocalStateStore::with_path(path.clone());
-        assert!(writer.mls_snapshot_for(realm).is_none());
-        writer.save_mls_snapshot(realm, envelope.clone()).unwrap();
+        assert!(writer.mls_checkpoint_for(realm).is_none());
+        writer.save_mls_checkpoint(realm, envelope.clone()).unwrap();
     }
     let reader = LocalStateStore::with_path(path);
-    let restored = reader.mls_snapshot_for(realm).expect("envelope persists");
+    let restored = reader.mls_checkpoint_for(realm).expect("envelope persists");
     assert_eq!(restored.realm_id, envelope.realm_id);
     assert_eq!(restored.epoch, 5);
     assert_eq!(restored.ciphertext_hex, envelope.ciphertext_hex);
-    assert_eq!(reader.mls_snapshots().len(), 1);
+    assert_eq!(reader.mls_local_checkpoints().len(), 1);
 }
 
 #[test]
@@ -69,7 +69,7 @@ fn logout_session_clear_shreds_memory_and_preserves_encrypted_e2ee_state() {
         let mut store = LocalStateStore::with_path(path.clone());
         store.switch_test_account(actor);
         store
-            .save_mls_snapshot(
+            .save_mls_checkpoint(
                 realm,
                 encrypt_state(realm, "abcd", 1, b"state", "secret", b"salt"),
             )
@@ -118,7 +118,7 @@ fn logout_session_clear_shreds_memory_and_preserves_encrypted_e2ee_state() {
     assert!(reader.session_grant().is_none());
     assert!(reader.dpop_device_key().is_none());
     assert!(
-        reader.mls_snapshot_for(realm).is_some(),
+        reader.mls_checkpoint_for(realm).is_some(),
         "logout must preserve local MLS snapshot for returning account"
     );
     assert!(

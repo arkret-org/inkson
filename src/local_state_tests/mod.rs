@@ -17,7 +17,7 @@ pub(super) use super::*;
 
 mod history_candidates;
 mod identity;
-mod mls_snapshot;
+mod mls_local_checkpoint;
 mod move_submission;
 mod presence;
 mod private_plaintext;

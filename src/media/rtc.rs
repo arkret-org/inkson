@@ -740,8 +740,8 @@ impl RealmMlsExporter {
     /// Restore the realm's live, synchronised MLS group from this device's
     /// persisted snapshot so the SFrame exporter secret matches every other
     /// member's. `snapshot` is the per-realm
-    /// [`crate::mls::persistence::MlsSnapshotEnvelope`] the caller reads from
-    /// `LocalStateStore::mls_snapshot_for` (passed by value so the caller can
+    /// [`crate::mls::persistence::MlsLocalCheckpointEnvelope`] the caller reads from
+    /// `LocalStateStore::mls_checkpoint_for` (passed by value so the caller can
     /// drop the store read-guard before this synchronous KDF runs, never
     /// holding it across an `.await`); `secure_store` provides the account
     /// MLS snapshot secret that unwraps it. This is the exact restore path
@@ -756,14 +756,14 @@ impl RealmMlsExporter {
     /// group has not synced on this device yet, so no media key can be
     /// derived".
     pub fn for_realm(
-        snapshot: Option<crate::mls::persistence::MlsSnapshotEnvelope>,
+        snapshot: Option<crate::mls::persistence::MlsLocalCheckpointEnvelope>,
         secure_store: &dyn crate::secure_key_store::SecureKeyStore,
         authority: &arkret_sdk::AccountId,
         device_id: &arkret_sdk::DeviceId,
     ) -> Result<Self, RtcClientError> {
         let snapshot = snapshot.ok_or(RtcClientError::E2eeKeySourceUnauthorised)?;
         let secret =
-            crate::mls::runtime::load_device_snapshot_secret(secure_store, authority, device_id)
+            crate::mls::runtime::load_device_checkpoint_secret(secure_store, authority, device_id)
                 .map_err(|_| RtcClientError::E2eeKeySourceUnauthorised)?;
         let group = crate::mls::persistence::restore_envelope(&snapshot, &secret, 0)
             .map_err(|_| RtcClientError::E2eeKeySourceUnauthorised)?;
@@ -1105,7 +1105,7 @@ mod tests {
     /// construction `crate::mls::runtime` uses for chat/reaction restore.
     fn seed_realm_snapshot(
         store: &crate::secure_key_store::MemorySecureKeyStore,
-    ) -> crate::mls::persistence::MlsSnapshotEnvelope {
+    ) -> crate::mls::persistence::MlsLocalCheckpointEnvelope {
         use arkret_sdk::{ArkretMlsIdentity, DeviceId};
 
         let secret = crate::mls::runtime::load_or_create_account_mls_secret(

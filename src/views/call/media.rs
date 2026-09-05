@@ -10,7 +10,7 @@ use crate::transport::auth::with_authed_api;
 
 /// Run the media join and wrap the resulting transport in shared state.
 ///
-/// `realm_mls_snapshot` is this device's persisted MLS snapshot for the
+/// `realm_mls_checkpoint` is this device's persisted MLS snapshot for the
 /// call's realm, read by the caller (and the store read-guard dropped)
 /// before this async fn runs so the snapshot restore never holds a `Signal`
 /// guard across an `.await`. It is `None` when the realm has not synced an
@@ -22,10 +22,17 @@ pub(super) async fn join_and_build_transport(
     join: &MediaJoinRequest,
     authority: &arkret_sdk::AccountId,
     device: &arkret_sdk::DeviceId,
-    realm_mls_snapshot: Option<crate::mls::persistence::MlsSnapshotEnvelope>,
+    realm_mls_checkpoint: Option<crate::mls::persistence::MlsLocalCheckpointEnvelope>,
 ) -> Result<(JoinedMediaSession, SharedTransport, Rc<PerSenderFrameKeys>), RtcClientError> {
-    let (session, per_sender_keys) =
-        join_via_api(base, api_token, join, authority, device, realm_mls_snapshot).await?;
+    let (session, per_sender_keys) = join_via_api(
+        base,
+        api_token,
+        join,
+        authority,
+        device,
+        realm_mls_checkpoint,
+    )
+    .await?;
     let transport = new_transport(&session);
     Ok((
         session,
@@ -54,11 +61,11 @@ async fn join_via_api(
     join: &MediaJoinRequest,
     authority: &arkret_sdk::AccountId,
     device: &arkret_sdk::DeviceId,
-    realm_mls_snapshot: Option<crate::mls::persistence::MlsSnapshotEnvelope>,
+    realm_mls_checkpoint: Option<crate::mls::persistence::MlsLocalCheckpointEnvelope>,
 ) -> Result<(JoinedMediaSession, PerSenderFrameKeys), RtcClientError> {
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
     let exporter = crate::media::rtc::RealmMlsExporter::for_realm(
-        realm_mls_snapshot,
+        realm_mls_checkpoint,
         secure_store.as_ref(),
         authority,
         device,

@@ -828,7 +828,7 @@ pub(crate) fn direct_conversation_client_local_blockers(
             .canonical_mls_group_id()
             .ok()
             .and_then(|group_id| {
-                crate::state::mls_scope_snapshot_key_for_group(&scope, &group_id).ok()
+                crate::state::mls_scope_checkpoint_key_for_group(&scope, &group_id).ok()
             })
             .and_then(|scope_group_key| {
                 crate::secure_key_store::load_history_secrets(&scope_group_key)

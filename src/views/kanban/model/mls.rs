@@ -23,7 +23,7 @@ pub(crate) fn mls_decrypt_ctx_if_ready<'a>(
     realm_id: &'a str,
     authority: &arkret_sdk::AccountId,
 ) -> Option<MlsDecryptCtx<'a>> {
-    let snapshot_requires_account_secret = state_store.mls_snapshot_for(realm_id).is_some();
+    let snapshot_requires_account_secret = state_store.mls_checkpoint_for(realm_id).is_some();
     if snapshot_requires_account_secret {
         let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
         let account_secret_available = matches!(

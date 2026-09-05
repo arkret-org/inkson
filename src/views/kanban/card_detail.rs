@@ -266,7 +266,7 @@ pub(super) async fn save_card_detail_edit(
         let session_credential = token();
         card_detail_edit_status.set("Restoring encrypted Realm state before saving...".to_owned());
         spawn(async move {
-            match recover_mls_snapshot_for_encrypted_write(
+            match recover_mls_checkpoint_for_encrypted_write(
                 &base_url,
                 &session_credential,
                 &realm_id,
@@ -357,7 +357,7 @@ pub(super) async fn save_card_detail_edit(
 /// background MLS effects. A Save click is itself a concrete readiness demand:
 /// fetch a pending Welcome, restore a decryptable account history backup, or
 /// finish creator genesis before retrying the exact draft the user submitted.
-async fn recover_mls_snapshot_for_encrypted_write(
+async fn recover_mls_checkpoint_for_encrypted_write(
     base_url: &str,
     session_credential: &str,
     realm_id: &str,

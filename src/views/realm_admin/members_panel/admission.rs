@@ -78,7 +78,7 @@ pub(crate) async fn submit_mls_admission_for_invitee(
     );
     let needs_mls_admission = {
         let store = state_store.read();
-        store.mls_snapshot_for(&realm_id).is_some()
+        store.mls_checkpoint_for(&realm_id).is_some()
             || store.realm_projection_is_mls_encrypted(&realm_id)
     };
     if !needs_mls_admission {
@@ -144,7 +144,7 @@ pub(crate) async fn submit_mls_admission_for_invitee(
     let group_id = {
         let store = state_store.read();
         store
-            .mls_snapshot_for(&realm_id)
+            .mls_checkpoint_for(&realm_id)
             .map(|snapshot| snapshot.group_id)
             .ok_or_else(|| {
                 anyhow::anyhow!(
@@ -485,7 +485,7 @@ pub(crate) fn mls_admission_candidate_realms_for_actor(
             realm_ids.insert(realm_id.clone());
         }
     }
-    for realm_id in store.mls_snapshots().keys() {
+    for realm_id in store.mls_local_checkpoints().keys() {
         if realm_id.starts_with("ak:realm:") {
             realm_ids.insert(realm_id.clone());
         }
@@ -493,7 +493,7 @@ pub(crate) fn mls_admission_candidate_realms_for_actor(
     realm_ids
         .into_iter()
         .filter(|realm_id| {
-            store.mls_snapshot_for(realm_id).is_some()
+            store.mls_checkpoint_for(realm_id).is_some()
                 && store.realm_projection_is_mls_encrypted(realm_id)
                 // Direct-conversation materialization owns its immutable
                 // genesis/Commit/Welcome IDs and admits the peer itself. The
@@ -535,7 +535,7 @@ pub(super) fn cache_exact_accepted_realm_mls_genesis(
     accepted_events: &[arkret_sdk::Event],
 ) -> anyhow::Result<()> {
     let snapshot = store
-        .mls_snapshot_for(realm_id)
+        .mls_checkpoint_for(realm_id)
         .ok_or_else(|| anyhow::anyhow!("MLS admission requires a local Realm group snapshot"))?;
     let matching = accepted_events
         .iter()
@@ -627,7 +627,7 @@ pub(crate) async fn reconcile_mls_admissions_for_realm(
                 realm = %short_protocol_id(&realm_id),
                 actor = %short_protocol_id(&actor_id),
                 device = %short_protocol_id(&device_id),
-                has_snapshot = state_store.read().mls_snapshot_for(&realm_id).is_some(),
+                has_snapshot = state_store.read().mls_checkpoint_for(&realm_id).is_some(),
                 "admission aborted: cannot read local MLS group roster (snapshot/secret/decrypt) — no member can be admitted"
             );
             return Ok(MlsAdmissionReconcileOutcome::default());
@@ -830,7 +830,7 @@ pub(super) async fn ensure_mls_genesis_frontier_for_invite(
     }
     let summary = {
         let store = state_store.read();
-        crate::mls::runtime::initial_mls_snapshot_summary_from_existing(
+        crate::mls::runtime::initial_mls_checkpoint_summary_from_existing(
             &store,
             secure_store,
             realm_id,
@@ -978,7 +978,7 @@ pub(super) async fn ensure_mls_governance_proof_for_next_commit(
     };
     let request = {
         let store = state_store.read();
-        let snapshot = store.mls_snapshot_for(realm_id).ok_or_else(|| {
+        let snapshot = store.mls_checkpoint_for(realm_id).ok_or_else(|| {
             anyhow::anyhow!("local MLS snapshot is unavailable for governance proof request")
         })?;
         crate::mls::governance_proof::proof_request(

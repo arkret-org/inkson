@@ -10,7 +10,7 @@ struct HostArtifactStore {
 impl garth::AcceptedMlsArtifactStore for HostArtifactStore {
     fn load_accepted_mls_artifacts(
         &self,
-    ) -> garth::Result<garth::VersionedAcceptedMlsArtifactSnapshot> {
+    ) -> garth::Result<garth::VersionedAcceptedMlsArtifactState> {
         Ok(self
             .state
             .read(|store| store.accepted_mls_artifact_snapshot()))
@@ -19,7 +19,7 @@ impl garth::AcceptedMlsArtifactStore for HostArtifactStore {
     async fn compare_and_swap_accepted_mls_artifacts(
         &self,
         revision: u64,
-        snapshot: &garth::AcceptedMlsArtifactSnapshot,
+        snapshot: &garth::AcceptedMlsArtifactState,
     ) -> garth::Result<bool> {
         let barrier = self
             .state
@@ -46,7 +46,7 @@ struct HostArtifactApplicator {
 #[derive(Clone)]
 struct LocalAuthoredCommitStaging {
     event_id: arkret_sdk::EventId,
-    snapshot: garth::QueuedMlsSnapshot,
+    snapshot: garth::QueuedMlsLocalCheckpoint,
     proof_leaves: Vec<arkret_sdk::MlsSecurityFrontierLeaf>,
 }
 
@@ -114,7 +114,7 @@ fn restore_local_authored_commit(
         ));
     }
     let mut group = crate::mls::persistence::restore_envelope(
-        &crate::mls::persistence::MlsSnapshotEnvelope::from(staging.snapshot.clone()),
+        &crate::mls::persistence::MlsLocalCheckpointEnvelope::from(staging.snapshot.clone()),
         snapshot_secret,
         payload.next_epoch(),
     )
@@ -168,7 +168,7 @@ impl HostArtifactApplicator {
     fn prepare_group(
         &self,
         event: &arkret_sdk::Event,
-        previous: Option<&garth::QueuedMlsSnapshot>,
+        previous: Option<&garth::QueuedMlsLocalCheckpoint>,
         snapshot_secret: &str,
     ) -> garth::Result<(
         arkret_sdk::ScopeRef,
@@ -182,7 +182,7 @@ impl HostArtifactApplicator {
                 let staged = self
                     .state
                     .read(|store| {
-                        store.staged_mls_snapshot_for_scope_and_group(
+                        store.staged_mls_checkpoint_for_scope_and_group(
                             &payload.effective_scope,
                             payload.mls_group_id.as_str(),
                         )
@@ -216,7 +216,7 @@ impl HostArtifactApplicator {
                     return Ok((scope, binding, group, event.clone()));
                 }
                 let mut group = crate::mls::persistence::restore_envelope(
-                    &crate::mls::persistence::MlsSnapshotEnvelope::from(previous.clone()),
+                    &crate::mls::persistence::MlsLocalCheckpointEnvelope::from(previous.clone()),
                     snapshot_secret,
                     0,
                 )
@@ -367,10 +367,10 @@ impl HostArtifactApplicator {
     fn prepare_inner(
         &self,
         event: &arkret_sdk::Event,
-        previous: Option<&garth::QueuedMlsSnapshot>,
+        previous: Option<&garth::QueuedMlsLocalCheckpoint>,
     ) -> garth::Result<garth::PreparedAcceptedMlsArtifact> {
         let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-        let snapshot_secret = super::load_device_snapshot_secret(
+        let snapshot_secret = super::load_device_checkpoint_secret(
             secure_store.as_ref(),
             &self.authority,
             &self.device_id,
@@ -459,7 +459,7 @@ impl garth::AcceptedMlsArtifactApplicator for HostArtifactApplicator {
     async fn prepare(
         &self,
         event: &arkret_sdk::Event,
-        previous: Option<&garth::QueuedMlsSnapshot>,
+        previous: Option<&garth::QueuedMlsLocalCheckpoint>,
     ) -> garth::Result<garth::PreparedAcceptedMlsArtifact> {
         self.prepare_inner(event, previous)
     }
@@ -477,7 +477,7 @@ fn locally_executable(
             let payload = event_payload::<arkret_sdk::MlsGenesisPayload>(event)
                 .map_err(|error| error.to_string())?;
             Ok(state
-                .staged_mls_snapshot_for_scope_and_group(
+                .staged_mls_checkpoint_for_scope_and_group(
                     &payload.effective_scope,
                     payload.mls_group_id.as_str(),
                 )
@@ -487,7 +487,7 @@ fn locally_executable(
             let payload = event_payload::<arkret_sdk::MlsCommitPayload>(event)
                 .map_err(|error| error.to_string())?;
             Ok(consumer
-                .ready_snapshot(
+                .ready_checkpoint(
                     payload.governance_binding().effective_scope(),
                     payload.mls_group_id(),
                 )
@@ -600,7 +600,7 @@ pub(crate) async fn converge_accepted_local_commit(
     authority: &arkret_sdk::AccountId,
     device_id: &arkret_sdk::DeviceId,
     event_id: &arkret_sdk::EventId,
-    staged_snapshot: &garth::QueuedMlsSnapshot,
+    staged_snapshot: &garth::QueuedMlsLocalCheckpoint,
 ) -> Result<garth::AcceptedMlsArtifactCommitOutcome, String> {
     let local = state.read(crate::state::LocalStateStore::load);
     let checkpoint = local
@@ -851,7 +851,7 @@ mod tests {
         .unwrap();
         let staging = LocalAuthoredCommitStaging {
             event_id: event_id.clone(),
-            snapshot: garth::QueuedMlsSnapshot {
+            snapshot: garth::QueuedMlsLocalCheckpoint {
                 realm_id: REALM.to_owned(),
                 group_id,
                 epoch: 2,

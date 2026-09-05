@@ -1079,7 +1079,7 @@ async fn submit_source_routed_sidecar_message(
     };
     let snapshot = state_store
         .read()
-        .mls_snapshot_for_scope_and_group(&effective_scope, group_id.as_str())
+        .mls_checkpoint_for_scope_and_group(&effective_scope, group_id.as_str())
         .ok_or_else(|| anyhow::anyhow!("native Sidecar MLS snapshot is unavailable"))?;
     if snapshot.group_id != group_id.as_str() {
         anyhow::bail!("native Sidecar MLS snapshot differs from its accepted group");

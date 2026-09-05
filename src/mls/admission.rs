@@ -1,7 +1,7 @@
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 
-use crate::mls::persistence::MlsSnapshotEnvelope;
+use crate::mls::persistence::MlsLocalCheckpointEnvelope;
 use crate::operation::trim_realm_id;
 use crate::secure_key_store::SecureKeyStore;
 use crate::state::LocalStateStore;
@@ -19,7 +19,7 @@ pub(crate) type WelcomeIntentStep =
 pub(crate) struct RealmMlsAdmissionEvents {
     pub(crate) commit: MlsAdmissionAuthoringPlan,
     pub(crate) welcome: WelcomeIntentStep,
-    pub(crate) snapshot: MlsSnapshotEnvelope,
+    pub(crate) snapshot: MlsLocalCheckpointEnvelope,
 }
 
 #[derive(Clone)]
@@ -377,7 +377,7 @@ fn validate_claim_receipt_for_admission(
         );
     }
     let expected_group = state_store
-        .mls_snapshot_for(realm_id)
+        .mls_checkpoint_for(realm_id)
         .map(|snapshot| snapshot.group_id)
         .ok_or_else(|| "MLS admission requires a current local group snapshot".to_owned())?;
     if receipt.request.mls_group_id.as_str() != expected_group {
@@ -1271,6 +1271,6 @@ mod tests {
             error.contains("does not match the exact requester"),
             "{error}"
         );
-        assert!(alice_state.mls_snapshot_for(realm).is_none());
+        assert!(alice_state.mls_checkpoint_for(realm).is_none());
     }
 }

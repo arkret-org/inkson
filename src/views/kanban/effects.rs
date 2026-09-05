@@ -406,7 +406,7 @@ pub(super) fn KanbanEffects(
             let initial_mls_unlock = {
                 let store = state_store.peek();
                 kanban_mls_unlock_signature(
-                    !store.mls_snapshots().is_empty(),
+                    !store.mls_local_checkpoints().is_empty(),
                     crate::app::local_mls_epoch_floor_all(&store),
                 )
             };
@@ -450,7 +450,7 @@ pub(super) fn KanbanEffects(
         let mls_unlock = {
             let store = state_store.read();
             kanban_mls_unlock_signature(
-                !store.mls_snapshots().is_empty(),
+                !store.mls_local_checkpoints().is_empty(),
                 crate::app::local_mls_epoch_floor_all(&store),
             )
         };

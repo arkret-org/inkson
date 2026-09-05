@@ -36,7 +36,7 @@ fn minimal_metadata_reaction_forces_commit_when_epoch_overdue() {
 
     super::seed_genesis_governance_proof(&mut state, realm);
     super::seed_human_creator_authorization(actor, device);
-    ensure_creator_mls_snapshot(
+    ensure_creator_mls_checkpoint(
         &mut state,
         &secure,
         realm,
@@ -45,12 +45,12 @@ fn minimal_metadata_reaction_forces_commit_when_epoch_overdue() {
     )
     .unwrap();
     super::seed_current_group_state_ref(&mut state, realm);
-    let base_epoch = state.mls_snapshot_for(realm).unwrap().epoch;
+    let base_epoch = state.mls_checkpoint_for(realm).unwrap().epoch;
 
     // Backdate the persisted snapshot's epoch clock past the 1h cap.
-    let mut overdue = state.mls_snapshot_for(realm).unwrap();
+    let mut overdue = state.mls_checkpoint_for(realm).unwrap();
     overdue.epoch_started_at = chrono::Utc::now() - chrono::Duration::hours(2);
-    state.save_mls_snapshot(realm, overdue).unwrap();
+    state.save_mls_checkpoint(realm, overdue).unwrap();
     super::seed_next_governance_proof(&mut state, realm);
 
     let target =
@@ -72,7 +72,7 @@ fn minimal_metadata_reaction_forces_commit_when_epoch_overdue() {
         error,
         MlsRuntimeError::EncryptionTransitionPending
     ));
-    assert_eq!(state.mls_snapshot_for(realm).unwrap().epoch, base_epoch);
+    assert_eq!(state.mls_checkpoint_for(realm).unwrap().epoch, base_epoch);
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -99,7 +99,7 @@ fn non_minimal_reaction_never_forces_commit_and_persists_in_place() {
     );
     super::seed_genesis_governance_proof(&mut state, realm);
     super::seed_human_creator_authorization(actor, device);
-    ensure_creator_mls_snapshot(
+    ensure_creator_mls_checkpoint(
         &mut state,
         &secure,
         realm,
@@ -108,10 +108,10 @@ fn non_minimal_reaction_never_forces_commit_and_persists_in_place() {
     )
     .unwrap();
     super::seed_current_group_state_ref(&mut state, realm);
-    let base_epoch = state.mls_snapshot_for(realm).unwrap().epoch;
-    let mut overdue = state.mls_snapshot_for(realm).unwrap();
+    let base_epoch = state.mls_checkpoint_for(realm).unwrap().epoch;
+    let mut overdue = state.mls_checkpoint_for(realm).unwrap();
     overdue.epoch_started_at = chrono::Utc::now() - chrono::Duration::hours(2);
-    state.save_mls_snapshot(realm, overdue).unwrap();
+    state.save_mls_checkpoint(realm, overdue).unwrap();
 
     assert!(!state.realm_projection_is_minimal_metadata(realm));
     let target =
@@ -128,6 +128,6 @@ fn non_minimal_reaction_never_forces_commit_and_persists_in_place() {
     )
     .unwrap();
     // Same epoch persisted in place (no skew), epoch clock carried forward.
-    let after = state.mls_snapshot_for(realm).unwrap();
+    let after = state.mls_checkpoint_for(realm).unwrap();
     assert_eq!(after.epoch, base_epoch);
 }

@@ -1076,22 +1076,25 @@ pub struct ClientLocalState {
     /// [`crate::mls::persistence::encrypt_state`]; the boot path
     /// rehydrates each Realm's MLS group state from the latest envelope
     /// rather than rejoining via Welcome from scratch.
-    #[serde(default)]
-    pub mls_snapshots: BTreeMap<String, crate::mls::persistence::MlsSnapshotEnvelope>,
+    // The persisted key keeps its original spelling: it addresses local state
+    // already written on every device, and an at-rest key is not a wire name.
+    #[serde(default, rename = "mls_snapshots")]
+    pub mls_local_checkpoints:
+        BTreeMap<String, crate::mls::persistence::MlsLocalCheckpointEnvelope>,
     /// Checkpoint-proven MLS artifacts committed through Garth's single
     /// durable consumer. The ready index in this snapshot is authoritative;
-    /// `mls_snapshots` only retains pre-accept authoring state and legacy
+    /// `mls_local_checkpoints` only retains pre-accept authoring state and legacy
     /// receive-chain snapshots that have not advanced the winning epoch.
     #[serde(default)]
-    pub accepted_mls_artifacts: garth::VersionedAcceptedMlsArtifactSnapshot,
+    pub accepted_mls_artifacts: garth::VersionedAcceptedMlsArtifactState,
     /// Pre-decrypt MLS checkpoints retained until the combined secure entry
     /// (advanced snapshot + decrypted plaintext cache) is durably confirmed.
     /// These envelopes are already device-secret-encrypted; keeping the oldest
     /// in-flight checkpoint in account state lets startup roll back and decrypt
     /// again if the IndexedDB put was interrupted by page exit.
-    #[serde(default)]
-    pub mls_receive_recovery_snapshots:
-        BTreeMap<String, crate::mls::persistence::MlsSnapshotEnvelope>,
+    #[serde(default, rename = "mls_receive_recovery_snapshots")]
+    pub mls_receive_recovery_checkpoints:
+        BTreeMap<String, crate::mls::persistence::MlsLocalCheckpointEnvelope>,
     /// Realms whose `ak.mls.genesis` event has already been submitted to
     /// soland. Tracked per-Realm so genesis is emitted exactly once for a
     /// locally-created creator group (the server also rejects a duplicate
@@ -1109,8 +1112,9 @@ pub struct ClientLocalState {
     pub mls_historical_group_state_refs: BTreeMap<String, MlsGroupStateRefRecord>,
     /// Device-secret-encrypted historical MLS snapshots used only to
     /// reconstruct authenticated author views for old messages.
-    #[serde(default)]
-    pub mls_historical_snapshots: BTreeMap<String, crate::mls::persistence::MlsSnapshotEnvelope>,
+    #[serde(default, rename = "mls_historical_snapshots")]
+    pub mls_historical_checkpoints:
+        BTreeMap<String, crate::mls::persistence::MlsLocalCheckpointEnvelope>,
     /// Bounded, cryptographically verified portable Agent signer evidence.
     /// Keys bind agent, method, authorization Event, state root and frontier.
     #[serde(default)]
@@ -1118,7 +1122,7 @@ pub struct ClientLocalState {
     /// `encryption-and-audit.md` §2.4.1 `epoch_update_required` — effective
     /// scopes whose last E2EE application DataEvent was refused with
     /// `mls_governance_binding_stale`, keyed by
-    /// `mls_effective_scope_snapshot_key`.
+    /// `mls_effective_scope_checkpoint_key`.
     ///
     /// The flag is set only by a receiver's typed refusal — never guessed from
     /// a moving Seal head. Every accepted `ak.mls.commit` also seals itself
@@ -1547,13 +1551,13 @@ impl Default for ClientLocalState {
             pending_principal_registration: None,
             recovery_material_evidence: None,
             pending_account_handoff: None,
-            mls_snapshots: BTreeMap::new(),
-            accepted_mls_artifacts: garth::VersionedAcceptedMlsArtifactSnapshot::default(),
-            mls_receive_recovery_snapshots: BTreeMap::new(),
+            mls_local_checkpoints: BTreeMap::new(),
+            accepted_mls_artifacts: garth::VersionedAcceptedMlsArtifactState::default(),
+            mls_receive_recovery_checkpoints: BTreeMap::new(),
             mls_genesis_emitted: BTreeSet::new(),
             mls_group_state_refs: BTreeMap::new(),
             mls_historical_group_state_refs: BTreeMap::new(),
-            mls_historical_snapshots: BTreeMap::new(),
+            mls_historical_checkpoints: BTreeMap::new(),
             agent_signer_evidence: BTreeMap::new(),
             mls_coverage_stale: BTreeMap::new(),
             mls_governance_proofs: BTreeMap::new(),
@@ -1600,9 +1604,10 @@ pub(crate) struct MlsReceiveOverlay {
     /// than) the `cached` envelope for the same realm; `&mut` snapshot
     /// writers clear/absorb the entry so it can never shadow a newer
     /// send-path snapshot.
-    pub(crate) snapshots: BTreeMap<String, crate::mls::persistence::MlsSnapshotEnvelope>,
+    pub(crate) snapshots: BTreeMap<String, crate::mls::persistence::MlsLocalCheckpointEnvelope>,
     /// Oldest pre-decrypt checkpoint for each realm touched by this overlay.
-    pub(crate) recovery_snapshots: BTreeMap<String, crate::mls::persistence::MlsSnapshotEnvelope>,
+    pub(crate) recovery_snapshots:
+        BTreeMap<String, crate::mls::persistence::MlsLocalCheckpointEnvelope>,
     /// Decrypted-plaintext cache entries pending absorption into
     /// `ClientLocalState::mls_decrypted_plaintext`
     /// (`realm_id -> payload_digest -> base64url(plaintext)`).
@@ -1623,12 +1628,12 @@ impl MlsReceiveOverlay {
     pub(crate) fn apply_to(&self, state: &mut ClientLocalState) {
         for (realm_id, envelope) in &self.snapshots {
             state
-                .mls_snapshots
+                .mls_local_checkpoints
                 .insert(realm_id.clone(), envelope.clone());
         }
         for (realm_id, envelope) in &self.recovery_snapshots {
             state
-                .mls_receive_recovery_snapshots
+                .mls_receive_recovery_checkpoints
                 .entry(realm_id.clone())
                 .or_insert_with(|| envelope.clone());
         }

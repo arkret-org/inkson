@@ -6,7 +6,7 @@ use arkret_wire::event_kind_str;
 use garth::mls::welcome_admission::mls_welcome_message_matches_realm;
 
 use super::{
-    MlsRuntimeError, load_device_snapshot_secret, load_mls_key_package_identity_state,
+    MlsRuntimeError, load_device_checkpoint_secret, load_mls_key_package_identity_state,
     should_force_epoch_advance,
 };
 use crate::secure_key_store::SecureKeyStore;
@@ -403,7 +403,7 @@ fn decrypt_application_payload_for_scope_internal(
     // `history_secret` — so a never-Welcomed joiner (no snapshot) can still read
     // granted history via the group-free standalone path below. When no snapshot
     // is present we skip straight to tier-3 history decrypt.
-    let Some(snapshot) = state_store.mls_snapshot_for_scope(effective_scope) else {
+    let Some(snapshot) = state_store.mls_checkpoint_for_scope(effective_scope) else {
         let plaintext = (!sidecar_scoped)
             .then(|| {
                 try_history_decrypt_standalone(
@@ -426,7 +426,7 @@ fn decrypt_application_payload_for_scope_internal(
         }
         return plaintext;
     };
-    let secret = match load_device_snapshot_secret(secure_store, authority, device_id) {
+    let secret = match load_device_checkpoint_secret(secure_store, authority, device_id) {
         Ok(secret) => secret,
         Err(error) => {
             if circle.is_none() && !sidecar_scoped {
@@ -600,11 +600,11 @@ pub fn minimal_metadata_author_view_for_scope(
         _ => None,
     };
     let snapshot = state_store
-        .mls_snapshot_for_scope(effective_scope)
+        .mls_checkpoint_for_scope(effective_scope)
         .filter(|snapshot| snapshot.epoch == epoch && snapshot.group_id == group_id)
         .or_else(|| {
             state_store
-                .historical_mls_snapshot_for_effective_scope(realm_id, circle_id, group_id, epoch)
+                .historical_mls_checkpoint_for_effective_scope(realm_id, circle_id, group_id, epoch)
         })?;
     let accepted_ref = state_store
         .mls_group_state_ref_for_effective_scope(realm_id, circle_id, group_id, epoch)
@@ -612,7 +612,7 @@ pub fn minimal_metadata_author_view_for_scope(
     if accepted_ref.as_str() != group_state_ref {
         return None;
     }
-    let secret = load_device_snapshot_secret(secure_store, authority, device_id).ok()?;
+    let secret = load_device_checkpoint_secret(secure_store, authority, device_id).ok()?;
     // COR-04: read-only restore — no ratchet advance / persist on this path.
     let group = crate::mls::persistence::restore_envelope(&snapshot, &secret, 0).ok()?;
     if group.group_id() != group_id || group.epoch() != epoch {
@@ -874,10 +874,10 @@ pub(crate) fn derive_and_retain_realm_history_secret(
     authority: &AccountId,
     device_id: &DeviceId,
 ) -> Result<Option<RetainedRealmHistorySecret>, MlsRuntimeError> {
-    let Some(snapshot) = state_store.mls_snapshot_for(realm_id) else {
+    let Some(snapshot) = state_store.mls_checkpoint_for(realm_id) else {
         return Ok(None);
     };
-    let secret = load_device_snapshot_secret(secure_store, authority, device_id)
+    let secret = load_device_checkpoint_secret(secure_store, authority, device_id)
         .map_err(MlsRuntimeError::DeviceSecret)?;
     // COR-04: read-only export of the CURRENT epoch's history secret — floor 0 is
     // intentional (no ratchet advance / persist; OpenMLS only exports the epoch the
@@ -912,8 +912,8 @@ fn export_receive_chain_envelope(
     group: &arkret_sdk::ArkretMlsGroup,
     realm_id: &str,
     secret: &str,
-    previous: &crate::mls::persistence::MlsSnapshotEnvelope,
-) -> Result<crate::mls::persistence::MlsSnapshotEnvelope, MlsRuntimeError> {
+    previous: &crate::mls::persistence::MlsLocalCheckpointEnvelope,
+) -> Result<crate::mls::persistence::MlsLocalCheckpointEnvelope, MlsRuntimeError> {
     let post_state = group
         .export_state_record()
         .map_err(|err| MlsRuntimeError::Export(err.to_string()))?;
@@ -1293,8 +1293,8 @@ pub(crate) fn mls_group_member_actor_ids_for_effective_scope(
     authority: &AccountId,
     device_id: &DeviceId,
 ) -> Option<Vec<arkret_sdk::ActorId>> {
-    let snapshot = state_store.mls_snapshot_for_effective_scope(realm_id, circle_id)?;
-    let secret = load_device_snapshot_secret(secure_store, authority, device_id).ok()?;
+    let snapshot = state_store.mls_checkpoint_for_effective_scope(realm_id, circle_id)?;
+    let secret = load_device_checkpoint_secret(secure_store, authority, device_id).ok()?;
     let group = crate::mls::persistence::restore_envelope(&snapshot, &secret, 0).ok()?;
     group.member_actor_ids().ok()
 }
@@ -1311,8 +1311,8 @@ pub(crate) fn mls_group_member_device_ids_for_effective_scope(
     authority: &AccountId,
     device_id: &DeviceId,
 ) -> Option<Vec<DeviceId>> {
-    let snapshot = state_store.mls_snapshot_for_effective_scope(realm_id, circle_id)?;
-    let secret = load_device_snapshot_secret(secure_store, authority, device_id).ok()?;
+    let snapshot = state_store.mls_checkpoint_for_effective_scope(realm_id, circle_id)?;
+    let secret = load_device_checkpoint_secret(secure_store, authority, device_id).ok()?;
     let group = crate::mls::persistence::restore_envelope(&snapshot, &secret, 0).ok()?;
     Some(
         group
@@ -1337,8 +1337,8 @@ pub fn mls_group_member_principal_ids_for_effective_scope(
     authority: &AccountId,
     device_id: &DeviceId,
 ) -> Option<Vec<String>> {
-    let snapshot = state_store.mls_snapshot_for_effective_scope(realm_id, circle_id)?;
-    let secret = load_device_snapshot_secret(secure_store, authority, device_id).ok()?;
+    let snapshot = state_store.mls_checkpoint_for_effective_scope(realm_id, circle_id)?;
+    let secret = load_device_checkpoint_secret(secure_store, authority, device_id).ok()?;
     let group = crate::mls::persistence::restore_envelope(&snapshot, &secret, 0).ok()?;
     Some(
         group
@@ -1867,7 +1867,7 @@ pub(crate) fn apply_welcome_messages_with_device_snapshot(
     // The snapshot secret / identity are prerequisites for ALL welcomes: if they
     // are unavailable no welcome could possibly apply, so surface them as a hard
     // error (the readiness status machinery keys off these).
-    let secret = load_device_snapshot_secret(secure_store, authority, device_id)
+    let secret = load_device_checkpoint_secret(secure_store, authority, device_id)
         .map_err(MlsRuntimeError::DeviceSecret)?;
     let principal_id = authority.principal_id.clone();
     let device_id_typed = device_id.clone();
@@ -2043,7 +2043,7 @@ pub(crate) fn apply_welcome_messages_with_device_snapshot(
         // the same group.
         let effective_scope = welcome_binding.effective_scope().clone();
         if let Some(existing) =
-            state_store.mls_snapshot_for_scope_and_group(&effective_scope, &post_state.group_id)
+            state_store.mls_checkpoint_for_scope_and_group(&effective_scope, &post_state.group_id)
             && existing.group_id == post_state.group_id
             && existing.epoch >= post_state.epoch
         {
@@ -2091,7 +2091,7 @@ pub(crate) fn apply_welcome_messages_with_device_snapshot(
                 continue;
             }
         }
-        if let Err(error) = state_store.save_mls_snapshot_for_scope(&effective_scope, snapshot) {
+        if let Err(error) = state_store.save_mls_checkpoint_for_scope(&effective_scope, snapshot) {
             outcome.record_failure(format!("persist Welcome MLS snapshot: {error}"));
             continue;
         }
@@ -2123,14 +2123,14 @@ pub(crate) fn encrypt_values_with_device_snapshot(
         Vec<arkret_sdk::DidCoreId>,
         Vec<serde_json::Value>,
         Option<PreparedMlsCommit>,
-        Option<crate::mls::persistence::MlsSnapshotEnvelope>,
+        Option<crate::mls::persistence::MlsLocalCheckpointEnvelope>,
         Option<crate::state::PendingHistorySecrets>,
     ),
     MlsRuntimeError,
 > {
     let effective_scope = runtime_effective_scope(realm_id, None, None)?;
     let snapshot = state_store
-        .mls_snapshot_for_scope(&effective_scope)
+        .mls_checkpoint_for_scope(&effective_scope)
         .ok_or(MlsRuntimeError::MissingWelcome)?;
     let group_state_ref = state_store
         .mls_group_state_ref_for_scope(&effective_scope, &snapshot.group_id, snapshot.epoch)
@@ -2169,7 +2169,7 @@ pub(crate) fn encrypt_values_with_device_snapshot_for_effective_scope(
         Vec<arkret_sdk::DidCoreId>,
         Vec<serde_json::Value>,
         Option<PreparedMlsCommit>,
-        Option<crate::mls::persistence::MlsSnapshotEnvelope>,
+        Option<crate::mls::persistence::MlsLocalCheckpointEnvelope>,
         Option<crate::state::PendingHistorySecrets>,
     ),
     MlsRuntimeError,
@@ -2182,9 +2182,9 @@ pub(crate) fn encrypt_values_with_device_snapshot_for_effective_scope(
         .filter(|circle_id| !circle_id.is_empty());
     let effective_scope = runtime_effective_scope(realm_id, circle, sidecar_binding)?;
     let snapshot = state_store
-        .mls_snapshot_for_scope(&effective_scope)
+        .mls_checkpoint_for_scope(&effective_scope)
         .ok_or(MlsRuntimeError::MissingWelcome)?;
-    let secret = load_device_snapshot_secret(secure_store, authority, device_id)
+    let secret = load_device_checkpoint_secret(secure_store, authority, device_id)
         .map_err(MlsRuntimeError::DeviceSecret)?;
     // COR-04: send/encrypt under the Seal-view epoch floor so encrypting from a
     // stale local snapshot (below the Seal lattice) is rejected as OutdatedSnapshot
@@ -2318,7 +2318,7 @@ pub(crate) fn encrypt_values_with_device_snapshot_for_effective_scope(
         .carry_epoch_started_at(&snapshot)
         .with_app_messages_observed(snapshot.app_messages_observed.saturating_add(sent));
     state_store
-        .save_mls_snapshot_for_scope(&effective_scope, new_envelope)
+        .save_mls_checkpoint_for_scope(&effective_scope, new_envelope)
         .map_err(MlsRuntimeError::Commit)?;
     Ok((
         schedule_hash,
@@ -2345,7 +2345,7 @@ type DeviceSnapshotEncryption = (
     arkret_sdk::EncryptedPayload,
     Option<arkret_sdk::EncryptedPayload>,
     Option<PreparedMlsCommit>,
-    Option<crate::mls::persistence::MlsSnapshotEnvelope>,
+    Option<crate::mls::persistence::MlsLocalCheckpointEnvelope>,
     Option<crate::state::PendingHistorySecrets>,
 );
 
@@ -2381,10 +2381,10 @@ pub(crate) fn encrypt_message_with_device_snapshot(
         .filter(|circle_id| !circle_id.is_empty());
     let effective_scope = runtime_effective_scope(realm_id, circle, sidecar_binding)?;
     let snapshot = state_store
-        .mls_snapshot_for_scope(&effective_scope)
+        .mls_checkpoint_for_scope(&effective_scope)
         .ok_or(MlsRuntimeError::MissingWelcome)?;
     let is_minimal_metadata = state_store.realm_projection_is_minimal_metadata(realm_id);
-    let secret = load_device_snapshot_secret(secure_store, authority, device_id)
+    let secret = load_device_checkpoint_secret(secure_store, authority, device_id)
         .map_err(MlsRuntimeError::DeviceSecret)?;
     // COR-04: send/encrypt under the Seal-view epoch floor so encrypting from a
     // stale local snapshot (below the Seal lattice) is rejected as OutdatedSnapshot
@@ -2523,7 +2523,7 @@ pub(crate) fn encrypt_message_with_device_snapshot(
         .carry_epoch_started_at(&snapshot)
         .with_app_messages_observed(snapshot.app_messages_observed.saturating_add(sent));
     state_store
-        .save_mls_snapshot_for_scope(&effective_scope, new_envelope)
+        .save_mls_checkpoint_for_scope(&effective_scope, new_envelope)
         .map_err(MlsRuntimeError::Commit)?;
     Ok((
         schedule_hash,
@@ -2579,8 +2579,8 @@ pub(crate) fn realm_mls_roster_matches_complete_membership_hint(
         Ok(joined) => joined?,
         Err(_) => return Some(false),
     };
-    let snapshot = state_store.mls_snapshot_for_effective_scope(realm_id, None)?;
-    let secret = load_device_snapshot_secret(secure_store, authority, device_id).ok()?;
+    let snapshot = state_store.mls_checkpoint_for_effective_scope(realm_id, None)?;
+    let secret = load_device_checkpoint_secret(secure_store, authority, device_id).ok()?;
     let group = crate::mls::persistence::restore_envelope(&snapshot, &secret, 0).ok()?;
     let members = group
         .member_actor_ids()

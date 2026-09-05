@@ -108,7 +108,7 @@ pub(crate) fn build_creator_mls_genesis_event(
     state_store: &mut LocalStateStore,
     realm_id: &str,
     actor_id: &str,
-    fresh_summary: Option<&crate::mls::runtime::InitialMlsSnapshotSummary>,
+    fresh_summary: Option<&crate::mls::runtime::InitialMlsCheckpointSummary>,
 ) -> Result<Option<crate::operation::LocalOperation>, String> {
     build_creator_mls_genesis_event_for_effective_scope(
         state_store,
@@ -124,7 +124,7 @@ pub(crate) fn build_creator_mls_genesis_event_for_effective_scope(
     realm_id: &str,
     circle_id: Option<&str>,
     actor_id: &str,
-    fresh_summary: Option<&crate::mls::runtime::InitialMlsSnapshotSummary>,
+    fresh_summary: Option<&crate::mls::runtime::InitialMlsCheckpointSummary>,
 ) -> Result<Option<crate::operation::LocalOperation>, String> {
     build_creator_mls_genesis_event_for_effective_scope_with_binding(
         state_store,
@@ -141,7 +141,7 @@ pub(crate) fn build_creator_mls_genesis_event_for_effective_scope_with_binding(
     realm_id: &str,
     circle_id: Option<&str>,
     actor_id: &str,
-    fresh_summary: Option<&crate::mls::runtime::InitialMlsSnapshotSummary>,
+    fresh_summary: Option<&crate::mls::runtime::InitialMlsCheckpointSummary>,
     sidecar_binding: Option<arkret_sdk::SidecarMlsBinding>,
 ) -> Result<Option<crate::operation::LocalOperation>, String> {
     let circle = circle_id
@@ -162,7 +162,7 @@ pub(crate) fn build_creator_mls_genesis_event_for_effective_scope_with_binding(
         },
     };
     if state_store.mls_genesis_emitted_for_scope(&effective_scope)
-        && let Some(snapshot) = state_store.mls_snapshot_for_scope(&effective_scope)
+        && let Some(snapshot) = state_store.mls_checkpoint_for_scope(&effective_scope)
         && state_store
             .mls_group_state_ref_for_scope(&effective_scope, &snapshot.group_id, snapshot.epoch)
             .is_ok()

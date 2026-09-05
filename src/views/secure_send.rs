@@ -41,7 +41,7 @@ pub(crate) type LocalMlsEncryptResult = (
     Option<arkret_sdk::EncryptedPayload>,
     Option<arkret_sdk::EncryptedPayload>,
     Option<crate::mls::runtime::PreparedMlsCommit>,
-    Option<crate::mls::persistence::MlsSnapshotEnvelope>,
+    Option<crate::mls::persistence::MlsLocalCheckpointEnvelope>,
     Option<crate::state::PendingHistorySecrets>,
 );
 
@@ -132,7 +132,7 @@ fn run_local_mls_encrypt_for_event(
     };
     let snapshot = state_store
         .read()
-        .mls_snapshot_for_scope(&effective_scope)
+        .mls_checkpoint_for_scope(&effective_scope)
         .ok_or(crate::mls::runtime::MlsRuntimeError::MissingWelcome)?;
     let group_state_ref = state_store
         .read()
@@ -213,7 +213,7 @@ pub(crate) struct SecureSendBuild {
     pub message_local_operation_id: crate::operation::LocalOperationId,
     /// Post-commit snapshot — persisted by the caller ONLY after the server
     /// accepts the commit (persist-on-accept).
-    pub new_mls_snapshot: Option<crate::mls::persistence::MlsSnapshotEnvelope>,
+    pub new_mls_checkpoint: Option<crate::mls::persistence::MlsLocalCheckpointEnvelope>,
     /// The Realm move-seal ref captured at build time (covered-seals binding).
     pub seal_ref: String,
     /// History-secret update that must commit before either MLS event is sent.
@@ -292,7 +292,7 @@ pub(crate) async fn build_secure_send(
         encrypted_message,
         encrypted_metadata_message,
         real_commit_envelope,
-        new_mls_snapshot,
+        new_mls_checkpoint,
         pending_history_secrets,
     ): LocalMlsEncryptResult = run_local_mls_encrypt(
         state_store,
@@ -429,7 +429,7 @@ pub(crate) async fn build_secure_send(
         commit_event,
         message_plan,
         message_local_operation_id,
-        new_mls_snapshot,
+        new_mls_checkpoint,
         seal_ref,
         pending_history_secrets,
         effective_scope,
@@ -465,7 +465,7 @@ pub(crate) async fn build_sidecar_exchange_control_send(
         encrypted_control,
         encrypted_metadata,
         prepared_commit,
-        new_mls_snapshot,
+        new_mls_checkpoint,
         pending_history_secrets,
     ) = run_local_mls_encrypt_for_event(
         state_store,
@@ -567,7 +567,7 @@ pub(crate) async fn build_sidecar_exchange_control_send(
         commit_event,
         message_plan,
         message_local_operation_id,
-        new_mls_snapshot,
+        new_mls_checkpoint,
         seal_ref: seal_view.move_seal_ref(),
         pending_history_secrets,
         effective_scope,
@@ -607,7 +607,7 @@ pub(crate) async fn submit_secure_send(
         commit_event,
         message_plan,
         message_local_operation_id: _,
-        new_mls_snapshot,
+        new_mls_checkpoint,
         seal_ref,
         pending_history_secrets,
         effective_scope,
@@ -666,7 +666,7 @@ pub(crate) async fn submit_secure_send(
                 // dependent encrypted message can be submitted. Dropping this
                 // snapshot leaves the browser at the previous epoch after a
                 // reload even though the server has already advanced it.
-                if let Some(snapshot) = new_mls_snapshot.as_ref() {
+                if let Some(snapshot) = new_mls_checkpoint.as_ref() {
                     let Some(event_id) = accepted_commit_event_id.as_ref() else {
                         return SecureSendOutcome::MessageFailed {
                             message: "accepted MLS commit has no typed Event id".to_owned(),
@@ -675,7 +675,7 @@ pub(crate) async fn submit_secure_send(
                     let persist_result = {
                         let mut store = state_store.write();
                         store
-                            .save_mls_snapshot_for_scope(&effective_scope, snapshot.clone())
+                            .save_mls_checkpoint_for_scope(&effective_scope, snapshot.clone())
                             .and_then(|()| {
                                 store.record_mls_group_state_ref_for_scope(
                                     &effective_scope,

@@ -90,7 +90,7 @@ pub(super) fn SecureStoreEffects(state: SecureStoreEffectState) -> Element {
                                         // entry has durably committed.
                                         match state_store_for_secure_upgrade
                                             .write()
-                                            .clear_mls_receive_recovery_snapshots_if_cache_unchanged(
+                                            .clear_mls_receive_recovery_checkpoints_if_cache_unchanged(
                                                 &key,
                                                 &json,
                                             ) {

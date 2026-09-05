@@ -76,8 +76,10 @@ impl BrowserStorageEstimate {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 struct E2eePlaintextCacheV1 {
-    #[serde(default)]
-    mls_snapshots: BTreeMap<String, crate::mls::persistence::MlsSnapshotEnvelope>,
+    // Persisted key, unchanged: this entry is already written in every
+    // device's secure store, and an at-rest key is not a wire name.
+    #[serde(default, rename = "mls_snapshots")]
+    mls_local_checkpoints: BTreeMap<String, crate::mls::persistence::MlsLocalCheckpointEnvelope>,
     #[serde(default)]
     private_plaintext: BTreeMap<String, BTreeMap<String, BTreeMap<String, String>>>,
     #[serde(default)]
@@ -89,7 +91,7 @@ struct E2eePlaintextCacheV1 {
 impl E2eePlaintextCacheV1 {
     fn from_state(state: &ClientLocalState) -> Self {
         Self {
-            mls_snapshots: state.mls_snapshots.clone(),
+            mls_local_checkpoints: state.mls_local_checkpoints.clone(),
             private_plaintext: state.mls_private_plaintext.clone(),
             decrypted_plaintext: state.mls_decrypted_plaintext.clone(),
             authenticated_identity_links: state.authenticated_identity_links.clone(),
@@ -97,7 +99,7 @@ impl E2eePlaintextCacheV1 {
     }
 
     fn is_empty(&self) -> bool {
-        self.mls_snapshots.is_empty()
+        self.mls_local_checkpoints.is_empty()
             && self.private_plaintext.is_empty()
             && self.decrypted_plaintext.is_empty()
             && self.authenticated_identity_links.is_empty()
@@ -133,8 +135,8 @@ impl E2eePlaintextCacheV1 {
         recovery_snapshot_keys: &BTreeSet<String>,
     ) -> bool {
         let mut changed = false;
-        for (realm_id, snapshot) in self.mls_snapshots {
-            match state.mls_snapshots.entry(realm_id.clone()) {
+        for (realm_id, snapshot) in self.mls_local_checkpoints {
+            match state.mls_local_checkpoints.entry(realm_id.clone()) {
                 std::collections::btree_map::Entry::Vacant(entry) => {
                     entry.insert(snapshot);
                     changed = true;
@@ -385,7 +387,7 @@ impl LocalStateStore {
         };
         let mut recovery_snapshot_keys: BTreeSet<String> = self
             .cached
-            .mls_receive_recovery_snapshots
+            .mls_receive_recovery_checkpoints
             .keys()
             .cloned()
             .collect();
@@ -397,17 +399,17 @@ impl LocalStateStore {
             &recovery_snapshot_keys,
         );
         let secure_snapshot_keys: BTreeSet<String> =
-            persisted.mls_snapshots.keys().cloned().collect();
+            persisted.mls_local_checkpoints.keys().cloned().collect();
         let mut changed = changed;
-        for (realm_id, recovery_snapshot) in self.cached.mls_receive_recovery_snapshots.clone() {
+        for (realm_id, recovery_snapshot) in self.cached.mls_receive_recovery_checkpoints.clone() {
             if live_receive_snapshot_keys.contains(&realm_id)
                 || secure_snapshot_keys.contains(&realm_id)
             {
                 continue;
             }
-            if self.cached.mls_snapshots.get(&realm_id) != Some(&recovery_snapshot) {
+            if self.cached.mls_local_checkpoints.get(&realm_id) != Some(&recovery_snapshot) {
                 self.cached
-                    .mls_snapshots
+                    .mls_local_checkpoints
                     .insert(realm_id, recovery_snapshot);
                 changed = true;
             }
@@ -424,13 +426,13 @@ impl LocalStateStore {
     }
 
     #[cfg(test)]
-    pub(crate) fn clear_mls_receive_recovery_snapshots(&mut self) -> anyhow::Result<()> {
+    pub(crate) fn clear_mls_receive_recovery_checkpoints(&mut self) -> anyhow::Result<()> {
         self.ensure_cached_loaded();
         self.absorb_mls_receive_overlay();
-        if self.cached.mls_receive_recovery_snapshots.is_empty() {
+        if self.cached.mls_receive_recovery_checkpoints.is_empty() {
             return Ok(());
         }
-        self.cached.mls_receive_recovery_snapshots.clear();
+        self.cached.mls_receive_recovery_checkpoints.clear();
         self.flush()
     }
 
@@ -439,7 +441,7 @@ impl LocalStateStore {
     /// therefore keeps every checkpoint for the next persistence pass instead
     /// of allowing an older background task to erase newer recovery state.
     #[cfg(any(test, target_arch = "wasm32"))]
-    pub(crate) fn clear_mls_receive_recovery_snapshots_if_cache_unchanged(
+    pub(crate) fn clear_mls_receive_recovery_checkpoints_if_cache_unchanged(
         &mut self,
         persisted_key: &str,
         persisted_json: &str,
@@ -454,10 +456,10 @@ impl LocalStateStore {
         {
             return Ok(false);
         }
-        if self.cached.mls_receive_recovery_snapshots.is_empty() {
+        if self.cached.mls_receive_recovery_checkpoints.is_empty() {
             return Ok(true);
         }
-        self.cached.mls_receive_recovery_snapshots.clear();
+        self.cached.mls_receive_recovery_checkpoints.clear();
         self.flush()?;
         Ok(true)
     }

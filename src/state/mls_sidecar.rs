@@ -47,19 +47,19 @@ fn historical_mls_state_key(effective_scope_key: &str, group_id: &str, epoch: u6
 
 fn prune_historical_mls_author_states(state: &mut ClientLocalState) {
     while state.mls_historical_group_state_refs.len() > MAX_HISTORICAL_MLS_AUTHOR_STATES
-        || state.mls_historical_snapshots.len() > MAX_HISTORICAL_MLS_AUTHOR_STATES
+        || state.mls_historical_checkpoints.len() > MAX_HISTORICAL_MLS_AUTHOR_STATES
     {
         let oldest = state
             .mls_historical_group_state_refs
             .keys()
-            .chain(state.mls_historical_snapshots.keys())
+            .chain(state.mls_historical_checkpoints.keys())
             .min()
             .cloned();
         let Some(oldest) = oldest else {
             break;
         };
         state.mls_historical_group_state_refs.remove(&oldest);
-        state.mls_historical_snapshots.remove(&oldest);
+        state.mls_historical_checkpoints.remove(&oldest);
     }
 }
 
@@ -68,7 +68,7 @@ fn attach_group_state_ref_to_snapshot(
     effective_scope_key: &str,
     record: &MlsGroupStateRefRecord,
 ) -> bool {
-    let Some(snapshot) = state.mls_snapshots.get_mut(effective_scope_key) else {
+    let Some(snapshot) = state.mls_local_checkpoints.get_mut(effective_scope_key) else {
         return false;
     };
     if snapshot.group_id != record.group_id
@@ -176,7 +176,7 @@ impl LocalStateStore {
 
     pub(crate) fn accepted_mls_artifact_snapshot(
         &self,
-    ) -> garth::VersionedAcceptedMlsArtifactSnapshot {
+    ) -> garth::VersionedAcceptedMlsArtifactState {
         self.load().accepted_mls_artifacts
     }
 
@@ -187,7 +187,7 @@ impl LocalStateStore {
     pub(crate) fn compare_and_swap_accepted_mls_artifacts(
         &mut self,
         expected_revision: u64,
-        snapshot: &garth::AcceptedMlsArtifactSnapshot,
+        snapshot: &garth::AcceptedMlsArtifactState,
     ) -> Result<Option<LocalStatePersistBarrier>, String> {
         self.ensure_cached_loaded();
         if self.cached.accepted_mls_artifacts.revision != expected_revision {
@@ -232,20 +232,21 @@ impl LocalStateStore {
                 _ => return Err("accepted MLS artifact has a non-MLS Event kind".to_owned()),
             };
             let scope_key =
-                mls_scope_snapshot_key_for_group(&effective_scope, &artifact.snapshot.group_id)?;
-            let envelope =
-                crate::mls::persistence::MlsSnapshotEnvelope::from(artifact.snapshot.clone());
-            if let Some(current) = self.cached.mls_snapshots.get(&scope_key)
+                mls_scope_checkpoint_key_for_group(&effective_scope, &artifact.snapshot.group_id)?;
+            let envelope = crate::mls::persistence::MlsLocalCheckpointEnvelope::from(
+                artifact.snapshot.clone(),
+            );
+            if let Some(current) = self.cached.mls_local_checkpoints.get(&scope_key)
                 && current.group_id == envelope.group_id
                 && current.epoch < envelope.epoch
             {
-                self.cached.mls_historical_snapshots.insert(
+                self.cached.mls_historical_checkpoints.insert(
                     historical_mls_state_key(&scope_key, &current.group_id, current.epoch),
                     current.clone(),
                 );
             }
             self.cached
-                .mls_snapshots
+                .mls_local_checkpoints
                 .insert(scope_key.clone(), envelope);
             self.cached.mls_group_state_refs.insert(
                 scope_key,
@@ -257,7 +258,7 @@ impl LocalStateStore {
             );
         }
         prune_historical_mls_author_states(&mut self.cached);
-        self.cached.accepted_mls_artifacts = garth::VersionedAcceptedMlsArtifactSnapshot {
+        self.cached.accepted_mls_artifacts = garth::VersionedAcceptedMlsArtifactState {
             revision: next_revision,
             snapshot: snapshot.clone(),
         };
@@ -271,36 +272,36 @@ impl LocalStateStore {
     /// previous record. The on-disk envelope is opaque to soland —
     /// device-secret-derived encryption keeps the server zero-knowledge
     /// of the underlying group keys.
-    pub fn save_mls_snapshot(
+    pub fn save_mls_checkpoint(
         &mut self,
         realm_id: impl Into<String>,
-        envelope: crate::mls::persistence::MlsSnapshotEnvelope,
+        envelope: crate::mls::persistence::MlsLocalCheckpointEnvelope,
     ) -> Result<(), String> {
-        self.save_mls_snapshot_for_effective_scope(realm_id, None, envelope)
+        self.save_mls_checkpoint_for_effective_scope(realm_id, None, envelope)
     }
 
-    pub fn save_mls_snapshot_for_effective_scope(
+    pub fn save_mls_checkpoint_for_effective_scope(
         &mut self,
         realm_id: impl Into<String>,
         circle_id: Option<&str>,
-        envelope: crate::mls::persistence::MlsSnapshotEnvelope,
+        envelope: crate::mls::persistence::MlsLocalCheckpointEnvelope,
     ) -> Result<(), String> {
         let realm_id = realm_id.into();
         let scope = mls_realm_or_circle_scope(&realm_id, circle_id)?;
-        self.save_mls_snapshot_for_scope(&scope, envelope)
+        self.save_mls_checkpoint_for_scope(&scope, envelope)
     }
 
-    pub fn save_mls_snapshot_for_scope(
+    pub fn save_mls_checkpoint_for_scope(
         &mut self,
         effective_scope: &arkret_sdk::ScopeRef,
-        mut envelope: crate::mls::persistence::MlsSnapshotEnvelope,
+        mut envelope: crate::mls::persistence::MlsLocalCheckpointEnvelope,
     ) -> Result<(), String> {
         // Order this write after any decrypt write-backs so the
         // overlay can never shadow it (overlay snapshots always derive from
-        // the state this caller just read via `mls_snapshot_for`).
+        // the state this caller just read via `mls_checkpoint_for`).
         self.absorb_mls_receive_overlay();
-        let key = mls_scope_snapshot_key_for_group(effective_scope, &envelope.group_id)?;
-        if let Some(current) = self.cached.mls_snapshots.get(&key)
+        let key = mls_scope_checkpoint_key_for_group(effective_scope, &envelope.group_id)?;
+        if let Some(current) = self.cached.mls_local_checkpoints.get(&key)
             && current.group_id == envelope.group_id
         {
             envelope.admission_epoch = current.admission_epoch;
@@ -311,16 +312,16 @@ impl LocalStateStore {
         {
             envelope.group_state_event_id = Some(record.event_id.clone());
         }
-        if let Some(current) = self.cached.mls_snapshots.get(&key)
+        if let Some(current) = self.cached.mls_local_checkpoints.get(&key)
             && current.group_id == envelope.group_id
             && current.epoch < envelope.epoch
         {
             let history_key = historical_mls_state_key(&key, &current.group_id, current.epoch);
             self.cached
-                .mls_historical_snapshots
+                .mls_historical_checkpoints
                 .insert(history_key, current.clone());
         }
-        self.cached.mls_snapshots.insert(key, envelope);
+        self.cached.mls_local_checkpoints.insert(key, envelope);
         prune_historical_mls_author_states(&mut self.cached);
         let _ = self.flush();
         self.persist_e2ee_plaintext_cache_if_ready();
@@ -331,31 +332,31 @@ impl LocalStateStore {
     /// Returns `None` when the Realm has not yet been snapshotted (a
     /// fresh group on this device, or a group that has not committed
     /// yet so there is no state to persist).
-    pub fn mls_snapshot_for(
+    pub fn mls_checkpoint_for(
         &self,
         realm_id: &str,
-    ) -> Option<crate::mls::persistence::MlsSnapshotEnvelope> {
-        self.mls_snapshot_for_effective_scope(realm_id, None)
+    ) -> Option<crate::mls::persistence::MlsLocalCheckpointEnvelope> {
+        self.mls_checkpoint_for_effective_scope(realm_id, None)
     }
 
-    pub fn mls_snapshot_for_effective_scope(
+    pub fn mls_checkpoint_for_effective_scope(
         &self,
         realm_id: &str,
         circle_id: Option<&str>,
-    ) -> Option<crate::mls::persistence::MlsSnapshotEnvelope> {
+    ) -> Option<crate::mls::persistence::MlsLocalCheckpointEnvelope> {
         let scope = mls_realm_or_circle_scope(realm_id, circle_id).ok()?;
-        self.mls_snapshot_for_scope(&scope)
+        self.mls_checkpoint_for_scope(&scope)
     }
 
-    pub fn mls_snapshot_for_scope(
+    pub fn mls_checkpoint_for_scope(
         &self,
         effective_scope: &arkret_sdk::ScopeRef,
-    ) -> Option<crate::mls::persistence::MlsSnapshotEnvelope> {
+    ) -> Option<crate::mls::persistence::MlsLocalCheckpointEnvelope> {
         match effective_scope {
             arkret_sdk::ScopeRef::Sidecar { .. } => {
-                let prefix = format!("{}\u{1f}", mls_scope_snapshot_key(effective_scope).ok()?);
+                let prefix = format!("{}\u{1f}", mls_scope_checkpoint_key(effective_scope).ok()?);
                 self.load()
-                    .mls_snapshots
+                    .mls_local_checkpoints
                     .iter()
                     .filter(|(key, _)| key.starts_with(&prefix))
                     .map(|(_, snapshot)| snapshot)
@@ -363,41 +364,41 @@ impl LocalStateStore {
                     .cloned()
             }
             _ => {
-                let key = mls_scope_snapshot_key(effective_scope).ok()?;
-                self.load().mls_snapshots.get(&key).cloned()
+                let key = mls_scope_checkpoint_key(effective_scope).ok()?;
+                self.load().mls_local_checkpoints.get(&key).cloned()
             }
         }
     }
 
-    pub fn mls_snapshot_for_scope_and_group(
+    pub fn mls_checkpoint_for_scope_and_group(
         &self,
         effective_scope: &arkret_sdk::ScopeRef,
         group_id: &str,
-    ) -> Option<crate::mls::persistence::MlsSnapshotEnvelope> {
-        let key = mls_scope_snapshot_key_for_group(effective_scope, group_id).ok()?;
-        self.load().mls_snapshots.get(&key).cloned()
+    ) -> Option<crate::mls::persistence::MlsLocalCheckpointEnvelope> {
+        let key = mls_scope_checkpoint_key_for_group(effective_scope, group_id).ok()?;
+        self.load().mls_local_checkpoints.get(&key).cloned()
     }
 
-    pub(crate) fn staged_mls_snapshot_for_scope_and_group(
+    pub(crate) fn staged_mls_checkpoint_for_scope_and_group(
         &self,
         effective_scope: &arkret_sdk::ScopeRef,
         group_id: &str,
-    ) -> Option<crate::mls::persistence::MlsSnapshotEnvelope> {
-        let key = mls_scope_snapshot_key_for_group(effective_scope, group_id).ok()?;
-        self.load().mls_snapshots.get(&key).cloned()
+    ) -> Option<crate::mls::persistence::MlsLocalCheckpointEnvelope> {
+        let key = mls_scope_checkpoint_key_for_group(effective_scope, group_id).ok()?;
+        self.load().mls_local_checkpoints.get(&key).cloned()
     }
 
-    pub fn historical_mls_snapshot_for_effective_scope(
+    pub fn historical_mls_checkpoint_for_effective_scope(
         &self,
         realm_id: &str,
         circle_id: Option<&str>,
         group_id: &str,
         epoch: u64,
-    ) -> Option<crate::mls::persistence::MlsSnapshotEnvelope> {
-        let scope_key = mls_effective_scope_snapshot_key(realm_id, circle_id).ok()?;
+    ) -> Option<crate::mls::persistence::MlsLocalCheckpointEnvelope> {
+        let scope_key = mls_effective_scope_checkpoint_key(realm_id, circle_id).ok()?;
         let history_key = historical_mls_state_key(&scope_key, group_id, epoch);
         self.load()
-            .mls_historical_snapshots
+            .mls_historical_checkpoints
             .get(&history_key)
             .cloned()
     }
@@ -416,7 +417,7 @@ impl LocalStateStore {
             .map_err(|error| format!("invalid Realm id for MLS transition evidence: {error}"))?;
         let effective_scope = arkret_sdk::ScopeRef::Realm { realm_id };
         let snapshot = self
-            .mls_snapshot_for_scope(&effective_scope)
+            .mls_checkpoint_for_scope(&effective_scope)
             .ok_or_else(|| "Realm has no durable MLS snapshot".to_owned())?;
         self.accepted_mls_transition_evidence(
             &effective_scope,
@@ -445,7 +446,7 @@ impl LocalStateStore {
             return Err("local MLS snapshot group id is not canonical for its scope".to_owned());
         }
         let snapshot = self
-            .mls_snapshot_for_scope_and_group(effective_scope, group_id)
+            .mls_checkpoint_for_scope_and_group(effective_scope, group_id)
             .ok_or_else(|| "local-authoritative export has no durable MLS snapshot".to_owned())?;
         if snapshot.epoch != epoch {
             return Err(
@@ -534,7 +535,7 @@ impl LocalStateStore {
         group_id: &str,
         records: impl IntoIterator<Item = arkret_sdk::LocalAuthoritativeHistorySecret>,
     ) -> Result<Option<PendingHistorySecrets>, crate::secure_key_store::SecureKeyStoreError> {
-        let scope_group_key = mls_scope_snapshot_key_for_group(effective_scope, group_id)
+        let scope_group_key = mls_scope_checkpoint_key_for_group(effective_scope, group_id)
             .map_err(crate::secure_key_store::SecureKeyStoreError::Backend)?;
         let history_scope = arkret_sdk::HistoryEffectiveScope::try_from(effective_scope.clone())
             .map_err(|error| {
@@ -607,7 +608,7 @@ impl LocalStateStore {
         group_id: &str,
         epoch: u64,
     ) -> Option<Vec<u8>> {
-        let scope_group_key = mls_scope_snapshot_key_for_group(effective_scope, group_id).ok()?;
+        let scope_group_key = mls_scope_checkpoint_key_for_group(effective_scope, group_id).ok()?;
         // The in-process copy is newer than any durable value read after a
         // failed secure-store update, so consult it first. It is never written
         // into account-state JSON; the hardened store remains the restart
@@ -636,7 +637,7 @@ impl LocalStateStore {
         group_id: &str,
         epoch: u64,
     ) -> Option<String> {
-        let scope_group_key = mls_scope_snapshot_key_for_group(effective_scope, group_id).ok()?;
+        let scope_group_key = mls_scope_checkpoint_key_for_group(effective_scope, group_id).ok()?;
         self.load()
             .history_epoch_cipher_suites
             .get(&scope_group_key)
@@ -661,10 +662,11 @@ impl LocalStateStore {
             .history_secrets
             .values()
             .find(|secret| secret.group_id == group_id && secret.epoch == epoch)?;
-        let envelope = serde_json::from_slice::<crate::mls::persistence::MlsSnapshotEnvelope>(
-            &queued.ciphertext,
-        )
-        .ok()?;
+        let envelope =
+            serde_json::from_slice::<crate::mls::persistence::MlsLocalCheckpointEnvelope>(
+                &queued.ciphertext,
+            )
+            .ok()?;
         let active = crate::secure_key_store::active_device_seed_scope()?;
         let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
         let secret =
@@ -717,9 +719,9 @@ impl LocalStateStore {
             }) {
                 return Err("history backup secret is not bound to an accepted artifact".to_owned());
             }
-            let envelope = serde_json::from_slice::<crate::mls::persistence::MlsSnapshotEnvelope>(
-                &queued.ciphertext,
-            )
+            let envelope = serde_json::from_slice::<
+                crate::mls::persistence::MlsLocalCheckpointEnvelope,
+            >(&queued.ciphertext)
             .map_err(|error| format!("decode accepted history-secret envelope: {error}"))?;
             let plaintext =
                 crate::mls::persistence::decrypt_envelope(&envelope, &account_secret.secret)
@@ -770,26 +772,28 @@ impl LocalStateStore {
     /// path to rehydrate every known Realm's group in one pass and by
     /// device-recovery strands to enumerate the encrypted snapshots that
     /// can be restored for this device.
-    pub fn mls_snapshots(&self) -> BTreeMap<String, crate::mls::persistence::MlsSnapshotEnvelope> {
-        self.load().mls_snapshots
+    pub fn mls_local_checkpoints(
+        &self,
+    ) -> BTreeMap<String, crate::mls::persistence::MlsLocalCheckpointEnvelope> {
+        self.load().mls_local_checkpoints
     }
 
     /// Test-only scenario helper: drop the persisted MLS snapshot for a
     /// Realm scope (rotate/leave simulation) so receive-chain tests can
     /// verify behaviour without group state.
     #[cfg(test)]
-    pub(crate) fn drop_mls_snapshot_for_test(&mut self, realm_id: &str) {
+    pub(crate) fn drop_mls_checkpoint_for_test(&mut self, realm_id: &str) {
         self.absorb_mls_receive_overlay();
         let Ok(scope) = mls_realm_or_circle_scope(realm_id, None) else {
             return;
         };
-        let Ok(key) = mls_scope_snapshot_key(&scope) else {
+        let Ok(key) = mls_scope_checkpoint_key(&scope) else {
             return;
         };
-        let dropped = self.cached.mls_snapshots.remove(&key).is_some()
+        let dropped = self.cached.mls_local_checkpoints.remove(&key).is_some()
             | self
                 .cached
-                .mls_receive_recovery_snapshots
+                .mls_receive_recovery_checkpoints
                 .remove(&key)
                 .is_some();
         if dropped {
@@ -855,7 +859,7 @@ impl LocalStateStore {
     pub fn advance_mls_receive_chain(
         &self,
         realm_id: &str,
-        envelope: crate::mls::persistence::MlsSnapshotEnvelope,
+        envelope: crate::mls::persistence::MlsLocalCheckpointEnvelope,
         payload_digest: &str,
         plaintext: &[u8],
     ) {
@@ -872,7 +876,7 @@ impl LocalStateStore {
         &self,
         realm_id: &str,
         circle_id: Option<&str>,
-        envelope: crate::mls::persistence::MlsSnapshotEnvelope,
+        envelope: crate::mls::persistence::MlsLocalCheckpointEnvelope,
         payload_digest: &str,
         plaintext: &[u8],
     ) {
@@ -885,18 +889,18 @@ impl LocalStateStore {
     pub fn advance_mls_receive_chain_for_scope(
         &self,
         effective_scope: &arkret_sdk::ScopeRef,
-        envelope: crate::mls::persistence::MlsSnapshotEnvelope,
+        envelope: crate::mls::persistence::MlsLocalCheckpointEnvelope,
         payload_digest: &str,
         plaintext: &[u8],
     ) {
         use base64::Engine as _;
         let encoded = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(plaintext);
-        let Ok(scope_key) = mls_scope_snapshot_key_for_group(effective_scope, &envelope.group_id)
+        let Ok(scope_key) = mls_scope_checkpoint_key_for_group(effective_scope, &envelope.group_id)
         else {
             return;
         };
         let previous_snapshot =
-            self.mls_snapshot_for_scope_and_group(effective_scope, &envelope.group_id);
+            self.mls_checkpoint_for_scope_and_group(effective_scope, &envelope.group_id);
         let Some(realm_id) = effective_scope.realm_id_opt().map(ToString::to_string) else {
             return;
         };
@@ -960,7 +964,7 @@ impl LocalStateStore {
     }
 
     pub fn mls_genesis_emitted_for_scope(&self, effective_scope: &arkret_sdk::ScopeRef) -> bool {
-        let Ok(key) = mls_scope_snapshot_key(effective_scope) else {
+        let Ok(key) = mls_scope_checkpoint_key(effective_scope) else {
             return false;
         };
         match effective_scope {
@@ -1004,7 +1008,7 @@ impl LocalStateStore {
     ) -> Result<(), String> {
         self.ensure_cached_loaded();
         let realm_id = realm_id.into();
-        let key = mls_effective_scope_snapshot_key(&realm_id, circle_id)?;
+        let key = mls_effective_scope_checkpoint_key(&realm_id, circle_id)?;
         if self.cached.mls_genesis_emitted.insert(key) {
             let _ = self.flush();
         }
@@ -1028,14 +1032,14 @@ impl LocalStateStore {
         genesis_event_id: &arkret_sdk::EventId,
     ) -> Result<(), String> {
         self.ensure_cached_loaded();
-        let scope_key = mls_scope_snapshot_key(effective_scope)?;
+        let scope_key = mls_scope_checkpoint_key(effective_scope)?;
         // A Sidecar scope keys its state per group, and the accepted genesis
         // names the group whose snapshot this device already holds.
         let scoped_key = match effective_scope {
             arkret_sdk::ScopeRef::Sidecar { .. } => {
                 let prefix = format!("{scope_key}\u{1f}");
                 self.cached
-                    .mls_snapshots
+                    .mls_local_checkpoints
                     .iter()
                     .filter(|(key, _)| key.starts_with(&prefix))
                     .max_by_key(|(_, snapshot)| snapshot.epoch)
@@ -1047,7 +1051,7 @@ impl LocalStateStore {
             "Sidecar MLS genesis persistence requires an existing group snapshot".to_owned()
         })?;
         let mut changed = self.cached.mls_genesis_emitted.insert(scoped_key.clone());
-        if let Some(snapshot) = self.cached.mls_snapshots.get(&scoped_key) {
+        if let Some(snapshot) = self.cached.mls_local_checkpoints.get(&scoped_key) {
             let record = MlsGroupStateRefRecord {
                 group_id: snapshot.group_id.clone(),
                 epoch: 0,
@@ -1086,7 +1090,7 @@ impl LocalStateStore {
         group_id: &str,
         epoch: u64,
     ) -> Result<arkret_sdk::EventId, String> {
-        let key = mls_scope_snapshot_key_for_group(effective_scope, group_id)?;
+        let key = mls_scope_checkpoint_key_for_group(effective_scope, group_id)?;
         let state = self.load();
         let record = state
             .mls_group_state_refs
@@ -1102,7 +1106,7 @@ impl LocalStateStore {
             })
             .or_else(|| {
                 state
-                    .mls_snapshots
+                    .mls_local_checkpoints
                     .get(&key)
                     .filter(|snapshot| snapshot.group_id == group_id && snapshot.epoch == epoch)
                     .and_then(|snapshot| {
@@ -1118,7 +1122,7 @@ impl LocalStateStore {
             .or_else(|| {
                 let history_key = historical_mls_state_key(&key, group_id, epoch);
                 state
-                    .mls_historical_snapshots
+                    .mls_historical_checkpoints
                     .get(&history_key)
                     .filter(|snapshot| snapshot.group_id == group_id && snapshot.epoch == epoch)
                     .and_then(|snapshot| {
@@ -1170,8 +1174,8 @@ impl LocalStateStore {
         circle_id: Option<&str>,
     ) -> Result<bool, String> {
         self.ensure_cached_loaded();
-        let key = mls_effective_scope_snapshot_key(realm_id, circle_id)?;
-        let Some(snapshot) = self.cached.mls_snapshots.get(&key).cloned() else {
+        let key = mls_effective_scope_checkpoint_key(realm_id, circle_id)?;
+        let Some(snapshot) = self.cached.mls_local_checkpoints.get(&key).cloned() else {
             return Ok(false);
         };
         if snapshot.epoch != 0 {
@@ -1229,7 +1233,7 @@ impl LocalStateStore {
         event_id: arkret_sdk::EventId,
     ) -> Result<(), String> {
         self.ensure_cached_loaded();
-        let key = mls_scope_snapshot_key_for_group(effective_scope, group_id)?;
+        let key = mls_scope_checkpoint_key_for_group(effective_scope, group_id)?;
         if let Some(current) = self.cached.mls_group_state_refs.get(&key) {
             if current.group_id != group_id {
                 return Err(format!(
@@ -1367,7 +1371,7 @@ impl LocalStateStore {
         epoch: u64,
         cipher_suite: &str,
     ) -> Result<(), String> {
-        let scope_group_key = mls_scope_snapshot_key_for_group(effective_scope, group_id)?;
+        let scope_group_key = mls_scope_checkpoint_key_for_group(effective_scope, group_id)?;
         let by_epoch = self
             .cached
             .history_epoch_cipher_suites
@@ -1456,7 +1460,7 @@ impl LocalStateStore {
         realm_id: &str,
         circle_id: Option<&str>,
     ) -> Option<String> {
-        let key = mls_effective_scope_snapshot_key(realm_id, circle_id).ok()?;
+        let key = mls_effective_scope_checkpoint_key(realm_id, circle_id).ok()?;
         self.load()
             .mls_coverage_stale
             .get(&key)
@@ -1489,7 +1493,7 @@ impl LocalStateStore {
         let circle_id = circle_id
             .map(str::trim)
             .filter(|circle_id| !circle_id.is_empty());
-        let key = mls_effective_scope_snapshot_key(&realm_id, circle_id)?;
+        let key = mls_effective_scope_checkpoint_key(&realm_id, circle_id)?;
         self.cached.mls_coverage_stale.insert(
             key,
             crate::state::types::MlsCoverageStale {
@@ -1516,7 +1520,7 @@ impl LocalStateStore {
         circle_id: Option<&str>,
     ) -> Result<(), String> {
         self.ensure_cached_loaded();
-        let key = mls_effective_scope_snapshot_key(realm_id, circle_id)?;
+        let key = mls_effective_scope_checkpoint_key(realm_id, circle_id)?;
         if self.cached.mls_coverage_stale.remove(&key).is_some() {
             let _ = self.flush();
         }
@@ -1524,14 +1528,15 @@ impl LocalStateStore {
     }
 }
 
-pub(crate) fn mls_effective_scope_snapshot_key(
+pub(crate) fn mls_effective_scope_checkpoint_key(
     realm_id: &str,
     circle_id: Option<&str>,
 ) -> Result<String, String> {
-    mls_realm_or_circle_scope(realm_id, circle_id).and_then(|scope| mls_scope_snapshot_key(&scope))
+    mls_realm_or_circle_scope(realm_id, circle_id)
+        .and_then(|scope| mls_scope_checkpoint_key(&scope))
 }
 
-pub(crate) fn mls_scope_snapshot_key(
+pub(crate) fn mls_scope_checkpoint_key(
     effective_scope: &arkret_sdk::ScopeRef,
 ) -> Result<String, String> {
     let bytes = effective_scope
@@ -1540,11 +1545,11 @@ pub(crate) fn mls_scope_snapshot_key(
     String::from_utf8(bytes).map_err(|error| format!("MLS scope key is not UTF-8: {error}"))
 }
 
-pub(crate) fn mls_scope_snapshot_key_for_group(
+pub(crate) fn mls_scope_checkpoint_key_for_group(
     effective_scope: &arkret_sdk::ScopeRef,
     group_id: &str,
 ) -> Result<String, String> {
-    let key = mls_scope_snapshot_key(effective_scope)?;
+    let key = mls_scope_checkpoint_key(effective_scope)?;
     match effective_scope {
         arkret_sdk::ScopeRef::Sidecar { .. } => {
             let group_id = group_id.trim();
@@ -1716,7 +1721,7 @@ mod tests {
         let event_id =
             arkret_sdk::EventId::new("ak:event:AXBcp13trH3bPXvj0eHppCpGqJZWL9yqE3cf2Tl43vyk")
                 .unwrap();
-        let snapshot = crate::mls::persistence::MlsSnapshotEnvelope {
+        let snapshot = crate::mls::persistence::MlsLocalCheckpointEnvelope {
             realm_id: realm_id.to_owned(),
             group_id: group_id.to_owned(),
             epoch: 1,
@@ -1732,7 +1737,7 @@ mod tests {
         };
 
         LocalStateStore::with_path(&path)
-            .save_mls_snapshot(realm_id, snapshot)
+            .save_mls_checkpoint(realm_id, snapshot)
             .unwrap();
         let restored = LocalStateStore::with_path(&path);
 
@@ -1757,7 +1762,7 @@ mod tests {
         let event_id =
             arkret_sdk::EventId::new("ak:event:AXBcp13trH3bPXvj0eHppCpGqJZWL9yqE3cf2Tl43vyk")
                 .unwrap();
-        let snapshot = crate::mls::persistence::MlsSnapshotEnvelope {
+        let snapshot = crate::mls::persistence::MlsLocalCheckpointEnvelope {
             realm_id: realm_id.to_owned(),
             group_id: group_id.to_owned(),
             epoch: 0,
@@ -1772,7 +1777,7 @@ mod tests {
             aead_version: crate::mls::persistence::AEAD_VERSION_CHACHA20_POLY1305,
         };
         let mut store = LocalStateStore::with_path(&path);
-        store.save_mls_snapshot(realm_id, snapshot).unwrap();
+        store.save_mls_checkpoint(realm_id, snapshot).unwrap();
         store.save_realm_tree_projection(
             realm_id,
             json!({
@@ -1808,7 +1813,7 @@ mod tests {
         let restored = LocalStateStore::with_path(&path);
         assert_eq!(
             restored
-                .mls_snapshot_for(realm_id)
+                .mls_checkpoint_for(realm_id)
                 .unwrap()
                 .group_state_event_id,
             None
@@ -1831,7 +1836,7 @@ mod tests {
         let accepted_event_id =
             arkret_sdk::EventId::new("ak:event:AXBcp13trH3bPXvj0eHppCpGqJZWL9yqE3cf2Tl43vyk")
                 .unwrap();
-        let snapshot = crate::mls::persistence::MlsSnapshotEnvelope {
+        let snapshot = crate::mls::persistence::MlsLocalCheckpointEnvelope {
             realm_id: realm_id.to_owned(),
             group_id: group_id.to_owned(),
             epoch: 0,
@@ -1846,7 +1851,7 @@ mod tests {
             aead_version: crate::mls::persistence::AEAD_VERSION_CHACHA20_POLY1305,
         };
         let mut store = LocalStateStore::with_path(&path);
-        store.save_mls_snapshot(realm_id, snapshot).unwrap();
+        store.save_mls_checkpoint(realm_id, snapshot).unwrap();
         store
             .record_mls_group_state_ref_for_effective_scope(
                 realm_id,
@@ -1892,7 +1897,7 @@ mod tests {
         let restored = LocalStateStore::with_path(&path);
         assert_eq!(
             restored
-                .mls_snapshot_for(realm_id)
+                .mls_checkpoint_for(realm_id)
                 .unwrap()
                 .group_state_event_id,
             Some(phantom_event_id)
@@ -1928,7 +1933,7 @@ mod tests {
                 }
             })
         };
-        let snapshot = crate::mls::persistence::MlsSnapshotEnvelope {
+        let snapshot = crate::mls::persistence::MlsLocalCheckpointEnvelope {
             realm_id: realm_id.to_owned(),
             group_id: group_id.to_owned(),
             epoch: 0,
@@ -1943,7 +1948,7 @@ mod tests {
             aead_version: crate::mls::persistence::AEAD_VERSION_CHACHA20_POLY1305,
         };
         let mut store = LocalStateStore::with_path(&path);
-        store.save_mls_snapshot(realm_id, snapshot).unwrap();
+        store.save_mls_checkpoint(realm_id, snapshot).unwrap();
         store
             .record_mls_group_state_ref_for_effective_scope(
                 realm_id,
@@ -1988,7 +1993,7 @@ mod tests {
         ));
         let realm_id = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
         let group_id = "010203";
-        let snapshot = crate::mls::persistence::MlsSnapshotEnvelope {
+        let snapshot = crate::mls::persistence::MlsLocalCheckpointEnvelope {
             realm_id: realm_id.to_owned(),
             group_id: group_id.to_owned(),
             epoch: 0,
@@ -2003,7 +2008,7 @@ mod tests {
             aead_version: crate::mls::persistence::AEAD_VERSION_CHACHA20_POLY1305,
         };
         let mut store = LocalStateStore::with_path(&path);
-        store.save_mls_snapshot(realm_id, snapshot).unwrap();
+        store.save_mls_checkpoint(realm_id, snapshot).unwrap();
         store.save_realm_tree_projection(
             realm_id,
             json!({

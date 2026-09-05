@@ -801,7 +801,7 @@ async fn run_circle_scope_rotate_pass(
             }
             let Some(snapshot) = ctx
                 .state_store
-                .read(|store| store.mls_snapshot_for(&realm_id))
+                .read(|store| store.mls_checkpoint_for(&realm_id))
             else {
                 tracing::debug!(
                     %realm_id,
@@ -886,7 +886,7 @@ async fn run_circle_scope_rotate_pass(
                     )
                     .await
                     .map_err(anyhow::Error::msg)?;
-                    let post_commit_snapshot = draft.post_commit_snapshot;
+                    let post_commit_checkpoint = draft.post_commit_checkpoint;
                     let removed_actors = draft.removed_actors;
                     // The commit's id exists only once the unit is authored, so
                     // the group-state reference is read from the authored result
@@ -903,12 +903,16 @@ async fn run_circle_scope_rotate_pass(
                     submitter
                         .submit_signed_sdk_events_batch(&authored, None)
                         .await?;
-                    Ok::<_, anyhow::Error>((post_commit_snapshot, removed_actors, commit_event_id))
+                    Ok::<_, anyhow::Error>((
+                        post_commit_checkpoint,
+                        removed_actors,
+                        commit_event_id,
+                    ))
                 },
             )
             .await;
             match submitted {
-                Ok((post_commit_snapshot, removed_actors, commit_event_id)) => {
+                Ok((post_commit_checkpoint, removed_actors, commit_event_id)) => {
                     if generation.get() != start_generation {
                         return;
                     }
@@ -916,11 +920,11 @@ async fn run_circle_scope_rotate_pass(
                         store.record_mls_group_state_ref_for_effective_scope(
                             realm_id.clone(),
                             None,
-                            post_commit_snapshot.group_id.as_str(),
-                            post_commit_snapshot.epoch,
+                            post_commit_checkpoint.group_id.as_str(),
+                            post_commit_checkpoint.epoch,
                             commit_event_id,
                         )?;
-                        store.save_mls_snapshot(realm_id.clone(), post_commit_snapshot)?;
+                        store.save_mls_checkpoint(realm_id.clone(), post_commit_checkpoint)?;
                         Ok::<_, String>(())
                     });
                     if let Err(error) = persisted {
@@ -1035,7 +1039,7 @@ async fn run_circle_scope_rotate_pass(
             }
             if ctx.state_store.read(|store| {
                 store
-                    .mls_snapshot_for_effective_scope(&realm_id, Some(&circle_id))
+                    .mls_checkpoint_for_effective_scope(&realm_id, Some(&circle_id))
                     .is_none()
             }) {
                 tracing::debug!(
@@ -1082,7 +1086,7 @@ async fn run_circle_scope_rotate_pass(
                 }
             };
             let steps = draft.steps;
-            let post_commit_snapshot = draft.post_commit_snapshot;
+            let post_commit_checkpoint = draft.post_commit_checkpoint;
             let removed_leaves = draft.removed_leaves;
             let removed_actors = draft.removed_actors;
             // The commit's id comes back with the authored unit: it does not
@@ -1130,14 +1134,14 @@ async fn run_circle_scope_rotate_pass(
                 store.record_mls_group_state_ref_for_effective_scope(
                     realm_id.clone(),
                     Some(&circle_id),
-                    post_commit_snapshot.group_id.as_str(),
-                    post_commit_snapshot.epoch,
+                    post_commit_checkpoint.group_id.as_str(),
+                    post_commit_checkpoint.epoch,
                     commit_event_id,
                 )?;
-                store.save_mls_snapshot_for_effective_scope(
+                store.save_mls_checkpoint_for_effective_scope(
                     realm_id.clone(),
                     Some(&circle_id),
-                    post_commit_snapshot,
+                    post_commit_checkpoint,
                 )?;
                 Ok::<_, String>(())
             });
@@ -1193,7 +1197,7 @@ async fn run_idle_self_update_pass(
     let now = crate::clock::now_utc();
     let realm_ids: Vec<String> = ctx
         .state_store
-        .read(|store| store.mls_snapshots().into_keys().collect());
+        .read(|store| store.mls_local_checkpoints().into_keys().collect());
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
     for realm_id in realm_ids {
         // Re-check cancellation between Realms: a logout / profile rotation
@@ -1281,7 +1285,7 @@ async fn run_idle_self_update_pass(
                         snapshot.epoch,
                         commit_event_id,
                     )?;
-                    store.save_mls_snapshot(realm_id.clone(), snapshot)?;
+                    store.save_mls_checkpoint(realm_id.clone(), snapshot)?;
                     Ok::<_, String>(())
                 });
                 if let Err(error) = persisted {

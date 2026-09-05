@@ -131,7 +131,7 @@ impl LocalStateStore {
     ///
     /// Also prunes the auxiliary per-Realm caches (`drafts`,
     /// `seal_views`, `read_cursors`, `realm_remarks`,
-    /// `mls_snapshots`, `move_submissions` keyed by Realm, the
+    /// `mls_local_checkpoints`, `move_submissions` keyed by Realm, the
     /// `read_receipt_*_overrides`, `read_receipt_policy_snapshots`,
     /// `realm_watch_levels`, and any leftover encrypted-message draft) so a
     /// pruned Realm/Space node doesn't leave private remnants behind.
@@ -176,7 +176,7 @@ impl LocalStateStore {
         self.cached.realm_destroy_receipts.remove(projection_id);
         self.cached.seal_views.remove(projection_id);
         self.cached.realm_remarks.remove(projection_id);
-        self.cached.mls_snapshots.remove(projection_id);
+        self.cached.mls_local_checkpoints.remove(projection_id);
         self.cached.realm_watch_levels.remove(projection_id);
         self.cached
             .read_receipt_realm_overrides

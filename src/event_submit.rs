@@ -139,7 +139,7 @@ impl EventOutboundSubmitter<'_> {
         realm_id: &str,
         device_id: &arkret_sdk::DeviceId,
         commit: &arkret_sdk::AuthoredEvent,
-        staged_snapshot: &garth::QueuedMlsSnapshot,
+        staged_snapshot: &garth::QueuedMlsLocalCheckpoint,
     ) -> Result<(), String> {
         let seal_view = self
             .owner
@@ -179,13 +179,14 @@ impl EventOutboundSubmitter<'_> {
         )
         .map_err(|error| format!("decode accepted MLS Commit payload: {error}"))?;
         let authority = self.owner.authority().map_err(|error| error.to_string())?;
-        let snapshot_secret = crate::mls::runtime::load_device_snapshot_secret(
+        let snapshot_secret = crate::mls::runtime::load_device_checkpoint_secret(
             crate::secure_key_store::default_secure_key_store("inkson").as_ref(),
             authority,
             device_id,
         )
         .map_err(|error| format!("load MLS snapshot secret after admission: {error}"))?;
-        let staged = crate::mls::persistence::MlsSnapshotEnvelope::from(staged_snapshot.clone());
+        let staged =
+            crate::mls::persistence::MlsLocalCheckpointEnvelope::from(staged_snapshot.clone());
         let staged_group = crate::mls::persistence::restore_envelope(
             &staged,
             &snapshot_secret,
@@ -231,7 +232,7 @@ impl EventOutboundSubmitter<'_> {
 
         let accepted = state_store
             .read(|store| {
-                store.mls_snapshot_for_scope(payload.governance_binding().effective_scope())
+                store.mls_checkpoint_for_scope(payload.governance_binding().effective_scope())
             })
             .is_some_and(|snapshot| {
                 snapshot.group_id == payload.mls_group_id()
@@ -2504,7 +2505,7 @@ impl EventSubmitter {
         realm_id: String,
         actor_id: String,
         device_id: String,
-        snapshot: crate::mls::persistence::MlsSnapshotEnvelope,
+        snapshot: crate::mls::persistence::MlsLocalCheckpointEnvelope,
         state_store: dioxus::prelude::SyncSignal<crate::state::LocalStateStore>,
     ) -> anyhow::Result<SubmitEventResult> {
         if welcomes.is_empty() {

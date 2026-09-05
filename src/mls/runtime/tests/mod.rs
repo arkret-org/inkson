@@ -36,7 +36,7 @@ fn seed_next_governance_proof(
     state: &mut crate::state::LocalStateStore,
     realm_id: &str,
 ) -> arkret_sdk::MlsGovernanceBindingPayload {
-    let snapshot = state.mls_snapshot_for(realm_id).unwrap();
+    let snapshot = state.mls_checkpoint_for(realm_id).unwrap();
     crate::mls::governance_proof::seed_test_governance_proof(
         state,
         realm_id,
@@ -51,7 +51,7 @@ fn seed_current_group_state_ref(
     state: &mut crate::state::LocalStateStore,
     realm_id: &str,
 ) -> arkret_sdk::EventId {
-    let snapshot = state.mls_snapshot_for(realm_id).unwrap();
+    let snapshot = state.mls_checkpoint_for(realm_id).unwrap();
     let event_id =
         arkret_sdk::EventId::new("ak:event:AZEvldDJcWI9IRHqP2BMibDDfc59Ax_LwrbsrQmeD6Ml").unwrap();
     state

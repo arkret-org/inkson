@@ -863,7 +863,7 @@ fn AppBootstrap() -> Element {
     // `e2ee_epoch: null => plaintext` parser before this build starts.
     let realm_ids_with_local_mls: BTreeSet<String> = state_store
         .read()
-        .mls_snapshots()
+        .mls_local_checkpoints()
         .into_keys()
         .filter(|scope_id| scope_id.starts_with("ak:realm:"))
         .collect();

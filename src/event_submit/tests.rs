@@ -1092,7 +1092,7 @@ fn queued_mls_admission_round_trips_exact_welcome_material() {
             )
             .expect("the Welcome signs");
     }
-    let snapshot = crate::mls::persistence::MlsSnapshotEnvelope {
+    let snapshot = crate::mls::persistence::MlsLocalCheckpointEnvelope {
         realm_id: realm_id.to_owned(),
         group_id: "010203".to_owned(),
         epoch: 1,

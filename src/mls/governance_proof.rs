@@ -1376,10 +1376,10 @@ pub(crate) fn current_security_frontier_leaves_for_scope(
     device_id: &arkret_sdk::DeviceId,
 ) -> Result<Vec<arkret_sdk::MlsSecurityFrontierLeaf>, String> {
     let snapshot = state_store
-        .mls_snapshot_for_scope(effective_scope)
+        .mls_checkpoint_for_scope(effective_scope)
         .ok_or_else(|| "MLS security frontier requires a local group snapshot".to_owned())?;
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-    let secret = crate::mls::runtime::load_device_snapshot_secret(
+    let secret = crate::mls::runtime::load_device_checkpoint_secret(
         secure_store.as_ref(),
         authority,
         device_id,
@@ -1401,10 +1401,10 @@ pub(crate) fn preview_security_frontier_with_added_keypackages(
     actors: &[arkret_sdk::ActorId],
 ) -> Result<Vec<arkret_sdk::MlsSecurityFrontierLeaf>, String> {
     let snapshot = state_store
-        .mls_snapshot_for_scope(effective_scope)
+        .mls_checkpoint_for_scope(effective_scope)
         .ok_or_else(|| "MLS security frontier requires a local group snapshot".to_owned())?;
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-    let secret = crate::mls::runtime::load_device_snapshot_secret(
+    let secret = crate::mls::runtime::load_device_checkpoint_secret(
         secure_store.as_ref(),
         authority,
         device_id,

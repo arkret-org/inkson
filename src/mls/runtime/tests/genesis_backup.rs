@@ -37,7 +37,7 @@ fn build_mls_genesis_payload_has_required_fields() {
 
     super::seed_genesis_governance_proof(&mut state, realm);
     super::seed_human_creator_authorization(actor, device);
-    let summary = ensure_creator_mls_snapshot(
+    let summary = ensure_creator_mls_checkpoint(
         &mut state,
         &secure,
         realm,
@@ -112,7 +112,7 @@ fn existing_epoch_zero_snapshot_restores_genesis_summary() {
 
     super::seed_genesis_governance_proof(&mut state, realm);
     super::seed_human_creator_authorization(actor, device);
-    let fresh = ensure_creator_mls_snapshot(
+    let fresh = ensure_creator_mls_checkpoint(
         &mut state,
         &secure,
         realm,
@@ -121,7 +121,7 @@ fn existing_epoch_zero_snapshot_restores_genesis_summary() {
     )
     .unwrap()
     .expect("creator snapshot should be created");
-    let restored = initial_mls_snapshot_summary_from_existing(
+    let restored = initial_mls_checkpoint_summary_from_existing(
         &state,
         &secure,
         realm,
@@ -148,7 +148,7 @@ fn only_unaccepted_epoch_zero_snapshot_can_be_recreated() {
 
     super::seed_genesis_governance_proof(&mut state, realm);
     super::seed_human_creator_authorization(actor, device);
-    ensure_creator_mls_snapshot(
+    ensure_creator_mls_checkpoint(
         &mut state,
         &secure,
         realm,
@@ -157,9 +157,9 @@ fn only_unaccepted_epoch_zero_snapshot_can_be_recreated() {
     )
     .unwrap()
     .expect("creator snapshot should be created");
-    let staged = state.mls_snapshot_for(realm).unwrap();
+    let staged = state.mls_checkpoint_for(realm).unwrap();
 
-    let recreated = recreate_unaccepted_creator_mls_snapshot(
+    let recreated = recreate_unaccepted_creator_mls_checkpoint(
         &mut state,
         &secure,
         realm,
@@ -167,7 +167,7 @@ fn only_unaccepted_epoch_zero_snapshot_can_be_recreated() {
         &fixture::device_id(device),
     )
     .expect("unaccepted epoch-0 state may be safely recreated");
-    let replacement = state.mls_snapshot_for(realm).unwrap();
+    let replacement = state.mls_checkpoint_for(realm).unwrap();
     assert_eq!(recreated.epoch, 0);
     assert_eq!(replacement.epoch, 0);
     assert_eq!(replacement.group_id, staged.group_id);
@@ -180,7 +180,7 @@ fn only_unaccepted_epoch_zero_snapshot_can_be_recreated() {
         .mark_mls_genesis_emitted_with_event(realm, &accepted)
         .unwrap();
     assert!(
-        recreate_unaccepted_creator_mls_snapshot(
+        recreate_unaccepted_creator_mls_checkpoint(
             &mut state,
             &secure,
             realm,

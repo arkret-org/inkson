@@ -118,7 +118,7 @@ pub(crate) fn creator_mls_bootstrap_pending(
     {
         return false;
     }
-    let Some(snapshot) = store.mls_snapshot_for(realm_id) else {
+    let Some(snapshot) = store.mls_checkpoint_for(realm_id) else {
         return true;
     };
     // This recovery entry point owns the creator's epoch-0 transaction. Once
@@ -168,7 +168,7 @@ pub(crate) async fn ensure_creator_realm_mls_genesis(
         return Ok(());
     }
     if state_store.read(|store| {
-        store.mls_genesis_emitted_for(realm_id) && store.mls_snapshot_for(realm_id).is_none()
+        store.mls_genesis_emitted_for(realm_id) && store.mls_checkpoint_for(realm_id).is_none()
     }) {
         return Err(format!(
             "accepted MLS genesis exists for {realm_id}, but the local snapshot is missing; restore this device before retrying creator bootstrap"
@@ -203,7 +203,7 @@ pub(crate) async fn ensure_creator_realm_mls_genesis(
             let accepted_event_id = accepted_event_id.as_ref().ok_or_else(|| {
                 "creator MLS convergence is missing its accepted Event id".to_owned()
             })?;
-            if state_store.read(|store| store.mls_snapshot_for(realm_id).is_none()) {
+            if state_store.read(|store| store.mls_checkpoint_for(realm_id).is_none()) {
                 return Err(format!(
                     "accepted MLS genesis exists for {realm_id}, but the local snapshot is missing; restore this device before retrying creator bootstrap"
                 ));
@@ -257,7 +257,7 @@ pub(crate) async fn ensure_creator_realm_mls_genesis(
             })?;
             let fresh_summary = state_store
                 .write(|store| {
-                    crate::mls::runtime::ensure_creator_mls_snapshot(
+                    crate::mls::runtime::ensure_creator_mls_checkpoint(
                         store,
                         secure_store.as_ref(),
                         realm_id,
@@ -269,7 +269,7 @@ pub(crate) async fn ensure_creator_realm_mls_genesis(
                     format!("MLS initial group setup failed: {}", error.user_message())
                 })?;
             // The interesting recovery case is "snapshot persisted, genesis never
-            // accepted": `ensure_creator_mls_snapshot` short-circuits to `None` there,
+            // accepted": `ensure_creator_mls_checkpoint` short-circuits to `None` there,
             // and the genesis builder refuses to emit without epoch-0 material. Restore
             // that material from the stored epoch-0 snapshot — the same fallback the
             // direct-conversation and Agent PCR bootstraps use — so the submit is
@@ -278,7 +278,7 @@ pub(crate) async fn ensure_creator_realm_mls_genesis(
                 Some(summary) => Some(summary),
                 None => {
                     let restored_summary = state_store.read(|store| {
-                        crate::mls::runtime::initial_mls_snapshot_summary_from_existing(
+                        crate::mls::runtime::initial_mls_checkpoint_summary_from_existing(
                             store,
                             secure_store.as_ref(),
                             realm_id,
@@ -301,7 +301,7 @@ pub(crate) async fn ensure_creator_realm_mls_genesis(
                             Some(
                                 state_store
                                     .write(|store| {
-                                        crate::mls::runtime::recreate_unaccepted_creator_mls_snapshot(
+                                        crate::mls::runtime::recreate_unaccepted_creator_mls_checkpoint(
                                             store,
                                             secure_store.as_ref(),
                                             realm_id,
@@ -577,8 +577,10 @@ mod tests {
     const ACTOR: &str = "did:web:alice.example";
     const REALM: &str = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
 
-    fn epoch_zero_snapshot(group_id: String) -> crate::mls::persistence::MlsSnapshotEnvelope {
-        crate::mls::persistence::MlsSnapshotEnvelope {
+    fn epoch_zero_snapshot(
+        group_id: String,
+    ) -> crate::mls::persistence::MlsLocalCheckpointEnvelope {
+        crate::mls::persistence::MlsLocalCheckpointEnvelope {
             realm_id: REALM.to_owned(),
             group_id,
             epoch: 0,
@@ -610,7 +612,7 @@ mod tests {
         };
         let group_id = scope.canonical_mls_group_id().unwrap();
         store
-            .save_mls_snapshot(REALM, epoch_zero_snapshot(group_id.clone()))
+            .save_mls_checkpoint(REALM, epoch_zero_snapshot(group_id.clone()))
             .unwrap();
         let accepted_genesis =
             arkret_sdk::EventId::new("ak:event:AXBcp13trH3bPXvj0eHppCpGqJZWL9yqE3cf2Tl43vyk")
@@ -627,7 +629,10 @@ mod tests {
         );
         assert!(store.trusted_mls_governance_checkpoint(REALM).is_some());
         assert_eq!(
-            store.mls_snapshot_for(REALM).unwrap().group_state_event_id,
+            store
+                .mls_checkpoint_for(REALM)
+                .unwrap()
+                .group_state_event_id,
             Some(accepted_genesis)
         );
         assert!(

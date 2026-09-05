@@ -553,7 +553,7 @@ pub async fn restore_mls_history_with_passphrase_from_payload(
     // exists. This deliberately runs even if a local secret is present: a
     // previous incomplete bootstrap may have generated a stale/random secret,
     // which would make every history restore fail with a secret mismatch.
-    let has_local_secret = crate::mls::runtime::load_device_snapshot_secret(
+    let has_local_secret = crate::mls::runtime::load_device_checkpoint_secret(
         secure_store,
         authority,
         &arkret_sdk::DeviceId::new(device_id.to_owned())

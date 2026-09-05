@@ -543,7 +543,7 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
                         None
                     } else {
                         let encrypted_snapshot_realms = store
-                            .mls_snapshots()
+                            .mls_local_checkpoints()
                             .keys()
                             .filter(|realm_id| {
                                 realm_id.starts_with("ak:realm:")
@@ -761,7 +761,7 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
             // the user's first encrypted write *creates* the account MLS
             // secret (and this Realm's MLS snapshot) the detection would
             // never re-run and the backup prompt would never appear. Read a
-            // `state_store` signal in the synchronous body (`has_local_mls_snapshot`)
+            // `state_store` signal in the synchronous body (`has_local_mls_checkpoint`)
             // so Dioxus re-fires this effect when the write saves the snapshot,
             // and fold both the local account-secret presence (`sec=`) and the
             // snapshot presence (`snap=`) into the key so the `seen` guard no
@@ -769,8 +769,8 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
             // Welcome hint is also folded in so a sync-delivered pending
             // Welcome retriggers the drain after an earlier empty probe.
             let state_for_bootstrap_key = state_store_for_bootstrap.read();
-            let has_local_mls_snapshot = state_for_bootstrap_key
-                .mls_snapshot_for(&bootstrap_realm_id)
+            let has_local_mls_checkpoint = state_for_bootstrap_key
+                .mls_checkpoint_for(&bootstrap_realm_id)
                 .is_some();
             let has_encrypted_realm_projection =
                 state_for_bootstrap_key.realm_projection_is_mls_encrypted(&bootstrap_realm_id);
@@ -798,7 +798,7 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
             .map(|secret| secret.is_some())
             .unwrap_or(false);
             let bootstrap_key = format!(
-                "{bootstrap_key}|sec={has_local_account_secret}|snap={has_local_mls_snapshot}|enc={has_encrypted_realm_projection}|epoch={local_mls_epoch_floor}|rk={recovery_key_fingerprint}|welcome={local_pending_welcome_hint}|coverage={coverage_repair_hint}"
+                "{bootstrap_key}|sec={has_local_account_secret}|snap={has_local_mls_checkpoint}|enc={has_encrypted_realm_projection}|epoch={local_mls_epoch_floor}|rk={recovery_key_fingerprint}|welcome={local_pending_welcome_hint}|coverage={coverage_repair_hint}"
             );
             if seen_bootstrap_key().as_deref() == Some(bootstrap_key.as_str()) {
                 return;
@@ -996,7 +996,7 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
                     let state = state_store_for_probe.read();
                     state.realm_projection_is_mls_encrypted(&creator_bootstrap_realm_id)
                         && state
-                            .mls_snapshot_for(&creator_bootstrap_realm_id)
+                            .mls_checkpoint_for(&creator_bootstrap_realm_id)
                             .is_none()
                 };
                 bootstrap_retry_required |= encrypted_realm_still_awaits_local_mls_state;

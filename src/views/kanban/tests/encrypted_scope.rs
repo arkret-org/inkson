@@ -51,7 +51,7 @@ fn seed_ready_creator_snapshot(
     device: &str,
 ) -> arkret_sdk::EventId {
     seed_device_authorization(actor, device);
-    crate::mls::runtime::ensure_creator_mls_snapshot(
+    crate::mls::runtime::ensure_creator_mls_checkpoint(
         state,
         secure,
         realm,
@@ -60,7 +60,7 @@ fn seed_ready_creator_snapshot(
     )
     .unwrap()
     .expect("fixture creates the current creator MLS snapshot");
-    let snapshot = state.mls_snapshot_for(realm).unwrap();
+    let snapshot = state.mls_checkpoint_for(realm).unwrap();
     let accepted_ref =
         arkret_sdk::EventId::new("ak:event:AZEvldDJcWI9IRHqP2BMibDDfc59Ax_LwrbsrQmeD6Ml").unwrap();
     state
@@ -354,7 +354,7 @@ async fn encrypted_private_patch_without_checkpoint_proven_snapshot_is_blocked_b
     assert_eq!(error, "checkpoint-proven MLS group state is pending");
     assert!(
         state
-            .mls_snapshot_for("ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19")
+            .mls_checkpoint_for("ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19")
             .is_none()
     );
     assert!(state.load().raw_operations.is_empty());
@@ -435,7 +435,7 @@ async fn kanban_write_does_not_consume_pending_welcome_without_checkpoint() {
     .unwrap_err();
 
     assert_eq!(error, "checkpoint-proven MLS group state is pending");
-    assert!(state.mls_snapshot_for(realm).is_none());
+    assert!(state.mls_checkpoint_for(realm).is_none());
     assert!(
         state
             .private_plaintext_for(realm, strand_id, KANBAN_ENCRYPTED_CONTENT_PATH)
@@ -524,7 +524,7 @@ async fn kanban_write_waits_for_runtime_to_apply_pending_welcome() {
     .await
     .unwrap_err();
     assert_eq!(error, "checkpoint-proven MLS group state is pending");
-    assert!(state.mls_snapshot_for(realm).is_none());
+    assert!(state.mls_checkpoint_for(realm).is_none());
     assert!(
         state
             .private_plaintext_for(realm, strand_id, KANBAN_ENCRYPTED_CONTENT_PATH)
@@ -580,7 +580,7 @@ async fn encrypted_private_patch_uses_checkpoint_proven_creator_snapshot() {
     .await
     .expect("checkpoint-proven creator state must reach the encrypted success path");
 
-    assert!(state.mls_snapshot_for(realm).is_some());
+    assert!(state.mls_checkpoint_for(realm).is_some());
     assert_eq!(
         state.private_plaintext_for(realm, strand_id, KANBAN_ENCRYPTED_CONTENT_PATH),
         Some(content_block_json("private description"))
@@ -623,7 +623,7 @@ async fn encrypted_private_patch_rejects_epoch_zero_without_accepted_genesis_ref
     );
     let secure = crate::secure_key_store::MemorySecureKeyStore::new();
     seed_device_authorization(actor, device);
-    crate::mls::runtime::ensure_creator_mls_snapshot(
+    crate::mls::runtime::ensure_creator_mls_checkpoint(
         &mut state,
         &secure,
         realm,
@@ -664,7 +664,7 @@ async fn encrypted_private_patch_rejects_epoch_zero_without_accepted_genesis_ref
 
 #[cfg(not(target_arch = "wasm32"))]
 #[tokio::test]
-async fn encrypted_private_patch_with_ready_snapshot_replaces_plaintext() {
+async fn encrypted_private_patch_with_ready_checkpoint_replaces_plaintext() {
     use arkret_sdk::{ArkretMlsIdentity, DeviceId};
 
     let actor = "ak:did_core:web:alice.example";
@@ -747,7 +747,7 @@ async fn encrypted_private_patch_with_ready_snapshot_replaces_plaintext() {
         },
     );
     envelope.epoch_started_at = chrono::Utc::now();
-    state.save_mls_snapshot(realm, envelope).unwrap();
+    state.save_mls_checkpoint(realm, envelope).unwrap();
     state
         .record_mls_group_state_ref_for_effective_scope(
             realm,
@@ -1067,7 +1067,7 @@ async fn sidecar_track_patch_encrypts_with_only_the_native_sidecar_snapshot() {
         &realm_salt,
     );
     state
-        .save_mls_snapshot(realm.to_owned(), realm_snapshot.clone())
+        .save_mls_checkpoint(realm.to_owned(), realm_snapshot.clone())
         .unwrap();
     let binding = arkret_sdk::SidecarMlsBinding {
         sidecar_id,
@@ -1081,7 +1081,7 @@ async fn sidecar_track_patch_encrypts_with_only_the_native_sidecar_snapshot() {
         ],
     };
     state
-        .save_mls_snapshot_for_scope(&effective_scope, snapshot)
+        .save_mls_checkpoint_for_scope(&effective_scope, snapshot)
         .expect("valid effective scope");
     state
         .record_mls_group_state_ref_for_scope(
@@ -1118,8 +1118,8 @@ async fn sidecar_track_patch_encrypts_with_only_the_native_sidecar_snapshot() {
     assert!(value_is_mls_envelope(&patch["encrypted_content"]["value"]));
     assert!(events.genesis.is_none());
     assert!(events.commit.is_none());
-    assert_eq!(state.mls_snapshot_for(realm), Some(realm_snapshot));
-    assert!(state.mls_snapshot_for_scope(&effective_scope).is_some());
+    assert_eq!(state.mls_checkpoint_for(realm), Some(realm_snapshot));
+    assert!(state.mls_checkpoint_for_scope(&effective_scope).is_some());
     assert_eq!(
         state.private_plaintext_for(realm, strand, KANBAN_ENCRYPTED_CONTENT_PATH),
         Some(content_block_json("private overlay"))

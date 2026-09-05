@@ -112,7 +112,7 @@ fn mls_readiness_remains_checkpoint_proven() {
         .unwrap_or_else(|error| panic!("failed to read {}: {error}", kanban_path.display()));
     assert!(
         kanban.contains("checkpoint-proven MLS group state is pending")
-            && !kanban.contains("save_mls_snapshot("),
+            && !kanban.contains("save_mls_checkpoint("),
         "Kanban must wait for checkpoint-proven group state instead of installing a staged snapshot"
     );
 }

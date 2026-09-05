@@ -295,13 +295,13 @@ fn receive_snapshot_and_plaintext_share_one_secure_entry() {
 
     let mut reloaded = LocalStateStore::with_path(temp_state_path("e2ee-combined-reader"));
     reloaded.switch_test_account(actor);
-    assert!(reloaded.mls_snapshot_for(realm).is_none());
+    assert!(reloaded.mls_checkpoint_for(realm).is_none());
     assert!(
         reloaded
             .hydrate_e2ee_plaintext_cache_with_secure_store(&secure)
             .unwrap()
     );
-    assert_eq!(reloaded.mls_snapshot_for(realm), Some(envelope));
+    assert_eq!(reloaded.mls_checkpoint_for(realm), Some(envelope));
     assert_eq!(
         reloaded
             .mls_decrypted_plaintext_for(realm, digest)
@@ -324,7 +324,7 @@ fn secure_snapshot_replaces_stale_same_epoch_account_snapshot() {
     let mut secure_writer = LocalStateStore::with_path(temp_state_path("e2ee-current-writer"));
     secure_writer.switch_test_account(actor);
     secure_writer
-        .save_mls_snapshot(realm, current.clone())
+        .save_mls_checkpoint(realm, current.clone())
         .unwrap();
     secure_writer
         .persist_e2ee_plaintext_cache_with_secure_store(&secure)
@@ -333,14 +333,14 @@ fn secure_snapshot_replaces_stale_same_epoch_account_snapshot() {
     let local_path = temp_state_path("e2ee-stale-local");
     let mut reloaded = LocalStateStore::with_path(local_path);
     reloaded.switch_test_account(actor);
-    reloaded.save_mls_snapshot(realm, stale.clone()).unwrap();
-    assert_eq!(reloaded.mls_snapshot_for(realm), Some(stale));
+    reloaded.save_mls_checkpoint(realm, stale.clone()).unwrap();
+    assert_eq!(reloaded.mls_checkpoint_for(realm), Some(stale));
     assert!(
         reloaded
             .hydrate_e2ee_plaintext_cache_with_secure_store(&secure)
             .unwrap()
     );
-    assert_eq!(reloaded.mls_snapshot_for(realm), Some(current));
+    assert_eq!(reloaded.mls_checkpoint_for(realm), Some(current));
 }
 
 #[test]
@@ -358,11 +358,11 @@ fn missing_secure_checkpoint_rolls_back_to_pre_decrypt_snapshot() {
     {
         let mut writer = LocalStateStore::with_path(path.clone());
         writer.switch_test_account(actor);
-        writer.save_mls_snapshot(realm, base.clone()).unwrap();
+        writer.save_mls_checkpoint(realm, base.clone()).unwrap();
         writer.advance_mls_receive_chain(realm, advanced.clone(), digest, b"interrupted plaintext");
-        assert_eq!(writer.mls_snapshot_for(realm), Some(advanced.clone()));
+        assert_eq!(writer.mls_checkpoint_for(realm), Some(advanced.clone()));
         assert_eq!(
-            writer.load().mls_receive_recovery_snapshots.get(realm),
+            writer.load().mls_receive_recovery_checkpoints.get(realm),
             Some(&base)
         );
     }
@@ -373,7 +373,7 @@ fn missing_secure_checkpoint_rolls_back_to_pre_decrypt_snapshot() {
     let secure = MemorySecureKeyStore::new();
     let mut reloaded = LocalStateStore::with_path(path);
     assert!(!reloaded.switch_test_account(actor));
-    assert_eq!(reloaded.mls_snapshot_for(realm), Some(advanced));
+    assert_eq!(reloaded.mls_checkpoint_for(realm), Some(advanced));
     assert!(
         reloaded
             .mls_decrypted_plaintext_for(realm, digest)
@@ -384,7 +384,7 @@ fn missing_secure_checkpoint_rolls_back_to_pre_decrypt_snapshot() {
             .hydrate_e2ee_plaintext_cache_with_secure_store(&secure)
             .unwrap()
     );
-    assert_eq!(reloaded.mls_snapshot_for(realm), Some(base));
+    assert_eq!(reloaded.mls_checkpoint_for(realm), Some(base));
     assert!(
         reloaded
             .mls_decrypted_plaintext_for(realm, digest)
@@ -393,8 +393,8 @@ fn missing_secure_checkpoint_rolls_back_to_pre_decrypt_snapshot() {
 
     // Bootstrap now persisted a coherent checkpoint; cleanup can remove the
     // temporary rollback journal without touching that secure entry.
-    reloaded.clear_mls_receive_recovery_snapshots().unwrap();
-    assert!(reloaded.load().mls_receive_recovery_snapshots.is_empty());
+    reloaded.clear_mls_receive_recovery_checkpoints().unwrap();
+    assert!(reloaded.load().mls_receive_recovery_checkpoints.is_empty());
 }
 
 #[test]
@@ -412,7 +412,7 @@ fn stale_background_cache_write_cannot_clear_newer_receive_recovery_checkpoint()
 
     let mut state = LocalStateStore::with_path(path);
     state.switch_test_account(actor);
-    state.save_mls_snapshot(realm, base).unwrap();
+    state.save_mls_checkpoint(realm, base).unwrap();
     state.advance_mls_receive_chain(realm, first, first_digest, b"first plaintext");
     let (old_key, Some(old_json)) = state.e2ee_plaintext_cache_secure_write().unwrap().unwrap()
     else {
@@ -423,11 +423,11 @@ fn stale_background_cache_write_cannot_clear_newer_receive_recovery_checkpoint()
     state.advance_mls_receive_chain(realm, second, second_digest, b"second plaintext");
     assert!(
         !state
-            .clear_mls_receive_recovery_snapshots_if_cache_unchanged(&old_key, &old_json)
+            .clear_mls_receive_recovery_checkpoints_if_cache_unchanged(&old_key, &old_json)
             .unwrap(),
         "an older completed write must not clear recovery state for newer cache contents"
     );
-    assert!(!state.load().mls_receive_recovery_snapshots.is_empty());
+    assert!(!state.load().mls_receive_recovery_checkpoints.is_empty());
 
     let (current_key, Some(current_json)) =
         state.e2ee_plaintext_cache_secure_write().unwrap().unwrap()
@@ -436,11 +436,11 @@ fn stale_background_cache_write_cannot_clear_newer_receive_recovery_checkpoint()
     };
     assert!(
         state
-            .clear_mls_receive_recovery_snapshots_if_cache_unchanged(&current_key, &current_json,)
+            .clear_mls_receive_recovery_checkpoints_if_cache_unchanged(&current_key, &current_json,)
             .unwrap(),
         "the exact cache write may clear the checkpoints it covers"
     );
-    assert!(state.load().mls_receive_recovery_snapshots.is_empty());
+    assert!(state.load().mls_receive_recovery_checkpoints.is_empty());
 }
 
 #[test]
@@ -457,7 +457,7 @@ fn dropping_mls_snapshot_also_drops_receive_recovery_checkpoint() {
         let mut writer = LocalStateStore::with_path(path.clone());
         writer.switch_test_account(actor);
         writer
-            .save_mls_snapshot(
+            .save_mls_checkpoint(
                 realm,
                 encrypt_state(realm, "abcd", 7, b"base", "profile", b"salt"),
             )
@@ -469,11 +469,11 @@ fn dropping_mls_snapshot_also_drops_receive_recovery_checkpoint() {
             b"cached plaintext",
         );
         writer.absorb_mls_receive_overlay();
-        writer.cached.mls_snapshots.remove(realm);
-        writer.cached.mls_receive_recovery_snapshots.remove(realm);
+        writer.cached.mls_local_checkpoints.remove(realm);
+        writer.cached.mls_receive_recovery_checkpoints.remove(realm);
         let _ = writer.flush();
-        assert!(writer.mls_snapshot_for(realm).is_none());
-        assert!(writer.load().mls_receive_recovery_snapshots.is_empty());
+        assert!(writer.mls_checkpoint_for(realm).is_none());
+        assert!(writer.load().mls_receive_recovery_checkpoints.is_empty());
         writer
             .persist_e2ee_plaintext_cache_with_secure_store(&secure)
             .unwrap();
@@ -484,7 +484,7 @@ fn dropping_mls_snapshot_also_drops_receive_recovery_checkpoint() {
     reloaded
         .hydrate_e2ee_plaintext_cache_with_secure_store(&secure)
         .unwrap();
-    assert!(reloaded.mls_snapshot_for(realm).is_none());
+    assert!(reloaded.mls_checkpoint_for(realm).is_none());
 }
 
 #[test]
@@ -703,7 +703,7 @@ async fn explicit_e2ee_plaintext_cleanup_persists_scope_and_keeps_mls_state() {
             .is_none()
     );
     assert!(store.mls_decrypted_plaintext_for(realm_a, digest).is_none());
-    assert!(store.mls_snapshot_for(realm_a).is_some());
+    assert!(store.mls_checkpoint_for(realm_a).is_some());
     assert_eq!(
         store.private_plaintext_for(realm_b, strand, "body"),
         Some("realm-b-author".to_owned())
@@ -728,7 +728,7 @@ async fn explicit_e2ee_plaintext_cleanup_persists_scope_and_keeps_mls_state() {
             .private_plaintext_for(realm_a, strand, "body")
             .is_none()
     );
-    assert!(reloaded.mls_snapshot_for(realm_a).is_some());
+    assert!(reloaded.mls_checkpoint_for(realm_a).is_some());
     assert_eq!(
         reloaded.private_plaintext_for(realm_b, strand, "body"),
         Some("realm-b-author".to_owned())
@@ -744,7 +744,7 @@ async fn explicit_e2ee_plaintext_cleanup_persists_scope_and_keeps_mls_state() {
             .unwrap()
     );
     assert_eq!(reloaded.e2ee_plaintext_cache_usage().entry_count(), 0);
-    assert!(reloaded.mls_snapshot_for(realm_a).is_some());
+    assert!(reloaded.mls_checkpoint_for(realm_a).is_some());
     assert!(
         !reloaded
             .clear_e2ee_plaintext_cache_with_secure_store(

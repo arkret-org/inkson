@@ -9,7 +9,7 @@ pub struct CircleScopeRotateDraft {
     /// The commit references the proposals by their FINAL `event_id`
     /// (`proposal_refs`), so it can only be built after they are authored.
     pub steps: Vec<crate::event_submit::EventUnitStep>,
-    pub post_commit_snapshot: crate::mls::persistence::MlsSnapshotEnvelope,
+    pub post_commit_checkpoint: crate::mls::persistence::MlsLocalCheckpointEnvelope,
     pub removed_leaves: Vec<u32>,
     pub removed_actors: Vec<arkret_sdk::ActorId>,
 }
@@ -84,7 +84,7 @@ async fn build_remove_scope_rotate_draft(
             None => arkret_sdk::ScopeRef::Realm { realm_id: realm },
         },
     };
-    let (remove, post_commit_snapshot, previous_governance_binding) =
+    let (remove, post_commit_checkpoint, previous_governance_binding) =
         crate::mls::runtime::build_mls_remove_members_commit_for_effective_scope_with_sidecar_binding(
             state_store,
             secure_store,
@@ -162,7 +162,7 @@ async fn build_remove_scope_rotate_draft(
     });
     Ok(CircleScopeRotateDraft {
         steps: vec![Box::new(move |_| Ok(proposals)), commit_step],
-        post_commit_snapshot,
+        post_commit_checkpoint,
         removed_leaves: remove.removed_leaves,
         removed_actors: remove.removed_actors,
     })

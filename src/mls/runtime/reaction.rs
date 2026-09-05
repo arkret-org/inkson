@@ -3,7 +3,7 @@
 use arkret_sdk::{AccountId, DeviceId};
 use arkret_wire::event_kind_str;
 
-use super::{MlsRuntimeError, load_device_snapshot_secret, should_force_epoch_advance};
+use super::{MlsRuntimeError, load_device_checkpoint_secret, should_force_epoch_advance};
 use crate::secure_key_store::SecureKeyStore;
 
 /// Content type for the encrypted real-emoji payload of a reaction.
@@ -44,9 +44,9 @@ pub fn encrypt_reaction_with_device_snapshot(
     canonical_emoji: &str,
 ) -> Result<EncryptedReaction, MlsRuntimeError> {
     let snapshot = state_store
-        .mls_snapshot_for(realm_id)
+        .mls_checkpoint_for(realm_id)
         .ok_or(MlsRuntimeError::MissingWelcome)?;
-    let secret = load_device_snapshot_secret(secure_store, authority, device_id)
+    let secret = load_device_checkpoint_secret(secure_store, authority, device_id)
         .map_err(MlsRuntimeError::DeviceSecret)?;
     // COR-04: reaction send may force an epoch commit; bind it to the Seal-view
     // epoch floor so a stale local snapshot can't seal a reaction on a forked ratchet.
@@ -176,7 +176,7 @@ pub fn encrypt_reaction_with_device_snapshot(
         .carry_epoch_started_at(&snapshot)
         .with_app_messages_observed(snapshot.app_messages_observed.saturating_add(1));
     state_store
-        .save_mls_snapshot(realm_id.to_owned(), new_envelope)
+        .save_mls_checkpoint(realm_id.to_owned(), new_envelope)
         .map_err(MlsRuntimeError::Commit)?;
     Ok(EncryptedReaction {
         routing_tag,

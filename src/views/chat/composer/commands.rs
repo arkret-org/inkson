@@ -333,7 +333,10 @@ pub(super) fn route_to_owned_agent_sidecar(
                         .is_some_and(|group_id| {
                             state_store
                                 .read()
-                                .mls_snapshot_for_scope_and_group(&native_scope, group_id.as_str())
+                                .mls_checkpoint_for_scope_and_group(
+                                    &native_scope,
+                                    group_id.as_str(),
+                                )
                                 .is_some()
                         });
                 let addressed_agent_label =

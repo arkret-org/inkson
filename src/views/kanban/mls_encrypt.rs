@@ -23,14 +23,14 @@ pub(super) struct EncryptedWriteMlsEvents {
     pub genesis: Option<crate::operation::LocalOperation>,
     /// Exact public epoch-0 bytes whose content-addressed refs are carried by
     /// `genesis`. Uploaded before the Event is submitted.
-    pub genesis_material: Option<crate::mls::runtime::InitialMlsSnapshotSummary>,
+    pub genesis_material: Option<crate::mls::runtime::InitialMlsCheckpointSummary>,
     pub commit: Option<crate::operation::LocalOperation>,
     /// X14 — the post-commit MLS snapshot. Persisted by the caller ONLY
     /// after the server ACCEPTS `commit`, so the local snapshot epoch never
     /// races ahead of the server's accepted epoch (the root cause of
     /// permanent `mls_epoch_skew`). `None` when the encrypted write rides the
     /// current epoch without forcing a commit.
-    pub snapshot: Option<crate::mls::persistence::MlsSnapshotEnvelope>,
+    pub snapshot: Option<crate::mls::persistence::MlsLocalCheckpointEnvelope>,
     /// Must commit before genesis/commit/content submission begins.
     pub pending_history_secrets: Option<crate::state::PendingHistorySecrets>,
 }
@@ -247,7 +247,7 @@ pub(super) async fn encrypt_private_card_detail_patch_values_with_store_for_effe
     };
     let mut fresh_summary = if sidecar_binding.is_none() {
         let snapshot = state_store
-            .mls_snapshot_for_scope(&effective_scope)
+            .mls_checkpoint_for_scope(&effective_scope)
             .ok_or_else(|| "checkpoint-proven MLS group state is pending".to_owned())?;
         state_store.mls_group_state_ref_for_scope(
             &effective_scope,
@@ -257,7 +257,7 @@ pub(super) async fn encrypt_private_card_detail_patch_values_with_store_for_effe
         None
     } else {
         if state_store
-            .mls_snapshot_for_scope(&effective_scope)
+            .mls_checkpoint_for_scope(&effective_scope)
             .is_none()
         {
             return Err("Private Sidecar MLS snapshot is unavailable".to_owned());
@@ -278,7 +278,7 @@ pub(super) async fn encrypt_private_card_detail_patch_values_with_store_for_effe
             actor_id,
         )
     {
-        fresh_summary = crate::mls::runtime::initial_mls_snapshot_summary_from_existing(
+        fresh_summary = crate::mls::runtime::initial_mls_checkpoint_summary_from_existing(
             state_store,
             secure_store,
             realm_id,
@@ -301,7 +301,7 @@ pub(super) async fn encrypt_private_card_detail_patch_values_with_store_for_effe
         build_creator_mls_genesis_event(state_store, realm_id, actor_id, fresh_summary.as_ref())?
     };
     let snapshot = state_store
-        .mls_snapshot_for_scope(&effective_scope)
+        .mls_checkpoint_for_scope(&effective_scope)
         .ok_or_else(|| "MLS snapshot is unavailable after bootstrap".to_owned())?;
     let accepted_group_state_ref = state_store
         .mls_group_state_ref_for_scope(&effective_scope, &snapshot.group_id, snapshot.epoch)

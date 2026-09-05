@@ -703,7 +703,7 @@ fn render_revoke_modal(
                                 );
                                 return;
                             };
-                            let snapshots = state_store.read().mls_snapshots();
+                            let snapshots = state_store.read().mls_local_checkpoints();
                             let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
                             let authority = authority.clone();
                             revoke_status.set(format!("Revoking {target_label}…"));

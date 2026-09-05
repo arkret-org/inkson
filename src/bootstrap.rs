@@ -69,7 +69,7 @@ pub(crate) fn local_state_has_encrypted_realm(state_store: &LocalStateStore) -> 
 
 pub(crate) fn local_mls_epoch_floor_all(state_store: &LocalStateStore) -> u64 {
     let mut max_epoch = 0_u64;
-    for (realm_id, snapshot) in state_store.mls_snapshots() {
+    for (realm_id, snapshot) in state_store.mls_local_checkpoints() {
         max_epoch = max_epoch.max(snapshot.epoch);
         max_epoch = max_epoch.max(
             state_store
@@ -951,7 +951,7 @@ pub(crate) async fn bootstrap_mls_welcome_for_realm(
                 message.get("kind").and_then(Value::as_str) == Some(event_kind_str::MLS_WELCOME)
             })
         });
-    if !has_welcome && state_store.read(|store| store.mls_snapshot_for(&realm_id).is_none()) {
+    if !has_welcome && state_store.read(|store| store.mls_checkpoint_for(&realm_id).is_none()) {
         // The accepted Welcome Event is the durable carrier; the device-message
         // queue is only a notification/acceleration path. If that queue was
         // missed, recover the exact still-live Event from canonical history and
@@ -1072,11 +1072,11 @@ pub(crate) async fn bootstrap_mls_welcome_for_realm(
         .await
         .map_err(|error| format!("durably persisting the account MLS secret failed: {error}"))?;
     }
-    let snapshot_before = state_store.read(|store| store.mls_snapshot_for(&realm_id).is_some());
+    let snapshot_before = state_store.read(|store| store.mls_checkpoint_for(&realm_id).is_some());
     let converged =
         crate::mls::runtime::converge_accepted_mls_artifacts(state_store, &authority, &device_id)
             .await?;
-    let snapshot_after = state_store.read(|store| store.mls_snapshot_for(&realm_id).is_some());
+    let snapshot_after = state_store.read(|store| store.mls_checkpoint_for(&realm_id).is_some());
     let accepted_welcome_event_ids = state_store
         .read(|store| store.accepted_mls_artifact_snapshot())
         .snapshot
@@ -1196,7 +1196,7 @@ pub(crate) async fn bootstrap_mls_welcome_for_realm(
         .await;
     }
 
-    let Some(_snapshot) = state_store.read(|store| store.mls_snapshot_for(&realm_id)) else {
+    let Some(_snapshot) = state_store.read(|store| store.mls_checkpoint_for(&realm_id)) else {
         return Err("MLS Welcome batch had no durable local MLS snapshot".to_owned());
     };
     if applied > 0 || welcome_outcome.skipped_stale > 0 {

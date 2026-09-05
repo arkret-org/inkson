@@ -549,7 +549,7 @@ pub fn key_material_for_scope(
         },
     };
     let snapshot = state_store
-        .mls_snapshot_for_effective_scope(realm_id, circle_id)
+        .mls_checkpoint_for_effective_scope(realm_id, circle_id)
         .ok_or_else(unavailable)?;
     let group_state_ref = state_store
         .mls_group_state_ref_for_effective_scope(
@@ -591,7 +591,7 @@ pub struct SignalRailUnavailable {
 pub struct SignalMlsSession {
     pub group: arkret_sdk::ArkretMlsGroup,
     pub content_scheme: arkret_sdk::EncryptedPayloadScheme,
-    pub snapshot: crate::mls::persistence::MlsSnapshotEnvelope,
+    pub snapshot: crate::mls::persistence::MlsLocalCheckpointEnvelope,
     pub snapshot_secret: String,
 }
 
@@ -630,7 +630,7 @@ pub fn restore_signal_mls_session(
     };
     let circle_id = scope_ref.circle_id().map(arkret_sdk::CircleId::as_str);
     let snapshot = state_store
-        .mls_snapshot_for_effective_scope(realm_id, circle_id)
+        .mls_checkpoint_for_effective_scope(realm_id, circle_id)
         .ok_or_else(|| anyhow::anyhow!("no accepted MLS group state for the signal scope"))?;
     if snapshot.epoch != expected_epoch {
         anyhow::bail!(
@@ -639,7 +639,7 @@ pub fn restore_signal_mls_session(
         );
     }
     let snapshot_secret =
-        crate::mls::runtime::load_device_snapshot_secret(secure_store, authority, device_id)
+        crate::mls::runtime::load_device_checkpoint_secret(secure_store, authority, device_id)
             .map_err(|error| anyhow::anyhow!("load Signal MLS snapshot secret: {error}"))?;
     let group =
         crate::mls::persistence::restore_envelope(&snapshot, &snapshot_secret, snapshot.epoch)
@@ -729,7 +729,7 @@ pub fn encrypt_signal_payload_with_store(
     .carry_epoch_started_at(&snapshot)
     .with_app_messages_observed(snapshot.app_messages_observed);
     state_store
-        .save_mls_snapshot_for_effective_scope(realm_id.to_owned(), circle_id, updated)
+        .save_mls_checkpoint_for_effective_scope(realm_id.to_owned(), circle_id, updated)
         .map_err(anyhow::Error::msg)?;
     Ok(sealed.encrypted_payload)
 }
