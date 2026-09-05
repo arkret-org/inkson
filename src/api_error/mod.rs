@@ -217,9 +217,13 @@ pub(crate) fn user_facing_error_key(error: &anyhow::Error) -> Option<&'static st
     }
     if matches!(
         code,
+        // `unsupported_operation_binding` was deleted from the error-code
+        // registry as one of the codes no implementation could produce
+        // (arkret-spec 0026). `unsupported_operation_version` is the
+        // registered code that stayed and belongs in the same bucket.
         c if c == ErrorCode::UNSUPPORTED_EVENT_KIND
             || c == ErrorCode::UNSUPPORTED_FEATURE
-            || c == ErrorCode::UNSUPPORTED_OPERATION_BINDING
+            || c == ErrorCode::UNSUPPORTED_OPERATION_VERSION
             || c == ErrorCode::UNSUPPORTED_PROTOCOL_VERSION
     ) {
         return Some("error.unsupported_protocol_data");
@@ -450,7 +454,7 @@ mod tests {
         let permission = sdk_api_error(403, ErrorCode::CAPABILITY_DENIED);
         let profile = sdk_api_error(422, ErrorCode::UNSUPPORTED_PROFILE);
         let unsupported_data = sdk_api_error(422, ErrorCode::UNSUPPORTED_EVENT_KIND);
-        let unsupported_binding = sdk_api_error(422, ErrorCode::UNSUPPORTED_OPERATION_BINDING);
+        let unsupported_version = sdk_api_error(422, ErrorCode::UNSUPPORTED_OPERATION_VERSION);
         let invalid_data = sdk_api_error(422, ErrorCode::SCHEMA_VIOLATION);
         let bottom = anyhow::Error::new(arkret_sdk::http_client::Error::Api {
             status: 409,
@@ -467,7 +471,7 @@ mod tests {
             (&permission, "error.permission_denied"),
             (&profile, "error.unsupported_profile"),
             (&unsupported_data, "error.unsupported_protocol_data"),
-            (&unsupported_binding, "error.unsupported_protocol_data"),
+            (&unsupported_version, "error.unsupported_protocol_data"),
             (&invalid_data, "error.invalid_protocol_data"),
             (&bottom, "error.realm_state_conflict"),
         ];

@@ -2,7 +2,6 @@ use std::collections::BTreeMap;
 use std::io::{self, Read};
 
 use anyhow::{Context, Result, bail};
-use arkret_wire::{SchemaId, event_kind_str};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -73,14 +72,18 @@ struct MockServiceAuthority {
     verification_method: arkret_sdk::DidUrl,
 }
 
-fn main() -> Result<()> {
+// `materialize_mls_governance_frontier` verifies the candidate checkpoint
+// asynchronously, so the fixture binary needs a runtime even though every other
+// command is synchronous.
+#[tokio::main(flavor = "current_thread")]
+async fn main() -> Result<()> {
     let command = std::env::args().nth(1).context("missing command")?;
     let input = read_stdin_json()?;
 
     let output = match command.as_str() {
         "canonical-json" => canonical_json(input)?,
         "sha256-canonical-json" => sha256_canonical_json(input)?,
-        "mls-governance-proof" => mls_governance_proof(input)?,
+        "mls-governance-proof" => mls_governance_proof(input).await?,
         "control-proposal-ack" => control_proposal_ack(input)?,
         "ingress-receipts" => ingress_receipts(input)?,
         "realm-actor-frontier" => realm_actor_frontier(input)?,
@@ -645,7 +648,7 @@ fn sha256_canonical_json(input: Value) -> Result<Value> {
     Ok(json!({ "digest": digest }))
 }
 
-fn mls_governance_proof(input: Value) -> Result<Value> {
+async fn mls_governance_proof(input: Value) -> Result<Value> {
     let input: MlsGovernanceProofInput =
         serde_json::from_value(input).context("parse MLS governance proof input")?;
     let group_genesis_binding = arkret_sdk::MlsGroupGenesisBinding {
@@ -658,11 +661,15 @@ fn mls_governance_proof(input: Value) -> Result<Value> {
         &group_genesis_binding,
         &input.local_mls_leaves,
         |_event, _digest_suite, _evidence, _dependencies| {
-            Err(arkret_sdk::WireError::Protocol(
-                "the inkson-wire fixture does not provide Agent historical authority".to_owned(),
-            ))
+            Box::pin(async {
+                Err(arkret_sdk::WireError::Protocol(
+                    "the inkson-wire fixture does not provide Agent historical authority"
+                        .to_owned(),
+                ))
+            })
         },
     )
+    .await
     .map_err(|error| anyhow::anyhow!("materialize MLS governance frontier: {error}"))?;
     serde_json::to_value(bundle).context("serialize MLS governance proof bundle")
 }

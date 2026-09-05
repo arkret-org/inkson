@@ -1,7 +1,13 @@
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
 use ed25519_dalek::Signer as _;
-use garth::mls::backup_series::verify_series_chain;
+use garth::mls::backup_selection::{
+    is_mls_account_secret_backup, is_mls_private_plaintext_backup,
+    mls_account_secret_backup_version, select_mls_account_secret_backup,
+    select_mls_account_secret_recovery_public_key_backup, select_mls_history_backups,
+    select_mls_private_plaintext_backup, select_preferred_mls_account_secret_backup,
+};
+use garth::mls::backup_series::{backup_series_seq, verify_series_chain};
 use serde_json::Value;
 
 use super::backup_body::{
@@ -11,15 +17,9 @@ use super::backup_body::{
     build_mls_account_secret_recovery_public_key_backup,
     build_mls_account_secret_recovery_public_key_backup_in_series,
     build_mls_private_plaintext_backup_body_with_kek, decrypt_mls_account_secret_backup,
-    decrypt_mls_private_plaintext_backup, is_mls_account_secret_backup,
-    is_mls_private_plaintext_backup,
+    decrypt_mls_private_plaintext_backup,
 };
 use super::restore::{mls_backup_prompt_required, verify_active_backup_series};
-use super::selection::{
-    backup_series_seq, mls_account_secret_backup_version, select_mls_account_secret_backup,
-    select_mls_account_secret_recovery_public_key_backup, select_mls_history_backups,
-    select_mls_private_plaintext_backup, select_preferred_mls_account_secret_backup,
-};
 use crate::key_backup::BackupKind;
 use crate::recovery_crypto::derive_vault_kek;
 use crate::secure_key_store::MemorySecureKeyStore;
@@ -35,11 +35,7 @@ const STALE_SECRET_STORAGE_SERIES: &str = "ak:backup_series:01964137-1000-7000-8
 const ACTIVE_MLS_HISTORY_SERIES: &str = "ak:backup_series:01964137-1000-7000-8000-0000000000b1";
 
 fn authority() -> arkret_sdk::AccountId {
-    let did = arkret_sdk::Did::new(ACTOR).unwrap();
-    arkret_sdk::AccountId::new(
-        arkret_sdk::project_did_to_core_id(&did).unwrap(),
-        arkret_sdk::DidCoreId::new("ak:did_core:web:server.example").unwrap(),
-    )
+    crate::test_support::authority_at_station(ACTOR, crate::test_support::SERVER_STATION_ID)
 }
 
 fn backup_frontier_ref() -> arkret_sdk::KeyBackupFrontierRef {

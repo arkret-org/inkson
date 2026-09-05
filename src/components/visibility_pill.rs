@@ -139,7 +139,7 @@ pub fn VisibilityPill(prefix: String, value: String, kind: String) -> Element {
         span {
             class: "{class}",
             "data-testid": "{testid}",
-            "title": "discovery-directory.md / event-auth-state-resolution §6",
+            "title": crate::i18n::tr("visibility.pill_title"),
             "{prefix}: {value}"
         }
     }

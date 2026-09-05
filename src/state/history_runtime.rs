@@ -1,21 +1,21 @@
-use dioxus::prelude::{ReadableExt, SyncSignal, WritableExt};
+use crate::runtime::input::StateStoreHandle;
 
-use super::LocalStateStore;
-
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub(crate) struct InksonHistoryRuntimeStore {
-    state_store: SyncSignal<LocalStateStore>,
+    state_store: StateStoreHandle,
 }
 
 impl InksonHistoryRuntimeStore {
-    pub(crate) fn new(state_store: SyncSignal<LocalStateStore>) -> Self {
+    pub(crate) fn new(state_store: StateStoreHandle) -> Self {
         Self { state_store }
     }
 }
 
 impl garth::HistoryRuntimeStore for InksonHistoryRuntimeStore {
     fn load_history_runtime(&self) -> garth::Result<garth::VersionedHistoryRuntimeSnapshot> {
-        Ok(self.state_store.read().load().history_runtime_state)
+        Ok(self
+            .state_store
+            .read(|store| store.load().history_runtime_state))
     }
 
     async fn compare_and_swap_history_runtime(
@@ -23,12 +23,10 @@ impl garth::HistoryRuntimeStore for InksonHistoryRuntimeStore {
         expected_revision: u64,
         snapshot: &garth::HistoryRuntimeSnapshot,
     ) -> garth::Result<bool> {
-        let barrier = {
-            let mut state_store = self.state_store;
-            let mut store = state_store.write();
+        let Some(barrier) = self.state_store.write(|store| {
             store.ensure_cached_loaded();
             if store.cached.history_runtime_state.revision != expected_revision {
-                return Ok(false);
+                return Ok(None);
             }
             let revision = expected_revision.checked_add(1).ok_or_else(|| {
                 garth::Error::Protocol("history runtime revision overflow".to_owned())
@@ -39,7 +37,11 @@ impl garth::HistoryRuntimeStore for InksonHistoryRuntimeStore {
             };
             store
                 .begin_durable_flush()
-                .map_err(|error| garth::Error::Protocol(error.to_string()))?
+                .map(Some)
+                .map_err(|error| garth::Error::Protocol(error.to_string()))
+        })?
+        else {
+            return Ok(false);
         };
         barrier
             .wait()
@@ -50,7 +52,7 @@ impl garth::HistoryRuntimeStore for InksonHistoryRuntimeStore {
 }
 
 pub(crate) fn history_runtime(
-    state_store: SyncSignal<LocalStateStore>,
+    state_store: &StateStoreHandle,
 ) -> garth::HistoryRuntime<InksonHistoryRuntimeStore> {
-    garth::HistoryRuntime::new(InksonHistoryRuntimeStore::new(state_store))
+    garth::HistoryRuntime::new(InksonHistoryRuntimeStore::new(state_store.clone()))
 }

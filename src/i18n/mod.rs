@@ -284,13 +284,30 @@ pub fn set_locale(signal: &mut I18nSignal, locale: UiLocale) {
 /// Convenience: pull the current i18n signal from Dioxus context and
 /// translate `key`. Views call this once they have been wrapped in a
 /// `provide_context(init_i18n_with_locale(...))` ancestor — currently
-/// `RealmView`. Falls back to the key itself when no context is
-/// installed (e.g. unit tests outside Dioxus runtime).
+/// `RealmView`.
+///
+/// Outside a Dioxus runtime — a unit test on a pure view model, a detached
+/// task — there is no context to consume, and `try_consume_context` panics
+/// there rather than returning `None`. Check the runtime first, then answer
+/// from the shipped English dictionary: readable default copy is a better
+/// fallback than rendering a raw dotted key, and it keeps every pure
+/// derivation that produces copy testable without mounting a component.
 pub fn tr(key: &str) -> String {
-    match try_consume_context::<I18nSignal>() {
+    let signal =
+        dioxus::core::Runtime::try_current().and_then(|_| try_consume_context::<I18nSignal>());
+    match signal {
         Some(signal) => t(&signal, key),
-        None => key.to_owned(),
+        None => default_locale_translations()
+            .get(key)
+            .map(ToOwned::to_owned)
+            .unwrap_or_else(|| key.to_owned()),
     }
+}
+
+/// The English dictionary, built once, for the runtime-free fallback above.
+fn default_locale_translations() -> &'static TranslationDict {
+    static DEFAULT: std::sync::OnceLock<TranslationDict> = std::sync::OnceLock::new();
+    DEFAULT.get_or_init(english_translations)
 }
 
 /// Substitute `{placeholder}` args into an already-localized string.

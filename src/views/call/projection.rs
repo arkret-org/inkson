@@ -772,6 +772,10 @@ mod tests {
         let start_event_id = "ak:event:AQ_TuICTz2cVFhqtuEZTue46AK_LsqKsKlTPixxkuedX";
         let content_digest =
             "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        // The recording result's content_digest is the artifact blob digest;
+        // the two are the same commitment, so the fixture derives one from the
+        // other instead of carrying two independent constants.
+        let blob_ref = format!("ak:blob:{content_digest}");
         let retention = json!({
             "retention_expires_at": "2026-06-20T00:00:00.000Z",
             "deletion_trigger": "retention_expiry",
@@ -797,8 +801,7 @@ mod tests {
                     "call_id": call_id,
                     "recording_id": recording_id,
                     "recording_start_event_id": start_event_id,
-                    "artifact_kind": "recording",
-                    "blob_ref": "ak:blob:sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                    "blob_ref": blob_ref,
                     "size_bytes": 1048576,
                     "duration_ms": 42000,
                     "media_type": "video/mp4",

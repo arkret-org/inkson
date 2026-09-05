@@ -141,6 +141,11 @@ pub(crate) mod state;
 pub mod sync_engine;
 pub mod sync_parse;
 pub mod telemetry;
+/// Shared test fixtures. Compiled only under `cfg(test)`; every test
+/// module builds authority/device/realm identifiers here instead of
+/// re-deriving the same literals locally.
+#[cfg(test)]
+pub(crate) mod test_support;
 pub(crate) mod transport;
 pub(crate) mod ui_signal;
 pub use transport::realm_write::{

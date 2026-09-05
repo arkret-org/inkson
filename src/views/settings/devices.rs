@@ -38,6 +38,7 @@ use dioxus_router::hooks::use_route;
 use serde_json::{Value, json};
 
 use crate::components::{EmptyState, EmptyStateKind, HelpTip, QrSharePanel, UiIcon};
+use crate::i18n::{tr, tr_args};
 use crate::identity::device_pairing::approve_device_pairing;
 use crate::operation::uuid_v7;
 use crate::routes::Route;
@@ -289,32 +290,32 @@ pub fn SettingsDevicesPanel(
             div { class: "event device-access-toolbar",
                 div { class: "device-access-toolbar-head",
                     div {
-                        strong { "Device access" }
-                        span { class: "muted", "Review trusted devices or approve another one." }
+                        strong { {tr("settings.devices.title")} }
+                        span { class: "muted", {tr("settings.devices.subtitle")} }
                     }
                     div { class: "device-access-session-state",
                         span { class: if has_session { "badge success" } else { "badge warning" },
-                            if has_session { "Signed in" } else { "Not signed in" }
+                            if has_session { {tr("settings.devices.session_active")} } else { {tr("settings.devices.session_inactive")} }
                         }
-                        HelpTip { text: "Manage the devices bound to your account. Revoking a device removes it from the active set and triggers MLS leaf removal in any E2EE Realm the device participates in.".to_owned() }
+                        HelpTip { text: tr("settings.devices.help") }
                     }
                 }
                 nav {
                     class: "device-access-tabs",
-                    "aria-label": "Device settings",
+                    "aria-label": tr("settings.devices.tabs_aria_label"),
                     Link {
                         class: if !pair_mode { "device-access-tab active" } else { "device-access-tab" },
                         "aria-current": if !pair_mode { "page" } else { "false" },
                         to: Route::SettingsDevices,
                         UiIcon { name: "monitor" }
-                        "Devices"
+                        {tr("settings.devices.tab_list")}
                     }
                     Link {
                         class: if pair_mode { "device-access-tab active" } else { "device-access-tab" },
                         "aria-current": if pair_mode { "page" } else { "false" },
                         to: Route::SettingsDevicesPair,
                         UiIcon { name: "plus" }
-                        "Add a device"
+                        {tr("settings.devices.tab_add")}
                     }
                 }
                 if !pair_mode {
@@ -324,7 +325,7 @@ pub fn SettingsDevicesPanel(
                         "data-testid": "device-list-refresh",
                         onclick: refresh_devices,
                         UiIcon { name: "refresh" }
-                        "Refresh"
+                        {tr("settings.devices.refresh")}
                     }
                 }
             }
@@ -389,23 +390,23 @@ fn render_device_list(
     rsx! {
         div { class: "event device-list-card", "data-testid": "device-list",
             div { class: "event-head",
-                span { "Active devices" }
+                span { {tr("settings.devices.active_title")} }
                 span { "{status_msg}" }
             }
             if !has_rows {
                 EmptyState {
                     kind: EmptyStateKind::Empty,
-                    title: "No devices loaded yet".to_owned(),
-                    message: Some("Loading your devices… or click Refresh to retry.".to_owned()),
+                    title: tr("settings.devices.empty_title"),
+                    message: Some(tr("settings.devices.empty_message")),
                     test_id: Some("device-list-empty".to_owned()),
                 }
             } else {
                 div { class: "device-list-table", role: "table",
                     div { class: "device-list-header", role: "row",
-                        span { role: "columnheader", "Device" }
-                        span { role: "columnheader", "Verification" }
-                        span { role: "columnheader", "Authorized" }
-                        span { role: "columnheader", "Actions" }
+                        span { role: "columnheader", {tr("settings.devices.column_device")} }
+                        span { role: "columnheader", {tr("settings.devices.column_verification")} }
+                        span { role: "columnheader", {tr("settings.devices.column_authorized")} }
+                        span { role: "columnheader", {tr("settings.devices.column_actions")} }
                     }
                     for row in rows.iter() {
                         {render_device_row(
@@ -441,6 +442,64 @@ fn render_device_list(
     }
 }
 
+/// `device-lifecycle.md` §2.1.1 step 3 — everything the approval UI MUST put
+/// in front of the user before the explicit confirmation: the requesting
+/// device's metadata, its `device_id` and key fingerprint, the full pairing
+/// code and the `gate_audience`.
+///
+/// The whole set is projected from the resolved `DevicePairingBootstrap` in
+/// one place so no surface can render the pairing code without the identity
+/// context that makes comparing it meaningful.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct PairingApprovalReview {
+    display_name: String,
+    device_id: String,
+    key_fingerprint: String,
+    platform: String,
+    gate_audience: String,
+    pairing_code: String,
+    expires_at: String,
+}
+
+impl PairingApprovalReview {
+    fn from_bootstrap(bootstrap: &arkret_sdk::DevicePairingBootstrap) -> Self {
+        let unknown = tr("settings.devices.accept_unnamed_device");
+        Self {
+            display_name: bootstrap
+                .display_name
+                .as_ref()
+                .map(|name| name.as_str().to_owned())
+                .unwrap_or_else(|| unknown.clone()),
+            device_id: bootstrap.new_device_pubkey.kid.as_str().to_owned(),
+            key_fingerprint: device_key_fingerprint(&bootstrap.new_device_pubkey),
+            platform: bootstrap
+                .device_metadata
+                .as_ref()
+                .and_then(|metadata| metadata.platform.as_ref())
+                .map(|platform| platform.as_str().to_owned())
+                .unwrap_or_else(|| unknown.clone()),
+            gate_audience: bootstrap.gate_audience_uri.clone(),
+            pairing_code: bootstrap.pairing_code.as_str().to_owned(),
+            expires_at: bootstrap.expires_at.to_rfc3339(),
+        }
+    }
+}
+
+/// Human-comparable fingerprint of the requesting device's public key.
+/// Grouped in fours so a person can read it aloud against the new device's
+/// screen without losing their place.
+fn device_key_fingerprint(public_key: &arkret_sdk::PublicKey) -> String {
+    let digest = arkret_sdk::canonical::sha256_hex(public_key.key.as_str().as_bytes());
+    digest
+        .chars()
+        .take(32)
+        .collect::<Vec<_>>()
+        .chunks(4)
+        .map(|chunk| chunk.iter().collect::<String>())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 /// Element-style verification shield for the device list. Maps the
 /// `verification_state` (`device-lifecycle.md` §6) to a colored pill:
 /// verified → green shield, unverified → amber, revoked → red. Unknown or
@@ -452,9 +511,13 @@ fn device_verification_badge(state: &str) -> Element {
         _ => "unverified",
     };
     let (class, glyph, label) = match normalized {
-        "verified" => ("badge success", "🛡", "Verified".to_owned()),
-        "unverified" => ("badge warning", "⚠", "Unverified".to_owned()),
-        "revoked" => ("badge danger", "⊘", "Revoked".to_owned()),
+        "verified" => ("badge success", "🛡", tr("settings.devices.state_verified")),
+        "unverified" => (
+            "badge warning",
+            "⚠",
+            tr("settings.devices.state_unverified"),
+        ),
+        "revoked" => ("badge danger", "⊘", tr("settings.devices.state_revoked")),
         _ => unreachable!("verification state normalized"),
     };
     rsx! {
@@ -462,7 +525,7 @@ fn device_verification_badge(state: &str) -> Element {
             class: "{class} device-verification-badge",
             "data-testid": "device-verification-badge",
             "data-verification": "{normalized}",
-            title: "Device verification state: {label}",
+            title: tr_args("settings.devices.state_title", &[("state", label.clone())]),
             "{glyph} {label}"
         }
     }
@@ -504,7 +567,7 @@ fn render_device_row(
             "data-current": if is_current { "true" } else { "false" },
             role: "row",
             div { class: "device-list-cell device-list-cell-identity", role: "cell",
-                span { class: "device-list-cell-label", "Device" }
+                span { class: "device-list-cell-label", {tr("settings.devices.column_device")} }
                 div { class: "device-identity",
                     strong {
                         title: "{row.device_id}",
@@ -531,20 +594,20 @@ fn render_device_row(
                         class: "badge green",
                         "data-testid": "device-row-current",
                         "data-device-id": "{row.device_id}",
-                        "this device"
+                        {tr("settings.devices.this_device")}
                     }
                 }
             }
             div { class: "device-list-cell", role: "cell",
-                span { class: "device-list-cell-label", "Verification" }
+                span { class: "device-list-cell-label", {tr("settings.devices.column_verification")} }
                 {device_verification_badge(&row.verification_state)}
             }
             div { class: "device-list-cell", role: "cell",
-                span { class: "device-list-cell-label", "Created" }
+                span { class: "device-list-cell-label", {tr("settings.devices.column_authorized")} }
                 span { class: "device-authorized-at", if row.authorized_at.is_empty() { "—" } else { "{row.authorized_at}" } }
             }
             div { class: "device-list-cell device-list-cell-actions", role: "cell",
-                span { class: "device-list-cell-label", "Actions" }
+                span { class: "device-list-cell-label", {tr("settings.devices.column_actions")} }
                 Button {
                     variant: ButtonVariant::Secondary,
                     "data-testid": "device-revoke-button",
@@ -552,7 +615,7 @@ fn render_device_row(
                     onclick: move |_| {
                         revoke_target.set(Some(device_id_for_button.clone()));
                     },
-                    if is_current { "Cannot self-revoke" } else { "Revoke" }
+                    if is_current { {tr("settings.devices.revoke_self_blocked")} } else { {tr("settings.devices.revoke")} }
                 }
             }
         }
@@ -588,26 +651,26 @@ fn render_revoke_modal(
             "aria-labelledby": "device-revoke-title",
             div { class: "modal event device-revoke-dialog",
                 div { class: "modal-head event-head",
-                    h3 { id: "device-revoke-title", "Revoke device" }
+                    h3 { id: "device-revoke-title", {tr("settings.devices.revoke_title")} }
                     span { class: "muted device-revoke-target", title: "{target}", "{target_label}" }
                 }
                 div { class: "modal-body workflow-form device-revoke-modal-body",
                     p {
-                        "This will write "
+                        {tr("settings.devices.revoke_body_before")}
                         code { {event_kind_str::DEVICE_REVOKE} }
-                        " to your principal control Realm, remove the device from any E2EE Realm it participates in, and rotate the account MLS history secret. The action cannot be undone."
+                        {tr("settings.devices.revoke_body_after")}
                     }
                     p { class: "muted", "data-testid": "device-revoke-threat-note",
-                        "Revocation is not a remote wipe. It cannot remotely erase secrets or cached history already copied onto that device. Treat a lost or compromised device as able to read any plaintext or old account MLS secret it retained before revocation."
+                        {tr("settings.devices.revoke_threat_note")}
                     }
-                    Label { html_for: "device-revoke-passphrase", "Recovery Key (24 words)" }
+                    Label { html_for: "device-revoke-passphrase", {tr("settings.devices.revoke_recovery_label")} }
                     Input {
                         id: "device-revoke-passphrase",
                         "data-testid": "device-revoke-passphrase-input",
                         r#type: "password",
                         value: "{revoke_passphrase().as_str()}",
                         autocomplete: "off",
-                        placeholder: "Your 24-word Recovery Key — required to rotate encrypted history backups",
+                        placeholder: tr("settings.devices.revoke_recovery_placeholder"),
                         oninput: move |event: FormEvent| {
                             revoke_passphrase.write().replace(event.value());
                         },
@@ -620,7 +683,7 @@ fn render_revoke_modal(
                         onclick: move |_| {
                             revoke_target.set(None);
                         },
-                        "Cancel"
+                        {tr("common.cancel")}
                     }
                     Button {
                         variant: ButtonVariant::Primary,
@@ -653,7 +716,9 @@ fn render_revoke_modal(
                                         crate::mls::account_recovery::execute_device_revoke_security_rotation(
                                             &api,
                                             secure_store,
-                                            state_store,
+                                            &crate::app::runtime_adapter::state_store_handle(
+                                                state_store,
+                                            ),
                                             &authority,
                                             &actor,
                                             &current_device,
@@ -709,7 +774,7 @@ fn render_revoke_modal(
                                 }
                             });
                         },
-                        "Confirm revoke"
+                        {tr("settings.devices.revoke_confirm")}
                     }
                 }
             }
@@ -740,11 +805,11 @@ fn render_pair_strand(
     let pair_code_value = pair_code();
     let pair_busy = pair_action_busy();
     let accept_resolved_value = accept_resolved();
-    let resolved_code = serde_json::from_str::<
+    let resolved_approval = serde_json::from_str::<
         crate::identity::device_pairing::ResolvedPairingApproval,
     >(&accept_resolved_value)
     .ok()
-    .map(|value| value.bootstrap.pairing_code.as_str().to_owned());
+    .map(|value| PairingApprovalReview::from_bootstrap(&value.bootstrap));
     let accept_busy = accept_action_busy();
 
     // Render a QR for the current payload (if any). `qrcode` returns
@@ -776,13 +841,13 @@ fn render_pair_strand(
         div { class: "event pair-device-card", "data-testid": "pair-device-card",
             div { class: "event-head",
                 div {
-                    span { class: "device-pairing-eyebrow", "This browser" }
-                    h3 { "Approve this device" }
+                    span { class: "device-pairing-eyebrow", {tr("settings.devices.pair_this_browser")} }
+                    h3 { {tr("settings.devices.pair_title")} }
                 }
-                span { class: "badge warning", "Approval required" }
+                span { class: "badge warning", {tr("settings.devices.pair_required_badge")} }
             }
             p { class: "muted",
-                "Generate a pairing QR code or link, then scan or open it on an already-authorized device. No automatic account notification is sent."
+                {tr("settings.devices.pair_body")}
             }
             div { class: "actions",
                 Button {
@@ -1002,7 +1067,7 @@ fn render_pair_strand(
                             pair_action_busy.set(false);
                         });
                     },
-                    if pair_busy { "Requesting…" } else { "Request approval" }
+                    if pair_busy { {tr("settings.devices.pair_requesting")} } else { {tr("settings.devices.pair_request")} }
                 }
                 Button {
                     variant: ButtonVariant::Secondary,
@@ -1014,13 +1079,13 @@ fn render_pair_strand(
                         pair_code.set(String::new());
                         pair_status.set("Approval request cleared from this screen.".to_owned());
                     },
-                    "Hide link"
+                    {tr("settings.devices.pair_hide_link")}
                 }
             }
             if !payload_value.is_empty() {
                 div { class: "pair-device-handoff",
                     div { class: "device-pair-approval-code-block",
-                        span { class: "muted", "Compare this code before approving" }
+                        span { class: "muted", {tr("device_pair.compare_code")} }
                         span {
                             class: "device-pair-approval-code mono",
                             "data-testid": "pair-device-code",
@@ -1030,8 +1095,8 @@ fn render_pair_strand(
                     QrSharePanel {
                         qr_svg,
                         url: payload_value.clone(),
-                        qr_aria_label: "Device approval QR code".to_owned(),
-                        url_aria_label: "Device approval link".to_owned(),
+                        qr_aria_label: tr("settings.devices.pair_qr_aria_label"),
+                        url_aria_label: tr("settings.devices.pair_link_aria_label"),
                         qr_test_id: "pair-device-qr".to_owned(),
                         url_test_id: "pair-device-secret".to_owned(),
                         copy_test_id: "pair-device-copy-button".to_owned(),
@@ -1130,7 +1195,7 @@ fn render_pair_strand(
                             });
                         },
                         UiIcon { name: "refresh" }
-                        if pair_busy { "Checking…" } else { "Check approval" }
+                        if pair_busy { {tr("settings.devices.pair_checking")} } else { {tr("settings.devices.pair_check")} }
                     }
                 }
             }
@@ -1146,11 +1211,11 @@ fn render_pair_strand(
         // pairing link, resolve it, compare the code, then approve.
         div { class: "event accept-pairing-card", "data-testid": "accept-pairing-card",
             div { class: "event-head",
-                strong { "Approve using a link" }
-                span { "on an authorized device" }
+                strong { {tr("settings.devices.accept_title")} }
+                span { {tr("device_pair.subtitle")} }
             }
             p { class: "muted",
-                "Use this fallback on an authorized device when no confirmation prompt appears."
+                {tr("settings.devices.accept_body")}
             }
             Textarea {
                 "data-testid": "accept-pairing-input",
@@ -1158,7 +1223,7 @@ fn render_pair_strand(
                 cols: "48",
                 value: "{accept_input}",
                 disabled: accept_busy,
-                placeholder: "Paste the pairing link (…/device-pairing/resolve#token=…) or the token",
+                placeholder: tr("settings.devices.accept_placeholder"),
                 oninput: move |event: FormEvent| accept_input.set(event.value()),
             }
             div { class: "actions",
@@ -1259,13 +1324,36 @@ fn render_pair_strand(
                             accept_action_busy.set(false);
                         });
                     },
-                    if accept_busy { "Resolving…" } else { "Resolve link" }
+                    if accept_busy { {tr("settings.devices.accept_resolving")} } else { {tr("settings.devices.accept_resolve")} }
                 }
-                if let Some(code) = resolved_code.clone() {
+                if let Some(review) = resolved_approval.clone() {
+                    div {
+                        class: "device-pair-approval-review",
+                        "data-testid": "accept-pairing-review",
+                        role: "group",
+                        "aria-label": tr("device_pair.aria_label"),
+                        strong { {tr("device_pair.title")} }
+                        p { class: "muted", {tr("device_pair.body")} }
+                        dl { class: "device-pair-approval-facts",
+                            dt { {tr("settings.devices.accept_device_name")} }
+                            dd { "data-testid": "accept-pairing-device-name", "{review.display_name}" }
+                            dt { {tr("settings.devices.accept_device_id")} }
+                            dd { class: "mono", "data-testid": "accept-pairing-device-id", "{review.device_id}" }
+                            dt { {tr("settings.devices.accept_key_fingerprint")} }
+                            dd { class: "mono", "data-testid": "accept-pairing-key-fingerprint", "{review.key_fingerprint}" }
+                            dt { {tr("device_pair.platform")} }
+                            dd { "data-testid": "accept-pairing-platform", "{review.platform}" }
+                            dt { {tr("settings.devices.accept_gate_audience")} }
+                            dd { class: "mono", "data-testid": "accept-pairing-gate-audience", "{review.gate_audience}" }
+                            dt { {tr("device_pair.expires")} }
+                            dd { "data-testid": "accept-pairing-expires", "{review.expires_at}" }
+                        }
+                        span { class: "muted", {tr("device_pair.compare_code")} }
+                    }
                     span {
                         class: "device-pair-approval-code mono",
                         "data-testid": "accept-pairing-code",
-                        "{code}"
+                        "{review.pairing_code}"
                     }
                     Button {
                         variant: ButtonVariant::Primary,
@@ -1309,16 +1397,27 @@ fn render_pair_strand(
                                         );
                                     }
                                     Err(err) => {
-                                        accept_status.set(format!(
-                                            "device-pair failed: {}",
-                                            err.display()
+                                        accept_status.set(tr_args(
+                                            "device_pair.err_approval_failed",
+                                            &[("error", err.display())],
                                         ));
                                     }
                                 }
                                 accept_action_busy.set(false);
                             });
                         },
-                        if accept_busy { "Approving…" } else { "Approve pairing" }
+                        if accept_busy { {tr("device_pair.approving")} } else { {tr("device_pair.approve")} }
+                    }
+                    Button {
+                        variant: ButtonVariant::Secondary,
+                        "data-testid": "accept-pairing-reject-button",
+                        disabled: accept_busy,
+                        onclick: move |_| {
+                            accept_resolved.set(String::new());
+                            accept_input.set(String::new());
+                            accept_status.set(tr("settings.devices.accept_rejected"));
+                        },
+                        {tr("device_pair.reject")}
                     }
                 }
             }

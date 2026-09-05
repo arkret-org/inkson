@@ -202,8 +202,6 @@ pub struct MemberHandleCacheEntry {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReadMarkerBody {
-    #[serde(default = "new_read_cursor_id")]
-    pub id: String,
     pub schema: String,
     pub realm_id: String,
     pub read_scope: ReadCursorScope,
@@ -1650,18 +1648,13 @@ impl MlsReceiveOverlay {
 #[cfg(test)]
 mod authority_root_tests {
     use super::*;
-
-    fn authority(server: &str) -> arkret_sdk::AccountId {
-        arkret_sdk::AccountId::new(
-            arkret_sdk::DidCoreId::new("ak:did_core:webvh:zAlice".to_owned()).unwrap(),
-            arkret_sdk::DidCoreId::new(server.to_owned()).unwrap(),
-        )
-    }
+    use crate::test_support as fixture;
 
     #[test]
     fn same_authority_keeps_the_original_profile_id() {
         let mut root = RootIndex::default();
-        let authority = authority("ak:did_core:webvh:zServerA");
+        let authority =
+            fixture::authority_at_station("ak:did_core:webvh:zAlice", "ak:did_core:webvh:zServerA");
 
         root.note_known_profile(AccountIndexEntry {
             profile_id: "ak:profile:first".to_owned(),
@@ -1681,8 +1674,10 @@ mod authority_root_tests {
     #[test]
     fn profile_id_collision_with_another_authority_fails_closed() {
         let mut root = RootIndex::default();
-        let first = authority("ak:did_core:webvh:zServerA");
-        let second = authority("ak:did_core:webvh:zServerB");
+        let first =
+            fixture::authority_at_station("ak:did_core:webvh:zAlice", "ak:did_core:webvh:zServerA");
+        let second =
+            fixture::authority_at_station("ak:did_core:webvh:zAlice", "ak:did_core:webvh:zServerB");
         root.note_known_profile(AccountIndexEntry {
             profile_id: "ak:profile:shared".to_owned(),
             authority: first.clone(),

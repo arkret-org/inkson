@@ -1,5 +1,10 @@
 use std::collections::{BTreeMap, BTreeSet};
 
+use arkret_models_identity::HandleClaim;
+use arkret_sdk::identity::{
+    HandleIssuerPolicyEntry, MentionRender, PrimaryHandleSelectInput, render_mention,
+};
+use arkret_sdk::{AccountId, Handle, MemberRosterEntry, MembershipState};
 use dioxus::prelude::{SyncSignal, WritableExt};
 use serde_json::Value;
 
@@ -7,22 +12,42 @@ use super::helpers::short_protocol_id;
 use crate::state::LocalStateStore;
 
 /// Canonical Realm roster row from the root `member_roster_entries[]` projection.
+///
+/// This is the typed `ak` roster entry
+/// (`account-subscribe-frame.schema.json#/$defs/member_roster_entry`) plus the
+/// membership value the projection carried. Field parsing goes through the SDK
+/// [`MemberRosterEntry`] so a wire rename cannot silently degrade to "no
+/// handle, no petname" the way hand-rolled `Value` field reads do.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct RealmMemberRow {
     pub actor_id: arkret_sdk::ActorId,
-    pub membership: Option<String>,
+    pub membership: Option<MembershipState>,
     pub identity_event_ids: Vec<String>,
     pub member_display_state_digest: Option<String>,
-    pub subject_id: Option<String>,
-    pub handle_claims: Vec<Value>,
+    pub subject_account_id: Option<AccountId>,
+    pub handle_claims: Vec<HandleClaim>,
     pub handle_claims_limited: bool,
+}
+
+impl RealmMemberRow {
+    /// Disclosed subject principal DID, when Realm policy disclosed the
+    /// subject account for this row.
+    pub(crate) fn subject_principal_id(&self) -> Option<&str> {
+        self.subject_account_id
+            .as_ref()
+            .map(|account| account.principal_id.as_str())
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct ResolvedMemberDisplay {
     pub label: String,
+    /// §3.8.2 render before the `client-preferences.md` §3.6 petname overlay.
+    pub public_label: String,
     pub collision_public_display: String,
     pub primary_handle: Option<String>,
+    /// §3.8.2 step 5 — which rung of the render ladder produced `label`.
+    pub tier: MemberDisplayTier,
     pub display_name: Option<String>,
     pub avatar_blob_ref: Option<arkret_sdk::BlobRef>,
     pub subject_id: Option<String>,
@@ -36,6 +61,16 @@ pub(crate) struct MemberHandleLookupRequest {
     pub member_display_state_digest: Option<String>,
 }
 
+/// Wire value of a roster membership state. `MembershipState` is closed to
+/// the two roster-visible values; other membership words in this client come
+/// from raw operations, not from the roster projection.
+pub(crate) fn membership_wire_str(state: MembershipState) -> &'static str {
+    match state {
+        MembershipState::Join => "join",
+        MembershipState::Knock => "knock",
+    }
+}
+
 pub(crate) fn realm_member_roster(projection: Option<&Value>) -> Vec<RealmMemberRow> {
     let Some(members) = projection
         .and_then(|root| root.get("member_roster_entries"))
@@ -45,50 +80,30 @@ pub(crate) fn realm_member_roster(projection: Option<&Value>) -> Vec<RealmMember
     };
     let mut rows = BTreeMap::new();
     for member in members {
-        let Some(map) = member.as_object() else {
+        // Entries whose membership is not roster-visible (`leave` / `ban`) and
+        // entries that fail the R3.2 disclosure dependency are both rejected
+        // by the SDK type; neither may reach a display surface.
+        let Ok(entry) = serde_json::from_value::<MemberRosterEntry>(member.clone()) else {
             continue;
         };
-        let Some(actor_id) = map
-            .get("actor_id")
-            .and_then(|value| serde_json::from_value::<arkret_sdk::ActorId>(value.clone()).ok())
-        else {
-            continue;
-        };
-        let string_field = |key: &str| {
-            map.get(key)
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(str::to_owned)
-        };
-        let row = RealmMemberRow {
-            actor_id,
-            membership: string_field("membership"),
-            identity_event_ids: map
-                .get("identity_event_ids")
-                .and_then(Value::as_array)
-                .into_iter()
-                .flatten()
-                .filter_map(Value::as_str)
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(str::to_owned)
-                .collect(),
-            member_display_state_digest: string_field("member_display_state_digest"),
-            subject_id: string_field("subject_id"),
-            handle_claims: map
-                .get("handle_claims")
-                .and_then(Value::as_array)
-                .cloned()
-                .unwrap_or_default(),
-            handle_claims_limited: map
-                .get("handle_claims_limited")
-                .and_then(Value::as_bool)
-                .unwrap_or(false),
-        };
-        if !matches!(row.membership.as_deref(), Some("join" | "knock")) {
+        if entry.validate().is_err() {
             continue;
         }
+        let row = RealmMemberRow {
+            actor_id: entry.actor_id,
+            membership: Some(entry.membership),
+            identity_event_ids: entry
+                .identity_event_ids
+                .into_iter()
+                .map(|id| id.as_str().to_owned())
+                .collect(),
+            member_display_state_digest: entry
+                .member_display_state_digest
+                .map(|digest| digest.to_string()),
+            subject_account_id: entry.subject_account_id,
+            handle_claims: entry.handle_claims.unwrap_or_default(),
+            handle_claims_limited: entry.handle_claims_limited.unwrap_or(false),
+        };
         // `actor_id` is the roster key. Retain the first duplicate exactly as
         // required by the sync contract.
         rows.entry(row.actor_id.clone()).or_insert(row);
@@ -96,52 +111,181 @@ pub(crate) fn realm_member_roster(projection: Option<&Value>) -> Vec<RealmMember
     rows.into_values().collect()
 }
 
-pub(crate) fn verified_inline_handle(row: &RealmMemberRow) -> Option<String> {
-    // disclosure gates handle evidence on `subject_id`; claims without
-    // that disclosed binding are malformed and must not affect display.
-    let subject = row.subject_id.as_deref()?;
-    row.handle_claims.iter().find_map(|claim| {
-        let core = claim.get("claim")?;
-        if core
-            .get("subject_account_id")
-            .and_then(|account| account.get("principal_id"))
-            .and_then(Value::as_str)?
-            .trim()
-            != subject
-            || claim.get("status").and_then(Value::as_str) != Some("verified")
-            || claim
-                .get("revocation_digest")
-                .is_some_and(|value| !value.is_null())
-            || claim
-                .get("fresh_until")
-                .and_then(Value::as_str)
-                .and_then(|value| chrono::DateTime::parse_from_rfc3339(value).ok())
-                .is_none_or(|fresh_until| fresh_until <= chrono::Utc::now())
-        {
-            return None;
-        }
-        core.get("handle")
-            .and_then(Value::as_str)
-            .and_then(crate::identity::handle::parse_user_handle)
-            .map(|handle| handle.display)
-    })
+/// Signed `ak.schema.handle_claim.v1` status-view fixture. The roster
+/// carries the full SDK type, so tests build the real shape (both core
+/// proofs and the status proof over the recomputed digests) instead of a
+/// hand-written JSON subset that the wire would reject.
+#[cfg(test)]
+pub(crate) fn test_handle_claim(
+    subject_account_id: &AccountId,
+    handle: &str,
+    issuer_did: &str,
+    status: arkret_models_identity::HandleClaimStatus,
+) -> HandleClaim {
+    use arkret_models_identity::{
+        HANDLE_CLAIM_PROOF_DOMAIN, HANDLE_CLAIM_STATUS_DOMAIN, HandleClaimCore, HandleClaimVariant,
+        HandleVisibility,
+    };
+    use arkret_wire::{DidUrl, Hash, PayloadProof, PayloadProofPurpose};
+
+    let now = chrono::Utc::now();
+    let issued_at = now - chrono::Duration::minutes(5);
+    let proof = |purpose: PayloadProofPurpose, domain: &str, created_at| {
+        PayloadProof {
+        kind: "detached_jws".to_owned(),
+        verification_method: DidUrl::new("did:webvh:z6mkfixture:issuer.example#key-1").unwrap(),
+        payload_digest: Hash::new(format!("sha256:{}", "0".repeat(64))).unwrap(),
+        created_at,
+        domain: Some(domain.to_owned()),
+        audience: None,
+        proof_purpose: Some(purpose),
+        jws: "eyJhbGciOiJFZDI1NTE5In0..AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA".to_owned(),
+    }
+    };
+    let mut core = HandleClaimCore {
+        schema: HandleClaimCore::SCHEMA.to_owned(),
+        handle: Handle::parse(handle).unwrap(),
+        handle_aliases: Vec::new(),
+        subject_account_id: subject_account_id.clone(),
+        issuer_id: arkret_sdk::DidCoreId::new(issuer_did.to_owned()).unwrap(),
+        claim: HandleClaimVariant::HandleBinding,
+        visibility: HandleVisibility::Public,
+        audience: None,
+        issued_at,
+        expires_at: Some(now + chrono::Duration::days(30)),
+        source_refs: Vec::new(),
+        proofs: [
+            proof(
+                PayloadProofPurpose::IssuerAttestation,
+                HANDLE_CLAIM_PROOF_DOMAIN,
+                issued_at,
+            ),
+            proof(
+                PayloadProofPurpose::HolderAcceptance,
+                HANDLE_CLAIM_PROOF_DOMAIN,
+                issued_at,
+            ),
+        ],
+    };
+    let digest = core.claim_digest().unwrap();
+    for entry in &mut core.proofs {
+        entry.payload_digest = digest.clone();
+    }
+    let mut claim = HandleClaim {
+        schema: HandleClaim::SCHEMA.to_owned(),
+        claim: core,
+        status,
+        as_of: now,
+        verifier_id: arkret_sdk::DidCoreId::new(issuer_did.to_owned()).unwrap(),
+        verified_at: matches!(status, arkret_models_identity::HandleClaimStatus::Verified)
+            .then_some(now),
+        revocation: None,
+        fresh_until: now + chrono::Duration::minutes(5),
+        status_proof: proof(
+            PayloadProofPurpose::StatusAttestation,
+            HANDLE_CLAIM_STATUS_DOMAIN,
+            now,
+        ),
+    };
+    claim.status_proof.payload_digest = claim.status_digest().unwrap();
+    claim
 }
 
+/// Realm `handle_issuer_policies` fixture matching [`test_handle_claim`].
 #[cfg(test)]
-pub(crate) fn test_inline_handle_claim(subject: &str, handle: &str, status: &str) -> Value {
-    serde_json::json!({
-        "schema": "ak.schema.handle_claim.v1",
-        "claim": {
-            "handle": handle,
-            "subject_account_id": {
-                "principal_id": subject,
-                "station_id": "ak:did_core:web:fixture-station.example"
-            }
-        },
-        "status": status,
-        "revocation_digest": null,
-        "fresh_until": "2099-01-01T00:00:00.000Z"
+pub(crate) fn test_issuer_policy(issuer_did: &str, domain: &str) -> HandleIssuerPolicyEntry {
+    HandleIssuerPolicyEntry {
+        issuer_id: arkret_sdk::DidCoreId::new(issuer_did.to_owned()).unwrap(),
+        authorized_handle_domains: vec![domain.to_owned()],
+        issuer_class: arkret_sdk::identity::HandleIssuerAuthorityClass::DomainAuthority,
+    }
+}
+
+/// `identity-handles.md` §3.2.1 issuer trust + domain-authority filter input:
+/// the Realm's effective `handle_issuer_policies`, read from the accepted
+/// `ak.realm.policy_bundle` revisions in the Realm projection.
+///
+/// The bundle cell is a `cas_register`, so the highest accepted
+/// `policy_revision` is the effective one. An empty result is not "no
+/// constraint": §3.2.1 Step 0 makes the issuer filter mandatory, so an empty
+/// policy makes the inline candidate set empty and the renderer degrades
+/// instead of showing an unvetted handle.
+pub(crate) fn realm_handle_issuer_policies(
+    projections: &BTreeMap<String, Value>,
+    realm_id: &str,
+) -> Vec<HandleIssuerPolicyEntry> {
+    handle_issuer_policies_from_projection(projections.get(realm_id.trim()))
+}
+
+/// [`realm_handle_issuer_policies`] over one already-selected Realm
+/// projection entry.
+pub(crate) fn handle_issuer_policies_from_projection(
+    projection: Option<&Value>,
+) -> Vec<HandleIssuerPolicyEntry> {
+    let Some(events) = projection
+        .and_then(|projection| projection.get("state"))
+        .and_then(|state| state.get("events"))
+        .and_then(Value::as_array)
+    else {
+        return Vec::new();
+    };
+    let mut best: Option<arkret_sdk::RealmPolicyBundlePayload> = None;
+    for event in events {
+        let kind = event
+            .get("kind")
+            .or_else(|| event.get("event_kind"))
+            .and_then(Value::as_str);
+        if kind != Some(arkret_wire::event_kind_str::REALM_POLICY_BUNDLE) {
+            continue;
+        }
+        let Some(payload) = event.get("payload") else {
+            continue;
+        };
+        let Ok(bundle) =
+            serde_json::from_value::<arkret_sdk::RealmPolicyBundlePayload>(payload.clone())
+        else {
+            continue;
+        };
+        if best
+            .as_ref()
+            .is_none_or(|current| bundle.policy_revision >= current.policy_revision)
+        {
+            best = Some(bundle);
+        }
+    }
+    best.and_then(|bundle| bundle.handle_issuer_policies)
+        .unwrap_or_default()
+}
+
+/// §3.8.2 step 1c/1d — run the SDK §3.2.1 primary-handle selection over the
+/// roster's inline signed handle-claim evidence.
+///
+/// The selection itself (issuer trust + domain-authority filter, audience
+/// scope, validity window, priority layers and the deterministic tie-break)
+/// lives in `arkret_sdk::identity`; this client only assembles the
+/// deterministic input tuple.
+pub(crate) fn inline_primary_handle(
+    row: &RealmMemberRow,
+    handle_issuer_policies: &[HandleIssuerPolicyEntry],
+    context: Option<&str>,
+) -> Option<Handle> {
+    let account_id = row.subject_account_id.as_ref()?;
+    if row.handle_claims.is_empty() {
+        return None;
+    }
+    arkret_sdk::identity::select_primary_handle(&PrimaryHandleSelectInput {
+        account_id,
+        context,
+        claim_set_snapshot: &row.handle_claims,
+        handle_issuer_policies,
+        // The DID Document `metadata.primary_handle` layer needs an as-of
+        // DID Document snapshot resolver; until one is wired this client
+        // runs the algorithm with the holder-preference layer empty, which
+        // §3.2.1 permits (the layer is simply skipped).
+        holder_primary_handle_at_as_of: None,
+        resolution_as_of: chrono::Utc::now(),
     })
+    .map(|claim| claim.claim.handle)
 }
 
 fn principal_core_subject(value: &str) -> Option<String> {
@@ -155,8 +299,7 @@ pub(crate) fn member_lookup_subject(
     row: &RealmMemberRow,
     identity: Option<&arkret_sdk::MemberIdentity>,
 ) -> Option<String> {
-    row.subject_id
-        .as_deref()
+    row.subject_principal_id()
         .and_then(principal_core_subject)
         .or_else(|| {
             identity.and_then(|identity| {
@@ -200,8 +343,9 @@ pub(crate) fn missing_member_handle_lookups(
     in_flight: &BTreeSet<String>,
 ) -> Vec<MemberHandleLookupRequest> {
     let mut requests = Vec::new();
+    let policies = realm_handle_issuer_policies(&store.load().realm_tree_projections, realm_id);
     for row in rows {
-        if verified_inline_handle(row).is_some() {
+        if inline_primary_handle(row, &policies, Some(realm_id)).is_some() {
             continue;
         }
         let identity = store.resolved_member_identity(realm_id, &row.actor_id);
@@ -302,51 +446,203 @@ pub(crate) async fn fetch_and_cache_member_handle(
     }
 }
 
+/// §3.8.2 step 5 — the visual-degradation tier a rendered member label sits
+/// on. Every non-`Verified` tier MUST be visually marked as degraded.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum MemberDisplayTier {
+    /// §3.2.1 selected a verified primary handle.
+    Verified,
+    /// Served from a locally cached verified handle (step 4a).
+    Cached,
+    /// Only a captured display name is available (step 4b).
+    NameOnly,
+    /// Nothing resolved; a truncated protocol id is shown (step 4c).
+    Unresolved,
+}
+
+impl MemberDisplayTier {
+    /// CSS class the surface applies so the degradation is visible.
+    pub(crate) fn css_class(self) -> &'static str {
+        match self {
+            Self::Verified => "identity-verified",
+            Self::Cached => "identity-cached",
+            Self::NameOnly => "identity-name-only",
+            Self::Unresolved => "identity-unresolved",
+        }
+    }
+
+    /// Short badge text for a degraded tier, and the longer explanation the
+    /// surface puts on its `title`. `None` for `Verified`.
+    pub(crate) fn degraded_badge(self) -> Option<(String, String)> {
+        let (badge, detail) = match self {
+            Self::Verified => return None,
+            Self::Cached => ("identity.tier.cached", "identity.tier.cached_detail"),
+            Self::NameOnly => ("identity.tier.name_only", "identity.tier.name_only_detail"),
+            Self::Unresolved => (
+                "identity.tier.unresolved",
+                "identity.tier.unresolved_detail",
+            ),
+        };
+        Some((crate::i18n::tr(badge), crate::i18n::tr(detail)))
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct SubjectDisplay {
+    pub label: String,
+    pub handle: Option<String>,
+    pub tier: MemberDisplayTier,
+}
+
+/// §3.8.2 — the single member/subject rendering entry point in this client.
+///
+/// When the exact `account_id` is known the whole ladder is the SDK's
+/// [`render_mention`]: §3.2.1 primary-handle selection first, then the
+/// cached-handle / display-name / unresolved fallbacks. Without an exact
+/// account id §3.2.1 Step 0 cannot run at all, so the render starts at the
+/// step 4 fallback ladder.
+///
+/// `unresolved_label` is this client's rendering of the step 4c "truncated
+/// DID" rung; which rung applies is decided by the SDK, never here.
+pub(crate) fn resolve_subject_display(
+    account_id: Option<&AccountId>,
+    claim_set_snapshot: &[HandleClaim],
+    handle_issuer_policies: &[HandleIssuerPolicyEntry],
+    context: Option<&str>,
+    cached_handle: Option<&Handle>,
+    display_name: Option<&str>,
+    unresolved_label: &str,
+) -> SubjectDisplay {
+    let unresolved = || SubjectDisplay {
+        label: unresolved_label.to_owned(),
+        handle: None,
+        tier: MemberDisplayTier::Unresolved,
+    };
+    if let Some(account_id) = account_id {
+        let selection = PrimaryHandleSelectInput {
+            account_id,
+            context,
+            claim_set_snapshot,
+            handle_issuer_policies,
+            // The holder-preference layer needs an as-of DID Document
+            // snapshot resolver; until one is wired the layer stays empty,
+            // which §3.2.1 permits.
+            holder_primary_handle_at_as_of: None,
+            resolution_as_of: chrono::Utc::now(),
+        };
+        return match render_mention(&selection, cached_handle, display_name) {
+            MentionRender::Verified { handle } => SubjectDisplay {
+                label: handle.canonical().to_owned(),
+                handle: Some(handle.canonical().to_owned()),
+                tier: MemberDisplayTier::Verified,
+            },
+            MentionRender::Cached { handle } => SubjectDisplay {
+                label: handle.canonical().to_owned(),
+                handle: Some(handle.canonical().to_owned()),
+                tier: MemberDisplayTier::Cached,
+            },
+            MentionRender::NameOnly { name } => SubjectDisplay {
+                label: name,
+                handle: None,
+                tier: MemberDisplayTier::NameOnly,
+            },
+            MentionRender::Unresolved { .. } => unresolved(),
+        };
+    }
+    if let Some(handle) = cached_handle {
+        return SubjectDisplay {
+            label: handle.canonical().to_owned(),
+            handle: Some(handle.canonical().to_owned()),
+            tier: MemberDisplayTier::Cached,
+        };
+    }
+    match display_name.map(str::trim).filter(|name| !name.is_empty()) {
+        Some(name) => SubjectDisplay {
+            label: name.to_owned(),
+            handle: None,
+            tier: MemberDisplayTier::NameOnly,
+        },
+        None => unresolved(),
+    }
+}
+
+fn parse_handle(raw: &str) -> Option<Handle> {
+    crate::identity::handle::parse_user_handle(raw)
+        .and_then(|parsed| Handle::parse(&parsed.handle).ok())
+}
+
 pub(crate) fn resolve_member_display(
     store: &LocalStateStore,
     realm_id: &str,
     row: &RealmMemberRow,
 ) -> ResolvedMemberDisplay {
+    let policies = realm_handle_issuer_policies(&store.load().realm_tree_projections, realm_id);
+    resolve_member_display_with_policies(store, realm_id, row, &policies)
+}
+
+/// [`resolve_member_display`] with the Realm's §3.2.1 issuer policy already
+/// resolved, so a roster loop reads the Realm projection once instead of once
+/// per row.
+pub(crate) fn resolve_member_display_with_policies(
+    store: &LocalStateStore,
+    realm_id: &str,
+    row: &RealmMemberRow,
+    handle_issuer_policies: &[HandleIssuerPolicyEntry],
+) -> ResolvedMemberDisplay {
     let identity = store.resolved_member_identity(realm_id, &row.actor_id);
     let subject_id = member_lookup_subject(row, identity.as_ref());
     let handle_lookup_subject = member_handle_lookup_subject(row, identity.as_ref());
-    let cached_handle = handle_lookup_subject.as_deref().and_then(|subject| {
-        store
-            .cached_member_handle_lookup(
-                subject,
-                Some(realm_id),
-                row.member_display_state_digest.as_deref(),
-            )
-            .and_then(|entry| entry.primary_handle)
-    });
-    let primary_handle = [
+    // §3.8.2 step 4a input: the last verified primary handle this client saw
+    // for the subject, either the active account's own persisted handle or a
+    // fresh Directory `list_handles_for_subject` result.
+    let cached_handle = [
         subject_id.as_deref(),
         Some(row.actor_id.signing_principal_id().as_str()),
     ]
     .into_iter()
     .flatten()
     .find_map(|principal_id| store.primary_handle_for_principal_id(principal_id))
-    .and_then(|handle| {
-        crate::identity::handle::parse_user_handle(&handle).map(|parsed| parsed.display)
+    .or_else(|| {
+        handle_lookup_subject.as_deref().and_then(|subject| {
+            store
+                .cached_member_handle_lookup(
+                    subject,
+                    Some(realm_id),
+                    row.member_display_state_digest.as_deref(),
+                )
+                .and_then(|entry| entry.primary_handle)
+        })
     })
-    .or(cached_handle.and_then(|handle| {
-        crate::identity::handle::parse_user_handle(&handle).map(|parsed| parsed.display)
-    }))
-    .or_else(|| verified_inline_handle(row));
+    .as_deref()
+    .and_then(parse_handle);
     let display_name = identity.as_ref().and_then(|identity| {
         let name = identity.display_profile.display_name.trim();
         (!name.is_empty()).then(|| name.to_owned())
     });
-    let public_label = member_label(row, identity.as_ref(), primary_handle.as_deref());
+    let account_id = row
+        .subject_account_id
+        .as_ref()
+        .or_else(|| row.actor_id.as_account_id());
+    let rendered = resolve_subject_display(
+        account_id,
+        &row.handle_claims,
+        handle_issuer_policies,
+        Some(realm_id),
+        cached_handle.as_ref(),
+        display_name.as_deref(),
+        &short_protocol_id(row.actor_id.signing_principal_id().as_str()),
+    );
     let collision_public_display = display_name
         .as_ref()
         .cloned()
-        .unwrap_or_else(|| public_label.clone());
-    let label = member_label_with_contact_petname(store, row, &public_label);
+        .unwrap_or_else(|| rendered.label.clone());
+    let label = member_label_with_contact_petname(store, row, &rendered.label);
     ResolvedMemberDisplay {
         label,
+        public_label: rendered.label,
         collision_public_display,
-        primary_handle,
+        primary_handle: rendered.handle,
+        tier: rendered.tier,
         display_name,
         avatar_blob_ref: identity.and_then(|identity| identity.display_profile.avatar_blob_ref),
         subject_id,
@@ -354,41 +650,49 @@ pub(crate) fn resolve_member_display(
 }
 
 /// Canonical actor label for surfaces that only have a stable principal id and no Realm
-/// roster row. An accepted human Contact's global petname wins; verified
-/// handles remain the secondary fallback and the protocol id is last.
+/// roster row. An accepted human Contact's global petname wins; the rest of
+/// the ladder is [`resolve_subject_display`] with no exact account id, so it
+/// starts at the §3.8.2 step 4 fallbacks.
 pub(crate) fn actor_display_label(store: &LocalStateStore, principal_id: &str) -> String {
-    store
+    if let Some(petname) = store
         .active_contact_remark(principal_id)
         .and_then(|remark| {
             let petname = remark.petname.trim();
             (!petname.is_empty()).then(|| petname.to_owned())
         })
-        .or_else(|| {
-            store
-                .primary_handle_for_principal_id(principal_id)
-                .and_then(|handle| crate::identity::handle::parse_user_handle(&handle))
-                .map(|parsed| parsed.display)
-        })
+    {
+        return petname;
+    }
+    let cached_handle = store
+        .primary_handle_for_principal_id(principal_id)
         .or_else(|| {
             store
                 .cached_member_handle_lookup(principal_id, None, None)
                 .and_then(|entry| entry.primary_handle)
-                .and_then(|handle| crate::identity::handle::parse_user_handle(&handle))
-                .map(|parsed| parsed.display)
         })
-        .unwrap_or_else(|| short_protocol_id(principal_id))
+        .as_deref()
+        .and_then(parse_handle);
+    resolve_subject_display(
+        None,
+        &[],
+        &[],
+        None,
+        cached_handle.as_ref(),
+        None,
+        &short_protocol_id(principal_id),
+    )
+    .label
 }
 
 /// Realm roster variant. A petname is joined only through a unique verified
-/// subject_id projection; actor ids and display strings are never guessed as
+/// subject projection; actor ids and display strings are never guessed as
 /// Contact principals.
 pub(crate) fn member_label_with_contact_petname(
     store: &LocalStateStore,
     row: &RealmMemberRow,
     public_label: &str,
 ) -> String {
-    row.subject_id
-        .as_deref()
+    row.subject_principal_id()
         .and_then(|principal_id| store.active_contact_remark(principal_id))
         .and_then(|remark| {
             let petname = remark.petname.trim();
@@ -439,24 +743,6 @@ pub(crate) fn public_display_conflicts_with_other_contact(
     })
 }
 
-pub(crate) fn member_label(
-    row: &RealmMemberRow,
-    identity: Option<&arkret_sdk::MemberIdentity>,
-    primary_handle: Option<&str>,
-) -> String {
-    primary_handle
-        .and_then(crate::identity::handle::parse_user_handle)
-        .map(|handle| handle.display)
-        .or_else(|| verified_inline_handle(row))
-        .or_else(|| {
-            identity.and_then(|identity| {
-                let name = identity.display_profile.display_name.trim();
-                (!name.is_empty()).then(|| name.to_owned())
-            })
-        })
-        .unwrap_or_else(|| short_protocol_id(row.actor_id.signing_principal_id().as_str()))
-}
-
 pub(crate) fn owned_agent_slug<'a>(
     row: &RealmMemberRow,
     owned_agent_slugs: &'a BTreeMap<String, String>,
@@ -473,8 +759,7 @@ pub(crate) fn owned_agent_slug<'a>(
     owned_agent_slugs
         .get(row.actor_id.signing_principal_id().as_str())
         .or_else(|| {
-            row.subject_id
-                .as_ref()
+            row.subject_principal_id()
                 .and_then(|subject| owned_agent_slugs.get(subject))
         })
         .map(String::as_str)
@@ -508,17 +793,15 @@ mod petname_tests {
             rows.iter()
                 .find(|row| row.actor_id == first)
                 .unwrap()
-                .membership
-                .as_deref(),
-            Some("join")
+                .membership,
+            Some(MembershipState::Join)
         );
         assert_eq!(
             rows.iter()
                 .find(|row| row.actor_id == second)
                 .unwrap()
-                .membership
-                .as_deref(),
-            Some("knock")
+                .membership,
+            Some(MembershipState::Knock)
         );
     }
 
@@ -559,10 +842,15 @@ mod petname_tests {
     fn realm_row(actor_id: &str, subject_id: Option<&str>) -> RealmMemberRow {
         RealmMemberRow {
             actor_id: crate::mls_api_helpers::local_account_actor_id(actor_id).unwrap(),
-            membership: Some("join".to_owned()),
+            membership: Some(MembershipState::Join),
             identity_event_ids: Vec::new(),
             member_display_state_digest: None,
-            subject_id: subject_id.map(ToOwned::to_owned),
+            subject_account_id: subject_id.map(|subject| {
+                arkret_sdk::AccountId::new(
+                    arkret_sdk::DidCoreId::new(subject.to_owned()).unwrap(),
+                    crate::operation::authoring_station_id().unwrap(),
+                )
+            }),
             handle_claims: Vec::new(),
             handle_claims_limited: false,
         }

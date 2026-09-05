@@ -522,7 +522,10 @@ fn card_synthesis_author_prefers_cached_member_primary_handle() {
                 "station_id": "ak:did_core:web:principal.example"
             }},
             "membership": "join",
-            "subject_id": subject,
+            "subject_account_id": {
+                "principal_id": subject,
+                "station_id": "ak:did_core:web:principal.example"
+            },
             "member_display_state_digest": digest
         }]
     });

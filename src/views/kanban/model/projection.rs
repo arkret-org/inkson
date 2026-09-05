@@ -180,6 +180,9 @@ pub(crate) fn overlay_local_board_space_options(
     options
 }
 
+/// Default-actor form of [`columns_from_lifecycle_projection_for_actor`].
+/// Test-only, for the same reason.
+#[cfg(test)]
 pub(crate) fn columns_from_lifecycle_projection(
     containers: &[crate::state::projection_views::SpaceContainerProjectionView],
     strands: &[crate::state::projection_views::StrandProjectionView],

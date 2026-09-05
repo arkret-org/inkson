@@ -102,6 +102,289 @@ pub fn english_translations() -> TranslationDict {
     // identity and how recently a proof has been produced.
     dict.set("settings.signer.label", "Active signer");
 
+    // Settings surfaces wired in the `views/settings/mod.rs` sweep:
+    // server information, local stores, storage diagnostics, encryption,
+    // MIMI interop, notifications, push, privacy/presence, read receipts,
+    // remarks, handle, appearance and session diagnostics.
+    dict.set("settings.server.context", "Server context");
+    dict.set("settings.server.station", "Station");
+    dict.set("settings.server.session", "Session");
+    dict.set("settings.server.session_authenticated", "Authenticated");
+    dict.set("settings.server.push", "Push");
+    dict.set("settings.avatar.account_alt", "Account avatar");
+    dict.set("settings.avatar.edit_dialog", "Edit avatar");
+    dict.set("settings.avatar.selected_alt", "Selected avatar");
+    dict.set(
+        "settings.avatar.cleared_synced",
+        "Avatar cleared from synced preferences",
+    );
+    dict.set(
+        "settings.avatar.restored_synced",
+        "Avatar restored from synced preferences",
+    );
+    dict.set(
+        "settings.avatar.removing",
+        "Removing avatar from the public profile.",
+    );
+    dict.set(
+        "settings.avatar.removed",
+        "Avatar removed; syncing clear to other devices.",
+    );
+    dict.set("settings.local_stores.title", "Local Stores");
+    dict.set("settings.local_stores.badge", "status");
+    dict.set("settings.local_stores.config_store", "Config Store");
+    dict.set("settings.local_stores.state_store", "State Store");
+    dict.set("settings.local_stores.active", "Active");
+    dict.set("settings.local_stores.config_size", "Config Size");
+    dict.set("settings.local_stores.approx_bytes", "~{bytes} bytes");
+    dict.set("settings.local_stores.platform", "Platform");
+    dict.set("settings.local_stores.platform_web", "Web (localStorage)");
+    dict.set(
+        "settings.local_stores.platform_native",
+        "Native (filesystem)",
+    );
+    dict.set("settings.storage_risks.title", "Storage diagnostics");
+    dict.set(
+        "settings.storage_risks.bounded_projection",
+        "Bounded localStorage projection ",
+    );
+    dict.set(
+        "settings.storage_risks.bounded_projection_hint",
+        "localStorage carries the small root/config projection. Account state, E2EE plaintext, session credentials, and key material use the protected IndexedDB tier.",
+    );
+    dict.set("settings.storage_risks.badge_bounded", "Bounded");
+    dict.set(
+        "settings.storage_risks.protected_e2ee",
+        "Protected E2EE storage ",
+    );
+    dict.set(
+        "settings.storage_risks.protected_e2ee_hint",
+        "E2EE plaintext caches and secret account state are encrypted in IndexedDB with a non-extractable SubtleCrypto wrapping key and are never mirrored to localStorage.",
+    );
+    dict.set(
+        "settings.storage_risks.single_tab",
+        "Single Active Browser Tab ",
+    );
+    dict.set(
+        "settings.storage_risks.single_tab_hint",
+        "Inkson allows one active tab per browser profile so IndexedDB, device keys, MLS state, cursors, and outbound writes have a single owner.",
+    );
+    dict.set("settings.storage_risks.badge_info", "Info");
+    dict.set("settings.storage_risks.filesystem", "Filesystem Storage ");
+    dict.set(
+        "settings.storage_risks.filesystem_hint",
+        "Native filesystem storage is used. Data persists across sessions. Ensure proper file permissions for security.",
+    );
+    dict.set("settings.storage_risks.badge_ok", "OK");
+    dict.set("settings.encryption.badge", "MLS / E2EE");
+    dict.set(
+        "settings.encryption.always_on",
+        "End-to-end encryption is always on for encrypted Realms. Manage your recovery key below.",
+    );
+    dict.set(
+        "settings.key_backup.title",
+        "Advanced key backup diagnostics",
+    );
+    dict.set("settings.key_backup.badge", "developer tools");
+    dict.set(
+        "settings.key_backup.body",
+        "Encrypted history recovery above creates key backup envelopes automatically. The recovery backup id is generated when a backup is created; it is not something to type by hand.",
+    );
+    dict.set(
+        "settings.key_backup.open_recovery_hint",
+        "Open Recovery when debugging a specific backup envelope.",
+    );
+    dict.set("settings.key_backup.open_recovery", "Recovery & backups");
+    dict.set(
+        "settings.key_backup.contract",
+        "Contract: ak.schema.key_backup.v1 over /_arkret/self/keys/backups/*. This is not required for encrypted-history recovery setup.",
+    );
+    dict.set("settings.mimi.title", "MIMI interop checks");
+    dict.set("settings.mimi.refresh_directory", "Refresh Directory");
+    dict.set("settings.mimi.identifier_query", "Identifier Query");
+    dict.set("settings.mimi.submit_message", "Submit Test Message");
+    dict.set("settings.mimi.proxy_download", "Proxy Download");
+    dict.set("settings.mimi.directory_badge", "features");
+    dict.set("settings.mimi.receipt_title", "Receipt");
+    dict.set("settings.mimi.receipt_badge", "last action");
+    dict.set("settings.mimi.not_loaded", "Not loaded");
+    dict.set("settings.mimi.no_receipt", "No MIMI action receipt");
+    dict.set(
+        "settings.notifications.defaults_title",
+        "Global notification defaults",
+    );
+    dict.set("settings.notifications.defaults_badge", "synced");
+    dict.set(
+        "settings.notifications.defaults_body",
+        "Apply to every Realm unless you add a per-Realm override below.",
+    );
+    dict.set("settings.notifications.sound_on", " Sound alerts");
+    dict.set("settings.notifications.sound_off", " Sound alerts off");
+    dict.set(
+        "settings.notifications.sound_enabled",
+        "Sound alerts enabled.",
+    );
+    dict.set(
+        "settings.notifications.sound_disabled",
+        "Sound alerts disabled.",
+    );
+    dict.set("settings.notifications.sound_test", "Test sound");
+    dict.set(
+        "settings.notifications.sound_test_played",
+        "Sound alert test played.",
+    );
+    dict.set(
+        "settings.notifications.sound_test_blocked",
+        "Enable sound alerts before testing.",
+    );
+    dict.set("settings.notifications.dnd", " Do not disturb");
+    dict.set("settings.notifications.dnd_off", "Off");
+    dict.set("settings.notifications.dnd_now", "Now");
+    dict.set(
+        "settings.notifications.overrides_title",
+        "Per-realm overrides",
+    );
+    dict.set(
+        "settings.notifications.overrides_body",
+        "Pick a Realm and how much it should notify you. This overrides the global defaults above for that Realm only.",
+    );
+    dict.set(
+        "settings.notifications.no_realms",
+        "No Realms available yet",
+    );
+    dict.set("settings.notifications.select_realm", "Select a Realm…");
+    dict.set("settings.notifications.notify_label", "Notify me about");
+    dict.set("settings.notifications.level_all", "All messages");
+    dict.set("settings.notifications.add_override", "Add override");
+    dict.set(
+        "settings.notifications.overrides_empty",
+        "No per-Realm overrides yet. Unconfigured Realms follow the global defaults.",
+    );
+    dict.set(
+        "settings.notifications.clear_overrides",
+        "Clear all overrides",
+    );
+    dict.set("settings.push.title", "Push delivery");
+    dict.set("settings.push.badge", "configure");
+    dict.set(
+        "settings.push.body",
+        "Push notification preferences and gateway registration.",
+    );
+    dict.set("settings.push.current", "Current: {state}");
+    dict.set("settings.push.not_registered", "Not registered");
+    dict.set("settings.privacy.badge", "visibility controls");
+    dict.set(
+        "settings.privacy.presence_visibility",
+        "Presence visibility",
+    );
+    dict.set(
+        "settings.privacy.presence_visibility.public",
+        "Everyone in shared Realms",
+    );
+    dict.set(
+        "settings.privacy.presence_visibility.contacts_only",
+        "Contacts only",
+    );
+    dict.set(
+        "settings.privacy.presence_visibility.nobody",
+        "Nobody (appear offline)",
+    );
+    dict.set("settings.privacy.status_title", "My status");
+    dict.set("settings.privacy.status_badge", "manual presence");
+    dict.set("settings.privacy.presence_state.auto", "Automatic");
+    dict.set("settings.privacy.presence_state.online", "Online");
+    dict.set("settings.privacy.presence_state.idle", "Idle");
+    dict.set(
+        "settings.privacy.presence_state.dnd",
+        "Do not disturb (busy)",
+    );
+    dict.set(
+        "settings.privacy.status_message_placeholder",
+        "Status message (e.g. In a meeting)",
+    );
+    dict.set("settings.privacy.status_expiry.never", "Don't clear");
+    dict.set("settings.privacy.status_expiry.30m", "Clear in 30 minutes");
+    dict.set("settings.privacy.status_expiry.1h", "Clear in 1 hour");
+    dict.set("settings.privacy.status_expiry.today", "Clear today");
+    dict.set("settings.privacy.status_save", "Save status");
+    dict.set("settings.privacy.status_clear", "Clear");
+    dict.set(
+        "settings.privacy.status_invalid",
+        "Status message is invalid: {error}",
+    );
+    dict.set(
+        "settings.privacy.status_state_unknown",
+        "Status state is not in the protocol closed set.",
+    );
+    dict.set("settings.privacy.status_cleared", "Status cleared.");
+    dict.set("settings.privacy.status_saved", "Status saved.");
+    dict.set("settings.read_receipts.default_badge", "Default");
+    dict.set(
+        "settings.read_receipts.send_default",
+        " Send read receipts by default",
+    );
+    dict.set(
+        "settings.read_receipts.display_default",
+        " Show others' read receipts by default",
+    );
+    dict.set(
+        "settings.read_receipts.realm_exceptions",
+        "Realm exceptions",
+    );
+    dict.set("settings.read_receipts.badge_sending", "sending");
+    dict.set("settings.read_receipts.badge_skipping", "skipping");
+    dict.set("settings.read_receipts.locked", "locked by Realm policy");
+    dict.set("settings.read_receipts.switch_to_skip", "Switch to skip");
+    dict.set("settings.read_receipts.switch_to_send", "Switch to send");
+    dict.set("settings.read_receipts.inherit_default", "Inherit default");
+    dict.set("settings.read_receipts.add_skip", "Add (skip)");
+    dict.set("settings.read_receipts.add_send", "Add (send)");
+    dict.set("settings.remarks.badge_private", "Private");
+    dict.set("settings.realm_remarks.title", "Realm remarks");
+    dict.set(
+        "settings.realm_remarks.empty",
+        "No remarks yet. Add one below to distinguish duplicate-titled Realms.",
+    );
+    dict.set(
+        "settings.realm_remarks.local_name_private",
+        "Local name (private)",
+    );
+    dict.set("settings.realm_remarks.local_name", "Local name");
+    dict.set("settings.realm_remarks.add", "Add remark");
+    dict.set("settings.contact_petnames.title", "Contact petnames");
+    dict.set(
+        "settings.contact_petnames.body",
+        "Petnames are global across all Realms. Add or edit them from an accepted human Contact row; arbitrary DIDs and Realm members cannot receive a petname.",
+    );
+    dict.set(
+        "settings.contact_petnames.empty",
+        "No saved contact petnames.",
+    );
+    dict.set("settings.handle.title", "Handle");
+    dict.set(
+        "settings.handle.managed_badge",
+        "Managed by your organization",
+    );
+    dict.set(
+        "settings.handle.managed_body",
+        "Your handle is managed by your organization. This client cannot set or change it directly — request changes through your organization's issuer.",
+    );
+    dict.set(
+        "settings.handle.issuer_link",
+        "Manage handle at your organization's issuer",
+    );
+    dict.set(
+        "settings.handle.issuer_link_unavailable",
+        "Issuer link unavailable",
+    );
+    dict.set("settings.theme.badge", "appearance");
+    dict.set("settings.theme.light", "Light theme");
+    dict.set("settings.theme.night", "Night theme");
+    dict.set("settings.theme.system", "System theme");
+    dict.set("settings.theme.current", "Current: {theme}");
+    dict.set("settings.language.title", "Language");
+    dict.set("settings.session_diagnostics.title", "Session diagnostics");
+
     // Common
     dict.set("common.retry", "Retry");
     dict.set("common.close", "Close");
@@ -1353,6 +1636,10 @@ pub fn english_translations() -> TranslationDict {
     dict.set("settings.avatar.pan_y", "Vertical");
     dict.set("settings.avatar.error", "Avatar upload failed");
     dict.set("settings.account.identity", "Account identity");
+    dict.set(
+        "settings.account.no_device_session",
+        "No authenticated device session",
+    );
     dict.set("settings.account.handles", "Handles");
     dict.set("settings.account.current_device", "Current device");
     dict.set("settings.account.copy_did", "Copy DID");
@@ -2809,6 +3096,200 @@ fn prompt_copy_strings(dict: &mut TranslationDict) {
         "Recovery was set up, but local details couldn't be saved on this device.",
     );
     dict.set("recovery_setup.confirm_button", "Confirm saved key");
+    // identity-handles.md §3.8.2 step 5 — every fallback rung MUST be
+    // visually marked so a degraded label never looks like a resolved one.
+    dict.set("identity.tier.cached", "Cached name");
+    dict.set(
+        "identity.tier.cached_detail",
+        "Shown from a saved copy. We could not re-check this name just now.",
+    );
+    dict.set("identity.tier.name_only", "Unverified name");
+    dict.set(
+        "identity.tier.name_only_detail",
+        "This is the name captured earlier, not a checked one.",
+    );
+    dict.set("identity.tier.unresolved", "Name unavailable");
+    dict.set(
+        "identity.tier.unresolved_detail",
+        "We could not look up a name for this account, so the account id is shown.",
+    );
+    dict.set("settings.devices.title", "Device access");
+    dict.set(
+        "settings.devices.subtitle",
+        "Review trusted devices or approve another one.",
+    );
+    dict.set("settings.devices.help", "Manage the devices bound to your account. Revoking a device removes it from the active set and triggers MLS leaf removal in any E2EE Realm the device participates in.");
+    dict.set("settings.devices.tabs_aria_label", "Device settings");
+    dict.set("settings.devices.tab_list", "Devices");
+    dict.set("settings.devices.tab_add", "Add a device");
+    dict.set("settings.devices.refresh", "Refresh");
+    dict.set("settings.devices.active_title", "Active devices");
+    dict.set("settings.devices.empty_title", "No devices loaded yet");
+    dict.set(
+        "settings.devices.empty_message",
+        "Loading your devices… or click Refresh to retry.",
+    );
+    dict.set("settings.devices.column_device", "Device");
+    dict.set("settings.devices.column_verification", "Verification");
+    dict.set("settings.devices.column_authorized", "Authorized");
+    dict.set("settings.devices.column_actions", "Actions");
+    dict.set("settings.devices.this_device", "this device");
+    dict.set("settings.devices.state_verified", "Verified");
+    dict.set("settings.devices.state_unverified", "Unverified");
+    dict.set("settings.devices.state_revoked", "Revoked");
+    dict.set(
+        "settings.devices.state_title",
+        "Device verification state: {state}",
+    );
+    dict.set("settings.devices.revoke_title", "Revoke device");
+    dict.set(
+        "settings.devices.revoke_recovery_label",
+        "Recovery Key (24 words)",
+    );
+    dict.set(
+        "settings.devices.revoke_recovery_placeholder",
+        "Your 24-word Recovery Key — required to rotate encrypted history backups",
+    );
+    dict.set("settings.devices.revoke_confirm", "Confirm revoke");
+    dict.set("settings.devices.pair_this_browser", "This browser");
+    dict.set("settings.devices.pair_title", "Approve this device");
+    dict.set("settings.devices.pair_required_badge", "Approval required");
+    dict.set("settings.devices.pair_body", "Generate a pairing QR code or link, then scan or open it on an already-authorized device. No automatic account notification is sent.");
+    dict.set("settings.devices.pair_hide_link", "Hide link");
+    dict.set(
+        "settings.devices.pair_qr_aria_label",
+        "Device approval QR code",
+    );
+    dict.set(
+        "settings.devices.pair_link_aria_label",
+        "Device approval link",
+    );
+    dict.set("settings.devices.accept_title", "Approve using a link");
+    dict.set(
+        "settings.devices.accept_body",
+        "Use this fallback on an authorized device when no confirmation prompt appears.",
+    );
+    dict.set(
+        "settings.devices.accept_placeholder",
+        "Paste the pairing link (…/device-pairing/resolve#token=…) or the token",
+    );
+    dict.set("settings.devices.session_active", "Signed in");
+    dict.set("settings.devices.session_inactive", "Not signed in");
+    dict.set("settings.devices.revoke_self_blocked", "Cannot self-revoke");
+    dict.set("settings.devices.revoke", "Revoke");
+    dict.set("settings.devices.revoke_body_before", "This will write ");
+    dict.set("settings.devices.revoke_body_after", " to your principal control Realm, remove the device from any E2EE Realm it participates in, and rotate the account MLS history secret. The action cannot be undone.");
+    dict.set("settings.devices.pair_requesting", "Requesting…");
+    dict.set("settings.devices.pair_request", "Request approval");
+    dict.set("settings.devices.pair_checking", "Checking…");
+    dict.set("settings.devices.pair_check", "Check approval");
+    dict.set("settings.devices.accept_resolving", "Resolving…");
+    dict.set("settings.devices.accept_resolve", "Resolve link");
+    dict.set(
+        "settings.devices.accept_rejected",
+        "Pairing request dismissed. Nothing was approved.",
+    );
+    dict.set("settings.devices.accept_device_name", "Device name");
+    dict.set("settings.devices.accept_device_id", "Device id");
+    dict.set("settings.devices.accept_key_fingerprint", "Key fingerprint");
+    dict.set(
+        "settings.devices.accept_gate_audience",
+        "Approving account server",
+    );
+    dict.set("settings.devices.accept_unnamed_device", "Not provided");
+    dict.set("settings.devices.revoke_threat_note", "Revoking is not a remote wipe. It cannot erase secrets or cached history already copied onto that device. Treat a lost or stolen device as able to read anything it kept before you revoked it.");
+    dict.set("audit.title", "Audit log");
+    dict.set("audit.help", "Some Realms record every read, others record every write. This view is read-only and shows only what this device has already seen.");
+    dict.set("audit.access_events", "Reads recorded");
+    dict.set(
+        "audit.access_events_hint",
+        "Recorded when a Realm logs every read",
+    );
+    dict.set("audit.write_receipts", "Writes recorded");
+    dict.set(
+        "audit.write_receipts_hint",
+        "Recorded when a Realm logs every write",
+    );
+    dict.set("audit.total_observed", "Total seen here");
+    dict.set(
+        "audit.total_observed_hint",
+        "Only what this device has synced so far",
+    );
+    dict.set("audit.empty_title", "No audit records yet");
+    dict.set("audit.empty_message", "Nothing has been recorded yet. Records appear only for Realms whose settings ask for them.");
+    dict.set("quarantine.title", "Invite quarantine");
+    dict.set("quarantine.status", "Pending invites are stored privately for you. Review controls appear once the consent flow is available.");
+    dict.set("theme.switcher_aria_label", "Theme");
+    dict.set("common.delete", "Delete");
+    dict.set("app.boot.opening_secure_storage", "Opening secure storage");
+    dict.set(
+        "app.boot.loading_keys",
+        "Loading encrypted account and device keys…",
+    );
+    dict.set(
+        "app.recovery.incomplete_title",
+        "Recovery setup is incomplete",
+    );
+    dict.set("app.recovery.incomplete_body", "Generate your Recovery Key (24 words) before relying on this account. Backups are stored server-side as ciphertext only; Arkret cannot recover the 24 words for you.");
+    dict.set("app.recovery.configure", "Configure recovery");
+    dict.set("app.recovery.history_status", "Encrypted history status");
+    dict.set("app.recovery.history_status_body", "Encrypted-history recovery needs an account MLS secret; if this is a brand-new account, the app will prompt again after your first encrypted write creates material that can be backed up.");
+    dict.set("app.nav.close_menu", "Close menu");
+    dict.set("app.nav.open_menu", "Open menu");
+    dict.set("app.nav.main_navigation", "Main navigation");
+    dict.set("app.nav.resize_menu", "Drag to resize menu");
+    dict.set("app.nav.scope_toggle", "Collaboration and contacts");
+    dict.set("app.nav.show_navigation", "Show navigation");
+    dict.set("app.nav.hide_navigation", "Hide navigation");
+    dict.set("app.brand.home", "Inkson | Arkret Home");
+    dict.set("app.main_content", "Main content");
+    dict.set("app.sidebar.hide_own_agents", "Hide your AI agents");
+    dict.set("app.sidebar.show_own_agents", "Show your AI agents");
+    dict.set("app.sidebar.opening", "Opening...");
+    dict.set("app.sidebar.agent_badge", "AI agent");
+    dict.set("app.sidebar.remark", "Remark");
+    dict.set(
+        "app.sidebar.remark_title",
+        "Local remark (private to this account)",
+    );
+    dict.set("app.sidebar.direct_badge", "DM");
+    dict.set("app.sidebar.agent_count", "Agents {count}");
+    dict.set("app.sidebar.contact_actions", "Contact actions");
+    dict.set("app.sidebar.close_row_actions", "Close row actions");
+    dict.set("app.sidebar.delete_contact", "Delete Contact");
+    dict.set("app.topbar.current_view", "Current view: {surface}");
+    dict.set("app.topbar.open_global_search", "Open global search");
+    dict.set("app.account.open_settings", "Open settings");
+    dict.set("app.account.did", "DID");
+    dict.set("app.account.server", "Server");
+    dict.set("app.account.refresh_session", "Refresh session");
+    dict.set("app.account.log_out", "Log out");
+    dict.set("theme.switch_to_light", "Switch to light theme");
+    dict.set("theme.switch_to_night", "Switch to night theme");
+    dict.set("account.not_signed_in", "Not signed in");
+    dict.set(
+        "account.refresh_then_sign_in",
+        "Refresh server metadata, then sign in",
+    );
+    dict.set("visibility.pill_title", "Who can find and see this");
+    dict.set("moderation.workbench_aria_label", "Moderation decisions");
+    dict.set("moderation.decide_title", "Record a decision");
+    dict.set("moderation.decide_badge", "Decision");
+    dict.set(
+        "moderation.target_placeholder",
+        "What this decision applies to",
+    );
+    dict.set("moderation.decide_submit", "Record decision");
+    dict.set("moderation.standing_title", "Decisions in force");
+    dict.set(
+        "moderation.standing_empty",
+        "No decisions are in force on this device yet.",
+    );
+    dict.set(
+        "moderation.decision_row_summary",
+        "Applies to {target} — {reason}",
+    );
+    dict.set("moderation.lift", "Lift decision");
     dict.set(
         "device_pair.aria_label",
         "A new device is requesting access to your account",

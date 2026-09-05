@@ -13,7 +13,6 @@ use std::time::Duration;
 use arkret_sdk::ErrorEnvelope;
 use arkret_sdk::events::{CbaEffectPlane, cba_cell_family_plane};
 use arkret_wire::{CapabilityActionId, event_kind_str};
-use dioxus::prelude::{ReadableExt, WritableExt};
 #[cfg(test)]
 use garth::ScheduledSendSubmissionState;
 use garth::outbound::BoxOutboundFuture;
@@ -130,13 +129,13 @@ struct EventOutboundSubmitter<'a> {
     owner: &'a EventSubmitter,
     results: &'a OutboundAttemptResults,
     state_store: Option<crate::runtime::input::StateStoreHandle>,
-    accepted_mls_state_store: Option<dioxus::prelude::SyncSignal<crate::state::LocalStateStore>>,
+    accepted_mls_state_store: Option<crate::runtime::input::StateStoreHandle>,
 }
 
 impl EventOutboundSubmitter<'_> {
     async fn converge_finalized_mls_admission(
         &self,
-        mut state_store: dioxus::prelude::SyncSignal<crate::state::LocalStateStore>,
+        state_store: &crate::runtime::input::StateStoreHandle,
         realm_id: &str,
         device_id: &arkret_sdk::DeviceId,
         commit: &arkret_sdk::AuthoredEvent,
@@ -147,26 +146,32 @@ impl EventOutboundSubmitter<'_> {
             .seals_frontier_realm_view(realm_id)
             .await
             .map_err(|error| format!("refresh accepted Seal view after MLS admission: {error}"))?;
-        state_store.write().set_realm_seal_view(
-            realm_id.to_owned(),
-            crate::state::LocalSealView {
-                frontier: seal_view
-                    .seal_basis
-                    .leaves
-                    .iter()
-                    .map(ToString::to_string)
-                    .collect(),
-                state_root: None,
-                ..Default::default()
-            },
-        );
+        state_store.write(|store| {
+            store.set_realm_seal_view(
+                realm_id.to_owned(),
+                crate::state::LocalSealView {
+                    frontier: seal_view
+                        .seal_basis
+                        .leaves
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect(),
+                    state_root: None,
+                    ..Default::default()
+                },
+            );
+        });
 
         let api = crate::transport::TransportClient::from_http(
             self.owner.http.clone(),
             crate::transport::RequestContext::new(""),
         );
-        crate::mls::governance_proof::ensure_governance_checkpoint(&api, state_store, realm_id)
-            .await?;
+        crate::mls::governance_proof::ensure_governance_checkpoint(
+            &api,
+            state_store.clone(),
+            realm_id,
+        )
+        .await?;
 
         let payload = serde_json::from_value::<arkret_sdk::MlsCommitPayload>(
             serde_json::to_value(&commit.event().payload)
@@ -197,17 +202,19 @@ impl EventOutboundSubmitter<'_> {
         let leaves = staged_group
             .security_frontier_leaves()
             .map_err(|error| format!("derive accepted MLS transition frontier: {error}"))?;
-        let request = crate::mls::governance_proof::proof_request_for_scope(
-            &state_store.read(),
-            payload.governance_binding().effective_scope().clone(),
-            payload.mls_group_id(),
-            payload.base_epoch(),
-            payload.next_epoch(),
-            leaves.clone(),
-        )?;
+        let request = state_store.read(|store| {
+            crate::mls::governance_proof::proof_request_for_scope(
+                store,
+                payload.governance_binding().effective_scope().clone(),
+                payload.mls_group_id(),
+                payload.base_epoch(),
+                payload.next_epoch(),
+                leaves.clone(),
+            )
+        })?;
         crate::mls::governance_proof::fetch_verify_and_cache_expected_proof(
             &api,
-            state_store,
+            state_store.clone(),
             &request,
             &leaves,
             payload.governance_binding(),
@@ -223,8 +230,9 @@ impl EventOutboundSubmitter<'_> {
         .await?;
 
         let accepted = state_store
-            .read()
-            .mls_snapshot_for_scope(payload.governance_binding().effective_scope())
+            .read(|store| {
+                store.mls_snapshot_for_scope(payload.governance_binding().effective_scope())
+            })
             .is_some_and(|snapshot| {
                 snapshot.group_id == payload.mls_group_id()
                     && snapshot.epoch == payload.next_epoch()
@@ -455,7 +463,7 @@ impl EventOutboundSubmitter<'_> {
                     }
                 }
                 let state_store = match accepted_mls_state_store_for_finalization(
-                    self.accepted_mls_state_store,
+                    self.accepted_mls_state_store.as_ref(),
                 ) {
                     Ok(state_store) => state_store,
                     Err(outcome) => return Ok(outcome),
@@ -1390,6 +1398,7 @@ impl EventSubmitter {
                 actor_id,
                 QueuedRecord::RealmBootstrap(Box::new(queued)),
                 Vec::new(),
+                crate::clock::now_utc(),
             )
             .await?;
 
@@ -1403,7 +1412,7 @@ impl EventSubmitter {
         loop {
             let fence = self.resolve_queue_generation_fence(&outbound).await?;
             match outbound
-                .submit_next_with_fence(&submitter, &fence, chrono::Utc::now())
+                .submit_next_with_fence(&submitter, &fence, crate::clock::now_utc())
                 .await?
             {
                 OutboundEngineOutcome::Prepared(_) | OutboundEngineOutcome::Superseded { .. } => {
@@ -1527,6 +1536,7 @@ impl EventSubmitter {
                     actor_id,
                     QueuedRecord::RealmBootstrap(Box::new(queued)),
                     Vec::new(),
+                    crate::clock::now_utc(),
                 )
                 .await?;
         }
@@ -1540,7 +1550,7 @@ impl EventSubmitter {
         loop {
             let fence = self.resolve_queue_generation_fence(&outbound).await?;
             match outbound
-                .submit_next_with_fence(&submitter, &fence, chrono::Utc::now())
+                .submit_next_with_fence(&submitter, &fence, crate::clock::now_utc())
                 .await?
             {
                 OutboundEngineOutcome::Prepared(_) | OutboundEngineOutcome::Superseded { .. } => {
@@ -1690,7 +1700,7 @@ impl EventSubmitter {
         loop {
             let fence = self.resolve_queue_generation_fence(&outbound).await?;
             match outbound
-                .submit_next_with_fence(&submitter, &fence, chrono::Utc::now())
+                .submit_next_with_fence(&submitter, &fence, crate::clock::now_utc())
                 .await?
             {
                 OutboundEngineOutcome::Accepted(item) | OutboundEngineOutcome::Duplicate(item) => {
@@ -1735,21 +1745,16 @@ impl EventSubmitter {
     /// staged snapshot is never trusted as group readiness by itself.
     pub(crate) async fn drain_mls_outbound_with_accepted_store(
         &self,
-        state_store: dioxus::prelude::SyncSignal<crate::state::LocalStateStore>,
+        state_store: crate::runtime::input::StateStoreHandle,
     ) -> anyhow::Result<usize> {
-        self.drain_mls_outbound_inner(
-            crate::app::runtime_adapter::state_store_handle(state_store),
-            Some(state_store),
-        )
-        .await
+        self.drain_mls_outbound_inner(state_store.clone(), Some(state_store))
+            .await
     }
 
     async fn drain_mls_outbound_inner(
         &self,
         state_store: crate::runtime::input::StateStoreHandle,
-        accepted_mls_state_store: Option<
-            dioxus::prelude::SyncSignal<crate::state::LocalStateStore>,
-        >,
+        accepted_mls_state_store: Option<crate::runtime::input::StateStoreHandle>,
     ) -> anyhow::Result<usize> {
         let _single_writer = outbound_submit_lock().lock().await;
         let outbound = OutboundEngine::new(crate::outbound_store::InksonOutboundStore::open(
@@ -1780,7 +1785,7 @@ impl EventSubmitter {
             }
             let fence = self.resolve_queue_generation_fence(&outbound).await?;
             match outbound
-                .submit_next_with_fence_and_hook(&submitter, &fence, &hook, chrono::Utc::now())
+                .submit_next_with_fence_and_hook(&submitter, &fence, &hook, crate::clock::now_utc())
                 .await?
             {
                 OutboundEngineOutcome::Accepted(_)
@@ -2604,7 +2609,7 @@ impl EventSubmitter {
                 }),
             )?,
             Some(crate::app::runtime_adapter::state_store_handle(state_store)),
-            Some(state_store),
+            Some(crate::app::runtime_adapter::state_store_handle(state_store)),
         )
         .await
     }
@@ -2613,9 +2618,7 @@ impl EventSubmitter {
         &self,
         queued: QueuedSdkEvent,
         state_store: Option<crate::runtime::input::StateStoreHandle>,
-        accepted_mls_state_store: Option<
-            dioxus::prelude::SyncSignal<crate::state::LocalStateStore>,
-        >,
+        accepted_mls_state_store: Option<crate::runtime::input::StateStoreHandle>,
     ) -> anyhow::Result<SubmitEventResult> {
         let mut transaction_id = queued.local_operation_id.clone();
         let durable_post_accept = queued.post_accept.is_some();
@@ -2713,7 +2716,9 @@ impl EventSubmitter {
                     // accept that attempt; active dependencies remain
                     // protected by SendQueue::prune_terminal_before.
                     outbound
-                        .compact_terminal_before(chrono::Utc::now() + chrono::Duration::seconds(1))
+                        .compact_terminal_before(
+                            crate::clock::now_utc() + chrono::Duration::seconds(1),
+                        )
                         .await?;
                     let mut repaired = queued.clone();
                     repaired.authoring_idempotency_key =
@@ -2725,6 +2730,7 @@ impl EventSubmitter {
                             actor_id.clone(),
                             QueuedRecord::SdkEvent(Box::new(repaired)),
                             Vec::new(),
+                            crate::clock::now_utc(),
                         )
                         .await?;
                 }
@@ -2743,6 +2749,7 @@ impl EventSubmitter {
                     actor_id.clone(),
                     QueuedRecord::SdkEvent(Box::new(queued)),
                     Vec::new(),
+                    crate::clock::now_utc(),
                 )
                 .await?;
         }
@@ -2772,7 +2779,7 @@ impl EventSubmitter {
                 Err(error) => return Err(error),
             };
             match outbound
-                .submit_next_with_fence_and_hook(&submitter, &fence, &hook, chrono::Utc::now())
+                .submit_next_with_fence_and_hook(&submitter, &fence, &hook, crate::clock::now_utc())
                 .await?
             {
                 OutboundEngineOutcome::Accepted(item) | OutboundEngineOutcome::Duplicate(item)

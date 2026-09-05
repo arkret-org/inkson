@@ -390,7 +390,12 @@ pub fn unwrap_secret(
     }
     let (nonce_bytes, ciphertext) = packed.split_at(12);
     let cipher = ChaCha20Poly1305::new(wrapping_key.into());
-    let nonce = Nonce::try_from(nonce_bytes).expect("nonce length was validated");
+    // `split_at(12)` already fixed the prefix length, so a rejection here can
+    // only mean the crate's nonce width changed; treat it as unreadable material
+    // rather than panicking inside a decode path that is total by contract.
+    let Ok(nonce) = Nonce::try_from(nonce_bytes) else {
+        return Ok(None);
+    };
     let plain = match cipher.decrypt(&nonce, ciphertext) {
         Ok(p) => p,
         Err(_) => return Ok(None),

@@ -836,6 +836,7 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+    use crate::test_support as fixture;
 
     #[test]
     fn participant_id_cross_check_fails_closed_on_unknown() {
@@ -1099,18 +1100,6 @@ mod tests {
     const EXPORTER_DEVICE: &str = "ak:device:01904100-0000-7000-8000-000000000001";
     const EXPORTER_REALM: &str = "ak:realm:AcsFZ3o2tOdN3EFpNceeLV-aI3jZkB9S34_4YIwJ5DLy";
 
-    fn test_authority(actor: &str) -> arkret_sdk::AccountId {
-        arkret_sdk::AccountId {
-            principal_id: crate::mls_api_helpers::principal_core_id(actor).unwrap(),
-            station_id: arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example".to_owned())
-                .unwrap(),
-        }
-    }
-
-    fn test_device(device: &str) -> arkret_sdk::DeviceId {
-        arkret_sdk::DeviceId::new(device.to_owned()).unwrap()
-    }
-
     /// Build a real MLS group for `EXPORTER_REALM`, store its account snapshot
     /// secret in `store`, and return the encrypted snapshot envelope — the same
     /// construction `crate::mls::runtime` uses for chat/reaction restore.
@@ -1121,7 +1110,7 @@ mod tests {
 
         let secret = crate::mls::runtime::load_or_create_account_mls_secret(
             store,
-            &test_authority(EXPORTER_ACTOR),
+            &fixture::authority(EXPORTER_ACTOR),
         )
         .unwrap();
         let identity = ArkretMlsIdentity::new_test_human_device(
@@ -1150,8 +1139,8 @@ mod tests {
         let exporter = RealmMlsExporter::for_realm(
             Some(snapshot),
             &store,
-            &test_authority(EXPORTER_ACTOR),
-            &test_device(EXPORTER_DEVICE),
+            &fixture::authority(EXPORTER_ACTOR),
+            &fixture::device_id(EXPORTER_DEVICE),
         )
         .expect("a synced snapshot + account secret must restore the group");
 
@@ -1185,15 +1174,15 @@ mod tests {
         // group on this device: honest fail-closed, no fabricated key.
         let _ = crate::mls::runtime::load_or_create_account_mls_secret(
             &store,
-            &test_authority(EXPORTER_ACTOR),
+            &fixture::authority(EXPORTER_ACTOR),
         )
         .unwrap();
 
         let result = RealmMlsExporter::for_realm(
             None,
             &store,
-            &test_authority(EXPORTER_ACTOR),
-            &test_device(EXPORTER_DEVICE),
+            &fixture::authority(EXPORTER_ACTOR),
+            &fixture::device_id(EXPORTER_DEVICE),
         );
         assert!(matches!(
             result.err(),
@@ -1212,8 +1201,8 @@ mod tests {
         let result = RealmMlsExporter::for_realm(
             Some(snapshot),
             &empty_store,
-            &test_authority(EXPORTER_ACTOR),
-            &test_device(EXPORTER_DEVICE),
+            &fixture::authority(EXPORTER_ACTOR),
+            &fixture::device_id(EXPORTER_DEVICE),
         );
         assert!(matches!(
             result.err(),
@@ -1255,9 +1244,11 @@ mod tests {
         actor: &str,
         device: &str,
     ) -> RealmMlsExporter {
-        let secret =
-            crate::mls::runtime::load_or_create_account_mls_secret(store, &test_authority(actor))
-                .unwrap();
+        let secret = crate::mls::runtime::load_or_create_account_mls_secret(
+            store,
+            &fixture::authority(actor),
+        )
+        .unwrap();
         let record = group.export_state_record().unwrap();
         let bytes = serde_json::to_vec(&record).unwrap();
         let envelope = crate::mls::persistence::encrypt_state(
@@ -1271,8 +1262,8 @@ mod tests {
         RealmMlsExporter::for_realm(
             Some(envelope),
             store,
-            &test_authority(actor),
-            &test_device(device),
+            &fixture::authority(actor),
+            &fixture::device_id(device),
         )
         .unwrap()
     }

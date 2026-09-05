@@ -1,7 +1,12 @@
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use dioxus::prelude::{ReadableExt, SyncSignal, WritableExt};
+use garth::history_runtime::{
+    canonical_ranges_for_epochs, live_attempt_covers_epoch,
+    principal_signer_evidence_coordinates_from_event, ranges_cover,
+    verify_authorization_incarnation_is_retained_join,
+};
 
+use crate::runtime::input::StateStoreHandle;
 use crate::secure_key_store::SecureKeyStore;
 use crate::state::LocalStateStore;
 
@@ -132,7 +137,7 @@ fn load_history_request_hpke_private_key(
 
 struct ReceiptTraversal<'a> {
     api: &'a crate::transport::TransportClient,
-    state_store: SyncSignal<LocalStateStore>,
+    state_store: &'a StateStoreHandle,
 }
 
 impl garth::ReceiptBoundHistoryTraversal for ReceiptTraversal<'_> {
@@ -163,8 +168,7 @@ impl garth::ReceiptBoundHistoryTraversal for ReceiptTraversal<'_> {
         };
         let existing = self
             .state_store
-            .read()
-            .trusted_mls_governance_checkpoint(realm_id.as_str())
+            .read(|store| store.trusted_mls_governance_checkpoint(realm_id.as_str()))
             .ok_or_else(|| {
                 garth::Error::Protocol(
                     "history traversal has no complete locally verified checkpoint".to_owned(),
@@ -215,13 +219,13 @@ impl garth::ReceiptBoundHistoryTraversal for ReceiptTraversal<'_> {
 }
 
 fn runtime(
-    state_store: SyncSignal<LocalStateStore>,
+    state_store: &StateStoreHandle,
 ) -> garth::HistoryRuntime<crate::state::InksonHistoryRuntimeStore> {
     crate::state::history_runtime(state_store)
 }
 
 pub fn accepted_history_request_ids(
-    state_store: SyncSignal<LocalStateStore>,
+    state_store: &StateStoreHandle,
 ) -> anyhow::Result<Vec<arkret_sdk::HistoryRequestId>> {
     runtime(state_store)
         .accepted_request_ids()
@@ -243,7 +247,7 @@ pub struct OrdinaryHumanHistoryRequestPlan {
 }
 
 fn request_trust_bases(
-    state_store: SyncSignal<LocalStateStore>,
+    state_store: &StateStoreHandle,
     scope: &arkret_sdk::HistoryEffectiveScope,
 ) -> anyhow::Result<(
     arkret_sdk::SealBasis,
@@ -251,8 +255,7 @@ fn request_trust_bases(
     arkret_sdk::MlsGovernanceVerificationCheckpoint,
 )> {
     let checkpoint = state_store
-        .read()
-        .trusted_mls_governance_checkpoint(scope.realm_id().as_str())
+        .read(|store| store.trusted_mls_governance_checkpoint(scope.realm_id().as_str()))
         .ok_or_else(|| anyhow::anyhow!("history request has no durable verified governance pin"))?;
     if &checkpoint.realm_id != scope.realm_id() {
         anyhow::bail!("history request governance pin belongs to another Realm");
@@ -275,35 +278,6 @@ fn request_trust_bases(
         checkpoint.basis.clone(),
         checkpoint,
     ))
-}
-
-fn verify_authorization_incarnation_is_retained_join(
-    checkpoint: &arkret_sdk::MlsGovernanceVerificationCheckpoint,
-    scope: &arkret_sdk::HistoryEffectiveScope,
-    actor_id: &arkret_sdk::ActorId,
-    incarnation: &arkret_sdk::AuthorizationIncarnation,
-) -> anyhow::Result<u64> {
-    let group_id =
-        arkret_sdk::MlsGroupId::new(scope.canonical_mls_group_id()?).map_err(anyhow::Error::msg)?;
-    let join_epoch = arkret_sdk::direct_traversal::derive_history_join_epoch(
-        &checkpoint.accepted_events,
-        &arkret_sdk::direct_traversal::HistoryJoinEpochSubject {
-            mls_group_id: group_id,
-            requester_actor_id: actor_id.clone(),
-            authorization_incarnation: incarnation.clone(),
-        },
-    )?;
-    match (scope, incarnation) {
-        (
-            arkret_sdk::HistoryEffectiveScope::Realm { .. },
-            arkret_sdk::AuthorizationIncarnation::Realm { .. },
-        )
-        | (
-            arkret_sdk::HistoryEffectiveScope::Circle { .. },
-            arkret_sdk::AuthorizationIncarnation::Circle { .. },
-        ) => Ok(join_epoch),
-        _ => anyhow::bail!("history request scope and authorization incarnation branch differ"),
-    }
 }
 
 async fn current_ordinary_human_endpoint_authorization(
@@ -351,7 +325,7 @@ async fn current_ordinary_human_endpoint_authorization(
 /// request-id retry reuses the already durable request, including both bases,
 /// ranges, endpoint authorization and recipient key.
 pub async fn author_and_create_ordinary_human_request(
-    state_store: SyncSignal<LocalStateStore>,
+    state_store: &StateStoreHandle,
     api: &crate::transport::TransportClient,
     secure_store: &dyn SecureKeyStore,
     authority: &arkret_sdk::AccountId,
@@ -431,7 +405,7 @@ pub async fn author_and_create_ordinary_human_request(
 }
 
 async fn create_or_resume_authored_request(
-    state_store: SyncSignal<LocalStateStore>,
+    state_store: &StateStoreHandle,
     api: &crate::transport::TransportClient,
     secure_store: &dyn SecureKeyStore,
     request: arkret_sdk::HistoryKeyRequest,
@@ -456,64 +430,11 @@ async fn create_or_resume_authored_request(
         .map_err(|error| anyhow::anyhow!(error.to_string()))
 }
 
-fn canonical_ranges_for_epochs(
-    epochs: impl IntoIterator<Item = u64>,
-) -> Vec<arkret_sdk::EpochRange> {
-    let epochs = epochs
-        .into_iter()
-        .collect::<std::collections::BTreeSet<_>>();
-    let mut ranges = Vec::<arkret_sdk::EpochRange>::new();
-    for epoch in epochs {
-        if let Some(last) = ranges.last_mut()
-            && last.to_epoch.checked_add(1) == Some(epoch)
-        {
-            last.to_epoch = epoch;
-            continue;
-        }
-        ranges.push(arkret_sdk::EpochRange {
-            from_epoch: epoch,
-            to_epoch: epoch,
-        });
-    }
-    ranges
-}
-
-fn live_attempt_covers_epoch(attempts: &[garth::DurableHistorySourceAttempt], epoch: u64) -> bool {
-    attempts
-        .iter()
-        .any(|attempt| live_ranges_cover_epoch(attempt.status, &attempt.covered_ranges, epoch))
-}
-
-fn live_ranges_cover_epoch(
-    status: garth::HistorySourceAttemptStatus,
-    ranges: &[arkret_sdk::EpochRange],
-    epoch: u64,
-) -> bool {
-    // history-visibility.md 6.2: a permanently_rejected attempt will never be
-    // accepted, so its coverage must not suppress the replacement manifest.
-    matches!(
-        status,
-        garth::HistorySourceAttemptStatus::Unfinished
-            | garth::HistorySourceAttemptStatus::Completed
-    ) && ranges
-        .iter()
-        .any(|range| range.from_epoch <= epoch && epoch <= range.to_epoch)
-}
-
-fn ranges_cover(outer: &[arkret_sdk::EpochRange], inner: &[arkret_sdk::EpochRange]) -> bool {
-    inner.iter().all(|needed| {
-        outer.iter().any(|available| {
-            available.from_epoch <= needed.from_epoch && needed.to_epoch <= available.to_epoch
-        })
-    })
-}
-
 fn scope_uses_exporter_history(
-    state_store: SyncSignal<LocalStateStore>,
+    state_store: &StateStoreHandle,
     scope: &arkret_sdk::HistoryEffectiveScope,
 ) -> bool {
-    let store = state_store.read();
-    match scope {
+    state_store.read(|store| match scope {
         arkret_sdk::HistoryEffectiveScope::Realm { realm_id } => store
             .realm_content_scheme(realm_id.as_str())
             .is_some_and(|scheme| scheme == "mls_exporter_aead_v1"),
@@ -523,40 +444,11 @@ fn scope_uses_exporter_history(
         } => store
             .circle_content_scheme(realm_id.as_str(), circle_id.as_str())
             .is_some_and(|scheme| scheme == "mls_exporter_aead_v1"),
-    }
-}
-
-fn principal_signer_evidence_coordinates_from_event(
-    value: &serde_json::Value,
-    realm_id: &arkret_sdk::RealmId,
-    actor_id: &arkret_sdk::DidCoreId,
-    verification_method: &arkret_sdk::DidUrl,
-) -> anyhow::Result<Option<arkret_sdk::SignerEvidenceRef>> {
-    let Ok(event) = serde_json::from_value::<arkret_sdk::Event>(value.clone()) else {
-        return Ok(None);
-    };
-    if event.actor_id.signing_principal_id() != actor_id
-        || event.scope_ref.realm_id_opt() != Some(realm_id)
-    {
-        return Ok(None);
-    }
-    for proof in &event.proofs {
-        let arkret_sdk::EventProof::Producer(producer) = proof else {
-            continue;
-        };
-        let Some(evidence_ref) = &producer.signer_resolution_evidence_ref else {
-            continue;
-        };
-        if producer.verification_method == *verification_method {
-            evidence_ref.content_digest()?;
-            return Ok(Some(evidence_ref.clone()));
-        }
-    }
-    Ok(None)
+    })
 }
 
 fn current_member_signer_evidence_coordinates(
-    state_store: SyncSignal<LocalStateStore>,
+    state_store: &StateStoreHandle,
     checkpoint: &arkret_sdk::MlsGovernanceVerificationCheckpoint,
     scope: &arkret_sdk::HistoryEffectiveScope,
     actor_id: &arkret_sdk::DidCoreId,
@@ -585,7 +477,7 @@ fn current_member_signer_evidence_coordinates(
     }
 
     let realm_id = scope.realm_id();
-    let state = state_store.read().load();
+    let state = state_store.read(LocalStateStore::load);
     let events = state
         .realm_tree_projections
         .get(realm_id.as_str())
@@ -669,7 +561,7 @@ fn build_signed_member_response(
 
 #[allow(clippy::too_many_arguments)]
 async fn build_member_source_attempt(
-    state_store: SyncSignal<LocalStateStore>,
+    state_store: &StateStoreHandle,
     api: &crate::transport::TransportClient,
     source_did: &arkret_sdk::Did,
     source_actor_id: &arkret_sdk::DidCoreId,
@@ -839,7 +731,7 @@ async fn build_member_source_attempt(
 /// is durable in the secure content-addressed blob store. The Garth attempt
 /// row is the atomic ready marker; callers may safely crash after this returns.
 pub async fn stage_member_source_attempt(
-    state_store: SyncSignal<LocalStateStore>,
+    state_store: &StateStoreHandle,
     secure_store: &dyn SecureKeyStore,
     bundle: garth::HistorySourceAttemptBundle,
 ) -> anyhow::Result<garth::HistorySourceAttemptIdentity> {
@@ -862,7 +754,7 @@ pub async fn stage_member_source_attempt(
 /// from the content-addressed secure store; neither proofs nor relay
 /// attestations are reconstructed during retry.
 pub async fn drain_source_outbox(
-    state_store: SyncSignal<LocalStateStore>,
+    state_store: &StateStoreHandle,
     api: &crate::transport::TransportClient,
     secure_store: &dyn SecureKeyStore,
     now: chrono::DateTime<chrono::Utc>,
@@ -903,7 +795,7 @@ pub async fn drain_source_outbox(
 }
 
 pub async fn list_requests(
-    state_store: SyncSignal<LocalStateStore>,
+    state_store: &StateStoreHandle,
     api: &crate::transport::TransportClient,
     query: &arkret_sdk::HistoryKeyRequestListQuery,
 ) -> anyhow::Result<arkret_sdk::HistoryKeyRequestListOutcome> {
@@ -919,7 +811,7 @@ pub async fn list_requests(
 /// join or same-Station route recovery is intentional: the service projection is the
 /// authoritative discovery surface and request ids make repeated pages safe.
 pub async fn discover_member_request_replicas(
-    state_store: SyncSignal<LocalStateStore>,
+    state_store: &StateStoreHandle,
     api: &crate::transport::TransportClient,
     realm_id: &str,
     circle_id: Option<&str>,
@@ -948,7 +840,7 @@ pub async fn discover_member_request_replicas(
 /// themselves.
 #[allow(clippy::too_many_arguments)]
 pub async fn converge_member_history_recovery(
-    state_store: SyncSignal<LocalStateStore>,
+    state_store: &StateStoreHandle,
     api: &crate::transport::TransportClient,
     secure_store: std::sync::Arc<dyn SecureKeyStore + Send + Sync>,
     authority: &arkret_sdk::AccountId,
@@ -1059,8 +951,9 @@ pub async fn converge_member_history_recovery(
     }
 
     let local_sources = state_store
-        .read()
-        .local_authoritative_history_secrets_for_backup(secure_store.as_ref(), authority)
+        .read(|store| {
+            store.local_authoritative_history_secrets_for_backup(secure_store.as_ref(), authority)
+        })
         .unwrap_or_else(|error| {
             outcome.pending_errors += 1;
             tracing::debug!(%error, "no local-authoritative history source material is available");
@@ -1196,7 +1089,7 @@ pub async fn converge_member_history_recovery(
 }
 
 pub async fn acquire_response_page(
-    state_store: SyncSignal<LocalStateStore>,
+    state_store: &StateStoreHandle,
     api: &crate::transport::TransportClient,
     secure_store: &dyn SecureKeyStore,
     request_id: &arkret_sdk::HistoryRequestId,
@@ -1215,7 +1108,7 @@ pub async fn acquire_response_page(
 /// Agent and minimal-metadata MLS branches with explicit typed state
 /// anchors.
 pub async fn verify_and_install_response_page<VerifyExternalSourceKey>(
-    mut state_store: SyncSignal<LocalStateStore>,
+    state_store: &StateStoreHandle,
     api: &crate::transport::TransportClient,
     secure_store: &dyn SecureKeyStore,
     request_id: &arkret_sdk::HistoryRequestId,
@@ -1541,18 +1434,39 @@ where
                         circle_id: circle_id.clone(),
                     },
                 };
+                let group_id = accepted.request.effective_scope.canonical_mls_group_id()?;
                 for (material_key, secret, attribution, cipher_suite) in candidates {
-                    let mut state = state_store.write();
-                    state
-                        .record_history_epoch_cipher_suite(
-                            &history_scope,
-                            &accepted.request.effective_scope.canonical_mls_group_id()?,
-                            material_key.epoch,
-                            &cipher_suite,
+                    let secret_bytes = secret.as_slice();
+                    state_store
+                        .stage_then_commit(
+                            |store| {
+                                store
+                                    .record_history_epoch_cipher_suite(
+                                        &history_scope,
+                                        &group_id,
+                                        material_key.epoch,
+                                        &cipher_suite,
+                                    )
+                                    .map_err(anyhow::Error::msg)?;
+                                store.stage_history_candidate(
+                                    secure_store,
+                                    secret_bytes,
+                                    attribution,
+                                    now,
+                                )
+                            },
+                            move |staged| async move {
+                                garth::persist_staged_history_candidate_secret(
+                                    secure_store,
+                                    &staged,
+                                    secret_bytes,
+                                )
+                                .await
+                                .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+                                Ok(staged)
+                            },
+                            |store, staged| store.commit_history_candidate(secure_store, staged),
                         )
-                        .map_err(anyhow::Error::msg)?;
-                    state
-                        .receive_history_candidate(secure_store, &secret, attribution, now)
                         .await?;
                 }
             }
@@ -1576,7 +1490,7 @@ where
 }
 
 async fn verify_history_external_source_key(
-    state_store: SyncSignal<LocalStateStore>,
+    state_store: StateStoreHandle,
     secure_store: std::sync::Arc<dyn SecureKeyStore + Send + Sync>,
     authority: arkret_sdk::AccountId,
     device_id: arkret_sdk::DeviceId,
@@ -1588,14 +1502,16 @@ async fn verify_history_external_source_key(
             signer_evidence,
             dependencies,
         } => {
+            let verifier_store = state_store;
             arkret_sdk::verify_agent_history_source_key(
                 source_record,
                 signer_evidence,
                 dependencies,
-                |request| {
+                move |request| {
+                    let verifier_store = verifier_store.clone();
                     Box::pin(async move {
                         crate::mls::governance_proof::verify_agent_external_trust(
-                            &state_store,
+                            &verifier_store,
                             request,
                         )
                     })
@@ -1613,13 +1529,14 @@ async fn verify_history_external_source_key(
                 | arkret_sdk::HistoryEffectiveScope::Circle { realm_id, .. } => realm_id,
             };
             let local = state_store
-                .read()
-                .locally_authenticated_identity_link(
-                    realm_id,
-                    &signer_evidence.mls_group_id,
-                    signer_evidence.epoch,
-                    signer_evidence.leaf_index,
-                )
+                .read(|store| {
+                    store.locally_authenticated_identity_link(
+                        realm_id,
+                        &signer_evidence.mls_group_id,
+                        signer_evidence.epoch,
+                        signer_evidence.leaf_index,
+                    )
+                })
                 .ok_or_else(|| {
                     arkret_sdk::WireError::Protocol(
                         "minimal-metadata history source has no locally received IdentityLink"
@@ -1662,21 +1579,24 @@ async fn verify_history_external_source_key(
                     circle_id: circle_id.clone(),
                 },
             };
-            let winning_group_state = crate::mls::runtime::minimal_metadata_author_view_for_scope(
-                &state_store.read(),
-                secure_store.as_ref(),
-                &authority,
-                &device_id,
-                &effective_scope,
-                &signer_evidence.mls_group_id,
-                signer_evidence.epoch,
-                signer_evidence.winning_group_state_transition_ref.as_str(),
-            )
-            .ok_or_else(|| {
-                arkret_sdk::WireError::Protocol(
-                    "minimal-metadata history source has no local winning MLS state".to_owned(),
-                )
-            })?;
+            let winning_group_state = state_store
+                .read(|store| {
+                    crate::mls::runtime::minimal_metadata_author_view_for_scope(
+                        store,
+                        secure_store.as_ref(),
+                        &authority,
+                        &device_id,
+                        &effective_scope,
+                        &signer_evidence.mls_group_id,
+                        signer_evidence.epoch,
+                        signer_evidence.winning_group_state_transition_ref.as_str(),
+                    )
+                })
+                .ok_or_else(|| {
+                    arkret_sdk::WireError::Protocol(
+                        "minimal-metadata history source has no local winning MLS state".to_owned(),
+                    )
+                })?;
             arkret_sdk::verify_minimal_metadata_history_source_local_state(
                 source_record,
                 signer_evidence,
@@ -1693,7 +1613,7 @@ async fn verify_history_external_source_key(
 /// boundary wired to Inkson's durable Agent and MLS state.
 #[allow(clippy::too_many_arguments)]
 pub async fn verify_and_install_response_page_from_local_state(
-    state_store: SyncSignal<LocalStateStore>,
+    state_store: &StateStoreHandle,
     api: &crate::transport::TransportClient,
     secure_store: std::sync::Arc<dyn SecureKeyStore + Send + Sync>,
     authority: &arkret_sdk::AccountId,
@@ -1705,6 +1625,7 @@ pub async fn verify_and_install_response_page_from_local_state(
     let verifier_store = secure_store.clone();
     let verifier_authority = authority.clone();
     let verifier_device_id = device_id.clone();
+    let verifier_state_store = state_store.clone();
     verify_and_install_response_page(
         state_store,
         api,
@@ -1714,7 +1635,7 @@ pub async fn verify_and_install_response_page_from_local_state(
         now,
         move |request| {
             Box::pin(verify_history_external_source_key(
-                state_store,
+                verifier_state_store.clone(),
                 verifier_store.clone(),
                 verifier_authority.clone(),
                 verifier_device_id.clone(),
@@ -1726,7 +1647,7 @@ pub async fn verify_and_install_response_page_from_local_state(
 }
 
 pub async fn record_response_disposition(
-    state_store: SyncSignal<LocalStateStore>,
+    state_store: &StateStoreHandle,
     request_id: &arkret_sdk::HistoryRequestId,
     disposition: arkret_sdk::HistoryResponseAckEntry,
 ) -> anyhow::Result<()> {
@@ -1737,7 +1658,7 @@ pub async fn record_response_disposition(
 }
 
 pub async fn acknowledge_ready_page(
-    state_store: SyncSignal<LocalStateStore>,
+    state_store: &StateStoreHandle,
     api: &crate::transport::TransportClient,
     secure_store: &dyn SecureKeyStore,
     request_id: &arkret_sdk::HistoryRequestId,
@@ -1750,7 +1671,7 @@ pub async fn acknowledge_ready_page(
 }
 
 pub async fn acquire_and_verify_traversal(
-    state_store: SyncSignal<LocalStateStore>,
+    state_store: &StateStoreHandle,
     api: &crate::transport::TransportClient,
     request_id: &arkret_sdk::HistoryRequestId,
 ) -> anyhow::Result<garth::VerifiedHistoryTraversal> {
@@ -1763,63 +1684,6 @@ pub async fn acquire_and_verify_traversal(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn recovery_ranges_are_canonical_and_live_request_coverage_is_exact() {
-        let ranges = canonical_ranges_for_epochs([9, 7, 8, 12, 12]);
-        assert_eq!(
-            ranges,
-            vec![
-                arkret_sdk::EpochRange {
-                    from_epoch: 7,
-                    to_epoch: 9,
-                },
-                arkret_sdk::EpochRange {
-                    from_epoch: 12,
-                    to_epoch: 12,
-                },
-            ]
-        );
-        assert!(ranges_cover(
-            &ranges,
-            &[arkret_sdk::EpochRange {
-                from_epoch: 8,
-                to_epoch: 9,
-            }]
-        ));
-        assert!(!ranges_cover(
-            &ranges,
-            &[arkret_sdk::EpochRange {
-                from_epoch: 9,
-                to_epoch: 12,
-            }]
-        ));
-        assert!(live_ranges_cover_epoch(
-            garth::HistorySourceAttemptStatus::Unfinished,
-            &ranges,
-            8,
-        ));
-        assert!(live_ranges_cover_epoch(
-            garth::HistorySourceAttemptStatus::Completed,
-            &ranges,
-            12,
-        ));
-        assert!(!live_ranges_cover_epoch(
-            garth::HistorySourceAttemptStatus::Expired,
-            &ranges,
-            8,
-        ));
-        assert!(!live_ranges_cover_epoch(
-            garth::HistorySourceAttemptStatus::PermanentlyRejected,
-            &ranges,
-            8,
-        ));
-        assert!(!live_ranges_cover_epoch(
-            garth::HistorySourceAttemptStatus::Completed,
-            &ranges,
-            10,
-        ));
-    }
 
     #[tokio::test]
     async fn history_request_hpke_keys_are_durable_and_request_scoped() {

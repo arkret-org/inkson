@@ -15,7 +15,7 @@ fn participant_membership_identity_and_self_badge_are_station_scoped() {
     ));
     let projection = serde_json::json!({"member_roster_entries": [
         {"actor_id": own, "membership":"join"},
-        {"actor_id": remote, "membership":"join", "subject_id": principal}
+        {"actor_id": remote, "membership":"join", "subject_account_id": remote.as_account_id()}
     ]});
     let participants = space_participants(
         Some(&projection),
@@ -256,9 +256,15 @@ pub(crate) fn space_participants(
 ) -> Vec<SpaceParticipant> {
     let mut participants = Vec::new();
 
+    let handle_issuer_policies =
+        crate::views::member_display::handle_issuer_policies_from_projection(projection);
     for row in crate::views::member_display::realm_member_roster(projection) {
-        let display =
-            crate::views::member_display::resolve_member_display(state_store, realm_id, &row);
+        let display = crate::views::member_display::resolve_member_display_with_policies(
+            state_store,
+            realm_id,
+            &row,
+            &handle_issuer_policies,
+        );
         upsert_participant(
             &mut participants,
             &row.actor_id,
@@ -326,22 +332,15 @@ pub(crate) fn is_own_message_sender(sender: &str, principal_id: &str) -> bool {
     false
 }
 
+/// §3.8.2 step 4c rendering of a principal with no resolvable name. One
+/// shortener across the client: the chat surfaces used to carry their own,
+/// which made the same unresolved account read differently per panel.
 pub(crate) fn short_principal_label(value: &str) -> String {
     let trimmed = value.trim();
     if trimmed.is_empty() {
-        return "Unknown".to_owned();
+        return crate::i18n::tr("identity.tier.unresolved");
     }
-    let tail = trimmed.rsplit(':').next().unwrap_or(trimmed);
-    // Count / slice by characters, not bytes: a display name or handle with
-    // non-ASCII would otherwise slice mid-character and panic the render.
-    if tail.chars().count() > 18 {
-        let head: String = tail.chars().take(8).collect();
-        let tail_len = tail.chars().count();
-        let suffix: String = tail.chars().skip(tail_len - 6).collect();
-        format!("{head}...{suffix}")
-    } else {
-        tail.to_owned()
-    }
+    crate::views::helpers::short_protocol_id(trimmed)
 }
 
 pub(crate) fn agent_display_label(participant: &SpaceParticipant) -> String {

@@ -594,22 +594,13 @@ fn jwk_thumbprint_ed25519(
 
 #[cfg(test)]
 mod tests {
+    use crate::test_support as fixture;
+
+    const TEST_DEVICE: &str = "ak:device:01964137-0000-7000-8000-000000000099";
     use super::*;
     use crate::secure_key_store::{DeviceSeedScopeTestGuard, MemorySecureKeyStore};
     // Shared hermetic state-store fixture from `local_state`.
     use crate::state::isolated_store_for_tests as isolated_store;
-
-    fn test_authority(actor: &str) -> arkret_sdk::AccountId {
-        arkret_sdk::AccountId::new(
-            crate::mls_api_helpers::principal_core_id(actor).unwrap(),
-            arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example".to_owned()).unwrap(),
-        )
-    }
-
-    fn test_device_id() -> arkret_sdk::DeviceId {
-        arkret_sdk::DeviceId::new("ak:device:01964137-0000-7000-8000-000000000099".to_owned())
-            .unwrap()
-    }
 
     #[test]
     fn ensure_device_key_is_idempotent() {
@@ -672,8 +663,8 @@ mod tests {
 
     #[test]
     fn secure_store_seed_round_trips_without_plaintext_state_seed() {
-        let authority = test_authority("ak:did_core:web:secure.example");
-        let device_id = test_device_id();
+        let authority = fixture::authority("ak:did_core:web:secure.example");
+        let device_id = fixture::device_id(TEST_DEVICE);
         let _scope = DeviceSeedScopeTestGuard::replace(Some((&authority, &device_id)));
         let mut store = isolated_store("secure");
         let secure = MemorySecureKeyStore::default();
@@ -715,8 +706,8 @@ mod tests {
 
     #[tokio::test]
     async fn accepted_account_holder_load_does_not_depend_on_the_active_scope() {
-        let authority = test_authority("ak:did_core:web:accepted.example");
-        let device_id = test_device_id();
+        let authority = fixture::authority("ak:did_core:web:accepted.example");
+        let device_id = fixture::device_id(TEST_DEVICE);
         let _scope = DeviceSeedScopeTestGuard::replace(None);
         let user_store =
             crate::secure_key_store::UserLocalStore::new(authority, device_id).unwrap();
@@ -741,8 +732,8 @@ mod tests {
         // the per-account device identity signing seed. `load_or_recover` recovers
         // the DPoP record from the grant-binding seed and ignores the signing seed.
         let actor = "ak:did_core:web:alice.example";
-        let authority = test_authority(actor);
-        let device_id = test_device_id();
+        let authority = fixture::authority(actor);
+        let device_id = fixture::device_id(TEST_DEVICE);
         let _scope = DeviceSeedScopeTestGuard::replace(Some((&authority, &device_id)));
         let mut store = isolated_store("recover-secure-dpop-record");
         let secure = MemorySecureKeyStore::default();
@@ -778,8 +769,8 @@ mod tests {
         // seed (the `cnf.jkt` credential), never from the device identity signing
         // seed. A present signing seed for the same account MUST be ignored.
         let actor = "ak:did_core:web:bob.example";
-        let authority = test_authority(actor);
-        let device_id = test_device_id();
+        let authority = fixture::authority(actor);
+        let device_id = fixture::device_id(TEST_DEVICE);
         let _scope = DeviceSeedScopeTestGuard::replace(Some((&authority, &device_id)));
         let mut store = isolated_store("repair-stale-dpop-record");
         let secure = MemorySecureKeyStore::default();
@@ -818,8 +809,8 @@ mod tests {
         // 0004 §4.2: `ensure_device_key` mints/loads the DPoP key from the
         // grant-binding store, decoupled from the device identity signing seed.
         let actor = "ak:did_core:web:returning.example";
-        let authority = test_authority(actor);
-        let device_id = test_device_id();
+        let authority = fixture::authority(actor);
+        let device_id = fixture::device_id(TEST_DEVICE);
         let _scope = DeviceSeedScopeTestGuard::replace(Some((&authority, &device_id)));
         let mut store = isolated_store("ensure-sources-grant-binding");
         let secure = MemorySecureKeyStore::default();

@@ -2,18 +2,18 @@
 //! sidecar.
 
 use anyhow::{Result, anyhow};
+use garth::mls::backup_selection::{
+    all_mls_account_secret_backups, is_mls_history_backup, latest_mls_history_backups_by_scope,
+    mls_account_secret_backup_version, select_mls_account_secret_backup,
+    select_mls_account_secret_recovery_public_key_backup, select_mls_history_backups,
+    select_mls_private_plaintext_backup, select_preferred_mls_account_secret_backup,
+};
 use garth::mls::backup_series::verify_series_chain;
 use serde_json::{Value, json};
 
 use super::backup_body::{
     decrypt_mls_account_secret_backup, decrypt_mls_private_plaintext_backup,
     open_mls_account_secret_recovery_public_key_backup,
-};
-use super::selection::{
-    all_mls_account_secret_backups, is_mls_history_backup, latest_mls_history_backups_by_scope,
-    mls_account_secret_backup_version, select_mls_account_secret_backup,
-    select_mls_account_secret_recovery_public_key_backup, select_mls_history_backups,
-    select_mls_private_plaintext_backup, select_preferred_mls_account_secret_backup,
 };
 
 fn mls_history_recipient_method(body: &Value) -> Option<arkret_sdk::KeyBackupRecipientMethod> {
@@ -129,21 +129,22 @@ pub struct RestoreReport {
 }
 
 pub(super) fn verify_active_backup_series(list_payload: &Value, backup_kind: &str) -> Result<()> {
+    let class = arkret_sdk::BackupKind::try_from(backup_kind).map_err(|error| anyhow!(error))?;
     let Some(active_series) =
-        super::selection::selectable_series_id_for_backup_class(list_payload, backup_kind)
+        garth::mls::backup_selection::selectable_series_id_for_backup_class(list_payload, class)
     else {
         return Err(anyhow!(
             "{backup_kind} active-series pointer is unavailable"
         ));
     };
-    let bodies = super::selection::iter_backup_bodies(list_payload)
+    let bodies = garth::mls::backup_selection::iter_backup_bodies(list_payload)
         .filter(|body| body.get("backup_kind").and_then(Value::as_str) == Some(backup_kind))
         .filter(|body| body.get("series_id").and_then(Value::as_str) == Some(active_series))
         .cloned()
         .collect::<Vec<_>>();
     let Some(tail) = bodies
         .iter()
-        .max_by_key(|body| super::selection::backup_series_seq(body))
+        .max_by_key(|body| garth::mls::backup_series::backup_series_seq(body))
     else {
         return Err(anyhow!(
             "authoritative {backup_kind} series has no envelopes"
@@ -164,7 +165,7 @@ pub(super) fn observe_active_series_versions(
     let expected_actor = arkret_sdk::ActorId::account(authority.clone());
     // Validate both pointers and envelopes before advancing any rollback floor.
     // A shared principal at another Station is a distinct backup owner.
-    for body in super::selection::iter_backup_bodies(list_payload) {
+    for body in garth::mls::backup_selection::iter_backup_bodies(list_payload) {
         if backup_actor(body)? != expected_actor {
             return Err(anyhow!("backup envelope actor binding mismatch"));
         }
@@ -223,10 +224,9 @@ pub async fn fetch_mls_account_secret_backup(
 /// Fetch the full key-backup list once for MLS account-secret import +
 /// history restore.
 ///
-/// UI callers that hold a Dioxus `SyncSignal<LocalStateStore>` should call this
-/// before acquiring `state_store.write()`, then pass the returned payload into
-/// [`restore_mls_history_with_passphrase_from_payload`]. That keeps the local
-/// state write guard out of the network await.
+/// Callers fetch here first and then pass the returned payload into
+/// [`restore_mls_history_with_passphrase_from_payload`], which keeps the
+/// network read out of every local state borrow.
 pub async fn fetch_mls_restore_payload(
     api: &crate::transport::TransportClient,
     actor_id: &str,
@@ -411,9 +411,10 @@ async fn hydrate_mls_restore_payload_with_unlock_proof(
             .get("backup_kind")
             .and_then(Value::as_str)
             .unwrap_or_default();
-        if matches!(backup_kind, "secret_storage" | "mls_history") {
-            let active_series =
-                super::selection::selectable_series_id_for_backup_class(&payload, backup_kind);
+        if let Ok(class) = arkret_sdk::BackupKind::try_from(backup_kind) {
+            let active_series = garth::mls::backup_selection::selectable_series_id_for_backup_class(
+                &payload, class,
+            );
             if entry.get("series_id").and_then(Value::as_str) != active_series {
                 continue;
             }
@@ -497,9 +498,9 @@ pub async fn fetch_mls_history_restore_payload_with_unlock_proof(
             backups.push(entry);
             continue;
         }
-        let active_series = super::selection::selectable_series_id_for_backup_class(
+        let active_series = garth::mls::backup_selection::selectable_series_id_for_backup_class(
             list_payload,
-            crate::key_backup::BackupKind::MlsHistory.as_str(),
+            crate::key_backup::BackupKind::MlsHistory,
         );
         if entry.get("series_id").and_then(Value::as_str) != active_series {
             continue;
@@ -537,7 +538,7 @@ pub async fn fetch_mls_history_restore_payload_with_unlock_proof(
 /// are then committed one at a time through the durable Garth ledger.
 pub async fn restore_mls_history_with_passphrase_from_payload(
     list_payload: &Value,
-    state_store: &mut crate::state::LocalStateStore,
+    state_store: &crate::runtime::input::StateStoreHandle,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
     authority: &arkret_sdk::AccountId,
     actor_id: &str,
@@ -545,7 +546,8 @@ pub async fn restore_mls_history_with_passphrase_from_payload(
     passphrase: &[u8],
 ) -> Result<RestoreReport> {
     let mut report = RestoreReport::default();
-    observe_active_series_versions(list_payload, state_store, authority, actor_id)?;
+    state_store
+        .write(|store| observe_active_series_versions(list_payload, store, authority, actor_id))?;
 
     // Step 1: refresh the local account secret from the server backup when it
     // exists. This deliberately runs even if a local secret is present: a
@@ -612,7 +614,7 @@ pub async fn restore_mls_history_with_passphrase_from_payload(
 /// the path that works without first holding the account secret.
 pub async fn restore_mls_history_with_recovery_key_from_payload(
     list_payload: &Value,
-    state_store: &mut crate::state::LocalStateStore,
+    state_store: &crate::runtime::input::StateStoreHandle,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
     authority: &arkret_sdk::AccountId,
     actor_id: &str,
@@ -622,7 +624,8 @@ pub async fn restore_mls_history_with_recovery_key_from_payload(
 ) -> Result<RestoreReport> {
     let _ = device_id;
     let mut report = RestoreReport::default();
-    observe_active_series_versions(list_payload, state_store, authority, actor_id)?;
+    state_store
+        .write(|store| observe_active_series_versions(list_payload, store, authority, actor_id))?;
     verify_active_backup_series(
         list_payload,
         crate::key_backup::BackupKind::SecretStorage.as_str(),
@@ -669,14 +672,14 @@ pub async fn restore_mls_history_with_recovery_key_from_payload(
 /// uploaded `mls_history` backup.
 pub async fn restore_mls_history_with_local_secret_from_payload(
     list_payload: &Value,
-    state_store: &mut crate::state::LocalStateStore,
+    state_store: &crate::runtime::input::StateStoreHandle,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
     authority: &arkret_sdk::AccountId,
     actor_id: &str,
 ) -> RestoreReport {
     let mut report = RestoreReport::default();
-    if let Err(error) =
-        observe_active_series_versions(list_payload, state_store, authority, actor_id)
+    if let Err(error) = state_store
+        .write(|store| observe_active_series_versions(list_payload, store, authority, actor_id))
     {
         report.failed = 1;
         report.first_error = Some(error.to_string());
@@ -710,7 +713,7 @@ pub async fn restore_mls_history_with_local_secret_from_payload(
 /// are counted, never abort the rest.
 async fn restore_history_and_sidecar(
     list_payload: &Value,
-    state_store: &mut crate::state::LocalStateStore,
+    state_store: &crate::runtime::input::StateStoreHandle,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
     authority: &arkret_sdk::AccountId,
     recovery_private_key: Option<&[u8]>,
@@ -740,8 +743,9 @@ async fn restore_history_and_sidecar(
     }
 
     if let Some(sidecar_body) = select_mls_private_plaintext_backup(list_payload) {
-        match restore_private_plaintext_sidecar(&sidecar_body, state_store, secure_store, authority)
-        {
+        match state_store.write(|store| {
+            restore_private_plaintext_sidecar(&sidecar_body, store, secure_store, authority)
+        }) {
             Ok(()) => report.private_plaintext_restored = true,
             Err(err) => {
                 if report.first_error.is_none() {
@@ -754,7 +758,7 @@ async fn restore_history_and_sidecar(
 
 async fn restore_history_backup(
     body: &Value,
-    state_store: &mut crate::state::LocalStateStore,
+    state_store: &crate::runtime::input::StateStoreHandle,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
     authority: &arkret_sdk::AccountId,
     recovery_private_key: Option<&[u8]>,
@@ -799,7 +803,7 @@ async fn restore_history_backup(
     let scope = arkret_sdk::ScopeRef::from(effective_scope.clone());
     let group_id = effective_scope.canonical_mls_group_id()?;
     let cipher_suite = state_store
-        .history_epoch_cipher_suite(&scope, &group_id, first_epoch)
+        .read(|store| store.history_epoch_cipher_suite(&scope, &group_id, first_epoch))
         .ok_or_else(|| {
             anyhow!(
                 "dependency_missing: exact winning transition ciphersuite is unavailable for epoch {first_epoch}"
@@ -808,7 +812,7 @@ async fn restore_history_backup(
     for item in items {
         for epoch in item.from_epoch..=item.to_epoch {
             if state_store
-                .history_epoch_cipher_suite(&scope, &group_id, epoch)
+                .read(|store| store.history_epoch_cipher_suite(&scope, &group_id, epoch))
                 .as_deref()
                 != Some(cipher_suite.as_str())
             {
@@ -829,12 +833,24 @@ async fn restore_history_backup(
         crate::clock::now_utc(),
     )?;
     for candidate in candidates {
+        let now = crate::clock::now_utc();
+        let secret = candidate.secret;
+        let secret_bytes = secret.as_slice();
+        let attribution = candidate.attribution;
         state_store
-            .receive_history_candidate(
-                secure_store,
-                &candidate.secret,
-                candidate.attribution,
-                crate::clock::now_utc(),
+            .stage_then_commit(
+                |store| store.stage_history_candidate(secure_store, secret_bytes, attribution, now),
+                move |staged| async move {
+                    garth::persist_staged_history_candidate_secret(
+                        secure_store,
+                        &staged,
+                        secret_bytes,
+                    )
+                    .await
+                    .map_err(|error| anyhow!("{error}"))?;
+                    Ok(staged)
+                },
+                |store, staged| store.commit_history_candidate(secure_store, staged),
             )
             .await?;
     }
@@ -878,7 +894,7 @@ fn restore_private_plaintext_sidecar(
 /// once the user has supplied the passphrase. Returns per-backup counts.
 pub async fn auto_restore_mls_history_with_passphrase(
     api: &crate::transport::TransportClient,
-    state_store: &mut crate::state::LocalStateStore,
+    state_store: &crate::runtime::input::StateStoreHandle,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
     authority: &arkret_sdk::AccountId,
     actor_id: &str,

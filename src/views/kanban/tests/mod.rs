@@ -8,6 +8,7 @@ pub(super) use super::*;
 // them here for the `tests/<sub>.rs` files that reach them via `use super::*;`.
 #[cfg(not(target_arch = "wasm32"))]
 pub(super) use crate::state::RawOperationRecord;
+pub(super) use crate::test_support as fixture;
 
 pub(super) const TEST_REALM_ID: &str = "ak:realm:AVFSR4O2uTcP6zGsyewp0OdaGeDZBXQAUZ9VIEKLSXYo";
 

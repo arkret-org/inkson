@@ -121,6 +121,31 @@ impl StateStoreHandle {
         }
     }
 
+    /// Run a mutation whose durable half is asynchronous, without ever holding
+    /// the store borrow across an `.await`.
+    ///
+    /// `stage` borrows the store to plan the change and hand back everything the
+    /// durable step needs; `durable` runs with the borrow released and returns
+    /// the plan; `commit` re-borrows to publish it. The borrow is a host lock —
+    /// a Dioxus `SyncSignal` guard on native, a single-threaded cell in wasm —
+    /// so an async closure over `&mut LocalStateStore` would block the very
+    /// executor that has to drive the awaited work. Two short borrows around the
+    /// await is the only shape that is correct on both hosts, and it is also the
+    /// shape a durable write ordering (bytes before ledger) already needs.
+    pub async fn stage_then_commit<S, D, R, E>(
+        &self,
+        stage: impl FnOnce(&mut LocalStateStore) -> Result<S, E>,
+        durable: impl FnOnce(S) -> D,
+        commit: impl FnOnce(&mut LocalStateStore, S) -> Result<R, E>,
+    ) -> Result<R, E>
+    where
+        D: std::future::Future<Output = Result<S, E>>,
+    {
+        let staged = self.write(stage)?;
+        let staged = durable(staged).await?;
+        self.write(|store| commit(store, staged))
+    }
+
     pub fn write<R>(&self, write: impl FnOnce(&mut LocalStateStore) -> R) -> R {
         let mut write = Some(write);
         let mut result = None;

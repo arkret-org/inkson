@@ -212,18 +212,18 @@ impl OutboundQueueStore for InksonOutboundStore {
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use super::*;
-
-    fn authority(server: &str) -> arkret_sdk::AccountId {
-        arkret_sdk::AccountId::new(
-            arkret_sdk::DidCoreId::new("ak:did_core:webvh:zPrincipal".to_owned()).unwrap(),
-            arkret_sdk::DidCoreId::new(server.to_owned()).unwrap(),
-        )
-    }
+    use crate::test_support as fixture;
 
     #[test]
     fn same_principal_on_different_servers_has_distinct_outbound_scope() {
-        let first = authority("ak:did_core:webvh:zServerA");
-        let second = authority("ak:did_core:webvh:zServerB");
+        let first = fixture::authority_at_station(
+            "ak:did_core:webvh:zPrincipal",
+            "ak:did_core:webvh:zServerA",
+        );
+        let second = fixture::authority_at_station(
+            "ak:did_core:webvh:zPrincipal",
+            "ak:did_core:webvh:zServerB",
+        );
         assert_ne!(
             outbound_storage_scope(&first, OutboundLane::Standard).unwrap(),
             outbound_storage_scope(&second, OutboundLane::Standard).unwrap()
@@ -232,7 +232,10 @@ mod tests {
 
     #[test]
     fn mls_and_standard_lanes_are_distinct_within_one_authority() {
-        let authority = authority("ak:did_core:webvh:zServerA");
+        let authority = fixture::authority_at_station(
+            "ak:did_core:webvh:zPrincipal",
+            "ak:did_core:webvh:zServerA",
+        );
         assert_ne!(
             outbound_storage_scope(&authority, OutboundLane::Standard).unwrap(),
             outbound_storage_scope(&authority, OutboundLane::MlsDurablePostAccept).unwrap()

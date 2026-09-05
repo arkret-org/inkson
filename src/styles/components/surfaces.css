@@ -1,0 +1,181 @@
+/* Card and container surfaces: `.event`, `.metric`, `.surface`, `.callout`,
+ * `.section`, `.timeline`, plus the muted-text pair every surface uses.
+ */
+/* Muted secondary text. This lives in the first components file on purpose:
+ * `.muted` and `.pill` have the same specificity, so `.pill`'s smaller
+ * font-size only wins by being injected later. */
+.card-meta,
+.muted {
+  color: var(--text-2);
+  font-size: 13px;
+}
+.muted,
+.card-meta {
+  color: var(--ak-muted);
+}
+.card-meta,
+.muted {
+  color: var(--text-2);
+}
+.muted { color: var(--text-2); }
+
+.entity-title { font-weight: 700; }
+.title { font-size: 28px; font-weight: 750; overflow-wrap: anywhere; }
+.timeline { display: grid; gap: 10px; align-content: start; overflow: auto; }
+.event { background: var(--surface-solid); border: 1px solid var(--border); border-radius: 8px; padding: 14px; display: grid; gap: 6px; }
+.section { display: grid; gap: 10px; }
+.section h2 { margin: 0; font-size: 16px; }
+.metric-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.metric { background: var(--surface-solid); border: 1px solid var(--border); border-radius: 8px; padding: 10px; min-width: 0; }
+.metric strong { display: block; font-size: 12px; color: var(--text-2); margin-bottom: 4px; }
+.metric span { overflow-wrap: anywhere; }
+.title {
+  color: var(--ak-ink);
+  font-size: 30px;
+  line-height: 1.12;
+}
+.event,
+.metric {
+  border-color: var(--ak-line);
+  border-radius: 14px;
+  background: var(--ak-surface);
+  color: var(--ak-ink);
+  box-shadow: var(--ak-shadow-sm);
+}
+.event-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--ak-muted);
+  font-size: 13px;
+  font-weight: 650;
+}
+.nested-card {
+  background: color-mix(in srgb, var(--surface-2) 76%, transparent);
+}
+/* ===== 4. TOP CONTROL BAR (theme + language switcher) ============= */
+
+.cards {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+@media (max-width: 1000px) { .cards { grid-template-columns: 1fr 1fr; } }
+@media (max-width: 640px)  { .cards { grid-template-columns: 1fr; } }
+
+/* ----- 7.5 Surface containers ----- */
+
+.surface {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.surface.pad   { padding: 14px 16px; }
+/* Card/section header row inside a `.surface`: padded with a divider under
+   it. Replaces the repeated inline
+   `padding: 14px 16px; border-bottom: 1px solid var(--border);`. */
+.surface-head {
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+/* ----- 7.6 Callouts ----- */
+
+.callout {
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  font-size: 13px;
+  line-height: 1.55;
+  display: flex;
+  gap: 10px;
+  border: 1px solid transparent;
+}
+.callout .ico {
+  width: 18px; flex-shrink: 0;
+  display: grid; place-items: start; padding-top: 1px;
+  font-size: 16px;
+}
+.callout .body { flex: 1; min-width: 0; }
+.callout .body strong { font-weight: 600; }
+.callout .actions { display: flex; gap: 6px; margin-top: 8px; }
+
+.callout.info    { background: var(--info-soft);    color: var(--info-ink);    border-color: rgba(3, 105, 161, 0.18); }
+.callout.warn    { background: var(--warning-soft); color: var(--warning-ink); border-color: rgba(180, 83, 9, 0.20); }
+.callout.danger  { background: var(--danger-soft);  color: var(--danger-ink);  border-color: rgba(185, 28, 28, 0.20); }
+.callout.success { background: var(--success-soft); color: var(--success-ink); border-color: rgba(21, 128, 61, 0.18); }
+
+/* ----- 7.7 Utility ----- */
+/* ===== 18. METRICS ================================================ */
+
+.metric-grid {
+  display: grid;
+  /* auto-fit + minmax makes the column count follow the CONTAINER width, not
+     the viewport. A viewport media query can't help here because the settings
+     panel is squeezed narrow by its parent layout while the viewport stays
+     wide — so 4 fixed columns each got ~50px and text wrapped per-character
+     (`even ts, sync...`). Each cell now claims >=150px and the grid drops to
+     fewer columns (down to 1) as space shrinks. */
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px;
+}
+.metric {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px;
+  /* Grid items default to min-width:auto, so a long unbroken token forces the
+     column wider than its 1fr share and — when the panel is squeezed (e.g. with
+     the right inspector open) — the browser falls back to per-character
+     wrapping, rendering text vertically (`even ts, sync...`). Allow the cell to
+     shrink and break long words/URLs at sensible points instead. */
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.metric .lbl {
+  font-size: 11px;
+  text-transform: uppercase; letter-spacing: 0.05em;
+  color: var(--text-3);
+}
+.metric .val {
+  font-size: 22px; font-weight: 600;
+  margin-top: 4px;
+  letter-spacing: -0.01em;
+}
+.metric .delta {
+  font-size: 11px;
+  color: var(--success-ink);
+  display: flex; align-items: center; gap: 3px;
+  margin-top: 4px;
+}
+.metric .delta.down { color: var(--danger); }
+
+
+.event {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: none;
+  padding: 14px 16px;
+  color: var(--text);
+}
+
+.event.nested-card {
+  padding: 10px 12px;
+  background: var(--surface-2);
+}
+
+.event-head {
+  color: var(--text-3);
+  font-size: 11px;
+  letter-spacing: 0.05em;
+}
+
+.entity-title,
+.title {
+  color: var(--text);
+}
+
+.nested-card{
+  background: color-mix(in srgb, var(--surface-2) 92%, white);
+}

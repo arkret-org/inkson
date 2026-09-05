@@ -51,18 +51,36 @@ fn candidate_error(error: garth::Error) -> anyhow::Error {
 }
 
 impl LocalStateStore {
-    /// Durably receive an external candidate into Garth's bounded ledger.
-    /// External material never enters the authoritative local MLS history.
-    pub(crate) async fn receive_history_candidate(
-        &mut self,
+    /// Plan the durable receipt of an external candidate into Garth's bounded
+    /// ledger. External material never enters the authoritative local MLS
+    /// history.
+    ///
+    /// The admission is two-phase because its durable half writes the exact
+    /// secret bytes asynchronously, and the store borrow must be released while
+    /// that runs. Callers stage here, await
+    /// [`garth::persist_staged_history_candidate_secret`], then
+    /// [`Self::commit_history_candidate`] — normally through
+    /// [`crate::runtime::input::StateStoreHandle::stage_then_commit`].
+    pub(crate) fn stage_history_candidate(
+        &self,
         secure_store: &dyn crate::secure_key_store::SecureKeyStore,
         secret: &[u8],
         attribution: HistoryCandidateOriginAttribution,
         now: DateTime<Utc>,
+    ) -> anyhow::Result<garth::StagedHistoryCandidate> {
+        garth::HistoryCandidateEngine::new(ReadOnlyCandidateState(self))
+            .stage_external_candidate(secure_store, secret, attribution, now)
+            .map_err(candidate_error)
+    }
+
+    /// Publish a staged candidate whose bytes are already durable.
+    pub(crate) fn commit_history_candidate(
+        &mut self,
+        secure_store: &dyn crate::secure_key_store::SecureKeyStore,
+        staged: garth::StagedHistoryCandidate,
     ) -> anyhow::Result<bool> {
         garth::HistoryCandidateEngine::new(WritableCandidateState(self))
-            .receive_external_candidate(secure_store, secret, attribution, now)
-            .await
+            .commit_staged_candidate(secure_store, staged)
             .map_err(candidate_error)
     }
 

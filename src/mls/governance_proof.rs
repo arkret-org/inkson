@@ -1,7 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use dioxus::prelude::{ReadableExt, WritableExt};
-
 pub(crate) fn bind_sidecar_scope(
     base: &arkret_sdk::MlsGovernanceBindingPayload,
     sidecar_binding: arkret_sdk::SidecarMlsBinding,
@@ -33,19 +31,6 @@ pub(crate) trait GovernanceProofStateStore:
 {
     fn with_read<R>(&self, read: impl FnOnce(&crate::state::LocalStateStore) -> R) -> R;
     fn with_write<R>(&self, write: impl FnOnce(&mut crate::state::LocalStateStore) -> R) -> R;
-}
-
-impl GovernanceProofStateStore for dioxus::prelude::SyncSignal<crate::state::LocalStateStore> {
-    fn with_read<R>(&self, read: impl FnOnce(&crate::state::LocalStateStore) -> R) -> R {
-        let store = ReadableExt::read(self);
-        read(&store)
-    }
-
-    fn with_write<R>(&self, write: impl FnOnce(&mut crate::state::LocalStateStore) -> R) -> R {
-        let mut signal = *self;
-        let mut store = WritableExt::write(&mut signal);
-        write(&mut store)
-    }
 }
 
 impl GovernanceProofStateStore for crate::runtime::input::StateStoreHandle {
@@ -681,18 +666,17 @@ pub(crate) fn claimed_actor_id(
     arkret_sdk::validate_target_claim_evidence(claim, receipt)
         .map_err(|error| format!("invalid target claim evidence: {error}"))?;
     if claim.pairwise_verification_method.is_some() {
-        Ok(arkret_sdk::ActorId::service(claim.principal_id.clone()))
-    } else if claim.agent_id.is_some() {
-        Ok(arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
-            claim.principal_id.clone(),
-            receipt.destination_id.clone(),
-        )))
-    } else {
-        Ok(arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
-            claim.principal_id.clone(),
-            receipt.destination_id.clone(),
-        )))
+        return Ok(arkret_sdk::ActorId::service(claim.principal_id.clone()));
     }
+    // Agent and human-device claims produce the same account ActorId. An Agent
+    // is a Station-carried account (`client-preferences.md` "actor" targets),
+    // and `validate_target_claim_evidence` above has already refused any Agent
+    // claim whose `agent_id` is not literally `principal_id`, so there is no
+    // second principal to project here.
+    Ok(arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+        claim.principal_id.clone(),
+        receipt.destination_id.clone(),
+    )))
 }
 
 pub(crate) fn leaf_authority_hints_from_welcome(

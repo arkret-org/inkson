@@ -334,18 +334,18 @@ fn settled_realm_profile_payload(rows: &[arkret_sdk::EventReadRow]) -> anyhow::R
                 event.event_id
             );
         };
-        if guard.predicate.op != arkret_sdk::PredicateOp::HeadEq || guard.predicate.value.is_none()
-        {
+        let Some(head_eq_value) = guard
+            .predicate
+            .value
+            .clone()
+            .filter(|_| guard.predicate.op == arkret_sdk::PredicateOp::HeadEq)
+        else {
             anyhow::bail!(
                 "Realm profile Event {} must carry a value-bearing head_eq guard for {cell}",
                 event.event_id
             );
-        }
-        entries.push((
-            event.event_id.to_string(),
-            guard.predicate.value.clone().expect("checked above"),
-            payload,
-        ));
+        };
+        entries.push((event.event_id.to_string(), head_eq_value, payload));
     }
 
     if entries.is_empty() {

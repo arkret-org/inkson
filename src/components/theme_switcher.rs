@@ -97,7 +97,7 @@ pub fn ThemeSwitcher(props: ThemeSwitcherProps) -> Element {
             class: "theme-switcher",
             "data-testid": "theme-switcher",
             role: "radiogroup",
-            "aria-label": "Theme",
+            "aria-label": crate::i18n::tr("theme.switcher_aria_label"),
 
             for mode in [ThemeMode::Light, ThemeMode::Dark, ThemeMode::System] {
                 {

@@ -17,6 +17,7 @@ pub mod storage;
 
 pub(crate) mod account_data;
 mod invite_locator;
+mod model;
 mod profile_helpers;
 mod sections;
 mod widgets;
@@ -510,23 +511,13 @@ pub fn SettingsPanel(
     // Manual presence preference editor state (profiles-presence.md
     // §3.6). Hydrated from persisted local state; the expiry picker is
     // relative so it always starts at "never".
-    let initial_presence_preference = {
-        let preference = state_store.read().presence_preference();
-        if !preference.is_empty() && !preference.is_active(chrono::Utc::now()) {
-            crate::state::PresencePreference::default()
-        } else {
-            preference
-        }
-    };
-    let initial_presence_manual_state = initial_presence_preference
-        .manual_state
-        .map(arkret_sdk::ManualPresenceState::as_wire)
-        .unwrap_or("auto")
-        .to_owned();
-    let initial_presence_status_message = initial_presence_preference
-        .status_message
-        .clone()
-        .unwrap_or_default();
+    let model::PresenceEditorSeed {
+        manual_state: initial_presence_manual_state,
+        status_message: initial_presence_status_message,
+    } = model::presence_editor_seed(
+        &state_store.read().presence_preference(),
+        chrono::Utc::now(),
+    );
     let mut presence_manual_state = use_signal(move || initial_presence_manual_state);
     let presence_manual_state_selected = use_memo(move || Some(presence_manual_state()));
     let mut presence_status_message = use_signal(move || initial_presence_status_message);
@@ -536,16 +527,10 @@ pub fn SettingsPanel(
     // Hydrate DND from the persisted local snapshot so the toggle reflects
     // the last-saved state instead of always rendering "off" (the saved body
     // only carries a full-day period when the user picked "now").
-    let initial_dnd_settings = state_store.read().notification_dnd_settings();
-    let initial_dnd_enabled = initial_dnd_settings.as_ref().is_some_and(|dnd| dnd.enabled);
-    let initial_dnd_mode = if initial_dnd_settings
-        .as_ref()
-        .is_some_and(|dnd| dnd.enabled && !dnd.schedule.periods.is_empty())
-    {
-        "now".to_owned()
-    } else {
-        "off".to_owned()
-    };
+    let model::DndEditorSeed {
+        enabled: initial_dnd_enabled,
+        mode: initial_dnd_mode,
+    } = model::dnd_editor_seed(state_store.read().notification_dnd_settings().as_ref());
     let mut dnd_enabled = use_signal(move || initial_dnd_enabled);
     let mut dnd_mode = use_signal(move || initial_dnd_mode);
     let dnd_mode_selected = use_memo(move || Some(dnd_mode()));
@@ -607,8 +592,8 @@ pub fn SettingsPanel(
     let mut avatar_crop_x = use_signal(|| 0_i32);
     let mut avatar_crop_y = use_signal(|| 0_i32);
     let mut avatar_refresh_nonce = use_signal(|| 0_u64);
-    let mut mimi_directory = use_signal(|| "Not loaded".to_owned());
-    let mut mimi_receipt = use_signal(|| "No MIMI action receipt".to_owned());
+    let mut mimi_directory = use_signal(|| crate::i18n::tr("settings.mimi.not_loaded"));
+    let mut mimi_receipt = use_signal(|| crate::i18n::tr("settings.mimi.no_receipt"));
     let realm_watch_overrides = state_store.read().realm_watch_levels();
     let known_realms = known_realm_options(&state_store.read());
     let active_locale = locale();
@@ -668,23 +653,18 @@ pub fn SettingsPanel(
         String::new()
     };
     let invite_locator_qr_svg = render_invite_locator_qr_svg(&invite_locator_url);
-    let principal_label = if has_session {
-        principal_id()
-    } else {
-        "Not signed in".to_owned()
-    };
-    let device_label = if has_session {
-        device_id()
-    } else {
-        "No authenticated device session".to_owned()
-    };
-    let account_handles_label =
-        format_settings_handle_list(&personal_handles, &personal_handles_status);
-    let account_handles_title = if personal_handles.is_empty() {
-        account_handles_label.clone()
-    } else {
-        personal_handles.join(", ")
-    };
+    let model::SessionIdentityLabels {
+        principal: principal_label,
+        device: device_label,
+        handles_label: account_handles_label,
+        handles_title: account_handles_title,
+    } = model::session_identity_labels(
+        has_session,
+        &principal_id(),
+        &device_id(),
+        &personal_handles,
+        &personal_handles_status,
+    );
     let device_short_label = short_protocol_id(&device_label);
     {
         use_effect(move || {
@@ -696,9 +676,9 @@ pub fn SettingsPanel(
                 profile_avatar_blob_ref.set(hydrated.clone());
                 avatar_refresh_nonce.set(avatar_refresh_nonce() + 1);
                 avatar_cache_status.set(if hydrated.trim().is_empty() {
-                    "Avatar cleared from synced preferences".to_owned()
+                    crate::i18n::tr("settings.avatar.cleared_synced")
                 } else {
-                    "Avatar restored from synced preferences".to_owned()
+                    crate::i18n::tr("settings.avatar.restored_synced")
                 });
             }
         });
@@ -723,25 +703,7 @@ pub fn SettingsPanel(
                             }
                             div { class: "settings-nav-list",
                             {
-                                let visible_groups: Vec<_> = SETTINGS_NAV_GROUPS
-                                    .iter()
-                                    .copied()
-                                    .filter_map(|(group_label, hint, sections)| {
-                                        let matched: Vec<SettingsSection> = sections
-                                            .iter()
-                                            .copied()
-                                            .filter(|section| {
-                                                query.is_empty()
-                                                    || section.label().to_lowercase().contains(&query)
-                                            })
-                                            .collect();
-                                        if matched.is_empty() {
-                                            None
-                                        } else {
-                                            Some((group_label, hint, matched))
-                                        }
-                                    })
-                                    .collect();
+                                let visible_groups = model::visible_nav_groups(&query);
                                 let group_count = visible_groups.len();
                                 rsx! {
                                     if group_count == 0 {
@@ -751,10 +713,10 @@ pub fn SettingsPanel(
                                             "{crate::i18n::tr(\"settings.search.no_results\")}"
                                         }
                                     }
-                                    for (group_index, (group_label, _, sections)) in visible_groups.into_iter().enumerate() {
+                                    for (group_index, group) in visible_groups.into_iter().enumerate() {
                                         div { class: "settings-nav-cluster",
-                                            div { class: "settings-nav-group-label", "{crate::i18n::tr(group_label)}" }
-                                            for section in sections.into_iter() {
+                                            div { class: "settings-nav-group-label", "{crate::i18n::tr(group.label_key)}" }
+                                            for section in group.sections.into_iter() {
                                                 Link {
                                                     class: if active_section == section { "settings-nav-item active" } else { "settings-nav-item" },
                                                     "data-testid": "settings-nav-item-{section.slug()}",
@@ -786,19 +748,25 @@ pub fn SettingsPanel(
                         div { class: "settings-card-grid",
                             div { class: "event settings-card-span-2", "data-testid": "transport-invariant",
                                 div { class: "event-head",
-                                    span { "Server context" }
+                                    span { {crate::i18n::tr("settings.server.context")} }
                                 }
                                 div { class: "metric-grid",
                                     div { class: "metric",
-                                        strong { "Station" }
+                                        strong { {crate::i18n::tr("settings.server.station")} }
                                         span { "{base_url}" }
                                     }
                                     div { class: "metric",
-                                        strong { "Session" }
-                                        span { if has_session { "Authenticated" } else { "Not signed in" } }
+                                        strong { {crate::i18n::tr("settings.server.session")} }
+                                        span {
+                                            if has_session {
+                                                {crate::i18n::tr("settings.server.session_authenticated")}
+                                            } else {
+                                                {crate::i18n::tr("account.not_signed_in")}
+                                            }
+                                        }
                                     }
                                     div { class: "metric",
-                                        strong { "Push" }
+                                        strong { {crate::i18n::tr("settings.server.push")} }
                                         span { "{push_label}" }
                                     }
                                 }
@@ -827,7 +795,7 @@ pub fn SettingsPanel(
                                             crate::components::IdentityAvatar {
                                                 key: "{blob_ref}:{avatar_refresh_nonce()}",
                                                 seed: principal_id(),
-                                                alt_text: "Account avatar".to_owned(),
+                                                alt_text: crate::i18n::tr("settings.avatar.account_alt"),
                                                 blob_ref: Some(blob_ref),
                                                 class: "avatar-img lg".to_owned(),
                                                 test_id: Some("settings-avatar-preview".to_owned()),
@@ -954,7 +922,7 @@ pub fn SettingsPanel(
                                                     }
                                                 },
                                                 "data-testid": "settings-avatar-crop-editor",
-                                                "aria-label": "Edit avatar",
+                                                "aria-label": crate::i18n::tr("settings.avatar.edit_dialog"),
                                                 div {
                                                 style: "position: fixed; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: var(--layer-modal, 300); display: grid; grid-template-columns: repeat(auto-fit, minmax(min(220px, 100%), 1fr)); gap: 16px; align-items: center; width: min(640px, calc(100vw - 32px)); max-height: calc(100vh - 48px); overflow: auto; padding: 18px; border: 1px solid var(--border, #333); border-radius: var(--radius-lg, 12px); background: var(--surface-solid, var(--surface, #1a1d22)); box-shadow: 0 0 0 9999px rgba(20, 22, 30, 0.55), var(--shadow-lg, 0 24px 56px rgba(0, 0, 0, 0.22));",
                                                 div {
@@ -962,7 +930,7 @@ pub fn SettingsPanel(
                                                     style: "position: relative; width: min(180px, 70vw); aspect-ratio: 1; justify-self: center; border-radius: 50%; overflow: hidden; border: 1px solid var(--border-default, #333); background: var(--bg-elevated, #1a1d22);",
                                                     img {
                                                         src: "{selection.preview_data_url}",
-                                                        alt: "Selected avatar",
+                                                        alt: crate::i18n::tr("settings.avatar.selected_alt"),
                                                         style: format!(
                                                             "width: 100%; height: 100%; object-fit: cover; transform-origin: center; transform: translate({}% , {}%) scale({});",
                                                             avatar_crop_x() / 4,
@@ -1205,7 +1173,7 @@ pub fn SettingsPanel(
                                                         avatar_uploading.set(true);
                                                         avatar_upload_status.set(String::new());
                                                         avatar_cache_status.set(
-                                                            "Removing avatar from the public profile.".to_owned(),
+                                                            crate::i18n::tr("settings.avatar.removing"),
                                                         );
                                                         // Publish the public tombstone before the
                                                         // actor-private mirror. Both Events share
@@ -1258,7 +1226,7 @@ pub fn SettingsPanel(
                                                                     pending_avatar_crop.set(None);
                                                                     avatar_uploading.set(false);
                                                                     avatar_cache_status.set(
-                                                                        "Avatar removed; syncing clear to other devices.".to_owned(),
+                                                                        crate::i18n::tr("settings.avatar.removed"),
                                                                     );
                                                                 }
                                                                 Err(err) => {
@@ -1293,7 +1261,7 @@ pub fn SettingsPanel(
                                 }
                                 div { class: "metric-grid settings-account-identity-grid",
                                     div { class: "metric settings-identity-row",
-                                        strong { "DID" }
+                                        strong { {crate::i18n::tr("app.account.did")} }
                                         div { class: "settings-identity-value",
                                             span {
                                                 class: "mono",
@@ -1485,23 +1453,46 @@ pub fn SettingsPanel(
                     if active_section == SettingsSection::Storage {
                         div { class: "settings-card-grid",
                             div { class: "event", "data-testid": "storage-table",
-                    div { class: "event-head", span { "Local Stores" } span { "status" } }
+                    div { class: "event-head",
+                        span { {crate::i18n::tr("settings.local_stores.title")} }
+                        span { {crate::i18n::tr("settings.local_stores.badge")} }
+                    }
                     div { class: "metric-grid",
                         div { class: "metric",
-                            strong { "Config Store" }
-                            span { "Active" }
+                            strong { {crate::i18n::tr("settings.local_stores.config_store")} }
+                            span { {crate::i18n::tr("settings.local_stores.active")} }
                         }
                         div { class: "metric",
-                            strong { "Config Size" }
-                            span { "~{config_store.read().load().server_url().map(|url| url.as_str().len()).unwrap_or(0)} bytes" }
+                            strong { {crate::i18n::tr("settings.local_stores.config_size")} }
+                            span {
+                                {crate::i18n::tr_args(
+                                    "settings.local_stores.approx_bytes",
+                                    &[(
+                                        "bytes",
+                                        config_store
+                                            .read()
+                                            .load()
+                                            .server_url()
+                                            .map(|url| url.as_str().len())
+                                            .unwrap_or(0)
+                                            .to_string(),
+                                    )],
+                                )}
+                            }
                         }
                         div { class: "metric",
-                            strong { "State Store" }
-                            span { "Active" }
+                            strong { {crate::i18n::tr("settings.local_stores.state_store")} }
+                            span { {crate::i18n::tr("settings.local_stores.active")} }
                         }
                         div { class: "metric",
-                            strong { "Platform" }
-                            span { if cfg!(target_arch = "wasm32") { "Web (localStorage)" } else { "Native (filesystem)" } }
+                            strong { {crate::i18n::tr("settings.local_stores.platform")} }
+                            span {
+                                if cfg!(target_arch = "wasm32") {
+                                    {crate::i18n::tr("settings.local_stores.platform_web")}
+                                } else {
+                                    {crate::i18n::tr("settings.local_stores.platform_native")}
+                                }
+                            }
                         }
                     }
                 }
@@ -1512,43 +1503,46 @@ pub fn SettingsPanel(
                             }
 
                             details { class: "event", "data-testid": "storage-risks",
-                    summary { class: "event-head", span { "Storage diagnostics" } span { "Advanced" } }
+                    summary { class: "event-head",
+                        span { {crate::i18n::tr("settings.storage_risks.title")} }
+                        span { {crate::i18n::tr("settings.group.advanced")} }
+                    }
                     if cfg!(target_arch = "wasm32") {
                         div { class: "metric",
                             strong {
-                                "Bounded localStorage projection "
-                                HelpTip { text: "localStorage carries the small root/config projection. Account state, E2EE plaintext, session credentials, and key material use the protected IndexedDB tier." }
+                                {crate::i18n::tr("settings.storage_risks.bounded_projection")}
+                                HelpTip { text: crate::i18n::tr("settings.storage_risks.bounded_projection_hint") }
                             }
                             span { class: "badge badge-info", "data-testid": "risk-badge",
-                                "Bounded"
+                                {crate::i18n::tr("settings.storage_risks.badge_bounded")}
                             }
                         }
                         div { class: "metric",
                             strong {
-                                "Protected E2EE storage "
-                                HelpTip { text: "E2EE plaintext caches and secret account state are encrypted in IndexedDB with a non-extractable SubtleCrypto wrapping key and are never mirrored to localStorage." }
+                                {crate::i18n::tr("settings.storage_risks.protected_e2ee")}
+                                HelpTip { text: crate::i18n::tr("settings.storage_risks.protected_e2ee_hint") }
                             }
                             span { class: "badge badge-success",
-                                "Encrypted"
+                                {crate::i18n::tr("manage.row_encrypted")}
                             }
                         }
                         div { class: "metric",
                             strong {
-                                "Single Active Browser Tab "
-                                HelpTip { text: "Inkson allows one active tab per browser profile so IndexedDB, device keys, MLS state, cursors, and outbound writes have a single owner." }
+                                {crate::i18n::tr("settings.storage_risks.single_tab")}
+                                HelpTip { text: crate::i18n::tr("settings.storage_risks.single_tab_hint") }
                             }
                             span { class: "badge badge-info",
-                                "Info"
+                                {crate::i18n::tr("settings.storage_risks.badge_info")}
                             }
                         }
                     } else {
                         div { class: "metric",
                             strong {
-                                "Filesystem Storage "
-                                HelpTip { text: "Native filesystem storage is used. Data persists across sessions. Ensure proper file permissions for security." }
+                                {crate::i18n::tr("settings.storage_risks.filesystem")}
+                                HelpTip { text: crate::i18n::tr("settings.storage_risks.filesystem_hint") }
                             }
                             span { class: "badge badge-success",
-                                "OK"
+                                {crate::i18n::tr("settings.storage_risks.badge_ok")}
                             }
                         }
                     }
@@ -1561,11 +1555,11 @@ pub fn SettingsPanel(
                         div { class: "settings-content-stack",
                             div { class: "event", "data-testid": "encryption-settings",
                                 div { class: "event-head",
-                                    span { "Encryption" }
-                                    span { "MLS / E2EE" }
+                                    span { {crate::i18n::tr("setup.axis.encryption")} }
+                                    span { {crate::i18n::tr("settings.encryption.badge")} }
                                 }
                                 div { class: "muted",
-                                    "End-to-end encryption is always on for encrypted Realms. Manage your recovery key below."
+                                    {crate::i18n::tr("settings.encryption.always_on")}
                                 }
                             }
                             // X11.1 — persistent MLS recovery-key entry.
@@ -1582,14 +1576,14 @@ pub fn SettingsPanel(
                             }
                             details { class: "event", "data-testid": "key-backup-guidance",
                                 summary { class: "event-head",
-                                    span { "Advanced key backup diagnostics" }
-                                    span { class: "badge amber", "developer tools" }
+                                    span { {crate::i18n::tr("settings.key_backup.title")} }
+                                    span { class: "badge amber", {crate::i18n::tr("settings.key_backup.badge")} }
                                 }
                                 div { class: "muted",
-                                    "Encrypted history recovery above creates key backup envelopes automatically. The recovery backup id is generated when a backup is created; it is not something to type by hand."
+                                    {crate::i18n::tr("settings.key_backup.body")}
                                 }
                                 div { class: "muted",
-                                    "Open Recovery when debugging a specific backup envelope."
+                                    {crate::i18n::tr("settings.key_backup.open_recovery_hint")}
                                 }
                                 div { class: "actions",
                                     Link {
@@ -1597,11 +1591,11 @@ pub fn SettingsPanel(
                                         "data-testid": "key-backup-open-recovery",
                                         to: Route::SettingsRecovery,
                                         UiIcon { name: "key" }
-                                        "Recovery & backups"
+                                        {crate::i18n::tr("settings.key_backup.open_recovery")}
                                     }
                                 }
                                 div { class: "muted",
-                                    "Contract: ak.schema.key_backup.v1 over /_arkret/self/keys/backups/*. This is not required for encrypted-history recovery setup."
+                                    {crate::i18n::tr("settings.key_backup.contract")}
                                 }
                             }
                         }
@@ -1611,7 +1605,10 @@ pub fn SettingsPanel(
                     if active_section == SettingsSection::Mimi {
                         div { class: "settings-content-stack",
                             div { class: "event", "data-testid": "mimi-interop-panel",
-                    div { class: "event-head", span { "MIMI interop checks" } span { "Advanced" } }
+                    div { class: "event-head",
+                        span { {crate::i18n::tr("settings.mimi.title")} }
+                        span { {crate::i18n::tr("settings.group.advanced")} }
+                    }
                     div { class: "actions",
                         Button {
                             variant: ButtonVariant::Secondary,
@@ -1649,7 +1646,7 @@ pub fn SettingsPanel(
                                     });
                                 }
                             },
-                            "Refresh Directory"
+                            {crate::i18n::tr("settings.mimi.refresh_directory")}
                         }
                         Button {
                             variant: ButtonVariant::Secondary,
@@ -1710,7 +1707,7 @@ pub fn SettingsPanel(
                                     });
                                 }
                             },
-                            "Identifier Query"
+                            {crate::i18n::tr("settings.mimi.identifier_query")}
                         }
                         Button {
                             variant: ButtonVariant::Secondary,
@@ -1775,7 +1772,7 @@ pub fn SettingsPanel(
                                     });
                                 }
                             },
-                            "Submit Test Message"
+                            {crate::i18n::tr("settings.mimi.submit_message")}
                         }
                         Button {
                             variant: ButtonVariant::Secondary,
@@ -1826,15 +1823,21 @@ pub fn SettingsPanel(
                                     });
                                 }
                             },
-                            "Proxy Download"
+                            {crate::i18n::tr("settings.mimi.proxy_download")}
                         }
                     }
                     div { class: "event", "data-testid": "mimi-directory-result",
-                        div { class: "event-head", span { "Directory" } span { "features" } }
+                        div { class: "event-head",
+                            span { {crate::i18n::tr("nav.directory")} }
+                            span { {crate::i18n::tr("settings.mimi.directory_badge")} }
+                        }
                         pre { "{mimi_directory}" }
                     }
                     div { class: "event", "data-testid": "mimi-action-receipt",
-                        div { class: "event-head", span { "Receipt" } span { "last action" } }
+                        div { class: "event-head",
+                            span { {crate::i18n::tr("settings.mimi.receipt_title")} }
+                            span { {crate::i18n::tr("settings.mimi.receipt_badge")} }
+                        }
                         pre { "{mimi_receipt}" }
                     }
                 }
@@ -1846,11 +1849,11 @@ pub fn SettingsPanel(
                         div { class: "settings-content-stack",
                             div { class: "event", "data-testid": "notification-settings-panel",
                                 div { class: "event-head",
-                                    span { "Global notification defaults" }
-                                    span { "synced" }
+                                    span { {crate::i18n::tr("settings.notifications.defaults_title")} }
+                                    span { {crate::i18n::tr("settings.notifications.defaults_badge")} }
                                 }
                                 div { class: "muted",
-                                    "Apply to every Realm unless you add a per-Realm override below."
+                                    {crate::i18n::tr("settings.notifications.defaults_body")}
                                 }
                                 div { class: "metric-grid",
                                     {render_notification_kind_toggle("mention", "Mention notifications", state_store)}
@@ -1878,13 +1881,17 @@ pub fn SettingsPanel(
                                                     crate::notification_sound::initialize_notification_audio();
                                                 }
                                                 notification_settings_status.set(if enabled {
-                                                    "Sound alerts enabled.".to_owned()
+                                                    crate::i18n::tr("settings.notifications.sound_enabled")
                                                 } else {
-                                                    "Sound alerts disabled.".to_owned()
+                                                    crate::i18n::tr("settings.notifications.sound_disabled")
                                                 });
                                             },
                                         }
-                                        if notification_sound_enabled() { " Sound alerts" } else { " Sound alerts off" }
+                                        if notification_sound_enabled() {
+                                            {crate::i18n::tr("settings.notifications.sound_on")}
+                                        } else {
+                                            {crate::i18n::tr("settings.notifications.sound_off")}
+                                        }
                                     }
                                     Button {
                                         variant: ButtonVariant::Secondary,
@@ -1894,12 +1901,12 @@ pub fn SettingsPanel(
                                             if notification_sound_enabled() {
                                                 crate::notification_sound::initialize_notification_audio();
                                                 crate::notification_sound::play_notification_sound();
-                                                notification_settings_status.set("Sound alert test played.".to_owned());
+                                                notification_settings_status.set(crate::i18n::tr("settings.notifications.sound_test_played"));
                                             } else {
-                                                notification_settings_status.set("Enable sound alerts before testing.".to_owned());
+                                                notification_settings_status.set(crate::i18n::tr("settings.notifications.sound_test_blocked"));
                                             }
                                         },
-                                        "Test sound"
+                                        {crate::i18n::tr("settings.notifications.sound_test")}
                                     }
                                 }
                                 div { class: "actions",
@@ -1909,14 +1916,24 @@ pub fn SettingsPanel(
                                             checked: if dnd_enabled() { CheckboxState::Checked } else { CheckboxState::Unchecked },
                                             on_checked_change: move |state: CheckboxState| dnd_enabled.set(bool::from(state)),
                                         }
-                                        " Do not disturb"
+                                        {crate::i18n::tr("settings.notifications.dnd")}
                                     }
                                     Select::<String> {
                                         "data-testid": "dnd-mode-select",
                                         value: Some(dnd_mode_selected.into()),
                                         on_value_change: move |v: Option<String>| { if let Some(v) = v { dnd_mode.set(v); } },
-                                        SelectOption::<String> { index: 0usize, value: "off".to_string(), text_value: "Off", "Off" }
-                                        SelectOption::<String> { index: 1usize, value: "now".to_string(), text_value: "Now", "Now" }
+                                        SelectOption::<String> {
+                                            index: 0usize,
+                                            value: "off".to_string(),
+                                            text_value: crate::i18n::tr("settings.notifications.dnd_off"),
+                                            {crate::i18n::tr("settings.notifications.dnd_off")}
+                                        }
+                                        SelectOption::<String> {
+                                            index: 1usize,
+                                            value: "now".to_string(),
+                                            text_value: crate::i18n::tr("settings.notifications.dnd_now"),
+                                            {crate::i18n::tr("settings.notifications.dnd_now")}
+                                        }
                                     }
                                     Button {
                                         variant: ButtonVariant::Primary,
@@ -1940,7 +1957,7 @@ pub fn SettingsPanel(
                                                 state_store.read().realm_watch_levels(),
                                             );
                                         },
-                                        "Save"
+                                        {crate::i18n::tr("common.save")}
                                     }
                                 }
                                 div { class: "muted", "data-testid": "notification-settings-status", "{notification_settings_status}" }
@@ -1948,11 +1965,11 @@ pub fn SettingsPanel(
                             // (2) Per-realm overrides — choose how much a specific Realm notifies.
                             div { class: "event", "data-testid": "per-realm-overrides",
                                 div { class: "event-head",
-                                    span { "Per-realm overrides" }
+                                    span { {crate::i18n::tr("settings.notifications.overrides_title")} }
                                     span { "{realm_watch_overrides.len()} configured" }
                                 }
                                 div { class: "muted",
-                                    "Pick a Realm and how much it should notify you. This overrides the global defaults above for that Realm only."
+                                    {crate::i18n::tr("settings.notifications.overrides_body")}
                                 }
                                 div { class: "actions",
                                     // Each picker lives in its own `label.field` wrapper — never a raw
@@ -1960,7 +1977,7 @@ pub fn SettingsPanel(
                                     // Select keeps the VNode tree stable so opening one doesn't remount
                                     // (and snap shut) its neighbour.
                                     label { class: "field",
-                                        span { class: "field-label", "Realm" }
+                                        span { class: "field-label", {crate::i18n::tr("friendly.realm")} }
                                         Select::<String> {
                                             class: "select",
                                             "data-testid": "realm-override-realm-select",
@@ -1970,8 +1987,16 @@ pub fn SettingsPanel(
                                             SelectOption::<String> {
                                                 index: 0usize,
                                                 value: String::new(),
-                                                text_value: if known_realms.is_empty() { "No Realms available yet" } else { "Select a Realm…" },
-                                                if known_realms.is_empty() { "No Realms available yet" } else { "Select a Realm…" }
+                                                text_value: if known_realms.is_empty() {
+                                                    crate::i18n::tr("settings.notifications.no_realms")
+                                                } else {
+                                                    crate::i18n::tr("settings.notifications.select_realm")
+                                                },
+                                                if known_realms.is_empty() {
+                                                    {crate::i18n::tr("settings.notifications.no_realms")}
+                                                } else {
+                                                    {crate::i18n::tr("settings.notifications.select_realm")}
+                                                }
                                             }
                                             for (index , (realm_id , label)) in known_realms.iter().enumerate() {
                                                 SelectOption::<String> {
@@ -1985,16 +2010,36 @@ pub fn SettingsPanel(
                                         }
                                     }
                                     label { class: "field",
-                                        span { class: "field-label", "Notify me about" }
+                                        span { class: "field-label", {crate::i18n::tr("settings.notifications.notify_label")} }
                                         Select::<String> {
                                             class: "select",
                                             "data-testid": "realm-override-level-select",
                                             value: Some(new_override_level_selected.into()),
                                             on_value_change: move |v: Option<String>| { if let Some(v) = v { new_override_level.set(v); } },
-                                            SelectOption::<String> { index: 0usize, value: "all".to_string(), text_value: "All messages", "All messages" }
-                                            SelectOption::<String> { index: 1usize, value: "participating".to_string(), text_value: "Participating", "Participating" }
-                                            SelectOption::<String> { index: 2usize, value: "mentions_only".to_string(), text_value: "Mentions only", "Mentions only" }
-                                            SelectOption::<String> { index: 3usize, value: "muted".to_string(), text_value: "Muted", "Muted" }
+                                            SelectOption::<String> {
+                                                index: 0usize,
+                                                value: "all".to_string(),
+                                                text_value: crate::i18n::tr("settings.notifications.level_all"),
+                                                {crate::i18n::tr("settings.notifications.level_all")}
+                                            }
+                                            SelectOption::<String> {
+                                                index: 1usize,
+                                                value: "participating".to_string(),
+                                                text_value: crate::i18n::tr("chat.watch_level.participating"),
+                                                {crate::i18n::tr("chat.watch_level.participating")}
+                                            }
+                                            SelectOption::<String> {
+                                                index: 2usize,
+                                                value: "mentions_only".to_string(),
+                                                text_value: crate::i18n::tr("chat.watch_level.mentions_only"),
+                                                {crate::i18n::tr("chat.watch_level.mentions_only")}
+                                            }
+                                            SelectOption::<String> {
+                                                index: 3usize,
+                                                value: "muted".to_string(),
+                                                text_value: crate::i18n::tr("chat.watch_level.muted"),
+                                                {crate::i18n::tr("chat.watch_level.muted")}
+                                            }
                                         }
                                     }
                                     Button {
@@ -2023,12 +2068,12 @@ pub fn SettingsPanel(
                                             );
                                             new_override_realm.set(String::new());
                                         },
-                                        "Add override"
+                                        {crate::i18n::tr("settings.notifications.add_override")}
                                     }
                                 }
                                 if realm_watch_overrides.is_empty() {
                                     div { class: "muted", "data-testid": "per-realm-overrides-empty",
-                                        "No per-Realm overrides yet. Unconfigured Realms follow the global defaults."
+                                        {crate::i18n::tr("settings.notifications.overrides_empty")}
                                     }
                                 } else {
                                     for realm_id in realm_watch_overrides.keys() {
@@ -2069,14 +2114,19 @@ pub fn SettingsPanel(
                                             );
                                             crate::components::feedback::toast_success("feedback.overrides_cleared", vec![]);
                                         },
-                                        "Clear all overrides"
+                                        {crate::i18n::tr("settings.notifications.clear_overrides")}
                                     }
                                 }
                             }
                 div { class: "event", "data-testid": "push-settings",
-                    div { class: "event-head", span { "Push delivery" } span { "configure" } }
-                    div { class: "muted", "Push notification preferences and gateway registration." }
-                    div { class: "muted", "data-testid": "push-registration-state", "Current: {push_label}" }
+                    div { class: "event-head",
+                        span { {crate::i18n::tr("settings.push.title")} }
+                        span { {crate::i18n::tr("settings.push.badge")} }
+                    }
+                    div { class: "muted", {crate::i18n::tr("settings.push.body")} }
+                    div { class: "muted", "data-testid": "push-registration-state",
+                        {crate::i18n::tr_args("settings.push.current", &[("state", push_label.clone())])}
+                    }
                     div { class: "actions",
                         Button {
                             variant: ButtonVariant::Secondary,
@@ -2160,7 +2210,7 @@ pub fn SettingsPanel(
                                         ).await {
                                             Ok(_) => {
                                                 state_store.write().clear_push_registration();
-                                                push_state.set("Not registered".to_owned());
+                                                push_state.set(crate::i18n::tr("settings.push.not_registered"));
                                                 crate::components::feedback::toast_success("feedback.push_unregistered", vec![]);
                                             }
                                             Err(err) => {
@@ -2187,11 +2237,14 @@ pub fn SettingsPanel(
                     if active_section == SettingsSection::Privacy {
                         div { class: "settings-content-stack",
                             div { class: "event", "data-testid": "privacy-settings",
-                    div { class: "event-head", span { "Privacy" } span { "visibility controls" } }
+                    div { class: "event-head",
+                        span { {crate::i18n::tr("settings.group.privacy")} }
+                        span { {crate::i18n::tr("settings.privacy.badge")} }
+                    }
                     // Presence visibility — the full three-tier policy
                     // (profiles-presence.md §3.4), not a binary toggle.
                     div { class: "actions",
-                        span { "Presence visibility" }
+                        span { {crate::i18n::tr("settings.privacy.presence_visibility")} }
                         Select::<String> {
                             "data-testid": "presence-visibility-select",
                             value: Some(presence_visibility_selected.into()),
@@ -2213,30 +2266,68 @@ pub fn SettingsPanel(
                                     state_store,
                                 );
                             },
-                            SelectOption::<String> { index: 0usize, value: "public".to_string(), text_value: "Everyone in shared Realms", "Everyone in shared Realms" }
-                            SelectOption::<String> { index: 1usize, value: "contacts_only".to_string(), text_value: "Contacts only", "Contacts only" }
-                            SelectOption::<String> { index: 2usize, value: "nobody".to_string(), text_value: "Nobody (appear offline)", "Nobody (appear offline)" }
+                            SelectOption::<String> {
+                                index: 0usize,
+                                value: "public".to_string(),
+                                text_value: crate::i18n::tr("settings.privacy.presence_visibility.public"),
+                                {crate::i18n::tr("settings.privacy.presence_visibility.public")}
+                            }
+                            SelectOption::<String> {
+                                index: 1usize,
+                                value: "contacts_only".to_string(),
+                                text_value: crate::i18n::tr("settings.privacy.presence_visibility.contacts_only"),
+                                {crate::i18n::tr("settings.privacy.presence_visibility.contacts_only")}
+                            }
+                            SelectOption::<String> {
+                                index: 2usize,
+                                value: "nobody".to_string(),
+                                text_value: crate::i18n::tr("settings.privacy.presence_visibility.nobody"),
+                                {crate::i18n::tr("settings.privacy.presence_visibility.nobody")}
+                            }
                         }
                     }
                     // My status — manual presence preference
                     // (profiles-presence.md §3.6): pinned state, transient
                     // status message and relative expiry, applied by every
                     // device of this account at send time.
-                    div { class: "event-head", span { "My status" } span { "manual presence" } }
+                    div { class: "event-head",
+                        span { {crate::i18n::tr("settings.privacy.status_title")} }
+                        span { {crate::i18n::tr("settings.privacy.status_badge")} }
+                    }
                     div { class: "actions",
                         Select::<String> {
                             "data-testid": "presence-manual-state-select",
                             value: Some(presence_manual_state_selected.into()),
                             on_value_change: move |v: Option<String>| { if let Some(v) = v { presence_manual_state.set(v); } },
-                            SelectOption::<String> { index: 0usize, value: "auto".to_string(), text_value: "Automatic", "Automatic" }
-                            SelectOption::<String> { index: 1usize, value: "online".to_string(), text_value: "Online", "Online" }
-                            SelectOption::<String> { index: 2usize, value: "idle".to_string(), text_value: "Idle", "Idle" }
-                            SelectOption::<String> { index: 3usize, value: "dnd".to_string(), text_value: "Do not disturb (busy)", "Do not disturb (busy)" }
+                            SelectOption::<String> {
+                                index: 0usize,
+                                value: "auto".to_string(),
+                                text_value: crate::i18n::tr("settings.privacy.presence_state.auto"),
+                                {crate::i18n::tr("settings.privacy.presence_state.auto")}
+                            }
+                            SelectOption::<String> {
+                                index: 1usize,
+                                value: "online".to_string(),
+                                text_value: crate::i18n::tr("settings.privacy.presence_state.online"),
+                                {crate::i18n::tr("settings.privacy.presence_state.online")}
+                            }
+                            SelectOption::<String> {
+                                index: 2usize,
+                                value: "idle".to_string(),
+                                text_value: crate::i18n::tr("settings.privacy.presence_state.idle"),
+                                {crate::i18n::tr("settings.privacy.presence_state.idle")}
+                            }
+                            SelectOption::<String> {
+                                index: 3usize,
+                                value: "dnd".to_string(),
+                                text_value: crate::i18n::tr("settings.privacy.presence_state.dnd"),
+                                {crate::i18n::tr("settings.privacy.presence_state.dnd")}
+                            }
                         }
                         Input {
                             r#type: "text",
                             "data-testid": "presence-status-message-input",
-                            placeholder: "Status message (e.g. In a meeting)",
+                            placeholder: crate::i18n::tr("settings.privacy.status_message_placeholder"),
                             value: "{presence_status_message()}",
                             oninput: move |event: FormEvent| presence_status_message.set(event.value()),
                         }
@@ -2244,10 +2335,30 @@ pub fn SettingsPanel(
                             "data-testid": "presence-status-expiry-select",
                             value: Some(presence_expiry_selected.into()),
                             on_value_change: move |v: Option<String>| { if let Some(v) = v { presence_expiry_choice.set(v); } },
-                            SelectOption::<String> { index: 0usize, value: "never".to_string(), text_value: "Don't clear", "Don't clear" }
-                            SelectOption::<String> { index: 1usize, value: "30m".to_string(), text_value: "Clear in 30 minutes", "Clear in 30 minutes" }
-                            SelectOption::<String> { index: 2usize, value: "1h".to_string(), text_value: "Clear in 1 hour", "Clear in 1 hour" }
-                            SelectOption::<String> { index: 3usize, value: "today".to_string(), text_value: "Clear today", "Clear today" }
+                            SelectOption::<String> {
+                                index: 0usize,
+                                value: "never".to_string(),
+                                text_value: crate::i18n::tr("settings.privacy.status_expiry.never"),
+                                {crate::i18n::tr("settings.privacy.status_expiry.never")}
+                            }
+                            SelectOption::<String> {
+                                index: 1usize,
+                                value: "30m".to_string(),
+                                text_value: crate::i18n::tr("settings.privacy.status_expiry.30m"),
+                                {crate::i18n::tr("settings.privacy.status_expiry.30m")}
+                            }
+                            SelectOption::<String> {
+                                index: 2usize,
+                                value: "1h".to_string(),
+                                text_value: crate::i18n::tr("settings.privacy.status_expiry.1h"),
+                                {crate::i18n::tr("settings.privacy.status_expiry.1h")}
+                            }
+                            SelectOption::<String> {
+                                index: 3usize,
+                                value: "today".to_string(),
+                                text_value: crate::i18n::tr("settings.privacy.status_expiry.today"),
+                                {crate::i18n::tr("settings.privacy.status_expiry.today")}
+                            }
                         }
                         Button {
                             variant: ButtonVariant::Primary,
@@ -2259,7 +2370,10 @@ pub fn SettingsPanel(
                                 );
                                 if let Err(error) = arkret_sdk::validate_status_message(&message) {
                                     presence_status_feedback.set(
-                                        format!("Status message is invalid: {error}"),
+                                        crate::i18n::tr_args(
+                                            "settings.privacy.status_invalid",
+                                            &[("error", error.to_string())],
+                                        ),
                                     );
                                     return;
                                 }
@@ -2270,7 +2384,7 @@ pub fn SettingsPanel(
                                     "dnd" => Some(arkret_sdk::ManualPresenceState::Dnd),
                                     _ => {
                                         presence_status_feedback.set(
-                                            "Status state is not in the protocol closed set.".to_owned(),
+                                            crate::i18n::tr("settings.privacy.status_state_unknown"),
                                         );
                                         return;
                                     }
@@ -2288,9 +2402,9 @@ pub fn SettingsPanel(
                                 let cleared = preference.is_empty();
                                 state_store.write().set_presence_preference(preference);
                                 presence_status_feedback.set(if cleared {
-                                    "Status cleared.".to_owned()
+                                    crate::i18n::tr("settings.privacy.status_cleared")
                                 } else {
-                                    "Status saved.".to_owned()
+                                    crate::i18n::tr("settings.privacy.status_saved")
                                 });
                                 push_presence_preference_account_data(
                                     base_url(),
@@ -2298,7 +2412,7 @@ pub fn SettingsPanel(
                                     state_store,
                                 );
                             },
-                            "Save status"
+                            {crate::i18n::tr("settings.privacy.status_save")}
                         }
                         Button {
                             variant: ButtonVariant::Secondary,
@@ -2310,20 +2424,20 @@ pub fn SettingsPanel(
                                 state_store.write().set_presence_preference(
                                     crate::state::PresencePreference::default(),
                                 );
-                                presence_status_feedback.set("Status cleared.".to_owned());
+                                presence_status_feedback.set(crate::i18n::tr("settings.privacy.status_cleared"));
                                 push_presence_preference_account_data(
                                     base_url(),
                                     token(),
                                     state_store,
                                 );
                             },
-                            "Clear"
+                            {crate::i18n::tr("settings.privacy.status_clear")}
                         }
                     }
                     div { class: "muted", "data-testid": "presence-status-feedback", "{presence_status_feedback}" }
                     div { class: "event-head",
-                        span { "Read receipts" }
-                        span { "Default" }
+                        span { {crate::i18n::tr("chat.settings.read_receipts")} }
+                        span { {crate::i18n::tr("settings.read_receipts.default_badge")} }
                     }
                     label {
                         Checkbox {
@@ -2352,7 +2466,7 @@ pub fn SettingsPanel(
                                 );
                             },
                         }
-                        " Send read receipts by default"
+                        {crate::i18n::tr("settings.read_receipts.send_default")}
                     }
                     label {
                         Checkbox {
@@ -2377,10 +2491,10 @@ pub fn SettingsPanel(
                                 );
                             },
                         }
-                        " Show others' read receipts by default"
+                        {crate::i18n::tr("settings.read_receipts.display_default")}
                     }
                     div { class: "event-head",
-                        span { "Realm exceptions" }
+                        span { {crate::i18n::tr("settings.read_receipts.realm_exceptions")} }
                         span { "{read_receipt_realm_overrides().len()} configured" }
                     }
                     for (realm_id, send) in read_receipt_realm_overrides() {
@@ -2407,13 +2521,17 @@ pub fn SettingsPanel(
                                     div { class: "actions", "data-testid": "read-receipt-override-row",
                                         span { title: "{realm_id}", "{realm_id_label}" }
                                         span { class: "badge",
-                                            {if send { "sending" } else { "skipping" }}
+                                            {if send {
+                                                crate::i18n::tr("settings.read_receipts.badge_sending")
+                                            } else {
+                                                crate::i18n::tr("settings.read_receipts.badge_skipping")
+                                            }}
                                         }
                                         if locked {
                                             span {
                                                 class: "badge red",
                                                 "data-testid": "read-receipt-override-locked",
-                                                "locked by Realm policy"
+                                                {crate::i18n::tr("settings.read_receipts.locked")}
                                             }
                                         }
                                         Button {
@@ -2449,7 +2567,11 @@ pub fn SettingsPanel(
                                                     );
                                                 }
                                             },
-                                            {if send { "Switch to skip" } else { "Switch to send" }}
+                                            {if send {
+                                                crate::i18n::tr("settings.read_receipts.switch_to_skip")
+                                            } else {
+                                                crate::i18n::tr("settings.read_receipts.switch_to_send")
+                                            }}
                                         }
                                         Button {
                                             variant: ButtonVariant::Secondary,
@@ -2479,7 +2601,7 @@ pub fn SettingsPanel(
                                                     );
                                                 }
                                             },
-                                            "Inherit default"
+                                            {crate::i18n::tr("settings.read_receipts.inherit_default")}
                                         }
                                     }
                                     if locked {
@@ -2525,7 +2647,7 @@ pub fn SettingsPanel(
                                     state_store,
                                 );
                             },
-                            "Add (skip)"
+                            {crate::i18n::tr("settings.read_receipts.add_skip")}
                         }
                         Button {
                             variant: ButtonVariant::Secondary,
@@ -2554,7 +2676,7 @@ pub fn SettingsPanel(
                                     state_store,
                                 );
                             },
-                            "Add (send)"
+                            {crate::i18n::tr("settings.read_receipts.add_send")}
                         }
                     }
                 }
@@ -2569,8 +2691,8 @@ pub fn SettingsPanel(
                 // them up.
                 div { class: "event", "data-testid": "realm-remarks-editor",
                     div { class: "event-head",
-                        span { "Realm remarks" }
-                        span { "Private" }
+                        span { {crate::i18n::tr("settings.realm_remarks.title")} }
+                        span { {crate::i18n::tr("settings.remarks.badge_private")} }
                     }
                     {
                         let remarks = realm_remarks_snapshot();
@@ -2579,7 +2701,7 @@ pub fn SettingsPanel(
                                 div {
                                     class: "muted",
                                     "data-testid": "realm-remarks-empty",
-                                    "No remarks yet. Add one below to distinguish duplicate-titled Realms."
+                                    {crate::i18n::tr("settings.realm_remarks.empty")}
                                 }
                             }
                         } else {
@@ -2596,7 +2718,7 @@ pub fn SettingsPanel(
                                                 Input {
                                                     r#type: "text",
                                                     "data-testid": "realm-remark-input",
-                                                    placeholder: "Local name (private)",
+                                                    placeholder: crate::i18n::tr("settings.realm_remarks.local_name_private"),
                                                     value: "{realm_remark_inputs().get(&realm_id).cloned().unwrap_or_else(|| remark.local_name.clone())}",
                                                     oninput: {
                                                         let id = realm_id.clone();
@@ -2692,7 +2814,7 @@ pub fn SettingsPanel(
                                                             );
                                                         }
                                                     },
-                                                    "Save"
+                                                    {crate::i18n::tr("common.save")}
                                                 }
                                                 Button {
                                                     variant: ButtonVariant::Secondary,
@@ -2733,7 +2855,7 @@ pub fn SettingsPanel(
                                                             );
                                                         }
                                                     },
-                                                    "Delete"
+                                                    {crate::i18n::tr("common.delete")}
                                                 }
                                             }
                                         }
@@ -2753,7 +2875,7 @@ pub fn SettingsPanel(
                         Input {
                             r#type: "text",
                             "data-testid": "realm-remark-add-name",
-                            placeholder: "Local name",
+                            placeholder: crate::i18n::tr("settings.realm_remarks.local_name"),
                             value: "{new_realm_remark_name()}",
                             oninput: move |event: FormEvent| new_realm_remark_name.set(event.value()),
                         }
@@ -2800,18 +2922,18 @@ pub fn SettingsPanel(
                                     remark,
                                 );
                             },
-                            "Add remark"
+                            {crate::i18n::tr("settings.realm_remarks.add")}
                         }
                     }
                 }
 
                 div { class: "event", "data-testid": "contact-remarks-editor",
                     div { class: "event-head",
-                        span { "Contact petnames" }
-                        span { "Private" }
+                        span { {crate::i18n::tr("settings.contact_petnames.title")} }
+                        span { {crate::i18n::tr("settings.remarks.badge_private")} }
                     }
                     div { class: "muted",
-                        "Petnames are global across all Realms. Add or edit them from an accepted human Contact row; arbitrary DIDs and Realm members cannot receive a petname."
+                        {crate::i18n::tr("settings.contact_petnames.body")}
                     }
                     {
                         let remarks = contact_remarks_snapshot();
@@ -2820,7 +2942,7 @@ pub fn SettingsPanel(
                                 div {
                                     class: "muted",
                                     "data-testid": "contact-remarks-empty",
-                                    "No saved contact petnames."
+                                    {crate::i18n::tr("settings.contact_petnames.empty")}
                                 }
                             }
                         } else {
@@ -2855,11 +2977,11 @@ pub fn SettingsPanel(
                 // notice + a link out to the issuer strand.
                             div { class: "event", "data-testid": "handle-managed-by-org",
                     div { class: "event-head",
-                        span { "Handle" }
-                        span { "Managed by your organization" }
+                        span { {crate::i18n::tr("settings.handle.title")} }
+                        span { {crate::i18n::tr("settings.handle.managed_badge")} }
                     }
                     div { class: "muted",
-                        "Your handle is managed by your organization. This client cannot set or change it directly — request changes through your organization's issuer."
+                        {crate::i18n::tr("settings.handle.managed_body")}
                     }
                     div { class: "actions",
                         if let Some(href) = crate::identity::account_auth::issuer_handle_management_url(&base_url()) {
@@ -2869,14 +2991,14 @@ pub fn SettingsPanel(
                                 href: "{href}",
                                 target: "_blank",
                                 rel: "noopener noreferrer",
-                                "Manage handle at your organization's issuer"
+                                {crate::i18n::tr("settings.handle.issuer_link")}
                             }
                         } else {
                             Button {
                                 variant: ButtonVariant::Secondary,
                                 "data-testid": "handle-issuer-link-disabled",
                                 disabled: true,
-                                "Issuer link unavailable"
+                                {crate::i18n::tr("settings.handle.issuer_link_unavailable")}
                             }
                         }
                     }
@@ -2927,15 +3049,18 @@ pub fn SettingsPanel(
                     if active_section == SettingsSection::Theme {
                         div { class: "settings-card-grid",
                             div { class: "event", "data-testid": "theme-settings",
-                    div { class: "event-head", span { "Theme" } span { "appearance" } }
+                    div { class: "event-head",
+                        span { {crate::i18n::tr("theme.switcher_aria_label")} }
+                        span { {crate::i18n::tr("settings.theme.badge")} }
+                    }
                     div { class: "actions",
                         Button {
                             variant: if theme() == "light" { ButtonVariant::Primary } else { ButtonVariant::Ghost },
                             size: ButtonSize::Sm,
                             class: "btn icon",
                             "data-testid": "theme-light",
-                            title: "Light theme",
-                            "aria-label": "Light theme",
+                            title: crate::i18n::tr("settings.theme.light"),
+                            "aria-label": crate::i18n::tr("settings.theme.light"),
                             onclick: move |_| {
                                 theme.set("light".to_owned());
                                 state_store.write().save_plain_local_data("theme", "light");
@@ -2948,8 +3073,8 @@ pub fn SettingsPanel(
                             size: ButtonSize::Sm,
                             class: "btn icon",
                             "data-testid": "theme-night",
-                            title: "Night theme",
-                            "aria-label": "Night theme",
+                            title: crate::i18n::tr("settings.theme.night"),
+                            "aria-label": crate::i18n::tr("settings.theme.night"),
                             onclick: move |_| {
                                 theme.set("night".to_owned());
                                 state_store.write().save_plain_local_data("theme", "night");
@@ -2962,8 +3087,8 @@ pub fn SettingsPanel(
                             size: ButtonSize::Sm,
                             class: "btn icon",
                             "data-testid": "theme-system",
-                            title: "System theme",
-                            "aria-label": "System theme",
+                            title: crate::i18n::tr("settings.theme.system"),
+                            "aria-label": crate::i18n::tr("settings.theme.system"),
                             onclick: move |_| {
                                 theme.set("system".to_owned());
                                 state_store.write().save_plain_local_data("theme", "system");
@@ -2972,7 +3097,9 @@ pub fn SettingsPanel(
                             UiIcon { name: "monitor" }
                         }
                     }
-                    div { class: "muted", "Current: {theme}" }
+                    div { class: "muted",
+                        {crate::i18n::tr_args("settings.theme.current", &[("theme", theme())])}
+                    }
                     // P5 — radiogroup-flavoured three-mode switcher
                     // alongside the existing icon-button trio. Same
                     // persistence path; adds ARIA semantics + a label
@@ -2991,7 +3118,7 @@ pub fn SettingsPanel(
                 }
                             div { class: "event", "data-testid": "language-settings",
                     div { class: "event-head",
-                        span { "Language" }
+                        span { {crate::i18n::tr("settings.language.title")} }
                         span { "data-testid": "text-direction", "{active_direction}" }
                     }
                     div { class: "actions",
@@ -3019,8 +3146,8 @@ pub fn SettingsPanel(
                         div { class: "settings-content-stack",
                             div { class: "event", "data-testid": "settings-session-diagnostics",
                                 div { class: "event-head",
-                                    span { "Session diagnostics" }
-                                    span { "Advanced" }
+                                    span { {crate::i18n::tr("settings.session_diagnostics.title")} }
+                                    span { {crate::i18n::tr("settings.group.advanced")} }
                                 }
                                 div { class: "metric-grid",
                                     div { class: "metric", "data-testid": "settings-proof-mode",

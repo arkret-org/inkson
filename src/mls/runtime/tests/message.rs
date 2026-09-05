@@ -1,23 +1,13 @@
 //! Tests for welcome application, application-payload encrypt / decrypt, and
 //! §5.6 receive-chain persistence.
 
+use garth::mls::welcome_admission::{mls_group_id_for_realm, mls_welcome_message_matches_realm};
 use serde_json::json;
 
 use crate::mls::runtime::*;
 use crate::secure_key_store::{MemorySecureKeyStore, SecureKeyStore, SecureKeyStoreError};
 use crate::state::isolated_store_for_tests as temp_state_store;
-
-fn test_authority(actor: &str) -> arkret_sdk::AccountId {
-    arkret_sdk::AccountId {
-        principal_id: crate::mls_api_helpers::principal_core_id(actor).unwrap(),
-        station_id: arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example".to_owned())
-            .unwrap(),
-    }
-}
-
-fn test_device(device: &str) -> arkret_sdk::DeviceId {
-    arkret_sdk::DeviceId::new(device.to_owned()).unwrap()
-}
+use crate::test_support as fixture;
 
 #[cfg(not(target_arch = "wasm32"))]
 fn seed_complete_rfc9420_projection(
@@ -25,7 +15,7 @@ fn seed_complete_rfc9420_projection(
     realm: &str,
     actor: &str,
 ) {
-    let actor_id = arkret_sdk::ActorId::account(test_authority(actor));
+    let actor_id = arkret_sdk::ActorId::account(fixture::authority(actor));
     state.save_realm_tree_projection(
         realm,
         json!({
@@ -78,7 +68,7 @@ fn creator_snapshot_bootstrap_makes_space_encryptable() {
             "content_scheme": "mls_rfc9420",
             "member_roster_entries_limited": false,
             "member_roster_entries": [{
-                "actor_id": arkret_sdk::ActorId::account(test_authority(actor)),
+                "actor_id": arkret_sdk::ActorId::account(fixture::authority(actor)),
                 "membership": "join"
             }]
         }),
@@ -87,8 +77,8 @@ fn creator_snapshot_bootstrap_makes_space_encryptable() {
         &mut state,
         &secure,
         realm,
-        &test_authority(actor),
-        &test_device(device),
+        &fixture::authority(actor),
+        &fixture::device_id(device),
     )
     .unwrap();
 
@@ -103,8 +93,8 @@ fn creator_snapshot_bootstrap_makes_space_encryptable() {
         &mut state,
         &secure,
         realm,
-        &test_authority(actor),
-        &test_device(device),
+        &fixture::authority(actor),
+        &fixture::device_id(device),
         "application/vnd.arkret.test+json",
         &[br#""private""#.to_vec()],
     )
@@ -117,8 +107,8 @@ fn creator_snapshot_bootstrap_makes_space_encryptable() {
         &mut state,
         &secure,
         realm,
-        &test_authority(actor),
-        &test_device(device),
+        &fixture::authority(actor),
+        &fixture::device_id(device),
         "application/vnd.arkret.test+json",
         &[br#""private-again""#.to_vec()],
     )
@@ -135,8 +125,8 @@ fn complete_membership_hint_does_not_alias_same_principal_at_another_station() {
     let mut state = temp_state_store("station-scoped-roster-hint");
     let secure = MemorySecureKeyStore::new();
     let principal = "did:web:alice.example";
-    let authority = test_authority(principal);
-    let device = test_device("ak:device:01904100-0000-7000-8000-000000000001");
+    let authority = fixture::authority(principal);
+    let device = fixture::device_id("ak:device:01904100-0000-7000-8000-000000000001");
     let realm = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
     super::seed_genesis_governance_proof(&mut state, realm);
     super::seed_human_creator_authorization(principal, device.as_str());
@@ -233,8 +223,8 @@ fn message_encrypt_carries_metadata_plaintext_on_the_same_epoch() {
         &mut state,
         &secure,
         realm,
-        &test_authority(actor),
-        &test_device(device),
+        &fixture::authority(actor),
+        &fixture::device_id(device),
     )
     .unwrap()
     .expect("creator snapshot");
@@ -252,8 +242,8 @@ fn message_encrypt_carries_metadata_plaintext_on_the_same_epoch() {
             &mut state,
             &secure,
             realm,
-            &test_authority(actor),
-            &test_device(device),
+            &fixture::authority(actor),
+            &fixture::device_id(device),
             "application/vnd.arkret.message+json",
             arkret_wire::event_kind_str::MESSAGE_CREATE,
             group_state_ref,
@@ -304,8 +294,8 @@ fn replacement_sender_domain_blocks_before_counter_advance() {
         &mut state,
         &secure,
         realm,
-        &test_authority(actor),
-        &test_device(device),
+        &fixture::authority(actor),
+        &fixture::device_id(device),
     )
     .unwrap()
     .expect("creator snapshot");
@@ -322,8 +312,8 @@ fn replacement_sender_domain_blocks_before_counter_advance() {
         &mut state,
         &secure,
         realm,
-        &test_authority(actor),
-        &test_device(device),
+        &fixture::authority(actor),
+        &fixture::device_id(device),
         "application/vnd.arkret.message+json",
         arkret_wire::event_kind_str::MESSAGE_CREATE,
         group_state_ref,
@@ -361,8 +351,8 @@ fn encrypted_write_blocks_complete_roster_ahead_of_local_group() {
         &mut state,
         &secure,
         realm,
-        &test_authority(actor),
-        &test_device(device),
+        &fixture::authority(actor),
+        &fixture::device_id(device),
     )
     .unwrap()
     .expect("creator snapshot");
@@ -374,7 +364,7 @@ fn encrypted_write_blocks_complete_roster_ahead_of_local_group() {
             "member_roster_entries_limited": false,
             "member_roster_entries": [
                 {
-                    "actor_id": arkret_sdk::ActorId::account(test_authority(actor)),
+                    "actor_id": arkret_sdk::ActorId::account(fixture::authority(actor)),
                     "membership": "join"
                 },
                 { "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:bob.example","station_id":"ak:did_core:web:principal.example"}}, "membership": "join" }
@@ -386,8 +376,8 @@ fn encrypted_write_blocks_complete_roster_ahead_of_local_group() {
         &mut state,
         &secure,
         realm,
-        &test_authority(actor),
-        &test_device(device),
+        &fixture::authority(actor),
+        &fixture::device_id(device),
         "application/vnd.arkret.test+json",
         &[br#""must-not-send-on-epoch-zero""#.to_vec()],
     )
@@ -417,8 +407,8 @@ fn encrypted_write_blocks_until_content_scheme_projection_arrives() {
         &mut state,
         &secure,
         realm,
-        &test_authority(actor),
-        &test_device(device),
+        &fixture::authority(actor),
+        &fixture::device_id(device),
     )
     .unwrap()
     .expect("creator snapshot");
@@ -429,7 +419,7 @@ fn encrypted_write_blocks_until_content_scheme_projection_arrives() {
             "encrypted": true,
             "member_roster_entries_limited": false,
             "member_roster_entries": [{
-                "actor_id": arkret_sdk::ActorId::account(test_authority(actor)),
+                "actor_id": arkret_sdk::ActorId::account(fixture::authority(actor)),
                 "membership": "join"
             }]
         }),
@@ -439,8 +429,8 @@ fn encrypted_write_blocks_until_content_scheme_projection_arrives() {
         &mut state,
         &secure,
         realm,
-        &test_authority(actor),
-        &test_device(device),
+        &fixture::authority(actor),
+        &fixture::device_id(device),
         "application/vnd.arkret.test+json",
         &[br#""must-wait-for-policy""#.to_vec()],
     )
@@ -471,8 +461,8 @@ async fn authoring_exporter_aead_content_requires_accepted_transition_evidence()
         &mut state,
         &secure,
         realm,
-        &test_authority(actor),
-        &test_device(device),
+        &fixture::authority(actor),
+        &fixture::device_id(device),
     )
     .unwrap()
     .expect("creator snapshot");
@@ -525,8 +515,8 @@ async fn authoring_exporter_aead_content_requires_accepted_transition_evidence()
         &mut state,
         &secure,
         realm,
-        &test_authority(actor),
-        &test_device(device),
+        &fixture::authority(actor),
+        &fixture::device_id(device),
         "application/vnd.arkret.test+json",
         &[br#""private""#.to_vec()],
     )
@@ -578,7 +568,7 @@ fn two_member_group_with_bob_snapshot(
         .install_test_leaf_bindings(endpoints.clone())
         .unwrap();
 
-    let secret = load_or_create_account_mls_secret(secure, &test_authority(bob_actor)).unwrap();
+    let secret = load_or_create_account_mls_secret(secure, &fixture::authority(bob_actor)).unwrap();
     let post_state = bob_group.export_state_record().unwrap();
     let serialized = serde_json::to_vec(&post_state).unwrap();
     let mut salt = [0u8; 16];
@@ -621,8 +611,8 @@ fn historical_author_view_survives_epoch_rotation() {
         &state,
         &secure,
         realm,
-        &test_authority(bob_actor),
-        &test_device(bob_device),
+        &fixture::authority(bob_actor),
+        &fixture::device_id(bob_device),
         &epoch_one_snapshot.group_id,
         epoch_one_snapshot.epoch,
         epoch_one_ref.as_str(),
@@ -631,8 +621,8 @@ fn historical_author_view_survives_epoch_rotation() {
 
     let secret = load_device_snapshot_secret(
         &secure,
-        &test_authority(bob_actor),
-        &test_device(bob_device),
+        &fixture::authority(bob_actor),
+        &fixture::device_id(bob_device),
     )
     .unwrap();
     let mut bob_group =
@@ -671,8 +661,8 @@ fn historical_author_view_survives_epoch_rotation() {
         &state,
         &secure,
         realm,
-        &test_authority(bob_actor),
-        &test_device(bob_device),
+        &fixture::authority(bob_actor),
+        &fixture::device_id(bob_device),
         &epoch_one_snapshot.group_id,
         epoch_one_snapshot.epoch,
         epoch_one_ref.as_str(),
@@ -684,8 +674,8 @@ fn historical_author_view_survives_epoch_rotation() {
             &state,
             &secure,
             realm,
-            &test_authority(bob_actor),
-            &test_device(bob_device),
+            &fixture::authority(bob_actor),
+            &fixture::device_id(bob_device),
             &epoch_one_snapshot.group_id,
             epoch_one_snapshot.epoch,
             "ak:event:AbQHDTvS4ZELwYOPkH_Rdpweaio8GKWhHTHvvDJIAgzZ",
@@ -736,8 +726,8 @@ fn receive_chain_persists_across_restart_and_plaintext_is_never_at_rest() {
         &state,
         &secure,
         realm,
-        &test_authority(bob_actor),
-        &test_device(bob_device),
+        &fixture::authority(bob_actor),
+        &fixture::device_id(bob_device),
         &m1,
         None,
         None,
@@ -755,8 +745,8 @@ fn receive_chain_persists_across_restart_and_plaintext_is_never_at_rest() {
         &state,
         &secure,
         realm,
-        &test_authority(bob_actor),
-        &test_device(bob_device),
+        &fixture::authority(bob_actor),
+        &fixture::device_id(bob_device),
         &m1,
         None,
         None,
@@ -777,8 +767,8 @@ fn receive_chain_persists_across_restart_and_plaintext_is_never_at_rest() {
             &restarted,
             &secure,
             realm,
-            &test_authority(bob_actor),
-            &test_device(bob_device),
+            &fixture::authority(bob_actor),
+            &fixture::device_id(bob_device),
             &m1,
             None,
             None,
@@ -792,8 +782,8 @@ fn receive_chain_persists_across_restart_and_plaintext_is_never_at_rest() {
         &restarted,
         &secure,
         realm,
-        &test_authority(bob_actor),
-        &test_device(bob_device),
+        &fixture::authority(bob_actor),
+        &fixture::device_id(bob_device),
         &m2,
         None,
         None,
@@ -841,8 +831,8 @@ fn circle_scoped_decrypt_uses_and_advances_only_the_circle_snapshot() {
             &state,
             &secure,
             realm,
-            &test_authority(bob_actor),
-            &test_device(bob_device),
+            &fixture::authority(bob_actor),
+            &fixture::device_id(bob_device),
             &encrypted,
             None,
             None,
@@ -854,8 +844,8 @@ fn circle_scoped_decrypt_uses_and_advances_only_the_circle_snapshot() {
         &state,
         &secure,
         realm,
-        &test_authority(bob_actor),
-        &test_device(bob_device),
+        &fixture::authority(bob_actor),
+        &fixture::device_id(bob_device),
         &encrypted,
         Some(circle),
         None,
@@ -904,8 +894,8 @@ fn out_of_order_skipped_keys_survive_restart() {
         &state,
         &secure,
         realm,
-        &test_authority(bob_actor),
-        &test_device(bob_device),
+        &fixture::authority(bob_actor),
+        &fixture::device_id(bob_device),
         &m3,
         None,
         None,
@@ -919,8 +909,8 @@ fn out_of_order_skipped_keys_survive_restart() {
         &restarted,
         &secure,
         realm,
-        &test_authority(bob_actor),
-        &test_device(bob_device),
+        &fixture::authority(bob_actor),
+        &fixture::device_id(bob_device),
         &m1,
         None,
         None,
@@ -951,8 +941,8 @@ fn author_own_ciphertext_stays_soft_failure_without_state_regression() {
         &mut state,
         &secure,
         realm,
-        &test_authority(actor),
-        &test_device(device),
+        &fixture::authority(actor),
+        &fixture::device_id(device),
     )
     .unwrap();
     super::seed_current_group_state_ref(&mut state, realm);
@@ -960,8 +950,8 @@ fn author_own_ciphertext_stays_soft_failure_without_state_regression() {
         &mut state,
         &secure,
         realm,
-        &test_authority(actor),
-        &test_device(device),
+        &fixture::authority(actor),
+        &fixture::device_id(device),
         "application/json",
         &[br#""mine""#.to_vec()],
     )
@@ -974,8 +964,8 @@ fn author_own_ciphertext_stays_soft_failure_without_state_regression() {
         &state,
         &secure,
         realm,
-        &test_authority(actor),
-        &test_device(device),
+        &fixture::authority(actor),
+        &fixture::device_id(device),
         &payload,
         None,
         None,
@@ -1013,8 +1003,8 @@ fn plaintext_cache_outlives_group_state() {
         &state,
         &secure,
         realm,
-        &test_authority(bob_actor),
-        &test_device(bob_device),
+        &fixture::authority(bob_actor),
+        &fixture::device_id(bob_device),
         &m1,
         None,
         None,
@@ -1028,8 +1018,8 @@ fn plaintext_cache_outlives_group_state() {
         &state,
         &secure,
         realm,
-        &test_authority(bob_actor),
-        &test_device(bob_device),
+        &fixture::authority(bob_actor),
+        &fixture::device_id(bob_device),
         &m1,
         None,
         None,
@@ -1066,8 +1056,8 @@ fn encrypted_write_with_snapshot_requires_existing_device_secret() {
         &mut state,
         &store,
         "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
-        &test_authority("did:web:alice.example"),
-        &test_device("ak:device:01904100-0000-7000-8000-000000000001"),
+        &fixture::authority("did:web:alice.example"),
+        &fixture::device_id("ak:device:01904100-0000-7000-8000-000000000001"),
         "text/plain",
         &[b"secret".to_vec()],
     )
@@ -1089,7 +1079,7 @@ fn encrypted_write_uses_device_key_snapshot_when_ready() {
     let device = "ak:device:01904100-0000-7000-8000-000000000001";
     let realm = "ak:realm:AcsFZ3o2tOdN3EFpNceeLV-aI3jZkB9S34_4YIwJ5DLy";
     let store = MemorySecureKeyStore::new();
-    let secret = load_or_create_account_mls_secret(&store, &test_authority(actor)).unwrap();
+    let secret = load_or_create_account_mls_secret(&store, &fixture::authority(actor)).unwrap();
     let identity = ArkretMlsIdentity::new_test_human_device(
         crate::mls_api_helpers::principal_core_id(actor).unwrap(),
         DeviceId::new(device.to_owned()).unwrap(),
@@ -1098,7 +1088,7 @@ fn encrypted_write_uses_device_key_snapshot_when_ready() {
     let mut group = identity.create_group(realm.as_bytes()).unwrap();
     group
         .install_local_creator_binding(
-            arkret_sdk::ActorId::account(test_authority(actor)),
+            arkret_sdk::ActorId::account(fixture::authority(actor)),
             Some(
                 arkret_sdk::EventId::new("ak:event:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1")
                     .unwrap(),
@@ -1125,8 +1115,8 @@ fn encrypted_write_uses_device_key_snapshot_when_ready() {
             &mut state,
             &store,
             realm,
-            &test_authority(actor),
-            &test_device(device),
+            &fixture::authority(actor),
+            &fixture::device_id(device),
             "text/plain",
             &[b"secret".to_vec()],
         )
@@ -1150,7 +1140,7 @@ fn minimal_overdue_epoch_blocks_before_counter_advance() {
     let actor = "did:web:minimal-counter.example";
     let device = "ak:device:01964137-0000-7000-8000-0000000000c1";
     let secure = MemorySecureKeyStore::new();
-    let _ = load_or_create_account_mls_secret(&secure, &test_authority(actor)).unwrap();
+    let _ = load_or_create_account_mls_secret(&secure, &fixture::authority(actor)).unwrap();
     crate::identity::authoring_generation::cache_verified_principal_generation_for_test(
         crate::mls_api_helpers::principal_core_id(actor)
             .unwrap()
@@ -1168,7 +1158,7 @@ fn minimal_overdue_epoch_blocks_before_counter_advance() {
             "content_scheme": "mls_rfc9420",
             "member_roster_entries_limited": false,
             "member_roster_entries": [{
-                "actor_id": arkret_sdk::ActorId::account(test_authority(actor)),
+                "actor_id": arkret_sdk::ActorId::account(fixture::authority(actor)),
                 "membership": "join"
             }]
         }),
@@ -1182,8 +1172,8 @@ fn minimal_overdue_epoch_blocks_before_counter_advance() {
         &mut state,
         &secure,
         realm,
-        &test_authority(actor),
-        &test_device(device),
+        &fixture::authority(actor),
+        &fixture::device_id(device),
     )
     .unwrap()
     .expect("creator snapshot created");
@@ -1197,8 +1187,8 @@ fn minimal_overdue_epoch_blocks_before_counter_advance() {
         &mut state,
         &secure,
         realm,
-        &test_authority(actor),
-        &test_device(device),
+        &fixture::authority(actor),
+        &fixture::device_id(device),
         "application/vnd.arkret.test+json",
         &[br#""private""#.to_vec()],
     )
@@ -1219,9 +1209,9 @@ fn empty_welcome_set_reports_no_work() {
         &mut state,
         &store,
         "ak:realm:Awkt11sH1cqYGNwG-NdGAvUk2xwJeJ7AC-93lG5ups2U",
-        &test_authority("did:web:alice.example"),
+        &fixture::authority("did:web:alice.example"),
         "did:web:alice.example",
-        &test_device("ak:device:01904100-0000-7000-8000-000000000001"),
+        &fixture::device_id("ak:device:01904100-0000-7000-8000-000000000001"),
         &json!({ "messages": [] }),
     )
     .unwrap();
@@ -1239,7 +1229,7 @@ fn malformed_welcome_is_counted_not_swallowed() {
     let store = MemorySecureKeyStore::new();
     store_account_mls_secret(
         &store,
-        &test_authority("did:web:alice.example"),
+        &fixture::authority("did:web:alice.example"),
         "snapshot-secret",
     )
     .unwrap();
@@ -1253,9 +1243,9 @@ fn malformed_welcome_is_counted_not_swallowed() {
         &mut state,
         &store,
         "ak:realm:Ae4L5dU13P9VksvkJAOF29Z7lsbKvgUqVqVh7q2H-E2I",
-        &test_authority("did:web:alice.example"),
+        &fixture::authority("did:web:alice.example"),
         "did:web:alice.example",
-        &test_device("ak:device:01904100-0000-7000-8000-000000000001"),
+        &fixture::device_id("ak:device:01904100-0000-7000-8000-000000000001"),
         &messages,
     )
     .unwrap();
@@ -1269,8 +1259,8 @@ fn malformed_welcome_is_counted_not_swallowed() {
 async fn welcome_consume_redelivery_reuses_exact_signed_body_and_rejects_drift() {
     let store = MemorySecureKeyStore::new();
     let actor_did = "did:web:alice.example";
-    let authority = test_authority(actor_did);
-    let device = test_device("ak:device:01904100-0000-7000-8000-000000000001");
+    let authority = fixture::authority(actor_did);
+    let device = fixture::device_id("ak:device:01904100-0000-7000-8000-000000000001");
     let identity = arkret_sdk::ArkretMlsIdentity::new_test_human_device(
         authority.principal_id.clone(),
         device.clone(),
@@ -1363,13 +1353,13 @@ fn retired_direct_welcome_envelope_does_not_persist_snapshot_or_consume_keypacka
     let bob_private_state = bob.export_private_state().unwrap();
     store_mls_key_package_identity_state(
         &store,
-        &test_authority(bob_actor),
-        &test_device(bob_device),
+        &fixture::authority(bob_actor),
+        &fixture::device_id(bob_device),
         &bob_key_package.keypackage_id,
         &bob_private_state,
     )
     .unwrap();
-    store_account_mls_secret(&store, &test_authority(bob_actor), "snapshot-secret").unwrap();
+    store_account_mls_secret(&store, &fixture::authority(bob_actor), "snapshot-secret").unwrap();
     let mut alice_group = alice.create_group(realm.as_bytes()).unwrap();
     let add = alice_group.add_member(&bob_key_package).unwrap();
     let messages = json!({
@@ -1388,9 +1378,9 @@ fn retired_direct_welcome_envelope_does_not_persist_snapshot_or_consume_keypacka
         &mut state,
         &store,
         realm,
-        &test_authority(bob_actor),
+        &fixture::authority(bob_actor),
         bob_actor,
-        &test_device(bob_device),
+        &fixture::device_id(bob_device),
         &messages,
     )
     .unwrap();
@@ -1416,8 +1406,8 @@ fn retired_direct_welcome_envelope_does_not_persist_snapshot_or_consume_keypacka
     assert!(
         load_mls_key_package_identity_state(
             &store,
-            &test_authority(bob_actor),
-            &test_device(bob_device),
+            &fixture::authority(bob_actor),
+            &fixture::device_id(bob_device),
             &bob_key_package.keypackage_id,
         )
         .unwrap()
@@ -1431,7 +1421,7 @@ fn durable_welcome_payload_without_claim_envelope_fails_closed() {
     let store = MemorySecureKeyStore::new();
     store_account_mls_secret(
         &store,
-        &test_authority("did:web:alice.example"),
+        &fixture::authority("did:web:alice.example"),
         "snapshot-secret",
     )
     .unwrap();
@@ -1463,9 +1453,9 @@ fn durable_welcome_payload_without_claim_envelope_fails_closed() {
         &mut state,
         &store,
         "ak:realm:Akb0VAmKqt26zC2oOrzxcUkvENt4KqxzU7fgzKks_4jk",
-        &test_authority("did:web:alice.example"),
+        &fixture::authority("did:web:alice.example"),
         "did:web:alice.example",
-        &test_device("ak:device:01904100-0000-7000-8000-000000000001"),
+        &fixture::device_id("ak:device:01904100-0000-7000-8000-000000000001"),
         &messages,
     )
     .unwrap();
@@ -1537,9 +1527,12 @@ fn welcome_claim_receipt_context_must_match_exact_requester_realm_group_and_targ
 
     for (name, path, replacement) in [
         (
-            "requester_id",
-            vec!["claim_receipt", "request", "requester_id"],
-            json!("ak:did_core:webvh:z6mkfixturebobexample"),
+            "requester_account_id",
+            vec!["claim_receipt", "request", "requester_account_id"],
+            json!({
+                "principal_id": "ak:did_core:webvh:z6mkfixturebobexample",
+                "station_id": "ak:did_core:webvh:z6mkfixturepsexample"
+            }),
         ),
         (
             "realm",
@@ -1552,9 +1545,12 @@ fn welcome_claim_receipt_context_must_match_exact_requester_realm_group_and_targ
             json!("different-fixture-group"),
         ),
         (
-            "target",
-            vec!["claim_receipt", "request", "target_principal_id"],
-            json!("ak:did_core:webvh:z6mkfixture"),
+            "target_account_id",
+            vec!["claim_receipt", "request", "target_account_id"],
+            json!({
+                "principal_id": "ak:did_core:webvh:z6mkfixture",
+                "station_id": "ak:did_core:webvh:z6mkfixturepsexample"
+            }),
         ),
     ] {
         let mut mismatched = valid.clone();

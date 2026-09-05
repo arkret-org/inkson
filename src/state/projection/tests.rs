@@ -3,7 +3,7 @@ use super::sync::projection_events_from_sync_realms;
 const GOLDEN_REALM: &str = "ak:realm:AeEFmfOZxsx5kLi2kpOJu8m7TFXZ_G8E4019rUp4wmT6";
 
 fn golden_realm_id() -> arkret_sdk::RealmId {
-    arkret_sdk::RealmId::new(GOLDEN_REALM).unwrap()
+    crate::test_support::realm_id(GOLDEN_REALM)
 }
 
 fn golden_actor() -> arkret_sdk::DidCoreId {

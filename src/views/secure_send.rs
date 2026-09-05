@@ -738,7 +738,7 @@ pub(crate) async fn submit_secure_send(
         Err(err)
             if !sidecar_scope
                 && crate::mls::coverage_liveness::note_e2ee_submit_refusal(
-                    &mut state_store,
+                    &crate::app::runtime_adapter::state_store_handle(state_store),
                     realm_id,
                     circle_id.as_deref(),
                     &err,

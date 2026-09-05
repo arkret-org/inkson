@@ -1,4 +1,5 @@
 use super::*;
+use crate::test_support as fixture;
 
 fn permission_checks(
     invite: anyhow::Result<bool>,
@@ -68,14 +69,13 @@ fn member_permission_aggregation_marks_all_errors_fail_closed() {
     assert!(load.all_checks_failed);
 }
 
+/// Roster key for a test principal. Agent and human actors share the same
+/// `ActorId::Account` shape — an agent is an account at the same Station, not
+/// a different actor kind — so there is one branch, not two identical ones.
 fn actor_key(id: &str) -> String {
     let principal = arkret_sdk::DidCoreId::new(id).unwrap();
     let station = arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap();
-    if id.contains("agent") {
-        arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(principal, station)).to_string()
-    } else {
-        arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(principal, station)).to_string()
-    }
+    arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(principal, station)).to_string()
 }
 
 fn member(id: &str) -> MemberProfile {
@@ -337,26 +337,42 @@ fn groups_agent_members_under_reported_controller() {
     );
 }
 
+const PANEL_ISSUER: &str = "ak:did_core:web:acme.example";
+
+fn acme_policy_events() -> serde_json::Value {
+    serde_json::json!({"events": [{
+        "kind": "ak.realm.policy_bundle",
+        "payload": {
+            "policy_revision": 1,
+            "handle_issuer_policies": [{
+                "issuer_id": PANEL_ISSUER,
+                "authorized_handle_domains": ["acme.example"],
+                "issuer_class": "domain_authority"
+            }]
+        }
+    }]})
+}
+
 #[test]
 fn projected_member_profiles_use_only_verified_canonical_identity_fields() {
     let realm_id = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
     let mut store = temp_store("projected-profiles");
+    let subject = fixture::authority("ak:did_core:web:acme.example:users:alice");
     store.save_realm_tree_projection(
         realm_id.to_owned(),
         serde_json::json!({
             "member_roster_entries": [{
                 "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:alice.example","station_id":"ak:did_core:web:principal.example"}},
-                "display_name": "Alice",
-                "subject_id": "ak:did_core:web:acme.example:users:alice",
-                "handle_claims": [crate::views::member_display::test_inline_handle_claim(
-                    "ak:did_core:web:acme.example:users:alice",
+                "membership": "join",
+                "subject_account_id": subject,
+                "handle_claims": [crate::views::member_display::test_handle_claim(
+                    &subject,
                     "alice:acme.example",
-                    "verified"
-                )],
-                "display_profile": {
-                    "avatar_blob_ref": "ak:blob:sha256:01015dc8af66d01f557ea63f13538f1964848840a350c5311d1efc8ad138bb91"
-                }
+                    PANEL_ISSUER,
+                    arkret_models_identity::HandleClaimStatus::Verified,
+                )]
             }],
+            "state": acme_policy_events(),
             "admins": ["did:web:alice.example"]
         }),
     );
@@ -368,8 +384,68 @@ fn projected_member_profiles_use_only_verified_canonical_identity_fields() {
         .expect("alice profile exists");
     assert_eq!(alice.display_name, None);
     assert_eq!(alice.handles, vec!["alice:acme.example"]);
+    assert_eq!(alice.primary_label(), "alice:acme.example");
     assert_eq!(alice.avatar_blob_ref, None);
     assert!(!alice.is_admin);
+}
+
+#[test]
+fn projected_member_profiles_reject_roster_rows_carrying_display_fields() {
+    // The roster entry is a closed wire shape. A producer that decorates a
+    // row with `display_name` / `display_profile` does not get those fields
+    // ignored — the whole entry is rejected, so no unsigned display string
+    // can reach a label.
+    let realm_id = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
+    let mut store = temp_store("projected-profiles-display-fields");
+    store.save_realm_tree_projection(
+        realm_id.to_owned(),
+        serde_json::json!({
+            "member_roster_entries": [{
+                "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:alice.example","station_id":"ak:did_core:web:principal.example"}},
+                "membership": "join",
+                "display_name": "Alice",
+                "display_profile": {
+                    "avatar_blob_ref": "ak:blob:sha256:01015dc8af66d01f557ea63f13538f1964848840a350c5311d1efc8ad138bb91"
+                }
+            }]
+        }),
+    );
+
+    assert!(projected_member_profiles_for_realm(&store, realm_id).is_empty());
+}
+
+#[test]
+fn projected_member_profiles_drop_handle_from_untrusted_issuer() {
+    // §3.2.1 Step 0 issuer trust filter is mandatory: without a Realm
+    // `handle_issuer_policies` entry authorizing the issuer for the handle
+    // domain the claim is not a candidate, and the row degrades instead of
+    // showing an unvetted handle.
+    let realm_id = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
+    let mut store = temp_store("projected-profiles-untrusted-issuer");
+    let subject = fixture::authority("ak:did_core:web:acme.example:users:alice");
+    store.save_realm_tree_projection(
+        realm_id.to_owned(),
+        serde_json::json!({
+            "member_roster_entries": [{
+                "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:alice.example","station_id":"ak:did_core:web:principal.example"}},
+                "membership": "join",
+                "subject_account_id": subject,
+                "handle_claims": [crate::views::member_display::test_handle_claim(
+                    &subject,
+                    "alice:acme.example",
+                    PANEL_ISSUER,
+                    arkret_models_identity::HandleClaimStatus::Verified,
+                )]
+            }]
+        }),
+    );
+
+    let profiles = projected_member_profiles_for_realm(&store, realm_id);
+    let alice = profiles
+        .iter()
+        .find(|profile| profile.actor_id == actor_key("ak:did_core:web:alice.example"))
+        .expect("alice profile exists");
+    assert!(alice.handles.is_empty());
 }
 
 #[test]

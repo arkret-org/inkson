@@ -56,10 +56,8 @@ const TO_DEVICE_RECEIPTS_MAX: usize = 4096;
 // the `crate::state::*` public paths and the `impl LocalStateStore` /
 // tests `use super::*` resolution unchanged.
 mod types;
+pub use garth::{BottomCellInfo, LocalSealView};
 pub use types::*;
-
-mod seal_view;
-pub use seal_view::*;
 
 mod mls_sidecar;
 pub(crate) use mls_sidecar::{

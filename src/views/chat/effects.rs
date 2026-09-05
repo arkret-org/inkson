@@ -602,7 +602,7 @@ pub(super) fn ChatEffects(
                     && let Err(error) =
                         crate::mls::creator_bootstrap::ensure_realm_governance_checkpoint(
                             &api,
-                            state_store,
+                            crate::app::runtime_adapter::state_store_handle(state_store),
                             &selected_realm_for_load,
                         )
                         .await
@@ -650,7 +650,7 @@ pub(super) fn ChatEffects(
                         &api,
                         &sync,
                         crate::app::runtime_adapter::value_cell(did_cache),
-                        state_store,
+                        crate::app::runtime_adapter::state_store_handle(state_store),
                         |realm_id| {
                             state_store
                                 .read()
@@ -740,7 +740,7 @@ pub(super) fn ChatEffects(
                                 &api,
                                 &backfill_events,
                                 crate::app::runtime_adapter::value_cell(did_cache),
-                                state_store,
+                                crate::app::runtime_adapter::state_store_handle(state_store),
                             )
                             .await;
                             }

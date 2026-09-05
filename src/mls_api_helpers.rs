@@ -456,8 +456,7 @@ mod tests {
     use super::*;
 
     fn pairwise_realm() -> arkret_sdk::RealmId {
-        arkret_sdk::RealmId::new("ak:realm:Aa8_CTduEn4HY_7QtwQ1Ct3QH2pg-9mfHGxJfGOYYHxx".to_owned())
-            .unwrap()
+        crate::test_support::realm_id("ak:realm:Aa8_CTduEn4HY_7QtwQ1Ct3QH2pg-9mfHGxJfGOYYHxx")
     }
 
     fn claim_for(

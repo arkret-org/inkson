@@ -7,6 +7,24 @@ use dioxus::prelude::*;
 pub use yoface::utils::text::short_protocol_id;
 
 pub(crate) use super::member_display::actor_display_label;
+
+/// Render an account's handles as one `@a, @b` label, or `fallback` when the
+/// account has none.
+///
+/// Shared by the sidebar account row and the settings account section. They
+/// used to hold byte-identical private copies, which is how the two surfaces
+/// could have disagreed about the empty case.
+pub(crate) fn account_handles_display(handles: &[String], fallback: &str) -> String {
+    if handles.is_empty() {
+        fallback.to_owned()
+    } else {
+        handles
+            .iter()
+            .map(|handle| format!("@{handle}"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+}
 use crate::api_error::normalize_wait_for_sync_token;
 use crate::config::{ClientConfig, LocalConfigStore};
 use crate::transport::auth::with_endpoint_clients;
@@ -137,9 +155,9 @@ pub fn parse_mention_nodes(input: &str) -> Vec<MentionNode> {
 }
 
 /// §3.8.2 — resolved render of an actor mention plus the visual
-/// degradation tier the UI MUST surface. Wraps the SDK
-/// [`arkret_sdk::MentionRender`] so the chat view can drive a distinct
-/// CSS class / badge per fallback level.
+/// degradation tier the UI MUST surface. Thin mention-flavoured wrapper
+/// over [`crate::views::member_display::resolve_subject_display`], which is
+/// the one place in this client that runs the render ladder.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RenderedMention {
     /// The label to display (`@{localpart}:{domain}` for verified /
@@ -156,26 +174,22 @@ pub struct RenderedMention {
 
 /// §3.8.2 mention render path (YG-MENT-2).
 ///
-/// Resolves the *current* display value for an actor mention by running
-/// the shared SDK [`arkret_sdk::render_mention`] helper off the
+/// Resolves the *current* display value for an actor mention from the
 /// authoritative `subject_id` — it MUST NOT use the audit-only
 /// `handle_at_time` / `display_name_at_time` as the current value (those
-/// are passed only as the degraded fallback inputs the SDK ladder steps
-/// down to).
+/// are passed only as the degraded fallback inputs the ladder steps down
+/// to).
 ///
 /// Step 1: Realm-scoped projection runs §3.2.1 primary handle selection
 /// over `claim_set_snapshot` (the roster handle-claim evidence) +
-/// `accepted_issuer_ids` policy. When a verified primary handle wins it is
-/// shown as `@{localpart}:{domain}`.
+/// `handle_issuer_policy`. When a verified primary handle wins it is shown
+/// as `@{localpart}:{domain}`.
 ///
 /// Step 2 (live `ak.find.directory.read.list_handles_for_subject.v1` resolution) is
 /// wired through [`crate::views::helpers::list_handles_for_subject_ui`] /
 /// the "Why am I seeing this handle?" panel and feeds the same
 /// `claim_set_snapshot` — `TODO`: plumb the live result back into
 /// this synchronous render call once the directory cache lands.
-///
-/// Fallback ladder (each visually degraded): local cached verified handle
-/// → `display_name_at_time` → truncated DID.
 pub fn render_actor_mention(
     subject_id: &str,
     claim_set_snapshot: &[arkret_models_identity::HandleClaim],
@@ -184,69 +198,43 @@ pub fn render_actor_mention(
     cached_handle: Option<&arkret_sdk::Handle>,
     display_name_at_time: Option<&str>,
 ) -> RenderedMention {
-    use arkret_sdk::identity::{MentionRender, PrimaryHandleSelectInput, render_mention};
+    use crate::views::member_display::{MemberDisplayTier, resolve_subject_display};
 
-    // A malformed subject_id can't be resolved; fall straight to the
-    // unresolved tier with a truncated form of the raw string.
-    let Ok(subject) = arkret_sdk::DidCoreId::new(subject_id.trim().to_owned()) else {
-        return RenderedMention {
-            label: short_protocol_id(subject_id),
-            tier_class: "mention-unresolved",
-            degraded: true,
-        };
-    };
-    let account_id = claim_set_snapshot
-        .iter()
-        .find(|claim| claim.claim.subject_account_id.principal_id == subject)
-        .map(|claim| claim.claim.subject_account_id.clone())
-        .or_else(|| {
-            crate::operation::authoring_station_id()
-                .ok()
-                .map(|station_id| arkret_sdk::AccountId::new(subject, station_id))
+    // A malformed subject_id can't be resolved, and neither can one this
+    // client cannot pair with a Station: §3.2.1 Step 0 keys on the exact
+    // account, so there is no candidate set to filter.
+    let account_id = arkret_sdk::DidCoreId::new(subject_id.trim().to_owned())
+        .ok()
+        .and_then(|subject| {
+            claim_set_snapshot
+                .iter()
+                .find(|claim| claim.claim.subject_account_id.principal_id == subject)
+                .map(|claim| claim.claim.subject_account_id.clone())
+                .or_else(|| {
+                    crate::operation::authoring_station_id()
+                        .ok()
+                        .map(|station_id| arkret_sdk::AccountId::new(subject, station_id))
+                })
         });
-    let Some(account_id) = account_id else {
-        return RenderedMention {
-            label: short_protocol_id(subject_id),
-            tier_class: "mention-unresolved",
-            degraded: true,
-        };
-    };
-
-    let selection = PrimaryHandleSelectInput {
-        account_id: &account_id,
-        context,
+    let rendered = resolve_subject_display(
+        account_id.as_ref(),
         claim_set_snapshot,
-        handle_issuer_policies: handle_issuer_policy,
-        // TODO: resolve `metadata.primary_handle` at as_of via a
-        // DID Document snapshot resolver (NoHolderPreferenceResolver
-        // until the resolver is wired).
-        holder_primary_handle_at_as_of: None,
-        resolution_as_of: chrono::Utc::now(),
+        handle_issuer_policy,
+        context,
+        cached_handle,
+        display_name_at_time,
+        &short_protocol_id(subject_id),
+    );
+    let (label, tier_class) = match rendered.tier {
+        MemberDisplayTier::Verified => (format!("@{}", rendered.label), "mention-verified"),
+        MemberDisplayTier::Cached => (format!("@{}", rendered.label), "mention-cached"),
+        MemberDisplayTier::NameOnly => (rendered.label, "mention-name-only"),
+        MemberDisplayTier::Unresolved => (rendered.label, "mention-unresolved"),
     };
-
-    match render_mention(&selection, cached_handle, display_name_at_time) {
-        MentionRender::Verified { handle } => RenderedMention {
-            label: format!("@{}", handle.canonical()),
-            tier_class: "mention-verified",
-            degraded: false,
-        },
-        MentionRender::Cached { handle } => RenderedMention {
-            label: format!("@{}", handle.canonical()),
-            tier_class: "mention-cached",
-            degraded: true,
-        },
-        MentionRender::NameOnly { name } => RenderedMention {
-            label: name,
-            tier_class: "mention-name-only",
-            degraded: true,
-        },
-        MentionRender::Unresolved {
-            truncated_account_id,
-        } => RenderedMention {
-            label: truncated_account_id,
-            tier_class: "mention-unresolved",
-            degraded: true,
-        },
+    RenderedMention {
+        label,
+        tier_class,
+        degraded: !matches!(rendered.tier, MemberDisplayTier::Verified),
     }
 }
 
@@ -549,7 +537,11 @@ mod tests {
                 arkret_sdk::DidCoreId::new("ak:did_core:web:station.acme.example").unwrap(),
             ),
             crate::mls_api_helpers::principal_core_id("did:web:issuer.acme.example").unwrap(),
-            now - chrono::Duration::hours(1),
+            // `verified_handle_claim` freezes `fresh_until` at issued_at + 5
+            // minutes, and §3.2.1 rejects any candidate whose freshness window
+            // has closed. An issued_at outside that window would test the
+            // stale ladder, not the verified tier this case is about.
+            now,
             now + chrono::Duration::days(30),
         );
         let accepted = vec![arkret_sdk::identity::HandleIssuerPolicyEntry {

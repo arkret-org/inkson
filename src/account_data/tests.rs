@@ -3,14 +3,11 @@ use std::collections::BTreeMap;
 use serde_json::json;
 
 use super::*;
-
-fn test_realm_id(value: &str) -> arkret_sdk::RealmId {
-    arkret_sdk::RealmId::new(value.to_owned()).unwrap()
-}
+use crate::test_support as fixture;
 
 fn test_realm_remark(value: &str, local_name: &str) -> RealmRemark {
     let mut remark = RealmRemark::new(
-        test_realm_id(value),
+        fixture::realm_id(value),
         "2026-06-01T00:00:00.000Z".parse().unwrap(),
     );
     remark.local_name = local_name.to_owned();
@@ -213,7 +210,7 @@ fn realm_remark_pinned_builder_preserves_private_fields() {
         version: 1,
         subject: RealmRemarkSubject {
             kind: "realm".to_owned(),
-            id: test_realm_id(realm_id),
+            id: fixture::realm_id(realm_id),
         },
         local_name: "Acme Eng".to_owned(),
         note: "Private note".to_owned(),
@@ -228,7 +225,7 @@ fn realm_remark_pinned_builder_preserves_private_fields() {
     };
 
     let next = RealmRemark::with_pinned_preserving_fields(
-        test_realm_id(realm_id),
+        fixture::realm_id(realm_id),
         Some(&existing),
         true,
         "2026-06-06T00:00:00.000Z".parse().unwrap(),
@@ -254,7 +251,7 @@ fn realm_remark_pinned_builder_preserves_private_fields() {
 fn realm_remark_unpin_builder_can_tombstone_empty_remark() {
     let realm_id = "ak:realm:AZQnaSleDidYaYIvfwYy3au5gnd_DSinxyUHEl7ewtxk";
     let existing = RealmRemark::with_pinned_preserving_fields(
-        test_realm_id(realm_id),
+        fixture::realm_id(realm_id),
         None,
         true,
         "2026-06-06T00:00:00.000Z".parse().unwrap(),
@@ -262,7 +259,7 @@ fn realm_remark_unpin_builder_can_tombstone_empty_remark() {
     assert!(!existing.is_empty());
 
     let next = RealmRemark::with_pinned_preserving_fields(
-        test_realm_id(realm_id),
+        fixture::realm_id(realm_id),
         Some(&existing),
         false,
         "2026-06-06T00:01:00.000Z".parse().unwrap(),

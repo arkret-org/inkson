@@ -1,0 +1,321 @@
+/* Buttons and other pressable controls: `.btn` and its variants, the bare
+ * `.primary`/`.secondary` pair, `.icon-button`, `.tabs`, `.segmented-control`,
+ * `.steps`, `.help-tip`, `.ui-icon`.
+ */
+.primary, .secondary { border: 0; border-radius: 6px; padding: 10px 12px; cursor: pointer; display: inline-block; text-decoration: none; text-align: center; }
+.primary { background: var(--accent-strong); color: var(--text-on-accent); }
+.secondary { background: var(--surface-3); color: var(--text); }
+a.primary, a.secondary { line-height: 1.5; }
+.btn.disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.tabs { display: flex; gap: 4px; margin-bottom: 8px; }
+.tab { border: 1px solid var(--border); border-radius: 6px 6px 0 0; padding: 8px 16px; cursor: pointer; background: var(--surface-3); }
+.tab.active { background: var(--surface-solid); border-bottom-color: var(--surface-solid); font-weight: 600; }
+.primary,
+.secondary {
+  border-radius: 10px;
+  min-height: 38px;
+  font-weight: 700;
+  box-shadow: var(--ak-shadow-sm);
+}
+.primary {
+  background: var(--ak-brand-strong);
+  color: var(--text-on-accent);
+}
+.secondary {
+  border: 1px solid var(--ak-line-strong);
+  background: var(--ak-surface);
+  color: var(--ak-ink);
+}
+.tabs {
+  gap: 6px;
+}
+.tab {
+  border-radius: 999px;
+  background: var(--ak-surface);
+  color: var(--ak-muted);
+}
+.tab.active {
+  border-color: var(--ak-brand);
+  background: var(--ak-brand);
+  color: var(--text-on-accent);
+}
+/* ----- 7.1 Buttons ----- */
+
+.btn {
+  appearance: none;
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 13px;
+  padding: 6px 12px;
+  border-radius: 6px;
+  display: inline-flex; align-items: center; gap: 6px;
+  white-space: nowrap;
+  transition: 80ms ease;
+}
+.btn:hover { background: var(--surface-2); }
+.btn:active { transform: translateY(1px); }
+.btn:focus-visible { outline: none; box-shadow: var(--ring); }
+.btn[disabled] { opacity: 0.55; cursor: not-allowed; }
+/* Many buttons use bare `class="primary"`/`class="secondary"` (no `.btn`),
+   so `.btn[disabled]` never matched them and a disabled button looked fully
+   clickable. Give every disabled button — and the bare primary/secondary
+   variants — an unmistakable disabled treatment. `!important` overrides the
+   `.primary`/`.secondary` background + hover so it can't read as enabled. */
+button[disabled],
+button:disabled,
+.primary[disabled],
+.secondary[disabled] {
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--surface-3) 82%, var(--surface-inv) 18%),
+    color-mix(in srgb, var(--surface-2) 86%, var(--surface-inv) 14%)
+  ) !important;
+  color: color-mix(in srgb, var(--text-2) 74%, var(--text-3) 26%) !important;
+  opacity: 1 !important;
+  cursor: not-allowed !important;
+  filter: none;
+  box-shadow:
+    inset 0 0 0 1px
+      color-mix(in srgb, var(--border-strong) 78%, var(--surface-inv) 22%),
+    inset 0 1px 0 color-mix(in srgb, var(--surface-inv) 18%, transparent) !important;
+}
+button[disabled]:hover,
+button:disabled:hover,
+.primary[disabled]:hover,
+.secondary[disabled]:hover {
+  /* Neutralise hover so a disabled button never brightens on mouseover. */
+  background: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--surface-3) 82%, var(--surface-inv) 18%),
+    color-mix(in srgb, var(--surface-2) 86%, var(--surface-inv) 14%)
+  ) !important;
+}
+button[data-style="link"][disabled],
+button[data-style="link"]:disabled,
+button[data-style="link"][disabled]:hover,
+button[data-style="link"]:disabled:hover {
+  background: transparent !important;
+  color: var(--text-3) !important;
+  box-shadow: none !important;
+}
+/* Inline form-validation hint that must NOT read as muted secondary text —
+   used for "passphrase too weak" / mismatch. */
+.form-hint-warn {
+  color: var(--warning-ink);
+  background: var(--warning-soft);
+  border: 1px solid var(--warning);
+  border-radius: var(--radius);
+  padding: 6px 10px;
+  font-size: 13px;
+  font-weight: 600;
+  /* Server error envelopes carry unbroken DID / device-id strings; without an
+     explicit break rule they force horizontal overflow and clip the dialog's
+     title and action buttons. */
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+.btn.primary {
+  background: var(--accent); color: var(--text-on-accent);
+  border-color: transparent;
+}
+.btn.primary:hover { background: var(--accent-strong); }
+.btn.danger {
+  color: var(--danger); border-color: var(--danger);
+  background: var(--surface);
+}
+.btn.danger:hover { background: var(--danger-soft); }
+.btn.success {
+  color: var(--success); border-color: var(--success);
+}
+.btn.success:hover { background: var(--success-soft); }
+.btn.ghost {
+  background: transparent; border-color: transparent;
+  color: var(--text-2);
+}
+.btn.ghost:hover { background: var(--hover); color: var(--text); }
+.btn.sm { padding: 3px 8px; font-size: 12px; }
+.btn.xs { padding: 1px 6px; font-size: 11px; border-radius: 4px; }
+.btn.icon {
+  padding: 0;
+  width: 28px; height: 28px;
+  justify-content: center;
+}
+.btn.icon.sm { width: 22px; height: 22px; }
+.btn.full { width: 100%; justify-content: center; }
+.btn.lg { padding: 9px 18px; font-size: 14px; }
+
+/* Step indicator */
+.steps {
+  display: flex; align-items: center;
+  margin-bottom: 22px;
+}
+.steps .step {
+  display: flex; align-items: center;
+  font-size: 12px;
+  color: var(--text-3);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.steps .step.now  { color: var(--text); font-weight: 600; }
+.steps .step.done { color: var(--text-2); }
+.steps .step .line {
+  width: 24px; height: 1px;
+  background: var(--border-strong);
+  margin: 0 10px;
+}
+.steps .step.done .line { background: var(--success); }
+
+.icon-button {
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  justify-content: center;
+}
+
+.icon-button.active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--text);
+}
+
+.btn,
+.primary,
+.secondary {
+  min-height: 32px;
+}
+
+.btn.sm {
+  min-height: 32px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+.btn.icon,
+.btn.icon.sm {
+  width: 32px;
+  height: 32px;
+  min-width: 32px;
+  min-height: 32px;
+  padding: 0;
+}
+
+.primary,
+.secondary {
+  appearance: none;
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 6px 12px;
+  color: var(--text);
+  background: var(--surface);
+  font-size: 13px;
+  line-height: 1.5;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.primary {
+  background: linear-gradient(135deg, var(--accent) 0%, var(--accent-2) 100%);
+  border-color: transparent;
+  color: var(--text-on-accent);
+  box-shadow: 0 14px 28px color-mix(in srgb, var(--accent) 24%, transparent);
+}
+
+.secondary {
+  background: var(--surface);
+  color: var(--text);
+}
+
+.primary:hover {
+  background: linear-gradient(135deg, var(--accent-strong) 0%, color-mix(in srgb, var(--accent-2) 92%, white) 100%);
+}
+.secondary:hover { background: var(--surface-2); }
+
+.ui-icon {
+  display: inline-block;
+  flex: 0 0 auto;
+  width: 16px;
+  height: 16px;
+  vertical-align: -2px;
+}
+
+.icon-actions,
+.toolbar-row{
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.toolbar-row {
+  justify-content: space-between;
+  flex-wrap: wrap;
+}
+
+.help-tip {
+  display: inline-grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border: 1px solid var(--border-strong);
+  border-radius: 50%;
+  color: var(--text-3);
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1;
+  cursor: help;
+  user-select: none;
+}
+
+.help-tip:hover,
+.help-tip:focus-visible {
+  color: var(--text);
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  outline: none;
+}
+
+.segmented-control {
+  display: inline-flex;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-2);
+}
+
+.segment {
+  appearance: none;
+  border: 0;
+  border-right: 1px solid var(--border);
+  padding: 5px 9px;
+  min-width: 48px;
+  background: transparent;
+  color: var(--text-2);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+}
+
+.segment:last-child {
+  border-right: 0;
+}
+
+.segment.active {
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+.tab.active {
+  border-color: color-mix(in srgb, var(--accent) 70%, var(--accent-2));
+  background: linear-gradient(135deg, var(--accent) 0%, var(--accent-2) 100%);
+  color: var(--text-on-accent);
+}

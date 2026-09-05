@@ -168,75 +168,86 @@ pub fn MlsUnlockPrompt(
                     );
                     crate::runtime_helpers::sleep_for(std::time::Duration::from_millis(16)).await;
                     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-                    match state_store.try_write() {
-                        Ok(mut store) => {
-                            tracing::warn!(
-                                target: "mls_unlock",
-                                history_count,
-                                "MLS unlock: starting local restore"
-                            );
-                            let mut restore_result = match crate::hpke_backup::derive_recovery_keypair_from_recovery_key(&pass)
-                                .map_err(|err| anyhow::anyhow!("derive recovery key: {err}"))
-                            {
-                                Ok((recovery_private_key, _)) => match active_policy.as_ref() {
-                                    Some(policy) => crate::mls::account_recovery::restore_mls_history_with_recovery_key_from_payload(
-                                        &payload,
-                                        &mut store,
-                                        secure_store.as_ref(),
-                                        &authority,
-                                        &actor,
-                                        &device,
-                                        &recovery_private_key,
-                                        (policy.policy_id.as_str(), policy.version),
-                                    )
-                                    .await
-                                    .map_err(ApiCallError::Failed),
-                                    None => Err(ApiCallError::Failed(anyhow::anyhow!(
-                                        "active recovery policy is required"
-                                    ))),
-                                },
-                                Err(error) => Err(ApiCallError::Failed(error)),
-                            };
-                            if restore_result.is_ok() {
+                    // The restore now runs through the host-neutral store
+                    // handle, so the store guard is taken and released around
+                    // each durable step instead of being held across the whole
+                    // async restore. Probe it once first: a dropped signal
+                    // still means the prompt is gone.
+                    if state_store.try_write().is_err() {
+                        Err(ApiCallError::Failed(anyhow::anyhow!(
+                            "recovery prompt closed before restore completed"
+                        )))
+                    } else {
+                        let store_handle =
+                            crate::app::runtime_adapter::state_store_handle(state_store);
+                        tracing::warn!(
+                            target: "mls_unlock",
+                            history_count,
+                            "MLS unlock: starting local restore"
+                        );
+                        let mut restore_result = match crate::hpke_backup::derive_recovery_keypair_from_recovery_key(&pass)
+                            .map_err(|err| anyhow::anyhow!("derive recovery key: {err}"))
+                        {
+                            Ok((recovery_private_key, _)) => match active_policy.as_ref() {
+                                Some(policy) => crate::mls::account_recovery::restore_mls_history_with_recovery_key_from_payload(
+                                    &payload,
+                                    &store_handle,
+                                    secure_store.as_ref(),
+                                    &authority,
+                                    &actor,
+                                    &device,
+                                    &recovery_private_key,
+                                    (policy.policy_id.as_str(), policy.version),
+                                )
+                                .await
+                                .map_err(ApiCallError::Failed),
+                                None => Err(ApiCallError::Failed(anyhow::anyhow!(
+                                    "active recovery policy is required"
+                                ))),
+                            },
+                            Err(error) => Err(ApiCallError::Failed(error)),
+                        };
+                        if restore_result.is_ok() {
+                            store_handle.write(|store| {
                                 crate::sync_engine::apply_account_data_entries(
-                                    &mut store,
+                                    store,
                                     &account_data,
                                     &authority,
                                 );
-                                if crate::views::recovery::save_generated_recovery_key_metadata_in_store(
-                                    &mut store,
-                                    &pass,
-                                )
+                            });
+                            if store_handle
+                                .write(|store| {
+                                    crate::views::recovery::save_generated_recovery_key_metadata_in_store(
+                                        store, &pass,
+                                    )
+                                })
                                 .is_none()
-                                {
-                                    restore_result = Err(ApiCallError::Failed(anyhow::anyhow!(
-                                        "recovery key public metadata could not be persisted"
-                                    )));
-                                } else if let Some(backup_id) = crate::mls::account_recovery::select_preferred_mls_account_secret_backup(
-                                    &payload,
-                                )
-                                .and_then(|backup| {
-                                    backup
-                                        .get("backup_id")
-                                        .and_then(serde_json::Value::as_str)
-                                        .map(str::to_owned)
-                                }) {
+                            {
+                                restore_result = Err(ApiCallError::Failed(anyhow::anyhow!(
+                                    "recovery key public metadata could not be persisted"
+                                )));
+                            } else if let Some(backup_id) = crate::mls::account_recovery::select_preferred_mls_account_secret_backup(
+                                &payload,
+                            )
+                            .and_then(|backup| {
+                                backup
+                                    .get("backup_id")
+                                    .and_then(serde_json::Value::as_str)
+                                    .map(str::to_owned)
+                            }) {
+                                store_handle.write(|store| {
                                     crate::components::mark_mls_recovery_backup_configured(
-                                        &mut store,
-                                        &backup_id,
+                                        store, &backup_id,
                                     );
-                                }
+                                });
                             }
-                            tracing::warn!(
-                                target: "mls_unlock",
-                                success = restore_result.is_ok(),
-                                "MLS unlock: local restore finished"
-                            );
-                            restore_result
                         }
-                        Err(_) => Err(ApiCallError::Failed(anyhow::anyhow!(
-                            "recovery prompt closed before restore completed"
-                        ))),
+                        tracing::warn!(
+                            target: "mls_unlock",
+                            success = restore_result.is_ok(),
+                            "MLS unlock: local restore finished"
+                        );
+                        restore_result
                     }
                 }
                 Err(err) => Err(err),

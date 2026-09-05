@@ -1,4 +1,4 @@
-use dioxus::prelude::{ReadableExt, SyncSignal, WritableExt};
+use crate::runtime::input::StateStoreHandle;
 
 struct ExternalHistoryDecryptTask {
     realm_id: String,
@@ -8,12 +8,22 @@ struct ExternalHistoryDecryptTask {
 }
 
 fn external_history_decrypt_tasks(
-    state_store: SyncSignal<crate::state::LocalStateStore>,
+    state_store: &StateStoreHandle,
     authority: &arkret_sdk::AccountId,
     actor_id: &str,
     device_id: &arkret_sdk::DeviceId,
 ) -> Result<Vec<ExternalHistoryDecryptTask>, String> {
-    let store = state_store.read();
+    state_store.read(|store| {
+        external_history_decrypt_tasks_in_store(store, authority, actor_id, device_id)
+    })
+}
+
+fn external_history_decrypt_tasks_in_store(
+    store: &crate::state::LocalStateStore,
+    authority: &arkret_sdk::AccountId,
+    actor_id: &str,
+    device_id: &arkret_sdk::DeviceId,
+) -> Result<Vec<ExternalHistoryDecryptTask>, String> {
     let state = store.load();
     let mut tasks = Vec::new();
     for projection in state.realm_tree_projections.values() {
@@ -59,7 +69,7 @@ fn external_history_decrypt_tasks(
             let Some(sender_domain) = crate::views::chat::verified_chat_sender_domain_for_realm(
                 &realm_id,
                 event,
-                Some(&store),
+                Some(store),
                 Some((authority, actor_id, device_id)),
             ) else {
                 continue;
@@ -84,7 +94,7 @@ fn external_history_decrypt_tasks(
                 None
             };
             let Some(payload) = super::message::encrypted_payload_from_verified_event_context(
-                &store,
+                store,
                 &envelope,
                 &effective_scope,
                 event_kind,
@@ -127,7 +137,7 @@ fn external_history_decrypt_tasks(
 /// Event contexts used by the candidate consumer. This prevents the recovery
 /// driver from creating requests for unverified projection-shaped input.
 pub(crate) fn missing_external_history_ranges(
-    state_store: SyncSignal<crate::state::LocalStateStore>,
+    state_store: &StateStoreHandle,
     authority: &arkret_sdk::AccountId,
     actor_id: &str,
     device_id: &arkret_sdk::DeviceId,
@@ -139,7 +149,6 @@ pub(crate) fn missing_external_history_ranges(
     String,
 > {
     let tasks = external_history_decrypt_tasks(state_store, authority, actor_id, device_id)?;
-    let store = state_store.read();
     let mut missing = std::collections::BTreeMap::<
         String,
         (
@@ -148,10 +157,11 @@ pub(crate) fn missing_external_history_ranges(
         ),
     >::new();
     for task in tasks {
-        if store
-            .mls_decrypted_plaintext_for(&task.realm_id, task.payload.payload_digest.as_str())
-            .is_some()
-        {
+        if state_store.read(|store| {
+            store
+                .mls_decrypted_plaintext_for(&task.realm_id, task.payload.payload_digest.as_str())
+                .is_some()
+        }) {
             continue;
         }
         let scope = task.binding_key.effective_scope;
@@ -186,7 +196,7 @@ pub(crate) fn missing_external_history_ranges(
 /// Open accepted exporter-AEAD Events with bounded external candidates and
 /// durably bind every candidate outcome before publishing plaintext to reads.
 pub(crate) fn converge_external_history_candidate_decryptions(
-    mut state_store: SyncSignal<crate::state::LocalStateStore>,
+    state_store: &StateStoreHandle,
     authority: &arkret_sdk::AccountId,
     actor_id: &str,
     device_id: &arkret_sdk::DeviceId,
@@ -196,25 +206,27 @@ pub(crate) fn converge_external_history_candidate_decryptions(
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
     let mut opened = 0;
     for task in tasks {
-        let plaintext = {
-            let mut store = state_store.write();
-            super::decrypt_external_history_candidates_for_event(
-                &mut store,
-                secure_store.as_ref(),
-                &task.realm_id,
-                &task.payload,
-                &task.effective_scope,
-                task.binding_key,
-                now,
-            )
-            .map_err(|error| error.user_message())?
-        };
+        let plaintext = state_store
+            .write(|store| {
+                super::decrypt_external_history_candidates_for_event(
+                    store,
+                    secure_store.as_ref(),
+                    &task.realm_id,
+                    &task.payload,
+                    &task.effective_scope,
+                    task.binding_key,
+                    now,
+                )
+            })
+            .map_err(|error| error.user_message())?;
         if let Some(plaintext) = plaintext {
-            state_store.read().cache_external_history_plaintext(
-                &task.realm_id,
-                task.payload.payload_digest.as_str(),
-                &plaintext,
-            );
+            state_store.read(|store| {
+                store.cache_external_history_plaintext(
+                    &task.realm_id,
+                    task.payload.payload_digest.as_str(),
+                    &plaintext,
+                )
+            });
             opened += 1;
         }
     }

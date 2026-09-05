@@ -13,19 +13,21 @@ use super::{
 /// `ak.strand.create` on `payload.object`.
 /// Build a canonical `ak.strand.create` for a discussion Strand.
 ///
-/// Every caller-chosen facet is a typed member of the create object: `rank`,
-/// `category` and `has_synthesis` live in `metadata.fields` (the same place the
-/// kanban card builder puts them) and `summary` in `metadata.summary`. The Strand
-/// object schema is closed, so writing them onto the serialized payload instead
-/// would put non-spec members on the wire.
-#[allow(clippy::too_many_arguments)]
+/// Every caller-chosen facet is a typed member of the create object:
+/// `category` and `has_synthesis` live in `metadata.fields` and `summary` in
+/// `metadata.summary`. The Strand object schema is closed, so writing them
+/// onto the serialized payload instead would put non-spec members on the wire.
+///
+/// Ordering is deliberately absent. `strand.schema.json#/$defs/metadata_fields`
+/// forbids `rank` there, and Strand carries no top-level rank: placement is
+/// owned by the position component that `ak.strand.move` / `ak.strand.reorder`
+/// write, so a create-time copy would be a second, unread source of truth.
 pub fn discussion_strand_create(
     realm_id: &str,
     actor: &str,
     title: &str,
     category: &str,
     summary: Option<&str>,
-    rank: &str,
     scope_circle_id: Option<&str>,
     with_synthesis: bool,
 ) -> anyhow::Result<TypedOperationBuilder> {
@@ -40,7 +42,6 @@ pub fn discussion_strand_create(
         .with_metadata_title(title)
         .with_metadata_field("category", serde_json::json!(category))
         .with_metadata_field("has_synthesis", serde_json::json!(with_synthesis))
-        .with_metadata_field("rank", serde_json::json!(rank))
         .with_track("discussion", arkret_sdk::StrandTrack::discussion_primary());
     if with_synthesis {
         strand = strand.with_track(

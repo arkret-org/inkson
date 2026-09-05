@@ -136,6 +136,7 @@ fn durable_sent_item_repairs_optimistic_operation_by_local_id() {
             realm_id,
             QueuedRecord::SdkEvent(Box::new(queued)),
             Vec::new(),
+            chrono::Utc::now(),
         )
         .unwrap();
     // A CAS re-author can change the queue transaction id, but the holder-local
@@ -465,6 +466,7 @@ fn pending_chat_projection_ignores_sent_items_and_other_conversations() {
                 .unwrap(),
             )),
             Vec::new(),
+            chrono::Utc::now(),
         )
         .unwrap();
 
@@ -494,6 +496,7 @@ fn pending_chat_projection_ignores_sent_items_and_other_conversations() {
                 .unwrap(),
             )),
             Vec::new(),
+            chrono::Utc::now(),
         )
         .unwrap();
 
@@ -520,6 +523,7 @@ fn pending_chat_projection_ignores_sent_items_and_other_conversations() {
                 .unwrap(),
             )),
             Vec::new(),
+            chrono::Utc::now(),
         )
         .unwrap();
     // An acceptance now has to carry its ingress receipts: they are the
@@ -544,6 +548,7 @@ fn pending_chat_projection_ignores_sent_items_and_other_conversations() {
                 &lease,
                 issued_at + chrono::Duration::minutes(1),
             )],
+            issued_at,
         )
         .unwrap();
 
@@ -641,10 +646,7 @@ const AUTHORITY_REALM: &str = "ak:realm:ATOz4l-vKJUCGZDmS_knGS9TjZ64pkOzx-HNGAgY
 const AUTHORITY_CONTROLLER: &str = "did:web:alice.example";
 const AUTHORITY_CONTROLLER_CORE: &str = "ak:did_core:web:alice.example";
 fn authority_controller_actor() -> arkret_sdk::ActorId {
-    arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
-        arkret_sdk::DidCoreId::new(AUTHORITY_CONTROLLER_CORE).unwrap(),
-        arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap(),
-    ))
+    crate::test_support::account_actor(AUTHORITY_CONTROLLER_CORE)
 }
 #[test]
 fn realm_create_authority_resolves_the_root_controller() {
@@ -787,9 +789,9 @@ fn dead_endpoint_submitter() -> EventSubmitter {
 }
 
 fn test_authority() -> arkret_sdk::AccountId {
-    arkret_sdk::AccountId::new(
-        arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example".to_owned()).unwrap(),
-        arkret_sdk::DidCoreId::new("ak:did_core:web:server.example".to_owned()).unwrap(),
+    crate::test_support::authority_at_station(
+        "ak:did_core:web:alice.example",
+        crate::test_support::SERVER_STATION_ID,
     )
 }
 
@@ -1155,6 +1157,7 @@ fn queued_mls_admission_round_trips_exact_welcome_material() {
             arkret_sdk::RealmId::new(realm_id.to_owned()).unwrap(),
             queued_record.clone(),
             Vec::new(),
+            chrono::Utc::now(),
         )
         .unwrap();
     let snapshot = finalization_queue.snapshot();

@@ -480,7 +480,7 @@ pub(crate) async fn seal_agent_pcr_current(
         device_id.as_str(),
         &agent_actor_id,
         realm_id.as_str(),
-        state_store,
+        crate::app::runtime_adapter::state_store_handle(state_store),
         None,
     )
     .await?;
@@ -536,7 +536,7 @@ pub(crate) async fn bootstrap_provisioned_agent(
         device_id.as_str(),
         &agent_actor_id,
         realm_id,
-        state_store,
+        crate::app::runtime_adapter::state_store_handle(state_store),
         None,
     )
     .await?;

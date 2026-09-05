@@ -265,7 +265,7 @@ where
         request: &IssueRecoveryCompletionGrantRequest,
     ) -> garth::Result<IssueRecoveryCompletionGrantOutcome> {
         self.engine
-            .issue_recovery_completion_grant(transaction_id, request)
+            .issue_recovery_completion_grant(transaction_id, request, crate::clock::now_utc())
             .await
     }
 
@@ -328,7 +328,7 @@ where
         transaction_id: &TransactionId,
     ) -> garth::Result<Option<IssueRecoveryCompletionGrantOutcome>> {
         self.engine
-            .retry_durable_completion_grant(transaction_id)
+            .retry_durable_completion_grant(transaction_id, crate::clock::now_utc())
             .await
     }
 

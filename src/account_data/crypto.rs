@@ -105,19 +105,16 @@ pub fn decrypt_account_data_entry<T: Serialize>(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn authority() -> arkret_sdk::AccountId {
-        arkret_sdk::AccountId::new(
-            arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example".to_owned()).unwrap(),
-            arkret_sdk::DidCoreId::new("ak:did_core:web:server.example".to_owned()).unwrap(),
-        )
-    }
+    use crate::test_support as fixture;
 
     #[test]
     fn missing_encrypted_value_fails_closed() {
         assert!(
             decrypt_account_data_entry(
-                &authority(),
+                &fixture::authority_at_station(
+                    "ak:did_core:web:alice.example",
+                    fixture::SERVER_STATION_ID,
+                ),
                 "ak.dnd_schedule",
                 &serde_json::json!({"content": {"dnd": {"enabled": true}}}),
             )

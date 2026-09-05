@@ -74,18 +74,6 @@ pub(crate) fn personal_handle_from_account_handle(account_handle: &str) -> Optio
     crate::identity::handle::normalize_user_handle_display(trimmed)
 }
 
-pub(super) fn account_handles_display(handles: &[String], fallback: &str) -> String {
-    if handles.is_empty() {
-        fallback.to_owned()
-    } else {
-        handles
-            .iter()
-            .map(|handle| format!("@{handle}"))
-            .collect::<Vec<_>>()
-            .join(", ")
-    }
-}
-
 pub(crate) fn server_key(server_url: &str) -> String {
     crate::config::server_url_key(server_url)
 }

@@ -35,14 +35,7 @@ pub(super) fn test_authority(principal: &str) -> arkret_sdk::AccountId {
 }
 
 pub(super) fn test_authority_at_server(principal: &str, station: &str) -> arkret_sdk::AccountId {
-    let principal_id = arkret_sdk::DidCoreId::new(principal.to_owned()).unwrap_or_else(|_| {
-        let did = arkret_sdk::Did::new(principal.to_owned()).expect("principal DID");
-        arkret_sdk::project_did_to_core_id(&did).expect("principal core projection")
-    });
-    arkret_sdk::AccountId::new(
-        principal_id,
-        arkret_sdk::DidCoreId::new(station.to_owned()).unwrap(),
-    )
+    crate::test_support::authority_at_station(principal, station)
 }
 
 pub(super) fn test_profile_id(authority: &arkret_sdk::AccountId) -> String {
@@ -53,7 +46,7 @@ pub(super) fn test_profile_id(authority: &arkret_sdk::AccountId) -> String {
 }
 
 pub(super) fn test_device_id() -> arkret_sdk::DeviceId {
-    arkret_sdk::DeviceId::new("ak:device:01964137-0000-7000-8000-000000000001".to_owned()).unwrap()
+    crate::test_support::device_id("ak:device:01964137-0000-7000-8000-000000000001")
 }
 
 pub(super) fn test_account_context(did: &arkret_sdk::Did) -> crate::config::ActiveAccountContext {
@@ -65,20 +58,13 @@ pub(super) fn test_account_context_for_authority(
     did: &arkret_sdk::Did,
     authority: arkret_sdk::AccountId,
 ) -> crate::config::ActiveAccountContext {
-    crate::config::ActiveAccountContext::new(
-        test_profile_id(&authority),
-        authority,
-        arkret_sdk::PrincipalResolutionProjection {
-            did: did.clone(),
-            method_history_head: "test-head".to_owned(),
-            version_id: "test-version".to_owned(),
-            resolution_event_ref: "test-event".to_owned(),
-            updated_at: "2026-08-22T00:00:00Z".parse().unwrap(),
-        },
-        test_device_id(),
-        url::Url::parse("https://test-server.example").unwrap(),
-    )
-    .unwrap()
+    crate::test_support::AccountFixture::new(did.as_str())
+        .station(authority.station_id.as_str())
+        .profile_id(test_profile_id(&authority))
+        .resolution("test-head", "test-version", "test-event")
+        .updated_at("2026-08-22T00:00:00Z".parse().unwrap())
+        .server_url("https://test-server.example")
+        .build()
 }
 
 impl LocalStateStore {

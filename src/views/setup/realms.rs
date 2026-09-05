@@ -1049,7 +1049,7 @@ pub(super) fn RealmsSection(
                                                         // specific, so establish it before exposing Done.
                                                         if let Err(err) = crate::mls::creator_bootstrap::ensure_realm_governance_checkpoint(
                                                             &api,
-                                                            state_store,
+                                                            crate::app::runtime_adapter::state_store_handle(state_store),
                                                             &realm_id,
                                                         )
                                                         .await
@@ -1116,7 +1116,7 @@ pub(super) fn RealmsSection(
                                                             // the Realm permanently unable to perform encrypted writes.
                                                             match crate::mls::creator_bootstrap::ensure_creator_realm_mls_genesis(
                                                                      &api,
-                                                                     state_store,
+                                                                     &crate::app::runtime_adapter::state_store_handle(state_store),
                                                                      &realm_id,
                                                                      &authority,
                                                                      &account_device_id,
@@ -1196,7 +1196,9 @@ pub(super) fn RealmsSection(
                                                                  authority.clone(),
                                                                  actor.clone(),
                                                                  account_device_id.to_string(),
-                                                                state_store,
+                                                                crate::app::runtime_adapter::state_store_handle(
+                                                                    state_store,
+                                                                ),
                                                                 signal,
                                                             )
                                                             .await;

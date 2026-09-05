@@ -177,10 +177,9 @@ pub async fn upload_actor_private_file(
     if upload.size_bytes != ciphertext_len as u64 {
         anyhow::bail!("file-transfer blob upload size mismatch");
     }
-    let blob_ref = upload.blob_ref.to_string();
-    verify_content_addressed_blob_ref(&blob_ref, &prepared.content_digest)?;
-
-    let record = prepared.into_record(blob_ref, upload.size_bytes)?;
+    // `into_record` re-derives the content-addressed binding, so the upload
+    // outcome only has to agree on the byte count here.
+    let record = prepared.into_record(upload.blob_ref.to_string(), upload.size_bytes)?;
     let derived_account_data_key = record_account_key(&record, crypto)?;
     if derived_account_data_key != account_data_key {
         anyhow::bail!("file-transfer account_data key derivation drift");
@@ -788,6 +787,13 @@ impl PreparedFileTransfer {
         blob_ref: String,
         blob_size_bytes: u64,
     ) -> anyhow::Result<FileTransferRecord> {
+        // `blob_ref` is the only wire carrier of the ciphertext digest
+        // (file-transfer.md §4), and the record deliberately keeps no second
+        // copy of it. Binding it to the exact ciphertext this transfer
+        // produced therefore has to happen where the record is constructed,
+        // not only on the upload path, or a drifting digest reaches
+        // account-data unchecked.
+        verify_content_addressed_blob_ref(&blob_ref, &self.content_digest)?;
         let record = FileTransferRecord {
             kind: FILE_TRANSFER_RECORD_KIND.to_owned(),
             transfer_id: self.transfer_id,
@@ -1084,18 +1090,14 @@ mod tests {
     }
 
     fn test_authority() -> arkret_sdk::AccountId {
-        arkret_sdk::AccountId::new(
-            crate::mls_api_helpers::principal_core_id(ACTOR).unwrap(),
-            arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap(),
-        )
+        crate::test_support::authority(ACTOR)
     }
 
     const ACTOR: &str = "did:web:alice.example";
     const DEVICE: &str = "ak:device:01904100-0000-7000-8000-000000000001";
 
     fn test_pcr() -> arkret_sdk::RealmId {
-        arkret_sdk::RealmId::new("ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19".to_owned())
-            .unwrap()
+        crate::test_support::realm_id("ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19")
     }
 
     fn test_account_secret() -> String {

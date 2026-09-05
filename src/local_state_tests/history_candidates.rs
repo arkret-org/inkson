@@ -52,10 +52,13 @@ async fn external_candidate_material_is_bounded_and_durable() {
     let mut keys = Vec::new();
     for seed in 1..=9 {
         let (key, secret, attribution) = candidate(seed, observed_at);
-        store
-            .receive_history_candidate(&secrets, &secret, attribution, observed_at)
+        let staged = store
+            .stage_history_candidate(&secrets, &secret, attribution, observed_at)
+            .unwrap();
+        garth::persist_staged_history_candidate_secret(&secrets, &staged, &secret)
             .await
             .unwrap();
+        store.commit_history_candidate(&secrets, staged).unwrap();
         keys.push(key);
     }
 

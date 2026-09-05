@@ -9,7 +9,7 @@ use serde_json::Value;
 use crate::components::{SecurityStateBadge, SelfAttributionBadge, UiIcon};
 use crate::config::{ClientConfig, LocalConfigStore, normalize_server_url};
 use crate::conformance::profile_ready;
-use crate::i18n::{TextDirection, UiLocale};
+use crate::i18n::UiLocale;
 use crate::models::{
     RealmTreeNode, RealmTreeNodeKind, ServiceDescribe, missing_v1_station_requirements,
     projection_realm_id_for_known_node, service_supports_event_envelope_write_plane,
@@ -19,8 +19,8 @@ use crate::models::{
 // `crate::sync_engine` so the existing `crate::app::…` call sites keep
 // resolving without a sync_engine edit.
 pub(crate) use crate::realm_tree::{
-    descendant_node_ids, full_sync_projection_keep_set, realm_tree_items_with_pinned_realms,
-    realm_tree_node_is_direct_conversation, realm_tree_nodes_from_sync_realms_with_roles,
+    descendant_node_ids, full_sync_projection_keep_set, realm_tree_node_is_direct_conversation,
+    realm_tree_nodes_from_sync_realms_with_roles,
 };
 use crate::routes::Route;
 use crate::state::projection::ProjectionEvent;
@@ -100,6 +100,7 @@ mod session_boot;
 mod session_context;
 mod session_shell;
 mod shell_effects;
+mod shell_model;
 mod sidebar;
 mod sidebar_width;
 mod signal_products;
@@ -166,36 +167,77 @@ pub(crate) fn account_sync_ready(cursor: &str) -> bool {
     !cursor.trim().is_empty()
 }
 
-// Each stylesheet below is assembled from semantic section files via `concat!`.
-// Injection order is explicit here rather than encoded in file-name prefixes.
-const STYLE: &str = concat!(
-    include_str!("../styles/app/base-auth-layout.css"),
-    include_str!("../styles/app/accessibility-responsive-print.css"),
-    include_str!("../styles/app/app-theme-shell.css"),
-    include_str!("../styles/app/workflow-card-detail.css"),
-    include_str!("../styles/app/workflow-card-assignees.css"),
-    include_str!("../styles/app/workflow-editor-settings.css"),
-    include_str!("../styles/app/shell-contacts-settings.css"),
+// The stylesheets are four ordered layers, and the order below IS the
+// contract; nothing is encoded in file-name prefixes.
+//
+//   `base/`       tokens first, then the element reset. `tokens.css` carries
+//                 custom-property declarations and nothing else, so there is
+//                 exactly one place a theme value can come from.
+//   `components/` product-neutral primitives (button, field, badge, surface,
+//                 modal, ...). A class defined here is defined once across the
+//                 whole layer.
+//   `features/`   one product surface per file, named after that surface. A
+//                 feature may scope a component (`.settings .btn`) or add a
+//                 modifier, but must not restate a component's own rule.
+//   `adaptive/`   cross-feature viewport, print, contrast and reduced-motion
+//                 overrides. It is last because a media query adds no
+//                 specificity: anywhere earlier and a plain rule after it wins,
+//                 which is how the tablet/mobile layer used to lose silently.
+//                 Media queries that only concern one feature stay in that
+//                 feature's file.
+const BASE_STYLE: &str = concat!(
+    include_str!("../styles/base/tokens.css"),
+    include_str!("../styles/base/reset.css"),
 );
 
-const DESIGN_STYLE: &str = concat!(
-    include_str!("../styles/design/tokens-reset-i18n.css"),
-    include_str!("../styles/design/controls-gallery-chrome.css"),
-    include_str!("../styles/design/common-components.css"),
-    include_str!("../styles/design/auth-kanban-strand-chat.css"),
-    include_str!("../styles/design/event-mobile-device-tables-call.css"),
-    include_str!("../styles/design/discovery-metrics-errors-doc-content.css"),
+const COMPONENT_STYLE: &str = concat!(
+    include_str!("../styles/components/surfaces.css"),
+    include_str!("../styles/components/controls.css"),
+    include_str!("../styles/components/forms.css"),
+    include_str!("../styles/components/badges.css"),
+    include_str!("../styles/components/avatar.css"),
+    include_str!("../styles/components/tables.css"),
+    include_str!("../styles/components/overlays.css"),
+    include_str!("../styles/components/feedback.css"),
+    include_str!("../styles/components/qr-share.css"),
+    include_str!("../styles/components/content-blocks.css"),
+    include_str!("../styles/components/rich-text-editor.css"),
+    include_str!("../styles/components/utilities.css"),
 );
 
-const APP_OVERRIDES: &str = concat!(
-    include_str!("../styles/app_overrides/theme-shell-overrides.css"),
-    include_str!("../styles/app_overrides/watch-handle-e2ee-tabs.css"),
-    include_str!("../styles/app_overrides/circle-composer-mentions.css"),
-    include_str!("../styles/app_overrides/sidebar-actions.css"),
-    include_str!("../styles/app_overrides/account-trigger-menu.css"),
-    include_str!("../styles/app_overrides/members-agents-admin.css"),
-    include_str!("../styles/app_overrides/sidecar-shell.css"),
-    include_str!("../styles/app_overrides/circle-realm.css"),
+const FEATURE_STYLE: &str = concat!(
+    include_str!("../styles/features/app-shell.css"),
+    include_str!("../styles/features/sidebar-nav.css"),
+    include_str!("../styles/features/topbar.css"),
+    include_str!("../styles/features/account-menu.css"),
+    include_str!("../styles/features/command-palette.css"),
+    include_str!("../styles/features/auth.css"),
+    include_str!("../styles/features/onboarding.css"),
+    include_str!("../styles/features/chat-shell.css"),
+    include_str!("../styles/features/chat-message.css"),
+    include_str!("../styles/features/chat-composer.css"),
+    include_str!("../styles/features/chat-sidecar.css"),
+    include_str!("../styles/features/circle.css"),
+    include_str!("../styles/features/kanban-board.css"),
+    include_str!("../styles/features/kanban-card-detail.css"),
+    include_str!("../styles/features/kanban-card-fields.css"),
+    include_str!("../styles/features/settings.css"),
+    include_str!("../styles/features/settings-security.css"),
+    include_str!("../styles/features/settings-devices.css"),
+    include_str!("../styles/features/setup.css"),
+    include_str!("../styles/features/contacts.css"),
+    include_str!("../styles/features/members-admin.css"),
+    include_str!("../styles/features/agents-admin.css"),
+    include_str!("../styles/features/realm-manage.css"),
+    include_str!("../styles/features/directory.css"),
+    include_str!("../styles/features/recovery.css"),
+    include_str!("../styles/features/file-transfer.css"),
+    include_str!("../styles/features/call.css"),
+);
+
+const ADAPTIVE_STYLE: &str = concat!(
+    include_str!("../styles/adaptive/viewport.css"),
+    include_str!("../styles/adaptive/accessibility-print.css"),
 );
 
 /// C3: yoface shared-component design tokens. The first layer is shadcn
@@ -203,11 +245,10 @@ const APP_OVERRIDES: &str = concat!(
 /// layer is the dioxus-components token aliases
 /// (`--primary-color-N/--focused-border-color/...`) used by `yoface::ui::*`
 /// `#[css_module]` styles. Values come from the inkson green palette (yoface
-/// tokens.css matches inkson design.css), so this keeps the existing
+/// tokens.css matches `styles/base/tokens.css`), so this keeps the existing
 /// `var(--dark,...)` / `var(--light,...)` and `[data-theme]` switches and the
-/// current inkson green appearance. Injection order stays before the three
-/// existing style blocks so later design.css/app_overrides can override these
-/// tokens.
+/// current inkson green appearance. Injection order stays before the four
+/// style layers so `base/tokens.css` can override these tokens.
 const DXC_THEME: &str = yoface::TOKENS_CSS;
 // CSS-module class hashes include the component source path. Keep the shared
 // button stylesheet available through yoface's stable `dx-button` class so a
@@ -658,23 +699,17 @@ fn AppBootstrap() -> Element {
     // it on the first user-driven add-account / switch action.
     let profiles_signal = use_signal(crate::config::MultiProfileConfig::default);
 
-    let remembered_realm_id = selected_realm_id();
-    let effective_realm_id = routed_realm_id
-        .clone()
-        .filter(|realm_id| !principal_control_realm_ids.contains(realm_id))
-        .or_else(|| {
-            if remembered_realm_id.trim().is_empty() {
-                None
-            } else {
-                Some(remembered_realm_id.clone())
-            }
-        });
+    let shell_model::RealmSelection {
+        effective_realm_id,
+        remember: remember_routed_realm_id,
+    } = shell_model::resolve_realm_selection(
+        routed_realm_id.as_deref(),
+        &selected_realm_id(),
+        &principal_control_realm_ids,
+    );
     let active_realm_id = effective_realm_id.clone().unwrap_or_default();
-    if let Some(route_realm_id) = routed_realm_id.as_deref()
-        && !principal_control_realm_ids.contains(route_realm_id)
-        && remembered_realm_id != route_realm_id
-    {
-        selected_realm_id.set(route_realm_id.to_owned());
+    if let Some(route_realm_id) = remember_routed_realm_id {
+        selected_realm_id.set(route_realm_id);
     }
 
     let active_server_description = server_description();
@@ -720,40 +755,23 @@ fn AppBootstrap() -> Element {
     let principal_id_label = short_protocol_id(&principal_id_value);
     let device_id_label = short_protocol_id(&device_id_value);
     let personal_handles_value = personal_handles();
-    let account_handles_label =
-        account_handles_display(&personal_handles_value, &personal_handles_status());
-    let account_handles_title = if personal_handles_value.is_empty() {
-        account_handles_label.clone()
-    } else {
-        personal_handles_value.join(", ")
-    };
     let account_display_name = current_account_display_name();
     let device_display_name = current_device_display_name();
-    let account_label = if has_session {
-        if !account_display_name.trim().is_empty() {
-            account_display_name.clone()
-        } else {
-            personal_handles_value
-                .first()
-                .map(|handle| format!("@{handle}"))
-                .unwrap_or_else(|| actor_display_label(&state_store.read(), &principal_id_value))
-        }
-    } else {
-        "Not signed in".to_owned()
-    };
-    let account_detail = if has_session {
-        let device = if device_display_name.trim().is_empty() {
-            device_id_label.clone()
-        } else {
-            device_display_name.clone()
-        };
-        personal_handles_value
-            .first()
-            .map(|handle| format!("@{handle} · {device}"))
-            .unwrap_or(device)
-    } else {
-        "Refresh server metadata, then sign in".to_owned()
-    };
+    let shell_model::AccountIdentityLabels {
+        handles_label: account_handles_label,
+        handles_title: account_handles_title,
+        label: account_label,
+        detail: account_detail,
+    } = shell_model::account_identity_labels(shell_model::AccountIdentityInput {
+        has_session,
+        personal_handles: &personal_handles_value,
+        personal_handles_status: &personal_handles_status(),
+        account_display_name: &account_display_name,
+        device_display_name: &device_display_name,
+        device_id_label: &device_id_label,
+        principal_id_value: &principal_id_value,
+        store: &state_store.read(),
+    });
     // The actor-private mirror is authoritative when present (including an
     // explicit empty tombstone after clearing an avatar). Otherwise use the
     // public Actor Profile projection loaded from account/viewer.
@@ -833,37 +851,10 @@ fn AppBootstrap() -> Element {
     } else {
         Vec::new()
     };
-    // Control-plane and Direct Conversation Realms are never product
-    // navigation nodes. PCR ids come only from accepted create projections or
-    // the verified account-scoped recovery evidence; no DID-derived guess is
-    // permitted because Realm ids are Event-derived.
-    let hidden_realm_tree_node_ids: BTreeSet<String> = loaded_realm_tree_nodes
-        .iter()
-        .filter(|node| {
-            node.kind == RealmTreeNodeKind::Realm
-                && (realm_tree_node_is_direct_conversation(node)
-                    || principal_control_realm_ids.contains(&node.id))
-        })
-        .flat_map(|node| descendant_node_ids(&loaded_realm_tree_nodes, &node.id))
-        .collect();
-    let collaboration_realm_tree_nodes: Vec<_> = loaded_realm_tree_nodes
-        .iter()
-        .filter(|node| !hidden_realm_tree_node_ids.contains(node.id.as_str()))
-        .cloned()
-        .collect();
-    let selected_preview = loaded_realm_tree_nodes
-        .iter()
-        .find(|node| context_realm_id.as_deref() == Some(node.id.as_str()))
-        .cloned();
-    let active_projection_realm_id =
-        projection_realm_id_for_known_node(&loaded_realm_tree_nodes, &active_realm_id)
-            .unwrap_or_default();
     let pinned_realm_ids = {
         let store = state_store.read();
         pinned_realm_ids_from_store(&store)
     };
-    let realm_tree =
-        realm_tree_items_with_pinned_realms(&collaboration_realm_tree_nodes, &pinned_realm_ids);
     let realm_tree_projections = state_store.read().load().realm_tree_projections;
     // A persisted Realm-default MLS snapshot is authoritative local evidence
     // for previously created/joined encrypted Realms. It also repairs clients
@@ -878,131 +869,38 @@ fn AppBootstrap() -> Element {
     let collaboration_sidebar_query_value =
         collaboration_sidebar_query().trim().to_ascii_lowercase();
     let direct_sidebar_query_value = direct_sidebar_query().trim().to_ascii_lowercase();
+    let realm_remarks_for_sidebar = state_store.read().realm_remarks();
+    let shell_model::RealmNavigationModel {
+        collaboration_nodes: collaboration_realm_tree_nodes,
+        selected_preview,
+        active_projection_realm_id,
+        realm_tree,
+        filtered_realm_tree,
+        manage_realm_rows,
+        active_realm_security_encrypted,
+    } = shell_model::build_realm_navigation(shell_model::RealmNavigationInput {
+        loaded_nodes: &loaded_realm_tree_nodes,
+        principal_control_realm_ids: &principal_control_realm_ids,
+        context_realm_id: context_realm_id.as_deref(),
+        active_realm_id: &active_realm_id,
+        pinned_realm_ids: &pinned_realm_ids,
+        realm_tree_projections: &realm_tree_projections,
+        realm_ids_with_local_mls: &realm_ids_with_local_mls,
+        realm_remarks: &realm_remarks_for_sidebar,
+        collaboration_query: &collaboration_sidebar_query_value,
+    });
     // Render from an owned snapshot. Keeping a Signal read guard alive inside
     // the RSX iterator lets an async Direct Conversation open complete while
     // Dioxus is still reconciling that borrowed hook storage, which panics in
     // generational-box when the opening state is cleared.
     let own_agent_rows_for_sidebar = own_agent_rows.read().clone();
-    let realm_remarks_for_sidebar = state_store.read().realm_remarks();
     let contact_remarks_for_sidebar = state_store.read().active_contact_remarks();
-    let filtered_realm_tree: Vec<_> = realm_tree
-        .iter()
-        .filter(|item| {
-            let display_name = realm_remarks_for_sidebar
-                .get(&item.node.id)
-                .map(|remark| remark.display_name(&item.node.title).to_owned())
-                .unwrap_or_else(|| item.node.title.clone());
-            let kind_label = match item.node.kind {
-                RealmTreeNodeKind::Realm => "realm",
-                RealmTreeNodeKind::Space => "space",
-            };
-            sidebar_text_matches_query(
-                &collaboration_sidebar_query_value,
-                &[&item.node.id, &item.node.title, &display_name, kind_label],
-            )
-        })
-        .cloned()
-        .collect();
-    let manage_realm_rows: Vec<_> = collaboration_realm_tree_nodes
-        .iter()
-        .filter(|node| node.kind == RealmTreeNodeKind::Realm)
-        .map(|node| {
-            let display_name = realm_remarks_for_sidebar
-                .get(&node.id)
-                .map(|remark| remark.display_name(&node.title).to_owned())
-                .unwrap_or_else(|| node.title.clone());
-            let encrypted = realm_tree_projections
-                .get(&node.id)
-                .and_then(garth::realm_projection_security_state)
-                .unwrap_or_else(|| realm_ids_with_local_mls.contains(&node.id));
-            let space_count = descendant_node_ids(&collaboration_realm_tree_nodes, &node.id)
-                .len()
-                .saturating_sub(1);
-            RealmManageRow {
-                realm_id: node.id.clone(),
-                display_name,
-                title: node.title.clone(),
-                encrypted,
-                space_count,
-            }
-        })
-        .collect::<Vec<_>>();
-    let mut filtered_direct_contact_rows: Vec<_> = direct_contact_rows
-        .read()
-        .iter()
-        .filter(|contact| {
-            let peer_id = crate::models::contact_peer_id(contact);
-            let display_name = actor_display_label(&state_store.read(), peer_id.as_str());
-            let scopes = contact
-                .bidirectional_scopes
-                .iter()
-                .chain(contact.effective_scopes.iter().flatten())
-                .chain(contact.granted_to_peer_scopes.iter())
-                .chain(contact.granted_by_peer_scopes.iter())
-                .map(|scope| crate::models::contact_scope_wire(*scope))
-                .collect::<Vec<_>>()
-                .join(" ");
-            let agent_match = contact.contact_agent_projections.iter().any(|agent| {
-                sidebar_text_matches_query(
-                    &direct_sidebar_query_value,
-                    &[
-                        agent.actor_id.signing_principal_id().as_str(),
-                        agent.display_name.as_deref().unwrap_or_default(),
-                        agent.agent_slug.as_deref().unwrap_or_default(),
-                    ],
-                )
-            });
-            agent_match
-                || sidebar_text_matches_query(
-                    &direct_sidebar_query_value,
-                    &[
-                        peer_id.as_str(),
-                        crate::models::contact_state_wire(contact.state),
-                        &display_name,
-                        &scopes,
-                    ],
-                )
-        })
-        .cloned()
-        .collect();
-    filtered_direct_contact_rows.sort_by(|left, right| {
-        let left_peer = crate::models::contact_peer_id(left);
-        let right_peer = crate::models::contact_peer_id(right);
-        let left_remark = contact_remarks_for_sidebar.get(left_peer.as_str());
-        let right_remark = contact_remarks_for_sidebar.get(right_peer.as_str());
-        let left_pinned = left_remark.is_some_and(|remark| remark.pinned);
-        let right_pinned = right_remark.is_some_and(|remark| remark.pinned);
-        let left_label =
-            actor_display_label(&state_store.read(), left_peer.as_str()).to_ascii_lowercase();
-        let right_label =
-            actor_display_label(&state_store.read(), right_peer.as_str()).to_ascii_lowercase();
-        right_pinned
-            .cmp(&left_pinned)
-            .then_with(|| left_label.cmp(&right_label))
-            .then_with(|| left_peer.cmp(&right_peer))
-    });
-    let active_security_scope_id = if active_projection_realm_id.trim().is_empty() {
-        active_realm_id.as_str()
-    } else {
-        active_projection_realm_id.as_str()
-    };
-    // The Realm row and topbar must never disagree about the same Realm. Use
-    // the row's already-resolved Realm projection first; only fall back to a
-    // Space/Strand scope lookup while the Realm tree itself is still hydrating.
-    // Scope-first lookup allowed a partial board projection to turn an
-    // encrypted Realm into the topbar's `Unencrypted` false default.
-    let active_realm_security_encrypted = manage_realm_rows
-        .iter()
-        .find(|row| row.realm_id == active_realm_id)
-        .map(|row| row.encrypted)
-        .or_else(|| {
-            garth::security_projection_for_scope_id(
-                &realm_tree_projections,
-                active_security_scope_id,
-            )
-            .map(garth::realm_projection_is_encrypted)
-        })
-        .unwrap_or(false);
+    let filtered_direct_contact_rows = shell_model::filter_and_sort_direct_contacts(
+        &direct_contact_rows.read(),
+        &direct_sidebar_query_value,
+        &state_store.read(),
+        &contact_remarks_for_sidebar,
+    );
     let active_locale = locale();
     let active_direction = active_locale.direction();
     let direction_attr = active_direction.as_str();
@@ -1014,22 +912,27 @@ fn AppBootstrap() -> Element {
     let configured_stations = config_store.read().load().stations;
     let server_options = server_options_for(&base_url(), &configured_stations);
     let sidebar_style = format!("--sidebar-w: {:.0}px;", sidebar_width());
-    let theme_is_night = theme_renders_as_night(&active_theme, system_theme_is_night());
+    let shell_model::ShellChrome {
+        theme_toggle_icon,
+        theme_toggle_title,
+        shell_class,
+        auth_class,
+    } = shell_model::shell_chrome(
+        &active_theme,
+        system_theme_is_night(),
+        active_direction,
+        sidebar_is_collapsed,
+        sidebar_is_resizing,
+    );
     // The shell's `data-theme` carries the *raw* chosen mode
     // (`light` | `night` | `system`) as an app/diagnostic signal (the e2e theme
     // assertions read it). All *styling* is driven off the *effective* canonical
     // `light`/`dark` value that `apply_document_root_theme` mirrors onto `<html>`:
-    // design.css / app_overrides tokens and the vendored dxc palette key on
-    // `:root` / `html[data-theme]`, and app.css's `--ak-*` + auth surfaces key on
-    // `[data-theme="dark"]` (the `<html>` ancestor). Nothing styling-related
+    // `styles/base/tokens.css` and the vendored dxc palette key on `:root` /
+    // `html[data-theme]`, and the `--ak-*` aliases plus the auth surfaces key
+    // on `[data-theme="dark"]` (the `<html>` ancestor). Nothing styling-related
     // depends on this attribute, so it stays the raw mode.
     let theme_attr = active_theme.as_str();
-    let theme_toggle_icon = if theme_is_night { "sun" } else { "moon" };
-    let theme_toggle_title = if theme_is_night {
-        "Switch to light theme"
-    } else {
-        "Switch to night theme"
-    };
     let route_title = if routed_control_realm_id.is_some() {
         crate::i18n::tr("route.principal_control")
     } else {
@@ -1061,35 +964,9 @@ fn AppBootstrap() -> Element {
     } else {
         format!("{route_title} | Inkson | Arkret")
     };
-    let shell_class = format!(
-        "shell app{}{}{}",
-        if active_direction == TextDirection::Rtl {
-            " rtl"
-        } else {
-            ""
-        },
-        if sidebar_is_collapsed {
-            " sidebar-collapsed"
-        } else {
-            ""
-        },
-        if sidebar_is_resizing {
-            " sidebar-resizing"
-        } else {
-            ""
-        }
-    );
     // The auth surface and app shell are mounted through one stable component
     // boundary below. SessionSurface owns the small conditional template, so
     // neither surface's internal RSX can alter this parent template's shape.
-    let auth_class = format!(
-        "auth-shell{}",
-        if active_direction == TextDirection::Rtl {
-            " rtl"
-        } else {
-            ""
-        }
-    );
     let mut login_bootstrap_pending = bootstrap_pending;
     let mut callback_bootstrap_pending = bootstrap_pending;
     let login_session_boot_state = session_boot_state;
@@ -1147,7 +1024,7 @@ fn AppBootstrap() -> Element {
                                 div { class: "auth-brand",
                                     div { class: "auth-logo", "C" }
                                     div {
-                                        h1 { "Opening secure storage" }
+                                        h1 { {crate::i18n::tr("app.boot.opening_secure_storage")} }
                                         p { "Arkret" }
                                     }
                                 }
@@ -1155,7 +1032,7 @@ fn AppBootstrap() -> Element {
                                 div {
                                     class: "auth-status",
                                     "data-testid": "session-restore-status",
-                                    "Loading encrypted account and device keys…"
+                                    {crate::i18n::tr("app.boot.loading_keys")}
                                 }
                             }
                         },
@@ -1449,9 +1326,10 @@ fn AppBootstrap() -> Element {
                 }
                 style { "{DXC_THEME}" }
                 style { "{DXC_BUTTON_STYLE}" }
-                style { "{STYLE}" }
-                style { "{DESIGN_STYLE}" }
-                style { "{APP_OVERRIDES}" }
+                style { "{BASE_STYLE}" }
+                style { "{COMPONENT_STYLE}" }
+                style { "{FEATURE_STYLE}" }
+                style { "{ADAPTIVE_STYLE}" }
                 document::Title { "{document_title}" }
                 SessionSurface {
                     is_app_shell: matches!(auth_surface, AuthSurface::AppShell),
@@ -1558,13 +1436,13 @@ fn AppBootstrap() -> Element {
                         class: "event recovery-setup-banner",
                         "data-testid": "recovery-setup-banner",
                         role: "region",
-                        "aria-label": "Recovery setup is incomplete",
+                        "aria-label": crate::i18n::tr("app.recovery.incomplete_title"),
                         div { class: "event-head",
-                            strong { "Recovery setup is incomplete" }
+                            strong { {crate::i18n::tr("app.recovery.incomplete_title")} }
                             span { class: "muted", "first-time setup" }
                         }
                         div { class: "muted",
-                            "Generate your Recovery Key (24 words) before relying on this account. Backups are stored server-side as ciphertext only; Arkret cannot recover the 24 words for you."
+                            {crate::i18n::tr("app.recovery.incomplete_body")}
                         }
                         div { class: "actions",
                             Button {
@@ -1572,7 +1450,7 @@ fn AppBootstrap() -> Element {
                                 "data-testid": "recovery-setup-open-recovery",
                                 onclick: move |_| recovery_key_setup_prompt.set(true),
                                 UiIcon { name: "key" }
-                                "Configure recovery"
+                                {crate::i18n::tr("app.recovery.configure")}
                             }
                             Link {
                                 class: "secondary",
@@ -1582,11 +1460,11 @@ fn AppBootstrap() -> Element {
                                     filter: String::new(),
                                 },
                                 UiIcon { name: "lock" }
-                                "Encrypted history status"
+                                {crate::i18n::tr("app.recovery.history_status")}
                             }
                         }
                         div { class: "muted",
-                            "Encrypted-history recovery needs an account MLS secret; if this is a brand-new account, the app will prompt again after your first encrypted write creates material that can be backed up."
+                            {crate::i18n::tr("app.recovery.history_status_body")}
                         }
                     }
                 }
@@ -1636,8 +1514,8 @@ fn AppBootstrap() -> Element {
                         size: ButtonSize::Sm,
                         class: "btn icon",
                         "data-testid": "mobile-nav-toggle",
-                        title: if mobile_nav_open() { "Close menu" } else { "Open menu" },
-                        "aria-label": if mobile_nav_open() { "Close menu" } else { "Open menu" },
+                        title: if mobile_nav_open() { crate::i18n::tr("app.nav.close_menu") } else { crate::i18n::tr("app.nav.open_menu") },
+                        "aria-label": if mobile_nav_open() { crate::i18n::tr("app.nav.close_menu") } else { crate::i18n::tr("app.nav.open_menu") },
                         "aria-controls": "mobile-navigation-drawer",
                         "aria-expanded": "{mobile_nav_open()}",
                         onclick: move |_| mobile_nav_open.toggle(),
@@ -1691,8 +1569,8 @@ fn AppBootstrap() -> Element {
                         r#type: "button",
                         class: if notifications_drawer_open() { "btn icon topbar-notifications-link is-active" } else { "btn icon topbar-notifications-link" },
                         "data-testid": "mobile-topbar-notifications-button",
-                        title: "Notifications",
-                        "aria-label": "Notifications",
+                        title: crate::i18n::tr("nav.notifications"),
+                        "aria-label": crate::i18n::tr("nav.notifications"),
                         "aria-expanded": "{notifications_drawer_open()}",
                         onclick: move |event: dioxus::events::MouseEvent| {
                             event.stop_propagation();
@@ -1717,11 +1595,11 @@ fn AppBootstrap() -> Element {
                     status: mobile_status,
                     realm_tree: mobile_realm_tree,
                 }
-                aside { class: "sidebar", "data-testid": "sidebar", role: "navigation", "aria-label": "Main navigation",
+                aside { class: "sidebar", "data-testid": "sidebar", role: "navigation", "aria-label": crate::i18n::tr("app.nav.main_navigation"),
                     div {
                         class: "sidebar-resize-handle",
                         "data-testid": "sidebar-resize-handle",
-                        title: "Drag to resize menu",
+                        title: crate::i18n::tr("app.nav.resize_menu"),
                         "aria-hidden": "true",
                         onmousedown: move |event| {
                             event.prevent_default();
@@ -1729,7 +1607,7 @@ fn AppBootstrap() -> Element {
                         },
                     }
                     div { class: "sidebar-header",
-                        Link { class: "brand", to: Route::Dashboard, "aria-label": "Inkson | Arkret Home",
+                        Link { class: "brand", to: Route::Dashboard, "aria-label": crate::i18n::tr("app.brand.home"),
                             span { class: "logo", "⌘" }
                             span { class: "product-meta",
                                 span { class: "product-name", "Inkson | Arkret" }
@@ -1764,7 +1642,7 @@ fn AppBootstrap() -> Element {
 
                     div { class: "sidebar-nav-group realm-tab-group", "data-testid": "realm-tree-list",
                         if !sidebar_is_collapsed {
-                            div { class: "sidebar-scope-toggle realm-tabs", "data-testid": "realm-sidebar-mode-toggle", role: "tablist", "aria-label": "Collaboration and contacts",
+                            div { class: "sidebar-scope-toggle realm-tabs", "data-testid": "realm-sidebar-mode-toggle", role: "tablist", "aria-label": crate::i18n::tr("app.nav.scope_toggle"),
                                 Button {
                                     variant: ButtonVariant::Secondary,
                                     class: if realm_sidebar_tab() == "collaboration" { "scope-chip active" } else { "scope-chip" },
@@ -1858,8 +1736,8 @@ fn AppBootstrap() -> Element {
                                     Link {
                                         class: "sidebar-toolbar-action sidebar-toolbar-link add-contact-cta",
                                         "data-testid": "sidebar-new-contact-cta",
-                                        title: "Add a contact",
-                                        "aria-label": "Add a contact",
+                                        title: crate::i18n::tr("contacts.empty_add"),
+                                        "aria-label": crate::i18n::tr("contacts.empty_add"),
                                         to: Route::Contacts,
                                         UiIcon { name: "user-plus" }
                                     }
@@ -1954,9 +1832,9 @@ fn AppBootstrap() -> Element {
                                         primary_handle
                                     };
                                     let self_agents_button_label = if own_agents_expanded() {
-                                        "Hide your AI agents"
+                                        crate::i18n::tr("app.sidebar.hide_own_agents")
                                     } else {
-                                        "Show your AI agents"
+                                        crate::i18n::tr("app.sidebar.show_own_agents")
                                     };
                                     rsx! {
                                         div {
@@ -2104,7 +1982,7 @@ fn AppBootstrap() -> Element {
                                                                         }
                                                                     }
                                                                     span { class: "grow truncate", "{agent_label}" }
-                                                                    span { class: "pill muted xs", if is_opening { "Opening..." } else { "AI agent" } }
+                                                                    span { class: "pill muted xs", if is_opening { {crate::i18n::tr("app.sidebar.opening")} } else { {crate::i18n::tr("app.sidebar.agent_badge")} } }
                                                                 }
                                                             }
                                                         }
@@ -2123,7 +2001,7 @@ fn AppBootstrap() -> Element {
                             } else if filtered_direct_contact_rows.is_empty() && !direct_sidebar_query_value.is_empty() {
                                 div { class: "sidebar-nav-item is-dim", "data-testid": "direct-conversation-no-results",
                                     span { class: "sidebar-nav-icon", UiIcon { name: "search" } }
-                                    span { class: "grow truncate", "No matching contacts" }
+                                    span { class: "grow truncate", {crate::i18n::tr("manage.contacts_no_results")} }
                                 }
                             } else {
                                 for contact in filtered_direct_contact_rows.iter() {
@@ -2175,7 +2053,7 @@ fn AppBootstrap() -> Element {
                                             crate::i18n::tr("direct.unavailable")
                                         };
                                         let state_badge_label = if is_opening {
-                                            "Opening...".to_owned()
+                                            crate::i18n::tr("app.sidebar.opening")
                                         } else {
                                             state_label.clone()
                                         };
@@ -2316,8 +2194,8 @@ fn AppBootstrap() -> Element {
                                                         span {
                                                             class: "pill muted xs",
                                                             "data-testid": "contact-sidebar-remark-badge",
-                                                            title: "Local remark (private to this account)",
-                                                            "Remark"
+                                                            title: crate::i18n::tr("app.sidebar.remark_title"),
+                                                            {crate::i18n::tr("app.sidebar.remark")}
                                                         }
                                                     }
                                                     if is_pinned_contact {
@@ -2330,7 +2208,7 @@ fn AppBootstrap() -> Element {
                                                     }
                                                     span { class: "pill muted xs", "{state_badge_label}" }
                                                     if has_direct_scope {
-                                                        span { class: "pill muted xs", title: "{scopes_label}", "DM" }
+                                                        span { class: "pill muted xs", title: "{scopes_label}", {crate::i18n::tr("app.sidebar.direct_badge")} }
                                                     }
                                                     if contact_agent_count > 0 {
                                                         span {
@@ -2351,7 +2229,10 @@ fn AppBootstrap() -> Element {
                                                                     }
                                                                 }
                                                             },
-                                                            "Agents {contact_agent_count}"
+                                                            {crate::i18n::tr_args(
+                                                                "app.sidebar.agent_count",
+                                                                &[("count", contact_agent_count.to_string())],
+                                                            )}
                                                         }
                                                     }
                                                 }
@@ -2361,8 +2242,8 @@ fn AppBootstrap() -> Element {
                                                         class: "sidebar-row-menu-button",
                                                         r#type: "button",
                                                         "data-testid": "direct-conversation-row-menu-button",
-                                                        title: "Contact actions",
-                                                        "aria-label": "Contact actions",
+                                                        title: crate::i18n::tr("app.sidebar.contact_actions"),
+                                                        "aria-label": crate::i18n::tr("app.sidebar.contact_actions"),
                                                         "aria-haspopup": "menu",
                                                         "aria-expanded": if contact_menu_is_open { "true" } else { "false" },
                                                         onclick: {
@@ -2382,13 +2263,13 @@ fn AppBootstrap() -> Element {
                                                     if contact_menu_is_open {
                                                         div {
                                                             class: "sidebar-row-menu-scrim",
-                                                            "aria-label": "Close row actions",
+                                                            "aria-label": crate::i18n::tr("app.sidebar.close_row_actions"),
                                                             onclick: move |_| sidebar_row_menu_open.set(None),
                                                         }
                                                         div {
                                                             class: "sidebar-row-menu-panel",
                                                             role: "menu",
-                                                            "aria-label": "Contact actions",
+                                                            "aria-label": crate::i18n::tr("app.sidebar.contact_actions"),
                                                             if can_edit_contact_remark {
                                                             button {
                                                                 class: "sidebar-row-menu-item",
@@ -2424,8 +2305,8 @@ fn AppBootstrap() -> Element {
                                                                 r#type: "button",
                                                                 role: "menuitem",
                                                                 "data-testid": "direct-conversation-row-delete-action",
-                                                                title: "Delete Contact",
-                                                                "aria-label": "Delete Contact",
+                                                                title: crate::i18n::tr("app.sidebar.delete_contact"),
+                                                                "aria-label": crate::i18n::tr("app.sidebar.delete_contact"),
                                                                 disabled: true,
                                                                 onclick: {
                                                                     let peer = peer.clone();
@@ -2444,7 +2325,7 @@ fn AppBootstrap() -> Element {
                                                                     }
                                                                 },
                                                                 UiIcon { name: "x" }
-                                                                span { "Delete" }
+                                                                span { {crate::i18n::tr("common.delete")} }
                                                             }
                                                         }
                                                     }
@@ -2578,7 +2459,7 @@ fn AppBootstrap() -> Element {
                                                                     }
                                                                 }
                                                                 span { class: "grow truncate", "{agent_label}" }
-                                                                span { class: "pill muted xs", if is_opening { "Opening..." } else { "AI agent" } }
+                                                                span { class: "pill muted xs", if is_opening { {crate::i18n::tr("app.sidebar.opening")} } else { {crate::i18n::tr("app.sidebar.agent_badge")} } }
                                                             }
                                                         }
                                                     }
@@ -2773,8 +2654,8 @@ fn AppBootstrap() -> Element {
                                         span {
                                             class: "pill muted xs",
                                             "data-testid": "realm-tree-realm-remark-badge",
-                                            title: "Local remark (private to this account)",
-                                            "Remark"
+                                            title: crate::i18n::tr("app.sidebar.remark_title"),
+                                            {crate::i18n::tr("app.sidebar.remark")}
                                         }
                                     }
                                     if is_pinned_realm {
@@ -2855,7 +2736,7 @@ fn AppBootstrap() -> Element {
                                     if menu_is_open {
                                         div {
                                             class: "sidebar-row-menu-scrim",
-                                            "aria-label": "Close row actions",
+                                            "aria-label": crate::i18n::tr("app.sidebar.close_row_actions"),
                                             onclick: move |_| sidebar_row_menu_open.set(None),
                                         }
                                         div {
@@ -2909,7 +2790,7 @@ fn AppBootstrap() -> Element {
                                                     }
                                                 },
                                                 UiIcon { name: "plus" }
-                                                span { "New Space" }
+                                                span { {crate::i18n::tr("setup.space.new_space")} }
                                             }
                                             if can_add_member {
                                                 Link {
@@ -2954,8 +2835,8 @@ fn AppBootstrap() -> Element {
                                                     class: "sidebar-row-menu-item",
                                                     role: "menuitem",
                                                     "data-testid": "realm-tree-row-circles-action",
-                                                    title: "Circles",
-                                                    "aria-label": "Circles",
+                                                    title: crate::i18n::tr("route.circles"),
+                                                    "aria-label": crate::i18n::tr("route.circles"),
                                                     to: Route::Circles { realm_id: target_realm_id.clone() },
                                                     onclick: {
                                                         let home_realm_id = target_realm_id.clone();
@@ -2965,15 +2846,15 @@ fn AppBootstrap() -> Element {
                                                         }
                                                     },
                                                     UiIcon { name: "users" }
-                                                    span { "Circles" }
+                                                    span { {crate::i18n::tr("route.circles")} }
                                                 }
                                                 button {
                                                     class: "sidebar-row-menu-item danger",
                                                     r#type: "button",
                                                     role: "menuitem",
                                                     "data-testid": "realm-tree-row-leave-action",
-                                                    title: "Leave Realm",
-                                                    "aria-label": "Leave Realm",
+                                                    title: crate::i18n::tr("realm_admin.leave_confirm_button"),
+                                                    "aria-label": crate::i18n::tr("realm_admin.leave_confirm_button"),
                                                     disabled: !has_session,
                                                     onclick: {
                                                         let id = item_node.id.clone();
@@ -2994,7 +2875,7 @@ fn AppBootstrap() -> Element {
                                                         }
                                                     },
                                                     UiIcon { name: "x" }
-                                                    span { "Leave" }
+                                                    span { {crate::i18n::tr("realm_admin.leave_realm")} }
                                                 }
                                             }
                                         }
@@ -3026,7 +2907,7 @@ fn AppBootstrap() -> Element {
                     }
                     }
 
-                main { class: "main realm", "data-testid": "main-view", role: "main", "aria-label": "Main content",
+                main { class: "main realm", "data-testid": "main-view", role: "main", "aria-label": crate::i18n::tr("app.main_content"),
                     div { class: "topbar realm-header",
                         div { class: "topbar-left",
                             Button {
@@ -3034,8 +2915,8 @@ fn AppBootstrap() -> Element {
                                 size: ButtonSize::Sm,
                                 class: "btn icon sidebar-collapse-toggle",
                                 "data-testid": "sidebar-collapse-toggle",
-                                title: if sidebar_is_collapsed { "Show navigation" } else { "Hide navigation" },
-                                "aria-label": if sidebar_is_collapsed { "Show navigation" } else { "Hide navigation" },
+                                title: if sidebar_is_collapsed { crate::i18n::tr("app.nav.show_navigation") } else { crate::i18n::tr("app.nav.hide_navigation") },
+                                "aria-label": if sidebar_is_collapsed { crate::i18n::tr("app.nav.show_navigation") } else { crate::i18n::tr("app.nav.hide_navigation") },
                                 onclick: move |_| sidebar_collapsed.toggle(),
                                 if sidebar_is_collapsed {
                                     UiIcon { name: "panel-left-open" }
@@ -3055,15 +2936,22 @@ fn AppBootstrap() -> Element {
                                 if route_uses_realm_context && !active_realm_id.is_empty() {
                                     {
                                         let (current_surface_label, current_surface_icon) = match resolved_realm_surface {
-                                            Some(surface) => (surface.short_label(), surface.icon_name()),
-                                            None if realm_members_active => ("Members", "users"),
-                                            None => ("Settings", "settings"),
+                                            Some(surface) => {
+                                                (surface.short_label().to_owned(), surface.icon_name())
+                                            }
+                                            None if realm_members_active => {
+                                                (crate::i18n::tr("realm_admin.members"), "users")
+                                            }
+                                            None => (crate::i18n::tr("nav.settings"), "settings"),
                                         };
                                         rsx! {
                                             span {
                                                 class: "topbar-current-surface",
                                                 "data-testid": "current-realm-surface",
-                                                title: "Current view: {current_surface_label}",
+                                                title: crate::i18n::tr_args(
+                                                    "app.topbar.current_view",
+                                                    &[("surface", current_surface_label.clone())],
+                                                ),
                                                 UiIcon { name: current_surface_icon }
                                                 span { class: "topbar-current-surface-label", "{current_surface_label}" }
                                             }
@@ -3096,7 +2984,7 @@ fn AppBootstrap() -> Element {
                                 onclick: move |_| {
                                     let _ = navigator.push(Route::Search);
                                 },
-                                "Open global search"
+                                {crate::i18n::tr("app.topbar.open_global_search")}
                             }
                             div {
                                 class: if topbar_search_is_open {
@@ -3327,8 +3215,8 @@ fn AppBootstrap() -> Element {
                                             Link {
                                                 class: "btn icon sm ghost account-menu__qr",
                                                 "data-testid": "account-menu-settings-qr",
-                                                title: "Settings",
-                                                "aria-label": "Open settings",
+                                                title: crate::i18n::tr("nav.settings"),
+                                                "aria-label": crate::i18n::tr("app.account.open_settings"),
                                                 to: Route::Settings,
                                                 onclick: move |_| account_menu_open.set(false),
                                                 UiIcon { name: "qr-code" }
@@ -3336,7 +3224,7 @@ fn AppBootstrap() -> Element {
                                         }
                                         div { class: "account-menu__rows",
                                             div { class: "account-menu__row",
-                                                strong { "DID" }
+                                                strong { {crate::i18n::tr("app.account.did")} }
                                                 div { class: "account-menu__value",
                                                     span { class: "mono", "data-testid": "account-menu-did", title: "{principal_id_value}", "{principal_id_label}" }
                                                     Button {
@@ -3344,8 +3232,8 @@ fn AppBootstrap() -> Element {
                                                         size: ButtonSize::Sm,
                                                         class: "btn icon account-menu__copy",
                                                         "data-testid": "account-menu-copy-did",
-                                                        title: "Copy DID",
-                                                        "aria-label": "Copy DID",
+                                                        title: crate::i18n::tr("settings.account.copy_did"),
+                                                        "aria-label": crate::i18n::tr("settings.account.copy_did"),
                                                         onclick: {
                                                             let value = principal_id_value.clone();
                                                             move |_| {
@@ -3358,7 +3246,7 @@ fn AppBootstrap() -> Element {
                                                 }
                                             }
                                             div { class: "account-menu__row",
-                                                strong { "Handles" }
+                                                strong { {crate::i18n::tr("settings.account.handles")} }
                                                 div { class: "account-menu__value",
                                                     span {
                                                         class: "mono",
@@ -3371,8 +3259,8 @@ fn AppBootstrap() -> Element {
                                                         size: ButtonSize::Sm,
                                                         class: "btn icon account-menu__copy",
                                                         "data-testid": "account-menu-copy-handles",
-                                                        title: "Copy handles",
-                                                        "aria-label": "Copy handles",
+                                                        title: crate::i18n::tr("settings.account.copy_handles"),
+                                                        "aria-label": crate::i18n::tr("settings.account.copy_handles"),
                                                         onclick: {
                                                             let value = account_handles_title.clone();
                                                             move |_| {
@@ -3385,13 +3273,13 @@ fn AppBootstrap() -> Element {
                                                 }
                                             }
                                             div { class: "account-menu__row",
-                                                strong { "Device" }
+                                                strong { {crate::i18n::tr("settings.devices.column_device")} }
                                                 div { class: "account-menu__value",
                                                     div { class: "account-menu__device-text",
                                                         span {
                                                             class: "account-menu__device-name",
                                                             "data-testid": "account-menu-device-name",
-                                                            if device_display_name.trim().is_empty() { "This device" } else { "{device_display_name}" }
+                                                            if device_display_name.trim().is_empty() { {crate::i18n::tr("settings.devices.this_device")} } else { "{device_display_name}" }
                                                         }
                                                         span {
                                                             class: "mono account-menu__device-id",
@@ -3405,8 +3293,8 @@ fn AppBootstrap() -> Element {
                                                         size: ButtonSize::Sm,
                                                         class: "btn icon account-menu__copy",
                                                         "data-testid": "account-menu-copy-device",
-                                                        title: "Copy device ID",
-                                                        "aria-label": "Copy device ID",
+                                                        title: crate::i18n::tr("settings.account.copy_device_id"),
+                                                        "aria-label": crate::i18n::tr("settings.account.copy_device_id"),
                                                         onclick: {
                                                             let value = device_id_value.clone();
                                                             move |_| {
@@ -3419,7 +3307,7 @@ fn AppBootstrap() -> Element {
                                                 }
                                             }
                                             div { class: "account-menu__row",
-                                                strong { "Server" }
+                                                strong { {crate::i18n::tr("app.account.server")} }
                                                 span { "{active_server_label}" }
                                             }
                                         }
@@ -3429,7 +3317,7 @@ fn AppBootstrap() -> Element {
                                                 size: ButtonSize::Sm,
                                                 class: "btn",
                                                 "data-testid": "account-menu-session-refresh",
-                                                "aria-label": "Refresh session",
+                                                "aria-label": crate::i18n::tr("app.account.refresh_session"),
                                                 disabled: !has_session,
                                                 onclick: {
                                                     let base = base_url();
@@ -3439,14 +3327,14 @@ fn AppBootstrap() -> Element {
                                                         refresh_context.clone(),
                                                     )
                                                 },
-                                                "Refresh"
+                                                {crate::i18n::tr("common.refresh")}
                                             }
                                             Button {
                                                 variant: ButtonVariant::Ghost,
                                                 size: ButtonSize::Sm,
                                                 class: "btn",
                                                 "data-testid": "account-menu-session-logout",
-                                                "aria-label": "Log out",
+                                                "aria-label": crate::i18n::tr("app.account.log_out"),
                                                 disabled: !has_session,
                                                 onclick: move |_| {
                                                     let base = base_url();
@@ -3622,7 +3510,7 @@ fn AppBootstrap() -> Element {
                                                         let _ = outcome;
                                                     });
                                                 },
-                                                "Log out"
+                                                {crate::i18n::tr("app.account.log_out")}
                                             }
                                             Link {
                                                 class: "btn sm",
@@ -3630,7 +3518,7 @@ fn AppBootstrap() -> Element {
                                                 to: Route::Settings,
                                                 onclick: move |_| account_menu_open.set(false),
                                                 UiIcon { name: "settings" }
-                                                "Settings"
+                                                {crate::i18n::tr("nav.settings")}
                                             }
                                         }
                                     }

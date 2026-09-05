@@ -2430,7 +2430,9 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                             authority_for_sidecar.clone(),
                                             actor_for_backup_trigger.clone(),
                                             device_for_sidecar_backup.to_string(),
-                                            state_store,
+                                            crate::app::runtime_adapter::state_store_handle(
+                                                state_store,
+                                            ),
                                             signal,
                                         )
                                         .await;

@@ -2001,7 +2001,7 @@ pub(super) fn connect(
                             &authed,
                             &sync,
                             super::runtime_adapter::value_cell(ctx.did_cache),
-                            state_store,
+                            super::runtime_adapter::state_store_handle(state_store),
                             |realm_id| {
                                 state_store
                                     .read()

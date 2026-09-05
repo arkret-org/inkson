@@ -1025,9 +1025,10 @@ async fn recover_bound_principal_device(
         replacement_device_id,
     )?;
     let api = issue_recovery_session_transport(handoff, state_store).await?;
+    let store_handle = crate::app::runtime_adapter::state_store_handle(state_store);
     if let Some(mut completed) = crate::mls::account_recovery::resume_pending_pcr_policy_recovery(
         &api,
-        state_store,
+        &store_handle,
         recovery_words,
     )
     .await?
@@ -1072,7 +1073,7 @@ async fn recover_bound_principal_device(
         .await?;
     let mut completed = crate::mls::account_recovery::execute_pcr_policy_recovery(
         &api,
-        state_store,
+        &store_handle,
         principal_did,
         &session,
         &proof_outcome,
@@ -4329,6 +4330,11 @@ mod tests {
         handoff.bound_principal_id =
             Some(arkret_sdk::project_did_to_core_id(&checkpoint.did).unwrap());
         handoff.bound_principal_did = Some(checkpoint.did.clone());
+        // account-lifecycle.md 2.1.2: only the closed `NoReturningDevice`
+        // normalization result opens Device Setup on a bound account. An
+        // absent result is not "no device" and must keep failing closed.
+        handoff.bound_device_entry_state =
+            Some(crate::state::BoundDeviceEntryState::NoReturningDevice);
 
         assert_eq!(
             onboarding_surface(Some(&handoff), None),

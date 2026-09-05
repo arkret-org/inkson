@@ -4,9 +4,9 @@ use anyhow::{Result, anyhow};
 use arkret_models_crypto::{KeyBackup, SecretStorageContentIndex, SecretStorageItemKind};
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
+use garth::mls::backup_selection::mls_account_secret_backup_version;
 use serde_json::Value;
 
-use super::selection::mls_account_secret_backup_version;
 use crate::key_backup::{
     BackupKind, build_passphrase_kdf_backup_body, open_passphrase_kdf_backup_body,
 };
@@ -153,40 +153,6 @@ pub fn decrypt_mls_account_secret_backup(passphrase: &[u8], body: &Value) -> Res
     opened_single_secret(passphrase, body)
 }
 
-/// True when `body` is an MLS account-secret backup (ANY recipient method).
-/// Matched on the dedicated `mls_account_secret` item type.
-pub fn is_mls_account_secret_backup(body: &Value) -> bool {
-    body.get("contents")
-        .and_then(Value::as_array)
-        .and_then(|c| c.first())
-        .and_then(|item| item.get("item_kind"))
-        .and_then(Value::as_str)
-        == Some(MLS_ACCOUNT_SECRET_ITEM_KIND.as_str())
-}
-
-/// The `encryption.recipient_method` of a backup envelope.
-fn backup_recipient_method(body: &Value) -> Option<&str> {
-    body.pointer("/encryption/recipient_method")
-        .and_then(Value::as_str)
-}
-
-/// True when `body` is the **passphrase-recoverable** account-secret backup
-/// (`recipient_method=passphrase_kdf`). The account secret now has TWO backups —
-/// this passphrase one and an HPKE `recovery_public_key` one — sharing the same
-/// `item_kind`, so the passphrase restore path MUST only pick this variant
-/// (else it would try to passphrase-decrypt an HPKE envelope).
-pub fn is_passphrase_account_secret_backup(body: &Value) -> bool {
-    is_mls_account_secret_backup(body) && backup_recipient_method(body) == Some("passphrase_kdf")
-}
-
-/// True when `body` is the HPKE `recovery_public_key` account-secret backup —
-/// the passphrase-free fresh-device recovery path (open with the recovery
-/// private key, no passphrase prompt).
-pub fn is_recovery_public_key_account_secret_backup(body: &Value) -> bool {
-    is_mls_account_secret_backup(body)
-        && backup_recipient_method(body) == Some("recovery_public_key")
-}
-
 /// X5.3 — build a `secret_storage` PUT body that wraps the entire encrypted
 /// local-plaintext sidecar map behind a KEK derived from the ACCOUNT SECRET.
 ///
@@ -290,15 +256,6 @@ fn opened_single_secret(unlock_key: &[u8], body: &Value) -> Result<Vec<u8>> {
 
 /// True when `body` is an MLS private-plaintext sidecar backup. Matched on the
 /// dedicated `mls_private_plaintext` item type.
-pub fn is_mls_private_plaintext_backup(body: &Value) -> bool {
-    body.get("contents")
-        .and_then(Value::as_array)
-        .and_then(|c| c.first())
-        .and_then(|item| item.get("item_kind"))
-        .and_then(Value::as_str)
-        == Some(MLS_PRIVATE_PLAINTEXT_ITEM_KIND.as_str())
-}
-
 /// Build the HPKE `recovery_public_key` account-secret backup: the account
 /// secret HPKE-sealed to the actor's recovery public key. ANY device (holding
 /// only the public key) can build/upload this; a fresh device opens it with the

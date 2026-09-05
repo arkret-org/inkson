@@ -166,7 +166,9 @@ pub fn FileTransferPanel(
                                                 authority.clone(),
                                                 actor.clone(),
                                                 device.clone(),
-                                                state_store,
+                                                crate::app::runtime_adapter::state_store_handle(
+                                                    state_store,
+                                                ),
                                                 signal,
                                             )
                                             .await;

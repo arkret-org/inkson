@@ -1,0 +1,212 @@
+/* The app shell frame: `.shell`, `.app`, `.realm`, `.main`, `.panel`,
+ * `.realm-body`, and the mobile shellbar/drawer containers.
+ */
+.shell { min-height: 100vh; display: grid; grid-template-columns: 288px minmax(0, 1fr) 340px; }
+.shell.rtl { direction: rtl; grid-template-columns: 340px minmax(0, 1fr) 288px; }
+.shell.rtl .sidebar { grid-column: 3; }
+.shell.rtl .main { grid-column: 2; }
+.shell.rtl .panel { grid-column: 1; border-left: 0; border-right: 1px solid var(--border); }
+.shell.rtl .actions { direction: rtl; }
+.shell.rtl .event-head, .shell.rtl .topbar { flex-direction: row-reverse; }
+.shell.rtl .realm-tree-node-button, .shell.rtl input, .shell.rtl textarea { text-align: right; }
+.main { padding: 24px; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; gap: 16px; min-width: 0; }
+.panel { border-left: 1px solid var(--border); background: var(--surface-2); padding: 22px; display: grid; gap: 16px; align-content: start; overflow: auto; min-width: 0; }
+.mobile-shellbar, .mobile-drawer { display: none; }
+.mobile-primary-nav { display: contents; }
+.mobile-status { display: grid; gap: 3px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; color: var(--text-2); }
+.mobile-status .muted { color: var(--text-3); }
+/* App theme layer: calm security-oriented palette shared by all views.
+ * The --ak-* tokens below are legacy aliases kept for existing
+ * consumers (workflow/board/card views); they now re-point at the
+ * canonical theme tokens from app_overrides/theme-shell-overrides.css
+ * so both light and dark themes resolve from one palette. */
+.shell {
+  --ak-bg: var(--bg);
+  --ak-bg-soft: var(--surface-2);
+  --ak-bg-end: var(--bg-elev);
+  --ak-surface: var(--surface-solid);
+  --ak-surface-raised: var(--surface);
+  --ak-ink: var(--text);
+  --ak-muted: var(--text-2);
+  --ak-line: var(--border);
+  --ak-line-strong: var(--border-strong);
+  --ak-brand: var(--accent);
+  --ak-brand-strong: var(--accent-strong);
+  --ak-teal: var(--accent-2);
+  --ak-green: var(--success);
+  --ak-amber: var(--warning);
+  --ak-red: var(--danger);
+  --ak-nav: var(--nav-bg);
+  --ak-nav-soft: var(--nav-bg-2);
+  --ak-shadow-sm: var(--shadow-sm);
+  --ak-shadow: var(--shadow-lg);
+  background: linear-gradient(135deg, var(--ak-bg) 0%, var(--ak-bg-soft) 64%, var(--ak-bg-end) 100%);
+  color: var(--ak-ink);
+}
+.main {
+  background: transparent;
+}
+.panel {
+  border-color: var(--ak-line);
+  background: var(--ak-surface-raised);
+  color: var(--ak-ink);
+}
+/* Arkret design implementation layer. */
+.shell {
+  grid-template-columns: 316px minmax(0, 1fr) 352px;
+}
+.shell.rtl {
+  grid-template-columns: 352px minmax(0, 1fr) 316px;
+}
+.shell.rtl .topbar{
+  direction: rtl;
+}
+
+/* ===== 6. APP CHROME ============================================== */
+
+.app {
+  display: grid;
+  grid-template-columns: var(--sidebar-w) 1fr;
+  height: 100vh;
+  overflow: hidden;
+}
+.app.no-sidebar { grid-template-columns: 1fr; }
+
+/* ----- 6.2 Realm ----- */
+
+.realm { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+
+.realm-body {
+  overflow: auto;
+  background: var(--bg);
+  padding: 18px 22px 48px;
+  flex: 1 1 auto;
+}
+.realm-body.no-pad { padding: 0; }
+.realm-body.tight  { padding: 14px 18px; }
+.realm-body.narrow { padding: 30px 28px 80px; max-width: 920px; margin: 0 auto; width: 100%; }
+.shell.app {
+  min-height: 0;
+  height: 100vh;
+  padding: 0;
+  gap: 0;
+  grid-template-columns: var(--sidebar-w) minmax(0, 1fr);
+  color: var(--text);
+  background: var(--bg);
+}
+
+.shell.app > .sidebar {
+  grid-column: 1;
+  grid-row: 1;
+}
+
+.shell.app > .realm {
+  grid-column: 2;
+  grid-row: 1;
+}
+
+.shell.app.rtl {
+  direction: ltr;
+  grid-template-columns: minmax(0, 1fr) var(--sidebar-w);
+}
+
+.shell.app.rtl > .sidebar {
+  grid-column: 2;
+}
+
+.shell.app.rtl > .realm {
+  grid-column: 1;
+}
+.shell.app.rtl .sidebar,
+.shell.app.rtl .realm,
+.shell.app.rtl .mobile-shellbar,
+.shell.app.rtl .mobile-drawer {
+  direction: rtl;
+}
+
+.shell.app.sidebar-collapsed {
+  grid-template-columns: var(--sidebar-collapsed-w) minmax(0, 1fr);
+}
+
+.shell.app.rtl.sidebar-collapsed {
+  grid-template-columns: minmax(0, 1fr) var(--sidebar-collapsed-w);
+}
+
+.shell.app.sidebar-resizing {
+  cursor: col-resize;
+  user-select: none;
+}
+
+.mobile-shellbar,
+.mobile-drawer {
+  display: none;
+}
+
+.main.realm {
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  min-width: 0;
+  min-height: 0;
+  height: 100vh;
+  overflow: hidden;
+}
+
+.realm-body {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  padding: 16px;
+}
+
+.realm-body > .timeline {
+  overflow: visible;
+  align-content: start;
+  gap: 16px;
+}
+
+.realm-body > .timeline.kanban-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+  overflow: hidden;
+  gap: 10px;
+  background: var(--bg);
+}
+.shell.app {
+  background:
+    radial-gradient(circle at 12% 0%, var(--page-glow-a), transparent 24%),
+    radial-gradient(circle at 88% 10%, var(--page-glow-b), transparent 24%),
+    linear-gradient(135deg, var(--bg) 0%, var(--bg-elev) 62%, color-mix(in srgb, var(--bg-elev) 92%, var(--accent-2) 8%) 100%);
+}
+
+
+.shell.app > .recovery-setup-banner {
+  position: fixed;
+  top: calc(var(--topbar-h, 56px) + 12px);
+  right: 16px;
+  left: calc(var(--sidebar-w, 264px) + 16px);
+  z-index: var(--layer-toast);
+  width: auto;
+  max-width: min(760px, calc(100vw - var(--sidebar-w, 264px) - 32px));
+  max-height: min(42dvh, 360px);
+  overflow: auto;
+  box-shadow: var(--shadow-lg);
+}
+
+.shell.app.sidebar-collapsed > .recovery-setup-banner {
+  left: calc(var(--sidebar-collapsed-w, 72px) + 16px);
+  max-width: min(760px, calc(100vw - var(--sidebar-collapsed-w, 72px) - 32px));
+}
+
+.shell.app.rtl > .recovery-setup-banner {
+  right: calc(var(--sidebar-w, 264px) + 16px);
+  left: 16px;
+}
+
+.shell.app.rtl.sidebar-collapsed > .recovery-setup-banner {
+  right: calc(var(--sidebar-collapsed-w, 72px) + 16px);
+  left: 16px;
+}

@@ -1,16 +1,5 @@
 use super::*;
 
-fn test_authority(actor: &str) -> arkret_sdk::AccountId {
-    arkret_sdk::AccountId::new(
-        crate::mls_api_helpers::principal_core_id(actor).unwrap(),
-        arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example".to_owned()).unwrap(),
-    )
-}
-
-fn test_device_id(value: &str) -> arkret_sdk::DeviceId {
-    arkret_sdk::DeviceId::new(value.to_owned()).unwrap()
-}
-
 struct ActiveAccountScopeTestGuard {
     // Drop the signer guard before the account-scope guard so restoration follows
     // the inverse of the documented scope-then-signer lock order.
@@ -19,8 +8,8 @@ struct ActiveAccountScopeTestGuard {
 }
 
 fn active_account_scope(actor: &str, device: &str) -> ActiveAccountScopeTestGuard {
-    let authority = test_authority(actor);
-    let device = test_device_id(device);
+    let authority = fixture::authority(actor);
+    let device = fixture::device_id(device);
     let scope =
         crate::secure_key_store::DeviceSeedScopeTestGuard::replace(Some((&authority, &device)));
     let signer = crate::event_signer::ActiveSignerTestGuard::replace(Some(std::sync::Arc::new(
@@ -66,8 +55,8 @@ fn seed_ready_creator_snapshot(
         state,
         secure,
         realm,
-        &test_authority(actor),
-        &test_device_id(device),
+        &fixture::authority(actor),
+        &fixture::device_id(device),
     )
     .unwrap()
     .expect("fixture creates the current creator MLS snapshot");
@@ -427,7 +416,7 @@ async fn kanban_write_does_not_consume_pending_welcome_without_checkpoint() {
     let secure = crate::secure_key_store::MemorySecureKeyStore::new();
     crate::mls::runtime::store_account_mls_secret(
         &secure,
-        &test_authority(bob_actor),
+        &fixture::authority(bob_actor),
         "snapshot-secret",
     )
     .unwrap();
@@ -509,14 +498,14 @@ async fn kanban_write_waits_for_runtime_to_apply_pending_welcome() {
     let secure = crate::secure_key_store::MemorySecureKeyStore::new();
     crate::mls::runtime::store_account_mls_secret(
         &secure,
-        &test_authority(bob_actor),
+        &fixture::authority(bob_actor),
         "snapshot-secret",
     )
     .unwrap();
     crate::mls::runtime::store_mls_key_package_identity_state(
         &secure,
-        &test_authority(bob_actor),
-        &test_device_id(bob_device),
+        &fixture::authority(bob_actor),
+        &fixture::device_id(bob_device),
         &bob_key_package.keypackage_id,
         &bob_private_state,
     )
@@ -546,8 +535,8 @@ async fn kanban_write_waits_for_runtime_to_apply_pending_welcome() {
     assert!(
         crate::mls::runtime::load_mls_key_package_identity_state(
             &secure,
-            &test_authority(bob_actor),
-            &test_device_id(bob_device),
+            &fixture::authority(bob_actor),
+            &fixture::device_id(bob_device),
             &bob_key_package.keypackage_id,
         )
         .unwrap()
@@ -638,8 +627,8 @@ async fn encrypted_private_patch_rejects_epoch_zero_without_accepted_genesis_ref
         &mut state,
         &secure,
         realm,
-        &test_authority(actor),
-        &test_device_id(device),
+        &fixture::authority(actor),
+        &fixture::device_id(device),
     )
     .unwrap()
     .expect("fixture creates and persists epoch-0 MLS state");
@@ -685,7 +674,7 @@ async fn encrypted_private_patch_with_ready_snapshot_replaces_plaintext() {
     let mut state = isolated_store_for_tests("ready-mls");
     let secure = crate::secure_key_store::MemorySecureKeyStore::new();
     let secret =
-        crate::mls::runtime::load_or_create_account_mls_secret(&secure, &test_authority(actor))
+        crate::mls::runtime::load_or_create_account_mls_secret(&secure, &fixture::authority(actor))
             .unwrap();
     let identity = ArkretMlsIdentity::new_test_human_device(
         crate::mls_api_helpers::principal_core_id(actor).unwrap(),
@@ -700,7 +689,7 @@ async fn encrypted_private_patch_with_ready_snapshot_replaces_plaintext() {
             "content_scheme": "mls_rfc9420",
             "member_roster_entries_limited": false,
             "member_roster_entries": [{
-                "actor_id": arkret_sdk::ActorId::account(test_authority(actor)),
+                "actor_id": arkret_sdk::ActorId::account(fixture::authority(actor)),
                 "membership": "join"
             }]
         }),
@@ -730,7 +719,7 @@ async fn encrypted_private_patch_with_ready_snapshot_replaces_plaintext() {
         .unwrap();
     group
         .install_local_creator_binding(
-            arkret_sdk::ActorId::account(test_authority(actor)),
+            arkret_sdk::ActorId::account(fixture::authority(actor)),
             Some(
                 arkret_sdk::EventId::new("ak:event:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1")
                     .unwrap(),
@@ -1067,7 +1056,7 @@ async fn sidecar_track_patch_encrypts_with_only_the_native_sidecar_snapshot() {
     let post_state = group.export_state_record().unwrap();
     let serialized = serde_json::to_vec(&post_state).unwrap();
     let secret =
-        crate::mls::runtime::load_or_create_account_mls_secret(&secure, &test_authority(actor))
+        crate::mls::runtime::load_or_create_account_mls_secret(&secure, &fixture::authority(actor))
             .unwrap();
     let mut salt = [0_u8; 16];
     getrandom::fill(&mut salt).unwrap();

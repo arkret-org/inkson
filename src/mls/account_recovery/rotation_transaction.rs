@@ -9,14 +9,13 @@ use arkret_wire::{
 };
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use dioxus::prelude::{ReadableExt, SyncSignal, WritableExt};
+use garth::mls::backup_selection::{active_series_id_for_backup_class, iter_backup_bodies};
 use garth::mls::backup_series::fresh_backup_id;
 use garth::{PutSecretOptions, SecretClass, SecretDurability, SecureKeyStore};
 use serde_json::Value;
 use zeroize::Zeroizing;
 
 use super::backup_body::build_mls_account_secret_backup_body_with_kek_and_version;
-use super::selection::{active_series_id_for_backup_class, iter_backup_bodies};
 use crate::recovery_crypto::derive_vault_kek;
 
 const PENDING_ROTATION_INDEX_KEY: &str = "security_rotation.pending.v1";
@@ -127,7 +126,7 @@ fn sign_rotation_key_backup(
 pub(crate) async fn execute_device_revoke_security_rotation(
     api: &crate::transport::TransportClient,
     secure_store: std::sync::Arc<dyn SecureKeyStore + Send + Sync>,
-    state_store: SyncSignal<crate::state::LocalStateStore>,
+    state_store: &crate::runtime::input::StateStoreHandle,
     authority: &arkret_sdk::AccountId,
     actor_id: &str,
     current_device_id: &str,
@@ -162,7 +161,7 @@ pub(crate) async fn execute_device_revoke_security_rotation(
     let signer = crate::event_signer::active_signer()
         .ok_or_else(|| anyhow!("active device signer is required"))?;
     let trust_anchor =
-        current_controller_backup_trust_anchor(&http, actor_id, current_device_id).await?;
+        current_controller_backup_trust_anchor(&http, authority, current_device_id).await?;
     let prepared = prepare_rotation_backup_material(
         secure_store.as_ref(),
         authority,
@@ -200,6 +199,7 @@ pub(crate) async fn execute_device_revoke_security_rotation(
         pointer_events.push(build_active_series_event(
             &control_realm,
             actor_id,
+            authority,
             class.backup_kind,
             class.new_series_id.as_str(),
             active_pointer_version(&list_payload, class.backup_kind)? + 1,
@@ -315,7 +315,7 @@ pub(crate) async fn execute_device_revoke_security_rotation(
 async fn resume_device_revoke_security_rotation(
     api: &crate::transport::TransportClient,
     secure_store: std::sync::Arc<dyn SecureKeyStore + Send + Sync>,
-    state_store: SyncSignal<crate::state::LocalStateStore>,
+    state_store: &crate::runtime::input::StateStoreHandle,
     authority: &arkret_sdk::AccountId,
     actor_id: &str,
     current_device_id: &str,
@@ -353,7 +353,7 @@ async fn resume_device_revoke_security_rotation(
 async fn drive_security_rotation(
     api: &crate::transport::TransportClient,
     secure_store: std::sync::Arc<dyn SecureKeyStore + Send + Sync>,
-    mut state_store: SyncSignal<crate::state::LocalStateStore>,
+    state_store: &crate::runtime::input::StateStoreHandle,
     authority: &arkret_sdk::AccountId,
     actor_id: &str,
     current_device_id: &str,
@@ -404,8 +404,7 @@ async fn drive_security_rotation(
         .clone();
     if transaction.next_required_step()? == Some(SecurityTransactionStep::EraseOldMaterial) {
         let digest_suite = state_store
-            .read()
-            .trusted_mls_governance_checkpoint(control_realm.as_str())
+            .read(|store| store.trusted_mls_governance_checkpoint(control_realm.as_str()))
             .ok_or_else(|| anyhow!("security rotation has no verified PCR governance checkpoint"))?
             .live_digest_suite;
         let erase_frontier = submitter
@@ -474,13 +473,16 @@ async fn drive_security_rotation(
     let staged: StagedRotationSecret =
         serde_json::from_slice(staged.as_slice()).context("decode staged MLS rotation material")?;
     let rotation = staged.into_rotation();
-    crate::mls::runtime::commit_account_mls_secret_rotation(
-        &mut state_store.write(),
-        secure_store.as_ref(),
-        authority,
-        &rotation,
-    )
-    .map_err(|error| anyhow!(error.to_string()))?;
+    state_store
+        .write(|store| {
+            crate::mls::runtime::commit_account_mls_secret_rotation(
+                store,
+                secure_store.as_ref(),
+                authority,
+                &rotation,
+            )
+        })
+        .map_err(|error| anyhow!(error.to_string()))?;
     let local_commit = arkret_models_crypto::SecurityRotationLocalCommit {
         schema: SchemaId::SECURITY_ROTATION_LOCAL_COMMIT_V1.to_owned(),
         transaction_id: transaction.transaction_id.clone(),
@@ -642,11 +644,14 @@ fn rotation_backup_count(transaction: &arkret_wire::SecurityTransaction) -> Resu
 /// anchor is that it comes from the authority's current state.
 pub(super) async fn current_controller_backup_trust_anchor(
     http: &arkret_sdk::http_client::Client,
-    actor_id: &str,
+    // The closed `AccountId` of the account being backed up. Rebuilding it from
+    // the principal plus the ambient authoring Station would pass the two
+    // components as a loose identity, which account-lifecycle.md §156 forbids,
+    // and the ambient slot is not installed yet during first enrollment.
+    account_id: &arkret_sdk::AccountId,
     device_id: &str,
 ) -> Result<ControllerBackupTrustAnchor> {
-    let actor = crate::mls_api_helpers::principal_core_id(actor_id)?;
-    let account_id = arkret_sdk::AccountId::new(actor, crate::operation::authoring_station_id()?);
+    let account_id = account_id.clone();
     let device = arkret_sdk::DeviceId::new(device_id.to_owned())?;
     let outcome = crate::transport::keys::query_keys(http, &account_id, device_id).await?;
     resolve_controller_backup_trust_anchor(&outcome, &account_id, &device)
@@ -689,6 +694,9 @@ fn signer_did_for_principal(signer_did: &str, principal: &arkret_sdk::DidCoreId)
 pub(super) fn build_active_series_event(
     principal_control_realm_id: &arkret_sdk::RealmId,
     actor_id: &str,
+    // Closed account identity of the author; see
+    // `current_controller_backup_trust_anchor`.
+    account_id: &arkret_sdk::AccountId,
     kind: BackupRotationKind,
     series_id: &str,
     pointer_version: u64,
@@ -699,6 +707,11 @@ pub(super) fn build_active_series_event(
     let signer = crate::event_signer::active_signer()
         .ok_or_else(|| anyhow!("active device signer is required"))?;
     let principal = crate::mls_api_helpers::principal_core_id(actor_id)?;
+    if principal != account_id.principal_id {
+        return Err(anyhow!(
+            "active-series author does not match the supplied account"
+        ));
+    }
     let principal_did = signer_did_for_principal(signer.signer_did(), &principal)?;
     let verification_method = signer.verification_method_for_principal(&principal_did)?;
     let backup_kind = match kind {
@@ -706,7 +719,7 @@ pub(super) fn build_active_series_event(
         BackupRotationKind::MlsHistory => BackupKind::MlsHistory,
     };
     let unsigned = arkret_sdk::UnsignedKeyBackupActiveSeries::new(
-        crate::mls_api_helpers::local_account_actor_id(principal.as_str())?,
+        arkret_sdk::ActorId::account(account_id.clone()),
         backup_kind,
         BackupSeriesId::new(series_id.to_owned())?,
         pointer_version,
@@ -722,9 +735,16 @@ pub(super) fn build_active_series_event(
     )
     .map_err(anyhow::Error::msg)?;
     let payload = unsigned.attach_signature(signature)?;
-    crate::operation::TypedOperationBuilder::new::<arkret_sdk::event_spec::KeyBackupActiveSeries>(
+    // `new` would take the Station from the ambient authoring slot, which is
+    // only installed once `describe` succeeds -- first enrollment authors this
+    // pointer before that. The account's own Station is already closed in
+    // `account_id` (account-lifecycle.md §156/§158), so name it explicitly.
+    crate::operation::TypedOperationBuilder::new_for_station::<
+        arkret_sdk::event_spec::KeyBackupActiveSeries,
+    >(
         principal_control_realm_id.to_string(),
         actor_id,
+        account_id.station_id.clone(),
         payload,
     )
     .build_sdk_event("inkson")
@@ -736,7 +756,8 @@ fn prepare_class(
     wire_kind: &str,
     new_backup_bodies: Vec<arkret_sdk::KeyBackup>,
 ) -> Result<PreparedRotationBackupClass> {
-    let previous_series_id = active_series_id_for_backup_class(list_payload, wire_kind)
+    let class = BackupKind::try_from(wire_kind).map_err(|error| anyhow!(error))?;
+    let previous_series_id = active_series_id_for_backup_class(list_payload, class)
         .ok_or_else(|| anyhow!("no authoritative {wire_kind} series is available"))?;
     let previous_series_id = BackupSeriesId::new(previous_series_id.to_owned())?;
     let expected_kind = match backup_kind {

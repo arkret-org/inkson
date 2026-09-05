@@ -17,11 +17,7 @@ mod device_identity_proof_tests {
     }
 
     fn authority(actor: &str) -> arkret_sdk::AccountId {
-        let principal_id = crate::mls_api_helpers::principal_core_id(actor).unwrap();
-        arkret_sdk::AccountId {
-            station_id: crate::operation::authoring_station_id().unwrap(),
-            principal_id,
-        }
+        crate::test_support::authority_at_authoring_station(actor)
     }
 
     fn signed_message_envelope_inner(

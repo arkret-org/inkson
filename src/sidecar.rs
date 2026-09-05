@@ -2143,10 +2143,7 @@ mod tests {
     use super::*;
 
     fn controller_account() -> arkret_sdk::AccountId {
-        arkret_sdk::AccountId::new(
-            crate::mls_api_helpers::principal_core_id("did:web:alice.example").unwrap(),
-            arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example".to_owned()).unwrap(),
-        )
+        crate::test_support::authority("did:web:alice.example")
     }
 
     fn account_data_namespace_key() -> [u8; 32] {
@@ -2464,7 +2461,6 @@ mod tests {
                 )
                 .unwrap(),
                 exchange_id: arkret_sdk::AgentSidecarExchangeId::new(exchange).unwrap(),
-                origin: arkret_sdk::AgentSidecarExchangeOrigin::SourceTrackRouted,
                 source_track_ref: arkret_sdk::AgentSidecarSourceTrackRef {
                     realm_id: arkret_sdk::RealmId::new(realm_id).unwrap(),
                     strand_id: arkret_sdk::StrandId::new(
@@ -2477,7 +2473,6 @@ mod tests {
                 source_hlc: arkret_sdk::Hlc::new("01970e589d21-0001-a13f9c2e").unwrap(),
                 client_order_key: arkret_sdk::NonEmptyString::new("device-1-1").unwrap(),
                 addressed_agent_ids: vec![coordinator.clone()],
-                completion_policy: arkret_sdk::AgentSidecarExchangeCompletionPolicy::Coordinator,
                 coordinator_agent_id: coordinator,
                 coordinator_assignment_event_id: request_event.clone(),
                 participating_agent_ids: Vec::new(),

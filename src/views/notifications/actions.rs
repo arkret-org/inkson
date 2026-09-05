@@ -489,7 +489,7 @@ fn accept_invite_notification(
             let checkpoint_error =
                 crate::mls::creator_bootstrap::ensure_realm_governance_checkpoint(
                     &api,
-                    state_store,
+                    crate::app::runtime_adapter::state_store_handle(state_store),
                     &accepted_realm_for_api,
                 )
                 .await

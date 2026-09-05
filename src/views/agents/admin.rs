@@ -507,8 +507,7 @@ mod directory_refresh_tests {
             .with_timezone(&chrono::Utc);
 
         assert!(
-            apply_renewed_pairing(&mut rows, outcome.agent_id.as_str(), &outcome, now.clone(),)
-                .is_err()
+            apply_renewed_pairing(&mut rows, outcome.agent_id.as_str(), &outcome, now,).is_err()
         );
         reconcile_refreshed_pairing(
             &mut rows,
@@ -917,7 +916,7 @@ fn spawn_set_agent_enabled(
                 device_id.as_str(),
                 &agent_actor_id,
                 key_state.principal_control_realm_id.as_str(),
-                state_store,
+                crate::app::runtime_adapter::state_store_handle(state_store),
                 None,
             )
             .await?;
@@ -960,7 +959,7 @@ fn spawn_set_agent_enabled(
                 device_id.as_str(),
                 &agent_actor_id,
                 key_state.principal_control_realm_id.as_str(),
-                state_store,
+                crate::app::runtime_adapter::state_store_handle(state_store),
                 None,
             )
             .await
@@ -1414,7 +1413,7 @@ fn spawn_provision_agent(
             .await?;
             crate::mls::creator_bootstrap::ensure_realm_governance_checkpoint(
                 &api,
-                state_store,
+                crate::app::runtime_adapter::state_store_handle(state_store),
                 controller_realm_for_checkpoint.as_str(),
             )
             .await
@@ -1663,7 +1662,7 @@ fn spawn_provision_agent(
                 device_id.as_str(),
                 &agent_actor_id,
                 pcr_realm_for_seal.as_str(),
-                state_store_for_seal,
+                crate::app::runtime_adapter::state_store_handle(state_store_for_seal),
                 Some(&frozen_genesis),
             )
             .await

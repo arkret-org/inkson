@@ -372,6 +372,7 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("settings.section.audit", "审计日志");
     dict.set("settings.section.developer", "开发者工具");
     dict.set("settings.account.identity", "账号身份");
+    dict.set("settings.account.no_device_session", "没有已认证的设备会话");
     dict.set("settings.account.handles", "账号标识");
     dict.set("settings.account.current_device", "当前设备");
     dict.set("settings.account.copy_did", "复制 DID");
@@ -409,6 +410,226 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("settings.search.placeholder", "搜索设置…");
     // T1.3 - event signature / proof mode status display.
     dict.set("settings.proof_mode.label", "事件签名");
+
+    // Settings surfaces wired in the `views/settings/mod.rs` sweep:
+    // server information, local stores, storage diagnostics, encryption,
+    // MIMI interop, notifications, push, privacy/presence, read receipts,
+    // remarks, handle, appearance and session diagnostics.
+    dict.set("settings.server.context", "服务器上下文");
+    dict.set("settings.server.station", "Station");
+    dict.set("settings.server.session", "会话");
+    dict.set("settings.server.session_authenticated", "已认证");
+    dict.set("settings.server.push", "推送");
+    dict.set("settings.avatar.account_alt", "账号头像");
+    dict.set("settings.avatar.edit_dialog", "编辑头像");
+    dict.set("settings.avatar.selected_alt", "已选头像");
+    dict.set("settings.avatar.cleared_synced", "已从同步偏好中清除头像");
+    dict.set("settings.avatar.restored_synced", "已从同步偏好中恢复头像");
+    dict.set("settings.avatar.removing", "正在从公开资料中移除头像。");
+    dict.set(
+        "settings.avatar.removed",
+        "头像已移除；正在向其他设备同步该清除。",
+    );
+    dict.set("settings.local_stores.title", "本地存储");
+    dict.set("settings.local_stores.badge", "状态");
+    dict.set("settings.local_stores.config_store", "配置存储");
+    dict.set("settings.local_stores.state_store", "状态存储");
+    dict.set("settings.local_stores.active", "运行中");
+    dict.set("settings.local_stores.config_size", "配置大小");
+    dict.set("settings.local_stores.approx_bytes", "约 {bytes} 字节");
+    dict.set("settings.local_stores.platform", "平台");
+    dict.set("settings.local_stores.platform_web", "Web（localStorage）");
+    dict.set("settings.local_stores.platform_native", "原生（文件系统）");
+    dict.set("settings.storage_risks.title", "存储诊断");
+    dict.set(
+        "settings.storage_risks.bounded_projection",
+        "有界的 localStorage 投影 ",
+    );
+    dict.set(
+        "settings.storage_risks.bounded_projection_hint",
+        "localStorage 只承载很小的 root/config 投影。账号状态、E2EE 明文、会话凭据与密钥材料都放在受保护的 IndexedDB 层。",
+    );
+    dict.set("settings.storage_risks.badge_bounded", "有界");
+    dict.set(
+        "settings.storage_risks.protected_e2ee",
+        "受保护的 E2EE 存储 ",
+    );
+    dict.set(
+        "settings.storage_risks.protected_e2ee_hint",
+        "E2EE 明文缓存与账号机密状态使用不可导出的 SubtleCrypto 包装密钥加密存放在 IndexedDB 中，且从不镜像到 localStorage。",
+    );
+    dict.set("settings.storage_risks.single_tab", "单个活动浏览器标签页 ");
+    dict.set(
+        "settings.storage_risks.single_tab_hint",
+        "Inkson 每个浏览器配置只允许一个活动标签页，使 IndexedDB、设备密钥、MLS 状态、游标与出站写入只有一个所有者。",
+    );
+    dict.set("settings.storage_risks.badge_info", "提示");
+    dict.set("settings.storage_risks.filesystem", "文件系统存储 ");
+    dict.set(
+        "settings.storage_risks.filesystem_hint",
+        "使用原生文件系统存储，数据跨会话保留。请确保文件权限设置正确以保障安全。",
+    );
+    dict.set("settings.storage_risks.badge_ok", "正常");
+    dict.set("settings.encryption.badge", "MLS / E2EE");
+    dict.set(
+        "settings.encryption.always_on",
+        "加密 Realm 始终启用端到端加密。可在下方管理你的恢复密钥。",
+    );
+    dict.set("settings.key_backup.title", "高级密钥备份诊断");
+    dict.set("settings.key_backup.badge", "开发者工具");
+    dict.set(
+        "settings.key_backup.body",
+        "上方的加密历史恢复会自动创建密钥备份信封。恢复备份 id 在创建备份时生成，不需要手工输入。",
+    );
+    dict.set(
+        "settings.key_backup.open_recovery_hint",
+        "调试某个具体备份信封时请打开「恢复」页面。",
+    );
+    dict.set("settings.key_backup.open_recovery", "恢复与备份");
+    dict.set(
+        "settings.key_backup.contract",
+        "契约：ak.schema.key_backup.v1，位于 /_arkret/self/keys/backups/*。加密历史恢复的设置不需要它。",
+    );
+    dict.set("settings.mimi.title", "MIMI 互操作检查");
+    dict.set("settings.mimi.refresh_directory", "刷新目录");
+    dict.set("settings.mimi.identifier_query", "标识符查询");
+    dict.set("settings.mimi.submit_message", "提交测试消息");
+    dict.set("settings.mimi.proxy_download", "代理下载");
+    dict.set("settings.mimi.directory_badge", "能力");
+    dict.set("settings.mimi.receipt_title", "回执");
+    dict.set("settings.mimi.receipt_badge", "最近一次操作");
+    dict.set("settings.mimi.not_loaded", "尚未加载");
+    dict.set("settings.mimi.no_receipt", "暂无 MIMI 操作回执");
+    dict.set("settings.notifications.defaults_title", "全局通知默认值");
+    dict.set("settings.notifications.defaults_badge", "已同步");
+    dict.set(
+        "settings.notifications.defaults_body",
+        "除非你在下方添加按 Realm 的覆盖，否则对所有 Realm 生效。",
+    );
+    dict.set("settings.notifications.sound_on", " 声音提醒");
+    dict.set("settings.notifications.sound_off", " 声音提醒已关闭");
+    dict.set("settings.notifications.sound_enabled", "声音提醒已开启。");
+    dict.set("settings.notifications.sound_disabled", "声音提醒已关闭。");
+    dict.set("settings.notifications.sound_test", "测试声音");
+    dict.set(
+        "settings.notifications.sound_test_played",
+        "已播放声音提醒测试。",
+    );
+    dict.set(
+        "settings.notifications.sound_test_blocked",
+        "请先开启声音提醒再测试。",
+    );
+    dict.set("settings.notifications.dnd", " 免打扰");
+    dict.set("settings.notifications.dnd_off", "关闭");
+    dict.set("settings.notifications.dnd_now", "现在");
+    dict.set("settings.notifications.overrides_title", "按 Realm 覆盖");
+    dict.set(
+        "settings.notifications.overrides_body",
+        "选择一个 Realm 及其通知程度。这只会为该 Realm 覆盖上方的全局默认值。",
+    );
+    dict.set("settings.notifications.no_realms", "暂无可选的 Realm");
+    dict.set("settings.notifications.select_realm", "选择一个 Realm…");
+    dict.set("settings.notifications.notify_label", "通知我");
+    dict.set("settings.notifications.level_all", "所有消息");
+    dict.set("settings.notifications.add_override", "添加覆盖");
+    dict.set(
+        "settings.notifications.overrides_empty",
+        "还没有按 Realm 的覆盖。未配置的 Realm 沿用全局默认值。",
+    );
+    dict.set("settings.notifications.clear_overrides", "清除所有覆盖");
+    dict.set("settings.push.title", "推送投递");
+    dict.set("settings.push.badge", "配置");
+    dict.set("settings.push.body", "推送通知偏好与网关注册。");
+    dict.set("settings.push.current", "当前：{state}");
+    dict.set("settings.push.not_registered", "未注册");
+    dict.set("settings.privacy.badge", "可见性控制");
+    dict.set("settings.privacy.presence_visibility", "在线状态可见性");
+    dict.set(
+        "settings.privacy.presence_visibility.public",
+        "共同 Realm 中的所有人",
+    );
+    dict.set(
+        "settings.privacy.presence_visibility.contacts_only",
+        "仅联系人",
+    );
+    dict.set(
+        "settings.privacy.presence_visibility.nobody",
+        "任何人都不可见（显示为离线）",
+    );
+    dict.set("settings.privacy.status_title", "我的状态");
+    dict.set("settings.privacy.status_badge", "手动在线状态");
+    dict.set("settings.privacy.presence_state.auto", "自动");
+    dict.set("settings.privacy.presence_state.online", "在线");
+    dict.set("settings.privacy.presence_state.idle", "空闲");
+    dict.set("settings.privacy.presence_state.dnd", "免打扰（忙碌）");
+    dict.set(
+        "settings.privacy.status_message_placeholder",
+        "状态消息（例如：会议中）",
+    );
+    dict.set("settings.privacy.status_expiry.never", "不自动清除");
+    dict.set("settings.privacy.status_expiry.30m", "30 分钟后清除");
+    dict.set("settings.privacy.status_expiry.1h", "1 小时后清除");
+    dict.set("settings.privacy.status_expiry.today", "今天结束时清除");
+    dict.set("settings.privacy.status_save", "保存状态");
+    dict.set("settings.privacy.status_clear", "清除");
+    dict.set("settings.privacy.status_invalid", "状态消息无效：{error}");
+    dict.set(
+        "settings.privacy.status_state_unknown",
+        "状态取值不在协议的封闭集合内。",
+    );
+    dict.set("settings.privacy.status_cleared", "状态已清除。");
+    dict.set("settings.privacy.status_saved", "状态已保存。");
+    dict.set("settings.read_receipts.default_badge", "默认");
+    dict.set("settings.read_receipts.send_default", " 默认发送已读回执");
+    dict.set(
+        "settings.read_receipts.display_default",
+        " 默认显示他人的已读回执",
+    );
+    dict.set("settings.read_receipts.realm_exceptions", "Realm 例外");
+    dict.set("settings.read_receipts.badge_sending", "发送中");
+    dict.set("settings.read_receipts.badge_skipping", "已跳过");
+    dict.set("settings.read_receipts.locked", "已被 Realm 策略锁定");
+    dict.set("settings.read_receipts.switch_to_skip", "改为跳过");
+    dict.set("settings.read_receipts.switch_to_send", "改为发送");
+    dict.set("settings.read_receipts.inherit_default", "继承默认值");
+    dict.set("settings.read_receipts.add_skip", "添加（跳过）");
+    dict.set("settings.read_receipts.add_send", "添加（发送）");
+    dict.set("settings.remarks.badge_private", "私有");
+    dict.set("settings.realm_remarks.title", "Realm 备注");
+    dict.set(
+        "settings.realm_remarks.empty",
+        "还没有备注。可在下方添加，用来区分同名的 Realm。",
+    );
+    dict.set(
+        "settings.realm_remarks.local_name_private",
+        "本地名称（私有）",
+    );
+    dict.set("settings.realm_remarks.local_name", "本地名称");
+    dict.set("settings.realm_remarks.add", "添加备注");
+    dict.set("settings.contact_petnames.title", "联系人昵称");
+    dict.set(
+        "settings.contact_petnames.body",
+        "昵称在所有 Realm 中是全局的。请在已接受的真人联系人行中添加或编辑；任意 DID 与 Realm 成员不能设置昵称。",
+    );
+    dict.set("settings.contact_petnames.empty", "尚未保存联系人昵称。");
+    dict.set("settings.handle.title", "Handle");
+    dict.set("settings.handle.managed_badge", "由你的组织管理");
+    dict.set(
+        "settings.handle.managed_body",
+        "你的 handle 由所属组织管理。本客户端不能直接设置或修改，请通过组织的签发方申请变更。",
+    );
+    dict.set("settings.handle.issuer_link", "在组织的签发方管理 handle");
+    dict.set(
+        "settings.handle.issuer_link_unavailable",
+        "签发方链接不可用",
+    );
+    dict.set("settings.theme.badge", "外观");
+    dict.set("settings.theme.light", "浅色主题");
+    dict.set("settings.theme.night", "深色主题");
+    dict.set("settings.theme.system", "跟随系统");
+    dict.set("settings.theme.current", "当前：{theme}");
+    dict.set("settings.language.title", "语言");
+    dict.set("settings.session_diagnostics.title", "会话诊断");
     dict.set("settings.proof_mode.real_ed25519", "真实 Ed25519");
     dict.set("settings.proof_mode.external_signer", "外部 signer");
     dict.set(
@@ -2371,6 +2592,171 @@ fn prompt_copy_strings(dict: &mut TranslationDict) {
         "恢复已设置完成,但本地信息未能保存到此设备。",
     );
     dict.set("recovery_setup.confirm_button", "确认已保存的密钥");
+    dict.set("identity.tier.cached", "缓存名称");
+    dict.set(
+        "identity.tier.cached_detail",
+        "这是本地保存的旧名称,刚才没能重新核对。",
+    );
+    dict.set("identity.tier.name_only", "未核验名称");
+    dict.set(
+        "identity.tier.name_only_detail",
+        "这是此前记录下来的名称,不是核验过的名称。",
+    );
+    dict.set("identity.tier.unresolved", "名称不可用");
+    dict.set(
+        "identity.tier.unresolved_detail",
+        "没能查到这个账号的名称,这里显示的是账号标识。",
+    );
+    dict.set("settings.devices.title", "设备访问");
+    dict.set(
+        "settings.devices.subtitle",
+        "查看受信任的设备,或批准一台新设备。",
+    );
+    dict.set("settings.devices.help", "管理绑定到你账户的设备。吊销设备会把它移出活跃设备集合,并在它参与的每个端到端加密 Realm 中移除对应的 MLS 叶节点。");
+    dict.set("settings.devices.tabs_aria_label", "设备设置");
+    dict.set("settings.devices.tab_list", "设备");
+    dict.set("settings.devices.tab_add", "添加设备");
+    dict.set("settings.devices.refresh", "刷新");
+    dict.set("settings.devices.active_title", "活跃设备");
+    dict.set("settings.devices.empty_title", "还没有加载到设备");
+    dict.set(
+        "settings.devices.empty_message",
+        "正在加载你的设备…也可以点击“刷新”重试。",
+    );
+    dict.set("settings.devices.column_device", "设备");
+    dict.set("settings.devices.column_verification", "验证状态");
+    dict.set("settings.devices.column_authorized", "授权时间");
+    dict.set("settings.devices.column_actions", "操作");
+    dict.set("settings.devices.this_device", "当前设备");
+    dict.set("settings.devices.state_verified", "已验证");
+    dict.set("settings.devices.state_unverified", "未验证");
+    dict.set("settings.devices.state_revoked", "已吊销");
+    dict.set("settings.devices.state_title", "设备验证状态:{state}");
+    dict.set("settings.devices.revoke_title", "吊销设备");
+    dict.set(
+        "settings.devices.revoke_recovery_label",
+        "恢复密钥(24 个词)",
+    );
+    dict.set(
+        "settings.devices.revoke_recovery_placeholder",
+        "你的 24 词恢复密钥 —— 轮换加密历史备份时必须提供",
+    );
+    dict.set("settings.devices.revoke_confirm", "确认吊销");
+    dict.set("settings.devices.pair_this_browser", "当前浏览器");
+    dict.set("settings.devices.pair_title", "批准这台设备");
+    dict.set("settings.devices.pair_required_badge", "需要批准");
+    dict.set(
+        "settings.devices.pair_body",
+        "生成配对二维码或链接,然后在一台已授权的设备上扫描或打开它。系统不会自动发送账户通知。",
+    );
+    dict.set("settings.devices.pair_hide_link", "隐藏链接");
+    dict.set("settings.devices.pair_qr_aria_label", "设备批准二维码");
+    dict.set("settings.devices.pair_link_aria_label", "设备批准链接");
+    dict.set("settings.devices.accept_title", "用链接批准");
+    dict.set(
+        "settings.devices.accept_body",
+        "如果已授权设备上没有弹出确认提示,就用这个备用方式。",
+    );
+    dict.set(
+        "settings.devices.accept_placeholder",
+        "粘贴配对链接(…/device-pairing/resolve#token=…)或令牌",
+    );
+    dict.set("settings.devices.session_active", "已登录");
+    dict.set("settings.devices.session_inactive", "未登录");
+    dict.set("settings.devices.revoke_self_blocked", "不能吊销当前设备");
+    dict.set("settings.devices.revoke", "吊销");
+    dict.set("settings.devices.revoke_body_before", "这会写入 ");
+    dict.set("settings.devices.revoke_body_after", " 到你的主控 Realm,把该设备移出它参与的每个端到端加密 Realm,并轮换账户 MLS 历史密钥。此操作无法撤销。");
+    dict.set("settings.devices.pair_requesting", "正在请求…");
+    dict.set("settings.devices.pair_request", "请求批准");
+    dict.set("settings.devices.pair_checking", "正在检查…");
+    dict.set("settings.devices.pair_check", "检查批准状态");
+    dict.set("settings.devices.accept_resolving", "正在解析…");
+    dict.set("settings.devices.accept_resolve", "解析链接");
+    dict.set(
+        "settings.devices.accept_rejected",
+        "已忽略这次配对请求,没有批准任何设备。",
+    );
+    dict.set("settings.devices.accept_device_name", "设备名称");
+    dict.set("settings.devices.accept_device_id", "设备标识");
+    dict.set("settings.devices.accept_key_fingerprint", "密钥指纹");
+    dict.set("settings.devices.accept_gate_audience", "批准账户服务器");
+    dict.set("settings.devices.accept_unnamed_device", "未提供");
+    dict.set("settings.devices.revoke_threat_note", "吊销不等于远程擦除。它无法删除该设备上已经复制走的密钥或缓存历史。请把丢失或被盗的设备当作仍能读取它在吊销前留存的一切内容。");
+    dict.set("audit.title", "审计日志");
+    dict.set("audit.help", "有些 Realm 会记录每一次读取,有些会记录每一次写入。此视图只读,只显示这台设备已经看到的记录。");
+    dict.set("audit.access_events", "已记录的读取");
+    dict.set("audit.access_events_hint", "在 Realm 记录每次读取时产生");
+    dict.set("audit.write_receipts", "已记录的写入");
+    dict.set("audit.write_receipts_hint", "在 Realm 记录每次写入时产生");
+    dict.set("audit.total_observed", "本机共计");
+    dict.set("audit.total_observed_hint", "仅统计这台设备已同步到的部分");
+    dict.set("audit.empty_title", "还没有审计记录");
+    dict.set(
+        "audit.empty_message",
+        "目前还没有任何记录。只有在设置要求记录的 Realm 中才会出现。",
+    );
+    dict.set("quarantine.title", "邀请隔离区");
+    dict.set(
+        "quarantine.status",
+        "待处理的邀请只为你自己私密保存。等同意流程可用后,这里会出现审阅控件。",
+    );
+    dict.set("theme.switcher_aria_label", "主题");
+    dict.set("common.delete", "删除");
+    dict.set("app.boot.opening_secure_storage", "正在打开安全存储");
+    dict.set("app.boot.loading_keys", "正在加载账户与设备的加密密钥…");
+    dict.set("app.recovery.incomplete_title", "恢复设置尚未完成");
+    dict.set("app.recovery.incomplete_body", "在依赖这个账户之前，先生成你的恢复密钥（24 个词）。备份在服务器上只以密文保存；Arkret 无法替你找回这 24 个词。");
+    dict.set("app.recovery.configure", "去设置恢复");
+    dict.set("app.recovery.history_status", "加密历史状态");
+    dict.set("app.recovery.history_status_body", "恢复加密历史需要一份账户 MLS 密钥材料；如果这是全新账户，等你第一次写入加密内容、生成可备份的材料之后，应用会再次提示。");
+    dict.set("app.nav.close_menu", "关闭菜单");
+    dict.set("app.nav.open_menu", "打开菜单");
+    dict.set("app.nav.main_navigation", "主导航");
+    dict.set("app.nav.resize_menu", "拖动调整菜单宽度");
+    dict.set("app.nav.scope_toggle", "协作与联系人");
+    dict.set("app.nav.show_navigation", "显示导航");
+    dict.set("app.nav.hide_navigation", "隐藏导航");
+    dict.set("app.brand.home", "Inkson | Arkret 首页");
+    dict.set("app.main_content", "主内容");
+    dict.set("app.sidebar.hide_own_agents", "隐藏你的 AI 助理");
+    dict.set("app.sidebar.show_own_agents", "显示你的 AI 助理");
+    dict.set("app.sidebar.opening", "正在打开…");
+    dict.set("app.sidebar.agent_badge", "AI 助理");
+    dict.set("app.sidebar.remark", "备注");
+    dict.set("app.sidebar.remark_title", "本地备注（只对这个账户可见）");
+    dict.set("app.sidebar.direct_badge", "私聊");
+    dict.set("app.sidebar.agent_count", "助理 {count}");
+    dict.set("app.sidebar.contact_actions", "联系人操作");
+    dict.set("app.sidebar.close_row_actions", "关闭这一行的操作");
+    dict.set("app.sidebar.delete_contact", "删除联系人");
+    dict.set("app.topbar.current_view", "当前视图：{surface}");
+    dict.set("app.topbar.open_global_search", "打开全局搜索");
+    dict.set("app.account.open_settings", "打开设置");
+    dict.set("app.account.did", "DID");
+    dict.set("app.account.server", "服务器");
+    dict.set("app.account.refresh_session", "刷新会话");
+    dict.set("app.account.log_out", "退出登录");
+    dict.set("theme.switch_to_light", "切换到浅色主题");
+    dict.set("theme.switch_to_night", "切换到深色主题");
+    dict.set("account.not_signed_in", "尚未登录");
+    dict.set("account.refresh_then_sign_in", "先刷新服务器元数据，再登录");
+    dict.set("visibility.pill_title", "谁可以找到并看到它");
+    dict.set("moderation.workbench_aria_label", "内容处置");
+    dict.set("moderation.decide_title", "记录一次处置");
+    dict.set("moderation.decide_badge", "处置");
+    dict.set("moderation.target_placeholder", "这次处置针对的对象");
+    dict.set("moderation.decide_submit", "记录处置");
+    dict.set("moderation.standing_title", "生效中的处置");
+    dict.set(
+        "moderation.standing_empty",
+        "这台设备上还没有生效中的处置。",
+    );
+    dict.set(
+        "moderation.decision_row_summary",
+        "针对 {target} —— {reason}",
+    );
+    dict.set("moderation.lift", "撤销处置");
     dict.set("device_pair.aria_label", "有新设备正在请求访问你的账户");
     dict.set("device_pair.title", "新设备请求加入你的账户");
     dict.set("device_pair.subtitle", "设备配对");

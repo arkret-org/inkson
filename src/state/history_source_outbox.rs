@@ -1,15 +1,13 @@
-use dioxus::prelude::{ReadableExt, SyncSignal, WritableExt};
-
-use super::LocalStateStore;
+use crate::runtime::input::StateStoreHandle;
 use crate::secure_key_store::SecureKeyStore;
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub(crate) struct InksonHistorySourceOutboxStore {
-    state_store: SyncSignal<LocalStateStore>,
+    state_store: StateStoreHandle,
 }
 
 impl InksonHistorySourceOutboxStore {
-    pub(crate) fn new(state_store: SyncSignal<LocalStateStore>) -> Self {
+    pub(crate) fn new(state_store: StateStoreHandle) -> Self {
         Self { state_store }
     }
 }
@@ -18,7 +16,9 @@ impl garth::HistorySourceOutboxStore for InksonHistorySourceOutboxStore {
     fn load_history_source_outbox(
         &self,
     ) -> garth::Result<garth::VersionedHistorySourceOutboxSnapshot> {
-        Ok(self.state_store.read().load().history_source_outbox_state)
+        Ok(self
+            .state_store
+            .read(|store| store.load().history_source_outbox_state))
     }
 
     async fn compare_and_swap_history_source_outbox(
@@ -26,12 +26,10 @@ impl garth::HistorySourceOutboxStore for InksonHistorySourceOutboxStore {
         expected_revision: u64,
         snapshot: &garth::HistorySourceOutboxSnapshot,
     ) -> garth::Result<bool> {
-        let barrier = {
-            let mut state_store = self.state_store;
-            let mut store = state_store.write();
+        let Some(barrier) = self.state_store.write(|store| {
             store.ensure_cached_loaded();
             if store.cached.history_source_outbox_state.revision != expected_revision {
-                return Ok(false);
+                return Ok(None);
             }
             let revision = expected_revision.checked_add(1).ok_or_else(|| {
                 garth::Error::Protocol("history source outbox revision overflow".to_owned())
@@ -43,7 +41,11 @@ impl garth::HistorySourceOutboxStore for InksonHistorySourceOutboxStore {
                 };
             store
                 .begin_durable_flush()
-                .map_err(|error| garth::Error::Protocol(error.to_string()))?
+                .map(Some)
+                .map_err(|error| garth::Error::Protocol(error.to_string()))
+        })?
+        else {
+            return Ok(false);
         };
         barrier
             .wait()
@@ -109,7 +111,7 @@ impl garth::HistorySourceBlobStore for InksonHistorySourceBlobStore<'_> {
 }
 
 pub(crate) fn history_source_outbox(
-    state_store: SyncSignal<LocalStateStore>,
+    state_store: &StateStoreHandle,
 ) -> garth::HistorySourceOutbox<InksonHistorySourceOutboxStore> {
-    garth::HistorySourceOutbox::new(InksonHistorySourceOutboxStore::new(state_store))
+    garth::HistorySourceOutbox::new(InksonHistorySourceOutboxStore::new(state_store.clone()))
 }

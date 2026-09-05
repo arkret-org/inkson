@@ -13,8 +13,7 @@
 //! transmitted in clear.
 //!
 //! This module is split by responsibility:
-//! - [`backup_body`] — build / decrypt / classify the on-wire backup envelopes.
-//! - [`selection`] — pure selection helpers over a `list_key_backups` payload.
+//! - [`backup_body`] — build / decrypt the on-wire backup envelopes.
 //! - [`restore`] — fetch + restore flow (account secret, history, sidecar).
 //! - [`upload`] — backup / rotation upload flow and superseded cleanup.
 
@@ -22,10 +21,17 @@ mod backup_body;
 mod recovery_transaction;
 mod restore;
 mod rotation_transaction;
-mod selection;
 mod upload;
 
-// The key-backup series chain is wire-shape verification, owned by garth.
+// Backup classification, series selection and the series chain are wire-shape
+// decisions, owned by garth.
+pub use garth::mls::backup_selection::{
+    is_mls_account_secret_backup, is_mls_private_plaintext_backup,
+    is_passphrase_account_secret_backup, is_recovery_public_key_account_secret_backup,
+    mls_account_secret_backup_version, select_mls_account_secret_backup,
+    select_mls_account_secret_recovery_public_key_backup, select_mls_history_backups,
+    select_mls_private_plaintext_backup, select_preferred_mls_account_secret_backup,
+};
 pub(crate) use garth::mls::backup_series::series_supersedes_digest;
 
 #[cfg(test)]
@@ -37,10 +43,7 @@ pub use backup_body::{
     build_mls_account_secret_backup_body_with_kek_and_version,
     build_mls_account_secret_recovery_public_key_backup,
     build_mls_private_plaintext_backup_body_with_kek, decrypt_mls_account_secret_backup,
-    decrypt_mls_private_plaintext_backup, is_mls_account_secret_backup,
-    is_mls_private_plaintext_backup, is_passphrase_account_secret_backup,
-    is_recovery_public_key_account_secret_backup,
-    open_mls_account_secret_recovery_public_key_backup,
+    decrypt_mls_private_plaintext_backup, open_mls_account_secret_recovery_public_key_backup,
 };
 pub(crate) use recovery_transaction::{
     CompletedFreshDeviceRecovery, execute_pcr_policy_recovery, resume_pending_pcr_policy_recovery,
@@ -57,11 +60,6 @@ pub use restore::{
     restore_mls_history_with_recovery_key_from_payload,
 };
 pub(crate) use rotation_transaction::execute_device_revoke_security_rotation;
-pub use selection::{
-    mls_account_secret_backup_version, select_mls_account_secret_backup,
-    select_mls_account_secret_recovery_public_key_backup, select_mls_history_backups,
-    select_mls_private_plaintext_backup, select_preferred_mls_account_secret_backup,
-};
 pub(crate) use upload::upload_local_authoritative_mls_history_records_with_recovery_public_key;
 pub use upload::{
     fetch_mls_private_plaintext_backup_body,

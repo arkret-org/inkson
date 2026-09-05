@@ -3,6 +3,7 @@
 
 use arkret_sdk::{AccountId, DeviceId};
 use arkret_wire::event_kind_str;
+use garth::mls::welcome_admission::mls_welcome_message_matches_realm;
 
 use super::{
     MlsRuntimeError, load_device_snapshot_secret, load_mls_key_package_identity_state,
@@ -1281,44 +1282,6 @@ pub(crate) fn accepted_welcome_consume_candidates(
         .filter_map(|entry| welcome_consume_candidate(entry, realm_id))
         .filter(|candidate| accepted_welcome_event_ids.contains(&candidate.welcome_event_id))
         .collect()
-}
-
-pub fn mls_group_id_for_realm(realm_id: &str) -> Result<String, String> {
-    let realm_id = arkret_sdk::RealmId::new(realm_id.trim().to_owned())
-        .map_err(|error| format!("invalid MLS Realm id: {error}"))?;
-    arkret_sdk::ScopeRef::Realm { realm_id }
-        .canonical_mls_group_id()
-        .map_err(|error| error.to_string())
-}
-
-pub fn mls_welcome_message_matches_realm(message: &serde_json::Value, realm_id: &str) -> bool {
-    if message
-        .get("kind")
-        .or_else(|| message.get("type"))
-        .and_then(|t| t.as_str())
-        != Some(event_kind_str::MLS_WELCOME)
-    {
-        return false;
-    }
-    let Some(content) = message.get("content") else {
-        return false;
-    };
-    if content
-        .get("governance_binding")
-        .and_then(|binding| binding.get("effective_scope"))
-        .and_then(|scope| scope.get("realm_id"))
-        .and_then(serde_json::Value::as_str)
-        == Some(realm_id)
-    {
-        return true;
-    }
-    let Ok(expected_group_id) = mls_group_id_for_realm(realm_id) else {
-        return false;
-    };
-    content
-        .get("mls_group_id")
-        .and_then(serde_json::Value::as_str)
-        == Some(expected_group_id.as_str())
 }
 
 /// Local RFC 9420 member roster of one effective MLS scope.

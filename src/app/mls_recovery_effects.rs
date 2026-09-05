@@ -49,7 +49,7 @@ pub(super) fn MlsRecoveryEffects(state: MlsRecoveryEffectState) -> Element {
         let mut needs_mls_backup = needs_mls_backup;
         let mut needs_mls_recovery_setup = needs_mls_recovery_setup;
         let mut restore_payload_cache = mls_restore_payload_cache;
-        let mut state_store_for_detection = state_store;
+        let state_store_for_detection = state_store;
         let secure_store_ready_for_detection = secure_store_bootstrap_ready;
         let account_recovery_configured_for_detection = account_recovery_configured;
         use_effect(move || {
@@ -234,19 +234,23 @@ pub(super) fn MlsRecoveryEffects(state: MlsRecoveryEffectState) -> Element {
                                     .map(str::to_owned)
                             });
                         {
-                            let mut store = state_store_for_detection.write();
-                            if let Some(backup_id) = configured_backup_id.as_deref() {
-                                crate::components::mark_mls_recovery_backup_configured(
-                                    &mut store,
-                                    backup_id,
+                            let store_handle =
+                                crate::app::runtime_adapter::state_store_handle(
+                                    state_store_for_detection,
                                 );
+                            if let Some(backup_id) = configured_backup_id.as_deref() {
+                                store_handle.write(|store| {
+                                    crate::components::mark_mls_recovery_backup_configured(
+                                        store, backup_id,
+                                    );
+                                });
                             }
                             if let Some(history_payload) =
                                 history_payload_for_local_restore.as_ref()
                             {
                                 let report = crate::mls::account_recovery::restore_mls_history_with_local_secret_from_payload(
                                     history_payload,
-                                    &mut store,
+                                    &store_handle,
                                     secure_store.as_ref(),
                                     &authority,
                                     authority.principal_id.as_str(),
@@ -265,7 +269,7 @@ pub(super) fn MlsRecoveryEffects(state: MlsRecoveryEffectState) -> Element {
                                     serde_json::json!({ "backups": [sidecar_body.clone()] });
                                 let report = crate::mls::account_recovery::restore_mls_history_with_local_secret_from_payload(
                                     &sidecar_payload,
-                                    &mut store,
+                                    &store_handle,
                                     secure_store.as_ref(),
                                     &authority,
                                     authority.principal_id.as_str(),
@@ -325,7 +329,9 @@ pub(super) fn MlsRecoveryEffects(state: MlsRecoveryEffectState) -> Element {
                                     authority.clone(),
                                     actor.clone(),
                                     device.to_string(),
-                                    state_store_for_detection,
+                                    crate::app::runtime_adapter::state_store_handle(
+                                        state_store_for_detection,
+                                    ),
                                     needs_mls_backup,
                                 )
                                 .await;
