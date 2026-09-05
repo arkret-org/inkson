@@ -1,3 +1,4 @@
+use super::admission::*;
 use super::*;
 use crate::test_support as fixture;
 
@@ -1061,4 +1062,307 @@ fn mls_admission_authoring_locks_are_scoped_per_realm() {
 
     assert!(Arc::ptr_eq(&realm_a, &realm_a_again));
     assert!(!Arc::ptr_eq(&realm_a, &realm_b));
+}
+
+// --- `build_realm_roster`: the derivation the panel used to inline ---------
+
+const SELF_PRINCIPAL: &str = "ak:did_core:web:alice.example";
+
+fn roster(
+    members: Vec<MemberProfile>,
+    owned_agents: Vec<MemberAgentRow>,
+    section: MemberRosterSection,
+    query: &str,
+    visible_limit: usize,
+) -> RealmRosterView {
+    build_realm_roster(RealmRosterInput {
+        members,
+        owned_agents,
+        principal_id: SELF_PRINCIPAL,
+        section,
+        query,
+        visible_limit,
+    })
+}
+
+fn pending_invite(id: &str) -> MemberProfile {
+    let mut profile = member(id);
+    profile.pending_invite = true;
+    profile.invite_id = Some(format!("ak:invite:{id}"));
+    profile
+}
+
+fn owner(id: &str) -> MemberProfile {
+    let mut profile = member(id);
+    profile.is_owner = true;
+    profile
+}
+
+fn admin(id: &str) -> MemberProfile {
+    let mut profile = member(id);
+    profile.is_admin = true;
+    profile
+}
+
+#[test]
+fn roster_paging_caps_mounted_groups_and_reports_more() {
+    let members: Vec<MemberProfile> = (0..5)
+        .map(|index| member(&format!("ak:did_core:web:m{index}.example")))
+        .collect();
+
+    let capped = roster(
+        members.clone(),
+        Vec::new(),
+        MemberRosterSection::Members,
+        "",
+        2,
+    );
+    assert_eq!(capped.filtered_count, 5, "the cap must not hide matches");
+    assert_eq!(capped.visible, 2);
+    assert_eq!(capped.visible_groups.len(), 2);
+    assert!(capped.has_more);
+
+    let complete = roster(members, Vec::new(), MemberRosterSection::Members, "", 50);
+    assert_eq!(complete.visible, 5);
+    assert!(!complete.has_more, "nothing left to reveal");
+}
+
+#[test]
+fn pending_invites_never_offer_load_more() {
+    // The pending section renders its rows from `visible_pending_invites`,
+    // which the group paging window never touches. Offering "load more" there
+    // would be a button that cannot change what is on screen.
+    let members: Vec<MemberProfile> = (0..5)
+        .map(|index| pending_invite(&format!("ak:did_core:web:p{index}.example")))
+        .collect();
+    let view = roster(
+        members,
+        Vec::new(),
+        MemberRosterSection::PendingInvites,
+        "",
+        1,
+    );
+    assert!(!view.has_more);
+    assert_eq!(view.visible_pending_invites.len(), 5);
+    assert_eq!(view.pending_invite_match_count, 5);
+}
+
+#[test]
+fn search_box_appears_only_past_the_threshold_and_never_for_my_agents() {
+    let small: Vec<MemberProfile> = (0..3)
+        .map(|index| member(&format!("ak:did_core:web:m{index}.example")))
+        .collect();
+    assert!(
+        !roster(
+            small,
+            Vec::new(),
+            MemberRosterSection::Members,
+            "",
+            MEMBER_PAGE_SIZE
+        )
+        .show_search
+    );
+
+    let large: Vec<MemberProfile> = (0..=MEMBER_SEARCH_THRESHOLD)
+        .map(|index| member(&format!("ak:did_core:web:m{index}.example")))
+        .collect();
+    assert!(
+        roster(
+            large.clone(),
+            Vec::new(),
+            MemberRosterSection::Members,
+            "",
+            MEMBER_PAGE_SIZE
+        )
+        .show_search
+    );
+    assert!(
+        !roster(
+            large,
+            Vec::new(),
+            MemberRosterSection::MyAgents,
+            "",
+            MEMBER_PAGE_SIZE
+        )
+        .show_search,
+        "the agent section is a fixed short list, not a searchable roster"
+    );
+}
+
+#[test]
+fn pending_invite_rows_narrow_with_the_query() {
+    let mut bob = pending_invite("ak:did_core:web:bob.example");
+    bob.handles = vec!["bob".to_owned()];
+    let mut carol = pending_invite("ak:did_core:web:carol.example");
+    carol.handles = vec!["carol".to_owned()];
+    let members = vec![bob, carol];
+    let view = roster(
+        members,
+        Vec::new(),
+        MemberRosterSection::PendingInvites,
+        "  CAROL  ",
+        MEMBER_PAGE_SIZE,
+    );
+    assert_eq!(
+        view.filter_query, "carol",
+        "the query is trimmed and case-folded once, in the model"
+    );
+    assert_eq!(view.pending_invite_match_count, 1);
+    assert_eq!(view.selected_section_visible_count, 1);
+    assert!(!view.selected_section_empty);
+}
+
+#[test]
+fn each_section_counts_its_own_population() {
+    let members = vec![
+        owner(SELF_PRINCIPAL),
+        admin("ak:did_core:web:bob.example"),
+        member("ak:did_core:web:carol.example"),
+        member("ak:did_core:web:dave.example"),
+        pending_invite("ak:did_core:web:erin.example"),
+    ];
+    let totals = |section| {
+        roster(members.clone(), Vec::new(), section, "", MEMBER_PAGE_SIZE).selected_section_total
+    };
+    assert_eq!(totals(MemberRosterSection::Members), 2, "non-governance");
+    assert_eq!(totals(MemberRosterSection::Owners), 1);
+    assert_eq!(totals(MemberRosterSection::Admins), 1);
+    assert_eq!(totals(MemberRosterSection::PendingInvites), 1);
+
+    let view = roster(
+        members,
+        Vec::new(),
+        MemberRosterSection::Members,
+        "",
+        MEMBER_PAGE_SIZE,
+    );
+    assert_eq!(view.total_members, 4, "pending invites are not members");
+    assert_eq!(view.total_pending_invites, 1);
+}
+
+#[test]
+fn the_authority_root_controller_is_told_to_transfer_ownership_not_to_add_an_admin() {
+    // `capabilities.md` §10.4 L858: the root controller's only exit is
+    // `ak.realm.owner.transfer`. A second admin satisfies the softer
+    // last-admin guard but changes nothing for the root, so the owner reason
+    // has to win.
+    let members = vec![
+        owner(SELF_PRINCIPAL),
+        admin("ak:did_core:web:bob.example"),
+        member("ak:did_core:web:carol.example"),
+    ];
+    let reason = roster(
+        members,
+        Vec::new(),
+        MemberRosterSection::Members,
+        "",
+        MEMBER_PAGE_SIZE,
+    )
+    .self_leave_disabled_reason
+    .expect("the root controller cannot leave");
+    assert!(reason.contains("ak.realm.owner.transfer"), "{reason}");
+}
+
+#[test]
+fn the_last_admin_is_asked_to_hand_over_authority_first() {
+    let members = vec![admin(SELF_PRINCIPAL), member("ak:did_core:web:bob.example")];
+    let reason = roster(
+        members,
+        Vec::new(),
+        MemberRosterSection::Members,
+        "",
+        MEMBER_PAGE_SIZE,
+    )
+    .self_leave_disabled_reason
+    .expect("the only governance principal cannot leave");
+    assert!(reason.contains("Realm admin authority"), "{reason}");
+}
+
+#[test]
+fn an_ordinary_member_may_leave() {
+    let members = vec![owner("ak:did_core:web:bob.example"), member(SELF_PRINCIPAL)];
+    assert!(
+        roster(
+            members,
+            Vec::new(),
+            MemberRosterSection::Members,
+            "",
+            MEMBER_PAGE_SIZE
+        )
+        .self_leave_disabled_reason
+        .is_none()
+    );
+}
+
+#[test]
+fn one_of_two_admins_may_leave() {
+    // The guard is about the Realm being left without governance, not about
+    // the account holding authority.
+    let members = vec![admin(SELF_PRINCIPAL), admin("ak:did_core:web:bob.example")];
+    assert!(
+        roster(
+            members,
+            Vec::new(),
+            MemberRosterSection::Members,
+            "",
+            MEMBER_PAGE_SIZE
+        )
+        .self_leave_disabled_reason
+        .is_none()
+    );
+}
+
+#[test]
+fn owned_agents_split_into_joined_and_addable_against_the_active_roster() {
+    let joined_agent = agent(
+        "ak:did_core:web:agent-joined.example",
+        SELF_PRINCIPAL,
+        "Joined",
+    );
+    let addable_agent = agent("ak:did_core:web:agent-free.example", SELF_PRINCIPAL, "Free");
+    let other_controller_agent = agent(
+        "ak:did_core:web:agent-bobs.example",
+        "ak:did_core:web:bob.example",
+        "Bob's",
+    );
+    let members = vec![
+        member(SELF_PRINCIPAL),
+        member(&joined_agent.agent_id),
+        member(&other_controller_agent.agent_id),
+    ];
+
+    let view = roster(
+        members,
+        vec![
+            joined_agent.clone(),
+            addable_agent.clone(),
+            other_controller_agent,
+        ],
+        MemberRosterSection::MyAgents,
+        "",
+        MEMBER_PAGE_SIZE,
+    );
+    assert_eq!(view.self_realm_agent_rows, vec![joined_agent]);
+    assert_eq!(view.available_self_agent_rows, vec![addable_agent]);
+    assert_eq!(
+        view.selected_section_total, 1,
+        "the agent section counts joined agents, not groups"
+    );
+    assert!(
+        view.member_set.contains(&actor_key(SELF_PRINCIPAL)),
+        "the active roster keys back the agent membership check"
+    );
+}
+
+#[test]
+fn the_section_menu_marks_exactly_the_selected_entry() {
+    let selected = MemberRosterSection::Admins;
+    assert_eq!(
+        MemberRosterSection::Admins.menu_item_class(selected),
+        "members-admin-menu-item active"
+    );
+    assert_eq!(
+        MemberRosterSection::Members.menu_item_class(selected),
+        "members-admin-menu-item"
+    );
 }

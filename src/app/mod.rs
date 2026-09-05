@@ -2039,7 +2039,7 @@ fn AppBootstrap() -> Element {
                                                 );
                                         let contact_remark =
                                             contact_remarks_for_sidebar.get(&peer_principal).cloned();
-                                        let display_name = crate::views::helpers::contact_peer_label(&state_store.read(), &contact);
+                                        let display_name = crate::views::helpers::contact_peer_label(&state_store.read(), contact);
                                         let opening_key = format!("contact:{peer}");
                                         let opening_target = direct_chat_opening();
                                         let chat_open_blocked = opening_target.is_some();

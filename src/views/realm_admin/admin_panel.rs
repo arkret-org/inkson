@@ -4,7 +4,9 @@ use dioxus_primitives::checkbox::CheckboxState;
 use dioxus_router::Link;
 use serde_json::{Value, json};
 
-use super::metadata::{metadata_subject_for, projected_members_for_realm, reconcile_editor_value};
+use super::metadata::{
+    MetadataSubject, metadata_subject_for, projected_members_for_realm, reconcile_editor_value,
+};
 use super::policy::build_principal_admission_join_policy;
 use super::section::{REALM_ADMIN_NAV_GROUPS, RealmAdminSection};
 use crate::components::encryption_floor_prompt::projection_has_recommended_encryption_floor;
@@ -18,6 +20,12 @@ use crate::ui::select::{Select, SelectOption};
 use crate::ui::textarea::Textarea;
 use crate::views::helpers::short_protocol_id;
 
+mod controller;
+mod model;
+
+use controller::*;
+use model::*;
+
 #[component]
 pub fn RealmAdminPanel(
     principal_id: String,
@@ -30,14 +38,13 @@ pub fn RealmAdminPanel(
 ) -> Element {
     // A4 — base_url / state_store from session context instead of props.
     let base_url = crate::app::SessionContext::base_url_string();
-    let mut state_store = crate::app::SessionContext::get().state_store;
+    let state_store = crate::app::SessionContext::get().state_store;
     let mut metadata_title = use_signal(String::new);
     let mut metadata_summary = use_signal(String::new);
     let mut metadata_avatar_blob_ref = use_signal(String::new);
     let mut metadata_alias = use_signal(String::new);
     let mut metadata_loaded_for = use_signal(String::new);
-    let mut metadata_loaded_subject =
-        use_signal(|| Option::<super::metadata::MetadataSubject>::None);
+    let mut metadata_loaded_subject = use_signal(|| Option::<MetadataSubject>::None);
     let mut join_rule = use_signal(|| "public".to_owned());
     let mut principal_admission_enabled = use_signal(|| false);
     let mut principal_admission_methods = use_signal(|| "did:webvh".to_owned());
@@ -108,26 +115,13 @@ pub fn RealmAdminPanel(
     //  - bottom_cells set → "concurrent candidates unresolved" banner (P0 M5)
     //  - frontier head    → debug visibility into what Move builders thread
     //  - state_root       → admin can confirm divergence between local + server
-    let seal_view = state_store.read().seal_view_for_realm(&selected_realm_id);
-    let bottom_cells: Vec<(String, crate::state::BottomCellInfo)> = seal_view
-        .bottom_cells
-        .iter()
-        .map(|(k, v)| (k.clone(), v.clone()))
-        .collect();
-    let seal_frontier_label = if seal_view.frontier.is_empty() {
-        "(no Seal seen — using sha256(empty) sentinel)".to_owned()
-    } else {
-        seal_view.frontier.join(", ")
-    };
-    let seal_state_root_label = seal_view
-        .state_root
-        .clone()
-        .unwrap_or_else(|| "(not published)".to_owned());
-    // MLS epoch from the cas-register value of ak.component.mls.epoch.v1.
-    let mls_epoch_label = seal_view
-        .mls_epoch
-        .map(|epoch| epoch.to_string())
-        .unwrap_or_else(|| "(no MLS epoch published)".to_owned());
+    let SealDiagnostics {
+        bottom_cells,
+        leaf_count: seal_leaf_count,
+        frontier_label: seal_frontier_label,
+        state_root_label: seal_state_root_label,
+        mls_epoch_label,
+    } = seal_diagnostics(&state_store.read().seal_view_for_realm(&selected_realm_id));
     // per-Realm Move submission tracker. Drives the state-pill list +
     // the Realm-wide notary_paused banner.
     let move_submissions = state_store
@@ -139,68 +133,54 @@ pub fn RealmAdminPanel(
     let realm_pending_mls_binding = state_store
         .read()
         .realm_has_pending_mls_binding(&selected_realm_id);
-    let (security_health_label, security_health_badge, security_next_step) = if realm_paused {
-        (
-            "Writes paused",
-            "badge red",
-            "Restore the Realm security service before asking members to try again.",
-        )
-    } else if realm_pending_mls_binding {
-        (
-            "Binding pending",
-            "badge amber",
-            "Wait for the encrypted update to finish, then retry if the alert remains.",
-        )
-    } else if !bottom_cells.is_empty() {
-        (
-            "Repair needed",
-            "badge red",
-            "Open Repair & Danger to review the conflicting changes.",
-        )
-    } else {
-        ("No active alerts", "badge green", "No action needed.")
-    };
+    let RealmSecurityHealth {
+        label: security_health_label,
+        badge: security_health_badge,
+        next_step: security_next_step,
+        alert_count,
+    } = realm_security_health(
+        realm_paused,
+        realm_pending_mls_binding,
+        !bottom_cells.is_empty(),
+    );
     let active_section = RealmAdminSection::from_slug(active_section.as_deref());
     // The account-sync writer can update the shared store outside this
     // component's reactive scope. Subscribe to its canonical cursor so a
     // deep-linked editor reconciles again when that projection lands.
     let _projection_sync_cursor = sync_cursor();
     let metadata_subject = metadata_subject_for(&state_store.read(), &selected_realm_id);
-    if metadata_loaded_for() != selected_realm_id {
-        metadata_title.set(metadata_subject.title.clone());
-        metadata_summary.set(metadata_subject.summary.clone());
-        metadata_avatar_blob_ref.set(metadata_subject.avatar_blob_ref.clone());
-        metadata_loaded_for.set(selected_realm_id.clone());
-        metadata_loaded_subject.set(Some(metadata_subject.clone()));
-    } else if metadata_loaded_subject().as_ref() != Some(&metadata_subject) {
-        // A deep-linked Profile page can render before the account projection
-        // arrives. Reconcile each untouched editor field against the previous
-        // canonical snapshot so the delayed value fills automatically without
-        // overwriting input the operator has already changed.
-        if let Some(previous) = metadata_loaded_subject() {
-            let reconciled_title =
-                reconcile_editor_value(&metadata_title(), &previous.title, &metadata_subject.title);
-            if reconciled_title != metadata_title() {
-                metadata_title.set(reconciled_title);
-            }
-            let reconciled_summary = reconcile_editor_value(
-                &metadata_summary(),
-                &previous.summary,
-                &metadata_subject.summary,
-            );
-            if reconciled_summary != metadata_summary() {
-                metadata_summary.set(reconciled_summary);
-            }
-            let reconciled_avatar = reconcile_editor_value(
-                &metadata_avatar_blob_ref(),
-                &previous.avatar_blob_ref,
-                &metadata_subject.avatar_blob_ref,
-            );
-            if reconciled_avatar != metadata_avatar_blob_ref() {
-                metadata_avatar_blob_ref.set(reconciled_avatar);
-            }
+    {
+        let loaded_for = metadata_loaded_for();
+        let loaded_subject = metadata_loaded_subject();
+        let editor_title = metadata_title();
+        let editor_summary = metadata_summary();
+        let editor_avatar = metadata_avatar_blob_ref();
+        let patch = reconcile_metadata_editors(
+            &selected_realm_id,
+            &metadata_subject,
+            MetadataEditorState {
+                loaded_for: &loaded_for,
+                loaded_subject: loaded_subject.as_ref(),
+                title: &editor_title,
+                summary: &editor_summary,
+                avatar_blob_ref: &editor_avatar,
+            },
+        );
+        if let Some(value) = patch.title {
+            metadata_title.set(value);
         }
-        metadata_loaded_subject.set(Some(metadata_subject.clone()));
+        if let Some(value) = patch.summary {
+            metadata_summary.set(value);
+        }
+        if let Some(value) = patch.avatar_blob_ref {
+            metadata_avatar_blob_ref.set(value);
+        }
+        if let Some(value) = patch.loaded_for {
+            metadata_loaded_for.set(value);
+        }
+        if let Some(value) = patch.loaded_subject {
+            metadata_loaded_subject.set(Some(value));
+        }
     }
     let metadata_subject_label = match metadata_subject.kind {
         RealmTreeNodeKind::Realm => "Realm",
@@ -210,9 +190,6 @@ pub fn RealmAdminPanel(
         RealmTreeNodeKind::Realm => event_kind_str::REALM_PROFILE,
         RealmTreeNodeKind::Space => event_kind_str::SPACE_UPDATE,
     };
-    let alert_count = usize::from(realm_paused)
-        + usize::from(realm_pending_mls_binding)
-        + usize::from(!bottom_cells.is_empty());
     let projected_members = projected_members_for_realm(&state_store.read(), &selected_realm_id);
     let projected_member_count = projected_members.len();
     // Resolve the authority root from the locally replayed projection. Every
@@ -235,17 +212,21 @@ pub fn RealmAdminPanel(
             .is_some_and(|(controller, actor)| &controller == actor);
         (root, is_controller)
     };
-    let gov_transfer_candidates: Vec<String> = projected_members
-        .iter()
-        .filter(|member| {
-            serde_json::from_str::<arkret_sdk::ActorId>(member)
-                .ok()
-                .is_some_and(|candidate| Some(&candidate) != account_actor.as_ref())
-        })
-        .cloned()
-        .collect();
+    let gov_transfer_candidates =
+        governance_transfer_candidates(&projected_members, account_actor.as_ref());
     let issuer_root_basis =
         crate::operation::ak_ops::IssuerRootBasis::from_resolved_root(authority_root.as_ref());
+    // Every write below is one named command on this bundle; the rsx keeps
+    // only the synchronous half of each click.
+    let controller = RealmAdminController {
+        status_msg,
+        sync_cursor,
+        state_store,
+        gov_transfer_target,
+        gov_transfer_acceptance,
+        metadata_alias,
+        admin_grant_id,
+    };
     rsx! {
         div { class: "settings realm-settings", "data-testid": "realm-admin-panel",
             div { class: "settings-shell realm-settings-shell",
@@ -590,7 +571,7 @@ pub fn RealmAdminPanel(
                             div { class: "security-diagnostic-row", "data-testid": "seal-frontier-debug",
                                 div {
                                     strong { "Seal frontier" }
-                                    span { class: "muted", "{seal_view.leaves.len()} accepted leaves" }
+                                    span { class: "muted", "{seal_leaf_count} accepted leaves" }
                                 }
                                 code { "data-testid": "seal-frontier-heads", title: "{seal_frontier_label}", "{short_protocol_id(&seal_frontier_label)}" }
                             }
@@ -844,34 +825,7 @@ pub fn RealmAdminPanel(
                                                 };
                                                 gov_transfer_confirm_open.set(false);
                                                 let target_for_msg = target.clone();
-                                                spawn(async move {
-                                                    match crate::transport::auth::with_event_submitter(
-                                                        &base,
-                                                        api_token,
-                                                        |sub| async move {
-                                                            crate::transport::realm_write::transfer_realm_owner(&sub, &actor_id, payload).await
-                                                        },
-                                                    )
-                                                    .await
-                                                    {
-                                                        Ok(resp) => {
-                                                            gov_transfer_target.set(String::new());
-                                                            gov_transfer_acceptance.set(String::new());
-                                                            status_msg.set(format!(
-                                                                "owner transfer submitted: event_id={} — once sealed, {} is the root controller and this account is demoted",
-                                                                short_protocol_id(&resp.event_id),
-                                                                short_protocol_id(&target_for_msg),
-                                                            ));
-                                                        }
-                                                        Err(err) => {
-                                                            let text = err.display();
-                                                            let hint = governance_failure_hint(&text)
-                                                                .map(|hint| format!(" — {hint}"))
-                                                                .unwrap_or_default();
-                                                            status_msg.set(format!("owner transfer failed: {text}{hint}"));
-                                                        }
-                                                    }
-                                                });
+                                                controller.transfer_owner(base, api_token, actor_id, payload, target_for_msg);
                                             }
                                         },
                                         "Transfer ownership"
@@ -972,29 +926,7 @@ pub fn RealmAdminPanel(
                                                 };
                                                 gov_reset_confirm_open.set(false);
                                                 gov_reset_confirm_text.set(String::new());
-                                                spawn(async move {
-                                                    match crate::transport::auth::with_event_submitter(
-                                                        &base,
-                                                        api_token,
-                                                        |sub| async move {
-                                                            crate::transport::realm_write::reset_realm_authority(&sub, &actor_id, payload).await
-                                                        },
-                                                    )
-                                                    .await
-                                                    {
-                                                        Ok(resp) => status_msg.set(format!(
-                                                            "authority reset submitted: event_id={} — every grant issued under the previous generation is void once sealed",
-                                                            short_protocol_id(&resp.event_id),
-                                                        )),
-                                                        Err(err) => {
-                                                            let text = err.display();
-                                                            let hint = governance_failure_hint(&text)
-                                                                .map(|hint| format!(" — {hint}"))
-                                                                .unwrap_or_default();
-                                                            status_msg.set(format!("authority reset failed: {text}{hint}"));
-                                                        }
-                                                    }
-                                                });
+                                                controller.reset_authority(base, api_token, actor_id, payload);
                                             }
                                         },
                                         "Reset authority generation"
@@ -1151,62 +1083,25 @@ pub fn RealmAdminPanel(
                                         let accepted_summary = (!summary.is_empty()).then_some(summary.clone());
                                         let accepted_avatar = (!avatar_blob_ref.is_empty())
                                             .then_some(avatar_blob_ref.clone());
-                                        spawn(async move {
-                                            let submit_home_realm_id = home_realm_id.clone();
-                                            match crate::transport::auth::with_event_submitter(
-                                                &base,
-                                                api_token,
-                                                |sub| async move {
-                                                    let digest_suite = sub
-                                                        .ensure_realm_governance_checkpoint(
-                                                            &submit_home_realm_id,
-                                                        )
-                                                        .await?;
-                                                    let profile_result = match subject_kind {
-                                                        RealmTreeNodeKind::Realm => {
-                                                            crate::transport::realm_write::update_realm_metadata(&sub, &submit_home_realm_id, &actor_id, digest_suite, patch).await
-                                                        }
-                                                        RealmTreeNodeKind::Space => {
-                                                            crate::transport::realm_write::update_space_metadata(&sub, &submit_home_realm_id, &subject_id, &actor_id, patch).await
-                                                        }
-                                                    }?;
-                                                    if subject_kind == RealmTreeNodeKind::Realm
-                                                        && !alias.is_empty()
-                                                    {
-                                                            crate::transport::realm_write::set_realm_alias(
-                                                                &sub,
-                                                                &submit_home_realm_id,
-                                                            &actor_id,
-                                                            Some(&alias),
-                                                        )
-                                                        .await?;
-                                                    }
-                                                    Ok::<_, anyhow::Error>(profile_result)
-                                                },
-                                            )
-                                            .await
-                                            {
-                                                Ok(_) => {
-                                                    if subject_kind == RealmTreeNodeKind::Realm {
-                                                        crate::views::realm_admin::metadata::store_accepted_realm_profile(
-                                                            &mut state_store.write(),
-                                                            &home_realm_id,
-                                                            &accepted_title,
-                                                            accepted_summary.as_deref(),
-                                                            accepted_avatar.as_deref(),
-                                                        );
-                                                    }
-                                                    status_msg.set(if updates_alias {
-                                                        format!("{metadata_event_kind} profile and Realm alias updated")
-                                                    } else {
-                                                        format!("{metadata_event_kind} profile updated")
-                                                    });
-                                                }
-                                                Err(err) => status_msg.set(format!(
-                                                    "profile update failed: {}", err.display()
-                                                )),
-                                            }
-                                        });
+                                        controller.save_metadata(
+                                            base,
+                                            api_token,
+                                            actor_id,
+                                            MetadataWriteSubject {
+                                                home_realm_id,
+                                                subject_id,
+                                                kind: subject_kind,
+                                                event_kind: metadata_event_kind,
+                                                updates_alias,
+                                            },
+                                            patch,
+                                            alias,
+                                            AcceptedRealmProfile {
+                                                title: accepted_title,
+                                                summary: accepted_summary,
+                                                avatar_blob_ref: accepted_avatar,
+                                            },
+                                        );
                                     }
                                 },
                                 {crate::i18n::tr("realm_admin.save_profile")}
@@ -1230,32 +1125,7 @@ pub fn RealmAdminPanel(
                                                 );
                                                 return;
                                             }
-                                            spawn(async move {
-                                                match crate::transport::auth::with_event_submitter(
-                                                    &base,
-                                                    api_token,
-                                                    |sub| async move {
-                                                        crate::transport::realm_write::set_realm_alias(
-                                                            &sub,
-                                                            &home_realm_id,
-                                                            &actor_id,
-                                                            None,
-                                                        )
-                                                        .await
-                                                    },
-                                                )
-                                                .await
-                                                {
-                                                    Ok(_) => {
-                                                        metadata_alias.set(String::new());
-                                                        status_msg.set("Realm alias removed".to_owned());
-                                                    }
-                                                    Err(error) => status_msg.set(format!(
-                                                        "alias removal failed: {}",
-                                                        error.display()
-                                                    )),
-                                                }
-                                            });
+                                            controller.remove_alias(base, api_token, actor_id, home_realm_id);
                                         }
                                     },
                                     "Remove Alias"
@@ -1377,38 +1247,16 @@ pub fn RealmAdminPanel(
                                     .realm_tree_projections
                                     .get(&realm)
                                     .is_some_and(projection_has_recommended_encryption_floor);
-                                spawn(async move {
-                                    match crate::transport::auth::with_event_submitter(
-                                        &base,
-                                        api_token,
-                                        |sub| async move {
-                                            let digest_suite = sub
-                                                .ensure_realm_governance_checkpoint(&realm)
-                                                .await?;
-                                            crate::transport::realm_write::set_realm_policy_events(
-                                                &sub,
-                                                &realm,
-                                                &actor,
-                                                digest_suite,
-                                                &rule,
-                                                tighten_access,
-                                                join_policy,
-                                                preserve_recommended_encryption_floor,
-                                            )
-                                            .await
-                                        },
-                                    )
-                                    .await
-                                    {
-                                        Ok(resp) => status_msg.set(format!(
-                                            "policy: join={}, history_access_tightened={}",
-                                            resp.join_rule, resp.history_access_tightened
-                                        )),
-                                        Err(err) => status_msg.set(format!(
-                                            "policy failed: {}", err.display()
-                                        )),
-                                    }
-                                });
+                                controller.apply_policy(
+                                    base,
+                                    api_token,
+                                    realm,
+                                    actor,
+                                    rule,
+                                    tighten_access,
+                                    join_policy,
+                                    preserve_recommended_encryption_floor,
+                                );
                             }
                         },
                         {crate::i18n::tr("realm_admin.apply_policy")}
@@ -1442,7 +1290,6 @@ pub fn RealmAdminPanel(
                                 let actor_id = actor_principal_id.trim().to_owned();
                                 let device = device.clone();
                                 let api_token = token();
-                                let mut state_store = state_store;
                                 if actor_id.is_empty() {
                                     status_msg.set("rotate failed: account is not connected".to_owned());
                                     return;
@@ -1461,126 +1308,15 @@ pub fn RealmAdminPanel(
                                     status_msg.set("rotate failed: active account authority changed".to_owned());
                                     return;
                                 }
-                                spawn(async move {
-                                    let local_state = state_store.read().clone();
-                                    let built = crate::mls::runtime::force_epoch_rotation_commit(
-                                        &local_state,
-                                        secure_store.as_ref(),
-                                        &realm,
-                                        &account.authority,
-                                        &account.device_id,
-                                    )
-                                    .map_err(|err| err.user_message());
-                                    let (commit_envelope, snapshot, previous_governance_binding) =
-                                        match built {
-                                            Ok(parts) => parts,
-                                            Err(err) => {
-                                                status_msg.set(format!("rotate failed: {err}"));
-                                                return;
-                                            }
-                                        };
-                                    let schedule_hash = commit_envelope.commit_digest.clone();
-                                    let commit_event = match crate::mls::group_events::mls_commit_event_from_store(
-                                        &local_state,
-                                        &realm,
-                                        &actor_id,
-                                        &schedule_hash,
-                                        &commit_envelope,
-                                        &previous_governance_binding,
-                                    )
-                                    .await
-                                    {
-                                        Ok(event) => event,
-                                        Err(err) => {
-                                            status_msg.set(format!("rotate failed: {err}"));
-                                            return;
-                                        }
-                                    };
-                                    let next_epoch = commit_envelope.epoch;
-                                    match crate::transport::auth::with_authed_api(
-                                        &base,
-                                        api_token,
-                                        |api| async move {
-                                            api.event_submitter()?.submit_sdk_event(&commit_event).await
-                                        },
-                                    )
-                                    .await
-                                    {
-                                        Ok(accepted) => {
-                                            // Persist-on-accept: only advance the
-                                            // local snapshot after the server
-                                            // accepted the ak.mls.commit, and bind
-                                            // it to the id the server accepted.
-                                            let commit_event_id = match arkret_sdk::EventId::new(
-                                                accepted.event_id.clone(),
-                                            ) {
-                                                Ok(event_id) => event_id,
-                                                Err(error) => {
-                                                    status_msg.set(format!(
-                                                        "rotate accepted but its Event id is invalid: {error}"
-                                                    ));
-                                                    return;
-                                                }
-                                            };
-                                            if let Err(error) = state_store
-                                                .write()
-                                                .record_mls_group_state_ref_for_effective_scope(
-                                                    realm.clone(),
-                                                    None,
-                                                    snapshot.group_id.as_str(),
-                                                    snapshot.epoch,
-                                                    commit_event_id,
-                                                )
-                                            {
-                                                status_msg.set(format!(
-                                                    "rotate accepted but MLS reference persistence failed: {error}"
-                                                ));
-                                                return;
-                                            }
-                                            if let Err(error) = state_store.write().save_mls_snapshot(
-                                                realm.clone(),
-                                                snapshot,
-                                            ) {
-                                                status_msg.set(format!(
-                                                    "MLS snapshot persist failed: {error}"
-                                                ));
-                                                return;
-                                            }
-                                            // A self-update is also the spec-defined
-                                            // recovery commit when a historical
-                                            // membership transition changed the
-                                            // frontier without changing the current
-                                            // MLS roster.  Never clear the send gate
-                                            // merely because the Event is effective:
-                                            // require this accepted Commit and exact
-                                            // complete-hint/MLS-roster agreement.
-                                            let secure_store = crate::secure_key_store::
-                                                default_secure_key_store("inkson");
-                                            let roster_aligned = {
-                                                let store = state_store.read();
-                                                super::members_panel::
-                                                    realm_mls_roster_matches_complete_membership_hint(
-                                                        &store,
-                                                        secure_store.as_ref(),
-                                                        &realm,
-                                                        &actor_id,
-                                                        &device,
-                                                    )
-                                            };
-                                            if roster_aligned {
-                                                let mut store = state_store.write();
-                                                store.resolve_member_add_mls_bindings(&realm);
-                                                store.resolve_member_remove_mls_bindings(&realm);
-                                            }
-                                            status_msg.set(format!(
-                                                "rotated to epoch {next_epoch}"
-                                            ));
-                                        }
-                                        Err(err) => status_msg.set(format!(
-                                            "rotate failed: {}", err.display()
-                                        )),
-                                    }
-                                });
+                                controller.rotate_mls_epoch(
+                                    base,
+                                    api_token,
+                                    realm,
+                                    actor_id,
+                                    device,
+                                    account,
+                                    secure_store,
+                                );
                             }
                         },
                         "Refresh keys"
@@ -1669,8 +1405,6 @@ pub fn RealmAdminPanel(
                                 let base = base_url.clone();
                                 let realm = selected_realm_id.clone();
                                 let actor_principal_id = principal_id.clone();
-                                let mut state_store = state_store;
-                                let mut sync_cursor = sync_cursor;
                                 move |_| {
                                     let base = base.clone();
                                     let realm = realm.clone();
@@ -1694,29 +1428,7 @@ pub fn RealmAdminPanel(
                                         return;
                                     }
                                     leave_confirm_open.set(false);
-                                    spawn(async move {
-                                        let realm_for_msg = realm.clone();
-                                        match crate::transport::auth::with_event_submitter(
-                                            &base,
-                                            api_token,
-                                            |sub| async move {
-                                                crate::transport::realm_write::leave_realm(&sub, &realm, &actor_id).await
-                                            },
-                                        )
-                                        .await
-                                        {
-                                            Ok(_) => {
-                                                state_store.write().forget_realm_tree_projection(&realm_for_msg);
-                                                sync_cursor.set(String::new());
-                                                status_msg.set(format!(
-                                                    "left {realm_for_msg}; local cache cleared"
-                                                ));
-                                            }
-                                            Err(err) => status_msg.set(format!(
-                                                "leave failed: {}", err.display()
-                                            )),
-                                        }
-                                    });
+                                    controller.leave_realm(base, api_token, realm, actor_id);
                                 }
                             },
                             {crate::i18n::tr("realm_admin.leave_confirm_button")}
@@ -1929,32 +1641,15 @@ pub fn RealmAdminPanel(
                                     }
                                 };
                                 let op_id = envelope.local_operation_id().to_string();
-                                spawn(async move {
-                                    match crate::transport::auth::with_authed_api(
-                                        &base,
-                                        api_token,
-                                        |api| async move {
-                                            api.event_submitter()?.submit_sdk_event(&envelope).await
-                                        },
-                                    )
-                                    .await
-                                    {
-                                        Ok(resp) => status_msg.set(format!(
-                                            "ak.capability.grant event {}: event_id={}",
-                                            short_protocol_id(&op_id),
-                                            short_protocol_id(&resp.event_id)
-                                        )),
-                                        Err(err) if crate::event_submit::is_durably_queued_error(err.inner()) => {
-                                            status_msg.set(format!(
-                                                "ak.capability.grant event {} queued for retry",
-                                                short_protocol_id(&op_id)
-                                            ));
-                                        }
-                                        Err(err) => status_msg.set(format!(
-                                            "capability.grant submit failed: {}", err.display()
-                                        )),
-                                    }
-                                });
+                                controller.submit_capability_event(
+                                    base,
+                                    api_token,
+                                    envelope,
+                                    op_id,
+                                    "ak.capability.grant",
+                                    "capability.grant",
+                                    true,
+                                );
                             }
                         },
                         {crate::i18n::tr("realm_admin.grant_capability_move")}
@@ -2016,26 +1711,15 @@ pub fn RealmAdminPanel(
                                     }
                                 };
                                 let op_id = envelope.local_operation_id().to_string();
-                                spawn(async move {
-                                    match crate::transport::auth::with_authed_api(
-                                        &base,
-                                        api_token,
-                                        |api| async move {
-                                            api.event_submitter()?.submit_sdk_event(&envelope).await
-                                        },
-                                    )
-                                    .await
-                                    {
-                                        Ok(resp) => status_msg.set(format!(
-                                            "ak.capability.revoke event {}: event_id={}",
-                                            short_protocol_id(&op_id),
-                                            short_protocol_id(&resp.event_id)
-                                        )),
-                                        Err(err) => status_msg.set(format!(
-                                            "capability.revoke submit failed: {}", err.display()
-                                        )),
-                                    }
-                                });
+                                controller.submit_capability_event(
+                                    base,
+                                    api_token,
+                                    envelope,
+                                    op_id,
+                                    "ak.capability.revoke",
+                                    "capability.revoke",
+                                    false,
+                                );
                             }
                         },
                         {crate::i18n::tr("realm_admin.revoke_capability_move")}
@@ -2088,33 +1772,7 @@ pub fn RealmAdminPanel(
                                     status_msg.set("set admin failed: account is not connected".to_owned());
                                     return;
                                 }
-                                let mut submitted_grant_id = admin_grant_id;
-                                spawn(async move {
-                                    match crate::transport::auth::with_event_submitter(
-                                        &base,
-                                        api_token,
-                                        |sub| async move {
-                                            crate::transport::realm_write::grant_realm_admin(&sub, &realm, &actor_id, &subject, issuer_root_basis).await
-                                        },
-                                    )
-                                    .await
-                                    {
-                                        Ok(resp) => {
-                                            if let Ok(event_id) = arkret_sdk::EventId::new(resp.event_id.clone()) {
-                                                submitted_grant_id.set(
-                                                    arkret_sdk::GrantId::from_event_id(&event_id).to_string(),
-                                                );
-                                            }
-                                            status_msg.set(format!(
-                                                "granted ak.realm.admin: event_id={}",
-                                                short_protocol_id(&resp.event_id)
-                                            ));
-                                        }
-                                        Err(err) => status_msg.set(format!(
-                                            "set admin failed: {}", err.display()
-                                        )),
-                                    }
-                                });
+                                controller.grant_realm_admin(base, api_token, realm, actor_id, subject, issuer_root_basis);
                             }
                         },
                         {crate::i18n::tr("realm_admin.admin_grant_button")}
@@ -2140,32 +1798,7 @@ pub fn RealmAdminPanel(
                                     status_msg.set("revoke admin failed: account is not connected".to_owned());
                                     return;
                                 }
-                                spawn(async move {
-                                    match crate::transport::auth::with_event_submitter(
-                                        &base,
-                                        api_token,
-                                        |sub| async move {
-                                            crate::transport::realm_write::revoke_realm_admin(
-                                                &sub,
-                                                &realm,
-                                                &actor_id,
-                                                &grant_id,
-                                                Some("admin_revoke"),
-                                            )
-                                            .await
-                                        },
-                                    )
-                                    .await
-                                    {
-                                        Ok(resp) => status_msg.set(format!(
-                                            "revoked ak.realm.admin: event_id={}",
-                                            short_protocol_id(&resp.event_id)
-                                        )),
-                                        Err(err) => status_msg.set(format!(
-                                            "revoke admin failed: {}", err.display()
-                                        )),
-                                    }
-                                });
+                                controller.revoke_realm_admin(base, api_token, realm, actor_id, grant_id);
                             }
                         },
                         {crate::i18n::tr("realm_admin.admin_revoke_button")}
@@ -2346,41 +1979,7 @@ pub fn RealmAdminPanel(
                                             destroy_confirm_open.set(false);
                                             danger_confirm_text.set(String::new());
                                             let reason = destroy_reason().trim().to_owned();
-                                            spawn(async move {
-                                                let realm_for_msg = realm.clone();
-                                                let result = crate::transport::auth::with_event_submitter(
-                                                    &base,
-                                                    api_token,
-                                                    |sub| async move {
-                                                        if is_destroy {
-                                                            let reason = if reason.is_empty() {
-                                                                "operator_request".to_owned()
-                                                            } else {
-                                                                reason
-                                                            };
-                                                            crate::transport::realm_write::destroy_realm(&sub, &realm, &actor_id, &reason).await
-                                                        } else {
-                                                            crate::transport::realm_write::archive_realm(&sub, &realm, &actor_id).await
-                                                        }
-                                                    },
-                                                )
-                                                .await;
-                                                match result {
-                                                    Ok(_) if is_destroy => status_msg.set(format!(
-                                                        "destroyed {}",
-                                                        short_protocol_id(&realm_for_msg)
-                                                    )),
-                                                    Ok(_) => status_msg.set(format!(
-                                                        "archive event submitted ({realm_for_msg})"
-                                                    )),
-                                                    Err(err) if is_destroy => status_msg.set(format!(
-                                                        "destroy failed: {}", err.display()
-                                                    )),
-                                                    Err(err) => status_msg.set(format!(
-                                                        "archive failed: {}", err.display()
-                                                    )),
-                                                }
-                                            });
+                                            controller.archive_or_destroy_realm(base, api_token, realm, actor_id, reason, is_destroy);
                                         }
                                     },
                                     "{confirm_label}"
@@ -2397,178 +1996,5 @@ pub fn RealmAdminPanel(
                 }
             }
         }
-    }
-}
-
-// ── Realm governance (authority root) helpers ─────────────────────────
-
-/// `expected_state_digest` for the two authority-root transition payloads:
-/// the canonical SHA-256 of the replayed root value, exactly what the soland
-/// reducer recomputes before applying a `security_barrier` transition.
-fn expected_authority_root_digest(
-    root: &arkret_policy::realm_bootstrap::RealmAuthorityRootValue,
-) -> anyhow::Result<arkret_sdk::Hash> {
-    arkret_sdk::Hash::new(crate::canonical::canonical_sha256(root)?).map_err(anyhow::Error::msg)
-}
-
-/// Build the `ak.realm.owner.transfer` payload. `successor_acceptance` is the
-/// successor's independent proof pasted by the operator — the client never
-/// synthesizes it (the wire type only requires non-empty signature material;
-/// binding semantics live with the successor's tooling).
-fn build_owner_transfer_payload(
-    realm_id: &str,
-    root: &arkret_policy::realm_bootstrap::RealmAuthorityRootValue,
-    successor: &str,
-    successor_acceptance: &str,
-) -> anyhow::Result<arkret_sdk::RealmOwnerTransferPayload> {
-    Ok(arkret_sdk::RealmOwnerTransferPayload {
-        realm_id: arkret_sdk::RealmId::new(realm_id.trim().to_owned())?,
-        expected_state_digest: expected_authority_root_digest(root)?,
-        patch: arkret_sdk::RealmOwnerTransferPatch {
-            controller_actor_id: serde_json::from_str(successor).map_err(|error| {
-                anyhow::anyhow!("successor must be a complete ActorId: {error}")
-            })?,
-        },
-        successor_acceptance: arkret_sdk::SignatureMaterial::NonEmptyString(
-            arkret_sdk::NonEmptyString::new(successor_acceptance.trim().to_owned())
-                .map_err(|reason| anyhow::anyhow!("successor acceptance: {reason}"))?,
-        ),
-    })
-}
-
-/// Build the destructive `ak.realm.authority.reset` payload.
-/// `destructive_confirmation` is the operator-typed token; the SDK builder
-/// (and the reducer) only accept the literal event-kind string, so the typed
-/// text ships verbatim instead of being auto-filled.
-fn build_authority_reset_payload(
-    realm_id: &str,
-    root: &arkret_policy::realm_bootstrap::RealmAuthorityRootValue,
-    destructive_confirmation: &str,
-) -> anyhow::Result<arkret_sdk::RealmAuthorityResetPayload> {
-    Ok(arkret_sdk::RealmAuthorityResetPayload {
-        realm_id: arkret_sdk::RealmId::new(realm_id.trim().to_owned())?,
-        expected_state_digest: expected_authority_root_digest(root)?,
-        destructive_confirmation: destructive_confirmation.trim().to_owned(),
-    })
-}
-
-/// Operator guidance for the known authority-root rejection reasons, appended
-/// to the raw error in the status line. `None` for anything unrecognized.
-fn governance_failure_hint(error_text: &str) -> Option<&'static str> {
-    if error_text.contains("realm_authority_root_conflict") {
-        Some(
-            "the authority root changed concurrently (security barrier) — wait for sync to \
-             surface the new root and retry from the refreshed state",
-        )
-    } else if error_text.contains("realm_authority_controller_mismatch") {
-        Some(
-            "only the current root controller may submit this transition, and an owner-transfer \
-             successor must be a joined member with a non-empty acceptance proof",
-        )
-    } else if error_text.contains("realm_authority_root_missing") {
-        Some(
-            "this Realm has no projected authority-root cell (it predates the contract); \
-             governance transitions are unavailable",
-        )
-    } else {
-        None
-    }
-}
-
-#[cfg(test)]
-mod governance_tests {
-    use super::*;
-
-    fn root() -> arkret_policy::realm_bootstrap::RealmAuthorityRootValue {
-        arkret_policy::realm_bootstrap::RealmAuthorityRootValue {
-            controller_actor_id: crate::mls_api_helpers::local_account_actor_id(
-                "ak:did_core:web:alice.example",
-            )
-            .unwrap(),
-            controller_epoch: 3,
-            authority_generation: 1,
-        }
-    }
-
-    const REALM: &str = "ak:realm:AV1bzsPGpTD74Cq12d9EOrCkieTddiSndS0kDtK1W2hM";
-
-    #[test]
-    fn owner_transfer_payload_pins_digest_and_new_controller() {
-        let successor = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
-            "ak:did_core:web:bob.example".parse().unwrap(),
-            "ak:did_core:web:remote-station.example".parse().unwrap(),
-        ));
-        let payload =
-            build_owner_transfer_payload(REALM, &root(), &successor.to_string(), "detached-proof")
-                .unwrap();
-        assert_eq!(payload.patch.controller_actor_id, successor);
-        assert_eq!(
-            payload.expected_state_digest.as_str(),
-            crate::canonical::canonical_sha256(&root()).unwrap()
-        );
-        // The full builder chain accepts this payload (root authorization ref
-        // stamped by the SDK intent builder).
-        let intent = crate::event_builders::build_realm_owner_transfer_control_intent(
-            "did:web:alice.example",
-            payload,
-        )
-        .unwrap();
-        assert_eq!(
-            intent.kind().as_str(),
-            arkret_wire::event_kind_str::REALM_OWNER_TRANSFER
-        );
-    }
-
-    #[test]
-    fn owner_transfer_payload_rejects_an_empty_acceptance_proof() {
-        let successor = root().controller_actor_id.to_string();
-        assert!(build_owner_transfer_payload(REALM, &root(), &successor, "  ").is_err());
-    }
-
-    #[test]
-    fn owner_transfer_does_not_infer_a_station_from_a_principal() {
-        assert!(
-            build_owner_transfer_payload(
-                REALM,
-                &root(),
-                "ak:did_core:web:bob.example",
-                "detached-proof"
-            )
-            .is_err()
-        );
-        assert!(
-            build_owner_transfer_payload(REALM, &root(), "did:web:bob.example", "detached-proof")
-                .is_err()
-        );
-    }
-
-    #[test]
-    fn authority_reset_payload_ships_the_typed_confirmation_verbatim() {
-        let payload = build_authority_reset_payload(
-            REALM,
-            &root(),
-            arkret_wire::event_kind_str::REALM_AUTHORITY_RESET,
-        )
-        .unwrap();
-        assert_eq!(payload.destructive_confirmation, "ak.realm.authority.reset");
-        // A wrong token still builds a payload here, but the SDK intent
-        // builder fails closed — the UI's disabled-until-match confirm is a
-        // convenience, not the enforcement point.
-        let wrong = build_authority_reset_payload(REALM, &root(), "yes really").unwrap();
-        assert!(
-            crate::event_builders::build_realm_authority_reset_control_intent(
-                "did:web:alice.example",
-                wrong,
-            )
-            .is_err()
-        );
-    }
-
-    #[test]
-    fn governance_failure_hints_cover_the_reducer_rejection_reasons() {
-        assert!(governance_failure_hint("submit failed: realm_authority_root_conflict").is_some());
-        assert!(governance_failure_hint("rejected: realm_authority_controller_mismatch").is_some());
-        assert!(governance_failure_hint("realm_authority_root_missing").is_some());
-        assert_eq!(governance_failure_hint("network timeout"), None);
     }
 }

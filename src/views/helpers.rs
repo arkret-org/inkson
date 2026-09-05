@@ -563,7 +563,7 @@ mod tests {
         }];
         let rendered = render_actor_mention(
             &alice,
-            &[claim.clone()],
+            std::slice::from_ref(&claim),
             &accepted,
             None,
             None,
