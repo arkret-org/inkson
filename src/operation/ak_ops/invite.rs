@@ -34,7 +34,7 @@ pub fn invite_create_structured(
     // cell instead of each minting its own Invite, and the loser is refused
     // with `invite_live_target_occupied` rather than silently creating a
     // second live invite.
-    let live_target = arkret_sdk::InviteLiveTargetSlot::Unset
+    let live_target = arkret_sdk::InviteLiveTargetSlot::Free
         .precondition(&payload.invitee_account_id)
         .map_err(|err| anyhow::anyhow!("invite live-target precondition: {err}"))?;
     Ok(
