@@ -418,25 +418,28 @@ async fn resolve_agent_selector_mentions(
         let Ok(controller_handle) = arkret_sdk::Handle::parse(controller_handle) else {
             continue;
         };
-        // The selector resolution is principal-scoped; the persisted mention
-        // target is a complete AccountId. Join both sides against the Realm
-        // roster and fail closed when the Station component is unavailable or
-        // ambiguous — never guess one (`identity-handles.md §3.8`).
-        let Some(subject_account_id) = roster_account_for(roster_accounts, &outcome.subject_id)
-        else {
-            continue;
-        };
-        let Some(controller_subject_account_id) =
-            roster_account_for(roster_accounts, &outcome.controller_subject_id)
-        else {
-            continue;
-        };
-        let mention = arkret_sdk::Mention::new(subject_account_id)
-            .with_agent_selector_metadata(
+        // The signed claim names one complete AccountId, so the persisted
+        // mention target is copied from it verbatim. The roster join this used
+        // to do was a guess with two failure modes the ruling names: it
+        // silently excluded an authorized agent that is not a Realm member,
+        // and it had no answer when the same principal held accounts on two
+        // Stations. Ruling `review/spec-done/2026-09-05-1310`.
+        let subject_account_id = outcome.subject_account_id.clone();
+        // The controller half is optional audit metadata and its authoritative
+        // source is the verified controller handle claim, not the roster. When
+        // the roster cannot supply it the mention is still written; a guessed
+        // controller account would be worse than an absent one.
+        let controller_subject_account_id =
+            roster_account_for(roster_accounts, &outcome.controller_subject_id);
+        let mut mention = arkret_sdk::Mention::new(subject_account_id);
+        if let Some(controller_subject_account_id) = controller_subject_account_id {
+            mention = mention.with_agent_selector_metadata(
                 controller_subject_account_id,
                 controller_handle,
                 outcome.agent_slug,
-            )
+            );
+        }
+        let mention = mention
             .with_mention_text_original(token.mention_text_original)
             .with_resolved_at(chrono::Utc::now());
         mentions.push(MentionNode::mention(mention));

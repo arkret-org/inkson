@@ -131,7 +131,7 @@ fn inkson_accepts_server_contract_payloads() {
         }],
         "supported_features": [],
         "supported_reducer_profiles": ["ak.reducer.core.v1"],
-        "auth_metadata": {"mode": "development"},
+        "auth_metadata": {},
         "limits": {"storage": "memory", "max_limit": 100},
         "rate_limit_policy": {},
         "plaintext_visibility": {"data_classes": [], "max_visibility": "none"},
@@ -183,7 +183,7 @@ fn inkson_accepts_server_contract_payloads() {
         ],
         "transport_bindings": [],
         "supported_features": [],
-        "auth_metadata": {"mode": "development"},
+        "auth_metadata": {},
         "limits": {},
         "plaintext_visibility": {"data_classes": [], "max_visibility": "none"},
         "claimed_profiles": [],
@@ -235,7 +235,7 @@ fn inkson_accepts_server_contract_payloads() {
             "extension_profile_required": null
         }],
         "supported_features": [],
-        "auth_metadata": {"mode": "public_no_auth"},
+        "auth_metadata": {},
         "limits": {},
         "plaintext_visibility": {},
         "rate_limit_policy": {},
@@ -265,14 +265,11 @@ fn inkson_accepts_server_contract_payloads() {
             "realm_id": "ak:realm:AZQnaSleDidYaYIvfwYy3au5gnd_DSinxyUHEl7ewtxk",
             "title": "Arkret Demo Realm",
             "summary": "Shared demo Realm served by server",
-            "tags": ["demo"],
-            "public": true,
-            "category": "collaboration",
             "as_of": "2026-05-30T00:00:00.000Z",
             "source_refs": ["ak:event:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-"],
             "policy_revision": "contract-rev"
         },
-        "stripped_state": [],
+        "stripped_state_entries": [],
         "join_rule": "public",
         "join_candidates": [{
             "realm_id": "ak:realm:AZQnaSleDidYaYIvfwYy3au5gnd_DSinxyUHEl7ewtxk",
@@ -282,13 +279,13 @@ fn inkson_accepts_server_contract_payloads() {
             },
             "service_kind": "station",
             "role": "joined_member_station",
-            "endpoint": "http://server",
+            "endpoint_url": "http://server",
             "operations": ["ak.peer.events.command.submit.v1"],
             "join_methods": ["invite_accept", "member_join"],
             "encryption_profile": "mls_rfc9420",
             "digest_algorithm": "sha256",
             "priority": 0,
-            "source": "station_route",
+            "source": "invite_hint",
             "seal_basis": {
                 "leaves": ["ak:seal:sha256:1111111111111111111111111111111111111111111111111111111111111111"]
             },
@@ -364,10 +361,20 @@ fn inkson_accepts_server_contract_payloads() {
             "id": "ak:grant:AfpU2UOijpNUdGOoAgQdaqV0xwreLXwLE3yXXHvB6n7X",
             "schema": arkret_wire::SchemaId::CAPABILITY_V1,
             "realm_id": "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-",
-            "issuer_id": "ak:did_core:web:server.local",
-            "issuer_station_id": "ak:did_core:web:server.local",
-            "subject": "ak:did_core:web:alice.example",
-            "subject_station_id": "ak:did_core:web:server.local",
+            "issuer_id": {
+                "kind": "account",
+                "account_id": {
+                    "principal_id": "ak:did_core:web:server.local",
+                    "station_id": "ak:did_core:web:server.local"
+                }
+            },
+            "subject": {
+                "kind": "account",
+                "account_id": {
+                    "principal_id": "ak:did_core:web:alice.example",
+                    "station_id": "ak:did_core:web:server.local"
+                }
+            },
             "issuer_authority_refs": [{
                 "kind": "realm_root",
                 "realm_id": "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-",
@@ -405,8 +412,12 @@ fn inkson_accepts_server_contract_payloads() {
     assert_eq!(keys.one_time_key_counts[&signed_curve25519], 1);
 
     let claimed: inkson::models::KeysClaimOutcome = serde_json::from_value(json!({
-        "one_time_keys": {
-            "ak:did_core:web:alice.example": {
+        "one_time_keys": [{
+            "account_id": {
+                "principal_id": "ak:did_core:web:alice.example",
+                "station_id": "ak:did_core:web:server.local"
+            },
+            "device_keys": {
                 "ak:device:0196419b-0000-7000-8000-000000000000": {
                     "signed_curve25519": {
                         "key": "YWxpY2Utb3RrLTE",
@@ -420,7 +431,7 @@ fn inkson_accepts_server_contract_payloads() {
                     }
                 }
             }
-        },
+        }],
         "failures": []
     }))
     .unwrap();
@@ -536,7 +547,7 @@ fn server_description_gates_event_envelope_write_plane() {
             "extension_profile_required": null
         }],
         "supported_features": [],
-        "auth_metadata": {"mode": "development"},
+        "auth_metadata": {},
         "limits": {},
         "plaintext_visibility": {"data_classes": [], "max_visibility": "none"},
         "claimed_profiles": [],
@@ -579,7 +590,7 @@ fn server_description_gates_event_envelope_write_plane() {
             "extension_profile_required": null
         }],
         "supported_features": [],
-        "auth_metadata": {"mode": "development"},
+        "auth_metadata": {},
         "limits": {"storage": "postgres"},
         "plaintext_visibility": {"data_classes": [], "max_visibility": "none"},
         "claimed_profiles": [
@@ -646,7 +657,7 @@ fn server_description_gates_event_envelope_write_plane() {
             "extension_profile_required": null
         }],
         "supported_features": [],
-        "auth_metadata": {"mode": "development"},
+        "auth_metadata": {},
         "limits": {},
         "plaintext_visibility": {"data_classes": [], "max_visibility": "none"},
         "claimed_profiles": [],
