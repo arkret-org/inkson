@@ -81,6 +81,7 @@ mod connect;
 mod connection_effects;
 mod connection_handlers;
 mod context_bar;
+mod direct_open;
 mod feature_gate;
 mod fold_evidence_effects;
 mod global_effects;
@@ -1921,56 +1922,17 @@ fn AppBootstrap() -> Element {
                                                                             let base = base.clone();
                                                                             let agent_id = agent_id.clone();
                                                                             let controller_principal_id = controller_principal_id.clone();
-                                                                            spawn(async move {
-                                                                                let agent_id_for_log = agent_id.clone();
-                                                                                let route = match crate::transport::auth::with_authed_api(
-                                                                                    &base,
-                                                                                    api_token,
-                                                                                    |api| async move {
-                                                                                        anyhow::ensure!(api.event_submitter()?.authority()?.principal_id == crate::mls_api_helpers::principal_core_id(&controller_principal_id)?, "active controller account changed while opening Agent conversation");
-                                                                                        crate::transport::account::direct_conversation_resolve(
-                                                                                            &api,
-                                                                                            state_store,
-                                                                                            &arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(crate::mls_api_helpers::principal_core_id(&agent_id)?, api.event_submitter()?.authority()?.station_id.clone())).to_string(),
-                                                                                            Some(&serde_json::to_string(api.event_submitter()?.authority()?)?),
-                                                                                            true,
-                                                                                        ).await
-                                                                                    },
-                                                                                ).await {
-                                                                                    Ok(ref response)
-                                                                                        if let Some(coordinates) =
-                                                                                            crate::transport::account::direct_conversation_coordinates(response) =>
-                                                                                    {
-                                                                                        Some(Route::DirectConversation {
-                                                                                            realm_id: coordinates.realm_id.to_string(),
-                                                                                            strand_id: coordinates.main_strand_id.to_string(),
-                                                                                        })
-                                                                                    },
-                                                                                    Ok(response) => {
-                                                                                        crate::components::feedback::toast_error(
-                                                                                            "feedback.direct_open_failed",
-                                                                                            vec![],
-                                                                                            Some(format!("outcome: {response:?}")),
-                                                                                        );
-                                                                                        None
-                                                                                    }
-                                                                                    Err(err) => {
-                                                                                        tracing::error!(
-                                                                                            error = %err.display_diagnostic(),
-                                                                                            agent_id = %agent_id_for_log,
-                                                                                            "owned agent direct conversation open failed"
-                                                                                        );
-                                                                                        crate::components::feedback::toast_error(
-                                                                                            "feedback.direct_open_failed", vec![], Some(err.display_diagnostic()),
-                                                                                        );
-                                                                                        None
-                                                                                    }
-                                                                                };
-                                                                                direct_chat_opening.set(None);
-                                                                                if let Some(route) = route {
-                                                                                    let _ = navigator.push(route);
-                                                                                }
-                                                                            });
+                                                                            direct_open::open_direct_conversation(
+                                                                                base,
+                                                                                api_token,
+                                                                                state_store,
+                                                                                navigator,
+                                                                                direct_chat_opening,
+                                                                                direct_open::DirectConversationTarget::OwnedAgent {
+                                                                                    agent_id,
+                                                                                    controller_principal_id,
+                                                                                },
+                                                                            );
                                                                         }
                                                                     },
                                                                     span { class: "sidebar-nav-icon contact-sidebar-agent-avatar",
@@ -2130,56 +2092,14 @@ fn AppBootstrap() -> Element {
                                                             let api_token = token();
                                                             let base = base.clone();
                                                             let peer_for_task = peer.clone();
-                                                            let peer_for_log = peer_for_task.clone();
-                                                            spawn(async move {
-                                                                let result = crate::transport::auth::with_authed_api(
-                                                                    &base,
-                                                                    api_token,
-                                                                    |api| async move {
-                                                                        crate::transport::account::direct_conversation_resolve(
-                                                                            &api,
-                                                                            state_store,
-                                                                            &peer_for_task,
-                                                                            None,
-                                                                            false,
-                                                                        ).await
-                                                                    },
-                                                                ).await;
-                                                                let route = match result {
-                                                                    Ok(response) => {
-                                                                        if let Some(coordinates) = crate::transport::account::direct_conversation_coordinates(&response) {
-                                                                            Some(Route::DirectConversation {
-                                                                                realm_id: coordinates.realm_id.to_string(),
-                                                                                strand_id: coordinates.main_strand_id.to_string(),
-                                                                            })
-                                                                        } else {
-                                                                            crate::components::feedback::toast_error(
-                                                                                "feedback.direct_open_failed",
-                                                                                vec![],
-                                                                                Some(format!("outcome: {response:?}")),
-                                                                            );
-                                                                            None
-                                                                        }
-                                                                    }
-                                                                    Err(err) => {
-                                                                        tracing::error!(
-                                                                            error = %err.display_diagnostic(),
-                                                                            peer = %peer_for_log,
-                                                                            "direct conversation open failed"
-                                                                        );
-                                                                        crate::components::feedback::toast_error(
-                                                                            "feedback.direct_open_failed",
-                                                                            vec![],
-                                                                            Some(err.display_diagnostic()),
-                                                                        );
-                                                                        None
-                                                                    }
-                                                                };
-                                                                direct_chat_opening.set(None);
-                                                                if let Some(route) = route {
-                                                                    let _ = navigator.push(route);
-                                                                }
-                                                            });
+                                                            direct_open::open_direct_conversation(
+                                                                base,
+                                                                api_token,
+                                                                state_store,
+                                                                navigator,
+                                                                direct_chat_opening,
+                                                                direct_open::DirectConversationTarget::Peer { peer_id: peer_for_task },
+                                                            );
                                                         }
                                                     },
                                                     span { class: "sidebar-nav-icon contact-sidebar-user-avatar",
@@ -2399,55 +2319,14 @@ fn AppBootstrap() -> Element {
                                                                         let base = base.clone();
                                                                         let agent_id = agent_id.clone();
                                                                         let controller = controller.clone();
-                                                                        spawn(async move {
-                                                                            let agent_id_for_log = agent_id.clone();
-                                                                            let route = match crate::transport::auth::with_authed_api(
-                                                                                &base,
-                                                                                api_token,
-                                                                                |api| async move {
-                                                                                    crate::transport::account::direct_conversation_resolve(
-                                                                                        &api,
-                                                                                        state_store,
-                                                                                        &agent_id,
-                                                                                        Some(&controller),
-                                                                                        false,
-                                                                                    ).await
-                                                                                },
-                                                                            ).await {
-                                                                                Ok(ref response)
-                                                                                    if let Some(coordinates) =
-                                                                                        crate::transport::account::direct_conversation_coordinates(response) =>
-                                                                                {
-                                                                                    Some(Route::DirectConversation {
-                                                                                        realm_id: coordinates.realm_id.to_string(),
-                                                                                        strand_id: coordinates.main_strand_id.to_string(),
-                                                                                    })
-                                                                                },
-                                                                                Ok(response) => {
-                                                                                    crate::components::feedback::toast_error(
-                                                                                        "feedback.direct_open_failed",
-                                                                                        vec![],
-                                                                                        Some(format!("outcome: {response:?}")),
-                                                                                    );
-                                                                                    None
-                                                                                }
-                                                                                Err(err) => {
-                                                                                    tracing::error!(
-                                                                                        error = %err.display_diagnostic(),
-                                                                                        agent_id = %agent_id_for_log,
-                                                                                        "contact agent direct conversation open failed"
-                                                                                    );
-                                                                                    crate::components::feedback::toast_error(
-                                                                                        "feedback.direct_open_failed", vec![], Some(err.display_diagnostic()),
-                                                                                    );
-                                                                                    None
-                                                                                }
-                                                                            };
-                                                                            direct_chat_opening.set(None);
-                                                                            if let Some(route) = route {
-                                                                                let _ = navigator.push(route);
-                                                                            }
-                                                                        });
+                                                                        direct_open::open_direct_conversation(
+                                                                            base,
+                                                                            api_token,
+                                                                            state_store,
+                                                                            navigator,
+                                                                            direct_chat_opening,
+                                                                            direct_open::DirectConversationTarget::ContactAgent { agent_id, controller },
+                                                                        );
                                                                     }
                                                                 },
                                                                 span { class: "sidebar-nav-icon contact-sidebar-agent-avatar",

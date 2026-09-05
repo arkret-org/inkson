@@ -395,3 +395,47 @@ pub(crate) fn card_state_from_write_state(write_state: &str) -> CardState {
         None => CardState::Queued,
     }
 }
+
+/// Which Board the toolbar names, and under which title.
+pub(crate) struct BoardHeader {
+    /// The pending create the surface stands in for while no confirmed Board
+    /// is selected. `None` once a confirmed Board is selected, even if creates
+    /// are still in flight.
+    pub(crate) active_pending_board: Option<PendingBoardCreate>,
+    pub(crate) title: String,
+}
+
+/// Resolve the Board header from the confirmed selection and the durable
+/// pending creates.
+///
+/// The active surface is either the confirmed selection or, while no confirmed
+/// Board is selected, the most recent pending create — so the user sees their
+/// titled Board surface from the moment they click Create, without the pending
+/// write ever borrowing a protocol identity. A confirmed Board whose title has
+/// not arrived in the options list yet falls back to its short id rather than
+/// rendering blank.
+pub(crate) fn board_header(
+    selected_board: Option<&arkret_sdk::SpaceId>,
+    board_space_options: &[BoardSpaceOption],
+    pending_board_creates: Vec<PendingBoardCreate>,
+) -> BoardHeader {
+    let Some(board_id) = selected_board else {
+        let active_pending_board = pending_board_creates.into_iter().next_back();
+        let title = active_pending_board
+            .as_ref()
+            .map(|pending| format!("{} ({})", pending.title, pending.status_hint()))
+            .unwrap_or_else(|| "Select board".to_owned());
+        return BoardHeader {
+            active_pending_board,
+            title,
+        };
+    };
+    BoardHeader {
+        active_pending_board: None,
+        title: board_space_options
+            .iter()
+            .find(|option| option.id == *board_id)
+            .map(|option| option.title.clone())
+            .unwrap_or_else(|| crate::views::helpers::short_protocol_id(board_id.as_str())),
+    }
+}

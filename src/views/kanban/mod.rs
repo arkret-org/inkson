@@ -1023,29 +1023,16 @@ pub fn KanbanPanel(
         }
     });
     let selected_board_value = selected_board();
-    // The active surface is either the confirmed selection or, while no
-    // confirmed Board is selected, the most recent pending create — so the
-    // user sees their titled Board surface (and a disabled Add List) from the
-    // moment they click Create, without the pending write ever borrowing a
-    // protocol identity.
-    let active_pending_board = if selected_board_value.is_some() {
-        None
-    } else {
-        pending_board_creates().into_iter().next_back()
-    };
+    let BoardHeader {
+        active_pending_board,
+        title: selected_board_title,
+    } = board_header(
+        selected_board_value.as_ref(),
+        &board_space_options(),
+        pending_board_creates(),
+    );
     let board_status_text = board_status();
     let board_select_label = format!("{}:", crate::i18n::tr("kanban.board_header"));
-    let selected_board_title = match &selected_board_value {
-        Some(board_id) => board_space_options()
-            .iter()
-            .find(|option| option.id == *board_id)
-            .map(|option| option.title.clone())
-            .unwrap_or_else(|| short_protocol_id(board_id.as_str())),
-        None => active_pending_board
-            .as_ref()
-            .map(|pending| format!("{} ({})", pending.title, pending.status_hint()))
-            .unwrap_or_else(|| "Select board".to_owned()),
-    };
 
     // Synthesis track projection (option`ak.strand.update). The track is built
     // by decrypting and replaying every `ak.strand.update` op for this strand
