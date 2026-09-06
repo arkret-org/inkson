@@ -7,6 +7,7 @@ use arkret_sdk::signatures::PublicKeyMaterial;
 use arkret_sdk::{Did, DidDocument};
 use arkret_wire::event_kind_str;
 
+use super::verification_method_controller;
 use crate::transport::TransportClient;
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -447,17 +448,6 @@ pub async fn refresh_device_keys(
     for (actor, device) in pairs {
         let _ = resolve_device_signing_key(api, anchor, actor, device).await;
     }
-}
-
-fn verification_method_controller(verification_method: &str) -> &str {
-    let no_query = verification_method
-        .split_once('?')
-        .map(|(head, _)| head)
-        .unwrap_or(verification_method);
-    no_query
-        .split_once('#')
-        .map(|(head, _)| head)
-        .unwrap_or(no_query)
 }
 
 fn verification_method_controller_matches_signer(

@@ -1,6 +1,7 @@
 use arkret_wire::event_kind_str;
 
 use super::*;
+use crate::identity::verification_method_controller;
 #[cfg(test)]
 pub(crate) use crate::state::projection::message_ops::message_operations_from_events;
 // The message-candidate walkers + raw-operation
@@ -149,12 +150,9 @@ fn redaction_payload_candidate(event: &Value) -> &Value {
 
 fn message_redaction_marker_from_event(event: &Value) -> Option<MessageRedactionMarker> {
     let candidates = message_candidates(event);
-    let kind = candidates.iter().find_map(|candidate| {
-        value_string_at(
-            candidate,
-            &["kind", "event_kind", "type"],
-        )
-    })?;
+    let kind = candidates
+        .iter()
+        .find_map(|candidate| value_string_at(candidate, &["kind", "event_kind", "type"]))?;
     if kind != event_kind_str::MESSAGE_REDACT && kind != event_kind_str::REDACTION {
         return None;
     }
@@ -351,12 +349,9 @@ struct ReactionMarker {
 
 fn reaction_marker_from_event(event: &Value) -> Option<ReactionMarker> {
     let candidates = message_candidates(event);
-    let kind = candidates.iter().find_map(|candidate| {
-        value_string_at(
-            candidate,
-            &["kind", "event_kind", "type"],
-        )
-    })?;
+    let kind = candidates
+        .iter()
+        .find_map(|candidate| value_string_at(candidate, &["kind", "event_kind", "type"]))?;
     let active = match kind {
         event_kind_str::REACTION_ADD => true,
         event_kind_str::REACTION_REMOVE => false,
@@ -1355,17 +1350,6 @@ fn persistent_proof_sender_device<'a>(envelope: &'a Value, actor: &str) -> Optio
         })
 }
 
-fn verification_method_controller(verification_method: &str) -> &str {
-    let no_query = verification_method
-        .split_once('?')
-        .map(|(head, _)| head)
-        .unwrap_or(verification_method);
-    no_query
-        .split_once('#')
-        .map(|(head, _)| head)
-        .unwrap_or(no_query)
-}
-
 fn verification_method_device_fragment<'a>(
     verification_method: &'a str,
     actor: &str,
@@ -1554,8 +1538,7 @@ pub(crate) fn chat_message_from_event_with_sidecar(
         .iter()
         .any(|candidate| message_kind_is_create(candidate) || message_kind_is_revise(candidate));
     let message_payload_shape =
-        first_string_in_candidates(&candidates, &["message_id", "strand_id"])
-            .is_some();
+        first_string_in_candidates(&candidates, &["message_id", "strand_id"]).is_some();
     if !explicit_message_kind && !message_payload_shape {
         return None;
     }

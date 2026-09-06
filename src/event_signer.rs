@@ -59,6 +59,7 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use chrono::{DateTime, Utc};
 use ed25519_dalek::{Signer as _, SigningKey};
 
+use crate::identity::verification_method_controller;
 use crate::operation::{Audience, AuthoredEvent, ProofMode, current_proof_mode};
 
 /// Complete canonical history for one actor in one Principal Control Realm.
@@ -1032,17 +1033,6 @@ fn normalize_signer_device_id(device_id: Option<impl AsRef<str>>) -> Option<Stri
         .map(|value| value.as_ref().trim())
         .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned)
-}
-
-fn verification_method_controller(verification_method: &str) -> &str {
-    let no_query = verification_method
-        .split_once('?')
-        .map(|(head, _)| head)
-        .unwrap_or(verification_method);
-    no_query
-        .split_once('#')
-        .map(|(head, _)| head)
-        .unwrap_or(no_query)
 }
 
 // Process-wide active signer slot. `OnceLock` so callers don't have to
