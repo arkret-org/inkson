@@ -72,10 +72,7 @@ pub(crate) fn message_actor_from_candidates(candidates: &[&Value]) -> Option<Str
 }
 
 fn discussion_event_kind(value: &Value) -> Option<&str> {
-    value_string_at(
-        value,
-        &["kind", "event_kind", "type"],
-    )
+    value_string_at(value, &["kind", "event_kind", "type"])
 }
 
 pub(crate) fn message_kind_is_create(value: &Value) -> bool {

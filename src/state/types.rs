@@ -265,9 +265,7 @@ fn default_true() -> bool {
 }
 
 pub(crate) fn raw_operation_kind(payload: &Value) -> Option<&str> {
-    payload
-        .get("kind")
-        .and_then(Value::as_str)
+    payload.get("kind").and_then(Value::as_str)
 }
 
 /// Persisted shape of the device identity. Production callers store this

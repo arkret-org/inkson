@@ -214,9 +214,7 @@ impl LocalStateStore {
     /// carrying the invite delivery cell. Returns true when the local
     /// credential state changed.
     pub(crate) fn ingest_invite_delivery_update_message(&mut self, message: &Value) -> bool {
-        if message
-            .get("kind")
-            .and_then(Value::as_str)
+        if message.get("kind").and_then(Value::as_str)
             != Some(arkret_wire::ActorPrivateUpdateKind::ACCOUNT_DATA_UPDATE)
         {
             return false;
