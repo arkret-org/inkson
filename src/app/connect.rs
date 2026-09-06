@@ -1606,7 +1606,7 @@ pub(super) fn connect(
                             let joined_realms =
                                 crate::state::projection::notifications::JoinedRealmIds::from_realm_entries(
                                     &sync.realm_entries,
-                                    &canonical_actor,
+                                    &arkret_sdk::ActorId::account(accepted_account.authority.clone()),
                                 );
                             crate::state::projection::notifications::apply_notification_projection(
                                 &mut notification_projection,

@@ -1480,15 +1480,15 @@ fn spawn_provision_agent(
             }
         };
         let principal_control_realm_id = frozen_genesis.realm_id.clone();
-        let controller_station_id = match crate::operation::authoring_station_id() {
-            Ok(value) => value,
-            Err(error) => {
-                last_op_status.set(format!(
-                    "Create failed: resolve controller Station: {error}"
-                ));
-                return;
-            }
-        };
+        // The controller is the active account, already closed in
+        // `account.authority`; its Station is read from there, not from the
+        // ambient authoring slot (account-lifecycle.md §156).
+        if account.authority.principal_id != controller_principal_id {
+            last_op_status
+                .set("Create failed: controller principal is not the active account".to_owned());
+            return;
+        }
+        let controller_station_id = account.authority.station_id.clone();
         let draft = match build_agent_provision_intent(
             &controller_did,
             &controller_station_id,

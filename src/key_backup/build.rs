@@ -51,7 +51,11 @@ fn public_content_item(item: &SecretStorageItem) -> anyhow::Result<KeyBackupCont
 /// strand. `root` is the Argon2id root key (its salt/params travel on the wire).
 pub fn build_passphrase_kdf_backup_body(
     backup_id: &str,
-    actor_id: &str,
+    // The closed account actor the envelope belongs to. Every production
+    // caller holds the account's `AccountId`; rebuilding it from a principal
+    // plus the ambient Station would pass a loose identity
+    // (account-lifecycle.md §156).
+    actor_id: &arkret_sdk::ActorId,
     device_id: &str,
     root: &VaultKek,
     secret: &[u8],
@@ -61,8 +65,7 @@ pub fn build_passphrase_kdf_backup_body(
 ) -> anyhow::Result<KeyBackup> {
     let backup_id = arkret_sdk::BackupId::new(backup_id.to_owned())
         .map_err(|error| anyhow::anyhow!("backup_id: {error}"))?;
-    let actor_id = crate::mls_api_helpers::local_account_actor_id(actor_id)
-        .map_err(|error| anyhow::anyhow!("actor_id: {error}"))?;
+    let actor_id = actor_id.clone();
     let device_id_typed = arkret_sdk::DeviceId::new(device_id.to_owned()).ok();
     let envelope = arkret_crypto::backup::build_key_backup_envelope(
         backup_id,
@@ -152,46 +155,9 @@ fn recovery_public_key_info(body: &KeyBackup) -> anyhow::Result<Vec<u8>> {
     crate::canonical::canonical_json_bytes(&info)
 }
 
-/// Spec §7.5.2 builder: assemble a `recovery_public_key` backup envelope and
-/// HPKE-seal `plaintext` to `recovery_public_key`. ANY device (holding only the
-/// public key) can build this; only the recovery private key opens it — the
-/// fresh-device restore path. `recovery_key_ref` names the recovery policy
-/// verification method / DID `recoveryKeyAgreement` the public key belongs to.
-#[allow(clippy::too_many_arguments)]
-pub fn build_recovery_public_key_backup_body(
-    backup_id: &str,
-    actor_id: &str,
-    device_id: &str,
-    recovery_public_key: &[u8],
-    recovery_key_ref: &str,
-    class: BackupKind,
-    subdomain: &str,
-    item: &SecretStorageContentIndex,
-    plaintext: &[u8],
-    // Active recovery policy this recovery-public-key envelope binds. The
-    // server cross-checks it against the actor's accepted policy.
-    recovery_policy_ref: Option<(&str, u64)>,
-) -> anyhow::Result<KeyBackup> {
-    build_recovery_public_key_backup_body_in_series(
-        backup_id,
-        &crate::mls_api_helpers::local_account_actor_id(actor_id)?,
-        device_id,
-        recovery_public_key,
-        recovery_key_ref,
-        class,
-        subdomain,
-        item,
-        plaintext,
-        recovery_policy_ref,
-        None,
-        None,
-        None,
-    )
-}
-
-/// Variant of [`build_recovery_public_key_backup_body`] that lets a caller
-/// preselect the genesis `series_id`. This is required when the encrypted
-/// plaintext keybag itself commits to the same series identity.
+/// HPKE `recovery_public_key` envelope whose genesis `series_id` the caller
+/// may preselect. This is required when the encrypted plaintext keybag itself
+/// commits to the same series identity.
 #[allow(clippy::too_many_arguments)]
 pub fn build_recovery_public_key_backup_body_in_series(
     backup_id: &str,
@@ -272,7 +238,7 @@ pub fn build_recovery_public_key_backup_body_for_items_in_series(
 #[allow(clippy::too_many_arguments)]
 pub fn build_recovery_public_key_history_backup_body_in_series(
     backup_id: &str,
-    actor_id: &str,
+    actor_id: &arkret_sdk::ActorId,
     device_id: &str,
     recovery_public_key: &[u8],
     recovery_key_ref: &str,
@@ -302,7 +268,7 @@ pub fn build_recovery_public_key_history_backup_body_in_series(
     )];
     build_recovery_public_key_backup_body_for_keybag_in_series(
         backup_id,
-        &crate::mls_api_helpers::local_account_actor_id(actor_id)?,
+        actor_id,
         device_id,
         recovery_public_key,
         recovery_key_ref,

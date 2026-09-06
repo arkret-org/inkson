@@ -2719,7 +2719,11 @@ fn prompt_copy_strings(dict: &mut TranslationDict) {
     dict.set("quarantine.scope_label", "请求用于");
     dict.set(
         "consent.grant.grantee_station_label",
-        "被授权方 Station DID（留空表示本 Station）",
+        "被授权方 Station DID（除非上方填写完整账号选择器，否则必填）",
+    );
+    dict.set(
+        "consent.request.holder_station_label",
+        "持有方 Station DID（除非上方填写完整账号选择器，否则必填）",
     );
     dict.set("quarantine.expires_label", "超时丢弃");
     dict.set("theme.switcher_aria_label", "主题");

@@ -408,8 +408,11 @@ pub(crate) async fn seal_self_principal_event_current(
     let predecessor = submitter
         .seals_frontier_realm_head(realm_id.as_str())
         .await?;
-    let controller_actor_id =
-        crate::mls_api_helpers::local_account_actor_id(controller_did.as_str())?;
+    let controller_authority = submitter.authority()?;
+    if arkret_sdk::project_did_to_core_id(controller_did)? != controller_authority.principal_id {
+        anyhow::bail!("controller DID does not belong to the authenticated account");
+    }
+    let controller_actor_id = arkret_sdk::ActorId::account(controller_authority.clone());
     let history = crate::event_signer::PrincipalControlHistory::load(
         &http,
         &controller_actor_id,

@@ -152,6 +152,24 @@ pub fn set_authoring_station_id(station_id: Option<arkret_sdk::DidCoreId>) {
     }
 }
 
+/// The Station this session is connected to, installed by `connect.rs` once
+/// `describe` succeeds and cleared when describe fails, the account changes, or
+/// the session ends.
+///
+/// This is the correct Station for exactly one thing: identities this session
+/// creates on the connected Station (the active account, and the Agents it
+/// owns and hosts here). `connect.rs` accepts an `ActiveAccountContext` only
+/// when `authority.station_id` equals the described Station, so for those
+/// identities the slot agrees with the closed `AccountId` in the store.
+///
+/// It is NOT a substitute for a closed `AccountId` a caller already holds
+/// (pass that instead: account-lifecycle.md §156 forbids passing the two
+/// components as a loose identity), it is never the Station of a remote
+/// subject (an inviter, invitee, grantee, holder, requester or contact), and
+/// it is not installed yet while first enrollment runs ahead of `describe`.
+/// `EventSubmitter::verify_origin_station` re-checks every authored Event
+/// against the captured authority, so a use outside these rules fails closed
+/// instead of authoring under another account.
 pub(crate) fn authoring_station_id() -> anyhow::Result<arkret_sdk::DidCoreId> {
     #[cfg(test)]
     if let Some(station_id) = TEST_AUTHORING_STATION_ID.with(|slot| slot.borrow().clone()) {

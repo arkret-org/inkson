@@ -61,8 +61,9 @@ pub(crate) fn refresh_notifications(
                     push_rules_from_account_data(&authority, &response.updates.account_data);
                 let account_dnd =
                     dnd_settings_from_account_data(&authority, &response.updates.account_data);
+                let account_actor = arkret_sdk::ActorId::account(authority.clone());
                 let joined_realms =
-                    JoinedRealmIds::from_realm_entries(&response.realm_entries, &principal_id);
+                    JoinedRealmIds::from_realm_entries(&response.realm_entries, &account_actor);
                 let inbox_states =
                     crate::account_data::notification_inbox_states_from_account_data_events(
                         &authority,
@@ -86,7 +87,7 @@ pub(crate) fn refresh_notifications(
                     hydrate_notifications_with_privacy_gate(
                         raw_notifications,
                         &local_state,
-                        &principal_id,
+                        Some(&account_actor),
                         push_rules.as_ref(),
                         effective_dnd,
                         &privacy_gate,
@@ -479,10 +480,15 @@ fn accept_invite_notification(
             // joins the Realm and releases the inviter Realm's live-target slot
             // for it. A third-party invite reaches acceptance through
             // `ak.invite.claim` instead and carries no account here.
-            let invitee_account_id = arkret_sdk::AccountId::new(
-                account.principal_id.clone(),
-                crate::operation::authoring_station_id()?,
-            );
+            let invitee_account_id = state_store
+                .read()
+                .active_authority()
+                .filter(|authority| authority.principal_id == account.principal_id)
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "the authenticated account is not the active account; cannot accept the invite"
+                    )
+                })?;
             let (submit, accepted_title) = api
                 .accept_realm_invite(
                     &accepted_realm_for_api,
@@ -530,13 +536,13 @@ fn accept_invite_notification(
         .await
         {
             Ok((Ok(sync), accepted_title, delivery_cell, checkpoint_error)) => {
-                let principal_id = state_store.read().active_principal_id().unwrap_or_default();
                 let push_rules =
                     push_rules_from_account_data(&authority, &sync.updates.account_data);
                 let account_dnd =
                     dnd_settings_from_account_data(&authority, &sync.updates.account_data);
+                let account_actor = arkret_sdk::ActorId::account(authority.clone());
                 let hidden_realms =
-                    JoinedRealmIds::from_realm_entries(&sync.realm_entries, &principal_id)
+                    JoinedRealmIds::from_realm_entries(&sync.realm_entries, &account_actor)
                         .joined_now(accepted_realm.clone());
                 let mut realm_title_hints = BTreeMap::new();
                 // The Realm title comes from the directory resolve the accept
@@ -577,7 +583,7 @@ fn accept_invite_notification(
                     hydrate_notifications_with_privacy_gate(
                         raw_notifications,
                         &local_state,
-                        &principal_id,
+                        Some(&account_actor),
                         push_rules.as_ref(),
                         effective_dnd,
                         &privacy_gate,

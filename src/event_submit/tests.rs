@@ -333,7 +333,7 @@ fn capability_payload_validation_does_not_mutate_queue_intent() {
     let operation = crate::operation::ak_ops::capability_grant_actions(
         "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
         "did:web:alice.example",
-        "did:web:bob.example",
+        &crate::test_support::authority("did:web:bob.example"),
         &["ak.message.create"],
         None,
         Value::Null,
@@ -1360,7 +1360,8 @@ async fn realm_bootstrap_preparation_requires_a_described_station() {
             "ak:device:01904100-0000-7000-8000-a11ce0000001",
         ),
     )));
-    let steps = crate::event_builders::build_realm_bootstrap_steps(
+    let steps = crate::event_builders::build_realm_bootstrap_steps_for_station(
+        crate::test_support::core_id(crate::test_support::SERVER_STATION_ID),
         arkret_sdk::GenesisSalt::new("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA").unwrap(),
         "did:web:alice.example",
         "did:web:server.example",
@@ -1409,7 +1410,9 @@ async fn ordinary_event_preparation_requires_describe_before_remote_frontier() {
         .unwrap();
 
     let error = EventSubmitter::new(http)
-        .with_authority(test_authority())
+        // The intent's actor lives at the fixture Station, so the captured
+        // authority must too; a mismatch is the guard tested below.
+        .with_authority(crate::test_support::authority("ak:did_core:web:alice.example"))
         .author_independent_events(vec![intent])
         .await
         .expect_err("ordinary Realm Event must refresh its combined actor frontier");
@@ -1417,6 +1420,32 @@ async fn ordinary_event_preparation_requires_describe_before_remote_frontier() {
     let detail = format!("{error:#}");
     assert!(
         detail.contains("server describe"),
+        "unexpected preparation error: {detail}"
+    );
+}
+
+/// account-lifecycle.md §156: the account is one closed value. An Event whose
+/// account actor carries the authenticated principal at another Station was
+/// rebuilt from the principal plus a stale ambient authoring slot, and must be
+/// refused before any network round trip rather than authored under the other
+/// account.
+#[tokio::test]
+async fn event_actor_station_must_match_the_captured_authority() {
+    let intent = EventIntent::from_authored(&sdk_event_without_proof("did:web:alice.example"));
+    let http = arkret_sdk::http_client::Client::builder("http://127.0.0.1:9/".parse().unwrap())
+        .allow_insecure_localhost()
+        .build()
+        .unwrap();
+
+    let error = EventSubmitter::new(http)
+        .with_authority(test_authority())
+        .author_independent_events(vec![intent])
+        .await
+        .expect_err("an actor at another Station must not be authored");
+
+    let detail = format!("{error:#}");
+    assert!(
+        detail.contains("but the authenticated account is hosted at"),
         "unexpected preparation error: {detail}"
     );
 }

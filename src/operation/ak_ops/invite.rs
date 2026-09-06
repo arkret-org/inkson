@@ -105,21 +105,20 @@ fn live_target_release_precondition(
 /// `ak.component.invite.lifecycle.v1` FSM, so a cancel without it has no
 /// derivable write. `rejected` is the invitee declining, `revoked` is the
 /// inviter or an admin withdrawing.
+///
+/// `invitee` is the complete account the Invite stores, read back from the
+/// signed `ak.invite.create` payload: it names the live-target slot the cancel
+/// releases, and an invitee hosted at another Station occupies a different
+/// slot than `(principal, this Station)` would (account-lifecycle.md §156).
 pub fn invite_cancel(
     realm_id: &str,
     actor: &str,
     invite_id: &str,
-    invitee: &str,
+    invitee: &arkret_sdk::AccountId,
     target_state: &str,
     reason: Option<&str>,
 ) -> anyhow::Result<TypedOperationBuilder> {
-    let (payload, invite_id_ref) = invite_cancel_payload(
-        invite_id,
-        invitee,
-        crate::operation::authoring_station_id()?,
-        target_state,
-        reason,
-    )?;
+    let (payload, invite_id_ref) = invite_cancel_payload(invite_id, invitee, target_state, reason)?;
     let release =
         live_target_release_precondition(&payload.invite_id, Some(&payload.invitee_account_id))?;
     Ok(
@@ -133,8 +132,7 @@ pub fn invite_cancel(
 
 fn invite_cancel_payload(
     invite_id: &str,
-    invitee: &str,
-    station_id: arkret_sdk::DidCoreId,
+    invitee: &arkret_sdk::AccountId,
     target_state: &str,
     reason: Option<&str>,
 ) -> anyhow::Result<(arkret_sdk::InviteCancelPayload, String)> {
@@ -146,35 +144,37 @@ fn invite_cancel_payload(
     let invite_id = arkret_sdk::InviteId::new(invite_id.to_owned())
         .map_err(|err| anyhow::anyhow!("invite_id not canonical: {err}"))?;
     let invite_id_ref = invite_id.to_string();
-    let invitee = arkret_sdk::DidCoreId::new(invitee.to_owned())
-        .map_err(|err| anyhow::anyhow!("invitee not a core_id {invitee:?}: {err}"))?;
+    invitee
+        .validate()
+        .map_err(|err| anyhow::anyhow!("invitee account is not closed: {err}"))?;
     let target_state = match target_state {
         "rejected" => arkret_sdk::InviteCancelTargetState::Rejected,
         "revoked" => arkret_sdk::InviteCancelTargetState::Revoked,
         _ => unreachable!("validated invite cancel target state"),
     };
-    let mut payload = arkret_sdk::InviteCancelPayload::new(
-        invite_id,
-        arkret_sdk::AccountId::new(invitee, station_id),
-        target_state,
-    );
+    let mut payload =
+        arkret_sdk::InviteCancelPayload::new(invite_id, invitee.clone(), target_state);
     if let Some(reason) = reason {
         payload = payload.with_reason(reason);
     }
     Ok((payload, invite_id_ref))
 }
 
+/// [`invite_cancel`] for an author whose Station is supplied explicitly rather
+/// than read from the ambient authoring slot. Conformance harnesses drive
+/// several Stations from one process, so the ambient slot cannot describe
+/// them; the invitee is still the complete account the Invite stores, which is
+/// hosted wherever it is hosted and never at the author's Station by default.
 pub fn invite_cancel_for_station(
     realm_id: &str,
     actor: &str,
     station_id: arkret_sdk::DidCoreId,
     invite_id: &str,
-    invitee: &str,
+    invitee: &arkret_sdk::AccountId,
     target_state: &str,
     reason: Option<&str>,
 ) -> anyhow::Result<TypedOperationBuilder> {
-    let (payload, invite_id_ref) =
-        invite_cancel_payload(invite_id, invitee, station_id.clone(), target_state, reason)?;
+    let (payload, invite_id_ref) = invite_cancel_payload(invite_id, invitee, target_state, reason)?;
     let release =
         live_target_release_precondition(&payload.invite_id, Some(&payload.invitee_account_id))?;
     Ok(
@@ -193,7 +193,9 @@ pub fn invite_revoke(
     realm_id: &str,
     actor: &str,
     invite_id: &str,
-    invitee: Option<&str>,
+    // The complete account the Invite stores, for the directed branch that
+    // releases the live-target slot; `None` for a token / 3PID Invite.
+    invitee: Option<&arkret_sdk::AccountId>,
     target_state: &str,
     reason_code: &str,
 ) -> anyhow::Result<TypedOperationBuilder> {
@@ -221,12 +223,11 @@ pub fn invite_revoke(
         .map_err(|err| anyhow::anyhow!("invite_id not canonical: {err}"))?;
     let invite_id_ref = invite_id.to_string();
     let invitee_account_id = invitee
-        .map(|value| arkret_sdk::DidCoreId::new(value.to_owned()))
-        .transpose()
-        .map_err(|err| anyhow::anyhow!("invitee is not a core_id: {err}"))?
-        .map(|principal_id| {
-            crate::operation::authoring_station_id()
-                .map(|station_id| arkret_sdk::AccountId::new(principal_id, station_id))
+        .map(|account| {
+            account
+                .validate()
+                .map(|()| account.clone())
+                .map_err(|err| anyhow::anyhow!("invitee account is not closed: {err}"))
         })
         .transpose()?;
     let target_state = match target_state {

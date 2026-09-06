@@ -523,7 +523,7 @@ fn current_member_signer_evidence_coordinates(
 fn build_signed_member_response(
     response_id: arkret_sdk::HistoryResponseId,
     request_record: &arkret_sdk::HistoryKeyRequestRecord,
-    source_actor_id: &arkret_sdk::DidCoreId,
+    source_actor_id: &arkret_sdk::ActorId,
     source_sender_domain: &str,
     source_signer_evidence_ref: &arkret_sdk::SignerEvidenceRef,
     verification_method: &arkret_sdk::DidUrl,
@@ -533,7 +533,6 @@ fn build_signed_member_response(
 ) -> anyhow::Result<arkret_sdk::HistoryKeyResponseSendRequest> {
     let request_digest = request_record.request.request_digest()?;
     let request_receipt_digest = request_record.request_receipt.request_receipt_digest()?;
-    let source_actor_id = crate::mls_api_helpers::local_account_actor_id(source_actor_id.as_str())?;
     Ok(
         arkret_sdk::HistoryKeyResponseSendRequest::build_signed_proof(
             verification_method.clone(),
@@ -564,6 +563,9 @@ async fn build_member_source_attempt(
     state_store: &StateStoreHandle,
     api: &crate::transport::TransportClient,
     source_did: &arkret_sdk::Did,
+    // The source is this account: `authority` is its closed AccountId and
+    // `source_actor_id` its principal, which must agree.
+    authority: &arkret_sdk::AccountId,
     source_actor_id: &arkret_sdk::DidCoreId,
     source_device_id: &arkret_sdk::DeviceId,
     request_record: &arkret_sdk::HistoryKeyRequestRecord,
@@ -573,6 +575,10 @@ async fn build_member_source_attempt(
     if request_record.request.expires_at <= now {
         return Ok(None);
     }
+    if *source_actor_id != authority.principal_id {
+        anyhow::bail!("history source actor does not belong to the active account");
+    }
+    let source_account_actor = arkret_sdk::ActorId::account(authority.clone());
     let mut selected =
         local_secrets
             .iter()
@@ -644,7 +650,7 @@ async fn build_member_source_attempt(
     let manifest = build_signed_member_response(
         manifest_response_id,
         request_record,
-        source_actor_id,
+        &source_account_actor,
         source_device_id.as_str(),
         &source_signer_evidence_ref,
         &verification_method,
@@ -682,9 +688,7 @@ async fn build_member_source_attempt(
             manifest_admission_digest: admission.manifest_admission_digest.clone(),
             chunk_response_id: response_id.clone(),
             chunk_index: descriptor.chunk_index,
-            source_actor_id: crate::mls_api_helpers::local_account_actor_id(
-                source_actor_id.as_str(),
-            )?,
+            source_actor_id: source_account_actor.clone(),
             source_sender_domain: source_device_id.as_str().to_owned(),
         };
         let plaintext = arkret_sdk::HistoryChunkPlaintext {
@@ -705,7 +709,7 @@ async fn build_member_source_attempt(
         let chunk = build_signed_member_response(
             response_id,
             request_record,
-            source_actor_id,
+            &source_account_actor,
             source_device_id.as_str(),
             &source_signer_evidence_ref,
             &verification_method,
@@ -899,10 +903,7 @@ pub async fn converge_member_history_recovery(
             .find(|durable| {
                 durable.request.effective_scope == scope
                     && durable.request.requester_actor_id
-                        == arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
-                            actor_id.clone(),
-                            authority.station_id.clone(),
-                        ))
+                        == arkret_sdk::ActorId::account(authority.clone())
                     && durable.request.requester_authorization_incarnation == incarnation
                     && ranges_cover(&durable.request.requested_ranges, &requested_ranges)
                     && durable.request.expires_at > now + chrono::Duration::minutes(1)
@@ -1011,6 +1012,7 @@ pub async fn converge_member_history_recovery(
                     state_store,
                     api,
                     requester_did,
+                    authority,
                     &actor_id,
                     device_id,
                     &request_record,

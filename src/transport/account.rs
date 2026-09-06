@@ -178,7 +178,7 @@ pub async fn update_profile(
         (
             crate::operation::ak_ops::account_profile_update(
                 &principal_control_realm_id,
-                &principal_id,
+                &authority_evidence.account_id,
                 profile_id,
                 patch,
             )?,
@@ -224,7 +224,7 @@ pub async fn update_profile(
         (
             crate::operation::ak_ops::account_profile_create(
                 &principal_control_realm_id,
-                &principal_id,
+                &authority_evidence.account_id,
                 profile,
             )?,
             None,
@@ -1474,14 +1474,14 @@ async fn wait_for_consent_dots_in_seal(
 /// `ak.self.consent.command.request.v1`.
 pub async fn request_consent(
     http: &arkret_sdk::http_client::Client,
-    holder: &str,
+    // The counterparty whose consent is requested, closed by the caller. Its
+    // Station is part of the identity; this client's authoring Station is not
+    // a stand-in for it (account-lifecycle.md §156).
+    holder: &arkret_sdk::AccountId,
     scope: &str,
 ) -> anyhow::Result<arkret_sdk::ConsentRequestOutcome> {
     let body = arkret_sdk::ConsentRequestRequestBody {
-        holder_account_id: arkret_sdk::AccountId::new(
-            crate::mls_api_helpers::principal_core_id(holder)?,
-            crate::operation::authoring_station_id()?,
-        ),
+        holder_account_id: holder.clone(),
         consent_scope: Some(scope.trim().parse()?),
     };
     http.post(arkret_wire::PATH_SELF_CONSENT_REQUEST, &body)
@@ -1782,9 +1782,13 @@ pub async fn submit_read_cursor_advance(
     submitter: &EventSubmitter,
     marker: &crate::state::ReadMarkerRecord,
 ) -> anyhow::Result<arkret_sdk::ReadMarkerOutcome> {
+    let authority = submitter.authority()?;
+    if crate::mls_api_helpers::principal_core_id(&marker.actor)? != authority.principal_id {
+        anyhow::bail!("read marker actor does not belong to the authenticated account");
+    }
     let payload = arkret_sdk::ReadCursor {
         schema: marker.body.schema.clone(),
-        actor_id: crate::mls_api_helpers::local_account_actor_id(&marker.actor)?,
+        actor_id: arkret_sdk::ActorId::account(authority.clone()),
         device_id: arkret_sdk::DeviceId::new(marker.device_id.clone())?,
         realm_id: arkret_sdk::RealmId::new(marker.body.realm_id.clone())?,
         read_scope: marker.body.read_scope.clone(),

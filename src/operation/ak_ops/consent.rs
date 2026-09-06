@@ -5,7 +5,7 @@
 //! subject, not something derived from an Event), and the or_set add dot falls out
 //! of the Event's own `event_id`, so neither is the server's to pick.
 
-use super::{TypedOperationBuilder, did_id};
+use super::TypedOperationBuilder;
 
 /// Build the `{kind:"actor"}` consent peer for an ordinary Account
 /// counterparty.
@@ -13,9 +13,11 @@ use super::{TypedOperationBuilder, did_id};
 /// Spec `zh/identity/consent-model.md` section 6.1 query step 1 matches this
 /// branch on the **complete** ActorId, so the counterparty's own Station is
 /// part of the value, not something the granter may leave implicit: a grant
-/// written against the wrong Station simply never matches. `station_id` is
-/// therefore explicit, defaulting to this client's authoring Station only for
-/// a counterparty hosted here.
+/// written against the wrong Station simply never matches. The counterparty is
+/// therefore either pasted as its canonical account selector or typed as a
+/// principal together with its Station; there is no fallback to this client's
+/// authoring Station, which is not the counterparty's Station and would name a
+/// different account whenever they differ (account-lifecycle.md §156/§158).
 ///
 /// There is deliberately no string-shaped path into the
 /// `{kind:"pairwise_principal"}` branch. That branch names a Realm-local
@@ -27,15 +29,11 @@ pub fn consent_actor_peer(
     principal_id: &str,
     station_id: Option<&str>,
 ) -> anyhow::Result<arkret_sdk::ConsentPeer> {
-    let station_id = match station_id.map(str::trim).filter(|value| !value.is_empty()) {
-        Some(station_id) => did_id(station_id)?,
-        None => crate::operation::authoring_station_id()?,
-    };
     Ok(arkret_sdk::ConsentPeer::Actor {
-        actor_id: arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
-            did_id(principal_id)?,
+        actor_id: arkret_sdk::ActorId::account(crate::mls_api_helpers::closed_account_id_input(
+            principal_id,
             station_id,
-        )),
+        )?),
     })
 }
 

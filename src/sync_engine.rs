@@ -1654,7 +1654,7 @@ pub fn apply_response(response: &AccountSyncStep, is_full_sync: bool, ctx: &Sync
             apply_notification_projection(
                 store,
                 response,
-                principal_id.as_str(),
+                &arkret_sdk::ActorId::account(ctx.account.authority.clone()),
                 is_full_sync,
             );
             if cursor_can_advance {
@@ -2344,7 +2344,7 @@ fn collect_device_frontier_actors(body: &Value) -> BTreeSet<String> {
 fn apply_notification_projection(
     store: &mut LocalStateStore,
     response: &AccountSyncStep,
-    principal_id: &str,
+    account_actor: &arkret_sdk::ActorId,
     is_full_sync: bool,
 ) {
     let should_save_notification_projection = !response.updates.notifications.is_empty()
@@ -2357,7 +2357,7 @@ fn apply_notification_projection(
     let mut notification_projection = store.notification_projection();
     let joined_realms = crate::state::projection::notifications::JoinedRealmIds::from_realm_entries(
         &response.realm_entries,
-        principal_id,
+        account_actor,
     );
     crate::state::projection::notifications::apply_notification_projection(
         &mut notification_projection,
@@ -3198,7 +3198,8 @@ mod tests {
         // lifecycle records are not membership and MUST NOT appear on the
         // roster. `knock` is therefore the roster's real "present but not
         // joined" row, and it is what must leave a pending invite standing.
-        apply_notification_projection(&mut store, &response("knock"), actor_id, false);
+        let account_actor = crate::test_support::account_actor(actor_id);
+        apply_notification_projection(&mut store, &response("knock"), &account_actor, false);
         assert!(
             store
                 .notification_projection()
@@ -3207,7 +3208,7 @@ mod tests {
             "a non-join roster membership must preserve the pending invite"
         );
 
-        apply_notification_projection(&mut store, &response("join"), actor_id, false);
+        apply_notification_projection(&mut store, &response("join"), &account_actor, false);
         assert!(
             store
                 .notification_projection()

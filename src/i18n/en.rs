@@ -3240,7 +3240,11 @@ fn prompt_copy_strings(dict: &mut TranslationDict) {
     dict.set("quarantine.scope_label", "Requested for");
     dict.set(
         "consent.grant.grantee_station_label",
-        "Grantee Station DID (blank = this Station)",
+        "Grantee Station DID (required unless the grantee is a full account selector)",
+    );
+    dict.set(
+        "consent.request.holder_station_label",
+        "Holder Station DID (required unless the holder is a full account selector)",
     );
     dict.set("quarantine.expires_label", "Discarded after");
     dict.set("theme.switcher_aria_label", "Theme");

@@ -174,7 +174,7 @@ pub(super) async fn recover_from_occupied_live_target(
                 realm_id,
                 actor,
                 &invite_id,
-                Some(invitee.account_id().principal_id.as_str()),
+                Some(invitee.account_id()),
                 "revoked",
                 "delivery_target_unreachable",
             )
@@ -265,8 +265,9 @@ pub(super) enum RealmMembersCommand {
         invite_id: String,
         member_id: String,
         member_label: String,
-        /// `Some` for a direct invite, whose invitee is addressable.
-        direct_invitee: Option<String>,
+        /// `Some` for a direct invite: the complete account the Invite stores,
+        /// which names the live-target slot the cancel releases.
+        direct_invitee: Option<arkret_sdk::AccountId>,
     },
     /// Invite already-accepted contacts through the directional Contact invite
     /// scope, one request per contact.
@@ -607,7 +608,7 @@ impl RealmMembersController {
         invite_id: String,
         member_id: String,
         member_label: String,
-        direct_invitee: Option<String>,
+        direct_invitee: Option<arkret_sdk::AccountId>,
     ) {
         let RealmWriteContext {
             base_url,

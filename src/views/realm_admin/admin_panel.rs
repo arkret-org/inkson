@@ -6,6 +6,7 @@ use serde_json::{Value, json};
 
 use super::metadata::{
     MetadataSubject, metadata_subject_for, projected_members_for_realm, reconcile_editor_value,
+    resolve_realm_member_account,
 };
 use super::policy::build_principal_admission_join_policy;
 use super::section::{REALM_ADMIN_NAV_GROUPS, RealmAdminSection};
@@ -1573,6 +1574,20 @@ pub fn RealmAdminPanel(
                                     );
                                     return;
                                 }
+                                // The subject is closed against the Realm roster (or pasted
+                                // as the full selector); a bare principal is never completed
+                                // with this client's Station.
+                                let subject_account = match resolve_realm_member_account(
+                                    &state_store.read(),
+                                    &realm,
+                                    &subject_val,
+                                ) {
+                                    Ok(subject) => subject,
+                                    Err(err) => {
+                                        status_msg.set(format!("capability grant failed: {err}"));
+                                        return;
+                                    }
+                                };
                                 // Pull the active constraint from the editor
                                 // signals into the canonical `grant-constraint`
                                 // shape (`{constraint_kind, effect, …}`). Empty
@@ -1624,7 +1639,7 @@ pub fn RealmAdminPanel(
                                 let envelope = crate::operation::ak_ops::capability_grant_actions(
                                     &realm,
                                     &actor_id,
-                                    &subject_val,
+                                    &subject_account,
                                     &[tag_val.as_str()],
                                     expires_at_opt.as_deref(),
                                     constraint_json,
@@ -1772,6 +1787,17 @@ pub fn RealmAdminPanel(
                                     status_msg.set("set admin failed: account is not connected".to_owned());
                                     return;
                                 }
+                                let subject = match resolve_realm_member_account(
+                                    &state_store.read(),
+                                    &realm,
+                                    &subject,
+                                ) {
+                                    Ok(subject) => subject,
+                                    Err(err) => {
+                                        status_msg.set(format!("set admin failed: {err}"));
+                                        return;
+                                    }
+                                };
                                 controller.grant_realm_admin(base, api_token, realm, actor_id, subject, issuer_root_basis);
                             }
                         },

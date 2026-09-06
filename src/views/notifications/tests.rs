@@ -222,12 +222,20 @@ fn visible_realm_preview_does_not_masquerade_as_joined_membership() {
     // `membership` to `join | knock` and states that invite lifecycle records
     // are not membership and MUST NOT appear on the roster, so there is no
     // `"invite"` row to assert against — the typed roster cannot carry one.
-    assert!(actor_is_joined_member(&entry("join"), actor_id));
-    assert!(!actor_is_joined_member(&entry("knock"), actor_id));
+    let account_actor = crate::test_support::account_actor(actor_id);
+    assert!(actor_is_joined_member(&entry("join"), &account_actor));
+    assert!(!actor_is_joined_member(&entry("knock"), &account_actor));
     assert!(!actor_is_joined_member(
         &arkret_sdk::RealmSyncEntry::default(),
-        actor_id
+        &account_actor
     ));
+    // The same principal joined at another Station is a different account and
+    // must not count as this account's membership (account-lifecycle.md §156).
+    let other_station = arkret_sdk::ActorId::account(crate::test_support::authority_at_station(
+        actor_id,
+        crate::test_support::SERVER_STATION_ID,
+    ));
+    assert!(!actor_is_joined_member(&entry("join"), &other_station));
 }
 
 #[test]
@@ -257,7 +265,12 @@ fn hydrate_pending_invite_uses_typed_local_membership() {
     let mut invited_raw = Vec::new();
     push_test_invite_projection(&mut invited_raw, vec![invite()], &JoinedRealmIds::default());
     assert_eq!(
-        hydrate_notifications_for_actor(invited_raw, &invited_state, actor_id).len(),
+        hydrate_notifications_for_actor(
+            invited_raw,
+            &invited_state,
+            &crate::test_support::account_actor(actor_id)
+        )
+        .len(),
         1,
         "a visible invite preview must retain its pending invite notification"
     );
@@ -269,7 +282,12 @@ fn hydrate_pending_invite_uses_typed_local_membership() {
     let mut joined_raw = Vec::new();
     push_test_invite_projection(&mut joined_raw, vec![invite()], &JoinedRealmIds::default());
     assert!(
-        hydrate_notifications_for_actor(joined_raw, &joined_state, actor_id).is_empty(),
+        hydrate_notifications_for_actor(
+            joined_raw,
+            &joined_state,
+            &crate::test_support::account_actor(actor_id)
+        )
+        .is_empty(),
         "an authoritative joined membership must suppress stale invites"
     );
 }

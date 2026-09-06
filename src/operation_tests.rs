@@ -1006,11 +1006,12 @@ fn invite_helpers_emit_canonical_kinds() {
         Some(&expected_head_eq)
     );
 
+    let bob = crate::test_support::authority("ak:did_core:web:bob.example");
     let cancel = ak_ops::invite_cancel(
         "ak:realm:AT3p9polsnQ_WOix32QZimMdE2zPe62HptJu2PaO3V1h",
         "did:web:alice.example",
         invite_id,
-        "ak:did_core:web:bob.example",
+        &bob,
         "revoked",
         Some("expired"),
     )
@@ -1089,7 +1090,7 @@ fn invite_helpers_emit_canonical_kinds() {
             "ak:realm:AT3p9polsnQ_WOix32QZimMdE2zPe62HptJu2PaO3V1h",
             "did:web:alice.example",
             invite_id,
-            "ak:did_core:web:bob.example",
+            &bob,
             "expired",
             None,
         )

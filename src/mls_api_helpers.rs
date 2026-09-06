@@ -41,9 +41,17 @@ pub(crate) fn principal_core_id(principal_id: &str) -> anyhow::Result<arkret_sdk
     arkret_sdk::project_did_to_core_id(&did).map_err(anyhow::Error::msg)
 }
 
-/// Complete account for a principal authored at the selected Station. Valid
-/// only for identities that really are hosted here — the active account and
-/// locally authored actors. Never use it to guess a remote subject's Station.
+/// Complete account for a principal authored at the selected Station.
+///
+/// Valid only for identities that really are hosted here: the active account
+/// and the Agents it owns, which this client hosts at its own authoring
+/// Station. `connect.rs` accepts an `ActiveAccountContext` only when its
+/// `authority.station_id` equals the described Station, so for the active
+/// account this is the same closed `AccountId` the store holds -- but a caller
+/// that already holds that `AccountId` MUST pass it instead of re-deriving it
+/// here (account-lifecycle.md §156 forbids passing the two components as a
+/// loose identity), and a caller that can run before `describe` succeeds MUST
+/// NOT use it at all. Never use it to guess a remote subject's Station.
 pub(crate) fn local_account_id(value: &str) -> anyhow::Result<arkret_sdk::AccountId> {
     Ok(arkret_sdk::AccountId::new(
         principal_core_id(value)?,
@@ -52,8 +60,71 @@ pub(crate) fn local_account_id(value: &str) -> anyhow::Result<arkret_sdk::Accoun
 }
 
 /// Complete account actor for a principal authored at the selected Station.
+/// Same preconditions as [`local_account_id`].
 pub(crate) fn local_account_actor_id(value: &str) -> anyhow::Result<arkret_sdk::ActorId> {
     Ok(arkret_sdk::ActorId::account(local_account_id(value)?))
+}
+
+/// Parse a complete account from its canonical selector: either the
+/// `AccountId` JSON object or an account-kind `ActorId` JSON object. This is
+/// the form the UI already accepts wherever a remote identity is pasted
+/// (`contact-requester-did-input`), and the only string form that carries both
+/// components.
+pub(crate) fn account_id_from_selector(value: &str) -> Option<arkret_sdk::AccountId> {
+    let value = value.trim();
+    let account = serde_json::from_str::<arkret_sdk::AccountId>(value)
+        .ok()
+        .or_else(|| {
+            serde_json::from_str::<arkret_sdk::ActorId>(value)
+                .ok()?
+                .as_account_id()
+                .cloned()
+        })?;
+    account.validate().ok()?;
+    Some(account)
+}
+
+/// Resolve a user-typed identity for a subject that is NOT this account into a
+/// closed `AccountId`, failing closed on a bare principal.
+///
+/// `primary` is either the canonical account selector (see
+/// [`account_id_from_selector`]) or a principal DID / core id; in the latter
+/// case `station` must name the subject's Station. There is deliberately no
+/// fallback to the ambient authoring Station: for a remote subject that
+/// Station is a guess, and a wrong guess names a different account
+/// (account-lifecycle.md §156/§158) instead of failing.
+pub(crate) fn closed_account_id_input(
+    primary: &str,
+    station: Option<&str>,
+) -> anyhow::Result<arkret_sdk::AccountId> {
+    let primary = primary.trim();
+    if primary.is_empty() {
+        anyhow::bail!("an account identity is required");
+    }
+    let station = station.map(str::trim).filter(|value| !value.is_empty());
+    if let Some(account) = account_id_from_selector(primary) {
+        if let Some(station) = station {
+            let station = principal_core_id(station)?;
+            if station != account.station_id {
+                anyhow::bail!(
+                    "the account selector names Station {} but Station {} was also given",
+                    account.station_id,
+                    station
+                );
+            }
+        }
+        return Ok(account);
+    }
+    let principal_id = principal_core_id(primary)?;
+    let Some(station) = station else {
+        anyhow::bail!(
+            "a complete account is required: give the principal together with its Station DID, or paste the canonical account selector"
+        );
+    };
+    Ok(arkret_sdk::AccountId::new(
+        principal_id,
+        principal_core_id(station)?,
+    ))
 }
 
 #[cfg(test)]

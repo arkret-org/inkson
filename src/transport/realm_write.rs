@@ -18,8 +18,9 @@ use crate::event_builders::{
     build_realm_alias_rename_event, build_realm_alias_tombstone_event, build_realm_archive_event,
     build_realm_authority_reset_control_intent, build_realm_bootstrap_steps_for_station,
     build_realm_destroy_event, build_realm_owner_transfer_control_intent,
-    build_realm_profile_replacement_event, build_realm_state_event, build_space_create_event,
-    build_space_lifecycle_event, parse_wire_enum, recommended_realm_policy_bundle_value,
+    build_realm_profile_replacement_event, build_realm_state_event_for_station,
+    build_space_create_event, build_space_lifecycle_event, parse_wire_enum,
+    recommended_realm_policy_bundle_value,
 };
 use crate::event_submit::EventSubmitter;
 use crate::models::{RealmCreateResult, RealmPolicyResult, SpaceCreateResult, SubmitEventResult};
@@ -499,9 +500,13 @@ pub async fn set_realm_policy_events(
         ));
     }
     let join_rule = validate_join_rule_v1(join_rule)?;
-    let mut events = vec![build_realm_state_event::<
+    // The facet writes are authored by the authenticated account, whose closed
+    // AccountId the submitter captured; its Station is named explicitly.
+    let station_id = submitter.authority()?.station_id.clone();
+    let mut events = vec![build_realm_state_event_for_station::<
         arkret_sdk::event_spec::RealmJoinRule,
     >(
+        station_id.clone(),
         realm_id,
         actor_id,
         digest_suite,
@@ -511,9 +516,10 @@ pub async fn set_realm_policy_events(
         )?),
     )?];
     if tighten_history_access {
-        events.push(build_realm_state_event::<
+        events.push(build_realm_state_event_for_station::<
             arkret_sdk::event_spec::RealmHistoryAccess,
         >(
+            station_id.clone(),
             realm_id,
             actor_id,
             digest_suite,
@@ -537,9 +543,15 @@ pub async fn set_realm_policy_events(
             serde_json::from_value(join_policy)
                 .map_err(|error| anyhow::anyhow!("invalid Realm join_policy: {error}"))?,
         );
-        events.push(build_realm_state_event::<
+        events.push(build_realm_state_event_for_station::<
             arkret_sdk::event_spec::RealmPolicyBundle,
-        >(realm_id, actor_id, digest_suite, policy_bundle)?);
+        >(
+            station_id,
+            realm_id,
+            actor_id,
+            digest_suite,
+            policy_bundle,
+        )?);
     }
     for event in events {
         submitter.submit_sdk_event(&event).await?;
@@ -562,7 +574,7 @@ pub async fn cancel_realm_invite(
     realm_id: &str,
     actor_id: &str,
     invite_id: &str,
-    invitee: &str,
+    invitee: &arkret_sdk::AccountId,
     target_state: &str,
     reason: Option<&str>,
 ) -> anyhow::Result<SubmitEventResult> {
@@ -577,7 +589,7 @@ pub async fn revoke_realm_invite(
     realm_id: &str,
     actor_id: &str,
     invite_id: &str,
-    invitee: Option<&str>,
+    invitee: Option<&arkret_sdk::AccountId>,
     target_state: &str,
     reason_code: &str,
 ) -> anyhow::Result<SubmitEventResult> {
@@ -733,7 +745,7 @@ pub async fn grant_realm_admin(
     submitter: &EventSubmitter,
     realm_id: &str,
     actor_id: &str,
-    subject: &str,
+    subject: &arkret_sdk::AccountId,
     root_basis: ak_ops::IssuerRootBasis,
 ) -> anyhow::Result<SubmitEventResult> {
     let event = ak_ops::capability_grant_actions(
@@ -891,13 +903,15 @@ mod tests {
     fn latest_alias_payload_ignores_unrelated_events() {
         let alias =
             build_realm_alias_event(REALM_ID, ACTOR_ID, SERVICE_DID, "engineering").unwrap();
-        let unrelated = build_realm_state_event::<arkret_sdk::event_spec::RealmProfile>(
-            REALM_ID,
-            ACTOR_ID,
-            arkret_sdk::DigestSuite::Sha256,
-            arkret_sdk::RealmProfile::new("Engineering").unwrap(),
-        )
-        .unwrap();
+        let unrelated =
+            build_realm_state_event_for_station::<arkret_sdk::event_spec::RealmProfile>(
+                crate::test_support::core_id(crate::test_support::STATION_ID),
+                REALM_ID,
+                ACTOR_ID,
+                arkret_sdk::DigestSuite::Sha256,
+                arkret_sdk::RealmProfile::new("Engineering").unwrap(),
+            )
+            .unwrap();
         let latest = latest_realm_alias_payload(&[
             arkret_sdk::EventReadRow::Event(crate::operation::author_for_test(&alias).into_event()),
             arkret_sdk::EventReadRow::Event(
@@ -915,7 +929,8 @@ mod tests {
 
     #[test]
     fn realm_profile_replacement_chains_from_the_complete_current_value() {
-        let initial = build_realm_state_event::<arkret_sdk::event_spec::RealmProfile>(
+        let initial = build_realm_state_event_for_station::<arkret_sdk::event_spec::RealmProfile>(
+            crate::test_support::core_id(crate::test_support::STATION_ID),
             REALM_ID,
             ACTOR_ID,
             arkret_sdk::DigestSuite::Sha256,
@@ -963,20 +978,23 @@ mod tests {
 
     #[test]
     fn realm_profile_history_rejects_a_replacement_without_a_cas_guard() {
-        let initial = build_realm_state_event::<arkret_sdk::event_spec::RealmProfile>(
+        let initial = build_realm_state_event_for_station::<arkret_sdk::event_spec::RealmProfile>(
+            crate::test_support::core_id(crate::test_support::STATION_ID),
             REALM_ID,
             ACTOR_ID,
             arkret_sdk::DigestSuite::Sha256,
             arkret_sdk::RealmProfile::new("Engineering").unwrap(),
         )
         .unwrap();
-        let unguarded = build_realm_state_event::<arkret_sdk::event_spec::RealmProfile>(
-            REALM_ID,
-            ACTOR_ID,
-            arkret_sdk::DigestSuite::Sha256,
-            arkret_sdk::RealmProfile::new("Platform").unwrap(),
-        )
-        .unwrap();
+        let unguarded =
+            build_realm_state_event_for_station::<arkret_sdk::event_spec::RealmProfile>(
+                crate::test_support::core_id(crate::test_support::STATION_ID),
+                REALM_ID,
+                ACTOR_ID,
+                arkret_sdk::DigestSuite::Sha256,
+                arkret_sdk::RealmProfile::new("Platform").unwrap(),
+            )
+            .unwrap();
         let mut unguarded_event = crate::operation::author_for_test(&unguarded).into_event();
         unguarded_event.preconditions.clear();
         let rows = vec![

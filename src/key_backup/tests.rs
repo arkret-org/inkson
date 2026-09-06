@@ -32,7 +32,7 @@ fn build_recovery_vault_backup_body(
 ) -> anyhow::Result<KeyBackup> {
     build_passphrase_kdf_backup_body(
         backup_id,
-        actor_id,
+        &crate::test_support::account_actor(actor_id),
         device_id,
         root,
         plaintext,
@@ -429,9 +429,9 @@ fn mls_history_requires_exactly_one_history_range_index() {
 #[test]
 fn recovery_public_key_backup_round_trips_and_validates() {
     let (sk, pk) = crate::hpke_backup::generate_recovery_keypair().unwrap();
-    let body = build_recovery_public_key_backup_body(
+    let body = build_recovery_public_key_backup_body_in_series(
         BACKUP_ID,
-        ACTOR,
+        &crate::test_support::account_actor(ACTOR),
         DEVICE,
         &pk,
         "did:web:alice.example#recovery",
@@ -448,6 +448,9 @@ fn recovery_public_key_backup_round_trips_and_validates() {
         },
         b"opaque account secret bytes",
         Some(("ak:policy:01964137-0000-7000-8000-000000000077", 1)),
+        None,
+        None,
+        None,
     )
     .unwrap();
 
@@ -489,7 +492,7 @@ fn portable_history_backup_round_trips_as_history_only_scope_object() {
     };
     let body = build_recovery_public_key_history_backup_body_in_series(
         BACKUP_ID,
-        ACTOR,
+        &crate::test_support::account_actor(ACTOR),
         DEVICE,
         &pk,
         "did:web:alice.example#backup-hpke",

@@ -59,64 +59,6 @@ fn event_requirements_with_schema(schema_ref: &str) -> EventRequirements {
     }
 }
 
-/// Build the ordered Realm genesis batch.
-///
-/// The Realm id is **not** an input: spec realm-and-space.md section 2.5.0
-/// derives it from the genesis Event, so this builds `ak.realm.create` first,
-/// reads the id off the built envelope, and only then builds the follow-ups
-/// that must name it. The derived id is returned alongside the batch.
-/// The ordinary Realm genesis unit, as an ordered chain.
-///
-/// The create Event names the Realm — the id is `retype(create.event_id)` — so
-/// every follow-up can only be built once the create is authored. The creator
-/// joins as an Account actor whose `AccountId` already carries its Station
-/// routing coordinate; no separate routing facet is authored. Returning stages
-/// makes the Realm-before-membership ordering structural, so there is no
-/// intermediate state where a member is scoped to a Realm that does not exist.
-#[allow(clippy::too_many_arguments)]
-pub fn build_realm_bootstrap_steps(
-    genesis_salt: arkret_sdk::GenesisSalt,
-    actor_id: &str,
-    notary_did: &str,
-    notary: arkret_sdk::NotaryValue,
-    notary_service_origin: &str,
-    title: &str,
-    summary: Option<&str>,
-    discoverability: &str,
-    join_rule: &str,
-    history_access: &str,
-    encryption_profile: &str,
-    security_class: &str,
-    federation_policy: &str,
-    digest_algorithm: &str,
-    trust_domain: &str,
-    plaintext_visible_services: &[String],
-    alias: Option<&str>,
-    content_scheme: Option<&str>,
-) -> anyhow::Result<Vec<crate::event_submit::EventUnitStep>> {
-    build_realm_bootstrap_steps_for_station(
-        crate::operation::authoring_station_id()?,
-        genesis_salt,
-        actor_id,
-        notary_did,
-        notary,
-        notary_service_origin,
-        title,
-        summary,
-        discoverability,
-        join_rule,
-        history_access,
-        encryption_profile,
-        security_class,
-        federation_policy,
-        digest_algorithm,
-        trust_domain,
-        plaintext_visible_services,
-        alias,
-        content_scheme,
-    )
-}
-
 /// Build a Realm bootstrap against the exact Station captured by the
 /// authenticated submitter. Production create flows use this entry point so a
 /// transient reconnect cannot clear a process-global selection between UI
@@ -1060,23 +1002,6 @@ pub fn build_space_lifecycle_event(
     .build_sdk_event("inkson")
 }
 
-/// Build a Realm facet state event (`ak.realm.join_rule`,
-/// `ak.realm.history_access`, `ak.realm.discovery`, ...).
-pub fn build_realm_state_event<K: arkret_sdk::EventSpec>(
-    realm_id: &str,
-    actor_id: &str,
-    digest_suite: arkret_sdk::DigestSuite,
-    payload: K::Payload,
-) -> anyhow::Result<crate::operation::LocalOperation> {
-    build_realm_state_event_for_station::<K>(
-        crate::operation::authoring_station_id()?,
-        realm_id,
-        actor_id,
-        digest_suite,
-        payload,
-    )
-}
-
 /// Build a replacement for the singleton Realm profile CAS register.
 ///
 /// Unlike the bootstrap profile write, a replacement must name the complete
@@ -1101,7 +1026,11 @@ pub fn build_realm_profile_replacement_event(
     )
 }
 
-fn build_realm_state_event_for_station<K: arkret_sdk::EventSpec>(
+/// Build a Realm facet state event (`ak.realm.join_rule`,
+/// `ak.realm.history_access`, `ak.realm.discovery`, ...) for the author's
+/// explicit Station. Production callers take the Station from the submitter's
+/// captured authority; there is no ambient variant.
+pub fn build_realm_state_event_for_station<K: arkret_sdk::EventSpec>(
     station_id: arkret_sdk::DidCoreId,
     realm_id: &str,
     actor_id: &str,
@@ -1826,7 +1755,8 @@ mod notary_derivation_tests {
     #[test]
     fn ordinary_realm_create_candidate_matches_closed_schema() {
         let events = crate::event_submit::author_event_unit_for_test(
-            build_realm_bootstrap_steps(
+            build_realm_bootstrap_steps_for_station(
+                crate::test_support::core_id(crate::test_support::STATION_ID),
                 arkret_sdk::GenesisSalt::new("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")
                     .unwrap(),
                 "did:web:alice.example",

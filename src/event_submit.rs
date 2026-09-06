@@ -1911,6 +1911,24 @@ impl EventSubmitter {
     }
 
     async fn verify_origin_station(&self, intent: &EventIntent) -> anyhow::Result<()> {
+        // The captured authority is the closed AccountId this submitter was
+        // created for. An account-kind actor with that principal MUST carry
+        // that Station: a builder that rebuilt the actor from the principal plus
+        // the ambient authoring slot while the slot named another Station would
+        // otherwise author under a different account (account-lifecycle.md
+        // §156/§158). Agent, service and pairwise actors are not this account
+        // and are judged by the origin check below only.
+        if let (Some(authority), Some(actor_account)) =
+            (self.authority.as_ref(), intent.actor_id().as_account_id())
+            && actor_account.principal_id == authority.principal_id
+            && actor_account.station_id != authority.station_id
+        {
+            anyhow::bail!(
+                "Event actor names Station {} but the authenticated account is hosted at {}",
+                actor_account.station_id,
+                authority.station_id
+            );
+        }
         let origin = self.describe_cached().await?.service_id.clone();
         if intent.actor_id().route_service_id() != &origin {
             anyhow::bail!(

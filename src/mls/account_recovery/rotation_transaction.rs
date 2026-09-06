@@ -43,7 +43,6 @@ pub(crate) struct PreparedRotationBackupClass {
 pub(crate) fn prepare_rotation_backup_material(
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
     authority: &arkret_sdk::AccountId,
-    actor_id: &str,
     device_id: &str,
     recovery_words: &str,
     snapshots: &std::collections::BTreeMap<
@@ -72,7 +71,7 @@ pub(crate) fn prepare_rotation_backup_material(
     let account_backup_id = fresh_backup_id();
     let account_body = build_mls_account_secret_backup_body_with_kek_and_version(
         &account_backup_id,
-        actor_id,
+        authority,
         device_id,
         &kek,
         &rotation.new_secret,
@@ -171,7 +170,6 @@ pub(crate) async fn execute_device_revoke_security_rotation(
     let prepared = prepare_rotation_backup_material(
         secure_store.as_ref(),
         authority,
-        actor_id,
         current_device_id,
         recovery_words,
         snapshots,
@@ -261,9 +259,14 @@ pub(crate) async fn execute_device_revoke_security_rotation(
     let transaction_id =
         TransactionId::new(format!("ak:transaction:{}", crate::operation::uuid_v7()))?;
     let principal = crate::mls_api_helpers::principal_core_id(principal.as_str())?;
+    if principal != authority.principal_id {
+        return Err(anyhow!(
+            "security rotation actor does not match the supplied account"
+        ));
+    }
     let create = crate::fresh_device_recovery::SecurityRotationDraft {
         transaction_id: transaction_id.clone(),
-        principal_id: principal,
+        account_id: authority.clone(),
         expires_at: crate::clock::now_utc() + chrono::Duration::hours(1),
         revoke_submission,
         new_secret_commitment: prepared.new_secret_commitment.clone(),
@@ -860,6 +863,117 @@ mod rotation_resume_tests {
             error
                 .to_string()
                 .contains("does not project to the key-backup actor")
+        );
+    }
+
+    /// Same shape as
+    /// `recovery_strand::genesis_policy_uses_explicit_account_station_before_app_connect`:
+    /// first enrollment authors the active-series pointer before `describe`
+    /// installs the ambient authoring Station, so the builder must take the
+    /// Station from the closed `AccountId` it is given and author under that
+    /// account. The 2026-09-04 joint run stalled onboarding at exactly this
+    /// step ("no authoring Station is selected") when only the policy half
+    /// had been made explicit.
+    #[test]
+    fn active_series_event_uses_the_explicit_account_station_before_app_connect() {
+        crate::operation::set_authoring_station_id(None);
+        let principal_did = Did::new("did:webvh:z6mkfixture:principal.example".to_owned()).unwrap();
+        let account_id = arkret_sdk::AccountId::new(
+            arkret_sdk::project_did_to_core_id(&principal_did).unwrap(),
+            arkret_sdk::DidCoreId::new(
+                "ak:did_core:webvh:z6mkfixture:onboarding-station.example".to_owned(),
+            )
+            .unwrap(),
+        );
+        let verification_method = format!("{principal_did}#founding-device");
+        let signer = crate::event_signer::build_ed25519_signer_with_verification_method(
+            [9_u8; 32],
+            principal_did.as_str(),
+            verification_method.clone(),
+        );
+        let _signer_guard =
+            crate::event_signer::ActiveSignerTestGuard::replace(Some(std::sync::Arc::new(signer)));
+        let realm_id = arkret_sdk::RealmId::new(
+            "ak:realm:AT3p9polsnQ_WOix32QZimMdE2zPe62HptJu2PaO3V1h".to_owned(),
+        )
+        .unwrap();
+        let zero_hash = Hash::new(format!("sha256:{}", "00".repeat(32))).unwrap();
+        let frontier = arkret_sdk::Seal {
+            id: arkret_sdk::SealId::new(format!("ak:seal:sha256:{}", "00".repeat(32))).unwrap(),
+            realm_id: realm_id.clone(),
+            predecessor_refs: Vec::new(),
+            delta: Vec::new(),
+            control_event_set_root: zero_hash.clone(),
+            state_root: zero_hash.clone(),
+            completeness_root: zero_hash.clone(),
+            notary_seq: 0,
+            data_view_root: None,
+            data_event_set_root: None,
+            availability_receipt_digests: Vec::new(),
+            covered_event_digests: Vec::new(),
+            previous_state_root: None,
+            previous_digest_algorithm: None,
+            notary_signature: arkret_sdk::NotarySig::Single(arkret_sdk::SealSignature {
+                verification_method: arkret_sdk::DidUrl::new(verification_method).unwrap(),
+                payload_digest: zero_hash,
+                jws: String::new(),
+            }),
+            sealed_at: chrono::Utc::now(),
+            hlc: arkret_sdk::Hlc::new("01970e589d21-0005-a13f9c2e").unwrap(),
+        };
+        let trust_anchor = ControllerBackupTrustAnchor {
+            authorize_event_id: arkret_sdk::EventId::new(
+                "ak:event:AcIMom-0qqAXx_hmDJfxxaUJb_oJ64S3ARW1-WKFDCoD".to_owned(),
+            )
+            .unwrap(),
+            generation_ref: 1,
+        };
+
+        let operation = build_active_series_event(
+            &realm_id,
+            principal_did.as_str(),
+            &account_id,
+            BackupRotationKind::SecretStorage,
+            "ak:backup_series:01964137-1000-7000-8000-0000000000a1",
+            1,
+            &[],
+            &frontier,
+            &trust_anchor,
+        )
+        .unwrap();
+
+        assert_eq!(
+            operation.actor_id(),
+            &arkret_sdk::ActorId::account(account_id.clone())
+        );
+        assert_eq!(
+            operation.actor_id().route_service_id(),
+            &account_id.station_id
+        );
+
+        let other_account = arkret_sdk::AccountId::new(
+            arkret_sdk::project_did_to_core_id(
+                &Did::new("did:webvh:z6mkother:principal.example".to_owned()).unwrap(),
+            )
+            .unwrap(),
+            account_id.station_id.clone(),
+        );
+        let error = build_active_series_event(
+            &realm_id,
+            principal_did.as_str(),
+            &other_account,
+            BackupRotationKind::SecretStorage,
+            "ak:backup_series:01964137-1000-7000-8000-0000000000a1",
+            1,
+            &[],
+            &frontier,
+            &trust_anchor,
+        )
+        .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("does not match the supplied account")
         );
     }
 

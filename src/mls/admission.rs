@@ -73,6 +73,10 @@ impl MlsAdmissionAuthoringPlan {
 pub(crate) struct WelcomePayloadInputs {
     pub(crate) realm_id: String,
     pub(crate) actor_id: String,
+    /// The closed account of the ordinary requester (this client's
+    /// authority). The Device branch names it in the Welcome claim envelope;
+    /// it is never rebuilt from `actor_id` plus the ambient Station.
+    pub(crate) requester_account_id: arkret_sdk::AccountId,
     pub(crate) requester: WelcomeRequester,
     pub(crate) claim: arkret_sdk::KeyPackageClaimRecord,
     pub(crate) keypackage_id: String,
@@ -283,7 +287,7 @@ async fn build_realm_mls_admission_events_from_verified_claim(
     validate_claim_receipt_for_admission(
         state_store,
         realm_id,
-        &actor_id,
+        authority,
         claim,
         claim_request_id,
         claim_receipt,
@@ -331,6 +335,7 @@ async fn build_realm_mls_admission_events_from_verified_claim(
     let welcome_inputs = WelcomePayloadInputs {
         realm_id: realm_id.to_owned(),
         actor_id,
+        requester_account_id: authority.clone(),
         requester,
         claim: claim.clone(),
         keypackage_id: member_key_package.keypackage_id.clone(),
@@ -352,21 +357,16 @@ async fn build_realm_mls_admission_events_from_verified_claim(
 fn validate_claim_receipt_for_admission(
     state_store: &LocalStateStore,
     realm_id: &str,
-    actor_id: &str,
+    authority: &arkret_sdk::AccountId,
     claim: &arkret_sdk::KeyPackageClaimRecord,
     claim_request_id: &str,
     receipt: &arkret_sdk::PeerKeyPackageClaimReceipt,
 ) -> Result<(), String> {
-    let requester = crate::mls_api_helpers::principal_core_id(actor_id)
-        .map_err(|error| format!("invalid requester actor_id: {error}"))?;
     let expected_realm = arkret_sdk::RealmId::new(trim_realm_id(realm_id))
         .map_err(|error| format!("invalid admission realm_id: {error}"))?;
-    if receipt
-        .request
-        .requester_account_id
-        .as_ref()
-        .map(|account| &account.principal_id)
-        != Some(&requester)
+    // The receipt names the requester as a complete account; it is compared as
+    // one value, never by principal alone (account-lifecycle.md §156).
+    if receipt.request.requester_account_id.as_ref() != Some(authority)
         || receipt.request.target_principal_id().as_ref() != Some(&claim.principal_id)
         || receipt.request.intended_realm_id != expected_realm
         || receipt.request.claim_request_id.as_str() != claim_request_id
@@ -399,6 +399,7 @@ fn welcome_intent_step(inputs: WelcomePayloadInputs) -> WelcomeIntentStep {
             } => build_mls_welcome_payload(
                 &inputs.realm_id,
                 &inputs.actor_id,
+                &inputs.requester_account_id,
                 sender_device_id.as_str(),
                 requester_device_authorize_event_id,
                 &inputs.claim,
@@ -445,6 +446,7 @@ fn welcome_intent_step(inputs: WelcomePayloadInputs) -> WelcomeIntentStep {
 pub(crate) fn build_mls_welcome_payload(
     realm_id: &str,
     actor_id: &str,
+    requester_account_id: &arkret_sdk::AccountId,
     sender_device_id: &str,
     requester_device_authorize_event_id: &arkret_sdk::EventId,
     claim: &arkret_sdk::KeyPackageClaimRecord,
@@ -458,6 +460,7 @@ pub(crate) fn build_mls_welcome_payload(
         realm_id,
         WelcomeRequesterRef::Device {
             actor_id,
+            account_id: requester_account_id,
             sender_device_id,
             requester_device_authorize_event_id,
         },
@@ -505,6 +508,7 @@ pub(crate) fn build_pairwise_mls_welcome_payload(
 enum WelcomeRequesterRef<'a> {
     Device {
         actor_id: &'a str,
+        account_id: &'a arkret_sdk::AccountId,
         sender_device_id: &'a str,
         requester_device_authorize_event_id: &'a arkret_sdk::EventId,
     },
@@ -528,63 +532,76 @@ fn build_mls_welcome_payload_with_requester(
 ) -> Result<arkret_sdk::MlsWelcomePayload, String> {
     let intended_realm_id = arkret_sdk::RealmId::new(trim_realm_id(realm_id))
         .map_err(|err| format!("invalid MLS Welcome Realm id: {err:?}"))?;
-    let (requester_did, sender_device_id, trust_binding, pairwise_identity) = match requester {
-        WelcomeRequesterRef::Device {
-            actor_id,
-            sender_device_id,
-            requester_device_authorize_event_id,
-        } => {
-            let requester_did =
-                crate::mls_api_helpers::principal_core_id(actor_id).map_err(|err| {
-                    format!("invalid MLS Welcome requester principal core id: {err:?}")
-                })?;
-            let sender_device_id = arkret_sdk::DeviceId::new(sender_device_id.trim().to_owned())
-                .map_err(|err| format!("invalid MLS Welcome sender device id: {err:?}"))?;
-            (
-                requester_did,
-                Some(sender_device_id.clone()),
-                arkret_sdk::MlsRequesterTrustBinding::RequesterDevice {
-                    requester_device_id: sender_device_id,
-                    requester_device_authorize_event_id: requester_device_authorize_event_id
-                        .clone(),
-                },
-                None,
-            )
-        }
-        WelcomeRequesterRef::MinimalMetadataPairwise {
-            actor_id,
-            verification_method,
-            signer,
-        } => {
-            let pairwise_actor_id = crate::mls_api_helpers::principal_core_id(actor_id)
-                .map_err(|error| format!("invalid pairwise requester actor id: {error}"))?;
-            let expected_controller = arkret_sdk::project_did_to_core_id(
-                &arkret_sdk::Did::new(
-                    verification_method
-                        .as_str()
-                        .split('#')
-                        .next()
-                        .unwrap_or_default()
-                        .to_owned(),
+    let (requester_did, requester_account_id, sender_device_id, trust_binding, pairwise_identity) =
+        match requester {
+            WelcomeRequesterRef::Device {
+                actor_id,
+                account_id,
+                sender_device_id,
+                requester_device_authorize_event_id,
+            } => {
+                let requester_did =
+                    crate::mls_api_helpers::principal_core_id(actor_id).map_err(|err| {
+                        format!("invalid MLS Welcome requester principal core id: {err:?}")
+                    })?;
+                if requester_did != account_id.principal_id {
+                    return Err(
+                        "MLS Welcome requester actor does not belong to the supplied account"
+                            .to_owned(),
+                    );
+                }
+                let sender_device_id =
+                    arkret_sdk::DeviceId::new(sender_device_id.trim().to_owned())
+                        .map_err(|err| format!("invalid MLS Welcome sender device id: {err:?}"))?;
+                (
+                    requester_did,
+                    Some(account_id.clone()),
+                    Some(sender_device_id.clone()),
+                    arkret_sdk::MlsRequesterTrustBinding::RequesterDevice {
+                        requester_device_id: sender_device_id,
+                        requester_device_authorize_event_id: requester_device_authorize_event_id
+                            .clone(),
+                    },
+                    None,
                 )
-                .map_err(|error| format!("invalid pairwise requester controller: {error}"))?,
-            )
-            .map_err(|error| format!("invalid pairwise requester projection: {error}"))?;
-            if expected_controller != pairwise_actor_id
-                || signer.verification_method() != verification_method.as_str()
-            {
-                return Err("pairwise Welcome requester actor/method/signer mismatch".to_owned());
             }
-            (
-                pairwise_actor_id,
-                None,
-                arkret_sdk::MlsRequesterTrustBinding::RequesterMinimalMetadataPairwise {
-                    requester_pairwise_verification_method: verification_method.clone(),
-                },
-                Some(signer),
-            )
-        }
-    };
+            WelcomeRequesterRef::MinimalMetadataPairwise {
+                actor_id,
+                verification_method,
+                signer,
+            } => {
+                let pairwise_actor_id = crate::mls_api_helpers::principal_core_id(actor_id)
+                    .map_err(|error| format!("invalid pairwise requester actor id: {error}"))?;
+                let expected_controller = arkret_sdk::project_did_to_core_id(
+                    &arkret_sdk::Did::new(
+                        verification_method
+                            .as_str()
+                            .split('#')
+                            .next()
+                            .unwrap_or_default()
+                            .to_owned(),
+                    )
+                    .map_err(|error| format!("invalid pairwise requester controller: {error}"))?,
+                )
+                .map_err(|error| format!("invalid pairwise requester projection: {error}"))?;
+                if expected_controller != pairwise_actor_id
+                    || signer.verification_method() != verification_method.as_str()
+                {
+                    return Err(
+                        "pairwise Welcome requester actor/method/signer mismatch".to_owned()
+                    );
+                }
+                (
+                    pairwise_actor_id,
+                    None,
+                    None,
+                    arkret_sdk::MlsRequesterTrustBinding::RequesterMinimalMetadataPairwise {
+                        requester_pairwise_verification_method: verification_method.clone(),
+                    },
+                    Some(signer),
+                )
+            }
+        };
     let keypackage_bytes = arkret_sdk::base64url_decode(claim.keypackage.as_bytes())
         .map_err(|err| format!("invalid claimed KeyPackage bytes: {err}"))?;
     let keypackage_digest =
@@ -595,18 +612,22 @@ fn build_mls_welcome_payload_with_requester(
     let capabilities_digest =
         arkret_sdk::Hash::new(arkret_sdk::canonical::sha256_digest(&capabilities_bytes))
             .map_err(|err| format!("invalid claimed KeyPackage capabilities digest: {err}"))?;
-    let requester_actor_id = match &trust_binding {
-        arkret_sdk::MlsRequesterTrustBinding::RequesterDevice { .. } => {
-            crate::mls_api_helpers::local_account_actor_id(requester_did.as_str())
-                .map_err(|error| format!("invalid requester AccountId: {error}"))?
-        }
-        arkret_sdk::MlsRequesterTrustBinding::RequesterMinimalMetadataPairwise { .. } => {
-            arkret_sdk::ActorId::service(requester_did.clone())
-        }
-        arkret_sdk::MlsRequesterTrustBinding::RequesterAgent { .. } => {
-            arkret_sdk::ActorId::service(requester_did.clone())
-        }
-    };
+    let requester_actor_id =
+        match &trust_binding {
+            arkret_sdk::MlsRequesterTrustBinding::RequesterDevice { .. } => {
+                // The Device branch always carries the closed requester account
+                // (matched above); it is the authority this client authors as.
+                arkret_sdk::ActorId::account(requester_account_id.ok_or_else(|| {
+                    "MLS Welcome device requester has no closed account".to_owned()
+                })?)
+            }
+            arkret_sdk::MlsRequesterTrustBinding::RequesterMinimalMetadataPairwise { .. } => {
+                arkret_sdk::ActorId::service(requester_did.clone())
+            }
+            arkret_sdk::MlsRequesterTrustBinding::RequesterAgent { .. } => {
+                arkret_sdk::ActorId::service(requester_did.clone())
+            }
+        };
     let envelope = arkret_sdk::UnsignedMlsWelcomeClaimEnvelope::new(
         arkret_sdk::MlsWelcomeClaimEnvelopeSigningInput {
             keypackage_ref: claim.keypackage_ref.clone(),

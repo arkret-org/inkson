@@ -128,7 +128,8 @@ fn full_bootstrap_chain_carries_real_proofs_and_anchors() {
     // Every stage of the unit is authored in order, so a later member can name
     // an earlier one — which is what the seal stamp then rides on.
     let events = common::author_unit(
-        event_builders::build_realm_bootstrap_steps(
+        event_builders::build_realm_bootstrap_steps_for_station(
+            arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example".to_owned()).unwrap(),
             test_genesis_salt(),
             TEST_ACTOR_ID,
             TEST_SERVICE_DID,

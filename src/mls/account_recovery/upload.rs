@@ -364,7 +364,7 @@ pub async fn upload_mls_account_secret_backup_with_passphrase(
     } else {
         build_mls_account_secret_backup_body_with_kek_and_version(
             &account_backup_id,
-            actor_id,
+            authority,
             device_id,
             &kek,
             &stored.secret,
@@ -594,7 +594,7 @@ pub(crate) async fn upload_local_authoritative_mls_history_records_with_recovery
         };
         let body = crate::key_backup::build_recovery_public_key_history_backup_body_in_series(
             &backup_id,
-            actor_id,
+            &arkret_sdk::ActorId::account(authority.clone()),
             device_id,
             recovery_public_key,
             &recovery_key_ref,
@@ -749,7 +749,7 @@ pub async fn upload_mls_private_plaintext_backup_with_previous(
     } else {
         build_mls_private_plaintext_backup_body_with_kek(
             &backup_id,
-            actor_id,
+            authority,
             device_id,
             &kek,
             sidecar_json,

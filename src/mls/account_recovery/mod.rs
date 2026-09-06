@@ -41,7 +41,6 @@ pub use backup_body::{
     MLS_ACCOUNT_SECRET_ITEM_KIND, MLS_ACCOUNT_SECRET_SECRET_ID, MLS_PRIVATE_PLAINTEXT_ITEM_KIND,
     MLS_PRIVATE_PLAINTEXT_SECRET_ID, build_mls_account_secret_backup_body_with_kek,
     build_mls_account_secret_backup_body_with_kek_and_version,
-    build_mls_account_secret_recovery_public_key_backup,
     build_mls_private_plaintext_backup_body_with_kek, decrypt_mls_account_secret_backup,
     decrypt_mls_private_plaintext_backup, open_mls_account_secret_recovery_public_key_backup,
 };

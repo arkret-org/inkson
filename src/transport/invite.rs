@@ -404,13 +404,19 @@ impl crate::transport::TransportClient {
                 introduction_evidence,
             });
         }
-        let target_id = crate::mls_api_helpers::principal_core_id(target)
-            .map_err(|err| anyhow::anyhow!("invalid contact target DID `{target}`: {err}"))?;
+        // An explicit address is the counterparty's complete account. A bare
+        // principal has no Station, and this client's Station is not a stand-in
+        // for it: the same principal at another Station is a different account
+        // (account-lifecycle.md §156/§158), so the request fails closed instead
+        // of being addressed to whoever holds that principal here.
+        let target_account =
+            crate::mls_api_helpers::account_id_from_selector(target).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "contact target `{target}` is neither a handle nor a complete account selector"
+                )
+            })?;
         Ok(ContactRequestAddressing {
-            target: arkret_sdk::AccountId::new(
-                target_id,
-                crate::operation::authoring_station_id()?,
-            ),
+            target: target_account,
             introduction_evidence: arkret_sdk::ContactIntroductionEvidence::ExplicitAddress,
         })
     }

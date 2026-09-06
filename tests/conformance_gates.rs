@@ -259,7 +259,8 @@ fn authored_realm_bootstrap(
     alias: Option<&str>,
 ) -> Vec<arkret_sdk::AuthoredEvent> {
     common::author_unit(
-        event_builders::build_realm_bootstrap_steps(
+        event_builders::build_realm_bootstrap_steps_for_station(
+            arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example".to_owned()).unwrap(),
             test_genesis_salt(),
             TEST_ACTOR_ID,
             TEST_SERVICE_DID,
@@ -541,14 +542,16 @@ fn build_space_lifecycle_event_tombstone_matches_event_schema() {
 #[test]
 fn build_realm_state_event_join_rule_matches_event_schema() {
     select_authoring_station();
-    let envelope =
-        event_builders::build_realm_state_event::<arkret_sdk::event_spec::RealmJoinRule>(
-            TEST_REALM_ID,
-            TEST_ACTOR_ID,
-            arkret_sdk::DigestSuite::Sha256,
-            arkret_sdk::RealmJoinRulePayload::new(arkret_sdk::RealmJoinRuleValue::Invite),
-        )
-        .expect("build_realm_state_event(join_rule) succeeds");
+    let envelope = event_builders::build_realm_state_event_for_station::<
+        arkret_sdk::event_spec::RealmJoinRule,
+    >(
+        arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example".to_owned()).unwrap(),
+        TEST_REALM_ID,
+        TEST_ACTOR_ID,
+        arkret_sdk::DigestSuite::Sha256,
+        arkret_sdk::RealmJoinRulePayload::new(arkret_sdk::RealmJoinRuleValue::Invite),
+    )
+    .expect("build_realm_state_event(join_rule) succeeds");
     let envelope = wire_envelope(envelope);
     assert_envelope_matches_schema("build_realm_state_event[join_rule]", &envelope);
 }
@@ -556,14 +559,16 @@ fn build_realm_state_event_join_rule_matches_event_schema() {
 #[test]
 fn build_realm_state_event_history_access_matches_event_schema() {
     select_authoring_station();
-    let envelope =
-        event_builders::build_realm_state_event::<arkret_sdk::event_spec::RealmHistoryAccess>(
-            TEST_REALM_ID,
-            TEST_ACTOR_ID,
-            arkret_sdk::DigestSuite::Sha256,
-            arkret_sdk::HistoryAccessPayload::tighten(),
-        )
-        .expect("build_realm_state_event(history_access) succeeds");
+    let envelope = event_builders::build_realm_state_event_for_station::<
+        arkret_sdk::event_spec::RealmHistoryAccess,
+    >(
+        arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example".to_owned()).unwrap(),
+        TEST_REALM_ID,
+        TEST_ACTOR_ID,
+        arkret_sdk::DigestSuite::Sha256,
+        arkret_sdk::HistoryAccessPayload::tighten(),
+    )
+    .expect("build_realm_state_event(history_access) succeeds");
     let envelope = wire_envelope(envelope);
     assert_envelope_matches_schema("build_realm_state_event[history_access]", &envelope);
 }
@@ -571,26 +576,28 @@ fn build_realm_state_event_history_access_matches_event_schema() {
 #[test]
 fn build_realm_preview_policy_event_matches_event_schema() {
     select_authoring_station();
-    let envelope =
-        event_builders::build_realm_state_event::<arkret_sdk::event_spec::RealmPreviewPolicy>(
-            TEST_REALM_ID,
-            TEST_ACTOR_ID,
-            arkret_sdk::DigestSuite::Sha256,
-            serde_json::from_value(serde_json::json!({
-                "value": {
-                    "mode": "stripped_state",
-                    "audiences": ["link_token_holder"],
-                    "fields": ["title", "summary", "join_rule", "history_access"],
-                    "token": {
-                        "required": true,
-                        "ttl_seconds": 600,
-                        "bind_target_digest": true
-                    }
+    let envelope = event_builders::build_realm_state_event_for_station::<
+        arkret_sdk::event_spec::RealmPreviewPolicy,
+    >(
+        arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example".to_owned()).unwrap(),
+        TEST_REALM_ID,
+        TEST_ACTOR_ID,
+        arkret_sdk::DigestSuite::Sha256,
+        serde_json::from_value(serde_json::json!({
+            "value": {
+                "mode": "stripped_state",
+                "audiences": ["link_token_holder"],
+                "fields": ["title", "summary", "join_rule", "history_access"],
+                "token": {
+                    "required": true,
+                    "ttl_seconds": 600,
+                    "bind_target_digest": true
                 }
-            }))
-            .expect("preview policy fixture is typed"),
-        )
-        .expect("build_realm_state_event(preview_policy) succeeds");
+            }
+        }))
+        .expect("preview policy fixture is typed"),
+    )
+    .expect("build_realm_state_event(preview_policy) succeeds");
     let envelope = wire_envelope(envelope);
     assert_envelope_matches_schema("build_realm_state_event[preview_policy]", &envelope);
 }

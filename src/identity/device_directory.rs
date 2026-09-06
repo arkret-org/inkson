@@ -69,16 +69,7 @@ pub enum CacheLookup {
 }
 
 pub(crate) fn account_from_selector(actor: &str) -> Option<arkret_sdk::AccountId> {
-    let account = serde_json::from_str::<arkret_sdk::AccountId>(actor)
-        .ok()
-        .or_else(|| {
-            serde_json::from_str::<arkret_sdk::ActorId>(actor)
-                .ok()?
-                .as_account_id()
-                .cloned()
-        })?;
-    account.validate().ok()?;
-    Some(account)
+    crate::mls_api_helpers::account_id_from_selector(actor)
 }
 
 fn cache_key(actor: &str, device: &str) -> Option<CacheKey> {

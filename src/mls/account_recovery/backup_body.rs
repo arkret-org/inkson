@@ -62,14 +62,14 @@ pub const MLS_PRIVATE_PLAINTEXT_SECRET_ID: &str = "inkson_mls_private_plaintext"
 /// reason; it was dead code and a latent footgun.)
 pub fn build_mls_account_secret_backup_body_with_kek(
     backup_id: &str,
-    actor_id: &str,
+    account_id: &arkret_sdk::AccountId,
     device_id: &str,
     kek: &VaultKek,
     account_secret: &str,
 ) -> Result<KeyBackup> {
     build_mls_account_secret_backup_body_with_kek_and_version(
         backup_id,
-        actor_id,
+        account_id,
         device_id,
         kek,
         account_secret,
@@ -81,7 +81,7 @@ pub fn build_mls_account_secret_backup_body_with_kek(
 /// the local account-secret version in the backup content metadata.
 pub fn build_mls_account_secret_backup_body_with_kek_and_version(
     backup_id: &str,
-    actor_id: &str,
+    account_id: &arkret_sdk::AccountId,
     device_id: &str,
     kek: &VaultKek,
     account_secret: &str,
@@ -92,7 +92,7 @@ pub fn build_mls_account_secret_backup_body_with_kek_and_version(
     // desynchronize the derived AAD from the ciphertext.
     build_passphrase_kdf_backup_body(
         backup_id,
-        actor_id,
+        &arkret_sdk::ActorId::account(account_id.clone()),
         device_id,
         kek,
         account_secret.as_bytes(),
@@ -167,14 +167,14 @@ pub fn decrypt_mls_account_secret_backup(passphrase: &[u8], body: &Value) -> Res
 /// the AAD's `item_kinds` matches the rewritten contents.
 pub fn build_mls_private_plaintext_backup_body_with_kek(
     backup_id: &str,
-    actor_id: &str,
+    account_id: &arkret_sdk::AccountId,
     device_id: &str,
     kek: &VaultKek,
     sidecar_json: &[u8],
 ) -> Result<KeyBackup> {
     build_passphrase_kdf_backup_body(
         backup_id,
-        actor_id,
+        &arkret_sdk::ActorId::account(account_id.clone()),
         device_id,
         kek,
         sidecar_json,
@@ -252,46 +252,6 @@ fn opened_single_secret(unlock_key: &[u8], body: &Value) -> Result<Vec<u8>> {
     };
     B64.decode(item.secret_b64u.as_bytes())
         .map_err(|error| anyhow!("key backup plaintext secret is not base64url: {error}"))
-}
-
-/// True when `body` is an MLS private-plaintext sidecar backup. Matched on the
-/// dedicated `mls_private_plaintext` item type.
-/// Build the HPKE `recovery_public_key` account-secret backup: the account
-/// secret HPKE-sealed to the actor's recovery public key. ANY device (holding
-/// only the public key) can build/upload this; a fresh device opens it with the
-/// recovery PRIVATE key — no passphrase prompt (key-management.md §7.5.2).
-#[allow(clippy::too_many_arguments)]
-pub fn build_mls_account_secret_recovery_public_key_backup(
-    backup_id: &str,
-    actor_id: &str,
-    device_id: &str,
-    recovery_public_key: &[u8],
-    recovery_key_ref: &str,
-    account_secret: &str,
-    account_secret_version: u32,
-    // The actor's currently-accepted recovery policy `(policy_id,
-    // policy_version)`. It is written into the envelope's
-    // `recovery_policy_ref`; the fresh-device restore path cross-checks it
-    // against the live accepted policy before importing the secret, so a
-    // compromised server can't replay an old-policy / non-frontier account-secret
-    // backup sealed to the same recovery public key.
-    recovery_policy_ref: (&str, u64),
-) -> Result<KeyBackup> {
-    build_mls_account_secret_recovery_public_key_backup_in_series(
-        backup_id,
-        &arkret_sdk::AccountId::new(
-            crate::mls_api_helpers::principal_core_id(actor_id)?,
-            crate::operation::authoring_station_id()?,
-        ),
-        device_id,
-        recovery_public_key,
-        recovery_key_ref,
-        account_secret,
-        account_secret_version,
-        recovery_policy_ref,
-        None,
-        None,
-    )
 }
 
 /// Build an HPKE account-secret backup that extends `previous_series_tail`.

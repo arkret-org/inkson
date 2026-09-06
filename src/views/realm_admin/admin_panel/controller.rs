@@ -469,7 +469,7 @@ impl RealmAdminController {
         api_token: String,
         realm_id: String,
         actor_id: String,
-        subject: String,
+        subject: arkret_sdk::AccountId,
         issuer_root_basis: crate::operation::ak_ops::IssuerRootBasis,
     ) {
         spawn(async move {

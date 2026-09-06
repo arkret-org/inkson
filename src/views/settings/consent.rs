@@ -14,7 +14,8 @@
 //!   `consent-new-grant-grantee-input`, `consent-new-grant-grantee-station-input`,
 //!   `consent-new-grant-ttl-input`, `consent-new-grant-submit-button`
 //! - opaque outbound request: `consent-request-button`, `consent-request-scope-input`,
-//!   `consent-request-holder-input`, `consent-request-submit-button`
+//!   `consent-request-holder-input`, `consent-request-holder-station-input`,
+//!   `consent-request-submit-button`
 //! - pending list: `consent-pending-row`, `consent-detail-button`, `consent-pending-detail`,
 //!   `consent-scope-select`, `consent-valid-until-input`, `grant-consent-button`
 //! - granted list: `consent-granted-row`, `revoke-consent-button`
@@ -204,16 +205,19 @@ pub fn ConsentSettingsPanel(principal_id: Signal<String>, token: Signal<String>)
     let grant_scope_selected = use_memo(move || Some(grant_scope()));
     let mut grant_grantee = use_signal(String::new);
     // The actor branch is matched on the complete ActorId, so the grantee's
-    // own Station is part of what is being granted, not an implicit local
-    // default. Blank means "hosted by this Station".
+    // own Station is part of what is being granted, never an implicit local
+    // default: either the grantee field carries the canonical account selector
+    // or this field names the Station (account-lifecycle.md §156).
     let mut grant_grantee_station = use_signal(String::new);
     let mut grant_ttl = use_signal(|| "30d".to_owned());
 
-    // Outbound-request form state.
+    // Outbound-request form state. The holder is a remote account and is
+    // closed the same way as the grantee above.
     let mut request_form_open = use_signal(|| false);
     let mut request_scope = use_signal(|| "message".to_owned());
     let request_scope_selected = use_memo(move || Some(request_scope()));
     let mut request_holder = use_signal(String::new);
+    let mut request_holder_station = use_signal(String::new);
 
     // Open pending-detail editor, keyed by `(peer_key, scope)` — the exact
     // wire peer, so two kinds sharing a principal core never share a row.
@@ -490,6 +494,16 @@ pub fn ConsentSettingsPanel(principal_id: Signal<String>, token: Signal<String>)
                                     oninput: move |event: FormEvent| request_holder.set(event.value()),
                                 }
                             }
+                            div { class: "field",
+                                Label { html_for: "consent-request-holder-station-input-input", {tr("consent.request.holder_station_label")} }
+                                Input {
+                                    id: "consent-request-holder-station-input-input",
+                                    "data-testid": "consent-request-holder-station-input",
+                                    value: "{request_holder_station}",
+                                    placeholder: "ak:did_core:web:station.example",
+                                    oninput: move |event: FormEvent| request_holder_station.set(event.value()),
+                                }
+                            }
                             div { class: "actions",
                                 Button {
                                     variant: ButtonVariant::Primary,
@@ -501,10 +515,24 @@ pub fn ConsentSettingsPanel(principal_id: Signal<String>, token: Signal<String>)
                                             let base = base.clone();
                                             let api_token = token();
                                             let holder = request_holder().trim().to_owned();
+                                            let holder_station = request_holder_station().trim().to_owned();
                                             let scope = ui_scope_to_wire(&request_scope()).to_owned();
                                             if holder.is_empty() {
                                                 return;
                                             }
+                                            // The holder is a remote account; a bare DID
+                                            // has no Station and fails closed here rather
+                                            // than being completed with this Station.
+                                            let holder = match crate::mls_api_helpers::closed_account_id_input(
+                                                &holder,
+                                                Some(holder_station.as_str()),
+                                            ) {
+                                                Ok(holder) => holder,
+                                                Err(err) => {
+                                                    write_status.set(format!("request failed: {err}"));
+                                                    return;
+                                                }
+                                            };
                                             busy.set(true);
                                             write_status.set("requesting…".to_owned());
                                             spawn(async move {
@@ -516,6 +544,7 @@ pub fn ConsentSettingsPanel(principal_id: Signal<String>, token: Signal<String>)
                                                     Ok(_) => {
                                                         request_form_open.set(false);
                                                         request_holder.set(String::new());
+                                                        request_holder_station.set(String::new());
                                                         write_status.set(
                                                             "consent request accepted for processing"
                                                                 .to_owned(),

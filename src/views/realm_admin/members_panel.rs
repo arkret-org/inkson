@@ -208,12 +208,14 @@ fn PendingInviteRow(
     let avatar_blob_ref = profile.avatar_blob_ref.as_ref().map(ToString::to_string);
     let invite_id = profile.invite_id.clone().unwrap_or_default();
     let invite_class_known = profile.invite_is_direct.is_some();
+    // A direct invite's row is keyed by the invitee's complete ActorId (see
+    // `pending_invite_profile`), so the closed account the cancel must name is
+    // read back from that key; it is never rebuilt from a principal.
     let direct_invitee = profile
         .invite_is_direct
         .is_some_and(|direct| direct)
-        .then(|| arkret_sdk::DidCoreId::new(member.clone()).ok())
-        .flatten()
-        .map(|invitee| invitee.to_string());
+        .then(|| crate::mls_api_helpers::account_id_from_selector(&member))
+        .flatten();
     let is_direct_invite = direct_invitee.is_some();
     let can_terminate_this_invite = invite_class_known
         && (if is_direct_invite {

@@ -155,6 +155,45 @@ pub(crate) fn metadata_subject_for(store: &LocalStateStore, subject_id: &str) ->
     }
 }
 
+/// Close a typed capability subject into the Realm member it names.
+///
+/// The admin surfaces take the subject as text. A canonical account selector
+/// is taken as is; a bare principal is joined against the locally replayed
+/// roster and accepted only when exactly one member account carries it. A
+/// principal that is not in the roster, or that appears under two Stations,
+/// fails closed: completing it with this client's Station would grant to
+/// `(principal, here)`, which for a member hosted elsewhere is an account that
+/// is not in the Realm (account-lifecycle.md §156/§158).
+pub(crate) fn resolve_realm_member_account(
+    store: &LocalStateStore,
+    realm_id: &str,
+    subject: &str,
+) -> anyhow::Result<arkret_sdk::AccountId> {
+    let subject = subject.trim();
+    if let Some(account) = crate::mls_api_helpers::account_id_from_selector(subject) {
+        return Ok(account);
+    }
+    let principal_id = crate::mls_api_helpers::principal_core_id(subject)
+        .map_err(|error| anyhow::anyhow!("subject is not a principal id: {error}"))?;
+    let state = store.load();
+    let projection = state.realm_tree_projections.get(realm_id);
+    let mut candidates = crate::views::member_display::realm_member_roster(projection)
+        .into_iter()
+        .filter_map(|row| row.actor_id.as_account_id().cloned())
+        .filter(|account| account.principal_id == principal_id)
+        .collect::<Vec<_>>();
+    candidates.dedup();
+    match candidates.as_slice() {
+        [account] => Ok(account.clone()),
+        [] => anyhow::bail!(
+            "subject {principal_id} is not a member account of this Realm; paste the full account selector to grant to an account hosted elsewhere"
+        ),
+        _ => anyhow::bail!(
+            "subject {principal_id} is a member of this Realm under more than one Station; paste the full account selector"
+        ),
+    }
+}
+
 pub(crate) fn projected_members_for_realm(store: &LocalStateStore, realm_id: &str) -> Vec<String> {
     let state = store.load();
     let Some(projection) = state.realm_tree_projections.get(realm_id) else {

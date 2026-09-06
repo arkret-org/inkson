@@ -170,7 +170,7 @@ pub(crate) fn hydrate_notifications(
     hydrate_notifications_with_privacy_gate(
         raw_notifications,
         local_state,
-        "",
+        None,
         push_rules,
         dnd,
         &crate::sidecar::SidecarPrivacyGate::default(),
@@ -181,12 +181,12 @@ pub(crate) fn hydrate_notifications(
 pub(crate) fn hydrate_notifications_for_actor(
     raw_notifications: Vec<StoredNotification>,
     local_state: &ClientLocalState,
-    actor_id: &str,
+    actor: &arkret_sdk::ActorId,
 ) -> Vec<UiNotification> {
     hydrate_notifications_with_privacy_gate(
         raw_notifications,
         local_state,
-        actor_id,
+        Some(actor),
         None,
         None,
         &crate::sidecar::SidecarPrivacyGate::default(),
@@ -196,13 +196,15 @@ pub(crate) fn hydrate_notifications_for_actor(
 pub(crate) fn hydrate_notifications_with_privacy_gate(
     raw_notifications: Vec<StoredNotification>,
     local_state: &ClientLocalState,
-    actor_id: &str,
+    // This account's complete ActorId; `None` when no account is active, in
+    // which case no Realm counts as joined and every invite stays visible.
+    actor: Option<&arkret_sdk::ActorId>,
     push_rules: Option<&PushRulesConfig>,
     dnd: Option<&DndSettings>,
     sidecar_privacy_gate: &crate::sidecar::SidecarPrivacyGate,
 ) -> Vec<UiNotification> {
     let joined_realms =
-        JoinedRealmIds::from_local_projections(&local_state.realm_tree_projections, actor_id);
+        JoinedRealmIds::from_local_projections(&local_state.realm_tree_projections, actor);
     let mut seen_invite_targets = BTreeSet::new();
     let mut notifications = raw_notifications
         .into_iter()

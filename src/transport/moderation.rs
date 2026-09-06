@@ -21,6 +21,10 @@ pub async fn report(
     )?;
     let principal_id = crate::mls_api_helpers::principal_core_id(actor)
         .map_err(|error| anyhow::anyhow!("invalid moderation reporter DID: {error}"))?;
+    let authority = submitter.authority()?;
+    if principal_id != authority.principal_id {
+        anyhow::bail!("moderation reporter does not belong to the authenticated account");
+    }
     let signed = submitter.author_for_direct_submission(&event).await?;
     let report_event = crate::authorization_lease::standard_initial_submission(
         submitter.http(),
@@ -30,7 +34,7 @@ pub async fn report(
     .await?;
     let body = arkret_sdk::ModerationReportRequestBody { report_event };
     body.validate_authoring_context(
-        &arkret_sdk::AccountId::new(principal_id, crate::operation::authoring_station_id()?),
+        authority,
         &arkret_sdk::ModerationReportAcceptedTargetBasis {
             target_ref: target_ref.to_owned(),
             effective_scope,

@@ -2,9 +2,10 @@ use serde_json::json;
 
 use crate::ephemeral::validate_outgoing_registered_event_payload;
 use crate::event_builders::{
-    build_member_state_transition_event, build_realm_bootstrap_steps, build_realm_create_event,
-    build_realm_state_event, build_sas_key_verification_content,
-    build_signed_device_verification_proof, build_space_create_event, test_single_signer_notary,
+    build_member_state_transition_event, build_realm_bootstrap_steps_for_station,
+    build_realm_create_event, build_realm_state_event_for_station,
+    build_sas_key_verification_content, build_signed_device_verification_proof,
+    build_space_create_event, test_single_signer_notary,
 };
 use crate::operation::TypedOperationBuilder;
 use crate::realm_defaults::RECOMMENDED_REALM_ENCRYPTION_FLOOR;
@@ -33,7 +34,8 @@ fn canonical_space_join_rule_keeps_v1_invite_value() {
 #[test]
 fn space_bootstrap_events_use_canonical_create_and_facet_kinds() {
     let events = crate::event_submit::author_event_unit_for_test(
-        build_realm_bootstrap_steps(
+        build_realm_bootstrap_steps_for_station(
+            crate::test_support::core_id(crate::test_support::STATION_ID),
             test_genesis_salt(),
             "did:web:alice.example",
             "did:web:server.example",
@@ -267,7 +269,8 @@ fn plaintext_realm_create_does_not_claim_e2ee_floors() {
 
 #[test]
 fn realm_bootstrap_rejects_prejoin_history_with_strict_mls_scheme() {
-    let err = build_realm_bootstrap_steps(
+    let err = build_realm_bootstrap_steps_for_station(
+        crate::test_support::core_id(crate::test_support::STATION_ID),
         test_genesis_salt(),
         "did:web:alice.example",
         "did:web:server.example",
@@ -298,7 +301,8 @@ fn realm_bootstrap_rejects_prejoin_history_with_strict_mls_scheme() {
 #[test]
 fn realm_bootstrap_allows_joined_history_with_strict_mls_scheme() {
     let events = crate::event_submit::author_event_unit_for_test(
-        build_realm_bootstrap_steps(
+        build_realm_bootstrap_steps_for_station(
+            crate::test_support::core_id(crate::test_support::STATION_ID),
             test_genesis_salt(),
             "did:web:alice.example",
             "did:web:server.example",
@@ -344,7 +348,8 @@ fn realm_bootstrap_allows_joined_history_with_strict_mls_scheme() {
 #[test]
 fn bootstrap_envelopes_have_no_sdk_digest_drift() {
     let events = crate::event_submit::author_event_unit_for_test(
-        build_realm_bootstrap_steps(
+        build_realm_bootstrap_steps_for_station(
+            crate::test_support::core_id(crate::test_support::STATION_ID),
             test_genesis_salt(),
             "did:web:alice.example",
             "did:web:server.example",
@@ -529,7 +534,8 @@ fn realm_bootstrap_payloads_match_spec_schema() {
             crate::event_signer::build_ed25519_signer([42_u8; 32], "did:web:alice.example"),
         )));
     let events = crate::event_submit::author_event_unit_for_test(
-        build_realm_bootstrap_steps(
+        build_realm_bootstrap_steps_for_station(
+            crate::test_support::core_id(crate::test_support::STATION_ID),
             test_genesis_salt(),
             "did:web:alice.example",
             "did:web:server.example",
@@ -592,14 +598,16 @@ fn realm_join_and_discovery_authoring_rejects_values_outside_spec_enums() {
     assert!(
         serde_json::from_value::<arkret_sdk::RealmDiscoveryValue>(json!("discoverable")).is_err()
     );
-    build_realm_state_event::<arkret_sdk::event_spec::RealmJoinRule>(
+    build_realm_state_event_for_station::<arkret_sdk::event_spec::RealmJoinRule>(
+        crate::test_support::core_id(crate::test_support::STATION_ID),
         realm_id,
         actor_id,
         arkret_sdk::DigestSuite::Sha256,
         arkret_sdk::RealmJoinRulePayload::new(arkret_sdk::RealmJoinRuleValue::KnockRestricted),
     )
     .unwrap();
-    build_realm_state_event::<arkret_sdk::event_spec::RealmDiscovery>(
+    build_realm_state_event_for_station::<arkret_sdk::event_spec::RealmDiscovery>(
+        crate::test_support::core_id(crate::test_support::STATION_ID),
         realm_id,
         actor_id,
         arkret_sdk::DigestSuite::Sha256,

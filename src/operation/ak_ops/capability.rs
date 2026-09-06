@@ -73,8 +73,12 @@ pub fn capability_revoke(
 /// `subject`) carries the full grant object, because the reducer fails
 /// closed on a grant body with no `issuer` or no `actions`.
 ///
-/// `subject` is the delegee DID the grant authorizes; `actor` is the
-/// issuer (and the Envelope signer). `resources` defaults to a single
+/// `subject` is the delegee's complete account; `actor` is the issuer (and
+/// the Envelope signer). The subject is closed by the caller (resolved from
+/// the Realm roster or pasted as the canonical selector) because a grant to
+/// `(principal, this Station)` for a member hosted elsewhere would name an
+/// account that is not in the Realm at all (account-lifecycle.md §156).
+/// `resources` defaults to a single
 /// `{kind:"realm", realm_id}` selector — the management surface this
 /// covers. The Envelope `seal_basis` / signature carries the issuer
 /// proof; the per-grant `proofs[]` the strict SDK builder mints is not
@@ -83,7 +87,7 @@ pub fn capability_revoke(
 pub fn capability_grant_actions(
     realm_id: &str,
     actor: &str,
-    subject: &str,
+    subject: &arkret_sdk::AccountId,
     actions: &[&str],
     expires_at: Option<&str>,
     constraints: Value,
@@ -114,7 +118,7 @@ pub fn capability_grant_actions(
 pub fn capability_grant_actions_with_resources(
     realm_id: &str,
     actor: &str,
-    subject: &str,
+    subject: &arkret_sdk::AccountId,
     actions: &[&str],
     resources: Vec<arkret_sdk::WireResourceSelector>,
     expires_at: Option<&str>,
@@ -124,7 +128,6 @@ pub fn capability_grant_actions_with_resources(
     let realm = trim_realm_id(realm_id);
     let realm_typed = arkret_sdk::RealmId::new(realm.clone())?;
     let actor_typed = crate::mls_api_helpers::principal_core_id(actor)?;
-    let subject_typed = crate::mls_api_helpers::principal_core_id(subject)?;
     let expires_at = expires_at
         .map(str::parse)
         .transpose()
@@ -148,10 +151,10 @@ pub fn capability_grant_actions_with_resources(
         realm_id: Some(realm_typed.clone()),
         issuer_id: arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
             actor_typed,
-            station_id.clone(),
+            station_id,
         )),
         subject: arkret_sdk::CapabilitySubject::Actor(arkret_sdk::ActorId::account(
-            arkret_sdk::AccountId::new(subject_typed, station_id),
+            subject.clone(),
         )),
         actions: actions.iter().map(|action| (*action).to_owned()).collect(),
         resources,
@@ -186,7 +189,7 @@ mod tests {
         let operation = capability_grant_actions(
             "ak:realm:AV1bzsPGpTD74Cq12d9EOrCkieTddiSndS0kDtK1W2hM",
             "did:web:issuer.example",
-            "did:web:subject.example",
+            &crate::test_support::authority("did:web:subject.example"),
             &["ak.message.create"],
             None,
             Value::Null,
@@ -215,7 +218,7 @@ mod tests {
         let operation = capability_grant_actions(
             "ak:realm:AV1bzsPGpTD74Cq12d9EOrCkieTddiSndS0kDtK1W2hM",
             "did:web:issuer.example",
-            "did:web:subject.example",
+            &crate::test_support::authority("did:web:subject.example"),
             &["ak.realm.admin"],
             None,
             Value::Null,

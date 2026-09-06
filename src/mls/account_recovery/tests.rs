@@ -14,7 +14,6 @@ use super::backup_body::{
     MLS_ACCOUNT_SECRET_ITEM_KIND, MLS_ACCOUNT_SECRET_SECRET_ID, MLS_PRIVATE_PLAINTEXT_ITEM_KIND,
     MLS_PRIVATE_PLAINTEXT_SECRET_ID, build_mls_account_secret_backup_body_with_kek,
     build_mls_account_secret_backup_successor_body_with_kek_and_version,
-    build_mls_account_secret_recovery_public_key_backup,
     build_mls_account_secret_recovery_public_key_backup_in_series,
     build_mls_private_plaintext_backup_body_with_kek, decrypt_mls_account_secret_backup,
     decrypt_mls_private_plaintext_backup,
@@ -96,7 +95,7 @@ fn wrap() -> Value {
     sign_wire_envelope(key_backup_wire(
         &build_mls_account_secret_backup_body_with_kek(
             BACKUP_ID,
-            ACTOR,
+            &authority(),
             DEVICE,
             &kek,
             ACCOUNT_SECRET,
@@ -113,15 +112,17 @@ fn wrap() -> Value {
 fn recovery_hpke_backup() -> Value {
     let (_sk, pk) = crate::hpke_backup::generate_recovery_keypair().unwrap();
     sign_wire_envelope(key_backup_wire(
-        &build_mls_account_secret_recovery_public_key_backup(
+        &build_mls_account_secret_recovery_public_key_backup_in_series(
             "ak:backup:01964137-0000-7000-8000-00000000c0de",
-            ACTOR,
+            &authority(),
             DEVICE,
             &pk,
             "did:web:alice.example#recovery",
             ACCOUNT_SECRET,
             1,
             ("ak:policy:01964137-0000-7000-8000-0000000000a1", 3),
+            None,
+            None,
         )
         .unwrap(),
     ))
@@ -322,9 +323,14 @@ fn round_trips_even_when_random_bytes_would_need_url_safe_alphabet() {
     let kek = derive_vault_kek(PASSPHRASE).unwrap();
     for i in 0..32u32 {
         let secret = format!("account-secret-payload-with-entropy-{i:08x}-padding++//");
-        let body =
-            build_mls_account_secret_backup_body_with_kek(BACKUP_ID, ACTOR, DEVICE, &kek, &secret)
-                .unwrap();
+        let body = build_mls_account_secret_backup_body_with_kek(
+            BACKUP_ID,
+            &authority(),
+            DEVICE,
+            &kek,
+            &secret,
+        )
+        .unwrap();
         let body = key_backup_wire(&body);
 
         for field in [
@@ -379,15 +385,17 @@ fn select_account_secret_finds_it_in_a_list_payload() {
 fn preferred_account_secret_requires_recovery_public_key() {
     let passphrase_wrapped = wrap();
     let (_sk, pk) = crate::hpke_backup::generate_recovery_keypair().unwrap();
-    let hpke = build_mls_account_secret_recovery_public_key_backup(
+    let hpke = build_mls_account_secret_recovery_public_key_backup_in_series(
         "ak:backup:01964137-0000-7000-8000-00000000c001",
-        ACTOR,
+        &authority(),
         DEVICE,
         &pk,
         "did:web:alice.example#recovery",
         ACCOUNT_SECRET,
         1,
         ("ak:policy:01964137-0000-7000-8000-0000000000a1", 3),
+        None,
+        None,
     )
     .unwrap();
     let hpke = key_backup_wire(&hpke);
@@ -488,7 +496,7 @@ fn private_plaintext_successor_is_sealed_with_final_series_metadata() {
     let kek = derive_vault_kek(ACCOUNT_SECRET.as_bytes()).unwrap();
     let genesis = build_mls_private_plaintext_backup_body_with_kek(
         SIDECAR_BACKUP_ID,
-        ACTOR,
+        &authority(),
         DEVICE,
         &kek,
         br#"{"realm":{"strand":{"title":"first"}}}"#,
@@ -520,15 +528,17 @@ fn recovery_public_key_backup_policy_ref_is_enforced_on_open() {
 
     let (recovery_sk, recovery_pk) = crate::hpke_backup::generate_recovery_keypair().unwrap();
     // SEC-05: build a backup bound to policy (P1, v3).
-    let body = build_mls_account_secret_recovery_public_key_backup(
+    let body = build_mls_account_secret_recovery_public_key_backup_in_series(
         BACKUP_ID,
-        ACTOR,
+        &authority(),
         DEVICE,
         &recovery_pk,
         "did:web:alice.example#recovery",
         ACCOUNT_SECRET,
         1,
         ("ak:policy:01964137-0000-7000-8000-0000000000a1", 3),
+        None,
+        None,
     )
     .unwrap();
     let body = key_backup_wire(&body);
@@ -625,15 +635,17 @@ fn recovery_public_key_backup_without_policy_ref_rejected_when_policy_expected()
 
     let (recovery_sk, recovery_pk) = crate::hpke_backup::generate_recovery_keypair().unwrap();
     // Backup built WITHOUT a policy ref.
-    let body = build_mls_account_secret_recovery_public_key_backup(
+    let body = build_mls_account_secret_recovery_public_key_backup_in_series(
         BACKUP_ID,
-        ACTOR,
+        &authority(),
         DEVICE,
         &recovery_pk,
         "did:web:alice.example#recovery",
         ACCOUNT_SECRET,
         1,
         ("ak:policy:01964137-0000-7000-8000-0000000000a1", 3),
+        None,
+        None,
     )
     .unwrap();
     let mut body = key_backup_wire(&body);
@@ -872,7 +884,7 @@ fn wrap_sidecar() -> (Vec<u8>, Value) {
     let kek = derive_vault_kek(ACCOUNT_SECRET.as_bytes()).unwrap();
     let body = build_mls_private_plaintext_backup_body_with_kek(
         SIDECAR_BACKUP_ID,
-        ACTOR,
+        &authority(),
         DEVICE,
         &kek,
         &json,

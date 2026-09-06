@@ -33,14 +33,19 @@ pub(crate) struct JoinedRealmIds(BTreeSet<String>);
 
 impl JoinedRealmIds {
     /// From the sync response's typed Realm roster.
+    ///
+    /// `actor` is this account's complete ActorId. Membership is judged on the
+    /// whole value: the same principal joined at another Station is a different
+    /// account, and treating its row as ours would hide a Realm invite this
+    /// account never accepted (account-lifecycle.md §156).
     pub(crate) fn from_realm_entries(
         entries: &BTreeMap<RealmId, RealmSyncEntry>,
-        actor_id: &str,
+        actor: &arkret_sdk::ActorId,
     ) -> Self {
         Self(
             entries
                 .iter()
-                .filter(|(_, entry)| actor_is_joined_member(entry, actor_id))
+                .filter(|(_, entry)| actor_is_joined_member(entry, actor))
                 .map(|(realm_id, _)| realm_id.as_str().to_owned())
                 .collect(),
         )
@@ -54,9 +59,9 @@ impl JoinedRealmIds {
     /// than silently claiming an authorization it cannot prove.
     pub(crate) fn from_local_projections(
         projections: &BTreeMap<String, Value>,
-        actor_id: &str,
+        actor: Option<&arkret_sdk::ActorId>,
     ) -> Self {
-        let Ok(actor_id) = arkret_sdk::DidCoreId::new(actor_id.trim().to_owned()) else {
+        let Some(actor) = actor else {
             return Self::default();
         };
         Self(
@@ -70,7 +75,7 @@ impl JoinedRealmIds {
                             members.iter().any(|member| {
                                 serde_json::from_value::<MemberRosterEntry>(member.clone())
                                     .is_ok_and(|member| {
-                                        member.actor_id.signing_principal_id() == &actor_id
+                                        member.actor_id == *actor
                                             && member.membership == MembershipState::Join
                                     })
                             })
@@ -96,15 +101,12 @@ impl JoinedRealmIds {
     }
 }
 
-pub(crate) fn actor_is_joined_member(entry: &RealmSyncEntry, actor_id: &str) -> bool {
-    let Ok(actor_id) = arkret_sdk::DidCoreId::new(actor_id.trim().to_owned()) else {
-        return false;
-    };
+pub(crate) fn actor_is_joined_member(entry: &RealmSyncEntry, actor: &arkret_sdk::ActorId) -> bool {
     entry.member_roster.as_ref().is_some_and(|roster| {
-        roster.entries.iter().any(|member| {
-            member.actor_id.signing_principal_id() == &actor_id
-                && member.membership == MembershipState::Join
-        })
+        roster
+            .entries
+            .iter()
+            .any(|member| member.actor_id == *actor && member.membership == MembershipState::Join)
     })
 }
 
