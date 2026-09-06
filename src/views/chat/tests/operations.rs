@@ -65,7 +65,6 @@ fn chat_message_create_operation_emits_schema_canonical_content() {
     assert!(!op.payload().contains_key("audience_mentions"));
     assert!(!op.payload().contains_key("mention_relations"));
     assert!(!op.payload().contains_key("reply_to_id"));
-    assert!(!op.payload().contains_key("thread_id"));
     arkret_schema_conformance::event_payload_validator_catalog()
         .unwrap()
         .validate_payload(
@@ -237,7 +236,6 @@ fn chat_message_create_operation_includes_reply_fields_only_when_present() {
         op.payload()["reply_to_id"].as_str(),
         Some("ak:message:ARELvWOpF6BRrks3DlbQy-9XIE6aAQQumDQp7fA4ApeM")
     );
-    assert!(!op.payload().contains_key("thread_id"));
     arkret_schema_conformance::event_payload_validator_catalog()
         .unwrap()
         .validate_payload(

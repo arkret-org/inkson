@@ -286,7 +286,7 @@ pub(crate) fn wasm_secure_store_ready() -> bool {
 
 /// E2EE-at-rest T1 — load an exact scope/group's aggregated `history_secret`s from the
 /// hardened SecureKeyStore. Returns `None` before IndexedDB initialization (fail
-/// closed) so callers fall back to any transitional inline copy; returns
+/// closed) so callers fall back to the in-process copy; returns
 /// `Some(empty)` when upgraded but no secrets are stored for the realm.
 pub(crate) fn load_history_secrets(
     scope_group_key: &str,

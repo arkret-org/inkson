@@ -74,7 +74,7 @@ pub(crate) fn message_actor_from_candidates(candidates: &[&Value]) -> Option<Str
 fn discussion_event_kind(value: &Value) -> Option<&str> {
     value_string_at(
         value,
-        &["kind", "event_kind", "type", "op_type", "event_type"],
+        &["kind", "event_kind", "type"],
     )
 }
 

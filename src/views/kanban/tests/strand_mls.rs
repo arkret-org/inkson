@@ -19,7 +19,7 @@ fn strand_body_display_text_reads_composite_parts() {
         "kind": "ak.content.composite",
         "parts": [
             { "kind": "ak.content.text", "body": "First block" },
-            { "kind": "ak.content.text", "text": "Second block" }
+            { "kind": "ak.content.text", "body": "Second block" }
         ]
     });
 

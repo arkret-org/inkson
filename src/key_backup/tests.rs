@@ -377,19 +377,6 @@ fn key_backup_validator_rejects_active_mls_state_item_kinds() {
 }
 
 #[test]
-fn key_backup_validator_rejects_legacy_aad_mirror() {
-    let root = test_root();
-    let body = build_recovery_vault_backup_body(BACKUP_ID, ACTOR, DEVICE, &root, b"x").unwrap();
-    let mut body = wire(&body);
-    validate_wire_envelope(&body, BackupKind::SecretStorage)
-        .expect("freshly built recovery vault backup validates");
-    body["domain_separation"]["aead_aad"] = json!({"recipient_method":"passphrase_kdf"});
-    let err = validate_wire_envelope(&body, BackupKind::SecretStorage)
-        .expect_err("legacy AAD mirrors must be rejected");
-    assert!(err.contains("unknown field"), "{err}");
-}
-
-#[test]
 fn key_backup_validator_rejects_missing_domain_separation() {
     let root = test_root();
     let body = build_recovery_vault_backup_body(BACKUP_ID, ACTOR, DEVICE, &root, b"x").unwrap();

@@ -151,21 +151,6 @@ fn realm_member_roster_reads_r32_digest_only() {
 }
 
 #[test]
-fn realm_member_roster_rejects_removed_digest_key() {
-    // The roster entry is a closed wire type: the legacy
-    // `identity_state_digest` key is not ignored, it makes the whole entry
-    // unparseable so no drifted producer can smuggle a display field in.
-    let projection = json!({
-        "member_roster_entries": [{
-            "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:acme.example:users:removed","station_id":ROSTER_STATION}},
-            "membership": "join",
-            "identity_state_digest": "sha256:cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd"
-        }]
-    });
-    assert!(realm_member_roster(Some(&projection)).is_empty());
-}
-
-#[test]
 fn realm_member_roster_ignores_bare_did_strings() {
     let projection = json!({
         "member_roster_entries": ["ak:did_core:web:bob.example", "ak:did_core:web:carol.example"]

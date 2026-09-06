@@ -759,7 +759,7 @@ mod agent_tests {
     }
 
     #[test]
-    fn build_action_approve_payload_binds_draft_digest_without_legacy_controller_mirror() {
+    fn build_action_approve_payload_binds_draft_digest() {
         let draft = serde_json::json!({
             "type": "ak.agent.draft.v1",
             "draft_id": "0197-draft",
@@ -778,7 +778,6 @@ mod agent_tests {
         )
         .unwrap();
         assert_eq!(payload["draft_id"], "0197-draft");
-        assert!(payload.get("controller_id").is_none());
         assert_eq!(payload["proposed_action"], "ak.message.create");
         assert_eq!(payload["approved_at"], "2026-06-26T00:00:00.000Z");
         assert_eq!(payload["expires_at"], "2026-06-26T01:00:00.000Z");

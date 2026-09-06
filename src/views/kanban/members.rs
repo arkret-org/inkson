@@ -148,8 +148,9 @@ pub(super) fn member_display_label_for_actor(
         .iter()
         .find(|row| row.actor_id.to_string() == actor_id)
         .or_else(|| {
-            // Legacy display-only authors may carry a principal, but an ambiguous
-            // principal must never pick an arbitrary Station's identity profile.
+            // A display-only author may be recorded as a bare principal rather
+            // than a full ActorId, but an ambiguous principal must never pick
+            // an arbitrary Station's identity profile.
             let mut matches = context.member_rows.iter().filter(|row| {
                 row.actor_id.signing_principal_id().as_str() == actor_id
                     || row

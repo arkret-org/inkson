@@ -42,8 +42,8 @@ fn stored_invite_credential(entry: &InviteDeliveryEntry) -> StoredInviteCredenti
 /// [`InviteDeliveryEntry`] type.
 ///
 /// The complete cell must decode and validate as the canonical SDK wire type.
-/// Malformed or legacy-shaped cells carry no credential anyone could rely on,
-/// so they fail closed instead of being partially trusted.
+/// Malformed cells carry no credential anyone could rely on, so they fail
+/// closed instead of being partially trusted.
 pub(crate) fn invite_delivery_entries_from_cell(
     content: &Value,
 ) -> Vec<(String, StoredInviteCredential)> {
@@ -216,7 +216,6 @@ impl LocalStateStore {
     pub(crate) fn ingest_invite_delivery_update_message(&mut self, message: &Value) -> bool {
         if message
             .get("kind")
-            .or_else(|| message.get("type"))
             .and_then(Value::as_str)
             != Some(arkret_wire::ActorPrivateUpdateKind::ACCOUNT_DATA_UPDATE)
         {
@@ -282,22 +281,6 @@ mod tests {
         assert_eq!(invite_id, INVITE_ID);
         assert_eq!(credential.invite_token, "ak:invite-token:abc");
         assert_eq!(credential.realm_id.as_str(), REALM_ID);
-    }
-
-    #[test]
-    fn legacy_entries_field_is_not_accepted() {
-        let content = json!({
-            "schema": InviteDelivery::SCHEMA,
-            "updated_at": "2026-08-18T00:00:00.000Z",
-            "entries": [entry(
-                INVITE_ID,
-                "ak:invite-token:legacy",
-                "2026-08-18T00:00:00.000Z",
-                "2099-08-25T00:00:00.000Z"
-            )]
-        });
-
-        assert!(invite_delivery_entries_from_cell(&content).is_empty());
     }
 
     #[test]

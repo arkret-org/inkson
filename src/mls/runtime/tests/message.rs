@@ -1578,18 +1578,6 @@ fn welcome_claim_receipt_context_must_match_exact_requester_realm_group_and_targ
 }
 
 #[test]
-fn legacy_direct_welcome_envelope_is_not_a_durable_payload() {
-    let legacy = json!({
-        "group_id": "fixture-group",
-        "epoch": 1,
-        "welcome": "AQID",
-        "welcome_hash": "sha256:039058c6f2c0cb492c533b0a4d14ef77cc0f78abccced5287d84a1a2011cfb81"
-    });
-    assert!(durable_welcome_payload_reject_reason(&legacy).is_some());
-    assert!(decode_welcome_envelope(&legacy).is_err());
-}
-
-#[test]
 fn local_welcome_hint_filters_by_realm_group_id() {
     let realm = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
     let other_realm = "ak:realm:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1";

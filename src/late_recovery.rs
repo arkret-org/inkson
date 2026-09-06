@@ -279,7 +279,7 @@ fn timestamp_from_contexts(value: &Value, keys: &[&str]) -> Option<DateTime<Utc>
 }
 
 fn audit_policy_access_payload_value(event: &Value) -> Option<&Value> {
-    if string_from_value(event, &["kind", "type", "event_type"])
+    if string_from_value(event, &["kind", "type"])
         == Some(arkret_wire::event_kind_str::AUDIT_ACCESSED)
     {
         return event
@@ -291,7 +291,7 @@ fn audit_policy_access_payload_value(event: &Value) -> Option<&Value> {
         let Some(candidate) = event.get(key).filter(|candidate| candidate.is_object()) else {
             continue;
         };
-        if string_from_value(candidate, &["kind", "type", "event_type"])
+        if string_from_value(candidate, &["kind", "type"])
             == Some(arkret_wire::event_kind_str::AUDIT_ACCESSED)
             || string_from_value(candidate, &["access_kind"]) == Some("e2ee_late_recovery")
         {

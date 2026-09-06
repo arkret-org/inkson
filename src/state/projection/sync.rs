@@ -166,10 +166,7 @@ pub fn projection_events_from_sync_realms(
                     .and_then(Value::as_str)
                     .unwrap_or(realm_id);
                 let sidecar_message_id = message_id.as_deref();
-                let strand_id = content
-                    .get("strand_id")
-                    .and_then(Value::as_str)
-                    .or_else(|| event.get("thread_id").and_then(Value::as_str));
+                let strand_id = content.get("strand_id").and_then(Value::as_str);
                 // a. Author sidecar — the plaintext the author stored on send.
                 let sidecar_body = store.and_then(|store| {
                     let message_id = sidecar_message_id?;
@@ -240,7 +237,6 @@ pub fn projection_events_from_sync_realms(
                 strand_id: content
                     .get("strand_id")
                     .and_then(Value::as_str)
-                    .or_else(|| event.get("thread_id").and_then(Value::as_str))
                     .map(ToOwned::to_owned),
                 id: event_id.clone(),
                 message_id,
@@ -256,10 +252,6 @@ pub fn projection_events_from_sync_realms(
                     .and_then(Value::as_str)
                     .unwrap_or("")
                     .to_owned(),
-                thread_id: event
-                    .get("thread_id")
-                    .and_then(Value::as_str)
-                    .map(ToOwned::to_owned),
                 reply_to: event
                     .get("reply_to")
                     .and_then(Value::as_str)

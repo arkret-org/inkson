@@ -152,7 +152,7 @@ fn message_redaction_marker_from_event(event: &Value) -> Option<MessageRedaction
     let kind = candidates.iter().find_map(|candidate| {
         value_string_at(
             candidate,
-            &["kind", "event_kind", "type", "op_type", "event_type"],
+            &["kind", "event_kind", "type"],
         )
     })?;
     if kind != event_kind_str::MESSAGE_REDACT && kind != event_kind_str::REDACTION {
@@ -354,7 +354,7 @@ fn reaction_marker_from_event(event: &Value) -> Option<ReactionMarker> {
     let kind = candidates.iter().find_map(|candidate| {
         value_string_at(
             candidate,
-            &["kind", "event_kind", "type", "op_type", "event_type"],
+            &["kind", "event_kind", "type"],
         )
     })?;
     let active = match kind {
@@ -1491,7 +1491,7 @@ pub(crate) fn chat_message_from_event_with_sidecar(
     } else {
         state_store.and_then(|store| {
             let message_id = message_protocol_message_id_from_candidates(&candidates)?;
-            let strand_id = first_string_in_candidates(&candidates, &["strand_id", "thread_id"])?;
+            let strand_id = first_string_in_candidates(&candidates, &["strand_id"])?;
             store.private_plaintext_for(message_realm, strand_id, &format!("message:{message_id}"))
         })
     };
@@ -1554,7 +1554,7 @@ pub(crate) fn chat_message_from_event_with_sidecar(
         .iter()
         .any(|candidate| message_kind_is_create(candidate) || message_kind_is_revise(candidate));
     let message_payload_shape =
-        first_string_in_candidates(&candidates, &["message_id", "strand_id", "thread_id"])
+        first_string_in_candidates(&candidates, &["message_id", "strand_id"])
             .is_some();
     if !explicit_message_kind && !message_payload_shape {
         return None;
@@ -1564,7 +1564,7 @@ pub(crate) fn chat_message_from_event_with_sidecar(
         .unwrap_or("event:unknown")
         .to_owned();
     let protocol_message_id = message_protocol_message_id_from_candidates(&candidates);
-    let strand_id = first_string_in_candidates(&candidates, &["strand_id", "thread_id"])
+    let strand_id = first_string_in_candidates(&candidates, &["strand_id"])
         .or_else(|| {
             event
                 .get("unsigned")
@@ -1690,7 +1690,7 @@ fn poll_content_from_private_sidecar(
 ) -> Option<Value> {
     let store = state_store?;
     let message_id = message_protocol_message_id_from_candidates(candidates)?;
-    let strand_id = first_string_in_candidates(candidates, &["strand_id", "thread_id"])?;
+    let strand_id = first_string_in_candidates(candidates, &["strand_id"])?;
     let message_realm = first_string_in_candidates(candidates, &["realm_id"]).unwrap_or(realm_id);
     let plaintext = store.private_plaintext_for(
         message_realm,

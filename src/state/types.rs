@@ -268,7 +268,6 @@ pub(crate) fn raw_operation_kind(payload: &Value) -> Option<&str> {
     payload
         .get("kind")
         .and_then(Value::as_str)
-        .or_else(|| payload.get("type").and_then(Value::as_str))
 }
 
 /// Persisted shape of the device identity. Production callers store this
@@ -1086,7 +1085,7 @@ pub struct ClientLocalState {
         BTreeMap<String, crate::mls::persistence::MlsLocalCheckpointEnvelope>,
     /// Checkpoint-proven MLS artifacts committed through Garth's single
     /// durable consumer. The ready index in this snapshot is authoritative;
-    /// `mls_local_checkpoints` only retains pre-accept authoring state and legacy
+    /// `mls_local_checkpoints` only retains pre-accept authoring state and
     /// receive-chain snapshots that have not advanced the winning epoch.
     #[serde(default)]
     pub accepted_mls_artifacts: garth::VersionedAcceptedMlsArtifactState,

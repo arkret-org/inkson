@@ -524,8 +524,8 @@ fn joined_member_signature_lists_only_joined_members_sorted() {
         }),
     );
 
-    // Only `join` members, deduped and sorted — the invalid legacy `invite`
-    // roster row is rejected. Invite lifecycle remains a separate projection.
+    // Only `join` members, deduped and sorted — an `invite` roster row is not
+    // valid. Invite lifecycle remains a separate projection.
     assert_eq!(
         joined_member_signature_for_realm(&store, realm_id),
         [
