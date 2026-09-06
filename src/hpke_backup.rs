@@ -30,7 +30,9 @@
 use anyhow::{Result, anyhow};
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+#[cfg(test)]
 use x25519_dalek::{PublicKey as X25519PublicKey, StaticSecret};
+#[cfg(test)]
 use zeroize::Zeroize as _;
 
 /// Output of [`hpke_seal`]: the RFC 9180 DHKEM encapsulated key (`enc`, the
@@ -52,6 +54,7 @@ fn x25519_32(bytes: &[u8], label: &str) -> Result<[u8; 32]> {
         .map_err(|_| anyhow!("{label} must be 32 bytes, got {}", bytes.len()))
 }
 
+#[cfg(test)]
 /// Generate a fresh X25519 recovery keypair. Returns `(private_key, public_key)`
 /// as raw 32-byte values; the public key is published and the private key is
 /// stored (encrypted) in the recovery vault.

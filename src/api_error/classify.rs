@@ -103,6 +103,7 @@ pub fn is_account_viewer_projection_missing_error(error: &anyhow::Error) -> bool
     })
 }
 
+#[cfg(test)]
 /// True only for the durable accepted-but-not-sealed device revocation gate.
 ///
 /// This state is deliberately non-terminal for local client material: the

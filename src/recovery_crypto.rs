@@ -10,6 +10,7 @@ pub use arkret_crypto::backup::{
 };
 use sha2::{Digest, Sha256};
 
+#[cfg(test)]
 pub const IDENTITY_RECOVERY_ENTROPY_BYTES: usize = 32;
 
 /// Generate a fresh 24-word BIP-39 identity recovery secret.
@@ -18,6 +19,7 @@ pub fn generate_recovery_key() -> Result<String> {
         .map_err(|error| anyhow!("recovery key generation: {error}"))
 }
 
+#[cfg(test)]
 pub fn format_recovery_key(bytes: &[u8]) -> String {
     arkret_crypto::identity_root::format_bip39_identity_recovery_mnemonic(bytes).unwrap_or_default()
 }

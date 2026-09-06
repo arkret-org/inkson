@@ -181,6 +181,7 @@ pub async fn describe_push_gateway(push_gateway_url: &str) -> anyhow::Result<Ser
         .await?)
 }
 
+#[cfg(test)]
 pub fn summarize_push_gateway(describe: &ServiceDescribe) -> String {
     let providers = describe
         .limits

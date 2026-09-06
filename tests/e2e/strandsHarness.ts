@@ -1,10 +1,14 @@
 import { expect, test } from "@playwright/test";
 import {
   CURRENT_STATION_ID,
+  DEMO_REALM,
   mockArkretApi,
 } from "./mockArkretApi";
 
-export { CURRENT_STATION_ID };
+// `DEMO_REALM` had a second literal copy here. The drift guard in
+// `mockArkretApi` only ever checked its own, so the two could disagree — and
+// did. One definition, re-exported.
+export { CURRENT_STATION_ID, DEMO_REALM };
 
 export function submittedEvent(body: any) {
   const entry = Array.isArray(body.events)
@@ -13,8 +17,6 @@ export function submittedEvent(body: any) {
   return entry?.event ?? entry;
 }
 
-export const DEMO_REALM =
-  "ak:realm:AZQnaSleDidYaYIvfwYy3au5gnd_DSinxyUHEl7ewtxk";
 export const DEMO_BOARD_SPACE =
   "ak:space:AY61QviMxoJ0ALEn5U39bA7Qbi1BxHCrOq4950m2JRjM";
 const DEFAULT_SERVER_URL = "https://local.host";

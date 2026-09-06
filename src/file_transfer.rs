@@ -635,30 +635,29 @@ impl FileTransferPlaintextSink for TransactionalDownloadSink {
     }
 }
 
+/// Decrypt a whole file-transfer blob already held in memory.
+///
+/// Production downloads segment by segment through
+/// [`decrypt_file_transfer_item_to_sink`]; this is the whole-buffer form the
+/// tests use. It runs the same [`validate_download_record`] gate — a second
+/// copy of that ladder drifted from it silently — and adds the two checks the
+/// streaming path can only make after it has seen every byte: the
+/// content-addressed digest and the declared blob size.
+#[cfg(test)]
 pub fn decrypt_file_transfer_ciphertext(
     record: &FileTransferRecord,
     ciphertext: &[u8],
 ) -> anyhow::Result<Vec<u8>> {
-    validate_ciphertext_binding(record, ciphertext)?;
-    let content_key_value = match &record.encryption.key_delivery {
-        FileTransferKeyDelivery::AccountDataWrappedKey { content_key } => content_key,
-        FileTransferKeyDelivery::ToDeviceWrappedKey { .. } => {
-            anyhow::bail!("file-transfer device_bound requires a to-device key message");
-        }
-    };
-    let content_key = decode_fixed::<CONTENT_KEY_LEN>(content_key_value)?;
-    decrypt_file_transfer_ciphertext_with_key(record, ciphertext, &content_key)
-}
-
-fn decrypt_file_transfer_ciphertext_with_key(
-    record: &FileTransferRecord,
-    ciphertext: &[u8],
-    content_key: &[u8; CONTENT_KEY_LEN],
-) -> anyhow::Result<Vec<u8>> {
+    let content_key = validate_download_record(record)?;
+    let digest = crate::canonical::sha256_digest(ciphertext);
+    verify_content_addressed_blob_ref(&record.blob_ref, &digest)?;
+    if record.blob_size_bytes != ciphertext.len() as u64 {
+        anyhow::bail!("file-transfer blob size mismatch");
+    }
     Ok(arkret_sdk::crypto::file_transfer_aead::decrypt(
         record,
         ciphertext,
-        content_key,
+        &content_key,
     )?)
 }
 
@@ -909,42 +908,6 @@ fn record_account_key(
     crypto: &FileTransferCryptoContext,
 ) -> anyhow::Result<String> {
     crate::account_data::file_transfer_account_data_key(crypto.namespace_key(), &record.transfer_id)
-}
-
-fn validate_ciphertext_binding(
-    record: &FileTransferRecord,
-    ciphertext: &[u8],
-) -> anyhow::Result<()> {
-    validate_ciphertext_blob_binding(record, ciphertext)?;
-    if !matches!(
-        &record.encryption.key_delivery,
-        FileTransferKeyDelivery::AccountDataWrappedKey { .. }
-    ) {
-        anyhow::bail!("file-transfer key delivery method unsupported");
-    }
-    if record.access.visibility != FileTransferAccessVisibility::ActorPrivate {
-        anyhow::bail!("file-transfer access visibility unsupported");
-    }
-    Ok(())
-}
-
-fn validate_ciphertext_blob_binding(
-    record: &FileTransferRecord,
-    ciphertext: &[u8],
-) -> anyhow::Result<()> {
-    record
-        .validate()
-        .map_err(|error| anyhow::anyhow!("file-transfer record invalid: {error}"))?;
-    let digest = crate::canonical::sha256_digest(ciphertext);
-    verify_content_addressed_blob_ref(&record.blob_ref, &digest)?;
-    if record.blob_size_bytes != ciphertext.len() as u64 {
-        anyhow::bail!("file-transfer blob size mismatch");
-    }
-    if record.encryption.aead_profile != AEAD_PROFILE_XCHACHA20_POLY1305_V1 {
-        anyhow::bail!("file-transfer AEAD profile mismatch");
-    }
-    validate_content_aad(record)?;
-    Ok(())
 }
 
 fn validate_content_aad(record: &FileTransferRecord) -> anyhow::Result<()> {

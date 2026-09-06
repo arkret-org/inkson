@@ -1328,28 +1328,6 @@ pub(crate) fn mls_group_member_device_ids_for_effective_scope(
     )
 }
 
-/// Cryptographic signing-principal projection, not a Realm membership roster.
-pub fn mls_group_member_principal_ids_for_effective_scope(
-    state_store: &crate::state::LocalStateStore,
-    secure_store: &dyn SecureKeyStore,
-    realm_id: &str,
-    circle_id: Option<&str>,
-    authority: &AccountId,
-    device_id: &DeviceId,
-) -> Option<Vec<String>> {
-    let snapshot = state_store.mls_checkpoint_for_effective_scope(realm_id, circle_id)?;
-    let secret = load_device_checkpoint_secret(secure_store, authority, device_id).ok()?;
-    let group = crate::mls::persistence::restore_envelope(&snapshot, &secret, 0).ok()?;
-    Some(
-        group
-            .member_principal_ids()
-            .ok()?
-            .iter()
-            .map(|did| did.as_str().to_owned())
-            .collect(),
-    )
-}
-
 pub fn collect_mls_welcome_messages_for_realm(
     messages: &[serde_json::Value],
     realm_id: &str,

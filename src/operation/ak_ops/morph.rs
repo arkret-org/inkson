@@ -5,8 +5,10 @@
 //! `ak.morph.update` patch builder is retained for the Morph patch payload
 //! family.
 
+#[cfg(test)]
 use super::{TypedOperationBuilder, morph_id_value, patch_from_value};
 
+#[cfg(test)]
 /// Build a `ak.morph.update` patch operation. Mirrors
 /// [`strand_update_patch`](super::strand_update_patch) for Morph objects;
 /// soland's `apply_morph_update` reducer accepts `payload.patch` with the

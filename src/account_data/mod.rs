@@ -132,6 +132,7 @@ impl AccountDataStore {
         self.snapshot_head.as_deref()
     }
 
+    #[cfg(test)]
     /// F-ACCT-SNAP-1: record the snapshot head the store was just
     /// reconciled to (called after applying a snapshot batch from the
     /// server). Subsequent live events apply on top of this point.
@@ -139,6 +140,7 @@ impl AccountDataStore {
         self.snapshot_head = Some(head.into());
     }
 
+    #[cfg(test)]
     /// F-ACCT-SNAP-1: drop the snapshot head (e.g. on logout or when a
     /// trust-bundle change invalidates prior reconciliation).
     pub fn clear_snapshot_head(&mut self) {

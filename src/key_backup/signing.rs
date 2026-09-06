@@ -3,7 +3,9 @@ use std::fmt;
 
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
-use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
+#[cfg(test)]
+use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+use ed25519_dalek::{Signer, SigningKey};
 use serde_json::Value;
 #[cfg(test)]
 use serde_json::json;
@@ -46,6 +48,7 @@ impl fmt::Display for KeyBackupUnlockBackoff {
 
 impl std::error::Error for KeyBackupUnlockBackoff {}
 
+#[cfg(test)]
 /// Check a key-backup envelope's `auth_data.signature` against
 /// `verifying_key`, recomputing `canonical_json(envelope without
 /// auth_data.signature)`. SDK validation first enforces the closed transcript

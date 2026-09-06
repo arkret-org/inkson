@@ -325,6 +325,7 @@ pub fn build_blocklist_account_data_body(
     serde_json::to_value(payload).map_err(|error| error.to_string())
 }
 
+#[cfg(test)]
 /// Decode the SDK payload and enforce holder binding.  The sync layer compares
 /// `payload.version` with the enclosing Account Data row revision before
 /// installing it, so this helper only validates the closed payload itself.

@@ -50,26 +50,10 @@ fn relation_create_payload_with_endpoints(
     ))
 }
 
-/// Build a schema-legal `ak.relation.create` event.
-pub fn relation_create(
-    realm_id: &str,
-    actor: &str,
-    kind: &str,
-    from_ref: &str,
-    to_ref: &str,
-) -> anyhow::Result<TypedOperationBuilder> {
-    // No relation id is minted here: `TypedOperationBuilder` stamps the derived one
-    // as `unsigned.local_target_ref` once the envelope exists.
-    Ok(TypedOperationBuilder::new::<
-        arkret_sdk::event_spec::RelationCreate,
-    >(
-        realm_id,
-        actor,
-        relation_create_payload(realm_id, actor, kind, from_ref, to_ref)?,
-    ))
-}
-
-/// Build a `ak.relation.tombstone` event targeting an existing Relation.
+/// Build a schema-legal `ak.relation.create` event whose `to_ref` is an actor.
+///
+/// No relation id is minted here: `TypedOperationBuilder` stamps the derived
+/// one as `unsigned.local_target_ref` once the envelope exists.
 pub fn relation_create_for_actor(
     realm_id: &str,
     actor: &str,

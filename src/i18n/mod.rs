@@ -25,6 +25,7 @@ use std::collections::HashMap;
 /// right-to-left locale stays a change in one crate rather than an audit of
 /// every layout.
 pub use arkret_locale::{TextDirection, UiLocale};
+#[cfg(test)]
 use chrono::{DateTime, Utc};
 use dioxus::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -182,6 +183,7 @@ pub fn missing_translation_snapshot() -> Vec<(String, String)> {
     out
 }
 
+#[cfg(test)]
 /// Format a UTC timestamp with locale-specific ordering.
 pub fn format_datetime(locale: UiLocale, timestamp: DateTime<Utc>) -> String {
     match locale {
@@ -210,11 +212,13 @@ pub struct TranslationCompleteness {
 }
 
 impl TranslationCompleteness {
+    #[cfg(test)]
     pub fn is_complete(&self) -> bool {
         self.missing_keys.is_empty()
     }
 }
 
+#[cfg(test)]
 /// Compare a locale dictionary against a reference dictionary.
 pub fn translation_completeness(
     reference: &TranslationDict,

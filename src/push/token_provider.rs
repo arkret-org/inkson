@@ -98,6 +98,7 @@ fn set_token(slot: &Mutex<Option<String>>, token: impl Into<String>) {
         .unwrap_or_else(std::sync::PoisonError::into_inner) = value;
 }
 
+#[cfg(test)]
 fn clear_token(slot: &Mutex<Option<String>>) {
     *slot
         .lock()
@@ -123,6 +124,7 @@ pub fn set_fcm_push_token(token: impl Into<String>) {
     set_token(fcm_token_slot(), token);
 }
 
+#[cfg(test)]
 /// Clear the bridged FCM token, for example after the OS reports token
 /// revocation or the user disables notifications.
 pub fn clear_fcm_push_token() {
@@ -135,6 +137,7 @@ pub fn set_apns_push_token(token: impl Into<String>) {
     set_token(apns_token_slot(), token);
 }
 
+#[cfg(test)]
 /// Clear the bridged APNs token after revocation or notification opt-out.
 pub fn clear_apns_push_token() {
     clear_token(apns_token_slot());
@@ -197,6 +200,7 @@ impl WebPushTokenProvider {
         }
     }
 
+    #[cfg(test)]
     /// Override the service-worker registration path (e.g.
     /// `/sw.js` or a versioned URL with cache-busting).
     pub fn with_service_worker_path(mut self, path: impl Into<String>) -> Self {

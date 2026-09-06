@@ -366,6 +366,12 @@ fn roster_account_for(
     index.get(principal_id).cloned().flatten()
 }
 
+/// Resolve `@controller/agent` selector tokens against the signed agent
+/// claim rather than the Realm roster.
+///
+/// The ruling behind that choice:
+///
+/// `review/spec-done/2026-09-05-1310-agent-selector-mention-has-no-normative-station-source.md`
 async fn resolve_agent_selector_mentions(
     mentions_enabled: bool,
     base_url: &str,
@@ -423,9 +429,7 @@ async fn resolve_agent_selector_mentions(
         // to do was a guess with two failure modes the ruling names: it
         // silently excluded an authorized agent that is not a Realm member,
         // and it had no answer when the same principal held accounts on two
-        // Stations. Ruling
-        // `review/spec-done/2026-09-05-1310-agent-selector-mention-has-no-normative-station-source.
-        // md`.
+        // Stations. See the ruling named on this function.
         let subject_account_id = outcome.subject_account_id.clone();
         // The controller half is optional audit metadata and its authoritative
         // source is the verified controller handle claim, not the roster. When

@@ -341,16 +341,28 @@ fn realm_genesis_seal(input: Value) -> Result<Value> {
     }
 
     let mut post_state = BTreeMap::new();
+    let mut post_cas_heads = arkret_state::CasHeadsByCell::new();
     for (cell, ops) in ops_by_cell {
         let binding = registry
             .resolve(&input.realm_id, &cell)
             .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        // A `cas_register` cell contributes its head set, not its value, to the
+        // §6.2.1 state_root. The heads come from the same ops the join sees.
+        if binding.lattice.kind() == arkret_state::LatticeKind::CasRegister {
+            let heads = arkret_state::cas_heads_for_batches(std::slice::from_ref(&ops));
+            if !heads.is_empty() {
+                post_cas_heads.insert(cell.clone(), heads);
+            }
+        }
         post_state.insert(
             cell.clone(),
             arkret_state::join_cell(binding.lattice.as_ref(), &cell, &ops),
         );
     }
-    let state_root = arkret_state::compute_state_root(&post_state, digest_suite)?;
+    let state_root = arkret_state::compute_state_root(
+        arkret_state::GovernanceView::new(&post_state, &post_cas_heads),
+        digest_suite,
+    )?;
 
     let signer = arkret_signatures::Ed25519PayloadSigner::new(
         authority.signing_key,

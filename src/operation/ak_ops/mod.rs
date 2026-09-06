@@ -47,6 +47,7 @@ pub use discussion::*;
 pub use incident_kanban::*;
 pub use invite::*;
 pub use moderation::*;
+#[cfg(test)]
 pub use morph::*;
 pub use realm::*;
 pub use relation::*;
@@ -78,6 +79,7 @@ pub(super) fn circle_id_value(value: &str) -> anyhow::Result<arkret_sdk::CircleI
         .map_err(|err| anyhow::anyhow!("invalid circle id {value:?}: {err:?}"))
 }
 
+#[cfg(test)]
 pub(super) fn morph_id_value(value: &str) -> anyhow::Result<arkret_sdk::MorphId> {
     arkret_sdk::MorphId::new(value.to_owned())
         .map_err(|err| anyhow::anyhow!("invalid morph id {value:?}: {err:?}"))

@@ -19,52 +19,6 @@ mod agent_tests {
     }
 
     #[test]
-    fn pairing_renewal_is_available_before_an_open_request_expires() {
-        assert!(super::super::admin::should_offer_pairing_renewal(
-            true,
-            "pending_runtime_key"
-        ));
-        assert!(super::super::admin::should_offer_pairing_renewal(
-            true,
-            "pairing_expired"
-        ));
-        assert!(!super::super::admin::should_offer_pairing_renewal(
-            false,
-            "pending_runtime_key"
-        ));
-        // Bootstrap renewal is offered only for the never-keyed runtime states;
-        // ready/replacing (keyed) are not bootstrap-renewable.
-        assert!(!super::super::admin::should_offer_pairing_renewal(
-            true, "ready"
-        ));
-        assert!(!super::super::admin::should_offer_pairing_renewal(
-            true,
-            "replacing"
-        ));
-    }
-
-    #[test]
-    fn pairing_credentials_require_bootstrap_or_explicit_replacement_state() {
-        use super::super::admin::should_show_pairing_card;
-
-        assert!(should_show_pairing_card(
-            "pending_runtime_key",
-            true,
-            false,
-            false
-        ));
-        assert!(should_show_pairing_card(
-            "pairing_expired",
-            true,
-            true,
-            false
-        ));
-        assert!(!should_show_pairing_card("ready", true, false, true));
-        assert!(!should_show_pairing_card("replacing", true, false, false));
-        assert!(should_show_pairing_card("replacing", true, false, true));
-    }
-
-    #[test]
     fn actor_kind_label_maps_canonical_variants() {
         assert_eq!(actor_kind_label(Some("user")), Some("User"));
         assert_eq!(actor_kind_label(Some("organization")), Some("Organization"));

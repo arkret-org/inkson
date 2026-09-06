@@ -11,7 +11,12 @@ import {
   PRINCIPAL_HTTP_CORE_BUNDLE,
 } from "./currentDescribeCapabilities";
 
-const DEMO_REALM = "ak:realm:AZQnaSleDidYaYIvfwYy3au5gnd_DSinxyUHEl7ewtxk";
+// Derived from the `demo-realm-genesis` wire fixture: it is the digest of
+// the authored Realm create Event, so any change to that Event's canonical
+// bytes moves it. The guard below refuses to run on a stale value rather
+// than serving a Realm the client cannot address.
+export const DEMO_REALM =
+  "ak:realm:AXLdBpLtU052snUYmC7z6ugXuYM9JDBd4PUF5AwhZ39K";
 export const PRINCIPAL_CONTROL_REALM =
   "ak:realm:Ac9iLS6pVSDjqFeDeJjvUhbtREpxQ8IWem2mi64wrqDq";
 const STRAND_POSITION_CELL_FAMILY = "ak.component.strand.position.v1";
@@ -2871,7 +2876,10 @@ export async function mockArkretApi(
           {
             peer: {
               kind: "human",
-              principal_id: "ak:did_core:web:bob.example",
+              account_id: {
+                principal_id: "ak:did_core:web:bob.example",
+                station_id: CURRENT_STATION_ID,
+              },
             },
             state: "accepted",
             request_event_ref:
@@ -2895,9 +2903,12 @@ export async function mockArkretApi(
                 "ak:event:AQmnyvvBmKOWOEOSD2rAYsVBQn6vJ_wdbdUY8CKUGB5c",
               state: "found",
             },
-            agents: [
+            contact_agents: [
               {
-                agent_id: "ak:did_core:web:agents.example:bob-helper",
+                actor_id: {
+                  kind: "service",
+                  service_id: "ak:did_core:web:agents.example:bob-helper",
+                },
                 controller_account_id: {
                   principal_id: "ak:did_core:web:bob.example",
                   station_id: CURRENT_STATION_ID,
@@ -2920,7 +2931,10 @@ export async function mockArkretApi(
           {
             peer: {
               kind: "human",
-              principal_id: "ak:did_core:web:carol.example",
+              account_id: {
+                principal_id: "ak:did_core:web:carol.example",
+                station_id: CURRENT_STATION_ID,
+              },
             },
             state: "pending_outgoing",
             request_event_ref:
@@ -3155,24 +3169,66 @@ export async function mockArkretApi(
         devices: accountDeviceSummaries(),
       };
       if (primaryHandle) {
+        // `handle_claim_status_view` (`schemas/handle-claim.schema.json`): the
+        // signed core sits under `claim`, and the status half — who verified
+        // it, when, until when — wraps it. The client reads it that way
+        // (`transport::account::primary_handle_from_viewer` filters on
+        // `claim.claim.subject_account_id`, `status`, `revocation` and
+        // `fresh_until`), so a flat claim here is a Realm the panel silently
+        // shows as handle-less.
         viewer.primary_handle_claim = {
           schema: "ak.schema.handle_claim.v1",
-          handle: primaryHandle,
-          subject: accountPrincipalCoreId,
-          issuer: CURRENT_STATION_ID,
-          binding_state: "verified",
-          created_at: "2026-04-28T12:00:00.000Z",
-          expires_at: "2099-04-28T12:00:00.000Z",
-          proofs: [
-            {
-              kind: "detached_jws",
-              verification_method: `${CURRENT_STATION_DID}#handle-claim-key`,
-              payload_digest: `sha256:${"0".repeat(64)}`,
-              created_at: "2026-04-28T12:00:00.000Z",
-              proof_purpose: "holder_acceptance",
-              jws: "e30..c2ln",
+          claim: {
+            schema: "ak.schema.handle_claim_core.v1",
+            handle: primaryHandle,
+            handle_aliases: [],
+            subject_account_id: {
+              principal_id: accountPrincipalCoreId,
+              station_id: CURRENT_STATION_ID,
             },
-          ],
+            issuer_id: CURRENT_STATION_ID,
+            claim: { kind: "handle_binding" },
+            visibility: "public",
+            audience: null,
+            issued_at: "2026-04-28T12:00:00.000Z",
+            expires_at: "2099-04-28T12:00:00.000Z",
+            source_refs: [],
+            proofs: [
+              {
+                kind: "detached_jws",
+                verification_method: `${CURRENT_STATION_DID}#handle-claim-key`,
+                payload_digest: `sha256:${"0".repeat(64)}`,
+                created_at: "2026-04-28T12:00:00.000Z",
+                domain: "ak.handle_claim_proof.v1",
+                proof_purpose: "issuer_attestation",
+                jws: "e30..c2ln",
+              },
+              {
+                kind: "detached_jws",
+                verification_method: `${CURRENT_STATION_DID}#handle-claim-key`,
+                payload_digest: `sha256:${"0".repeat(64)}`,
+                created_at: "2026-04-28T12:00:00.000Z",
+                domain: "ak.handle_claim_proof.v1",
+                proof_purpose: "holder_acceptance",
+                jws: "e30..c2ln",
+              },
+            ],
+          },
+          status: "verified",
+          as_of: "2026-04-28T12:00:00.000Z",
+          verifier_id: CURRENT_STATION_ID,
+          verified_at: "2026-04-28T12:00:00.000Z",
+          revocation: null,
+          fresh_until: "2099-04-28T12:00:00.000Z",
+          status_proof: {
+            kind: "detached_jws",
+            verification_method: `${CURRENT_STATION_DID}#handle-claim-key`,
+            payload_digest: `sha256:${"0".repeat(64)}`,
+            created_at: "2026-04-28T12:00:00.000Z",
+            domain: "ak.handle_claim_status.v1",
+            proof_purpose: "status_attestation",
+            jws: "e30..c2ln",
+          },
         };
       }
       return json(route, viewer);

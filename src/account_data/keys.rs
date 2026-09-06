@@ -186,6 +186,7 @@ pub fn build_private_account_data_set(
     >(realm_id, actor, payload))
 }
 
+#[cfg(test)]
 pub fn build_private_account_data_tombstone(
     realm_id: &str,
     actor: &str,
