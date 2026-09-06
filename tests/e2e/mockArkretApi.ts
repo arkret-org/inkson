@@ -63,16 +63,6 @@ const eventIdForDerivedId = (id: string, prefix: string): string => {
   }
   return `ak:event:${id.slice(prefix.length)}`;
 };
-/// The Event id of the `ak.strand.move` that places a fixture card.
-///
-/// A Strand id is the base64url body of the Event that created it, so the
-/// create's id is already taken. The placement Event is a second Event and
-/// needs its own; swapping the leading character keeps the 44-character shape
-/// the `ak:event:` pattern requires while staying deterministic.
-const placementEventId = (strandId: string): string => {
-  const body = eventIdForDerivedId(strandId, "ak:strand:").slice("ak:event:".length);
-  return `ak:event:M${body.slice(1)}`;
-};
 const DEMO_BLOB_REF =
   "ak:blob:sha256:431ced6916a2a21a156e38701afe55bbd7f88969fbbfc56d7fe099d47f265460";
 const DEMO_AVATAR_PNG_BASE64 =
@@ -1156,8 +1146,23 @@ export async function mockArkretApi(
         },
       ),
     ),
-    ...boardStrandProjections.flatMap((strand, index) => {
-      const create = canonicalProjectionEvent(
+    // `strand.schema.json` forbids `board_space_id` / `list_space_id` / `rank`
+    // inside `metadata.fields`, so a conforming create carries the card and
+    // nothing about where it sits — exactly what
+    // `views::kanban::model::board_projection` documents and folds.
+    //
+    // Placement therefore needs a following `ak.strand.move`, and this fixture
+    // does not have one yet: a synthesized move in the subscribe timeline makes
+    // the client drop the whole Realm, not just that Event — the sidebar goes
+    // to "No Realms loaded yet". Adding `preconditions` on the position cell
+    // did not change it, and the client's own tracing does not reach the
+    // browser console, so the cause is still open. Until it is found, the
+    // cards stay UNPLACED, which is the legal state between an accepted create
+    // and its first Move; the Board tests fail on their own assertions rather
+    // than on a Realm that never appears. See arkret-work
+    // `2026-09-06-0700`.
+    ...boardStrandProjections.map((strand, index) =>
+      canonicalProjectionEvent(
         eventIdForDerivedId(strand.strand_id, "ak:strand:"),
         "ak.strand.create",
         210 + index,
@@ -1175,25 +1180,8 @@ export async function mockArkretApi(
             },
           },
         },
-      );
-      if (!strand.board_space_id || !strand.list_space_id) {
-        return [create];
-      }
-      return [
-        create,
-        canonicalProjectionEvent(
-          placementEventId(strand.strand_id),
-          "ak.strand.move",
-          230 + index,
-          {
-            strand_id: strand.strand_id,
-            board_space_id: strand.board_space_id,
-            target_space_id: strand.list_space_id,
-            rank: strand.rank ?? "U",
-          },
-        ),
-      ];
-    }),
+      ),
+    ),
   );
   await page.route("**/*", async (route) => {
     const url = new URL(route.request().url());

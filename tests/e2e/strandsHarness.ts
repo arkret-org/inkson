@@ -34,6 +34,14 @@ const apiObservations = new WeakMap<
   Array<{ method: string; path: string; status: number }>
 >();
 
+// The client says why it dropped a sync frame in the console, and the seed
+// diagnostic below used to report only that the Realm tree was empty — which
+// says nothing about the cause and sends the reader to a thirty-minute rerun.
+const consoleErrors = new WeakMap<
+  import("@playwright/test").Page,
+  string[]
+>();
+
 async function settleWithin<T>(
   operation: Promise<T>,
   fallback: T,
@@ -253,6 +261,10 @@ export async function assertRealmTreeSeeded(
       accountSubscribe: (apiObservations.get(page) ?? []).filter((entry) =>
         entry.path.includes("/_arkret/self/account/subscribe"),
       ),
+      // The last few client-side complaints. A dropped sync frame names the
+      // field it choked on here, which is the difference between "the tree is
+      // empty" and knowing why.
+      consoleErrors: (consoleErrors.get(page) ?? []).slice(-8),
     };
     throw new Error(
       `Realm tree seed failed before product assertions: ${JSON.stringify(diagnostics)}\n${String(error)}`,
@@ -441,6 +453,16 @@ export function registerStrandsBeforeEach() {
       status: number;
     }> = [];
     apiObservations.set(page, observations);
+    const errors: string[] = [];
+    consoleErrors.set(page, errors);
+    page.on("console", (message) => {
+      if (message.type() === "error" || message.type() === "warning") {
+        errors.push(`${message.type()}: ${message.text()}`.slice(0, 400));
+      }
+    });
+    page.on("pageerror", (error) => {
+      errors.push(`pageerror: ${String(error)}`.slice(0, 400));
+    });
     page.on("response", (response) => {
       const url = new URL(response.url());
       if (url.pathname.startsWith("/_arkret/")) {
