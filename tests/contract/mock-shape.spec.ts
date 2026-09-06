@@ -38,6 +38,7 @@ const PROBES: Probe[] = [
       actor_id: "ak:did_core:web:bob.example",
       handle: "bob:local.host",
       limit: 1,
+      realm_id: "ak:realm:AXLdBpLtU052snUYmC7z6ugXuYM9JDBd4PUF5AwhZ39K",
       events: [{ realm_id: "ak:realm:AXLdBpLtU052snUYmC7z6ugXuYM9JDBd4PUF5AwhZ39K" }],
     },
   },
@@ -47,6 +48,7 @@ const PROBES: Probe[] = [
       actor_id: "ak:did_core:web:carol.example",
       handle: "carol:local.host",
       limit: 2,
+      realm_id: "ak:realm:AajANEG2ah2GJghhdat8rziaz1qjK25iQAYUUR6kcIeW",
       events: [
         { realm_id: "ak:realm:AajANEG2ah2GJghhdat8rziaz1qjK25iQAYUUR6kcIeW" },
         { realm_id: "ak:realm:AajANEG2ah2GJghhdat8rziaz1qjK25iQAYUUR6kcIeW" },
@@ -70,10 +72,28 @@ const INSTALLS: Record<string, unknown>[] = [
   },
 ];
 
+// Drifts inkson cannot close, each with the reason it is out of reach. This
+// list exists so the gate stays enforceable rather than permanently red; it is
+// not a place to park work that belongs here. Anything added needs a reason
+// that names where the fix has to happen.
+const UPSTREAM_DRIFT: Record<string, string> = {
+  "ak.open.service.read.resolution.v1":
+    "The SDK and the spec disagree about `authenticated_service_resolution." +
+    "normalized_did_document`. `identity-resolution.schema.json` wants the " +
+    "Arkret v1 projection (`did`, `contexts`, the relationship arrays); the " +
+    "SDK's `require_same_document` compares the retained document " +
+    "byte-for-byte against the method-native resolution, which for `did:key` " +
+    "is the W3C document. Both cannot hold, and the mock serves whatever " +
+    "`inkson-wire service-resolution` produces — so the fix is an adjudication " +
+    "between arkret-spec and the SDK, not a mock edit. See arkret-work " +
+    "`2026-09-06-0700`.",
+};
+
 test("every mock response the inventory names still matches its schema", async () => {
   const violations: string[] = [];
   const requestDependent: string[] = [];
   const covered = new Set<string>();
+  const excused = new Set<string>();
 
   for (const install of INSTALLS) {
     const { page, handler } = captureRouteHandler();
@@ -81,7 +101,7 @@ test("every mock response the inventory names still matches its schema", async (
     // drift in those fails here before a single request is driven.
     await mockArkretApi(page as never, install as never);
     const route = handler();
-    await driveInstall(route, violations, requestDependent, covered);
+    await driveInstall(route, violations, requestDependent, covered, excused);
   }
 
   // Recorded, not asserted: these are the operations whose response the driver
@@ -92,15 +112,24 @@ test("every mock response the inventory names still matches its schema", async (
       `${requestDependent.length} request-dependent and therefore unjudged`,
   );
 
-  expect(violations, violations.join("\n")).toEqual([]);
+  // An operation reached under more than one install reports the same drift
+  // once per install; the reader wants the drift, not the install count.
+  const distinct = [...new Set(violations)].sort();
+  expect(distinct, distinct.join("\n")).toEqual([]);
   // Two ways the assertion above could be vacuously true, both guarded here: a
   // refactor that makes every branch fall through, so nothing is reached; and
   // one that makes every response echo the request, so nothing is judgeable.
   expect(covered.size).toBeGreaterThan(20);
   expect(
-    requestDependent.length,
-    `too many operations are request-dependent for this gate to mean anything:\n${requestDependent.join("\n")}`,
+    new Set(requestDependent).size,
+    `too many operations are request-dependent for this gate to mean anything:\n${[...new Set(requestDependent)].sort().join("\n")}`,
   ).toBeLessThan(40);
+  // An excused drift that stopped drifting is a stale excuse, and a stale
+  // excuse is how a gate quietly stops covering something.
+  expect(
+    Object.keys(UPSTREAM_DRIFT).filter((id) => !excused.has(id)),
+    "these operations no longer drift; drop them from UPSTREAM_DRIFT",
+  ).toEqual([]);
 });
 
 async function driveInstall(
@@ -108,6 +137,7 @@ async function driveInstall(
   violations: string[],
   requestDependent: string[],
   covered: Set<string>,
+  excused: Set<string>,
 ) {
   for (const operation of mockOperations()) {
     const url = `${BASE_URL}${concretePath(operation.path_template)}`;
@@ -139,7 +169,11 @@ async function driveInstall(
 
     const label = `${operation.method} ${operation.path_template} (${operation.operation_id})`;
     if (seen[0] && seen[1] && seen[0].fingerprint === seen[1].fingerprint) {
-      violations.push(`${label}: ${seen[0].summary}`);
+      if (operation.operation_id in UPSTREAM_DRIFT) {
+        excused.add(operation.operation_id);
+      } else {
+        violations.push(`${label}: ${seen[0].summary}`);
+      }
     } else if (seen.some((entry) => entry)) {
       requestDependent.push(label);
     }

@@ -4209,25 +4209,27 @@ export async function mockArkretApi(
             ? (event.payload.value as Record<string, any>)
             : {};
         const acceptedAt = new Date().toISOString();
+        const policyId = policy.policy_id ?? seededRecoveryPolicyId;
+        const acceptanceBasisRef = `ak:seal:sha256:${"a".repeat(64)}`;
         recoveryPolicy = {
-          policy_id: policy.policy_id,
-          principal_id: policy.principal_id,
-          version: policy.version,
-          acceptance_basis: `ak:seal:sha256:${"a".repeat(64)}`,
-          trust_domain: policy.trust_domain,
+          policy_id: policyId,
+          account_id: accountId,
+          version: policy.version ?? 1,
+          acceptance_basis_ref: acceptanceBasisRef,
+          trust_domain: policy.trust_domain ?? "ak:trust_domain:soland.local",
           allowed_proof_kinds: Array.isArray(policy.allowed_proof_kinds)
             ? policy.allowed_proof_kinds
             : [],
-          supersedes: policy.supersedes ?? null,
+          supersedes_id: policy.supersedes_id ?? null,
           expires_at: policy.expires_at ?? null,
-          issued_at: policy.issued_at,
+          issued_at: policy.issued_at ?? acceptedAt,
           accepted_at: acceptedAt,
         };
         return json(route, {
-          policy_id: policy.policy_id,
-          principal_id: policy.principal_id,
-          version: policy.version,
-          acceptance_basis: `ak:seal:sha256:${"a".repeat(64)}`,
+          policy_id: policyId,
+          account_id: accountId,
+          version: policy.version ?? 1,
+          acceptance_basis_ref: acceptanceBasisRef,
           accepted_at: acceptedAt,
         });
       }

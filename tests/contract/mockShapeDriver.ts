@@ -182,6 +182,17 @@ export function violationSummary(error: unknown): string {
 /// hard-coded response (identical both times, so a real drift) from one
 /// assembled out of the request (different both times, so the driver's own
 /// filler is what got rejected).
+///
+/// Volatile values are erased first. Some responses come from `inkson-wire`,
+/// which stamps `Utc::now()` and signs it — so the same hard-coded shape comes
+/// back with different bytes on every call and would be misread as
+/// request-dependent. That is not hypothetical: it is how the service
+/// resolution and governance dependency fixtures stayed stale while this gate
+/// read green.
 export function violationFingerprint(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+  const message = error instanceof Error ? error.message : String(error);
+  return message
+    .replace(/\d{4}-\d{2}-\d{2}T[\d:.]+Z/g, "<timestamp>")
+    .replace(/\b[0-9a-f]{64}\b/g, "<digest>")
+    .replace(/"jws":"[^"]*"/g, '"jws":"<jws>"');
 }
