@@ -112,7 +112,7 @@ pub(super) fn realm_state_snapshot_manifest_for_items(
     items: Vec<arkret_sdk::RealmStateSnapshotMaterializedItem>,
 ) -> (
     arkret_sdk::RealmStateSnapshotManifest,
-    Vec<arkret_sdk::RealmStateRealmStateSnapshotChunkPayload>,
+    Vec<arkret_sdk::RealmStateSnapshotChunkPayload>,
 ) {
     let realm_state_snapshot_id = arkret_sdk::RealmStateSnapshotId::new(
         "ak:realm_state_snapshot:01904100-0000-7000-8000-0000000000aa",
