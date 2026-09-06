@@ -132,6 +132,14 @@ npm run e2e
 
 The Playwright runner builds the web bundle with `dx build --platform web --profile joint-e2e --features wasm-localstorage-secrets-test` (into `target/playwright-e2e`) and serves it via `node tests/e2e/staticServer.mjs` on port 4727, exercising the web shell against mocked `/_arkret/*` responses. Use `INKSON_E2E_BASE_URL=http://127.0.0.1:<port>` when testing an already-running web build.
 
+That validation runs on its own too, without a browser and without the WASM build:
+
+```powershell
+npm run contract
+```
+
+`tests/contract/` drives the mock's route handler directly and checks every response the embedded OpenAPI inventory names, in about half a minute. Reach for it whenever the spec moves: a stale mock field otherwise costs a full `dx build` to discover, and the next stale field costs another, because each rejection stops at the first. Set `INKSON_WIRE_BIN` to a prebuilt `inkson-wire` so the check does not `cargo run` once per response.
+
 The e2e suite under `tests/e2e/` is **mock-only**: every mocked JSON response is validated against the SDK's embedded OpenAPI and schema artifacts before it reaches inkson, and the suite never speaks to a real Arkret server. Full UI ↔ real-server integration lives in the sibling [`cotest`](../cotest) joint suite (`cotest/e2e/`), which boots both `inkson` and a real `soland` process. Any test that needs a live server should be added there, not here.
 
 The UI compile guard is included in `cargo test` and verifies the exported Dioxus root component signature used by `src/main.rs`.

@@ -63,6 +63,16 @@ const eventIdForDerivedId = (id: string, prefix: string): string => {
   }
   return `ak:event:${id.slice(prefix.length)}`;
 };
+/// The Event id of the `ak.strand.move` that places a fixture card.
+///
+/// A Strand id is the base64url body of the Event that created it, so the
+/// create's id is already taken. The placement Event is a second Event and
+/// needs its own; swapping the leading character keeps the 44-character shape
+/// the `ak:event:` pattern requires while staying deterministic.
+const placementEventId = (strandId: string): string => {
+  const body = eventIdForDerivedId(strandId, "ak:strand:").slice("ak:event:".length);
+  return `ak:event:M${body.slice(1)}`;
+};
 const DEMO_BLOB_REF =
   "ak:blob:sha256:431ced6916a2a21a156e38701afe55bbd7f88969fbbfc56d7fe099d47f265460";
 const DEMO_AVATAR_PNG_BASE64 =
@@ -466,6 +476,16 @@ export async function mockArkretApi(
     principal_id: accountPrincipalCoreId,
     station_id: CURRENT_STATION_ID,
   };
+  // `event-envelope.schema.json` closes the envelope (`additionalProperties:
+  // false`) and types `actor_id` as the composite `common-ids#/$defs/actor_id`:
+  // the account variant carries the complete AccountId and there is no
+  // top-level `station_id` beside it. Every synthesized Event below authors
+  // through this one value rather than spelling the shape again.
+  const accountActorId = { kind: "account", account_id: accountId };
+  const accountActorIdFor = (principalCoreId: string) => ({
+    kind: "account",
+    account_id: { principal_id: principalCoreId, station_id: CURRENT_STATION_ID },
+  });
   const primaryHandle =
     options.primaryHandle === undefined
       ? "alice:local.host"
@@ -474,6 +494,110 @@ export async function mockArkretApi(
     options.directoryPrimaryHandle === undefined
       ? primaryHandle
       : options.directoryPrimaryHandle;
+  // `handle_claim_status_view` (`schemas/handle-claim.schema.json`): the signed
+  // core sits under `claim`, and the status half — who verified it, when, until
+  // when — wraps it. The client reads it that way
+  // (`transport::account::primary_handle_from_viewer` filters on
+  // `claim.claim.subject_account_id`, `status`, `revocation` and
+  // `fresh_until`), so a flat claim is a handle the panel silently drops.
+  // Both the account viewer and the directory's handle list serve this shape,
+  // so it is built once.
+  const handleClaimStatusView = (handle: string, subjectPrincipalId: string) => ({
+    schema: "ak.schema.handle_claim.v1",
+    claim: {
+      schema: "ak.schema.handle_claim_core.v1",
+      handle,
+      handle_aliases: [],
+      subject_account_id: {
+        principal_id: subjectPrincipalId,
+        station_id: CURRENT_STATION_ID,
+      },
+      issuer_id: CURRENT_STATION_ID,
+      claim: { kind: "handle_binding" },
+      visibility: "public",
+      audience: null,
+      issued_at: "2026-04-28T12:00:00.000Z",
+      expires_at: "2099-04-28T12:00:00.000Z",
+      source_refs: [],
+      proofs: [
+        {
+          kind: "detached_jws",
+          verification_method: `${CURRENT_STATION_DID}#handle-claim-key`,
+          payload_digest: `sha256:${"0".repeat(64)}`,
+          created_at: "2026-04-28T12:00:00.000Z",
+          domain: "ak.handle_claim_proof.v1",
+          proof_purpose: "issuer_attestation",
+          jws: "e30..c2ln",
+        },
+        {
+          kind: "detached_jws",
+          verification_method: `${CURRENT_STATION_DID}#handle-claim-key`,
+          payload_digest: `sha256:${"0".repeat(64)}`,
+          created_at: "2026-04-28T12:00:00.000Z",
+          domain: "ak.handle_claim_proof.v1",
+          proof_purpose: "holder_acceptance",
+          jws: "e30..c2ln",
+        },
+      ],
+    },
+    status: "verified",
+    as_of: "2026-04-28T12:00:00.000Z",
+    verifier_id: CURRENT_STATION_ID,
+    verified_at: "2026-04-28T12:00:00.000Z",
+    revocation: null,
+    fresh_until: "2099-04-28T12:00:00.000Z",
+    status_proof: {
+      kind: "detached_jws",
+      verification_method: `${CURRENT_STATION_DID}#handle-claim-key`,
+      payload_digest: `sha256:${"0".repeat(64)}`,
+      created_at: "2026-04-28T12:00:00.000Z",
+      domain: "ak.handle_claim_status.v1",
+      proof_purpose: "status_attestation",
+      jws: "e30..c2ln",
+    },
+  });
+
+  // `contact_operation_outcome` is a prepare/commit union, not the single-shot
+  // `{event_ref, state}` object this mock used to serve — the client drives it
+  // through `ContactOperationOutcome` and could not even deserialize the old
+  // shape.
+  //
+  // The prepare half is a stand-in draft the caller signs, which the mock can
+  // author honestly. The commit half is a *signed acceptance receipt* the
+  // client verifies (`transport::account::verify_contact_request_receipt`), so
+  // a hand-written one would be rejected by the very check it exists to
+  // exercise; the mock answers with the schema's own failure branch instead of
+  // pretending. Minting real receipts belongs in `inkson-wire` beside
+  // `demo-realm-genesis` — see arkret-work `2026-09-06-0700`.
+  const contactOutcome = (
+    resultKind: "request" | "response" | "reject" | "scope_update" | "tombstone",
+    body: Record<string, unknown>,
+  ) => {
+    const operationId =
+      typeof body.operation_id === "string"
+        ? body.operation_id
+        : "ak:operation:01964137-0000-7000-8000-0000000000f2";
+    if (body.phase === "commit") {
+      return {
+        status: "failed",
+        result_kind: resultKind,
+        operation_id: operationId,
+        reason: "contact_round_conflict",
+      };
+    }
+    return {
+      status: "prepared",
+      result_kind: resultKind,
+      operation_id: operationId,
+      reservation_handle: "e2e-contact-reservation",
+      expires_at: "2099-01-01T00:00:00.000Z",
+      event_draft: {
+        unsigned_event_bytes: "ZTJlLWNvbnRhY3QtZHJhZnQ",
+        event_digest: `sha256:${"c".repeat(64)}`,
+      },
+    };
+  };
+
   const directoryHandleForSubject = (subject: string) => {
     if (!directoryPrimaryHandle) {
       return null;
@@ -591,16 +715,15 @@ export async function mockArkretApi(
     content_scheme: "mls_rfc9420",
     mls_group_id: "demo-circle",
     state: circleStates.get(circleId) ?? "active",
-    member_count: circleMembers.get(circleId)?.length ?? 0,
     viewer_membership: circleMembers
       .get(circleId)
       ?.includes(accountPrincipalCoreId)
       ? "join"
       : undefined,
-    members: circleMembers.get(circleId) ?? [],
-    created_by: accountPrincipalCoreId,
+    member_ids: (circleMembers.get(circleId) ?? []).map(accountActorIdFor),
+    created_by: accountActorId,
     created_at: "2026-06-23T00:00:00.000Z",
-    updated_by: accountPrincipalCoreId,
+    updated_by: accountActorId,
     updated_at: "2026-06-23T00:00:00.000Z",
   });
   const sidecarCircleView = () => ({
@@ -621,12 +744,12 @@ export async function mockArkretApi(
     options.preseedRecoveryMaterial === true
       ? {
           policy_id: seededRecoveryPolicyId,
-          principal_id: accountPrincipalCoreId,
+          account_id: accountId,
           version: 1,
-          acceptance_basis: `ak:seal:sha256:${"a".repeat(64)}`,
+          acceptance_basis_ref: `ak:seal:sha256:${"a".repeat(64)}`,
           trust_domain: "ak:trust_domain:soland.local",
           allowed_proof_kinds: ["did_root"],
-          supersedes: null,
+          supersedes_id: null,
           expires_at: null,
           issued_at: "2026-07-29T00:00:00.000Z",
           accepted_at: "2026-07-29T00:00:01.000Z",
@@ -637,7 +760,7 @@ export async function mockArkretApi(
     const backupId = "ak:backup:019a6aa0-0000-7000-8000-000000000002";
     keyBackups.set(backupId, {
       backup_id: backupId,
-      actor_id: accountPrincipalCoreId,
+      actor_id: accountActorId,
       device_id: currentDeviceId,
       backup_kind: "secret_storage",
       backup_version: "v1",
@@ -928,7 +1051,7 @@ export async function mockArkretApi(
           board_space_id: DEMO_BOARD_SPACE,
           list_space_id: DEMO_TODO_LIST,
           rank: "U",
-          assigned_actor_ids: [accountPrincipalCoreId],
+          assigned_actor_ids: [accountActorIdFor(accountPrincipalCoreId)],
           fields: {
             labels: ["legal", "beta"],
             due_at: "May 08",
@@ -949,7 +1072,7 @@ export async function mockArkretApi(
           board_space_id: DEMO_BOARD_SPACE,
           list_space_id: DEMO_PROGRESS_LIST,
           rank: "U",
-          assigned_actor_ids: ["ak:did_core:web:bob.example"],
+          assigned_actor_ids: [accountActorIdFor("ak:did_core:web:bob.example")],
           fields: { labels: ["copy", "support"], due_at: "May 10" },
         },
         {
@@ -963,7 +1086,7 @@ export async function mockArkretApi(
           board_space_id: DEMO_BOARD_SPACE,
           list_space_id: DEMO_DONE_LIST,
           rank: "U",
-          assigned_actor_ids: ["ak:did_core:web:carol.example"],
+          assigned_actor_ids: [accountActorIdFor("ak:did_core:web:carol.example")],
           fields: { labels: ["security", "reviewed"], due_at: "May 01" },
         },
         {
@@ -977,7 +1100,7 @@ export async function mockArkretApi(
           board_space_id: DEMO_SECOND_BOARD_SPACE,
           list_space_id: DEMO_SECOND_LIST,
           rank: "U",
-          assigned_actor_ids: ["ak:did_core:web:dana.example"],
+          assigned_actor_ids: [accountActorIdFor("ak:did_core:web:dana.example")],
           fields: { labels: ["planning"], due_at: "May 12" },
         },
       ];
@@ -993,8 +1116,7 @@ export async function mockArkretApi(
       kind,
       realm_id: DEMO_REALM,
       scope_ref: { kind: "realm", realm_id: DEMO_REALM },
-      actor_id: accountPrincipalCoreId,
-      station_id: CURRENT_STATION_ID,
+      actor_id: accountActorId,
       actor_seq: actorSeq,
       created_at: createdAt,
       hlc: `01964137${String(actorSeq).padStart(4, "0")}-0000-12345678`,
@@ -1024,7 +1146,7 @@ export async function mockArkretApi(
             realm_id: space.realm_id,
             kind: space.kind,
             title: space.title,
-            created_by: accountPrincipalCoreId,
+            created_by: accountActorId,
             created_at: `2026-04-28T12:${String(index).padStart(2, "0")}:00.000Z`,
             ...(space.rank ? { rank: space.rank } : {}),
             ...(space.parent_space_id
@@ -1034,8 +1156,8 @@ export async function mockArkretApi(
         },
       ),
     ),
-    ...boardStrandProjections.map((strand, index) =>
-      canonicalProjectionEvent(
+    ...boardStrandProjections.flatMap((strand, index) => {
+      const create = canonicalProjectionEvent(
         eventIdForDerivedId(strand.strand_id, "ak:strand:"),
         "ak.strand.create",
         210 + index,
@@ -1044,23 +1166,34 @@ export async function mockArkretApi(
             schema: "ak.schema.strand.v1",
             realm_id: strand.realm_id,
             tracks: { discussion: {} },
-            created_by: accountPrincipalCoreId,
+            created_by: accountActorId,
             created_at: `2026-04-28T12:${10 + index}:00.000Z`,
             metadata: {
               title: strand.title,
               summary: strand.summary,
-              fields: {
-                ...strand.fields,
-                board_space_id: strand.board_space_id,
-                list_space_id: strand.list_space_id,
-                rank: strand.rank,
-                strand_kind: "card",
-              },
+              fields: { ...strand.fields, strand_kind: "card" },
             },
           },
         },
-      ),
-    ),
+      );
+      if (!strand.board_space_id || !strand.list_space_id) {
+        return [create];
+      }
+      return [
+        create,
+        canonicalProjectionEvent(
+          placementEventId(strand.strand_id),
+          "ak.strand.move",
+          230 + index,
+          {
+            strand_id: strand.strand_id,
+            board_space_id: strand.board_space_id,
+            target_space_id: strand.list_space_id,
+            rank: strand.rank ?? "U",
+          },
+        ),
+      ];
+    }),
   );
   await page.route("**/*", async (route) => {
     const url = new URL(route.request().url());
@@ -1205,7 +1338,7 @@ export async function mockArkretApi(
       circleMembers.set(circleId, [...members]);
       return json(route, {
         circle_id: circleId,
-        actor_id: request.actor_id,
+        member_id: accountActorIdFor(request.actor_id),
         membership,
       });
     }
@@ -1220,7 +1353,7 @@ export async function mockArkretApi(
       circleMembers.set(circleId, [...members]);
       return json(route, {
         circle_id: circleId,
-        actor_id: decodeURIComponent(actorId),
+        member_id: accountActorIdFor(decodeURIComponent(actorId)),
         membership: "leave",
       });
     }
@@ -1872,17 +2005,13 @@ export async function mockArkretApi(
       route.request().method() === "POST"
     ) {
       return json(route, {
-        ok: true,
-        key_packages: [
+        keypackages: [
           {
-            key_package_ref: "mimi:key-package:e2e",
-            target: "mimi://remote.example/alice",
+            device_id: "ak:device:01964137-0000-7000-8000-0000000000b2",
+            mls_keypackage: "bWltaS1rZXktcGFja2FnZS1lMmU",
           },
         ],
-        receipt: {
-          kind: "ak.open.mimi.exchange.request_key_material.v1",
-          profile: "ak.profile.mimi_interop.v1",
-        },
+        failures: [],
       });
     }
 
@@ -1891,13 +2020,12 @@ export async function mockArkretApi(
       route.request().method() === "POST"
     ) {
       const roomId = decodeURIComponent(url.pathname.split("/")[5]);
+      // `roomId` is the addressed Strand; the outcome answers whether the
+      // update was accepted, not which room it was.
+      void roomId;
       return json(route, {
-        ok: true,
-        room_id: roomId,
-        receipt: {
-          kind: "ak.open.mimi.command.update_room.v1",
-          operation_id: "ak:operation:mimi-room-update",
-        },
+        accepted: true,
+        rejections: [],
       });
     }
 
@@ -1905,14 +2033,7 @@ export async function mockArkretApi(
       url.pathname.match(/^\/_arkret\/open\/mimi\/strands\/[^/]+\/notify$/) &&
       route.request().method() === "POST"
     ) {
-      return json(route, {
-        ok: true,
-        accepted: ["did:web:remote.example"],
-        receipt: {
-          kind: "ak.open.mimi.command.notify.v1",
-          notification_id: "ak:mimi:notify:e2e",
-        },
-      });
+      return json(route, { accepted: true });
     }
 
     if (
@@ -1923,9 +2044,9 @@ export async function mockArkretApi(
         event_ref: "ak:event:AX-AFSYZHl0U2MQP-Ng7mU-aOm_Flhf0pVBoHYUK6Shg",
         delivery: {
           status: "accepted",
-          delivered_to: ["ak:did_core:web:remote.example"],
+          delivered_to_ids: ["ak:did_core:web:remote.example"],
         },
-        rejected: [],
+        rejections: [],
       });
     }
 
@@ -1934,10 +2055,8 @@ export async function mockArkretApi(
       route.request().method() === "POST"
     ) {
       return json(route, {
-        ok: true,
-        consent_id: "ak:mimi-consent:e2e",
-        state: "requested",
-        receipt: { kind: "ak.open.mimi.command.request_consent.v1" },
+        consent_id: "ak:consent:01964137-0000-7000-8000-0000000000f1",
+        challenge: "e2e-consent-challenge",
       });
     }
 
@@ -1946,10 +2065,10 @@ export async function mockArkretApi(
       route.request().method() === "POST"
     ) {
       return json(route, {
-        ok: true,
-        consent_id: "ak:mimi-consent:e2e",
-        state: "accepted",
-        receipt: { kind: "ak.open.mimi.command.update_consent.v1" },
+        consent_id: "ak:consent:01964137-0000-7000-8000-0000000000f1",
+        decision: "accept",
+        updated_at: "2026-04-28T12:00:00.000Z",
+        event_ref: "ak:event:AX-AFSYZHl0U2MQP-Ng7mU-aOm_Flhf0pVBoHYUK6Shg",
       });
     }
 
@@ -1965,7 +2084,7 @@ export async function mockArkretApi(
             matched: true,
             mimi_uri:
               body.identifiers?.[0]?.mimi_uri ?? "mimi://remote.example/alice",
-            subject: accountPrincipalCoreId,
+            subject_id: accountPrincipalCoreId,
           },
         ],
         proofs: [
@@ -1986,10 +2105,8 @@ export async function mockArkretApi(
       route.request().method() === "POST"
     ) {
       return json(route, {
-        ok: true,
-        report_id: "ak:report:mimi-e2e",
-        status: "queued",
-        receipt: { kind: "ak.open.mimi.command.report_abuse.v1" },
+        report_id: "ak:report:AX-AFSYZHl0U2MQP-Ng7mU-aOm_Flhf0pVBoHYUK6Shg",
+        routed_to_ids: [],
       });
     }
 
@@ -2189,9 +2306,10 @@ export async function mockArkretApi(
           id: "ak:actor_profile:AbhO_nhWEZ7jojF3JULUGyzIUTiHNshUWblbkJCr7NbP",
           schema: "ak.schema.actor_profile.v1",
           principal_id: "ak:did_core:web:alice.example",
+          realm_id: PRINCIPAL_CONTROL_REALM,
           actor_kind: "user",
           display_name: displayName,
-          handle: "alice.example",
+          handle: primaryHandle ?? "alice:local.host",
           avatar_blob_ref: avatarBlobRef,
           profile_fields: bio ? { bio } : {},
           accountable_principal_ids: [],
@@ -2240,8 +2358,7 @@ export async function mockArkretApi(
               kind: "ak.account_data.set",
               realm_id: DEMO_REALM,
               scope_ref: { kind: "realm", realm_id: DEMO_REALM },
-              actor_id: accountPrincipalCoreId,
-              station_id: CURRENT_STATION_ID,
+              actor_id: accountActorId,
               actor_seq: 101,
               created_at: "2026-04-28T12:01:00.000Z",
               hlc: "019641370001-0000-12345678",
@@ -2283,8 +2400,7 @@ export async function mockArkretApi(
               kind: "ak.account_data.set",
               realm_id: DEMO_REALM,
               scope_ref: { kind: "realm", realm_id: DEMO_REALM },
-              actor_id: accountPrincipalCoreId,
-              station_id: CURRENT_STATION_ID,
+              actor_id: accountActorId,
               actor_seq: 102,
               created_at: "2026-04-28T12:02:00.000Z",
               hlc: "019641370002-0000-12345678",
@@ -2393,10 +2509,26 @@ export async function mockArkretApi(
                     },
                   },
                   summary: { joined_member_count: 2 },
-                  members: [
-                    { actor_id: accountPrincipalCoreId, membership: "join" },
-                    { actor_id: activeAssistantId, membership: "join" },
-                  ],
+                  // `realm_sync_entry` carries a `member_roster`, not a bare
+                  // `members` array: the roster is the closed shape the client
+                  // reads (`sync_engine` folds `member_roster.entries`), and
+                  // each entry names a complete ActorId.
+                  member_roster: {
+                    entries: [
+                      {
+                        actor_id: accountActorId,
+                        membership: "join",
+                      },
+                      {
+                        actor_id: {
+                          kind: "service",
+                          service_id: activeAssistantId,
+                        },
+                        membership: "join",
+                      },
+                    ],
+                    limited: false,
+                  },
                   timeline: { events: demoProjectionEvents, limited: false },
                   state: { events: [] },
                   unread_notifications: {
@@ -2467,7 +2599,7 @@ export async function mockArkretApi(
           messages: [],
         },
         account_data: { events: notificationEvents },
-        device_lists: { changed: [], left: [] },
+        device_lists: { changed_ids: [], left_ids: [] },
         notifications: { items: [] },
       };
       validateMockSchema("schemas/account-subscribe-frame.schema.json", frame);
@@ -2523,12 +2655,11 @@ export async function mockArkretApi(
       return json(route, {
         actors: [
           {
-            actor_id: "ak:did_core:web:bob.example",
+            actor_id: accountActorIdFor("ak:did_core:web:bob.example"),
+            handle: "bob:local.host",
             display_name: "Bob Example",
-            preview: {
-              handle: "bob.example",
-              display_name: "Bob Example",
-            },
+            as_of: "2026-04-28T12:00:00.000Z",
+            policy_revision: "1",
           },
         ],
         has_more: false,
@@ -2579,33 +2710,25 @@ export async function mockArkretApi(
       const body = await route.request().postDataJSON();
       const subject = body.subject ?? accountPrincipalId;
       const subjectPrimaryHandle = directoryHandleForSubject(subject);
+      const subjectAccountId = {
+        principal_id: didCoreId(subject),
+        station_id: CURRENT_STATION_ID,
+      };
       if (!subjectPrimaryHandle) {
         return json(route, {
-          subject,
+          account_id: subjectAccountId,
           as_of: "2026-04-28T12:00:00.000Z",
           has_more: false,
           claims: [],
         });
       }
       return json(route, {
-        subject,
+        account_id: subjectAccountId,
         primary_handle: subjectPrimaryHandle,
         as_of: "2026-04-28T12:00:00.000Z",
         has_more: false,
         claims: [
-          {
-            subject,
-            handle: subjectPrimaryHandle,
-            issuer: CURRENT_STATION_ID,
-            vouching_id: CURRENT_STATION_ID,
-            binding_state: "verified",
-            claim_kind: "handle_binding",
-            visibility: "public",
-            audience: CURRENT_STATION_ID,
-            created_at: "2026-04-28T12:00:00.000Z",
-            verified_at: "2026-04-28T12:00:00.000Z",
-            expires_at: "2027-04-28T12:00:00.000Z",
-          },
+          handleClaimStatusView(subjectPrimaryHandle, subjectAccountId.principal_id),
         ],
       });
     }
@@ -2833,7 +2956,7 @@ export async function mockArkretApi(
       return json(route, {
         grants: [
           {
-            grant_id: "ak:grant:Aa1lsSUPO6wXCITbk8eNFN84GlTcykTUKRcvz1PQJsau",
+            id: "ak:grant:Aa1lsSUPO6wXCITbk8eNFN84GlTcykTUKRcvz1PQJsau",
             issuer: "did:web:admin.example",
             subject: url.searchParams.get("subject"),
             actions: ["space.read", "message.create"],
@@ -2953,12 +3076,11 @@ export async function mockArkretApi(
       url.pathname === "/_arkret/self/contacts/request" &&
       route.request().method() === "POST"
     ) {
-      return json(route, {
-        request_event_ref:
-          "ak:event:Ac0ppqD4MwXzM_wG3nnX6dRTTTETTV6R6FC5dQMJpNKg",
-        requester_consent_refs: [],
-        state: "pending_outgoing",
-      });
+      const requestBody = ((await contractRequestBody(route)) ?? {}) as Record<
+        string,
+        unknown
+      >;
+      return json(route, contactOutcome("request", requestBody));
     }
 
     // U1 — accept / reject an incoming contact request.
@@ -2966,16 +3088,14 @@ export async function mockArkretApi(
       url.pathname === "/_arkret/self/contacts/respond" &&
       route.request().method() === "POST"
     ) {
-      const body = await route.request().postDataJSON();
-      return json(route, {
-        response_event_ref:
-          "ak:event:ASrCVYDLWrTzqCRodpngZ6LK9iIwwIgL7l6-ajIUdfMm",
-        consent_grant_refs:
-          body.action === "accept"
-            ? ["ak:event:AesHEt8JYmIG0EOAQhG0vgNb-fdkllGCSFjb28OLN3OY"]
-            : [],
-        state: body.action === "accept" ? "accepted" : "rejected",
-      });
+      const body = ((await contractRequestBody(route)) ?? {}) as Record<
+        string,
+        unknown
+      >;
+      return json(
+        route,
+        contactOutcome(body.action === "reject" ? "reject" : "response", body),
+      );
     }
 
     // U5 — tombstone / block a contact.
@@ -2983,13 +3103,11 @@ export async function mockArkretApi(
       url.pathname === "/_arkret/self/contacts/tombstone" &&
       route.request().method() === "POST"
     ) {
-      return json(route, {
-        tombstone_event_ref:
-          "ak:event:Ae9AOYURRtmDHAs3Nw_dqE_a9UIwCkI1yPGQQmxYgszW",
-        consent_revoke_refs: [],
-        state: "tombstoned",
-        partial_revoke: false,
-      });
+      const tombstoneBody = ((await contractRequestBody(route)) ?? {}) as Record<
+        string,
+        unknown
+      >;
+      return json(route, contactOutcome("tombstone", tombstoneBody));
     }
 
     // U4 — invite_receive_policy ("who may invite me"). Spec invite-addressing.md
@@ -3089,10 +3207,15 @@ export async function mockArkretApi(
         : [];
       return json(route, {
         accepted: keyPackages.length,
-        rejected: [],
-        key_package_refs: keyPackages
-          .map((entry) => entry.keypackage_ref)
-          .filter((value): value is string => typeof value === "string"),
+        rejections: [],
+        // `keypackage_ref_array` is non-empty by definition, so the member is
+        // absent rather than `[]` when nothing was accepted.
+        ...(() => {
+          const refs = keyPackages
+            .map((entry) => entry.keypackage_ref)
+            .filter((value): value is string => typeof value === "string");
+          return refs.length > 0 ? { keypackage_refs: refs } : {};
+        })(),
       });
     }
 
@@ -3176,60 +3299,10 @@ export async function mockArkretApi(
         // `claim.claim.subject_account_id`, `status`, `revocation` and
         // `fresh_until`), so a flat claim here is a Realm the panel silently
         // shows as handle-less.
-        viewer.primary_handle_claim = {
-          schema: "ak.schema.handle_claim.v1",
-          claim: {
-            schema: "ak.schema.handle_claim_core.v1",
-            handle: primaryHandle,
-            handle_aliases: [],
-            subject_account_id: {
-              principal_id: accountPrincipalCoreId,
-              station_id: CURRENT_STATION_ID,
-            },
-            issuer_id: CURRENT_STATION_ID,
-            claim: { kind: "handle_binding" },
-            visibility: "public",
-            audience: null,
-            issued_at: "2026-04-28T12:00:00.000Z",
-            expires_at: "2099-04-28T12:00:00.000Z",
-            source_refs: [],
-            proofs: [
-              {
-                kind: "detached_jws",
-                verification_method: `${CURRENT_STATION_DID}#handle-claim-key`,
-                payload_digest: `sha256:${"0".repeat(64)}`,
-                created_at: "2026-04-28T12:00:00.000Z",
-                domain: "ak.handle_claim_proof.v1",
-                proof_purpose: "issuer_attestation",
-                jws: "e30..c2ln",
-              },
-              {
-                kind: "detached_jws",
-                verification_method: `${CURRENT_STATION_DID}#handle-claim-key`,
-                payload_digest: `sha256:${"0".repeat(64)}`,
-                created_at: "2026-04-28T12:00:00.000Z",
-                domain: "ak.handle_claim_proof.v1",
-                proof_purpose: "holder_acceptance",
-                jws: "e30..c2ln",
-              },
-            ],
-          },
-          status: "verified",
-          as_of: "2026-04-28T12:00:00.000Z",
-          verifier_id: CURRENT_STATION_ID,
-          verified_at: "2026-04-28T12:00:00.000Z",
-          revocation: null,
-          fresh_until: "2099-04-28T12:00:00.000Z",
-          status_proof: {
-            kind: "detached_jws",
-            verification_method: `${CURRENT_STATION_DID}#handle-claim-key`,
-            payload_digest: `sha256:${"0".repeat(64)}`,
-            created_at: "2026-04-28T12:00:00.000Z",
-            domain: "ak.handle_claim_status.v1",
-            proof_purpose: "status_attestation",
-            jws: "e30..c2ln",
-          },
-        };
+        viewer.primary_handle_claim = handleClaimStatusView(
+          primaryHandle,
+          accountPrincipalCoreId,
+        );
       }
       return json(route, viewer);
     }
@@ -3309,14 +3382,13 @@ export async function mockArkretApi(
         "ak:sidecar:ARtoYyyaAqwT8z7xX2YLO-x_zdkPXEy8ygoDx-tu-5fm";
       const desiredAgentIds = [...sidecarAgentIds].sort();
       return json(route, {
-        items: [
+        sidecars: [
           {
             sidecar: {
               id: sidecarId,
               schema: "ak.schema.agent_sidecar.v1",
               realm_id: DEMO_REALM,
               controller_account_id: accountId,
-              encryption_profile: "mls_rfc9420",
               state: "active",
               created_at: "2026-07-20T00:00:00.000Z",
             },
@@ -3359,7 +3431,6 @@ export async function mockArkretApi(
           schema: "ak.schema.agent_sidecar.v1",
           realm_id: DEMO_REALM,
           controller_account_id: accountId,
-          encryption_profile: "mls_rfc9420",
           state: "active",
           created_at: "2026-07-20T00:00:00.000Z",
         },
@@ -3726,7 +3797,7 @@ export async function mockArkretApi(
     if (agentParticipationMatch && route.request().method() === "GET") {
       return json(route, {
         agent_id: decodeURIComponent(agentParticipationMatch[1]),
-        entries: [],
+        participation_entries: [],
       });
     }
 
@@ -3830,8 +3901,8 @@ export async function mockArkretApi(
       return json(route, {
         device_pairing_request_id:
           "device_pairing_request:01964137-0000-7000-8000-0000000000c1",
-        pairing_code: "pairing-secret-7H2K9M4Q-e2e",
-        gate_audience: url.origin,
+        pairing_code: "7H2K9M4Q",
+        gate_audience_uri: url.origin,
         server_nonce: "Y290ZXN0LXNlcnZlci1wYWlyaW5nLW5vbmNl",
         expires_at: "2099-01-01T00:00:00.000Z",
       });
@@ -3845,7 +3916,7 @@ export async function mockArkretApi(
         arkret_base_url: url.origin,
         device_pairing_request_id:
           "device_pairing_request:01964137-0000-7000-8000-0000000000c1",
-        pairing_code: "pairing-secret-7H2K9M4Q-e2e",
+        pairing_code: "7H2K9M4Q",
         new_device_pubkey: {
           kty: "OKP",
           kid: "ak:device:01964137-0000-7000-8000-0000000000b2",
@@ -3853,7 +3924,7 @@ export async function mockArkretApi(
           key: "z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuBV8xRoAnwWsdvktH",
         },
         client_nonce: "Y290ZXN0LWRldmljZS1wYWlyaW5nLW5vbmNl",
-        gate_audience: url.origin,
+        gate_audience_uri: url.origin,
         server_nonce: "Y290ZXN0LXNlcnZlci1wYWlyaW5nLW5vbmNl",
         display_name: "New device",
         device_metadata: { platform: "browser" },
@@ -3891,8 +3962,15 @@ export async function mockArkretApi(
       route.request().method() === "POST"
     ) {
       return json(route, {
-        ok: true,
-        delivered: { "did:web:alice.example": ["dev_inkson"] },
+        delivered: {
+          [accountPrincipalCoreId]: {
+            [currentDeviceId]: {
+              device_message_id:
+                "ak:device_message:01964137-0000-7000-8000-0000000000d9",
+              status: "delivered",
+            },
+          },
+        },
         unknown_devices: {},
       });
     }
@@ -3901,7 +3979,7 @@ export async function mockArkretApi(
       url.pathname === "/_arkret/self/device_messages/ack" &&
       route.request().method() === "POST"
     ) {
-      return json(route, { ok: true, pruned_count: 0 });
+      return json(route, { pruned_count: 0 });
     }
 
     if (
@@ -4029,9 +4107,9 @@ export async function mockArkretApi(
       route.request().method() === "POST"
     ) {
       return json(route, {
-        ok: true,
+        push_target_id: "ak:pseudonym:push:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
         registration_id: "push:e2e",
-        expires_at: null,
+        expires_at: "2099-01-01T00:00:00.000Z",
       });
     }
 
@@ -4050,8 +4128,6 @@ export async function mockArkretApi(
         blob_ref: DEMO_BLOB_REF,
         size_bytes: 68,
         media_type: "image/jpeg",
-        content_digest:
-          "sha256:431ced6916a2a21a156e38701afe55bbd7f88969fbbfc56d7fe099d47f265460",
       });
     }
 
@@ -4065,7 +4141,9 @@ export async function mockArkretApi(
         call_id:
           body.call_id ??
           "ak:call:AbhvODyrIRCskAIoS9IXLjMfD-Zsr8lwDpiCU_zLR4it",
-        actor_id: body.actor_id ?? "ak:did_core:web:alice.example",
+        actor_id: body.actor_id
+          ? accountActorIdFor(String(body.actor_id))
+          : accountActorId,
         device_id:
           body.device_id ?? "ak:device:01904100-0000-7000-8000-a11ce0000001",
         ice_servers: [
@@ -4103,9 +4181,8 @@ export async function mockArkretApi(
       route.request().method() === "POST"
     ) {
       return json(route, {
-        report_id: "ak:report:e2e",
-        status: "queued",
-        routed_to: [`${CURRENT_STATION_DID}#moderation`],
+        report_id: "ak:report:AX-AFSYZHl0U2MQP-Ng7mU-aOm_Flhf0pVBoHYUK6Shg",
+        routed_to_ids: [CURRENT_STATION_ID],
       });
     }
 
@@ -4188,7 +4265,7 @@ export async function mockArkretApi(
           ciphertext_digest:
             typeof body.ciphertext_digest === "string"
               ? body.ciphertext_digest
-              : "sha256:e2e",
+              : `sha256:${"e".repeat(64)}`,
         });
       }
     }

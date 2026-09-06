@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 import {
   registerStrandsBeforeEach,
+  CURRENT_STATION_ID,
   DEMO_REALM,
   latestTestId,
   dismissBlockingRecoveryModal,
@@ -260,7 +261,15 @@ test("settings MIMI facade discovers drafts and runs interop actions", async ({ 
   await page.getByTestId("mimi-submit-message").click();
   const submitBody = (await submit).postDataJSON();
   expect(submitBody.source_format).toBeUndefined();
-  expect(submitBody.sender_actor_id).toBe("ak:did_core:web:alice.example");
+  // `sender_actor_id` is an `ActorId`: the account variant carries the complete
+  // AccountId, and no comparison may fall back to a bare principal id.
+  expect(submitBody.sender_actor_id).toEqual({
+    kind: "account",
+    account_id: {
+      principal_id: "ak:did_core:web:alice.example",
+      station_id: CURRENT_STATION_ID,
+    },
+  });
   expect(submitBody.ciphertext.content_type).toBe("application/json");
   expect(submitBody.ciphertext.ciphertext_digest).toMatch(/^sha256:[0-9a-f]{64}$/);
   expect(submitBody.ciphertext.payload).toMatch(/^[A-Za-z0-9_-]+$/);

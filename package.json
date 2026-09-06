@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "e2e": "playwright test",
+    "contract": "playwright test --config playwright.contract.config.ts",
     "e2e:headed": "playwright test --headed",
     "e2e:viewport": "playwright test tests/e2e/viewport.spec.ts",
     "test:cross-platform": "playwright test --config tests/cross_platform/playwright.config.ts",

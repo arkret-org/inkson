@@ -5,6 +5,7 @@
 /node_modules
 _*.md
 /test-results
+/test-results-contract
 /.claude
 /.playwright-mcp/
 /_circle_rollout_baseline.md
