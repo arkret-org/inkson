@@ -30,7 +30,7 @@ fn local_projection_commands_wait_for_the_projector() {
 }
 
 #[test]
-fn account_snapshot_refresh_preserves_local_realm_profile_overlay() {
+fn account_realm_state_snapshot_refresh_preserves_local_realm_profile_overlay() {
     let path = temp_state_path("realm-profile-overlay-refresh");
     let mut store = LocalStateStore::with_path(path);
     let realm_id = "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-";
@@ -51,7 +51,7 @@ fn account_snapshot_refresh_preserves_local_realm_profile_overlay() {
 }
 
 #[test]
-fn account_snapshot_refresh_preserves_pre_genesis_mls_binding_selectors() {
+fn account_realm_state_snapshot_refresh_preserves_pre_genesis_mls_binding_selectors() {
     let path = temp_state_path("pre-genesis-mls-binding-refresh");
     let mut store = LocalStateStore::with_path(path);
     let realm_id = "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-";
@@ -326,26 +326,27 @@ fn member_handle_cache_records_fresh_negative_lookup() {
 /// Nothing here is assembled locally.
 #[test]
 fn witness_attestations_are_built_from_the_sdk_witness_projection() {
-    // `snapshot-schema.md` section 3: items are reducer cells, never rendered
+    // `realm-state-snapshot-schema.md` section 3: items are reducer cells, never rendered
     // objects. The Realm genesis log is an ordered_log cell every Realm writes.
     let items = vec![
-        arkret_sdk::SnapshotMaterializedItem::value(
+        arkret_sdk::RealmStateSnapshotMaterializedItem::value(
             arkret_sdk::CellRef::new("ak:cell:ak.component.realm.create.v1:null").unwrap(),
             json!([]),
         )
         .unwrap(),
     ];
-    let (mut manifest, _chunks) = snapshot_manifest_for_items(items);
+    let (mut manifest, _chunks) = realm_state_snapshot_manifest_for_items(items);
     // A non-witness-quorum manifest carries no attestations at all.
     manifest.validate_witness_attestation_shape().unwrap();
 
-    manifest.authority_binding.authority_kind = arkret_sdk::SnapshotAuthorityKind::WitnessQuorum;
+    manifest.authority_binding.authority_kind =
+        arkret_sdk::RealmStateSnapshotAuthorityKind::WitnessQuorum;
     let attestations = ["did:web:witness-a.example", "did:web:witness-b.example"]
         .into_iter()
         .map(|did| {
             let witness_id = crate::mls_api_helpers::principal_core_id(did).unwrap();
             let digest = manifest.witness_attestation_digest(&witness_id).unwrap();
-            arkret_sdk::snapshot::SnapshotWitnessAttestation {
+            arkret_sdk::realm_state_snapshot::RealmStateSnapshotWitnessAttestation {
                 witness_id,
                 proof: arkret_sdk::DetachedJwsProof::ed25519(
                     arkret_sdk::DidUrl::new(format!("{did}#witness")).unwrap(),
@@ -373,7 +374,7 @@ fn witness_attestations_are_built_from_the_sdk_witness_projection() {
     let error = manifest.validate_witness_attestation_shape().unwrap_err();
     assert_eq!(
         error.code,
-        arkret_sdk::SnapshotValidationCode::SchemaViolation
+        arkret_sdk::RealmStateSnapshotValidationCode::SchemaViolation
     );
 }
 

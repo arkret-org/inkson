@@ -897,7 +897,7 @@ mod backfill_display_tests {
         .expect("valid RedactedEventView row");
         let backfill = BackfillView(arkret_sdk::EventsQueryOutcome {
             events: vec![redacted],
-            snapshot_bootstrap: None,
+            realm_state_snapshot_bootstrap: None,
             prev_cursor: None,
             next_cursor: None,
             has_more: false,
@@ -939,8 +939,9 @@ impl From<arkret_sdk::EventsQueryOutcome> for BackfillView {
     }
 }
 
-// `ak.self.snapshot.read.manifest_head.v1` returns the full signed
-// `ak.schema.snapshot.v1` manifest. See `api::TransportClient::snapshot_head`.
+// `ak.self.realm_state_snapshot.read.manifest_head.v1` returns the full signed
+// `ak.schema.realm_state_snapshot.v1` manifest. See
+// `api::TransportClient::realm_state_snapshot_head`.
 
 /// Structured mention node embedded in message body. Spec
 /// `models/strand-and-message.md §9.4` + `identity/identity-handles.md §3.8`.

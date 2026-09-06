@@ -130,11 +130,11 @@ pub mod secure_key_store;
 pub async fn run_browser_account_persist_fault_contract() -> anyhow::Result<()> {
     state::run_browser_account_persist_fault_contract().await
 }
+pub mod realm_state_snapshot;
 pub(crate) mod scheduled_send;
 pub mod sidecar;
 pub mod signal;
 pub mod signal_receive_engine;
-pub mod snapshot;
 /// Sync projection layer (account/realm wire payloads -> local projection
 /// models); moved out of `views/`.
 pub(crate) mod state;

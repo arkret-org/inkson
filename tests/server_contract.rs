@@ -49,36 +49,38 @@ fn problem_bytes(status: StatusCode, code: &str, detail: &str) -> Vec<u8> {
 }
 
 fn snapshot_contract_manifest_payload() -> serde_json::Value {
-    let snapshot_id =
-        arkret_sdk::SnapshotId::new("ak:snapshot:01904100-0000-7000-8000-0000000000cc").unwrap();
+    let realm_state_snapshot_id = arkret_sdk::RealmStateSnapshotId::new(
+        "ak:realm_state_snapshot:01904100-0000-7000-8000-0000000000cc",
+    )
+    .unwrap();
     let realm_id =
         arkret_sdk::RealmId::new("ak:realm:AeI0Z4D734iPt9RpF51PAg0CRjLSQmxPqv9NgUmBJiQi").unwrap();
     let service_id = arkret_sdk::DidCoreId::new("ak:did_core:web:server.local").unwrap();
-    // `snapshot-schema.md` section 3: items are reducer cells, never rendered
+    // `realm-state-snapshot-schema.md` section 3: items are reducer cells, never rendered
     // objects. The Realm genesis log is an ordered_log cell every Realm writes.
     let items = vec![
-        arkret_sdk::SnapshotMaterializedItem::value(
+        arkret_sdk::RealmStateSnapshotMaterializedItem::value(
             arkret_sdk::CellRef::new("ak:cell:ak.component.realm.create.v1:null").unwrap(),
             json!([]),
         )
         .unwrap(),
     ];
     let state_digest = arkret_sdk::state_digest_from_items(&items).unwrap();
-    let built = arkret_sdk::build_snapshot_chunks(
-        &snapshot_id,
+    let built = arkret_sdk::build_realm_state_snapshot_chunks(
+        &realm_state_snapshot_id,
         arkret_sdk::CORE_REDUCER_PROFILE,
         items,
         4096,
     )
     .unwrap();
     let created_at = Utc::now();
-    let mut manifest = arkret_sdk::SnapshotManifest {
-        id: snapshot_id,
+    let mut manifest = arkret_sdk::RealmStateSnapshotManifest {
+        id: realm_state_snapshot_id,
         realm_id,
         reducer_profile: arkret_sdk::CORE_REDUCER_PROFILE.to_owned(),
         schema_profile_refs: vec!["ak.profile.core_event_store.v1".to_owned()],
         state_digest,
-        frontier: arkret_sdk::SnapshotFrontier {
+        frontier: arkret_sdk::RealmStateSnapshotFrontier {
             event_ids: vec![snapshot_contract_event_id("0000000000c1")],
             timeline_hlc: arkret_sdk::Hlc::new("01970e589d21-0004-a13f9c2e").unwrap(),
         },
@@ -89,12 +91,12 @@ fn snapshot_contract_manifest_payload() -> serde_json::Value {
             actor_seq_ranges: Vec::new(),
         },
         chunks: built.into_iter().map(|chunk| chunk.descriptor).collect(),
-        security_class: arkret_sdk::SnapshotSecurityClass::Standard,
+        security_class: arkret_sdk::RealmStateSnapshotSecurityClass::Standard,
         verification_hints: None,
         created_by: arkret_sdk::ActorId::service(service_id.clone()),
         created_at,
         authority_binding: arkret_sdk::AuthorityBinding {
-            authority_kind: arkret_sdk::SnapshotAuthorityKind::RealmPolicySnapshotIssuer,
+            authority_kind: arkret_sdk::RealmStateSnapshotAuthorityKind::RealmPolicySnapshotIssuer,
             auth_state_digest: snapshot_contract_hash(1),
             auth_frontier: vec![snapshot_contract_event_id("0000000000c1")],
             checked_at: created_at,
@@ -317,25 +319,28 @@ fn inkson_accepts_server_contract_payloads() {
     );
     assert_eq!(submit.cursor, "sx:1760000000000");
 
-    let snapshot_head: arkret_sdk::SnapshotManifest =
+    let realm_state_snapshot_head: arkret_sdk::RealmStateSnapshotManifest =
         serde_json::from_value(snapshot_contract_manifest_payload()).unwrap();
     assert_eq!(
-        snapshot_head.reducer_profile,
+        realm_state_snapshot_head.reducer_profile,
         arkret_sdk::CORE_REDUCER_PROFILE
     );
     assert_eq!(
-        snapshot_head.created_by.signing_principal_id().as_str(),
+        realm_state_snapshot_head
+            .created_by
+            .signing_principal_id()
+            .as_str(),
         "ak:did_core:web:server.local"
     );
     assert!(
-        snapshot_head
+        realm_state_snapshot_head
             .signature
             .payload_digest
             .as_str()
             .starts_with("sha256:")
     );
     assert!(
-        serde_json::from_value::<arkret_sdk::SnapshotManifest>(json!({
+        serde_json::from_value::<arkret_sdk::RealmStateSnapshotManifest>(json!({
             "seal": "ak:seal:sha256:00",
             "chunk_count": 1,
             "merkle_root": format!("sha256:{}", "00".repeat(32)),

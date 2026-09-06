@@ -883,7 +883,7 @@ pub(crate) fn derive_and_retain_realm_history_secret(
     // intentional (no ratchet advance / persist; OpenMLS only exports the epoch the
     // snapshot already holds, so a Seal-view floor would add no safety here).
     let mut group = crate::mls::persistence::restore_envelope(&snapshot, &secret, 0)
-        .map_err(|error| MlsRuntimeError::SnapshotRestore(error.to_string()))?;
+        .map_err(|error| MlsRuntimeError::CheckpointRestore(error.to_string()))?;
     let epoch = snapshot.epoch;
     let history_secret = group
         .derive_and_retain_history_secret(realm_id)
@@ -2169,7 +2169,7 @@ pub(crate) fn encrypt_values_with_device_snapshot_for_effective_scope(
     // rather than producing ciphertext on a forked ratchet.
     let epoch_floor = super::seal_view_epoch_floor(state_store, realm_id);
     let mut group = crate::mls::persistence::restore_envelope(&snapshot, &secret, epoch_floor)
-        .map_err(|err| MlsRuntimeError::SnapshotRestore(err.to_string()))?;
+        .map_err(|err| MlsRuntimeError::CheckpointRestore(err.to_string()))?;
     if sidecar_binding.is_none() {
         ensure_realm_membership_is_covered_for_send(state_store, realm_id, circle, &group)?;
     }
@@ -2369,7 +2369,7 @@ pub(crate) fn encrypt_message_with_device_snapshot(
     // rather than producing ciphertext on a forked ratchet.
     let epoch_floor = super::seal_view_epoch_floor(state_store, realm_id);
     let mut group = crate::mls::persistence::restore_envelope(&snapshot, &secret, epoch_floor)
-        .map_err(|err| MlsRuntimeError::SnapshotRestore(err.to_string()))?;
+        .map_err(|err| MlsRuntimeError::CheckpointRestore(err.to_string()))?;
     if let Some(expected_sender_domain) = expected_sender_domain {
         let active_sender_domain = group
             .local_content_sender_domain()

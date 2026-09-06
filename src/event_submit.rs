@@ -3206,7 +3206,7 @@ impl EventSubmitter {
         }
         // Absence is not cached: the Realm may simply not be queryable yet
         // (sealed moments ago), and a compacted log may start past genesis
-        // (`snapshot_bootstrap`) — the claim is skipped rather than guessed
+        // (`realm_state_snapshot_bootstrap`) — the claim is skipped rather than guessed
         // until snapshot state is wired as a second source.
         Ok(resolved)
     }

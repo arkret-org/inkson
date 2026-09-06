@@ -541,9 +541,9 @@ pub struct MoveSubmissionRecord {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SnapshotSyncStatus {
+pub struct RealmStateSnapshotSyncStatus {
     pub manifest_id: String,
-    pub trust_state: crate::snapshot::SnapshotTrustState,
+    pub trust_state: crate::realm_state_snapshot::RealmStateSnapshotTrustState,
     pub updated_at: DateTime<Utc>,
     #[serde(default)]
     pub source_event_ids: Vec<String>,
@@ -930,7 +930,10 @@ pub struct ClientLocalState {
     #[serde(default)]
     pub realm_collaboration_roles: BTreeMap<String, arkret_sdk::CollaborationRealmRole>,
     #[serde(default)]
-    pub snapshot_sync: BTreeMap<String, SnapshotSyncStatus>,
+    // Persisted key, unchanged: it addresses local state already written
+    // on every device, and an at-rest key is not a wire name.
+    #[serde(rename = "snapshot_sync")]
+    pub realm_state_snapshot_sync: BTreeMap<String, RealmStateSnapshotSyncStatus>,
     /// Principal-private saved-item account-data values, keyed by
     /// `ak.saved.v1:<collection_key>:<target_key>`.
     #[serde(default)]
@@ -1518,7 +1521,7 @@ impl Default for ClientLocalState {
             realm_destroy_receipts: BTreeMap::new(),
             realm_tree_projections: BTreeMap::new(),
             realm_collaboration_roles: BTreeMap::new(),
-            snapshot_sync: BTreeMap::new(),
+            realm_state_snapshot_sync: BTreeMap::new(),
             saved_account_data: BTreeMap::new(),
             scheduled_send_account_data: BTreeMap::new(),
             scheduled_send_target_realms: BTreeMap::new(),

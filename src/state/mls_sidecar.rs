@@ -1618,7 +1618,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn same_epoch_secret_with_new_snapshot_ref_is_idempotent() {
+    async fn same_epoch_secret_with_new_realm_state_snapshot_ref_is_idempotent() {
         let path = std::env::temp_dir().join(format!(
             "inkson-history-secret-snapshot-refresh-{}-{}.json",
             std::process::id(),
@@ -1651,7 +1651,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn concurrent_same_epoch_retains_with_distinct_snapshot_refs_converge() {
+    async fn concurrent_same_epoch_retains_with_distinct_realm_state_snapshot_refs_converge() {
         let path = std::env::temp_dir().join(format!(
             "inkson-history-secret-concurrent-refresh-{}-{}.json",
             std::process::id(),

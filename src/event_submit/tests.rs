@@ -1517,7 +1517,7 @@ fn mls_genesis_event_lookup_filters_kind_and_realm() {
             )
             .into(),
         ],
-        snapshot_bootstrap: None,
+        realm_state_snapshot_bootstrap: None,
         next_cursor: None,
         prev_cursor: None,
         has_more: false,

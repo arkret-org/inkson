@@ -2903,11 +2903,11 @@ export async function mockArkretApi(
       });
     }
 
-    // NB: no `/_arkret/self/snapshot/head` route. The mock's describe does
-    // not advertise `ak.self.snapshot.read.manifest_head.v1`, so the client falls back to
+    // NB: no `/_arkret/self/realm-state-snapshot/head` route. The mock's describe does
+    // not advertise `ak.self.realm_state_snapshot.read.manifest_head.v1`, so the client falls back to
     // event replay before issuing the request. The current wire shape is the
-    // full signed `ak.schema.snapshot.v1` manifest (self-id field `id`); the
-    // removed `snapshot_ref` pointer DTO is hard-rejected and MUST NOT be
+    // full signed `ak.schema.realm_state_snapshot.v1` manifest (self-id field `id`); the
+    // removed `realm_state_snapshot_ref` pointer DTO is hard-rejected and MUST NOT be
     // reintroduced here.
     if (
       url.pathname === "/_arkret/root/identity/describe" &&

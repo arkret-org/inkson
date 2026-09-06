@@ -52,7 +52,7 @@ pub fn encrypt_reaction_with_device_snapshot(
     // epoch floor so a stale local snapshot can't seal a reaction on a forked ratchet.
     let epoch_floor = super::seal_view_epoch_floor(state_store, realm_id);
     let mut group = crate::mls::persistence::restore_envelope(&snapshot, &secret, epoch_floor)
-        .map_err(|err| MlsRuntimeError::SnapshotRestore(err.to_string()))?;
+        .map_err(|err| MlsRuntimeError::CheckpointRestore(err.to_string()))?;
 
     let is_minimal_metadata = state_store.realm_projection_is_minimal_metadata(realm_id);
 

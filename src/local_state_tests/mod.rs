@@ -108,20 +108,22 @@ pub(super) fn snapshot_hash(seed: u8) -> arkret_sdk::Hash {
     arkret_sdk::Hash::new(format!("sha256:{}", format!("{seed:02x}").repeat(32))).unwrap()
 }
 
-pub(super) fn snapshot_manifest_for_items(
-    items: Vec<arkret_sdk::SnapshotMaterializedItem>,
+pub(super) fn realm_state_snapshot_manifest_for_items(
+    items: Vec<arkret_sdk::RealmStateSnapshotMaterializedItem>,
 ) -> (
-    arkret_sdk::SnapshotManifest,
-    Vec<arkret_sdk::SnapshotChunkPayload>,
+    arkret_sdk::RealmStateSnapshotManifest,
+    Vec<arkret_sdk::RealmStateRealmStateSnapshotChunkPayload>,
 ) {
-    let snapshot_id =
-        arkret_sdk::SnapshotId::new("ak:snapshot:01904100-0000-7000-8000-0000000000aa").unwrap();
+    let realm_state_snapshot_id = arkret_sdk::RealmStateSnapshotId::new(
+        "ak:realm_state_snapshot:01904100-0000-7000-8000-0000000000aa",
+    )
+    .unwrap();
     let realm_id =
         arkret_sdk::RealmId::new("ak:realm:AZEvldDJcWI9IRHqP2BMibDDfc59Ax_LwrbsrQmeD6Ml").unwrap();
     let service_id = crate::mls_api_helpers::principal_core_id("did:web:server.example").unwrap();
     let state_digest = arkret_sdk::state_digest_from_items(&items).unwrap();
-    let built = arkret_sdk::build_snapshot_chunks(
-        &snapshot_id,
+    let built = arkret_sdk::build_realm_state_snapshot_chunks(
+        &realm_state_snapshot_id,
         arkret_sdk::CORE_REDUCER_PROFILE,
         items,
         4096,
@@ -136,13 +138,13 @@ pub(super) fn snapshot_manifest_for_items(
         .map(|chunk| chunk.descriptor)
         .collect::<Vec<_>>();
     let created_at = Utc::now();
-    let mut manifest = arkret_sdk::SnapshotManifest {
-        id: snapshot_id,
+    let mut manifest = arkret_sdk::RealmStateSnapshotManifest {
+        id: realm_state_snapshot_id,
         realm_id,
         reducer_profile: arkret_sdk::CORE_REDUCER_PROFILE.to_owned(),
         schema_profile_refs: vec!["ak.profile.core_event_store.v1".to_owned()],
         state_digest,
-        frontier: arkret_sdk::SnapshotFrontier {
+        frontier: arkret_sdk::RealmStateSnapshotFrontier {
             event_ids: vec![snapshot_event_id("0000000000a2")],
             timeline_hlc: arkret_sdk::Hlc::new("01970e589d21-0004-a13f9c2e").unwrap(),
         },
@@ -153,12 +155,12 @@ pub(super) fn snapshot_manifest_for_items(
             actor_seq_ranges: Vec::new(),
         },
         chunks,
-        security_class: arkret_sdk::SnapshotSecurityClass::Standard,
+        security_class: arkret_sdk::RealmStateSnapshotSecurityClass::Standard,
         verification_hints: None,
         created_by: arkret_sdk::ActorId::service(service_id.clone()),
         created_at,
         authority_binding: arkret_sdk::AuthorityBinding {
-            authority_kind: arkret_sdk::SnapshotAuthorityKind::RealmPolicySnapshotIssuer,
+            authority_kind: arkret_sdk::RealmStateSnapshotAuthorityKind::RealmPolicySnapshotIssuer,
             auth_state_digest: snapshot_hash(1),
             auth_frontier: vec![snapshot_event_id("0000000000a2")],
             checked_at: created_at,

@@ -53,7 +53,7 @@ fn test_message_header(
 
 #[cfg(not(target_arch = "wasm32"))]
 #[test]
-fn creator_snapshot_bootstrap_makes_space_encryptable() {
+fn creator_realm_state_snapshot_bootstrap_makes_space_encryptable() {
     let mut state = temp_state_store("creator-bootstrap");
     let secure = MemorySecureKeyStore::new();
     let actor = "did:web:alice.example";

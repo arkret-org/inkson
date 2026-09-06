@@ -316,15 +316,15 @@ pub fn DashboardPanel(
                                             .as_ref()
                                             .is_some_and(|r| !r.local_name.trim().is_empty());
                                         let snapshot_status = if node.kind == crate::models::RealmTreeNodeKind::Realm {
-                                            state_store.read().snapshot_sync_status(&node.id)
+                                            state_store.read().realm_state_snapshot_sync_status(&node.id)
                                         } else {
                                             None
                                         };
                                         let snapshot_badge = snapshot_status.as_ref().and_then(|status| {
                                             match status.trust_state {
-                                                crate::snapshot::SnapshotTrustState::LowerTrust => Some("lower-trust"),
-                                                crate::snapshot::SnapshotTrustState::Degraded => Some("degraded"),
-                                                crate::snapshot::SnapshotTrustState::Verified => None,
+                                                crate::realm_state_snapshot::RealmStateSnapshotTrustState::LowerTrust => Some("lower-trust"),
+                                                crate::realm_state_snapshot::RealmStateSnapshotTrustState::Degraded => Some("degraded"),
+                                                crate::realm_state_snapshot::RealmStateSnapshotTrustState::Verified => None,
                                             }
                                         });
                                         let kind_label =

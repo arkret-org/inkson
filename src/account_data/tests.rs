@@ -17,12 +17,12 @@ fn test_realm_remark(value: &str, local_name: &str) -> RealmRemark {
 // ── F-ACCT-SNAP-1 ────────────────────────────────────────────────
 
 #[test]
-fn snapshot_head_default_is_none_and_round_trips() {
+fn realm_state_snapshot_head_default_is_none_and_round_trips() {
     let mut store = AccountDataStore::new();
-    assert_eq!(store.snapshot_head(), None);
+    assert_eq!(store.realm_state_snapshot_head(), None);
 
-    store.set_snapshot_head("sha256:abc123");
-    assert_eq!(store.snapshot_head(), Some("sha256:abc123"));
+    store.set_realm_state_snapshot_head("sha256:abc123");
+    assert_eq!(store.realm_state_snapshot_head(), Some("sha256:abc123"));
 
     // Subsequent reconcile overwrites without affecting entries.
     store
@@ -33,13 +33,13 @@ fn snapshot_head_default_is_none_and_round_trips() {
             "01970e589d21-0001-a13f9c2e".to_owned(),
         )
         .unwrap();
-    store.set_snapshot_head("sha256:def456");
-    assert_eq!(store.snapshot_head(), Some("sha256:def456"));
+    store.set_realm_state_snapshot_head("sha256:def456");
+    assert_eq!(store.realm_state_snapshot_head(), Some("sha256:def456"));
     assert_eq!(store.len(), 1);
 }
 
 #[test]
-fn snapshot_head_clears_independently_of_entries() {
+fn realm_state_snapshot_head_clears_independently_of_entries() {
     let mut store = AccountDataStore::new();
     store
         .set(
@@ -49,16 +49,16 @@ fn snapshot_head_clears_independently_of_entries() {
             "01970e589d21-0001-a13f9c2e".to_owned(),
         )
         .unwrap();
-    store.set_snapshot_head("sha256:abc123");
-    store.clear_snapshot_head();
-    assert_eq!(store.snapshot_head(), None);
+    store.set_realm_state_snapshot_head("sha256:abc123");
+    store.clear_realm_state_snapshot_head();
+    assert_eq!(store.realm_state_snapshot_head(), None);
     // Entries survive the snapshot reset — a trust-bundle change
     // forces re-reconciliation but doesn't wipe live data.
     assert_eq!(store.len(), 1);
 }
 
 #[test]
-fn snapshot_head_persists_through_serde_round_trip() {
+fn realm_state_snapshot_head_persists_through_serde_round_trip() {
     let mut store = AccountDataStore::new();
     store
         .set(
@@ -68,16 +68,16 @@ fn snapshot_head_persists_through_serde_round_trip() {
             "01970e589d21-0001-a13f9c2e".to_owned(),
         )
         .unwrap();
-    store.set_snapshot_head("sha256:abc123");
+    store.set_realm_state_snapshot_head("sha256:abc123");
 
     let bytes = serde_json::to_string(&store).unwrap();
     let restored: AccountDataStore = serde_json::from_str(&bytes).unwrap();
-    assert_eq!(restored.snapshot_head(), Some("sha256:abc123"));
+    assert_eq!(restored.realm_state_snapshot_head(), Some("sha256:abc123"));
     assert_eq!(restored.len(), 1);
 }
 
 #[test]
-fn snapshot_head_absent_from_state_defaults_to_none() {
+fn realm_state_snapshot_head_absent_from_state_defaults_to_none() {
     let persisted = json!({
         "entries": {
             "ak.client.ui_state": {
@@ -89,7 +89,7 @@ fn snapshot_head_absent_from_state_defaults_to_none() {
         }
     });
     let store: AccountDataStore = serde_json::from_value(persisted).unwrap();
-    assert_eq!(store.snapshot_head(), None);
+    assert_eq!(store.realm_state_snapshot_head(), None);
     assert_eq!(store.len(), 1);
 }
 

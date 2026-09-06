@@ -51,7 +51,7 @@ pub struct AccountDataRecord {
 /// F-ACCT-SNAP-1: tracks the server-declared snapshot head this store was
 /// last reconciled to (the account-data delta itself arrives on the
 /// `sync/client-sync.md` account-subscribe frame). A new device can
-/// hydrate from `snapshot_head` instead of replaying every historic
+/// hydrate from `realm_state_snapshot_head` instead of replaying every historic
 /// `ak.account_data.set` event; once the snapshot endpoint surfaces a
 /// fingerprint matching this value, the client knows it's caught up and
 /// can resume incremental sync from the live event stream.
@@ -64,7 +64,7 @@ pub struct AccountDataStore {
     /// snapshot fetches refresh the value. Persisted alongside `entries`
     /// so a restart can resume incremental sync from this point.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    snapshot_head: Option<String>,
+    realm_state_snapshot_head: Option<String>,
 }
 
 impl AccountDataStore {
@@ -128,23 +128,23 @@ impl AccountDataStore {
 
     /// F-ACCT-SNAP-1: most recent snapshot head this store has caught
     /// up to, or `None` before the first snapshot reconcile.
-    pub fn snapshot_head(&self) -> Option<&str> {
-        self.snapshot_head.as_deref()
+    pub fn realm_state_snapshot_head(&self) -> Option<&str> {
+        self.realm_state_snapshot_head.as_deref()
     }
 
     #[cfg(test)]
     /// F-ACCT-SNAP-1: record the snapshot head the store was just
     /// reconciled to (called after applying a snapshot batch from the
     /// server). Subsequent live events apply on top of this point.
-    pub fn set_snapshot_head(&mut self, head: impl Into<String>) {
-        self.snapshot_head = Some(head.into());
+    pub fn set_realm_state_snapshot_head(&mut self, head: impl Into<String>) {
+        self.realm_state_snapshot_head = Some(head.into());
     }
 
     #[cfg(test)]
     /// F-ACCT-SNAP-1: drop the snapshot head (e.g. on logout or when a
     /// trust-bundle change invalidates prior reconciliation).
-    pub fn clear_snapshot_head(&mut self) {
-        self.snapshot_head = None;
+    pub fn clear_realm_state_snapshot_head(&mut self) {
+        self.realm_state_snapshot_head = None;
     }
 }
 

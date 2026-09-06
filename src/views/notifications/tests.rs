@@ -44,7 +44,7 @@ fn push_test_invite_projection(
 }
 
 #[test]
-fn snapshot_refresh_preserves_an_existing_live_invite_projection() {
+fn realm_state_snapshot_refresh_preserves_an_existing_live_invite_projection() {
     let path = std::env::temp_dir().join(format!(
         "inkson-notification-snapshot-{}.json",
         crate::operation::uuid_v7()

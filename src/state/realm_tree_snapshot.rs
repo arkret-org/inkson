@@ -120,8 +120,11 @@ impl LocalStateStore {
         self.load().realm_collaboration_roles.get(realm_id).copied()
     }
 
-    pub fn snapshot_sync_status(&self, realm_id: &str) -> Option<SnapshotSyncStatus> {
-        self.load().snapshot_sync.get(realm_id).cloned()
+    pub fn realm_state_snapshot_sync_status(
+        &self,
+        realm_id: &str,
+    ) -> Option<RealmStateSnapshotSyncStatus> {
+        self.load().realm_state_snapshot_sync.get(realm_id).cloned()
     }
 
     /// Drop every `realm_tree_projections` entry whose key isn't in `keep`.

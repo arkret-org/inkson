@@ -1,5 +1,5 @@
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub enum SnapshotTrustState {
+pub enum RealmStateSnapshotTrustState {
     LowerTrust,
     Verified,
     Degraded,

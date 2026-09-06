@@ -80,7 +80,7 @@ pub fn force_epoch_rotation_commit_for_effective_scope(
     // local snapshot can't silently fork the group from an outdated epoch.
     let epoch_floor = super::seal_view_epoch_floor(state_store, realm_id);
     let mut group = crate::mls::persistence::restore_envelope(&snapshot, &secret, epoch_floor)
-        .map_err(|err| MlsRuntimeError::SnapshotRestore(err.to_string()))?;
+        .map_err(|err| MlsRuntimeError::CheckpointRestore(err.to_string()))?;
     let previous_governance_binding = current_governance_binding_predecessor(&group)?;
     let proof_request = crate::mls::governance_proof::proof_request(
         state_store,
@@ -171,7 +171,7 @@ pub(crate) fn build_mls_remove_members_commit_for_effective_scope_with_sidecar_b
     // local snapshot can't silently fork the group from an outdated epoch.
     let epoch_floor = super::seal_view_epoch_floor(state_store, realm_id);
     let mut group = crate::mls::persistence::restore_envelope(&snapshot, &secret, epoch_floor)
-        .map_err(|err| MlsRuntimeError::SnapshotRestore(err.to_string()))?;
+        .map_err(|err| MlsRuntimeError::CheckpointRestore(err.to_string()))?;
     let previous_governance_binding = current_governance_binding_predecessor(&group)?;
     let governance_binding = crate::mls::governance_proof::cached_verified_binding_for_transition(
         state_store,
@@ -287,7 +287,7 @@ pub(crate) fn build_add_member_commit_for_effective_scope_with_binding(
     // local snapshot can't silently fork the group from an outdated epoch.
     let epoch_floor = super::seal_view_epoch_floor(state_store, realm_id);
     let mut group = crate::mls::persistence::restore_envelope(&snapshot, &secret, epoch_floor)
-        .map_err(|err| MlsRuntimeError::SnapshotRestore(err.to_string()))?;
+        .map_err(|err| MlsRuntimeError::CheckpointRestore(err.to_string()))?;
     let previous_governance_binding = current_governance_binding_predecessor(&group)?;
     let governance_binding = crate::mls::governance_proof::cached_verified_binding_for_transition(
         state_store,
@@ -402,7 +402,7 @@ pub fn build_idle_self_update_commit(
     // local snapshot can't silently fork the group from an outdated epoch.
     let epoch_floor = super::seal_view_epoch_floor(state_store, realm_id);
     let mut group = crate::mls::persistence::restore_envelope(&snapshot, &secret, epoch_floor)
-        .map_err(|err| MlsRuntimeError::SnapshotRestore(err.to_string()))?;
+        .map_err(|err| MlsRuntimeError::CheckpointRestore(err.to_string()))?;
     let previous_governance_binding = current_governance_binding_predecessor(&group)?;
     let commit_envelope = group
         .self_update_commit()
