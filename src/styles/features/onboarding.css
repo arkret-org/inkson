@@ -16,6 +16,22 @@
   box-shadow: 0 16px 40px color-mix(in srgb, #0f172a 9%, transparent);
 }
 
+/* Inside the auth shell `.auth-card` is already the framed surface, so the flow
+ * contributes content only. Without this the two frames stacked: the auth card
+ * drew a second border/background around the onboarding card, and the flow's
+ * bottom padding pushed it 20px past the inner card as a visible ledge. The app
+ * shell hosts the same flow in a plain `.realm-body`, where the onboarding card
+ * keeps its own frame. */
+.auth-card .onboarding-flow {
+  padding: 0;
+}
+.auth-card .onboarding-card {
+  border: 0;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+}
+
 .onboarding-progress {
   list-style: none;
   display: grid;
