@@ -946,9 +946,9 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                         {
                                                             div { class: "workflow-form card-detail-edit-form card-detail-inline-edit-form", "data-testid": "card-detail-edit-form",
                                                                 div { class: "field",
-                                                                    Label { html_for: "card-detail-description-input", "Description" }
                                                                     CardMarkdownEditor {
                                                                         key: "card-markdown-description",
+                                                                        aria_label: "Description".to_owned(),
                                                                         value: card_edit_body(),
                                                                         token: token(),
                                                                         realm_id: selected_realm_id.clone(),
@@ -1318,9 +1318,9 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                                     && card_edit_synthesis_target_id().as_deref() == Some(entry.id.as_str()) {
                                                                                     div { class: "workflow-form card-detail-edit-form card-detail-inline-edit-form", "data-testid": "card-detail-edit-form",
                                                                                         div { class: "field",
-                                                                                            Label { html_for: "card-detail-synthesis-input", "Synthesis" }
                                                                                             CardMarkdownEditor {
                                                                                                 key: "card-markdown-synthesis-{entry.id}",
+                                                                                                aria_label: "Synthesis".to_owned(),
                                                                                                 value: card_edit_synthesis(),
                                                                                                 token: token(),
                                                                                                 realm_id: selected_realm_id.clone(),
@@ -1409,9 +1409,9 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                             && card_edit_synthesis_target_id().is_none() {
                                                             div { class: "workflow-form card-detail-edit-form card-detail-inline-edit-form", "data-testid": "card-detail-edit-form",
                                                                 div { class: "field",
-                                                                    Label { html_for: "card-detail-synthesis-input", "Synthesis" }
                                                                     CardMarkdownEditor {
                                                                         key: "card-markdown-synthesis-new",
+                                                                        aria_label: "Synthesis".to_owned(),
                                                                         value: card_edit_synthesis(),
                                                                         token: token(),
                                                                         realm_id: selected_realm_id.clone(),

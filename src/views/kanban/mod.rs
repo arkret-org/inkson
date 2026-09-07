@@ -73,6 +73,11 @@ fn CardMarkdownEditor(
     /// confuse the toast bootstrap script. Defaults to the stable
     /// `"description"` slot used by existing data-testids.
     slot: Option<String>,
+    /// Accessible name for the fallback textarea. The track editors sit
+    /// inside a tab panel whose tab already names the track, so they carry
+    /// the name here instead of repeating it as a visible `<label>` above
+    /// the editor.
+    aria_label: Option<String>,
 ) -> Element {
     // A4 — base_url from session context instead of a prop.
     let base_url = crate::app::SessionContext::base_url_string();
@@ -162,6 +167,7 @@ fn CardMarkdownEditor(
                 id: "{fallback_id}",
                 class: "textarea card-rich-editor-fallback",
                 "data-testid": "card-detail-description-input",
+                "aria-label": aria_label.clone().unwrap_or_default(),
                 value: "{value}",
                 maxlength: "8192",
                 oninput: move |event: FormEvent| on_change.call(event.value()),
