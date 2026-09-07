@@ -306,7 +306,7 @@ fn build_realm_bootstrap_membership_intent(
 ) -> anyhow::Result<crate::operation::EventIntent> {
     let actor_id = facets.actor_id.as_str();
     Ok(build_member_state_transition_event_for_station(
-        Some(&facets.station_id),
+        &facets.station_id,
         realm_id,
         actor_id,
         &arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
@@ -1423,7 +1423,7 @@ pub fn build_member_state_transition_event(
     reason: &str,
 ) -> anyhow::Result<crate::operation::LocalOperation> {
     build_member_state_transition_event_for_station(
-        None,
+        &crate::operation::authoring_station_id()?,
         realm_id,
         actor_id,
         member_actor_id,
@@ -1434,7 +1434,7 @@ pub fn build_member_state_transition_event(
 }
 
 fn build_member_state_transition_event_for_station(
-    station_id: Option<&arkret_sdk::DidCoreId>,
+    station_id: &arkret_sdk::DidCoreId,
     realm_id: &str,
     actor_id: &str,
     member_actor_id: &arkret_sdk::ActorId,
@@ -1453,9 +1453,7 @@ fn build_member_state_transition_event_for_station(
         "ban" => MembershipPayloadState::Ban,
         other => return Err(anyhow::anyhow!("unknown membership state {other}")),
     };
-    let station_id = station_id
-        .cloned()
-        .unwrap_or(crate::operation::authoring_station_id()?);
+    let station_id = station_id.clone();
     let member_id = member_actor_id.clone();
     // `member.state` is keyed by the complete ActorId. ActorId is structured
     // canonical JSON, so the registry's canonical_json composite rule hashes

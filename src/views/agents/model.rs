@@ -374,8 +374,8 @@ pub fn requested_scope_for_presets(
     })
 }
 
-/// Builds the runtime-agnostic pairing bootstrap (agent spec §4.4): the six
-/// short-lived fields any agent runtime needs to start key pairing. It carries
+/// Builds the legacy stored bootstrap (agent spec §4.4). New link-based pairing
+/// resolves the complete runtime identity from the Station. This value carries
 /// no scope payload — the authoritative ceiling lives in `ak.agent.key.authorize`
 /// and the effective-permission intersection, and the requested scope is shown
 /// separately in the admin card, not baked into the QR.
@@ -386,6 +386,7 @@ pub fn build_agent_pairing_bootstrap_json(
 ) -> serde_json::Result<String> {
     let base_url = base_url.trim_end_matches('/');
     let bootstrap = AgentPairingBootstrap {
+        runtime_identity: None,
         arkret_base_url: base_url.to_owned(),
         service_id: arkret_sdk::DidCoreId::new(service_id.trim().to_owned())
             .map_err(json_invalid_input)?,
@@ -400,7 +401,8 @@ pub fn build_agent_pairing_bootstrap_json(
 /// Wraps the bootstrap into a standard HTTPS Universal/App Link whose host is the
 /// deployment's `arkret_base_url` (a custom URI scheme is forbidden).
 /// The fragment carries only a short handoff token; runtimes resolve it through
-/// `POST /_arkret/open/agent-pairing/resolve` to obtain the six-field bootstrap.
+/// `POST /_arkret/open/agent-pairing/resolve` to obtain the bootstrap and its
+/// Station-supplied runtime identity.
 pub fn build_agent_pairing_deep_link(base_url: &str, pairing_token: &str) -> String {
     let base = base_url.trim_end_matches('/');
     format!("{base}/_arkret/open/agent-pairing/resolve#token={pairing_token}")

@@ -61,6 +61,8 @@ pub(crate) async fn prepare_pcr_policy_recovery(
     if verified_session.state != arkret_sdk::SessionState::Verified
         || verified_session.identity_model != arkret_sdk::RecoveryIdentityModel::PcrPolicy
         || verified_session.recovery_session_id != session.recovery_session_id
+        || verified_session.account_id != session.account_id
+        || verified_session.requesting_device_id != session.requesting_device_id
         || verified_session.proof_summary != proof_outcome.proof_summary
     {
         anyhow::bail!("recovery session is not the verified PCR-policy snapshot");
@@ -193,10 +195,6 @@ pub(crate) async fn prepare_pcr_policy_recovery(
         verified_session.account_id.principal_id.as_str(),
         scope_ref.realm_id().as_str(),
     )?;
-    let station_id = crate::operation::authoring_station_id()?;
-    if station_id != verified_session.account_id.station_id {
-        anyhow::bail!("verified recovery session belongs to a different AccountId");
-    }
     let mut reanchor = arkret_sdk::TypedEventDraft::<arkret_sdk::event_spec::DeviceReanchor>::new(
         scope_ref.clone(),
         arkret_sdk::ActorId::account(verified_session.account_id.clone()),

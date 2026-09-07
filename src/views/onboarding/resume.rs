@@ -93,9 +93,17 @@ pub(super) async fn issue_recovery_session_transport(
     mut state_store: SyncSignal<crate::state::LocalStateStore>,
 ) -> anyhow::Result<crate::transport::TransportClient> {
     let holder = {
+        let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
+        let pending_store = crate::secure_key_store::PendingLocalStore::new(
+            arkret_sdk::DeviceId::new(handoff.device_id.clone())?,
+        );
         let mut store = state_store.write();
-        crate::identity::account_auth::grant_dpop::load_or_recover_device_key(&mut store)?
-            .ok_or_else(|| anyhow::anyhow!("recovery grant holder key is unavailable"))?
+        crate::identity::account_auth::grant_dpop::load_or_recover_pending_device_key_with_secure_store(
+            &mut store,
+            secure_store.as_ref(),
+            &pending_store,
+        )?
+        .ok_or_else(|| anyhow::anyhow!("recovery handoff holder key is unavailable"))?
     };
     if holder.jkt() != handoff.holder_jkt {
         anyhow::bail!("account handoff holder key changed before recovery grant issuance");
@@ -131,6 +139,7 @@ pub(super) async fn issue_recovery_session_transport(
         .map(|operation| (*operation).to_owned())
         .collect::<Vec<_>>();
     if outcome.account_id.principal_id != *principal_id
+        || outcome.account_id.station_id != handoff.audience_id
         || outcome.device_id.as_ref().map(arkret_sdk::DeviceId::as_str)
             != Some(handoff.device_id.as_str())
         || outcome.audience_id != handoff.audience_id
@@ -182,9 +191,17 @@ pub(super) async fn issue_recovery_completion_grant(
     mut state_store: SyncSignal<crate::state::LocalStateStore>,
 ) -> anyhow::Result<CompletedIdentityCreation> {
     let holder = {
+        let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
+        let pending_store = crate::secure_key_store::PendingLocalStore::new(
+            arkret_sdk::DeviceId::new(handoff.device_id.clone())?,
+        );
         let mut store = state_store.write();
-        crate::identity::account_auth::grant_dpop::load_or_recover_device_key(&mut store)?
-            .ok_or_else(|| anyhow::anyhow!("recovery grant holder key is unavailable"))?
+        crate::identity::account_auth::grant_dpop::load_or_recover_pending_device_key_with_secure_store(
+            &mut store,
+            secure_store.as_ref(),
+            &pending_store,
+        )?
+        .ok_or_else(|| anyhow::anyhow!("recovery handoff holder key is unavailable"))?
     };
     if handoff.holder_jkt != holder.jkt() {
         anyhow::bail!("account handoff holder key changed during recovery");
@@ -254,8 +271,10 @@ pub(super) async fn issue_recovery_completion_grant(
         .bound_principal_did
         .clone()
         .ok_or_else(|| anyhow::anyhow!("account handoff omits its bound principal DID"))?;
-    if session.account_id.principal_id != principal_id {
-        anyhow::bail!("recovery session grant principal does not match the account handoff");
+    if session.account_id.principal_id != principal_id
+        || session.account_id.station_id != handoff.audience_id
+    {
+        anyhow::bail!("recovery session grant AccountId does not match the account handoff");
     }
     let persisted = crate::state::PersistedSessionGrant {
         grant_jwt: session.grant_jwt.clone(),

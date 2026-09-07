@@ -1658,7 +1658,7 @@ pub fn ChatPanel(
     // The private Strand only carries its internal scope id, so ordinary Realm
     // inheritance would incorrectly downgrade a Sidecar opened from a
     // plaintext principal-control Realm and expose the plaintext Send path.
-    let selected_channel_security_encrypted = if sidecar_mode {
+    let selected_channel_security_encrypted = if sidecar_mode || direct_mode {
         true
     } else {
         selected_channel_info
@@ -1666,17 +1666,31 @@ pub fn ChatPanel(
             .and_then(|channel| channel.security_encrypted)
             .unwrap_or(selected_realm_security_encrypted)
     };
-    let direct_message_authority = crate::app::SessionContext::get().active_account()
-        .and_then(|account| state_store.read().trusted_mls_governance_checkpoint(&selected_realm_id)
-            .and_then(|checkpoint| crate::mls::direct_binding::message_authority(
-                &checkpoint, &arkret_sdk::ActorId::account(account.authority),
-                state_store.read().direct_conversation_binding_exists(&selected_realm_id))));
-    let provisional_founder = matches!(direct_message_authority,
-        Some(crate::mls::direct_binding::MessageAuthority::ProvisionalFounder(_)));
+    let direct_message_authority =
+        crate::app::SessionContext::get()
+            .active_account()
+            .and_then(|account| {
+                state_store
+                    .read()
+                    .trusted_mls_governance_checkpoint(&selected_realm_id)
+                    .and_then(|checkpoint| {
+                        crate::mls::direct_binding::message_authority(
+                            &checkpoint,
+                            &arkret_sdk::ActorId::account(account.authority),
+                            state_store
+                                .read()
+                                .direct_conversation_binding_exists(&selected_realm_id),
+                        )
+                    })
+            });
+    let provisional_founder = matches!(
+        direct_message_authority,
+        Some(crate::mls::direct_binding::MessageAuthority::ProvisionalFounder(_))
+    );
     let mut selected_realm_pending_mls_binding_reason = state_store
         .read()
         .realm_pending_mls_binding_reason(&selected_realm_id);
-    if selected_realm_security_encrypted
+    if (selected_realm_security_encrypted || direct_mode)
         && !sidecar_mode
         && selected_realm_pending_mls_binding_reason.is_none()
     {
@@ -1713,20 +1727,27 @@ pub fn ChatPanel(
                     "Waiting for this device's encryption keys. Keep this conversation open to receive the MLS Welcome."
                         .to_owned(),
                 );
-            } else if provisional_founder && state_store.read()
-                .mls_checkpoint_for_effective_scope(&selected_realm_id, None)
-                .is_none_or(|snapshot| {
-                    let Ok(realm_id) = arkret_sdk::RealmId::new(selected_realm_id.clone()) else {
-                        return true;
-                    };
-                    state_store.read().mls_group_state_ref_for_scope(
-                        &arkret_sdk::ScopeRef::Realm { realm_id },
-                        &snapshot.group_id, snapshot.epoch).is_err()
-                })
+            } else if provisional_founder
+                && state_store
+                    .read()
+                    .mls_checkpoint_for_effective_scope(&selected_realm_id, None)
+                    .is_none_or(|snapshot| {
+                        let Ok(realm_id) = arkret_sdk::RealmId::new(selected_realm_id.clone())
+                        else {
+                            return true;
+                        };
+                        state_store
+                            .read()
+                            .mls_group_state_ref_for_scope(
+                                &arkret_sdk::ScopeRef::Realm { realm_id },
+                                &snapshot.group_id,
+                                snapshot.epoch,
+                            )
+                            .is_err()
+                    })
             {
-                selected_realm_pending_mls_binding_reason = Some(
-                    "Waiting for the verified conversation encryption state.".to_owned(),
-                );
+                selected_realm_pending_mls_binding_reason =
+                    Some("Waiting for the verified conversation encryption state.".to_owned());
             } else if roster_matches == Some(false) && !provisional_founder {
                 selected_realm_pending_mls_binding_reason = Some(
                     "encryption_transition_pending: synced roster differs from the verified MLS group"
@@ -1735,14 +1756,17 @@ pub fn ChatPanel(
             }
         }
     }
-    if !sidecar_mode && selected_realm_pending_mls_binding_reason.is_none()
-        && state_store.read().realm_collaboration_role(&selected_realm_id)
-            == Some(arkret_sdk::CollaborationRealmRole::DirectConversation)
+    if !sidecar_mode
+        && selected_realm_pending_mls_binding_reason.is_none()
+        && (direct_mode
+            || state_store
+                .read()
+                .realm_collaboration_role(&selected_realm_id)
+                == Some(arkret_sdk::CollaborationRealmRole::DirectConversation))
         && direct_message_authority.is_none()
     {
-        selected_realm_pending_mls_binding_reason = Some(
-            "Waiting for verified conversation authority and encryption keys.".to_owned(),
-        );
+        selected_realm_pending_mls_binding_reason =
+            Some("Waiting for verified conversation authority and encryption keys.".to_owned());
     }
     let selected_realm_pending_mls_binding = selected_realm_pending_mls_binding_reason.is_some();
     let sidecar_security_label = sidecar_session.as_ref().map(|session| {
@@ -2097,7 +2121,8 @@ pub fn ChatPanel(
     };
 
     let participant_ids_for_presence = presence_participant_ids(&presence_participants);
-    let self_presence_actor = crate::app::SessionContext::get().active_account()
+    let self_presence_actor = crate::app::SessionContext::get()
+        .active_account()
         .map(|account| arkret_sdk::ActorId::account(account.authority).to_string());
     let has_remote_presence = participant_ids_for_presence
         .iter()
@@ -2148,10 +2173,14 @@ pub fn ChatPanel(
             last_updated,
         }
     });
-    let direct_mls_epoch = direct_mode.then(|| {
-        state_store.read().mls_checkpoint_for_effective_scope(&selected_realm_id, None)
-            .map(|snapshot| snapshot.epoch.to_string())
-    }).flatten();
+    let direct_mls_epoch = direct_mode
+        .then(|| {
+            state_store
+                .read()
+                .mls_checkpoint_for_effective_scope(&selected_realm_id, None)
+                .map(|snapshot| snapshot.epoch.to_string())
+        })
+        .flatten();
     rsx! {
         div {
             class: "{shell_class}",
