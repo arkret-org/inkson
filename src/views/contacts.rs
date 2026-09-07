@@ -54,11 +54,6 @@ pub fn ContactNewPanel(
     // A4 — base_url from session context instead of a prop.
     let base_url = crate::app::SessionContext::base_url_string();
     let mut target = use_signal(String::new);
-    // "Ordinary friend" preset: accepted contacts can direct-message by default
-    // and can also invite this user into groups by default. Both scopes start
-    // checked; users can opt out of either for finer control.
-    let mut scope_direct_message = use_signal(|| true);
-    let mut scope_invite = use_signal(|| true);
     let mut message = use_signal(String::new);
     let mut status = use_signal(String::new);
     let mut sending = use_signal(|| false);
@@ -66,7 +61,6 @@ pub fn ContactNewPanel(
     let message_len = message.read().chars().count();
     let message_over = message_len > CONTACT_MESSAGE_MAX;
     let target_empty = target.read().trim().is_empty();
-    let no_scope = !scope_direct_message() && !scope_invite();
 
     rsx! {
         div { class: "event", "data-testid": "contact-request-panel",
@@ -82,36 +76,6 @@ pub fn ContactNewPanel(
                 value: "{target}",
                 placeholder: tr("contacts.new.target_placeholder"),
                 oninput: move |event: FormEvent| target.set(event.value()),
-            }
-            Label { html_for: "contact-scope-checkboxes", {tr("contacts.new.scope_label")} }
-            div { id: "contact-scope-checkboxes", class: "settings-list",
-                label {
-                    class: "metric",
-                    "data-testid": "contact-scope-direct_message-row",
-                    Checkbox {
-                        "data-testid": "contact-scope-direct_message",
-                        checked: if scope_direct_message() { CheckboxState::Checked } else { CheckboxState::Unchecked },
-                        on_checked_change: move |state: CheckboxState| scope_direct_message.set(bool::from(state)),
-                    }
-                    span { {scope_label(&ContactScope::DirectMessage)} }
-                }
-                label {
-                    class: "metric",
-                    "data-testid": "contact-scope-invite-row",
-                    Checkbox {
-                        "data-testid": "contact-scope-invite",
-                        checked: if scope_invite() { CheckboxState::Checked } else { CheckboxState::Unchecked },
-                        on_checked_change: move |state: CheckboxState| scope_invite.set(bool::from(state)),
-                    }
-                    span { {scope_label(&ContactScope::Invite)} }
-                }
-            }
-            if no_scope {
-                div {
-                    class: "muted",
-                    "data-testid": "contact-scope-empty-hint",
-                    {tr("contacts.new.scope_empty")}
-                }
             }
             Label { html_for: "contact-message-input", {tr("contacts.new.message_label")} }
             Textarea {
@@ -131,20 +95,15 @@ pub fn ContactNewPanel(
                 Button {
                     variant: ButtonVariant::Primary,
                     "data-testid": "send-contact-request-button",
-                    disabled: target_empty || message_over || no_scope || sending(),
+                    disabled: target_empty || message_over || sending(),
                     onclick: {
                         let base = base_url.clone();
                         move |_| {
                             let api_token = token();
                             let base = base.clone();
                             let target_did = target().trim().to_owned();
-                            let mut scopes = Vec::new();
-                            if scope_direct_message() {
-                                scopes.push("direct_message".to_owned());
-                            }
-                            if scope_invite() {
-                                scopes.push("invite".to_owned());
-                            }
+                            let scopes = crate::transport::DEFAULT_CONTACT_SCOPE_NAMES
+                                .iter().map(|scope| (*scope).to_owned()).collect::<Vec<_>>();
                             let greeting = message().trim().to_owned();
                             sending.set(true);
                             status.set(tr("contacts.new.sending"));
@@ -199,6 +158,7 @@ fn ContactRow(
     token: Signal<String>,
     contact: ContactListRow,
     on_changed: EventHandler<()>,
+    #[props(default)] advanced: bool,
 ) -> Element {
     // A4 — base_url / state_store from session context instead of props.
     let base_url = crate::app::SessionContext::base_url_string();
@@ -298,13 +258,13 @@ fn ContactRow(
                 // TRUST-CACHE comment at the top of the file).
                 TrustCacheBadge { peer: peer_principal.clone() }
             }
-            if !contact.bidirectional_scopes.is_empty() {
+            if advanced && !contact.bidirectional_scopes.is_empty() {
                 div { class: "muted",
                     {tr("contacts.shared_scopes")}
                     {contact.bidirectional_scopes.iter().map(scope_label).collect::<Vec<_>>().join("、")}
                 }
             }
-            if is_accepted {
+            if advanced && is_accepted {
                 div {
                     class: "contact-scope-editor",
                     "data-testid": "contact-scope-editor-{peer}",
@@ -383,14 +343,14 @@ fn ContactRow(
                     }
                 }
             }
-            if let Some(summary) = &contact.direct_conversation {
+            if advanced && let Some(summary) = &contact.direct_conversation {
                 div { class: "muted mono",
                     "{short_protocol_id(&summary.realm_id)} / {short_protocol_id(&summary.main_strand_id)}"
                 }
             }
 
             div { class: "actions",
-                if is_accepted_human {
+                if advanced && is_accepted_human {
                     Input {
                         r#type: "text",
                         "data-testid": "contact-petname-{peer}",
@@ -786,7 +746,7 @@ fn ContactRow(
 /// Action dispatched from a contact row. Keeps the async closure small and
 /// `Clone`-friendly.
 #[derive(Clone)]
-enum ContactRowAction {
+pub(crate) enum ContactRowAction {
     Respond {
         requester: String,
         request_event_ref: Option<String>,
@@ -805,7 +765,7 @@ enum ContactRowAction {
 /// Run a Contact write for a row, then refresh the parent list on success.
 /// Signals are `Copy`, so this is a free function the per-row onclick handlers
 /// can call without fighting closure-capture rules.
-fn run_contact_action(
+pub(crate) fn run_contact_action(
     base: String,
     api_token: String,
     action: ContactRowAction,
@@ -869,12 +829,14 @@ fn run_contact_action(
 }
 
 #[component]
-pub fn ContactsPanel(token: Signal<String>) -> Element {
+pub fn ContactsPanel(token: Signal<String>, #[props(default)] advanced: bool) -> Element {
+    let mut contact_inbox = use_context::<crate::app::ContactInbox>();
     // A4 — base_url and the account-scoped state store come from session
     // context instead of props.
     let base_url = crate::app::SessionContext::base_url_string();
     let mut state_store = crate::app::SessionContext::get().state_store;
     let mut contacts = use_signal(Vec::<ContactListRow>::new);
+    use_effect(move || contacts.set(contact_inbox.0()));
     let mut status = use_signal(|| "loading".to_owned());
     let mut error = use_signal(|| Option::<String>::None);
     let mut reload = use_signal(|| 0_u32);
@@ -902,6 +864,7 @@ pub fn ContactsPanel(token: Signal<String>) -> Element {
                 {
                     Ok(response) => {
                         let count = response.contacts.len();
+                        contact_inbox.0.set(response.contacts.clone());
                         state_store
                             .write()
                             .replace_accepted_human_contacts(&response.contacts);
@@ -918,23 +881,25 @@ pub fn ContactsPanel(token: Signal<String>) -> Element {
     }
 
     let is_loading = status() == "loading";
-    let contact_rows = contacts.read().clone();
+    let contact_rows = contacts.read().iter()
+        .filter(|row| !advanced || row.state == arkret_sdk::ContactState::Accepted)
+        .cloned().collect::<Vec<_>>();
 
     rsx! {
-        div { class: "settings", "data-testid": "contacts-panel",
+        div { class: "settings contacts-panel", "data-testid": "contacts-panel",
             div { class: "settings-shell",
                 section { class: "settings-content-stack",
                     div { class: "event",
                         div { class: "event-head",
-                            span { {tr("contacts.title")} }
-                            div { class: "actions",
+                            span { {tr(if advanced { "settings.section.contacts" } else { "contacts.title" })} }
+                            if !advanced { div { class: "actions",
                                 Button {
                                     variant: ButtonVariant::Primary,
                                     "data-testid": "add-contact-button",
                                     onclick: move |_| add_modal_open.set(true),
                                     {tr("contacts.add_button")}
                                 }
-                            }
+                            } }
                         }
 
                         if let Some(message) = error.read().clone() {
@@ -956,15 +921,15 @@ pub fn ContactsPanel(token: Signal<String>) -> Element {
                         } else if contact_rows.is_empty() {
                             div { class: "members-empty", "data-testid": "contacts-empty-state",
                                 div { class: "members-empty-title", {tr("contacts.empty_title")} }
-                                div { class: "muted members-empty-hint", {tr("contacts.empty_hint")} }
-                                div { class: "actions",
+                                div { class: "muted members-empty-hint", {tr(if advanced { "contacts.settings.empty" } else { "contacts.empty_hint" })} }
+                                if !advanced { div { class: "actions",
                                     Button {
                                         variant: ButtonVariant::Primary,
                                         "data-testid": "contacts-empty-add-button",
                                         onclick: move |_| add_modal_open.set(true),
                                         {tr("contacts.empty_add")}
                                     }
-                                }
+                                } }
                             }
                         } else {
                             ul { class: "settings-list",
@@ -973,6 +938,7 @@ pub fn ContactsPanel(token: Signal<String>) -> Element {
                                         key: "{contact.peer.contact_actor_id()}",
                                         token,
                                         contact: contact.clone(),
+                                        advanced,
                                         on_changed: move |_| reload.set(reload() + 1),
                                     }
                                 }

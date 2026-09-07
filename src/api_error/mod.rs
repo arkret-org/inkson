@@ -6,6 +6,11 @@ mod classify;
 
 pub use classify::*;
 
+/// Local operation context; preserves the original API error for diagnostics.
+#[derive(Debug, thiserror::Error)]
+#[error("invite link is unavailable")]
+pub(crate) struct InviteLocatorUnavailable;
+
 #[derive(Clone, Debug, thiserror::Error)]
 #[error("Arkret API returned {status}: {error}")]
 pub struct TransportClientError {
@@ -104,6 +109,10 @@ pub(crate) fn localized_error_copy(key: &str) -> String {
 /// failure (caller keeps the local message).
 pub(crate) fn user_facing_error_key(error: &anyhow::Error) -> Option<&'static str> {
     use arkret_sdk::error_codes::{ErrorCode, ReasonCode};
+
+    if error.downcast_ref::<InviteLocatorUnavailable>().is_some() {
+        return Some("error.invite_locator_unavailable");
+    }
 
     let Some((status, envelope)) = api_error_status_and_envelope(error) else {
         // No server envelope: only connection-level failures get mapped;
@@ -329,6 +338,25 @@ pub(crate) fn maybe_dispatch_policy_deny(status: StatusCode, envelope: &Problem)
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn invite_locator_failure_explains_recovery_without_changing_other_not_found_errors() {
+        let error = anyhow::Error::new(arkret_sdk::http_client::Error::Api {
+            status: 404,
+            error: Box::new(Problem::from_code("not_found", "invite locator not found")),
+        });
+        assert_eq!(user_facing_error_key(&error), Some("error.not_found"));
+        let error = error.context(InviteLocatorUnavailable);
+        assert_eq!(
+            user_facing_error_key(&error),
+            Some("error.invite_locator_unavailable")
+        );
+        assert!(display_user_facing(&error).contains("fresh invite link"));
+        assert_eq!(
+            api_error_status_and_envelope(&error).unwrap().0,
+            StatusCode::NOT_FOUND
+        );
+    }
 
     #[test]
     fn diagnostic_display_includes_returned_reason_detail() {

@@ -1,6 +1,15 @@
 use super::*;
 use crate::notification_rules::{DndPeriod, DndSchedule, DndSettings};
 
+#[test]
+fn contact_permissions_are_available_in_advanced_settings() {
+    assert_eq!(SettingsSection::from_slug(Some("contacts")), SettingsSection::Contacts);
+    let groups = visible_nav_groups("Contact permissions");
+    assert_eq!(groups.len(), 1);
+    assert_eq!(groups[0].label_key, "settings.group.advanced");
+    assert_eq!(groups[0].sections, vec![SettingsSection::Contacts]);
+}
+
 fn dnd(enabled: bool, periods: Vec<DndPeriod>) -> DndSettings {
     DndSettings {
         enabled,

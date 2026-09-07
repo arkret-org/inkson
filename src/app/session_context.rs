@@ -18,6 +18,20 @@ use crate::state::LocalStateStore;
 #[derive(Clone, Copy)]
 pub(super) struct AppStateStore(pub SyncSignal<LocalStateStore>);
 
+/// Current account's contact inbox, shared by the sidebar and notifications.
+#[derive(Clone, Copy)]
+pub(crate) struct ContactInbox(pub Signal<Vec<crate::models::ContactListRow>>);
+
+impl ContactInbox {
+    pub(crate) fn pending_count(self) -> usize {
+        self.0
+            .read()
+            .iter()
+            .filter(|row| row.state == arkret_sdk::ContactState::PendingIncoming)
+            .count()
+    }
+}
+
 /// Shared per-login-session handles. Provided in `RouterView` via
 /// `use_context_provider`; consumed anywhere below via
 /// `use_context::<SessionContext>()`.

@@ -178,7 +178,20 @@ async fn resolve_principal_locator_url(
         .map_err(|err| anyhow::anyhow!("invalid invite locator token: {err}"))?;
     let locator: arkret_sdk::PrincipalLocator = resolver
         .post(arkret_sdk::INVITE_LOCATOR_RESOLVE_PATH, &body)
-        .await?;
+        .await
+        .map_err(|error| {
+            let unavailable = matches!(
+                &error,
+                arkret_sdk::http_client::Error::Api { status: 404, error }
+                    if error.code() == arkret_sdk::error_codes::ErrorCode::NOT_FOUND
+            );
+            let error = anyhow::Error::from(error);
+            if unavailable {
+                error.context(crate::api_error::InviteLocatorUnavailable)
+            } else {
+                error
+            }
+        })?;
     locator.validate_minimal()?;
     Ok(Some(locator))
 }

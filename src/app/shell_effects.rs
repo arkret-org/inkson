@@ -36,15 +36,62 @@ pub(super) fn ShellEffects(state: ShellEffectState) -> Element {
         mut account_identity_lookup_key,
         contact_handles_lookup_key,
         contact_handles_fetching,
-        direct_contact_rows,
+        mut direct_contact_rows,
     } = state;
     let SessionContext {
         mut state_store,
         base_url,
         active_account,
+        session_generation,
         ..
     } = SessionContext::get();
     let navigator = use_navigator();
+
+    // Contact requests are read from the account contact projection, not the
+    // Realm invite notification carrier. Keep this inbox live even when the
+    // Contacts sidebar has never been opened. A session change cancels the
+    // resource and fences responses from the previous account.
+    use_resource(move || async move {
+        let account = active_account().map(|account| account.authority);
+        let api_token = token();
+        let base = base_url();
+        let generation = session_generation();
+        direct_contact_rows.set(Vec::new());
+        if account.is_none() || api_token.trim().is_empty() {
+            return;
+        }
+        loop {
+            let result = crate::transport::auth::with_authed_sdk_client(
+                &base,
+                api_token.clone(),
+                |http| async move { crate::transport::account::contacts(&http).await },
+            )
+            .await;
+            if *session_generation.peek() != generation
+                || active_account
+                    .peek()
+                    .as_ref()
+                    .map(|account| &account.authority)
+                    != account.as_ref()
+                || *base_url.peek() != base
+                || *token.peek() != api_token
+            {
+                return;
+            }
+            match result {
+                Ok(response) => {
+                    state_store
+                        .write()
+                        .replace_accepted_human_contacts(&response.contacts);
+                    direct_contact_rows.set(response.contacts);
+                }
+                Err(error) => {
+                    tracing::warn!(error = %error.display_diagnostic(), "contact inbox refresh failed")
+                }
+            }
+            crate::runtime_helpers::sleep_for(std::time::Duration::from_secs(15)).await;
+        }
+    });
 
     // Account-viewer is the authoritative source for the Actor Profile,
     // device display_name, and signed primary handle claim. Keep those

@@ -1926,12 +1926,14 @@ fn add_contacts_keys(dict: &mut TranslationDict) {
     );
     dict.set("contacts.empty_add", "Add a contact");
 
+    dict.set("settings.section.contacts", "Contact permissions");
+    dict.set("contacts.settings.empty", "After a contact request is accepted, you can adjust their permissions here.");
     // ── ContactNewPanel ───────────────────────────────────────────────
     dict.set("contacts.new.title", "Add contact");
     dict.set("contacts.new.subtitle", "Needs their approval");
     dict.set(
         "contacts.new.intro",
-        "Enter the other person's invite link, handle, or complete account selector to send a friend request. By default contacts can both message you and invite you to groups (just like a regular friend). For tighter control, uncheck options below.",
+        "Enter the other person's invite link, handle, or complete account selector to send a friend request. All contact permissions are allowed by default. You can change them later in Settings.",
     );
     dict.set(
         "contacts.new.target_label",
@@ -1980,6 +1982,8 @@ fn add_contacts_keys(dict: &mut TranslationDict) {
 
     // ── ContactRow ────────────────────────────────────────────────────
     dict.set("contacts.state.pending_incoming", "Waiting on you");
+    dict.set("notifications.contact_request.title", "New contact request");
+    dict.set("notifications.contact_request.review", "Review contact requests");
     dict.set("contacts.state.pending_outgoing", "Waiting for them");
     dict.set("contacts.state.accepted", "Contact");
     dict.set("contacts.state.rejected", "Declined");
@@ -2284,6 +2288,10 @@ fn add_generic_error_keys(dict: &mut TranslationDict) {
     dict.set(
         "error.rate_limited",
         "Too many requests. Wait a moment, then try again.",
+    );
+    dict.set(
+        "error.invite_locator_unavailable",
+        "This invite link is unavailable. It may have expired or been revoked. Ask the other person to generate a fresh invite link in Settings and use it within 15 minutes.",
     );
     dict.set(
         "error.not_found",

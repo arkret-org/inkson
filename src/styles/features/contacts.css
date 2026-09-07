@@ -54,11 +54,31 @@
   justify-content: space-between;
   gap: 8px;
 }
+.contacts-panel > .settings-shell {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .contact-row {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr);
   align-items: center;
   gap: 10px;
+}
+
+.contact-row > .event-head {
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  min-width: 0;
+}
+
+.contact-row > .event-head > .mono {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.contact-row > .actions {
+  align-items: center;
+  min-width: 0;
 }
 
 .invite-locator-head-actions {

@@ -133,6 +133,7 @@ use security_signals::{SecurityRuntimeSignals, use_security_runtime_signals};
 pub(crate) use session_boot::*;
 use session_context::AppStateStore;
 pub(crate) use session_context::SessionContext;
+pub(crate) use session_context::ContactInbox;
 use session_shell::{
     MobileConnectionStatus, MobileNavDrawer, MobileRealmTree, SessionShell, SessionSurface,
 };
@@ -575,6 +576,7 @@ fn AppBootstrap() -> Element {
     let realm_manage_query = use_signal(String::new);
     let contact_manage_query = use_signal(String::new);
     let direct_contact_rows = use_signal(Vec::<crate::models::ContactListRow>::new);
+    use_context_provider(|| ContactInbox(direct_contact_rows));
     let direct_contacts_loaded = use_signal(|| false);
     let own_agent_rows = use_signal(Vec::<arkret_sdk::AgentProjection>::new);
     let own_agents_loaded = use_signal(|| false);
@@ -958,7 +960,8 @@ fn AppBootstrap() -> Element {
         });
     let topbar_search_is_open =
         palette_open() || topbar_search_expanded() || !global_query().is_empty();
-    let topbar_unread_notifications = unread_notification_count(&state_store.read().load());
+    let topbar_unread_notifications = unread_notification_count(&state_store.read().load())
+        + ContactInbox(direct_contact_rows).pending_count();
     let has_topbar_unread_notifications = topbar_unread_notifications > 0;
     let document_title = if matches!(&route, Route::Dashboard) {
         "Inkson | Arkret".to_owned()

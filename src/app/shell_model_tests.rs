@@ -336,6 +336,37 @@ fn contact_row(principal: &str) -> crate::models::ContactListRow {
     }
 }
 
+#[test]
+fn contact_inbox_badge_tracks_only_pending_incoming_requests() {
+    use dioxus::prelude::*;
+    use std::{cell::Cell, rc::Rc};
+    let count = Rc::new(Cell::new(usize::MAX));
+    let mut dom = dioxus::prelude::VirtualDom::new_with_props(
+        |count: Rc<Cell<usize>>| {
+            let rows = dioxus::prelude::use_signal(|| {
+                [
+                    arkret_sdk::ContactState::PendingIncoming,
+                    arkret_sdk::ContactState::PendingOutgoing,
+                    arkret_sdk::ContactState::Accepted,
+                    arkret_sdk::ContactState::Rejected,
+                ]
+                .into_iter()
+                .map(|state| {
+                    let mut row = contact_row("ak:did_core:web:peer.example");
+                    row.state = state;
+                    row
+                })
+                .collect()
+            });
+            count.set(crate::app::ContactInbox(rows).pending_count());
+            dioxus::prelude::rsx! {}
+        },
+        count.clone(),
+    );
+    dom.rebuild_in_place();
+    assert_eq!(count.get(), 1);
+}
+
 fn pinned_remark(principal: &str) -> ContactRemark {
     let mut remark = ContactRemark::new(
         crate::test_support::core_id(principal),

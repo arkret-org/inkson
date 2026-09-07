@@ -2548,6 +2548,9 @@ pub fn SettingsPanel(
                     }
 
                     // ── U4 invite_receive_policy ─────────────────────────
+                    if active_section == SettingsSection::Contacts {
+                        crate::views::contacts::ContactsPanel { token, advanced: true }
+                    }
                     if active_section == SettingsSection::InvitePolicy {
                         div { class: "settings-content-stack",
                             crate::views::settings::invite_policy::InvitePolicySettingsCard {

@@ -26,6 +26,10 @@ pub fn NotificationsPanel(
     // A4 — base_url / state_store from session context instead of props.
     let base_url = crate::app::SessionContext::base_url_string();
     let session = crate::app::SessionContext::get();
+    let contact_inbox = use_context::<crate::app::ContactInbox>();
+    let pending_contacts = contact_inbox.0.read().iter()
+        .filter(|row| row.state == arkret_sdk::ContactState::PendingIncoming)
+        .cloned().collect::<Vec<_>>();
     let mut state_store = session.state_store;
     let Some(account) = session.active_account() else {
         return rsx! { div { class: "event error-banner", "Active account context is unavailable." } };
@@ -116,6 +120,13 @@ pub fn NotificationsPanel(
 
     rsx! {
         div { class: "timeline notifications-panel", "data-testid": "notifications-panel", role: "region", "aria-label": "Notifications",
+            for contact in pending_contacts {
+                ContactRequestNotification {
+                    key: "{contact.peer.contact_actor_id()}",
+                    contact,
+                    token,
+                }
+            }
             div { class: "toolbar-row",
                 div { class: "segmented-control", role: "tablist", "aria-label": "Notification grouping",
                     Button {
@@ -432,6 +443,56 @@ pub fn NotificationsPanel(
                         {crate::i18n::tr("notifications.load_more")}
                     }
                 }
+            }
+        }
+    }
+}
+
+
+#[component]
+fn ContactRequestNotification(contact: crate::models::ContactListRow, token: Signal<String>) -> Element {
+    let session = crate::app::SessionContext::get();
+    let mut inbox = use_context::<crate::app::ContactInbox>();
+    let busy = use_signal(|| false);
+    let status = use_signal(String::new);
+    let peer = contact.peer.contact_actor_id().to_string();
+    let request_event_ref = contact.request_event_ref.as_ref().map(ToString::to_string);
+    let label = crate::views::helpers::contact_peer_label(&session.state_store.read(), &contact);
+    rsx! {
+        div { class: "event", "data-testid": "contact-request-notification",
+            strong { {crate::i18n::tr("notifications.contact_request.title")} }
+            span { "{label}" }
+            Button {
+                variant: ButtonVariant::Primary,
+                "data-testid": "notification-contact-accept",
+                disabled: busy(),
+                onclick: move |_| {
+                    let generation = *session.session_generation.peek();
+                    let completed_peer = peer.clone();
+                    let completed_request = request_event_ref.clone();
+                    crate::views::contacts::run_contact_action(
+                        session.base_url.peek().clone(), token(),
+                        crate::views::contacts::ContactRowAction::Respond {
+                            requester: peer.clone(), request_event_ref: request_event_ref.clone(),
+                            verb: "accept".to_owned(),
+                        },
+                        crate::i18n::tr("contacts.action.accepting"), busy, status,
+                        EventHandler::new(move |_| {
+                            if *session.session_generation.peek() == generation {
+                                inbox.0.write().retain(|row| {
+                                    !(row.state == arkret_sdk::ContactState::PendingIncoming
+                                        && row.peer.contact_actor_id().to_string() == completed_peer
+                                        && row.request_event_ref.as_ref().map(ToString::to_string) == completed_request)
+                                });
+                            }
+                        }),
+                    );
+                },
+                if busy() { {crate::i18n::tr("contacts.action.accepting")} }
+                else { {crate::i18n::tr("contacts.action.accept")} }
+            }
+            if !status().is_empty() {
+                div { role: "status", class: "muted", "{status}" }
             }
         }
     }

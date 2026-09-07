@@ -347,7 +347,7 @@ async fn submit_contact_response(
         ContactAcceptAction, ContactAcceptPrepareRequestBody, ContactAcceptRequestBody,
         ContactCommitPhase, ContactCommitRequestBody, ContactOperationOutcome, ContactPreparePhase,
         ContactPreparedOutcome, ContactRejectAction, ContactRejectPrepareRequestBody,
-        ContactRejectRequestBody, ContactScope,
+        ContactRejectRequestBody,
     };
 
     verify_contact_request_receipt(http, &request_receipt).await?;
@@ -364,7 +364,7 @@ async fn submit_contact_response(
             idempotency_key: idempotency_key.clone(),
             request_receipt,
             action: ContactAcceptAction::Accept,
-            granted_to_peer_scopes: vec![ContactScope::DirectMessage],
+            granted_to_peer_scopes: crate::transport::contacts::default_contact_scopes(),
         });
         let prepared = http.contacts_respond(&prepare).await?;
         let (returned_operation_id, reservation_handle, event_draft) = match prepared {

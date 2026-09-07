@@ -130,6 +130,10 @@ fn add_generic_error_keys_zh(dict: &mut TranslationDict) {
     );
     dict.set("error.rate_limited", "请求过于频繁。请稍等片刻,然后重试。");
     dict.set(
+        "error.invite_locator_unavailable",
+        "此邀请链接已失效，可能已过期或被撤销。请让对方在设置中重新生成邀请链接，并在 15 分钟内使用。",
+    );
+    dict.set(
         "error.not_found",
         "服务器找不到你要查看的内容。它可能已被移动或删除。请刷新后重试。",
     );
@@ -1770,12 +1774,14 @@ fn add_contacts_keys_zh(dict: &mut TranslationDict) {
     );
     dict.set("contacts.empty_add", "添加联系人");
 
+    dict.set("settings.section.contacts", "联系人权限");
+    dict.set("contacts.settings.empty", "联系人请求接受后，可在这里调整其权限。");
     // ── ContactNewPanel ───────────────────────────────────────────────
     dict.set("contacts.new.title", "添加联系人");
     dict.set("contacts.new.subtitle", "需对方同意");
     dict.set(
         "contacts.new.intro",
-        "输入对方的邀请链接、handle 或完整账号标识发送好友请求。成为好友默认既能私聊、也允许对方拉你入群(像微信好友一样)。如需更严格,可在下面取消勾选。",
+        "输入对方的邀请链接、handle 或完整账号标识发送好友请求。默认允许全部联系人权限，添加后可在设置中修改。",
     );
     dict.set("contacts.new.target_label", "对方邀请链接、handle 或账号");
     dict.set(
@@ -1809,6 +1815,8 @@ fn add_contacts_keys_zh(dict: &mut TranslationDict) {
 
     // ── ContactRow ────────────────────────────────────────────────────
     dict.set("contacts.state.pending_incoming", "等待你处理");
+    dict.set("notifications.contact_request.title", "新的联系人请求");
+    dict.set("notifications.contact_request.review", "查看联系人请求");
     dict.set("contacts.state.pending_outgoing", "等待对方接受");
     dict.set("contacts.state.accepted", "已是联系人");
     dict.set("contacts.state.rejected", "已拒绝");

@@ -5,6 +5,28 @@ use arkret_sdk::contact_operations::{
 };
 use arkret_sdk::{IdempotencyKey, PreparedEventDraft, ProtocolOperationId, ReservationHandle};
 
+pub(crate) const DEFAULT_CONTACT_SCOPE_NAMES: [&str; 5] = [
+    "invite", "direct_message", "voice_call", "video_call", "presence",
+];
+
+pub(crate) fn default_contact_scopes() -> Vec<ContactScope> {
+    DEFAULT_CONTACT_SCOPE_NAMES.iter().map(|scope| {
+        contact_scope(scope).expect("default Contact scopes are registered")
+    }).collect()
+}
+
+#[cfg(test)]
+mod default_scope_tests {
+    #[test]
+    fn ordinary_contacts_grant_all_five_permissions_in_canonical_order() {
+        let scopes = super::default_contact_scopes();
+        assert_eq!(serde_json::to_value(&scopes).unwrap(), serde_json::json!([
+            "invite", "direct_message", "voice_call", "video_call", "presence"
+        ]));
+        assert!(scopes.windows(2).all(|pair| pair[0] < pair[1]));
+    }
+}
+
 pub(crate) struct PrincipalSuccessorSealContext {
     actor_id: arkret_sdk::ActorId,
     control_realm: arkret_sdk::RealmId,

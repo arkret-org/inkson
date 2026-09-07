@@ -16,6 +16,7 @@ pub(super) enum SettingsSection {
     Mimi,
     Notifications,
     Privacy,
+    Contacts,
     /// U4 invite_receive_policy (`/settings/invite-policy`).
     InvitePolicy,
     /// Holder-private consent surface (`/settings/consent`).
@@ -46,6 +47,7 @@ impl SettingsSection {
             "mimi" => Self::Mimi,
             "push" | "notifications" => Self::Notifications,
             "privacy" => Self::Privacy,
+            "contacts" => Self::Contacts,
             "invite-policy" | "invite_policy" => Self::InvitePolicy,
             "consent" => Self::Consent,
             "blocklist" | "blocked-users" => Self::Blocklist,
@@ -70,6 +72,7 @@ impl SettingsSection {
             Self::Mimi => "mimi",
             Self::Notifications => "notifications",
             Self::Privacy => "privacy",
+            Self::Contacts => "contacts",
             Self::InvitePolicy => "invite-policy",
             Self::Consent => "consent",
             Self::Blocklist => "blocklist",
@@ -97,6 +100,7 @@ impl SettingsSection {
             Self::Mimi => "settings.section.mimi",
             Self::Notifications => "settings.section.notifications",
             Self::Privacy => "settings.section.privacy",
+            Self::Contacts => "settings.section.contacts",
             Self::InvitePolicy => "settings.section.invite_policy",
             Self::Consent => "settings.section.consent",
             Self::Blocklist => "settings.section.blocklist",
@@ -158,6 +162,7 @@ pub(super) const SETTINGS_NOTIFICATIONS_GROUP: &[SettingsSection] =
     &[SettingsSection::Notifications];
 pub(super) const SETTINGS_APPEARANCE_GROUP: &[SettingsSection] = &[SettingsSection::Theme];
 pub(super) const SETTINGS_ADVANCED_GROUP: &[SettingsSection] = &[
+    SettingsSection::Contacts,
     SettingsSection::Storage,
     SettingsSection::Release,
     SettingsSection::Audit,
