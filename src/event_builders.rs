@@ -634,10 +634,9 @@ pub fn build_agent_pcr_bootstrap_steps(
     Ok(vec![Box::new(move |_authored| Ok(vec![create]))])
 }
 
-/// Build the closed four-Event Direct Conversation founding unit from the
-/// resolver's verbatim authoring material.  All identifiers are derived from
-/// the finalized Event bytes; no service allocation or local UUID participates.
-/// The four-Event Direct Conversation founding unit, as an ordered chain.
+/// Build the four-Event Direct Conversation founding chain. Authority evidence
+/// belongs to the submission carrier; these Events contain only their own
+/// creation and membership data. Identifiers derive from finalized Event bytes.
 ///
 /// Each member descends from the one before it (`prev_refs`) and every follow-up
 /// is scoped to the Realm the create Event derives, so the unit can only be
@@ -649,7 +648,6 @@ pub fn build_direct_conversation_founding_steps(
     peer_actor: &arkret_sdk::AccountId,
     notary: arkret_sdk::NotaryValue,
     trust_domain: arkret_sdk::TrustDomainId,
-    _input: &arkret_sdk::DirectConversationFoundingInput,
 ) -> anyhow::Result<Vec<crate::event_submit::EventUnitStep>> {
     let created_at = event_timestamp();
     let founder_actor = founder_actor.clone();

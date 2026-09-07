@@ -726,7 +726,6 @@ pub async fn create_direct_conversation_from_resolve(
         peer_account,
         notary,
         trust_domain,
-        next_founding_input,
     )?;
     let signed = submitter.author_event_unit(steps).await?;
     let events: [arkret_sdk::EventInitialSubmission; 4] = signed
