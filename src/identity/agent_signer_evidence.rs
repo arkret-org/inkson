@@ -752,35 +752,28 @@ fn verify_lifecycle_reducer(
     {
         return Err(AgentEvidenceRejectedReason::SigningKeyMismatch);
     }
-    let provenance_matches = match (&witness.status, &witness.provenance) {
+    let provenance_matches = match (&witness.cell_value, &witness.provenance) {
         (
             arkret_sdk::AgentLifecycleStatus::Active,
             arkret_sdk::AgentLifecycleProvenance::DelegatedPcrGenesis {
                 realm_create_event_id,
-                agent_provision_event_id,
             },
         ) => {
-            let mut provision_refs = event
-                .refs
-                .iter()
-                .filter(|event_ref| event_ref.role == "agent_provision");
             event.kind == arkret_sdk::EventKind::RealmCreate
                 && event.event_id == *realm_create_event_id
-                && provision_refs.next().is_some_and(|event_ref| {
-                    event_ref.id == agent_provision_event_id.as_str() && event_ref.critical
-                })
-                && provision_refs.next().is_none()
+                && event.payload.get("object")
+                    .and_then(|object| object.get("purpose"))
+                    .and_then(Value::as_str) == Some("agent_control")
+                // The current contract declares genesis from the provision;
+                // genesis itself must not introduce a reverse dependency.
+                && !event.refs.iter().any(|reference| reference.role == "agent_provision")
         }
         (
             arkret_sdk::AgentLifecycleStatus::Active,
-            arkret_sdk::AgentLifecycleProvenance::ResumeAccepted {
-                resume_event_id,
-                predecessor_pause_event_id,
-            },
+            arkret_sdk::AgentLifecycleProvenance::ResumeAccepted { resume_event_id },
         ) => {
             event.kind == arkret_sdk::EventKind::SelfAgentResume
                 && event.event_id == *resume_event_id
-                && event.prev_refs.contains(predecessor_pause_event_id)
                 && event.payload.get("transition").and_then(Value::as_str) == Some("resume")
                 && event.payload.get("previous_status").and_then(Value::as_str) == Some("paused")
         }

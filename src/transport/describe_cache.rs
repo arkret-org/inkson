@@ -5,7 +5,7 @@ pub(crate) async fn fetch_service_describe(
 ) -> anyhow::Result<crate::models::ServiceDescribe> {
     http.describe()
         .await
-        .map_err(|error| anyhow::anyhow!("server describe: {error}"))
+        .map_err(|error| anyhow::Error::new(error).context("server describe"))
 }
 
 pub(crate) async fn cached_service_describe<'a>(

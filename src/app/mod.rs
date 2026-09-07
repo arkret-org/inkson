@@ -132,8 +132,7 @@ use secure_store_effects::{SecureStoreEffectState, SecureStoreEffects};
 use security_signals::{SecurityRuntimeSignals, use_security_runtime_signals};
 pub(crate) use session_boot::*;
 use session_context::AppStateStore;
-pub(crate) use session_context::SessionContext;
-pub(crate) use session_context::ContactInbox;
+pub(crate) use session_context::{ContactInbox, SessionContext};
 use session_shell::{
     MobileConnectionStatus, MobileNavDrawer, MobileRealmTree, SessionShell, SessionSurface,
 };
@@ -1299,6 +1298,7 @@ fn AppBootstrap() -> Element {
                         contact_handles_lookup_key,
                         contact_handles_fetching,
                         direct_contact_rows,
+                        did_resolution_health,
                     }
                 }
                 SecureStoreEffects {

@@ -744,7 +744,8 @@ pub(super) fn connect(
                     Err(error) => {
                         tracing::warn!(?error, "identity describe probe failed");
                         let cache = ctx.did_cache.read();
-                        crate::components::DidResolutionHealth::from_identity_probe_failure(
+                        crate::components::DidResolutionHealth::from_probe_error(
+                            &error,
                             &cache,
                             chrono::Utc::now(),
                         )

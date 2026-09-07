@@ -1009,7 +1009,7 @@ pub async fn identity_describe(
 ) -> anyhow::Result<arkret_sdk::ServiceDescribe> {
     http.identity_describe()
         .await
-        .map_err(|error| anyhow::anyhow!("identity describe: {error}"))
+        .map_err(|error| anyhow::Error::new(error).context("identity describe"))
 }
 
 pub async fn sync_describe(

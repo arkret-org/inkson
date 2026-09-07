@@ -76,6 +76,20 @@ impl DidResolutionHealth {
         }
     }
 
+    pub(crate) fn from_probe_error(
+        error: &anyhow::Error,
+        cache: &DidResolutionCache,
+        now: DateTime<Utc>,
+    ) -> Self {
+        if crate::api_error::is_response_format_error(error) {
+            Self::Degraded {
+                reason: DidResolutionHealthReason::UnsupportedIdentityProtocol,
+            }
+        } else {
+            Self::from_identity_probe_failure(cache, now)
+        }
+    }
+
     fn presentation(&self) -> Option<DidResolutionHealthPresentation> {
         match self {
             Self::Healthy => None,
@@ -263,6 +277,54 @@ mod tests {
             DidResolutionHealth::Outage {
                 reason: DidResolutionHealthReason::IdentityDescribeFailedNoCache
             }
+        );
+    }
+
+    #[test]
+    fn response_format_failure_is_metadata_mismatch_and_can_recover() {
+        let decode = serde_json::from_str::<ServiceKind>("\"unknown_service\"").unwrap_err();
+        let error = anyhow::Error::new(arkret_sdk::http_client::Error::Json(decode))
+            .context("identity describe");
+        let cache = DidResolutionCache::new(8);
+        let health = DidResolutionHealth::from_probe_error(&error, &cache, Utc::now());
+        assert_eq!(
+            health,
+            DidResolutionHealth::Degraded {
+                reason: DidResolutionHealthReason::UnsupportedIdentityProtocol,
+            }
+        );
+        assert_eq!(
+            health.presentation().unwrap().label,
+            "did_health.label.metadata"
+        );
+        let recovered = DidResolutionHealth::from_identity_description(&identity_description());
+        assert!(recovered.presentation().is_none());
+    }
+
+    #[test]
+    fn transport_failure_remains_outage() {
+        let error = anyhow::Error::new(arkret_sdk::http_client::Error::Http(
+            "connection refused".into(),
+        ));
+        let cache = DidResolutionCache::new(8);
+        assert_eq!(
+            DidResolutionHealth::from_probe_error(&error, &cache, Utc::now()),
+            DidResolutionHealth::Outage {
+                reason: DidResolutionHealthReason::IdentityDescribeFailedNoCache
+            }
+        );
+    }
+
+    #[test]
+    fn contact_initialization_preserves_format_error_copy() {
+        let decode = serde_json::from_str::<ServiceKind>("\"unknown_service\"").unwrap_err();
+        let error = anyhow::Error::new(arkret_sdk::http_client::Error::Json(decode))
+            .context("server describe")
+            .context("resolve Account Authority");
+        let error = crate::transport::auth::ApiCallError::Unavailable(error);
+        assert_eq!(
+            error.display(),
+            crate::api_error::localized_error_copy("error.server_format_mismatch")
         );
     }
 }

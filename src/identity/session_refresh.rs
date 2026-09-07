@@ -534,7 +534,7 @@ async fn session_transport_provider(
             grant.station_url.as_str(),
         )
         .await
-        .map_err(|error| anyhow::anyhow!("resolve Account Authority: {error}"))?;
+        .context("resolve Account Authority")?;
     let account_sdk_base_url = sdk_base_url_from_gate_account_base_url(&gate_account_base_url)?;
     let principal_sdk_base_url = grant.station_url.clone();
     let refresh_transport = ReplaceableSessionTransport::default();

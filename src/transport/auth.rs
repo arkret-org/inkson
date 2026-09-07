@@ -107,6 +107,9 @@ impl ApiCallError {
     /// for logs and developer surfaces.
     pub fn display(&self) -> String {
         match self {
+            Self::Unavailable(err) if crate::api_error::is_response_format_error(err) => {
+                crate::api_error::display_user_facing(err)
+            }
             Self::Unavailable(_) => {
                 crate::api_error::localized_error_copy("error.server_unavailable")
             }

@@ -17,6 +17,7 @@ pub(super) struct ShellEffectState {
     pub contact_handles_lookup_key: Signal<String>,
     pub contact_handles_fetching: Signal<BTreeSet<String>>,
     pub direct_contact_rows: Signal<Vec<crate::models::ContactListRow>>,
+    pub did_resolution_health: Signal<crate::components::DidResolutionHealth>,
 }
 
 #[component]
@@ -37,6 +38,7 @@ pub(super) fn ShellEffects(state: ShellEffectState) -> Element {
         contact_handles_lookup_key,
         contact_handles_fetching,
         mut direct_contact_rows,
+        mut did_resolution_health,
     } = state;
     let SessionContext {
         mut state_store,
@@ -46,6 +48,42 @@ pub(super) fn ShellEffects(state: ShellEffectState) -> Element {
         ..
     } = SessionContext::get();
     let navigator = use_navigator();
+    let did_cache = use_context::<Signal<arkret_sdk::identity::DidResolutionCache>>();
+
+    // Recheck failed bootstrap probes independently of session refresh. A
+    // successful probe clears the banner without logging out or reloading.
+    use_resource(move || async move {
+        let base = base_url();
+        let generation = session_generation();
+        loop {
+            crate::runtime_helpers::sleep_for(std::time::Duration::from_secs(15)).await;
+            if *did_resolution_health.peek() == crate::components::DidResolutionHealth::Healthy {
+                continue;
+            }
+            let probe = async {
+                let api = crate::transport::TransportClient::unauthenticated(&base)?;
+                crate::transport::account::identity_describe(&api.sdk_http_client()?).await
+            };
+            let result = tokio::select! {
+                result = probe => result,
+                _ = crate::runtime_helpers::sleep_for(std::time::Duration::from_secs(12)) =>
+                    Err(anyhow::anyhow!("identity describe probe timed out")),
+            };
+            if *base_url.peek() != base || *session_generation.peek() != generation {
+                return;
+            }
+            did_resolution_health.set(match result {
+                Ok(description) => {
+                    crate::components::DidResolutionHealth::from_identity_description(&description)
+                }
+                Err(error) => crate::components::DidResolutionHealth::from_probe_error(
+                    &error,
+                    &did_cache.peek(),
+                    chrono::Utc::now(),
+                ),
+            });
+        }
+    });
 
     // Contact requests are read from the account contact projection, not the
     // Realm invite notification carrier. Keep this inbox live even when the

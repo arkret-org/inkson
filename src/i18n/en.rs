@@ -1927,7 +1927,10 @@ fn add_contacts_keys(dict: &mut TranslationDict) {
     dict.set("contacts.empty_add", "Add a contact");
 
     dict.set("settings.section.contacts", "Contact permissions");
-    dict.set("contacts.settings.empty", "After a contact request is accepted, you can adjust their permissions here.");
+    dict.set(
+        "contacts.settings.empty",
+        "After a contact request is accepted, you can adjust their permissions here.",
+    );
     // ── ContactNewPanel ───────────────────────────────────────────────
     dict.set("contacts.new.title", "Add contact");
     dict.set("contacts.new.subtitle", "Needs their approval");
@@ -1983,7 +1986,10 @@ fn add_contacts_keys(dict: &mut TranslationDict) {
     // ── ContactRow ────────────────────────────────────────────────────
     dict.set("contacts.state.pending_incoming", "Waiting on you");
     dict.set("notifications.contact_request.title", "New contact request");
-    dict.set("notifications.contact_request.review", "Review contact requests");
+    dict.set(
+        "notifications.contact_request.review",
+        "Review contact requests",
+    );
     dict.set("contacts.state.pending_outgoing", "Waiting for them");
     dict.set("contacts.state.accepted", "Contact");
     dict.set("contacts.state.rejected", "Declined");
@@ -2272,6 +2278,10 @@ fn add_generic_error_keys(dict: &mut TranslationDict) {
     dict.set(
         "error.network_unavailable",
         "Can't reach the server. Check your connection, then try again.",
+    );
+    dict.set(
+        "error.server_format_mismatch",
+        "The server responded, but this app cannot read its response format. Refresh or update the app and try again.",
     );
     dict.set(
         "error.server_unavailable",
@@ -3028,7 +3038,7 @@ fn prompt_copy_strings(dict: &mut TranslationDict) {
     );
     dict.set("did_health.detail.fresh_cache", "Identity checks are offline right now; showing recently confirmed information for display only.");
     dict.set("did_health.detail.stale_cache", "Identity checks are offline right now, and the saved information is out of date. Actions that need trust are paused.");
-    dict.set("did_health.detail.metadata_mismatch", "The identity service did not provide the expected information format. Actions that need trust remain paused.");
+    dict.set("did_health.detail.metadata_mismatch", "The identity service responded, but this app cannot read its response format. Refresh or update the app. Identity checks will retry automatically.");
     dict.set(
         "did_health.detail.partial",
         "Some identity checks are unavailable right now. Actions that need trust remain paused.",

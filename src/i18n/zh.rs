@@ -120,6 +120,10 @@ fn add_generic_error_keys_zh(dict: &mut TranslationDict) {
         "无法连接服务器。请检查网络连接,然后重试。",
     );
     dict.set(
+        "error.server_format_mismatch",
+        "服务器已响应，但当前应用无法读取其数据格式。请刷新或更新应用后重试。",
+    );
+    dict.set(
         "error.server_unavailable",
         "服务器当前不可用。请检查服务器地址,或稍等片刻后重试。",
     );
@@ -1775,7 +1779,10 @@ fn add_contacts_keys_zh(dict: &mut TranslationDict) {
     dict.set("contacts.empty_add", "添加联系人");
 
     dict.set("settings.section.contacts", "联系人权限");
-    dict.set("contacts.settings.empty", "联系人请求接受后，可在这里调整其权限。");
+    dict.set(
+        "contacts.settings.empty",
+        "联系人请求接受后，可在这里调整其权限。",
+    );
     // ── ContactNewPanel ───────────────────────────────────────────────
     dict.set("contacts.new.title", "添加联系人");
     dict.set("contacts.new.subtitle", "需对方同意");
@@ -2523,7 +2530,7 @@ fn prompt_copy_strings(dict: &mut TranslationDict) {
     );
     dict.set(
         "did_health.detail.metadata_mismatch",
-        "身份服务未提供预期的信息格式。涉及信任的操作仍处于暂停状态。",
+        "身份服务已响应，但当前应用无法读取其数据格式。请刷新或更新应用；身份检查会自动重试。",
     );
     dict.set(
         "did_health.detail.partial",

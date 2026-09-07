@@ -11,6 +11,20 @@ pub use classify::*;
 #[error("invite link is unavailable")]
 pub(crate) struct InviteLocatorUnavailable;
 
+/// A received response failed decoding or protocol validation, not connectivity.
+pub(crate) fn is_response_format_error(error: &anyhow::Error) -> bool {
+    error.chain().any(|cause| {
+        matches!(
+            cause.downcast_ref::<arkret_sdk::http_client::Error>(),
+            Some(
+                arkret_sdk::http_client::Error::Json(_)
+                    | arkret_sdk::http_client::Error::Protocol(_)
+                    | arkret_sdk::http_client::Error::Wire(_)
+            )
+        )
+    })
+}
+
 #[derive(Clone, Debug, thiserror::Error)]
 #[error("Arkret API returned {status}: {error}")]
 pub struct TransportClientError {
@@ -112,6 +126,9 @@ pub(crate) fn user_facing_error_key(error: &anyhow::Error) -> Option<&'static st
 
     if error.downcast_ref::<InviteLocatorUnavailable>().is_some() {
         return Some("error.invite_locator_unavailable");
+    }
+    if is_response_format_error(error) {
+        return Some("error.server_format_mismatch");
     }
 
     let Some((status, envelope)) = api_error_status_and_envelope(error) else {
