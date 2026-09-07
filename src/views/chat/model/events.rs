@@ -2229,30 +2229,3 @@ pub(crate) fn poll_cards_from_local_state_with_sidecar(
         .collect::<Vec<_>>();
     poll_cards_from_events_with_sidecar("", &events, state_store, decrypt_identity)
 }
-
-pub(crate) fn bool_at_path(value: &Value, path: &[&str]) -> Option<bool> {
-    let mut current = value;
-    for key in path {
-        current = current.get(*key)?;
-    }
-    current.as_bool()
-}
-
-pub(crate) fn string_at_path<'a>(value: &'a Value, path: &[&str]) -> Option<&'a str> {
-    let mut current = value;
-    for key in path {
-        current = current.get(*key)?;
-    }
-    current.as_str()
-}
-
-pub(crate) fn first_string_in_candidate_paths<'a>(
-    candidates: &[&'a Value],
-    paths: &[&[&str]],
-) -> Option<&'a str> {
-    candidates.iter().find_map(|candidate| {
-        paths
-            .iter()
-            .find_map(|path| string_at_path(candidate, path))
-    })
-}

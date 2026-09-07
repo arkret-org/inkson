@@ -81,7 +81,7 @@ async fn account_state_fault_injection_contract_holds_in_browser() {
 //
 // The queue moved off localStorage because one queue of signed, not-yet-sent
 // Events routinely exceeds the whole ~5 MB per-origin budget. These contracts
-// run the production adoption / read-modify-write code (through
+// run the production read-modify-write code (through
 // `inkson::outbound_store_test_api`, which only exists so the store can be
 // passed in) against a real IndexedDB tier.
 
@@ -203,66 +203,27 @@ async fn outbound_queue_past_the_localstorage_quota_round_trips_in_indexeddb() {
 }
 
 #[wasm_bindgen_test(async)]
-async fn legacy_localstorage_queues_are_adopted_or_discarded_by_account_index() {
-    let service_name = format!("outbound-migration-{}", js_sys::Date::now());
+async fn localstorage_queue_is_not_imported_into_the_secure_store() {
+    let service_name = format!("outbound-isolation-{}", js_sys::Date::now());
     let store = IndexedDbSecureKeyStore::new_async(&service_name)
         .await
         .expect("open store");
     let storage = browser_local_storage();
-    let root_key = "inkson.local_state.v1";
-
+    let key = inkson::outbound_store_test_api::outbound_queue_key("nsObsolete", "standard");
     let mut queue = garth::SendQueue::new();
     fill_queue(&mut queue, 2);
-    let legacy_json = serde_json::to_string(&queue.snapshot()).expect("encode legacy queue");
-
-    // 1. Root index unreadable (absent) => "unknown", so every queue is
-    //    adopted rather than risk discarding unsent Events.
-    let _ = storage.remove_item(root_key);
-    let adopt_key = inkson::outbound_store_test_api::outbound_queue_key("nsAdopt", "standard");
+    let obsolete = serde_json::to_string(&queue.snapshot()).unwrap();
     storage
-        .set_item(&adopt_key, &legacy_json)
-        .expect("seed a legacy queue");
-
-    inkson::outbound_store_test_api::drain_legacy_outbound_queues(&store)
-        .await
-        .expect("drain legacy queues");
-
+        .set_item(&key, &obsolete)
+        .expect("seed obsolete queue");
+    let count = inkson::outbound_store_test_api::mutate_outbound_queue(&store, &key, |queue| {
+        Ok(queue.len())
+    })
+    .await
+    .expect("open current queue");
     assert_eq!(
-        store.get_secret(&adopt_key).expect("read adopted queue"),
-        Some(legacy_json.clone()),
-        "an adopted queue must reach the secure tier byte for byte"
+        count, 0,
+        "plaintext historical entries must not enter the queue"
     );
-    assert_eq!(
-        storage.get_item(&adopt_key).expect("read localStorage"),
-        None,
-        "the legacy copy is removed only after the durable copy is committed"
-    );
-
-    // 2. A parsed root index that lists no profile is a trustworthy answer:
-    //    the queue's authority is gone, its items can never be signed or sent,
-    //    and copying them forward would migrate unreachable work.
-    storage
-        .set_item(root_key, "{\"known_profiles\":[]}")
-        .expect("seed an empty account index");
-    let discard_key = inkson::outbound_store_test_api::outbound_queue_key("nsGone", "standard");
-    storage
-        .set_item(&discard_key, &legacy_json)
-        .expect("seed an abandoned queue");
-
-    inkson::outbound_store_test_api::drain_legacy_outbound_queues(&store)
-        .await
-        .expect("drain abandoned queues");
-
-    assert_eq!(
-        storage.get_item(&discard_key).expect("read localStorage"),
-        None,
-        "an abandoned queue is removed"
-    );
-    assert_eq!(
-        store.get_secret(&discard_key).expect("read secure tier"),
-        None,
-        "an abandoned queue is not carried into the secure tier"
-    );
-
-    let _ = storage.remove_item(root_key);
+    storage.remove_item(&key).expect("remove test fixture");
 }

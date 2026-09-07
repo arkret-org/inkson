@@ -518,23 +518,14 @@ async fn verify_governance_checkpoint_candidate_with_http<S: GovernanceProofStat
     let realm = arkret_sdk::RealmId::new(realm_id.to_owned()).map_err(|error| {
         format!("invalid Realm id for governance checkpoint bootstrap: {error}")
     })?;
-    let mut leaves = state_store
-        .with_read(|store| store.seal_view_for_realm(realm_id).frontier)
-        .into_iter()
-        .map(|seal| {
-            arkret_sdk::SealId::new(seal)
-                .map_err(|error| format!("invalid Realm Seal frontier id: {error}"))
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    leaves.sort();
-    leaves.dedup();
-    if leaves.is_empty() {
-        return Err(
-            "governance checkpoint bootstrap requires the complete synchronized Seal antichain"
-                .to_owned(),
-        );
-    }
-    let target_basis = arkret_sdk::SealBasis { leaves };
+    // Discovery supplies a candidate basis, never a trusted checkpoint. Resolve
+    // and verify every Seal, Event and dependency before pinning it below.
+    let target_basis = http
+        .seals_frontier(realm.clone())
+        .await
+        .map_err(|error| format!("discover complete governance Seal frontier: {error}"))?
+        .frontier
+        .seal_basis;
     let resolved = crate::mls::governance_acquisition::resolve_mls_governance_checkpoint_with_http(
         http,
         &realm,

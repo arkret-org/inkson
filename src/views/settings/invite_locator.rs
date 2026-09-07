@@ -64,8 +64,9 @@ pub(super) fn render_invite_locator_qr_svg(locator_url: &str) -> String {
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
-    use super::*;
     use std::io::{Read, Write};
+
+    use super::*;
 
     #[tokio::test]
     async fn expired_invite_locator_refresh_issues_a_new_link() {
@@ -104,8 +105,13 @@ mod tests {
         });
         let client = arkret_sdk::http_client::ClientBuilder::new(
             url::Url::parse(&format!("http://{address}")).unwrap(),
-        ).allow_insecure_localhost().build().unwrap();
-        let outcome = rotate_invite_locator(client, locator_id.to_owned()).await.unwrap();
+        )
+        .allow_insecure_localhost()
+        .build()
+        .unwrap();
+        let outcome = rotate_invite_locator(client, locator_id.to_owned())
+            .await
+            .unwrap();
         server.join().unwrap();
         assert_eq!(outcome.locator_token, "fresh-token");
         assert!(!outcome.one_time_use);

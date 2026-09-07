@@ -27,9 +27,13 @@ pub fn NotificationsPanel(
     let base_url = crate::app::SessionContext::base_url_string();
     let session = crate::app::SessionContext::get();
     let contact_inbox = use_context::<crate::app::ContactInbox>();
-    let pending_contacts = contact_inbox.0.read().iter()
+    let pending_contacts = contact_inbox
+        .0
+        .read()
+        .iter()
         .filter(|row| row.state == arkret_sdk::ContactState::PendingIncoming)
-        .cloned().collect::<Vec<_>>();
+        .cloned()
+        .collect::<Vec<_>>();
     let mut state_store = session.state_store;
     let Some(account) = session.active_account() else {
         return rsx! { div { class: "event error-banner", "Active account context is unavailable." } };
@@ -448,9 +452,11 @@ pub fn NotificationsPanel(
     }
 }
 
-
 #[component]
-fn ContactRequestNotification(contact: crate::models::ContactListRow, token: Signal<String>) -> Element {
+fn ContactRequestNotification(
+    contact: crate::models::ContactListRow,
+    token: Signal<String>,
+) -> Element {
     let session = crate::app::SessionContext::get();
     let mut inbox = use_context::<crate::app::ContactInbox>();
     let busy = use_signal(|| false);

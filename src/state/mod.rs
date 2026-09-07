@@ -39,25 +39,6 @@ fn account_state_key(namespace: &str) -> String {
     format!("{LOCAL_STATE_STORAGE_KEY}.account.{namespace}")
 }
 
-/// Storage namespaces of every account this device holds a persisted entry
-/// for, as written by [`account_storage_scope`].
-///
-/// Callers reclaim browser storage by namespace, so this fails closed: `None`
-/// means "the set is unknown" (no root index yet, or an unparseable one) and
-/// MUST NOT be read as "no account is known". Returning an empty set is a
-/// distinct, trustworthy answer — a parsed root index with no profile.
-#[cfg(target_arch = "wasm32")]
-pub(crate) fn persisted_account_storage_namespaces() -> Option<BTreeSet<String>> {
-    let raw = crate::browser_storage::local_storage_get(LOCAL_STATE_STORAGE_KEY)?;
-    let root: RootIndex = serde_json::from_str(&raw).ok()?;
-    Some(
-        root.known_profiles
-            .iter()
-            .filter_map(|entry| account_storage_scope(&entry.authority).ok())
-            .collect(),
-    )
-}
-
 /// Hard cap on the persisted `raw_operations` audit log. Each
 /// user write appends one record and the whole `ClientLocalState` blob is
 /// re-serialized on every flush; left unbounded it grows without limit

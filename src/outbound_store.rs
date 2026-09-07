@@ -10,9 +10,7 @@
 //! SubtleCrypto encrypted entries store — the tier the per-account main state
 //! already uses — so a queue of signed, not-yet-accepted Events is ciphertext
 //! at rest and is not charged against the ~5 MB localStorage per-origin quota
-//! that a single queue can exhaust on its own. Queues written by builds that
-//! predate this are drained out of localStorage on first use; see
-//! [`migrate_legacy_localstorage_queues`].
+//! that a single queue can exhaust on its own.
 
 use garth::OutboundQueueStore;
 use garth::outbound::BoxOutboundFuture;
@@ -20,58 +18,9 @@ use garth::outbound::BoxOutboundFuture;
 /// Storage-key prefix for one durable outbound queue:
 /// `<prefix><authority digest>.<lane>`.
 ///
-/// The same key addresses the same logical queue in both tiers — the IndexedDB
-/// entries store writes it today, and the retired localStorage layout the
-/// migration drains used it verbatim — so adopting a legacy queue needs no key
-/// rewrite. `secure_key_store::is_wasm_indexeddb_required_secret_key`
-/// classifies this prefix as IndexedDB-only, which is what stops the secure
-/// localStorage tier from mirroring a multi-megabyte queue back onto the very
-/// quota it was moved off.
+/// `secure_key_store::is_wasm_indexeddb_required_secret_key` classifies this
+/// prefix as IndexedDB-only, preventing plaintext localStorage persistence.
 pub(crate) const OUTBOUND_QUEUE_KEY_PREFIX: &str = "inkson.outbound.v1::";
-
-/// The authority storage namespace an outbound queue key belongs to, or `None`
-/// when the key is not an outbound queue.
-///
-/// The digest is base64url and so never contains `.`, while the lane suffix
-/// (`standard`, `mls-durable-post-accept`, ...) contains `-`. The first dot
-/// after the prefix is therefore the only correct split point.
-#[cfg_attr(not(any(target_arch = "wasm32", test)), allow(dead_code))]
-fn outbound_key_namespace(storage_key: &str) -> Option<&str> {
-    storage_key
-        .strip_prefix(OUTBOUND_QUEUE_KEY_PREFIX)?
-        .split_once('.')
-        .map(|(namespace, _)| namespace)
-}
-
-/// What the one-shot legacy drain does with one localStorage queue.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[cfg_attr(not(any(target_arch = "wasm32", test)), allow(dead_code))]
-enum LegacyQueueAction {
-    /// Copy into the secure store, then delete the legacy copy.
-    Adopt,
-    /// Delete without copying. The authority owning this queue has no account
-    /// entry left, so nothing will ever sign or send its items — they are
-    /// unreachable work, not pending work.
-    Discard,
-}
-
-/// Classify one legacy key against the authorities this device still holds an
-/// account entry for.
-///
-/// `live_namespaces` is `None` when the root index could not be read. That
-/// means "unknown", never "no account is known", so every queue is adopted
-/// rather than risk discarding a live authority's unsent Events.
-#[cfg_attr(not(any(target_arch = "wasm32", test)), allow(dead_code))]
-fn legacy_queue_action(
-    storage_key: &str,
-    live_namespaces: Option<&std::collections::BTreeSet<String>>,
-) -> Option<LegacyQueueAction> {
-    let namespace = outbound_key_namespace(storage_key)?;
-    match live_namespaces {
-        Some(live) if !live.contains(namespace) => Some(LegacyQueueAction::Discard),
-        _ => Some(LegacyQueueAction::Adopt),
-    }
-}
 
 /// The hardened entries store, or a refusal.
 ///
@@ -89,75 +38,11 @@ fn secure_outbound_store()
     Ok(crate::secure_key_store::default_secure_key_store("inkson"))
 }
 
-/// Write gate, holding "the legacy drain has run" as its guarded state.
-///
-/// Persisting now spans `await`, so two concurrent `mutate_outbound` calls
-/// could otherwise interleave read-modify-write into a lost update. One
-/// process-wide gate rather than one per queue also makes the drain run
-/// exactly once with no second lock to order against; outbound writes are not
-/// a hot path.
+/// Serialize asynchronous read-modify-write operations to prevent lost updates.
 #[cfg(target_arch = "wasm32")]
-fn outbound_write_gate() -> &'static tokio::sync::Mutex<bool> {
-    static GATE: std::sync::OnceLock<tokio::sync::Mutex<bool>> = std::sync::OnceLock::new();
-    GATE.get_or_init(|| tokio::sync::Mutex::new(false))
-}
-
-/// Drain every queue the retired localStorage layout still holds.
-///
-/// An adopted queue is committed durably FIRST and only then removed from
-/// localStorage, so a failure anywhere leaves the legacy copy in place for the
-/// next attempt: no unsent item is dropped to let the drain finish. A queue
-/// that will not decode is left untouched and reported, rather than copied as
-/// bytes the queue engine would later refuse to load.
-#[cfg(target_arch = "wasm32")]
-async fn migrate_legacy_localstorage_queues(
-    store: &dyn crate::secure_key_store::SecureKeyStore,
-) -> garth::Result<()> {
-    let Some(storage) = crate::browser_storage::browser_storage() else {
-        return Ok(());
-    };
-    let Ok(length) = storage.length() else {
-        return Ok(());
-    };
-    let legacy_keys = (0..length)
-        .filter_map(|index| storage.key(index).ok().flatten())
-        .filter(|key| outbound_key_namespace(key).is_some())
-        .collect::<Vec<_>>();
-    if legacy_keys.is_empty() {
-        return Ok(());
-    }
-    let live_namespaces = crate::state::persisted_account_storage_namespaces();
-    for key in legacy_keys {
-        match legacy_queue_action(&key, live_namespaces.as_ref()) {
-            Some(LegacyQueueAction::Discard) => {
-                let _ = storage.remove_item(&key);
-                continue;
-            }
-            None => continue,
-            Some(LegacyQueueAction::Adopt) => {}
-        }
-        let Some(raw) = storage.get_item(&key).ok().flatten() else {
-            continue;
-        };
-        if store.get_secret(&key).ok().flatten().is_none() {
-            serde_json::from_str::<garth::SendQueueSnapshot>(&raw).map_err(|error| {
-                garth::Error::Protocol(format!("decode legacy outbound queue {key}: {error}"))
-            })?;
-            store
-                .store_secret_durable(&key, &raw)
-                .await
-                .map_err(|error| {
-                    garth::Error::Protocol(format!(
-                        "adopt legacy outbound queue {key} ({} bytes): {error}",
-                        raw.len()
-                    ))
-                })?;
-        }
-        // The durable copy is committed — now, or by an earlier run whose
-        // delete was lost — so dropping the legacy copy cannot lose an item.
-        let _ = storage.remove_item(&key);
-    }
-    Ok(())
+fn outbound_write_gate() -> &'static tokio::sync::Mutex<()> {
+    static GATE: std::sync::OnceLock<tokio::sync::Mutex<()>> = std::sync::OnceLock::new();
+    GATE.get_or_init(|| tokio::sync::Mutex::new(()))
 }
 
 /// One read-modify-write of a queue against an explicit store.
@@ -291,11 +176,7 @@ impl OutboundQueueStore for InksonOutboundStore {
         {
             Box::pin(async move {
                 let store = secure_outbound_store()?;
-                let mut legacy_drained = outbound_write_gate().lock().await;
-                if !*legacy_drained {
-                    migrate_legacy_localstorage_queues(store.as_ref()).await?;
-                    *legacy_drained = true;
-                }
+                let _write_guard = outbound_write_gate().lock().await;
                 mutate_queue_in_store(store.as_ref(), &self.storage_key, mutation).await
             })
         }
@@ -307,7 +188,7 @@ impl OutboundQueueStore for InksonOutboundStore {
 /// The production path takes a process-global store and a process-global gate,
 /// neither of which a browser test can substitute. These forward into the same
 /// functions with the store passed in, so the contract exercises the real
-/// adoption and read-modify-write code rather than a copy of it.
+/// read-modify-write code rather than a copy of it.
 ///
 /// Target-gated, not feature-gated: CI runs the browser tests with no extra
 /// features, and a contract that only compiles under an opt-in feature is a
@@ -322,12 +203,6 @@ pub mod test_api {
         mutation: impl FnOnce(&mut garth::SendQueue) -> garth::Result<R>,
     ) -> garth::Result<R> {
         super::mutate_queue_in_store(store, storage_key, mutation).await
-    }
-
-    pub async fn drain_legacy_outbound_queues(
-        store: &dyn crate::secure_key_store::SecureKeyStore,
-    ) -> garth::Result<()> {
-        super::migrate_legacy_localstorage_queues(store).await
     }
 
     /// Build a queue key exactly as [`super::InksonOutboundStore::open`] does,
@@ -358,31 +233,6 @@ mod tests {
         assert_ne!(
             outbound_storage_scope(&first, OutboundLane::Standard).unwrap(),
             outbound_storage_scope(&second, OutboundLane::Standard).unwrap()
-        );
-    }
-
-    #[test]
-    fn every_lane_of_one_authority_shares_one_browser_namespace() {
-        let authority = fixture::authority_at_station(
-            "ak:did_core:webvh:zPrincipal",
-            "ak:did_core:webvh:zServerA",
-        );
-        let standard = outbound_storage_scope(&authority, OutboundLane::Standard).unwrap();
-        let mls = outbound_storage_scope(&authority, OutboundLane::MlsDurablePostAccept).unwrap();
-        let standard_key = format!("{OUTBOUND_QUEUE_KEY_PREFIX}{standard}");
-        let mls_key = format!("{OUTBOUND_QUEUE_KEY_PREFIX}{mls}");
-
-        // Reclaiming abandoned queues keys off this namespace, and the lane
-        // suffix itself contains `-`: splitting anywhere but the first `.`
-        // would read one authority's MLS lane as a different account and
-        // delete pending work the live session still owns.
-        assert_eq!(
-            outbound_key_namespace(&standard_key),
-            outbound_key_namespace(&mls_key)
-        );
-        assert_eq!(
-            outbound_key_namespace(&mls_key),
-            Some(mls.split_once('.').unwrap().0)
         );
     }
 
@@ -585,62 +435,6 @@ mod tests {
             crate::secure_key_store::is_wasm_indexeddb_required_secret_key(&format!(
                 "{OUTBOUND_QUEUE_KEY_PREFIX}{scope}"
             ))
-        );
-    }
-
-    fn namespaces(values: &[&str]) -> std::collections::BTreeSet<String> {
-        values.iter().map(|value| (*value).to_owned()).collect()
-    }
-
-    #[test]
-    fn legacy_drain_adopts_a_queue_whose_authority_still_has_an_account() {
-        let live = namespaces(&["nsA", "nsB"]);
-        assert_eq!(
-            legacy_queue_action("inkson.outbound.v1::nsA.standard", Some(&live)),
-            Some(LegacyQueueAction::Adopt)
-        );
-    }
-
-    #[test]
-    fn legacy_drain_discards_a_queue_whose_authority_is_gone() {
-        // These items are Pending forever — the session that would sign and
-        // send them no longer exists — so carrying them into the new tier
-        // would migrate work that can never drain.
-        let live = namespaces(&["nsA"]);
-        assert_eq!(
-            legacy_queue_action("inkson.outbound.v1::nsGone.standard", Some(&live)),
-            Some(LegacyQueueAction::Discard)
-        );
-    }
-
-    #[test]
-    fn legacy_drain_adopts_everything_when_the_account_index_is_unreadable() {
-        // `None` is "unknown", not "no account is known". Reading it as the
-        // latter would delete a live authority's unsent Events the first time
-        // the root index fails to parse.
-        assert_eq!(
-            legacy_queue_action("inkson.outbound.v1::nsA.standard", None),
-            Some(LegacyQueueAction::Adopt)
-        );
-    }
-
-    #[test]
-    fn legacy_drain_ignores_keys_that_are_not_outbound_queues() {
-        let live = namespaces(&["nsA"]);
-        assert_eq!(
-            legacy_queue_action("inkson.local_state.v1", Some(&live)),
-            None
-        );
-    }
-
-    #[test]
-    fn browser_namespace_is_none_for_keys_that_are_not_outbound_queues() {
-        // `None` keeps the reclaimer fail-closed: a key it cannot parse is
-        // never treated as an abandoned queue.
-        assert_eq!(outbound_key_namespace("inkson.local_state.v1"), None);
-        assert_eq!(
-            outbound_key_namespace("inkson.outbound.v1::digest-without-a-lane"),
-            None
         );
     }
 

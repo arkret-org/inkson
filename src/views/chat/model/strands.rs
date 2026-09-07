@@ -1,219 +1,13 @@
-use arkret_wire::event_kind_str;
-
 use super::*;
 
 pub(crate) fn default_discussion_strand_id(realm_body: &Value) -> Option<String> {
-    let strand_id = realm_body
-        .get("default_strand_id")
-        .or_else(|| {
-            realm_body
-                .get("summary")
-                .and_then(|summary| summary.get("strand"))
-                .and_then(|strand| strand.get("strand_id").or_else(|| strand.get("id")))
-        })
-        .and_then(Value::as_str)?
-        .trim();
+    let strand_id = realm_body.get("default_strand_id")?.as_str()?;
     arkret_sdk::StrandId::new(strand_id.to_owned())
         .ok()
         .map(|id| id.to_string())
 }
 
-pub(crate) fn candidate_has_track(candidate: &Value, track: &str) -> bool {
-    candidate
-        .get("tracks")
-        .and_then(|tracks| tracks.get(track))
-        .is_some()
-        || ["object", "strand"].iter().any(|wrapper| {
-            candidate
-                .get(*wrapper)
-                .and_then(|inner| inner.get("tracks"))
-                .and_then(|tracks| tracks.get(track))
-                .is_some()
-        })
-}
-
-pub(crate) fn strand_create_has_discussion_track(candidates: &[&Value]) -> bool {
-    candidates
-        .iter()
-        .any(|candidate| candidate_has_track(candidate, "discussion"))
-}
-
-pub(crate) fn strand_create_has_synthesis_track(candidates: &[&Value]) -> bool {
-    candidates
-        .iter()
-        .any(|candidate| candidate_has_track(candidate, "synthesis"))
-        || candidates.iter().any(|candidate| {
-            bool_at_path(candidate, &["create_card"]).unwrap_or(false)
-                || bool_at_path(candidate, &["fields", "has_synthesis"]).unwrap_or(false)
-                || bool_at_path(candidate, &["object", "fields", "has_synthesis"]).unwrap_or(false)
-                || bool_at_path(candidate, &["strand", "fields", "has_synthesis"]).unwrap_or(false)
-        })
-}
-
-pub(crate) fn strand_security_state_from_candidates(candidates: &[&Value]) -> Option<bool> {
-    candidates
-        .iter()
-        .find_map(|candidate| garth::strand_projection_security_state(candidate))
-}
-
-pub(crate) fn channel_from_strand_projection(
-    strand: &Value,
-    is_default: bool,
-) -> Option<ChannelEntity> {
-    if !candidate_has_track(strand, "discussion") {
-        return None;
-    }
-
-    let strand_id = first_string_in_candidate_paths(&[strand], &[&["strand_id"], &["id"]])
-        .map(str::trim)
-        .filter(|id| id.starts_with("ak:strand:"))
-        .and_then(|id| arkret_sdk::StrandId::new(id.to_owned()).ok())
-        .map(|id| id.to_string())?;
-    let name = first_string_in_candidate_paths(
-        &[strand],
-        &[
-            &["title"],
-            &["name"],
-            &["metadata", "title"],
-            &["metadata", "name"],
-        ],
-    )
-    .filter(|title| !title.trim().is_empty())
-    .map(ToOwned::to_owned)
-    .unwrap_or_else(|| {
-        if is_default {
-            "Discussion".to_owned()
-        } else {
-            strand_id.clone()
-        }
-    });
-    let category = first_string_in_candidate_paths(
-        &[strand],
-        &[
-            &["category"],
-            &["fields", "category"],
-            &["metadata", "fields", "category"],
-            &["summary", "category"],
-        ],
-    )
-    .filter(|category| !category.trim().is_empty())
-    .map(ToOwned::to_owned)
-    .unwrap_or_else(|| {
-        if is_default {
-            "default strand".to_owned()
-        } else {
-            "general".to_owned()
-        }
-    });
-    let topic = first_string_in_candidate_paths(
-        &[strand],
-        &[
-            &["summary"],
-            &["topic"],
-            &["description"],
-            &["fields", "summary"],
-            &["fields", "topic"],
-            &["metadata", "summary"],
-            &["metadata", "fields", "summary"],
-            &["metadata", "fields", "topic"],
-        ],
-    )
-    .filter(|topic| !topic.trim().is_empty())
-    .map(ToOwned::to_owned)
-    .or_else(|| {
-        if is_default {
-            Some("Default Strand discussion track".to_owned())
-        } else {
-            None
-        }
-    });
-    let has_synthesis = strand_create_has_synthesis_track(&[strand]);
-    let security_encrypted = garth::strand_projection_security_state(strand);
-    let scope_circle = strand_scope_circle_from_projection(strand);
-
-    Some(ChannelEntity {
-        strand_id,
-        name,
-        kind: if !is_default && has_synthesis {
-            "strand".to_owned()
-        } else {
-            "discussion".to_owned()
-        },
-        category,
-        topic,
-        unread: 0,
-        is_default,
-        is_private_sidecar: false,
-        security_encrypted,
-        scope_circle,
-    })
-}
-
-/// Extract the optional Circle-scope projection from a Strand
-/// projection JSON. Looks under both the top-level
-/// `scope_circle_id` and the canonical `scope.circle_id` shape so
-/// the helper tolerates both projection layouts.
-pub(crate) fn strand_scope_circle_from_projection(strand: &Value) -> Option<StrandScopeCircle> {
-    let circle_id = first_string_in_candidate_paths(
-        &[strand],
-        &[
-            &["scope_circle_id"],
-            &["scope", "circle_id"],
-            &["scope", "scope_circle_id"],
-            &["fields", "scope_circle_id"],
-        ],
-    )
-    .map(str::trim)
-    .filter(|value| value.starts_with("ak:circle:"))
-    .map(ToOwned::to_owned)?;
-
-    let title = first_string_in_candidate_paths(
-        &[strand],
-        &[
-            &["scope_circle_title"],
-            &["scope", "circle_title"],
-            &["scope", "title"],
-        ],
-    )
-    .filter(|value| !value.trim().is_empty())
-    .map(ToOwned::to_owned)
-    .unwrap_or_else(|| circle_id.clone());
-
-    let member_count = u32_at_path(strand, &["scope_circle_member_count"])
-        .or_else(|| u32_at_path(strand, &["scope", "member_count"]))
-        .unwrap_or(0);
-
-    Some(StrandScopeCircle {
-        circle_id,
-        title,
-        member_count,
-    })
-}
-
-pub(crate) fn u32_at_path(value: &Value, path: &[&str]) -> Option<u32> {
-    let mut current = value;
-    for segment in path {
-        current = current.get(segment)?;
-    }
-    current
-        .as_u64()
-        .and_then(|raw| u32::try_from(raw).ok())
-        .or_else(|| {
-            current
-                .as_str()
-                .and_then(|raw| raw.trim().parse::<u32>().ok())
-        })
-}
-
 pub(crate) fn default_discussion_channel(realm_body: Option<&Value>) -> Option<ChannelEntity> {
-    if let Some(strand) = realm_body
-        .and_then(|body| body.get("summary"))
-        .and_then(|summary| summary.get("strand"))
-        && let Some(channel) = channel_from_strand_projection(strand, true)
-    {
-        return Some(channel);
-    }
-
     let realm_body = realm_body?;
     let strand_id = default_discussion_strand_id(realm_body)?;
     Some(ChannelEntity {
@@ -251,105 +45,58 @@ pub(crate) fn discussion_channel_for_strand(strand_id: &str) -> Option<ChannelEn
     })
 }
 
-pub(crate) fn channel_from_strand_event(_realm_id: &str, event: &Value) -> Option<ChannelEntity> {
-    let candidates = message_candidates(event);
-    if !candidates.iter().any(|candidate| {
-        value_string_at(candidate, &["kind", "type"]) == Some(event_kind_str::STRAND_CREATE)
-    }) {
+pub(crate) fn channel_from_strand_event(realm_id: &str, value: &Value) -> Option<ChannelEntity> {
+    let event: arkret_sdk::Event = serde_json::from_value(value.clone()).ok()?;
+    if event.kind != arkret_sdk::EventKind::StrandCreate || event.realm_id.as_str() != realm_id {
         return None;
     }
-    if !strand_create_has_discussion_track(&candidates)
-        && !candidates.iter().any(|candidate| {
-            // T2.3: the v1 wire uses `track_name`; writers MUST NOT emit the
-            // removed `branch` field.
-            value_string_at(candidate, &["track_name"]) == Some("discussion")
-        })
+    let payload: arkret_sdk::StrandCreatePayload =
+        serde_json::from_value(serde_json::to_value(&event.payload).ok()?).ok()?;
+    channel_from_strand_creation(realm_id, &event.event_id, payload)
+}
+
+fn channel_from_strand_creation(
+    realm_id: &str,
+    event_id: &arkret_sdk::EventId,
+    payload: arkret_sdk::StrandCreatePayload,
+) -> Option<ChannelEntity> {
+    let strand = payload.object;
+    if strand.id.is_some()
+        || strand.realm_id.as_str() != realm_id
+        || !strand.tracks.contains_key("discussion")
     {
         return None;
     }
-
-    let strand_id = first_string_in_candidate_paths(
-        &candidates,
-        &[
-            &["strand_id"],
-            &["target_ref"],
-            &["object", "id"],
-            &["object", "strand_id"],
-            &["strand", "id"],
-            &["strand", "strand_id"],
-        ],
-    )?
-    .trim();
-    if !strand_id.starts_with("ak:strand:") {
-        return None;
-    }
-
-    let name = first_string_in_candidate_paths(
-        &candidates,
-        &[
-            &["title"],
-            &["name"],
-            &["object", "title"],
-            &["object", "name"],
-            &["object", "metadata", "title"],
-            &["object", "metadata", "name"],
-            &["strand", "title"],
-            &["strand", "name"],
-            &["strand", "metadata", "title"],
-            &["strand", "metadata", "name"],
-        ],
-    )
-    .unwrap_or(strand_id)
-    .to_owned();
-    let category = first_string_in_candidate_paths(
-        &candidates,
-        &[
-            &["category"],
-            &["fields", "category"],
-            &["metadata", "fields", "category"],
-            &["object", "fields", "category"],
-            &["object", "metadata", "fields", "category"],
-            &["strand", "fields", "category"],
-            &["strand", "metadata", "fields", "category"],
-        ],
-    )
-    .unwrap_or("general")
-    .to_owned();
-    let topic = first_string_in_candidate_paths(
-        &candidates,
-        &[
-            &["summary"],
-            &["topic"],
-            &["description"],
-            &["object", "summary"],
-            &["object", "topic"],
-            &["object", "description"],
-            &["object", "metadata", "summary"],
-            &["object", "metadata", "fields", "summary"],
-            &["object", "metadata", "fields", "topic"],
-            &["strand", "summary"],
-            &["strand", "topic"],
-            &["strand", "description"],
-            &["strand", "metadata", "summary"],
-            &["strand", "metadata", "fields", "summary"],
-            &["strand", "metadata", "fields", "topic"],
-        ],
-    )
-    .map(ToOwned::to_owned);
-    let has_synthesis = strand_create_has_synthesis_track(&candidates);
-    let security_encrypted = strand_security_state_from_candidates(&candidates);
-    let scope_circle = candidates
-        .iter()
-        .find_map(|candidate| strand_scope_circle_from_projection(candidate));
-
+    strand.validate_content_surfaces().ok()?;
+    let strand_id = arkret_sdk::StrandId::from_event_id(event_id).to_string();
+    let metadata = strand.metadata.as_ref();
+    let name = metadata
+        .and_then(|metadata| metadata.title.as_ref())
+        .filter(|title| !title.trim().is_empty())
+        .cloned()
+        .unwrap_or_else(|| strand_id.clone());
+    let category = metadata
+        .and_then(|metadata| metadata.fields.get("category"))
+        .and_then(Value::as_str)
+        .unwrap_or("general")
+        .to_owned();
+    let topic = metadata.and_then(|metadata| metadata.summary.clone());
+    let security_encrypted =
+        (strand.encrypted_metadata.is_some() || strand.encrypted_content.is_some()).then_some(true);
+    let scope_circle = strand.scope_circle_id.map(|circle_id| StrandScopeCircle {
+        circle_id: circle_id.to_string(),
+        title: circle_id.to_string(),
+        member_count: 0,
+    });
     Some(ChannelEntity {
-        strand_id: strand_id.to_owned(),
+        strand_id,
         name,
-        kind: if has_synthesis {
-            "strand".to_owned()
+        kind: if strand.tracks.contains_key("synthesis") {
+            "strand"
         } else {
-            "discussion".to_owned()
-        },
+            "discussion"
+        }
+        .to_owned(),
         category,
         topic,
         unread: 0,
@@ -369,34 +116,43 @@ pub(crate) fn channels_from_events(realm_id: &str, events: &[Value]) -> Vec<Chan
 
 pub(crate) fn channels_from_sync_realms(
     realms: &std::collections::BTreeMap<String, Value>,
-    default_realm_ids: &[String],
+    selected_realm_id: &str,
 ) -> Vec<ChannelEntity> {
+    let Some(body) = realms.get(selected_realm_id) else {
+        return Vec::new();
+    };
     let mut channels = Vec::new();
-    for (realm_id, body) in realms {
-        if default_realm_ids.iter().any(|id| id == realm_id) {
-            channels.extend(default_discussion_channel(Some(body)));
-        }
-        let Some(wire_events) = body
-            .get("timeline")
-            .and_then(|projection| projection.get("events"))
-            .and_then(Value::as_array)
-        else {
-            continue;
-        };
-        channels.extend(channels_from_events(realm_id, wire_events));
+    channels.extend(default_discussion_channel(Some(body)));
+    if let Some(events) = body
+        .get("timeline")
+        .and_then(|projection| projection.get("events"))
+        .and_then(Value::as_array)
+    {
+        channels.extend(channels_from_events(selected_realm_id, events));
     }
     channels
 }
 
-pub(crate) fn channels_from_local_state(state: &ClientLocalState) -> Vec<ChannelEntity> {
+pub(crate) fn channels_from_local_state(
+    state: &ClientLocalState,
+    selected_realm_id: &str,
+) -> Vec<ChannelEntity> {
     state
         .raw_operations
         .iter()
+        .filter(|record| record.realm_id.as_deref() == Some(selected_realm_id))
         .filter_map(|record| {
-            channel_from_strand_event(
-                record.realm_id.as_deref().unwrap_or_default(),
-                &record.payload,
-            )
+            // The current ingest projection stores a typed payload in `body`,
+            // not an Event envelope. Only its canonical Event identity is used.
+            let local = &record.payload;
+            if local.get("kind")?.as_str()? != arkret_wire::event_kind_str::STRAND_CREATE
+                || local.get("operation_id")?.as_str()? != record.operation_id
+            {
+                return None;
+            }
+            let event_id = arkret_sdk::EventId::new(record.operation_id.clone()).ok()?;
+            let payload = serde_json::from_value(local.get("body")?.clone()).ok()?;
+            channel_from_strand_creation(record.realm_id.as_deref()?, &event_id, payload)
         })
         .collect()
 }

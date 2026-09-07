@@ -881,9 +881,12 @@ pub fn ContactsPanel(token: Signal<String>, #[props(default)] advanced: bool) ->
     }
 
     let is_loading = status() == "loading";
-    let contact_rows = contacts.read().iter()
+    let contact_rows = contacts
+        .read()
+        .iter()
         .filter(|row| !advanced || row.state == arkret_sdk::ContactState::Accepted)
-        .cloned().collect::<Vec<_>>();
+        .cloned()
+        .collect::<Vec<_>>();
 
     rsx! {
         div { class: "settings contacts-panel", "data-testid": "contacts-panel",

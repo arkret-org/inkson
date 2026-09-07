@@ -573,7 +573,7 @@ pub(super) fn ChatEffects(
                         Some(&store),
                         local_decrypt_identity,
                     ),
-                    channels_from_local_state(&snapshot),
+                    channels_from_local_state(&snapshot, &selected_realm_for_load),
                 )
             };
             if !local_channels.is_empty() {
@@ -687,7 +687,7 @@ pub(super) fn ChatEffects(
                     event_sink.emit(ChatProjectionEvent::MergeChannels(
                         channels_from_sync_realms(
                             &sync.realm_projections,
-                            std::slice::from_ref(&selected_realm_for_load),
+                            &selected_realm_for_load,
                         ),
                     ));
                     sync_cursor.set(sync.cursor);
@@ -780,7 +780,7 @@ pub(super) fn ChatEffects(
                 }
 
                 event_sink.emit(ChatProjectionEvent::MergeChannels(
-                    channels_from_local_state(&state_store.read().load()),
+                    channels_from_local_state(&state_store.read().load(), &selected_realm_for_load),
                 ));
                 if selected_channel().trim().is_empty()
                     && let Some(first_channel) = channels.read().first()

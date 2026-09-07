@@ -338,8 +338,10 @@ fn contact_row(principal: &str) -> crate::models::ContactListRow {
 
 #[test]
 fn contact_inbox_badge_tracks_only_pending_incoming_requests() {
+    use std::cell::Cell;
+    use std::rc::Rc;
+
     use dioxus::prelude::*;
-    use std::{cell::Cell, rc::Rc};
     let count = Rc::new(Cell::new(usize::MAX));
     let mut dom = dioxus::prelude::VirtualDom::new_with_props(
         |count: Rc<Cell<usize>>| {

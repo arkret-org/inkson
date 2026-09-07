@@ -49,8 +49,10 @@ pub(super) fn SidebarManageHomeLink(
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod manage_link_tests {
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
     use dioxus_router::{Routable, Router};
-    use std::{cell::RefCell, rc::Rc};
 
     use super::*;
 

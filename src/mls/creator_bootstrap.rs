@@ -71,9 +71,7 @@ pub(crate) async fn ensure_realm_governance_checkpoint<
     );
     let seal_view = wait_for_realm_seal_view(&submitter, realm_id)
         .await
-        .map_err(|error| {
-            format!("refreshing the accepted Seal view failed: {error}")
-        })?;
+        .map_err(|error| format!("refreshing the accepted Seal view failed: {error}"))?;
     state_store.with_write(|store| {
         let mut view = store.seal_view_for_realm(realm_id);
         view.frontier = seal_view
