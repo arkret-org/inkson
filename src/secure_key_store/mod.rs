@@ -198,6 +198,14 @@ pub(crate) use garth::{account_id_storage_digest, device_storage_digest};
 #[cfg(any(target_arch = "wasm32", test))]
 pub(crate) const ACCOUNT_LOCAL_STATE_KEY_PREFIX: &str = "inkson.local_state.v1.account.";
 
+// The durable outbound send-queue prefix
+// (`crate::outbound_store::OUTBOUND_QUEUE_KEY_PREFIX`) is classified
+// IndexedDB-only for two reasons at once. A queue snapshot carries signed,
+// not-yet-accepted Events, so a localStorage mirror would leave authored
+// content at rest under the weaker tier; and one queue routinely exceeds the
+// whole ~5 MB localStorage per-origin budget, so the mirror would also spend
+// that budget against every other key on the origin.
+
 #[cfg(any(target_arch = "wasm32", test))]
 pub(crate) fn is_wasm_indexeddb_required_secret_key(key: &str) -> bool {
     let scoped_prefix = |logical_prefix: &str| {
@@ -230,6 +238,7 @@ pub(crate) fn is_wasm_indexeddb_required_secret_key(key: &str) -> bool {
         || key.starts_with("arkret/history-source-outbox/v1/")
         || key.starts_with(E2EE_PLAINTEXT_CACHE_KEY_PREFIX)
         || key.starts_with(ACCOUNT_LOCAL_STATE_KEY_PREFIX)
+        || key.starts_with(crate::outbound_store::OUTBOUND_QUEUE_KEY_PREFIX)
 }
 
 pub(crate) fn e2ee_plaintext_cache_store_key(authority_namespace: &str) -> String {

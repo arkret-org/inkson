@@ -130,6 +130,13 @@ pub mod secure_key_store;
 pub async fn run_browser_account_persist_fault_contract() -> anyhow::Result<()> {
     state::run_browser_account_persist_fault_contract().await
 }
+
+/// Durable-outbound-queue contract entry points for the browser test suite
+/// (`tests/wasm_indexed_db_capacity.rs`). `outbound_store` is a private module,
+/// so the contract reaches the real adoption / read-modify-write functions
+/// through here rather than reimplementing them.
+#[cfg(target_arch = "wasm32")]
+pub use outbound_store::test_api as outbound_store_test_api;
 pub mod realm_state_snapshot;
 pub(crate) mod scheduled_send;
 pub mod sidecar;
