@@ -605,20 +605,22 @@ async fn materialize_verified_cache_entry(
             verification_method_public_keys.insert(method.as_str().to_owned(), key);
         }
     }
-    for proof in &snapshot
-        .state
-        .agent_lifecycle_witness
-        .accepted_status_event
-        .proofs
-    {
-        let method = match proof {
-            arkret_sdk::EventProof::Producer(proof) => &proof.verification_method,
-            arkret_sdk::EventProof::StationAdmission(proof) => &proof.verification_method,
+    let lifecycle_event = &snapshot.state.agent_lifecycle_witness.accepted_status_event;
+    for proof in &lifecycle_event.proofs {
+        let arkret_sdk::EventProof::StationAdmission(proof) = proof else {
+            continue;
         };
+        let method = &proof.verification_method;
         if verification_method_public_keys.contains_key(method.as_str()) {
             continue;
         }
-        let key = resolve_method_key(http, anchor, method).await?;
+        let key = resolve_source_service_method_key(
+            http,
+            anchor,
+            lifecycle_event.actor_id.route_service_id(),
+            method,
+        )
+        .await?;
         verification_method_public_keys.insert(method.as_str().to_owned(), key);
     }
     let entry = CachedAgentSignerEvidence {
@@ -728,92 +730,19 @@ fn authorization_record_digests(evidence: &AgentSignerEvidence) -> Option<(Hash,
         })
 }
 
-fn verify_lifecycle_reducer(
+fn verify_lifecycle_signature(
     entry: &CachedAgentSignerEvidence,
     witness: &arkret_sdk::AgentLifecycleWitness,
 ) -> Result<(), AgentEvidenceRejectedReason> {
-    let snapshot = authority_state_evidence(&entry.evidence);
-    let event = &witness.accepted_status_event;
-    let Some(controller_principal_id) = event
-        .executed_by
-        .as_ref()
-        .map(arkret_sdk::ActorId::signing_principal_id)
-    else {
-        return Err(AgentEvidenceRejectedReason::SigningKeyMismatch);
-    };
-    if &witness.agent_id != event.actor_id.signing_principal_id()
-        || event.realm_id != snapshot.state.principal_control_realm_id
-        || arkret_sdk::signed_event_digest_claim(event)
-            .ok()
-            .is_none_or(|digest| {
-                !witness.seal.delta.contains(&digest)
-                    && !witness.seal.covered_event_digests.contains(&digest)
-            })
-    {
-        return Err(AgentEvidenceRejectedReason::SigningKeyMismatch);
-    }
-    let provenance_matches = match (&witness.cell_value, &witness.provenance) {
-        (
-            arkret_sdk::AgentLifecycleStatus::Active,
-            arkret_sdk::AgentLifecycleProvenance::DelegatedPcrGenesis {
-                realm_create_event_id,
-            },
-        ) => {
-            event.kind == arkret_sdk::EventKind::RealmCreate
-                && event.event_id == *realm_create_event_id
-                && event.payload.get("object")
-                    .and_then(|object| object.get("purpose"))
-                    .and_then(Value::as_str) == Some("agent_control")
-                // The current contract declares genesis from the provision;
-                // genesis itself must not introduce a reverse dependency.
-                && !event.refs.iter().any(|reference| reference.role == "agent_provision")
-        }
-        (
-            arkret_sdk::AgentLifecycleStatus::Active,
-            arkret_sdk::AgentLifecycleProvenance::ResumeAccepted { resume_event_id },
-        ) => {
-            event.kind == arkret_sdk::EventKind::SelfAgentResume
-                && event.event_id == *resume_event_id
-                && event.payload.get("transition").and_then(Value::as_str) == Some("resume")
-                && event.payload.get("previous_status").and_then(Value::as_str) == Some("paused")
-        }
-        _ => false,
-    };
-    if !provenance_matches {
-        return Err(AgentEvidenceRejectedReason::AuthorizationInactive);
-    }
-    let envelope =
-        serde_json::to_value(event).map_err(|_| AgentEvidenceRejectedReason::SigningKeyMismatch)?;
-    let proofs = envelope
-        .get("proofs")
-        .and_then(Value::as_array)
-        .cloned()
-        .ok_or(AgentEvidenceRejectedReason::SigningKeyMismatch)?;
-    // The SDK owns the `encoding.md` §6 exclusion rule. This site used to apply
-    // it by hand and dropped only `proofs`, `unsigned` and `actor_kind`: leaving
-    // `event_id` in produced bytes the producer never signed, so every
-    // well-formed evidence Event failed verification as
-    // `SigningKeyMismatch`.
-    let envelope = arkret_sdk::event_digest_preimage(&envelope)
-        .map_err(|_| AgentEvidenceRejectedReason::SigningKeyMismatch)?;
-    let verified = proofs.iter().any(|proof| {
-        let Some(method) = proof.get("verification_method").and_then(Value::as_str) else {
-            return false;
-        };
-        let Some(key) = entry.verification_method_public_keys.get(method) else {
-            return false;
-        };
-        crate::identity::device_directory::verify_proof_value_for_signer(
-            &envelope,
-            proof,
-            controller_principal_id.as_str(),
-            witness.agent_id.as_str(),
-            key,
-        )
-    });
-    verified
-        .then_some(())
-        .ok_or(AgentEvidenceRejectedReason::SigningKeyMismatch)
+    arkret_sdk::signatures::agent_evidence::verify_agent_lifecycle_event_signature(
+        witness,
+        &|method| {
+            entry
+                .verification_method_public_keys
+                .get(method.as_str())
+                .cloned()
+        },
+    )
 }
 
 fn verified_evidence_state(
@@ -828,7 +757,7 @@ fn verified_evidence_state(
     let (public_key_digest, binding_digest) = authorization_record_digests(&entry.evidence)?;
     let verify_seal = |seal: &arkret_sdk::Seal| verify_seal_signature(entry, seal);
     let verify_lifecycle =
-        |witness: &arkret_sdk::AgentLifecycleWitness| verify_lifecycle_reducer(entry, witness);
+        |witness: &arkret_sdk::AgentLifecycleWitness| verify_lifecycle_signature(entry, witness);
     let context = AgentEvidenceStateVerificationContext {
         signer_id: &binding.agent_id,
         signer_actor_id,
