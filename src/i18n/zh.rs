@@ -1775,9 +1775,13 @@ fn add_contacts_keys_zh(dict: &mut TranslationDict) {
     dict.set("contacts.new.subtitle", "需对方同意");
     dict.set(
         "contacts.new.intro",
-        "输入对方的 DID 或 handle 发送好友请求。成为好友默认既能私聊、也允许对方拉你入群(像微信好友一样)。如需更严格,可在下面取消勾选。",
+        "输入对方的邀请链接、handle 或完整账号标识发送好友请求。成为好友默认既能私聊、也允许对方拉你入群(像微信好友一样)。如需更严格,可在下面取消勾选。",
     );
-    dict.set("contacts.new.target_label", "对方 DID 或 handle");
+    dict.set("contacts.new.target_label", "对方邀请链接、handle 或账号");
+    dict.set(
+        "contacts.new.target_placeholder",
+        "粘贴邀请链接或输入 alice:example.com",
+    );
     dict.set("contacts.new.scope_label", "好友权限(普通好友默认两项都开)");
     dict.set("contacts.new.scope_empty", "至少需要选择一项权限。");
     dict.set("contacts.new.message_label", "附言(可选)");

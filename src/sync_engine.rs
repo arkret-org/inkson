@@ -1986,6 +1986,7 @@ pub(crate) fn ingest_kanban_events(
 #[derive(Clone, Debug)]
 enum LocalMembershipEvent {
     MemberState(arkret_sdk::MembershipPayload),
+    InviteCreate(arkret_sdk::InviteCreatePayload),
     InviteAccept(arkret_sdk::InviteAcceptPayload),
 }
 
@@ -2002,6 +2003,11 @@ impl LocalMembershipEvent {
                     .typed_payload::<arkret_wire::event_spec::InviteAccept>()
                     .ok()?,
             ),
+            arkret_sdk::EventKind::InviteCreate => Self::InviteCreate(
+                event
+                    .typed_payload::<arkret_wire::event_spec::InviteCreate>()
+                    .ok()?,
+            ),
             _ => return None,
         })
     }
@@ -2013,6 +2019,12 @@ impl LocalMembershipEvent {
                     kind: arkret_sdk::EventKind::$kind,
                     operation_id: &metadata.operation_id,
                     event_id: &metadata.event_id,
+                    invite_id: match self {
+                        Self::InviteCreate(_) => Some(arkret_sdk::InviteId::from_event_id(
+                            &arkret_sdk::EventId::new(metadata.event_id.clone()).ok()?,
+                        )),
+                        _ => None,
+                    },
                     actor_id: &metadata.actor_id,
                     signing_device_id: metadata.signing_device_id.as_ref(),
                     created_at: &metadata.created_at,
@@ -2024,6 +2036,7 @@ impl LocalMembershipEvent {
         }
         match self {
             Self::MemberState(payload) => serialize_record!(MemberState, payload),
+            Self::InviteCreate(payload) => serialize_record!(InviteCreate, payload),
             Self::InviteAccept(payload) => serialize_record!(InviteAccept, payload),
         }
     }
@@ -2034,7 +2047,9 @@ struct LocalMembershipRecord<'a, T> {
     kind: arkret_sdk::EventKind,
     operation_id: &'a str,
     event_id: &'a str,
-    actor_id: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    invite_id: Option<arkret_sdk::InviteId>,
+    actor_id: &'a arkret_sdk::ActorId,
     #[serde(skip_serializing_if = "Option::is_none")]
     signing_device_id: Option<&'a arkret_sdk::DeviceId>,
     created_at: &'a str,
@@ -2045,7 +2060,7 @@ struct LocalMembershipRecord<'a, T> {
 struct LocalMembershipMetadata {
     operation_id: String,
     event_id: String,
-    actor_id: String,
+    actor_id: arkret_sdk::ActorId,
     signing_device_id: Option<arkret_sdk::DeviceId>,
     created_at: String,
 }
@@ -2056,7 +2071,9 @@ fn membership_operation_from_event(event: &arkret_sdk::Event) -> Option<RawOpera
     let metadata = LocalMembershipMetadata {
         operation_id: operation_id.clone(),
         event_id: operation_id.clone(),
-        actor_id: event.actor_id.signing_principal_id().as_str().to_owned(),
+        // Keep the complete Account/Service actor. Reducing it to a principal
+        // string loses the Station and cannot match the accepted invite route.
+        actor_id: event.actor_id.clone(),
         signing_device_id: accepted_human_event_signing_device(event),
         created_at: arkret_sdk::canonical::format_timestamp_canonical(event.created_at),
     };
@@ -2097,22 +2114,7 @@ fn membership_operation_from_client_event(
         garth::ClientEvent::Event(event) => event,
         _ => return None,
     };
-    let local_event = LocalMembershipEvent::from_sdk_event(event)?;
-    let operation_id = event.event_id.as_str().to_owned();
-    let metadata = LocalMembershipMetadata {
-        operation_id: operation_id.clone(),
-        event_id: event.event_id.as_str().to_owned(),
-        actor_id: event.actor_id.signing_principal_id().as_str().to_owned(),
-        signing_device_id: accepted_human_event_signing_device(event),
-        created_at: arkret_sdk::canonical::format_timestamp_canonical(event.created_at),
-    };
-    let payload = local_event.record_value(&metadata)?;
-    Some(RawOperationRecord {
-        operation_id: operation_id.clone(),
-        realm_id: Some(event.realm_id.as_str().to_owned()),
-        received_at: event.created_at,
-        payload,
-    })
+    membership_operation_from_event(event)
 }
 
 pub(crate) fn ingest_membership_events(

@@ -1931,9 +1931,16 @@ fn add_contacts_keys(dict: &mut TranslationDict) {
     dict.set("contacts.new.subtitle", "Needs their approval");
     dict.set(
         "contacts.new.intro",
-        "Enter the other person's DID or handle to send a friend request. By default contacts can both message you and invite you to groups (just like a regular friend). For tighter control, uncheck options below.",
+        "Enter the other person's invite link, handle, or complete account selector to send a friend request. By default contacts can both message you and invite you to groups (just like a regular friend). For tighter control, uncheck options below.",
     );
-    dict.set("contacts.new.target_label", "Their DID or handle");
+    dict.set(
+        "contacts.new.target_label",
+        "Their invite link, handle, or account",
+    );
+    dict.set(
+        "contacts.new.target_placeholder",
+        "Paste an invite link or enter alice:example.com",
+    );
     dict.set(
         "contacts.new.scope_label",
         "Friend permissions (both on by default for a regular contact)",

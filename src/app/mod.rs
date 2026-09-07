@@ -1743,41 +1743,30 @@ fn AppBootstrap() -> Element {
                                         UiIcon { name: "user-plus" }
                                     }
                                 }
-                                if realm_sidebar_tab() == "collaboration" {
-                                    Link {
-                                        class: if matches!(content_route, Route::RealmsManage | Route::PrincipalControl) { "sidebar-toolbar-action sidebar-toolbar-link is-active" } else { "sidebar-toolbar-action sidebar-toolbar-link" },
-                                        "data-testid": "realm-sidebar-manage-home-button",
-                                        title: crate::i18n::tr("manage.realms_title"),
-                                        "aria-label": crate::i18n::tr("manage.realms_title"),
-                                        to: Route::RealmsManage,
-                                        UiIcon { name: "home" }
-                                    }
-                                } else {
-                                    Link {
-                                        class: if matches!(content_route, Route::ContactsManage) { "sidebar-toolbar-action sidebar-toolbar-link is-active" } else { "sidebar-toolbar-action sidebar-toolbar-link" },
-                                        "data-testid": "realm-sidebar-manage-home-button",
-                                        title: crate::i18n::tr("manage.contacts_title"),
-                                        "aria-label": crate::i18n::tr("manage.contacts_title"),
-                                        to: Route::ContactsManage,
-                                        onclick: {
-                                            let base = base_url();
-                                            move |_| {
-                                                if direct_contacts_loaded() || token().trim().is_empty() {
-                                                    return;
-                                                }
-                                                load_direct_contacts_and_agents_for_sidebar(
-                                                    base.clone(),
-                                                    token(),
-                                                    state_store,
-                                                    direct_contact_rows,
-                                                    direct_contacts_loaded,
-                                                    own_agent_rows,
-                                                    own_agents_loaded,
-                                                );
+                                SidebarManageHomeLink {
+                                    direct: realm_sidebar_tab() == "direct",
+                                    active: if realm_sidebar_tab() == "direct" {
+                                        matches!(content_route, Route::ContactsManage)
+                                    } else {
+                                        matches!(content_route, Route::RealmsManage | Route::PrincipalControl)
+                                    },
+                                    on_open_contacts: {
+                                        let base = base_url();
+                                        move |_| {
+                                            if direct_contacts_loaded() || token().trim().is_empty() {
+                                                return;
                                             }
-                                        },
-                                        UiIcon { name: "home" }
-                                    }
+                                            load_direct_contacts_and_agents_for_sidebar(
+                                                base.clone(),
+                                                token(),
+                                                state_store,
+                                                direct_contact_rows,
+                                                direct_contacts_loaded,
+                                                own_agent_rows,
+                                                own_agents_loaded,
+                                            );
+                                        }
+                                    },
                                 }
                             }
                         }

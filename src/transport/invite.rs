@@ -152,11 +152,35 @@ fn parse_invite_locator_url(target: &str) -> anyhow::Result<Option<(String, Stri
         Ok(url) => url,
         Err(_) => return Ok(None),
     };
+    if !matches!(url.scheme(), "https" | "http") {
+        return Ok(None);
+    }
     if url.path() != "/_arkret/open/invite-locators/resolve" {
         anyhow::bail!("invite locator URL path must be /_arkret/open/invite-locators/resolve");
     }
     let token = locator_url_token(&url)?;
     Ok(Some((locator_url_origin(&url)?, token)))
+}
+
+async fn resolve_principal_locator_url(
+    target: &str,
+) -> anyhow::Result<Option<arkret_sdk::PrincipalLocator>> {
+    let Some((origin, token)) = parse_invite_locator_url(target)? else {
+        return Ok(None);
+    };
+    // Resolve public introduction evidence without forwarding the caller's
+    // session credential to the locator's Station.
+    let resolver = arkret_sdk::http_client::ClientBuilder::new(Url::parse(&origin)?)
+        .allow_insecure_localhost()
+        .build()?;
+    let body = arkret_sdk::InviteLocatorResolveRequestBody::new(token);
+    body.validate_minimal()
+        .map_err(|err| anyhow::anyhow!("invalid invite locator token: {err}"))?;
+    let locator: arkret_sdk::PrincipalLocator = resolver
+        .post(arkret_sdk::INVITE_LOCATOR_RESOLVE_PATH, &body)
+        .await?;
+    locator.validate_minimal()?;
+    Ok(Some(locator))
 }
 
 fn token_value<'a>(token: &'a str, names: &[&str]) -> Option<&'a str> {
@@ -373,6 +397,14 @@ impl crate::transport::TransportClient {
         if target.is_empty() {
             anyhow::bail!("contact target is required");
         }
+        if let Some(principal_locator) = resolve_principal_locator_url(target).await? {
+            return Ok(ContactRequestAddressing {
+                target: principal_locator.account_id.clone(),
+                introduction_evidence: arkret_sdk::ContactIntroductionEvidence::LocatorRef {
+                    principal_locator,
+                },
+            });
+        }
         if let Ok(handle) = canonical_invitee_handle(target) {
             let requester = crate::transport::account::account_me(&self.sdk_http_client()?)
                 .await?
@@ -412,7 +444,7 @@ impl crate::transport::TransportClient {
         let target_account =
             crate::mls_api_helpers::account_id_from_selector(target).ok_or_else(|| {
                 anyhow::anyhow!(
-                    "contact target `{target}` is neither a handle nor a complete account selector"
+                    "contact target must be an invite link, handle, or complete account selector"
                 )
             })?;
         Ok(ContactRequestAddressing {
@@ -457,21 +489,7 @@ impl crate::transport::TransportClient {
         if let Some(invitee) = invitee_from_target_json(target)? {
             return Ok(invitee);
         }
-        if let Some((resolver_origin, locator_token)) = parse_invite_locator_url(target)? {
-            // Loopback allowance (the SDK still rejects insecure remote URLs) so
-            // an invite locator resolves against a local dev / joint-e2e
-            // resolver on `http://127.0.0.1`.
-            let resolver =
-                arkret_sdk::http_client::ClientBuilder::new(Url::parse(&resolver_origin)?)
-                    .allow_insecure_localhost()
-                    .build()?;
-            let body = arkret_sdk::InviteLocatorResolveRequestBody::new(locator_token);
-            body.validate_minimal()
-                .map_err(|err| anyhow::anyhow!("invalid invite locator token: {err}"))?;
-            let locator: arkret_sdk::PrincipalLocator = resolver
-                .post(arkret_sdk::INVITE_LOCATOR_RESOLVE_PATH, &body)
-                .await
-                .map_err(anyhow::Error::from)?;
+        if let Some(locator) = resolve_principal_locator_url(target).await? {
             return invitee_from_principal_locator(locator);
         }
 
@@ -518,9 +536,8 @@ mod invite_addressing_tests {
         assert!(err.to_string().contains("fragment"));
     }
 
-    #[test]
-    fn principal_locator_builds_locator_ref_evidence() {
-        let locator = json!({
+    fn principal_locator_fixture() -> Value {
+        json!({
             "schema": arkret_sdk::SchemaId::PRINCIPAL_LOCATOR_V1,
             "account_id": {"principal_id": "ak:did_core:web:bob.example", "station_id": "ak:did_core:web:ps.bob.example"},
             "service_resolution": {
@@ -539,7 +556,12 @@ mod invite_addressing_tests {
                     "jws": "header..sig"
                 }
             }],
-        });
+        })
+    }
+
+    #[test]
+    fn principal_locator_builds_locator_ref_evidence() {
+        let locator = principal_locator_fixture();
         let locator = serde_json::from_value(locator).expect("typed principal locator");
         let invitee = invitee_from_principal_locator(locator).expect("principal locator");
         assert_eq!(
@@ -551,6 +573,84 @@ mod invite_addressing_tests {
             "ak:did_core:web:ps.bob.example"
         );
         assert_eq!(invitee.introduction_evidence.kind(), "locator_ref");
+    }
+
+    #[test]
+    fn locator_url_parser_leaves_handles_and_account_selectors_to_their_resolvers() {
+        for target in [
+            "alice:example.com",
+            "ak:did_core:web:alice.example",
+            "{\"account_id\":{}}",
+        ] {
+            assert!(parse_invite_locator_url(target).unwrap().is_none());
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[tokio::test]
+    async fn contact_invite_link_resolves_exact_account_and_keeps_locator_evidence() {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let expected = principal_locator_fixture();
+        let response = expected.to_string();
+        let server = std::thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            socket
+                .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+                .unwrap();
+            let mut request = Vec::new();
+            loop {
+                let mut buffer = [0; 4096];
+                let count = socket.read(&mut buffer).unwrap();
+                assert!(count > 0);
+                request.extend_from_slice(&buffer[..count]);
+                if let Some(end) = request.windows(4).position(|part| part == b"\r\n\r\n") {
+                    let headers = String::from_utf8_lossy(&request[..end]).to_ascii_lowercase();
+                    let length: usize = headers
+                        .lines()
+                        .find_map(|line| line.strip_prefix("content-length:"))
+                        .unwrap()
+                        .trim()
+                        .parse()
+                        .unwrap();
+                    if request.len() >= end + 4 + length {
+                        assert!(
+                            headers
+                                .starts_with("post /_arkret/open/invite-locators/resolve http/1.1")
+                        );
+                        assert!(!headers.contains("authorization:"));
+                        assert!(!headers.contains("bG9jYXRvci1zZWNyZXQtMTIzNDU2Nzg5"));
+                        let body: Value = serde_json::from_slice(&request[end + 4..]).unwrap();
+                        assert_eq!(body["locator_token"], "bG9jYXRvci1zZWNyZXQtMTIzNDU2Nzg5");
+                        break;
+                    }
+                }
+            }
+            write!(socket, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", response.len(), response).unwrap();
+        });
+        let client = crate::transport::TransportClient::new(
+            "http://127.0.0.1:1",
+            crate::transport::RequestContext::new("private-session-must-not-be-forwarded"),
+        )
+        .unwrap();
+        let result = client
+            .contact_request_addressing(&format!(
+                "http://{address}/_arkret/open/invite-locators/resolve#token=bG9jYXRvci1zZWNyZXQtMTIzNDU2Nzg5"
+            ))
+            .await
+            .unwrap();
+        server.join().unwrap();
+        assert_eq!(
+            serde_json::to_value(result.target).unwrap(),
+            expected["account_id"]
+        );
+        let arkret_sdk::ContactIntroductionEvidence::LocatorRef { principal_locator } =
+            result.introduction_evidence
+        else {
+            panic!("contact must carry the resolved locator evidence");
+        };
+        assert_eq!(serde_json::to_value(principal_locator).unwrap(), expected);
     }
 
     #[test]

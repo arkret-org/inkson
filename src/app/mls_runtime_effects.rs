@@ -707,8 +707,6 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
         });
     }
     {
-        let bootstrap_route_uses_realm_context = route_uses_realm_context;
-        let bootstrap_context_realm_id = context_realm_id.clone();
         let mut seen_bootstrap_key = mls_welcome_bootstrap_key_seen;
         let state_store_for_bootstrap = state_store;
         let crypto_state_for_bootstrap = crypto_state;
@@ -717,7 +715,16 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
         let secure_store_ready_for_bootstrap = secure_store_bootstrap_ready;
         let welcome_device_queue = device_queue;
         let coverage_repair_in_flight = mls_coverage_repair_in_flight;
+        // Route props are not Signals: explicitly subscribe to them so entering
+        // a Realm from Contacts/Settings (or switching Realms) wakes bootstrap
+        // even when the session, inbox and remembered selection are unchanged.
+        let mut bootstrap_context =
+            use_reactive((&route_uses_realm_context, &context_realm_id), |context| {
+                context
+            });
         use_effect(move || {
+            let (bootstrap_route_uses_realm_context, bootstrap_context_realm_id) =
+                bootstrap_context();
             // Account sync journals to-device envelopes in the shared store,
             // then publishes the durable inbox length through `device_queue`.
             // Subscribe explicitly so a Welcome delivered after an earlier

@@ -80,7 +80,7 @@ pub fn ContactNewPanel(
                 id: "contact-target-input-input",
                 "data-testid": "contact-target-input",
                 value: "{target}",
-                placeholder: "alice:example.com or did:web:alice.example",
+                placeholder: tr("contacts.new.target_placeholder"),
                 oninput: move |event: FormEvent| target.set(event.value()),
             }
             Label { html_for: "contact-scope-checkboxes", {tr("contacts.new.scope_label")} }

@@ -2,6 +2,108 @@ use arkret_wire::CapabilityActionId;
 
 use super::*;
 
+/// These destinations have different callback ownership. Dioxus 0.7.10 can
+/// retain a dropped optional handler when an unkeyed Link changes None -> Some.
+/// Keep their identities separate when the sidebar tab changes.
+#[component]
+pub(super) fn SidebarManageHomeLink(
+    direct: bool,
+    active: bool,
+    on_open_contacts: EventHandler<()>,
+) -> Element {
+    let destination_key = if direct {
+        "manage-contacts"
+    } else {
+        "manage-realms"
+    };
+    let class = if active {
+        "sidebar-toolbar-action sidebar-toolbar-link is-active"
+    } else {
+        "sidebar-toolbar-action sidebar-toolbar-link"
+    };
+    rsx! {
+        if direct {
+            Link {
+                key: "{destination_key}",
+                class,
+                "data-testid": "realm-sidebar-manage-home-button",
+                title: crate::i18n::tr("manage.contacts_title"),
+                "aria-label": crate::i18n::tr("manage.contacts_title"),
+                to: Route::ContactsManage,
+                onclick: move |_| on_open_contacts.call(()),
+                UiIcon { name: "home" }
+            }
+        } else {
+            Link {
+                key: "{destination_key}",
+                class,
+                "data-testid": "realm-sidebar-manage-home-button",
+                title: crate::i18n::tr("manage.realms_title"),
+                "aria-label": crate::i18n::tr("manage.realms_title"),
+                to: Route::RealmsManage,
+                UiIcon { name: "home" }
+            }
+        }
+    }
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod manage_link_tests {
+    use dioxus_router::{Routable, Router};
+    use std::{cell::RefCell, rc::Rc};
+
+    use super::*;
+
+    #[derive(Clone, Debug, PartialEq, Routable)]
+    enum TestRoute {
+        #[route("/")]
+        ManageLinkFixture,
+    }
+
+    #[component]
+    fn ManageLinkFixture() -> Element {
+        let state = use_context::<Signal<(bool, bool)>>();
+        let (direct, active) = state();
+        rsx! {
+            SidebarManageHomeLink {
+                direct,
+                active,
+                on_open_contacts: move |_| {},
+            }
+        }
+    }
+
+    #[test]
+    fn contacts_sidebar_link_survives_tab_changes_and_navigation_rerenders() {
+        let handle = Rc::new(RefCell::new(None::<Signal<(bool, bool)>>));
+        let mut dom = VirtualDom::new_with_props(
+            |handle: Rc<RefCell<Option<Signal<(bool, bool)>>>>| {
+                let state = use_signal(|| (false, false));
+                use_context_provider(|| state);
+                *handle.borrow_mut() = Some(state);
+                rsx! { Router::<TestRoute> {} }
+            },
+            handle.clone(),
+        );
+        dom.rebuild_in_place();
+        let mut state = handle.borrow().unwrap();
+        // None -> Some onclick when entering Contacts, then rerender on route
+        // change. Without separate Link keys the second update panics inside
+        // LinkProps::memoize with ValueDroppedError in Dioxus 0.7.10.
+        for next in [
+            (true, false),
+            (true, true),
+            (true, false),
+            (false, true),
+            (true, false),
+            (true, true),
+        ] {
+            dom.in_runtime(|| state.set(next));
+            dom.render_immediate(&mut dioxus::core::NoOpMutations);
+        }
+    }
+}
+
 #[component]
 pub(super) fn ServerSwitcher(
     server_menu_open: Signal<bool>,

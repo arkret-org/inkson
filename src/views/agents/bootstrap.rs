@@ -44,10 +44,9 @@ fn has_agent_pcr_create(events: &[arkret_sdk::Event]) -> bool {
             && event
                 .payload
                 .get("object")
-                .and_then(|object| object.get("fields"))
-                .and_then(|fields| fields.get("purpose"))
+                .and_then(|object| object.get("purpose"))
                 .and_then(serde_json::Value::as_str)
-                == Some(arkret_bootstrap::PRINCIPAL_CONTROL_PURPOSE)
+                == Some("agent_control")
     })
 }
 
@@ -583,6 +582,56 @@ mod tests {
             status,
             error: Box::new(arkret_wire::Problem::from_code(code, "test error")),
         })
+    }
+
+    fn delegated_create(payload: serde_json::Value) -> arkret_sdk::Event {
+        let mut event = arkret_wire::test_support::raw_event(
+            arkret_sdk::EventKind::RealmCreate.as_str(),
+            arkret_sdk::ScopeRef::Realm {
+                realm_id: crate::test_support::realm_id(
+                    "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
+                ),
+            },
+            crate::test_support::core_id("ak:did_core:web:agent.example"),
+            crate::test_support::core_id("ak:did_core:web:principal.example"),
+            1,
+            arkret_sdk::Hlc::new("000000000000-0000-00000000").unwrap(),
+            payload,
+        )
+        .unwrap();
+        event.executed_by = Some(crate::test_support::account_actor("did:web:alice.example"));
+        event
+    }
+
+    #[test]
+    fn agent_pcr_create_recognizes_current_genesis_purpose() {
+        let event = delegated_create(serde_json::json!({
+            "object": {"purpose": arkret_sdk::RealmPurpose::AgentControl}
+        }));
+        assert!(has_agent_pcr_create(std::slice::from_ref(&event)));
+
+        let mut undelegated = event.clone();
+        undelegated.executed_by = None;
+        assert!(!has_agent_pcr_create(&[undelegated]));
+
+        let mut other_kind = event;
+        other_kind.kind = arkret_sdk::EventKind::MessageCreate;
+        assert!(!has_agent_pcr_create(&[other_kind]));
+    }
+
+    #[test]
+    fn agent_pcr_create_rejects_self_pcr_and_legacy_payloads() {
+        for object in [
+            serde_json::json!({"purpose": arkret_sdk::RealmPurpose::PrincipalControl}),
+            serde_json::json!({"fields": {"purpose": "principal_control"}}),
+            serde_json::json!({"fields": {"purpose": "agent_control"}}),
+            serde_json::json!({}),
+        ] {
+            assert!(!has_agent_pcr_create(&[delegated_create(
+                serde_json::json!({"object": object}),
+            )]));
+        }
+        assert!(!has_agent_pcr_create(&[]));
     }
 
     #[test]

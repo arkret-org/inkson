@@ -559,6 +559,122 @@ fn joined_member_signature_reads_raw_member_state_join() {
 }
 
 #[test]
+fn accepted_invite_route_recovers_from_canonical_history_after_restart() {
+    let realm = arkret_sdk::RealmId::from_event_id(&arkret_sdk::EventId::from_digest(
+        arkret_sdk::DigestSuite::Sha256,
+        [0x42; 32],
+    ));
+    let realm_id = realm.as_str();
+    let invitee = fixture::authority("ak:did_core:web:bob.example");
+    let device_id = "ak:device:0196419b-0000-7000-8000-000000000002";
+    let make_event = |kind: &str, principal: &str, payload: Value| {
+        arkret_wire::test_support::raw_event(
+            kind,
+            arkret_sdk::ScopeRef::Realm {
+                realm_id: fixture::realm_id(realm_id),
+            },
+            fixture::core_id(principal),
+            invitee.station_id.clone(),
+            1,
+            arkret_sdk::Hlc::new("01970e589d21-0004-a13f9c2e").unwrap(),
+            payload,
+        )
+        .unwrap()
+    };
+    let create = make_event(
+        "ak.invite.create",
+        "ak:did_core:web:alice.example",
+        serde_json::json!({
+            "invitee_account_id": invitee,
+            "introduction_evidence_digest": format!("sha256:{}", "1".repeat(64)),
+            "expires_at": "2099-01-01T00:00:00.000Z"
+        }),
+    );
+    let invite_id = arkret_sdk::InviteId::from_event_id(&create.event_id);
+    let mut accept = make_event(
+        "ak.invite.accept",
+        invitee.principal_id.as_str(),
+        serde_json::json!({
+            "invite_id": invite_id,
+            "invitee_account_id": invitee,
+        }),
+    );
+    accept.proofs.push(
+        arkret_sdk::ProducerEventProof {
+            kind: arkret_sdk::proof_kind::DETACHED_JWS.to_owned(),
+            verification_method: arkret_sdk::DidUrl::new(format!(
+                "did:web:bob.example#{device_id}"
+            ))
+            .unwrap(),
+            event_digest: arkret_sdk::Hash::new(
+                accept
+                    .event_digest_with_digest_suite(arkret_sdk::DigestSuite::Sha256)
+                    .unwrap(),
+            )
+            .unwrap(),
+            signer_resolution_evidence_ref: None,
+            created_at: accept.created_at,
+            domain: None,
+            audience: None,
+            proof_purpose: None,
+            jws: "header..producer".to_owned(),
+        }
+        .into(),
+    );
+    // This is a projection test over already accepted Events; signature
+    // verification belongs to the canonical ingest boundary. Start with no
+    // locally authored invite hints, as on another device or after restart.
+    for live_stream in [false, true] {
+        let mut store = temp_store("accepted-invite-canonical-history");
+        let events = [create.clone(), accept.clone()];
+        let changed = if live_stream {
+            crate::sync_engine::ingest_membership_events(
+                &mut store,
+                realm_id,
+                &events
+                    .into_iter()
+                    .map(garth::ClientEvent::Event)
+                    .collect::<Vec<_>>(),
+            )
+        } else {
+            crate::sync_engine::ingest_membership_projection_events(&mut store, realm_id, &events)
+        };
+        assert_eq!(changed, 2);
+        assert_eq!(
+            accepted_invite_claim_route(
+                &store,
+                realm_id,
+                &arkret_sdk::ActorId::account(invitee.clone()).to_string()
+            ),
+            Some(AcceptedInviteClaimRoute {
+                destination_id: invitee.station_id.to_string(),
+                target_device_id: Some(device_id.to_owned()),
+            })
+        );
+        let other_station = fixture::authority_at_station(
+            invitee.principal_id.as_str(),
+            "ak:did_core:web:other.example",
+        );
+        assert!(
+            accepted_invite_claim_route(
+                &store,
+                realm_id,
+                &arkret_sdk::ActorId::account(other_station).to_string()
+            )
+            .is_none()
+        );
+        assert_eq!(
+            crate::sync_engine::ingest_membership_projection_events(
+                &mut store,
+                realm_id,
+                &[create.clone(), accept.clone()]
+            ),
+            0
+        );
+    }
+}
+
+#[test]
 fn accepted_invite_route_binds_delivery_service_and_accepting_device() {
     let realm_id = "ak:realm:AKOOF3y2qB7XA-na-H-ZVZqMxf852TBtYhWuYm5iO_yw";
     let invitee = "ak:did_core:web:bob.example";
