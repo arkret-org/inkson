@@ -1437,7 +1437,7 @@ export async function mockArkretApi(
               governance_health: {
                 status: "healthy",
                 pending_proposals: [],
-                retained_faults: [],
+                pending_proposals_complete: true,
               },
               hlc: seal.hlc,
             },
@@ -1473,7 +1473,7 @@ export async function mockArkretApi(
             governance_health: {
               status: "healthy",
               pending_proposals: [],
-              retained_faults: [],
+              pending_proposals_complete: true,
             },
             hlc: fixture.seal.hlc,
           },
@@ -4014,7 +4014,7 @@ export async function mockArkretApi(
           governance_health: {
             status: "healthy",
             pending_proposals: [],
-            retained_faults: [],
+            pending_proposals_complete: true,
           },
           observation_coordinate: {
             service_id: CURRENT_STATION_ID,

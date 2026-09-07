@@ -355,7 +355,7 @@ fn test_seal_basis() -> arkret_sdk::SealBasis {
         "governance_health": {
             "status": "healthy",
             "pending_proposals": [],
-            "retained_faults": []
+            "pending_proposals_complete": true
         },
         "observation_coordinate": {
             "service_id": "ak:did_core:web:server.example",
