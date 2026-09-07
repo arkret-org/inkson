@@ -271,7 +271,7 @@ fn state_event_values(body: &Value) -> impl Iterator<Item = &Value> {
         )
 }
 
-fn projected_state_event_values(body: &Value) -> impl Iterator<Item = &Value> {
+pub(crate) fn projected_state_event_values(body: &Value) -> impl Iterator<Item = &Value> {
     body.get("state_after")
         .and_then(|state| state.get("events"))
         .and_then(Value::as_array)

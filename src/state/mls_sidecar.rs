@@ -305,6 +305,12 @@ impl LocalStateStore {
             && current.group_id == envelope.group_id
         {
             envelope.admission_epoch = current.admission_epoch;
+            // Ratchet/history write-backs do not change the accepted epoch.
+            // Re-encrypting the local state must retain its accepted-event
+            // anchor even when the auxiliary group-state index is absent.
+            if current.epoch == envelope.epoch && envelope.group_state_event_id.is_none() {
+                envelope.group_state_event_id = current.group_state_event_id.clone();
+            }
         }
         if let Some(record) = self.cached.mls_group_state_refs.get(&key)
             && record.group_id == envelope.group_id
@@ -1166,9 +1172,9 @@ impl LocalStateStore {
         Ok(record.event_id)
     }
 
-    /// Attach the exact accepted epoch-zero Event from the verified governance
+    /// Attach the exact accepted transition Event from the verified governance
     /// checkpoint to a local snapshot that does not yet carry its transition.
-    pub fn reconcile_mls_genesis_group_state_ref_from_checkpoint(
+    pub fn reconcile_mls_group_state_ref_from_checkpoint(
         &mut self,
         realm_id: &str,
         circle_id: Option<&str>,
@@ -1178,32 +1184,29 @@ impl LocalStateStore {
         let Some(snapshot) = self.cached.mls_local_checkpoints.get(&key).cloned() else {
             return Ok(false);
         };
-        if snapshot.epoch != 0 {
-            return Ok(false);
-        }
         let scope = mls_realm_or_circle_scope(realm_id, circle_id)?;
-        let genesis_ids =
-            checkpoint_mls_group_state_event_ids(&self.cached, &scope, &snapshot.group_id, 0);
-        let [event_id] = genesis_ids.as_slice() else {
-            if genesis_ids.len() > 1 {
-                return Err("verified checkpoint has ambiguous MLS Genesis Events".to_owned());
+        let transition_ids =
+            checkpoint_mls_group_state_event_ids(&self.cached, &scope, &snapshot.group_id, snapshot.epoch);
+        let [event_id] = transition_ids.as_slice() else {
+            if transition_ids.len() > 1 {
+                return Err("verified checkpoint has ambiguous MLS transition Events".to_owned());
             }
             return Ok(false);
         };
         if let Some(current) = self.cached.mls_group_state_refs.get(&key)
             && current.group_id == snapshot.group_id
-            && current.epoch == 0
+            && current.epoch == snapshot.epoch
             && &current.event_id != event_id
         {
             return Err(
-                "local MLS Genesis reference differs from the verified checkpoint".to_owned(),
+                "local MLS transition reference differs from the verified checkpoint".to_owned(),
             );
         }
         self.record_mls_group_state_ref_for_effective_scope(
             realm_id.to_owned(),
             circle_id,
             &snapshot.group_id,
-            0,
+            snapshot.epoch,
             event_id.clone(),
         )?;
         Ok(true)
@@ -1584,6 +1587,49 @@ mod tests {
 
     use super::LocalStateStore;
 
+    #[test]
+    fn verified_commit_restores_missing_nonzero_epoch_reference() {
+        let path = std::env::temp_dir().join(format!("inkson-commit-anchor-{}.json", chrono::Utc::now().timestamp_nanos_opt().unwrap()));
+        let realm = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
+        let id = arkret_sdk::EventId::new("ak:event:AXBcp13trH3bPXvj0eHppCpGqJZWL9yqE3cf2Tl43vyk").unwrap();
+        let group = "AQID";
+        let binding = arkret_sdk::MlsGovernanceBindingPayload::realm(
+            arkret_sdk::RealmId::new(realm).unwrap(), group, 0, 1,
+            arkret_sdk::Hash::new(format!("sha256:{}", "a5".repeat(32))).unwrap(),
+            arkret_sdk::ContentScheme::MlsExporterAeadV1,
+            Some(arkret_sdk::DurabilityPolicy::None),
+            arkret_sdk::ProfileId::MLS_GOVERNANCE_BINDING_FULL_V1,
+            arkret_sdk::CORE_REDUCER_PROFILE,
+        ).unwrap();
+        let commit = arkret_sdk::MlsCommitEnvelope {
+            group_id: group.into(), epoch: 1, commit: arkret_sdk::base64url_encode(b"commit"),
+            commit_digest: arkret_sdk::Hash::new(arkret_sdk::canonical::sha256_digest(b"commit")).unwrap(),
+            ratchet_tree: None,
+        };
+        let payload = arkret_sdk::MlsCommitPayload::new(0, id.to_string(), Vec::new(), &commit, binding).unwrap();
+        let event = serde_json::from_value(json!({
+            "event_id": id, "kind": "ak.mls.commit", "realm_id": realm,
+            "scope_ref": {"kind":"realm", "realm_id":realm},
+            "actor_id": {"kind":"account", "account_id": {"principal_id":"ak:did_core:web:alice.example", "station_id":"ak:did_core:web:station.example"}},
+            "actor_seq": 1, "created_at":"2026-05-19T00:00:00.000Z",
+            "hlc":"01970e589d21-0001-a13f9c2e", "prev_refs":[], "payload":payload, "proofs":[]
+        })).unwrap();
+        let mut store = LocalStateStore::with_path(&path);
+        let snapshot = crate::mls::persistence::encrypt_state(realm, group, 1, b"snapshot", "test-secret", &[7;16]);
+        store.save_mls_checkpoint(realm, snapshot).unwrap();
+        assert!(!store.reconcile_mls_group_state_ref_from_checkpoint(realm, None).unwrap());
+        // Post-verification fixture: projection rows remain insufficient.
+        store.cached.mls_governance_checkpoints.insert(realm.into(), arkret_sdk::MlsGovernanceVerificationCheckpoint {
+            realm_id: arkret_sdk::RealmId::new(realm).unwrap(),
+            basis: arkret_sdk::SealBasis { leaves: Vec::new() },
+            live_digest_suite: arkret_sdk::DigestSuite::Sha256,
+            accepted_seals: Vec::new(), accepted_events: vec![event], governance_dependencies: Vec::new(),
+        });
+        assert!(store.reconcile_mls_group_state_ref_from_checkpoint(realm, None).unwrap());
+        assert_eq!(store.mls_checkpoint_for(realm).unwrap().group_state_event_id, Some(id));
+        let _ = std::fs::remove_file(path);
+    }
+
     fn history_secret_fixture(
         local_state_ref: &str,
         secret: &[u8],
@@ -1739,7 +1785,18 @@ mod tests {
         LocalStateStore::with_path(&path)
             .save_mls_checkpoint(realm_id, snapshot)
             .unwrap();
-        let restored = LocalStateStore::with_path(&path);
+        let mut restored = LocalStateStore::with_path(&path);
+        let mut rewritten = restored.mls_checkpoint_for(realm_id).unwrap();
+        rewritten.group_state_event_id = None;
+        rewritten.app_messages_observed = 1;
+        restored.save_mls_checkpoint(realm_id, rewritten).unwrap();
+        assert_eq!(
+            restored
+                .mls_checkpoint_for(realm_id)
+                .unwrap()
+                .group_state_event_id,
+            Some(event_id.clone())
+        );
 
         assert_eq!(
             restored
@@ -1807,7 +1864,7 @@ mod tests {
         );
         assert!(
             !store
-                .reconcile_mls_genesis_group_state_ref_from_checkpoint(realm_id, None)
+                .reconcile_mls_group_state_ref_from_checkpoint(realm_id, None)
                 .unwrap()
         );
         let restored = LocalStateStore::with_path(&path);
@@ -1885,7 +1942,7 @@ mod tests {
 
         assert!(
             !store
-                .reconcile_mls_genesis_group_state_ref_from_checkpoint(realm_id, None)
+                .reconcile_mls_group_state_ref_from_checkpoint(realm_id, None)
                 .unwrap()
         );
         assert_eq!(
@@ -1972,7 +2029,7 @@ mod tests {
 
         assert!(
             !store
-                .reconcile_mls_genesis_group_state_ref_from_checkpoint(realm_id, None)
+                .reconcile_mls_group_state_ref_from_checkpoint(realm_id, None)
                 .unwrap()
         );
         assert_eq!(
@@ -2037,7 +2094,7 @@ mod tests {
         );
         assert!(
             !store
-                .reconcile_mls_genesis_group_state_ref_from_checkpoint(realm_id, None)
+                .reconcile_mls_group_state_ref_from_checkpoint(realm_id, None)
                 .unwrap()
         );
         let _ = std::fs::remove_file(path);

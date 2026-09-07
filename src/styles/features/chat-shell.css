@@ -88,8 +88,16 @@
   grid-column: 2;
   grid-row: 2;
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  overflow-wrap: anywhere;
   gap: 10px;
   padding: 12px;
+}
+
+.discussion-composer > * {
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
 }
 
 .discussion-shell.embedded .discussion-composer {
@@ -669,4 +677,16 @@
 .discussion-left-rail{
     display: none;
   }
+}
+.read-receipt-indicator {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 4px;
+}
+
+.read-receipt-avatar {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 16px;
 }

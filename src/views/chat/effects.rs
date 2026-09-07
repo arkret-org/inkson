@@ -335,7 +335,6 @@ pub(super) fn ChatEffects(
             if presence_announce_key_seen.peek().as_str() == announce_key {
                 return;
             }
-            presence_announce_key_seen.set(announce_key);
             let base = base.clone();
             // Presence is an ordinary `session` Signal. Without accepted MLS
             // state for the scope the capability is withdrawn; there is no
@@ -347,6 +346,11 @@ pub(super) fn ChatEffects(
             ) else {
                 return;
             };
+            // Only claim this heartbeat after MLS material is available. A
+            // page can mount before Welcome/checkpoint restoration; recording
+            // it earlier prevents both the state-change retry and the timer
+            // from ever starting, leaving this participant offline forever.
+            presence_announce_key_seen.set(announce_key);
             let presence_store =
                 crate::app::runtime_adapter::state_store_handle(state_store_for_presence);
             spawn(async move {
@@ -452,7 +456,9 @@ pub(super) fn ChatEffects(
 
     {
         let realm = selected_realm_id.clone();
-        let actor = principal_id.clone();
+        let actor = crate::app::SessionContext::get().active_account()
+            .map(|account| arkret_sdk::ActorId::account(account.authority).to_string())
+            .unwrap_or_default();
         let strand = selected_channel_value.clone();
         let participants_for_sync = participant_ids_for_presence.clone();
         let typing_actors_for_sync = typing_actors;

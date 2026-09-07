@@ -898,7 +898,16 @@ fn decrypt_chat_encrypted_content_value(
             &realm_scope
         }
     };
-    let verified_sender_domain = verified_sender_domain?;
+    let verified_sender_domain = verified_sender_domain.or_else(|| {
+        crate::mls::runtime::warn_mls_decrypt_once(
+            realm_id,
+            &arkret_sdk::canonical::sha256_digest(envelope.ciphertext.as_bytes()),
+            envelope.encryption_context.epoch(),
+            None,
+            "verified sender device domain is unavailable",
+        );
+        None
+    })?;
     let payload = crate::mls::runtime::encrypted_payload_from_verified_event_context(
         state_store,
         &envelope,
@@ -1957,11 +1966,11 @@ pub(crate) fn typing_actor_snapshot_from_signals(
         if expires_at <= now {
             continue;
         }
-        let actor = value_string_at(body, &["actor_id"])
-            .unwrap_or_default()
-            .trim();
-        if !actor.is_empty() && !same_principal_core(actor, principal_id) {
-            actors.insert(actor.to_owned());
+        let Some(actor) = body.get("actor_id").and_then(signal_actor_identity) else {
+            continue;
+        };
+        if actor != principal_id {
+            actors.insert(actor);
             let expires_at_ms = expires_at.timestamp_millis();
             next_expires_at_ms = Some(match next_expires_at_ms {
                 Some(current) => current.min(expires_at_ms),
@@ -1975,29 +1984,17 @@ pub(crate) fn typing_actor_snapshot_from_signals(
     }
 }
 
+fn signal_actor_identity(value: &Value) -> Option<String> {
+    serde_json::from_value::<arkret_sdk::ActorId>(value.clone()).ok().map(|actor| actor.to_string())
+}
+
 pub(crate) fn sync_presence_actor(event: &Value) -> Option<String> {
-    value_string_at(event, &["user_id", "actor"])
-        .map(str::trim)
-        .filter(|actor| !actor.is_empty())
-        .map(ToOwned::to_owned)
-        .or_else(|| event.get("actor_id").and_then(actor_principal_from_value))
+    event.get("actor_id").and_then(signal_actor_identity)
 }
 
-fn sync_presence_payload(event: &Value) -> &Value {
-    event.get("payload").unwrap_or(event)
-}
-
-/// Presence state from a decrypted `ak.presence` Signal body. Flat
-/// projection-shaped values remain readable for existing local fixtures.
-/// Values outside the closed v1 set (`online` / `idle` / `dnd` / `offline`)
-/// fail closed to `None` — the caller renders `offline`, never a guessed
-/// nearby state (profiles-presence.md §3.2).
+/// Only the canonical, admitted Signal projection is consumed here.
 pub(crate) fn sync_presence_state(event: &Value) -> Option<String> {
-    let payload = sync_presence_payload(event);
-    ["state", "status", "presence"]
-        .iter()
-        .find_map(|field| payload.get(*field).and_then(Value::as_str))
-        .map(str::trim)
+    event.get("state").and_then(Value::as_str)
         .and_then(arkret_sdk::PresenceStatus::parse_wire)
         .map(|state| state.as_wire().to_owned())
 }
@@ -2006,7 +2003,7 @@ pub(crate) fn sync_presence_state(event: &Value) -> Option<String> {
 /// (profiles-presence.md §3.3). Fail-closed: values violating the wire
 /// constraint are dropped rather than truncated.
 pub(crate) fn sync_presence_status_message(event: &Value) -> Option<String> {
-    sync_presence_payload(event)
+    event
         .get("status_message")
         .and_then(Value::as_str)
         .map(str::trim)
@@ -2024,31 +2021,8 @@ fn sync_presence_timestamp(event: &Value, field: &str) -> Option<chrono::DateTim
 }
 
 fn sync_presence_event_is_live(event: &Value, now: chrono::DateTime<chrono::Utc>) -> bool {
-    if event
-        .get("kind")
-        .and_then(Value::as_str)
-        .is_some_and(|kind| kind != "ak.presence")
-    {
-        return false;
-    }
-    if event.get("expires_at").is_some()
-        && sync_presence_timestamp(event, "expires_at").is_none_or(|expires_at| expires_at <= now)
-    {
-        return false;
-    }
-    let payload = sync_presence_payload(event);
-    let Some(ttl_value) = payload.get("ttl_ms") else {
-        return true;
-    };
-    let Some(ttl_ms) = ttl_value.as_u64().and_then(|ttl| i64::try_from(ttl).ok()) else {
-        return false;
-    };
-    let Some(sent_at) = sync_presence_timestamp(event, "sent_at") else {
-        return false;
-    };
-    sent_at
-        .checked_add_signed(chrono::Duration::milliseconds(ttl_ms))
-        .is_some_and(|expires_at| expires_at > now)
+    event.get("kind").and_then(Value::as_str) == Some("ak.presence")
+        && sync_presence_timestamp(event, "expires_at").is_some_and(|expiry| expiry > now)
 }
 
 pub(crate) type PresenceMaps = (
@@ -2080,26 +2054,26 @@ pub(crate) fn presence_maps_from_sync_events(
     if events.is_empty() {
         return None;
     }
-    let participant_by_core = participants
+    let participant_by_identity = participants
         .iter()
         .filter_map(|participant| {
-            principal_core_key(participant).map(|core| (core, participant.clone()))
+            serde_json::from_str::<arkret_sdk::ActorId>(participant).ok().map(|actor| (actor.to_string(), participant.clone()))
         })
         .collect::<std::collections::BTreeMap<_, _>>();
-    let account_core = principal_core_key(principal_id);
+    let account_identity = serde_json::from_str::<arkret_sdk::ActorId>(principal_id).ok().map(|actor| actor.to_string());
     let mut states = std::collections::BTreeMap::<String, String>::new();
     let mut labels = std::collections::BTreeMap::<String, String>::new();
     let mut status_messages = std::collections::BTreeMap::<String, String>::new();
     for did in participants {
         states.insert(
             did.clone(),
-            if principal_core_key(did) == account_core {
+            if Some(did) == account_identity.as_ref() {
                 "online".to_owned()
             } else {
                 "offline".to_owned()
             },
         );
-        if principal_core_key(did) == account_core
+        if Some(did) == account_identity.as_ref()
             && let Some(label) = clean_participant_display_name(account_label, Some(did))
         {
             labels.insert(did.clone(), label);
@@ -2115,11 +2089,11 @@ pub(crate) fn presence_maps_from_sync_events(
     >::new();
     for event in events {
         let Some(actor_core) =
-            sync_presence_actor(event).and_then(|actor| principal_core_key(&actor))
+            sync_presence_actor(event)
         else {
             continue;
         };
-        let Some(actor) = participant_by_core.get(&actor_core).cloned() else {
+        let Some(actor) = participant_by_identity.get(&actor_core).cloned() else {
             continue;
         };
         if !sync_presence_event_is_live(event, now) {
@@ -2150,7 +2124,7 @@ pub(crate) fn presence_maps_from_sync_events(
     }
     let matched_remote = presence_by_actor
         .keys()
-        .any(|actor| principal_core_key(actor) != account_core);
+        .any(|actor| Some(actor) != account_identity.as_ref());
     for (actor, (actor_states, status_message)) in presence_by_actor {
         states.insert(
             actor.clone(),

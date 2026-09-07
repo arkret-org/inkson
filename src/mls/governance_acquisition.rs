@@ -189,7 +189,7 @@ pub(crate) async fn resolve_mls_governance_proof(
 pub(crate) async fn resolve_history_governance_cut(
     api: &crate::transport::TransportClient,
     retention: &arkret_sdk::HistoryGovernanceTraversalRetention,
-    access: &arkret_sdk::SelfHistoryTraversalAccess,
+    access: Option<&arkret_sdk::SelfHistoryTraversalAccess>,
 ) -> Result<ResolvedMlsGovernanceCut, String> {
     retention
         .validate_digest()
@@ -233,7 +233,7 @@ pub(crate) async fn resolve_history_governance_cut(
             pending.remove(seal_ref);
         }
         for seal in
-            fetch_seals_for_realm_with_access(&http, &realm_id, batch, Some(access.clone())).await?
+            fetch_seals_for_realm_with_access(&http, &realm_id, batch, access.cloned()).await?
         {
             for predecessor in &seal.predecessor_refs {
                 if !base_leaves.contains(predecessor) && !seals.contains_key(predecessor) {
@@ -255,7 +255,7 @@ pub(crate) async fn resolve_history_governance_cut(
         &event_digests,
         &BTreeMap::new(),
         "retained cut delta",
-        Some(access.clone()),
+        access.cloned(),
     )
     .await?;
     let selectors = arkret_sdk::governance_runtime_dependency_selector_coordinates_for_acquisition(
@@ -266,7 +266,7 @@ pub(crate) async fn resolve_history_governance_cut(
         &http,
         &realm_id,
         selectors,
-        Some(access.clone()),
+        access.cloned(),
     )
     .await?
     .into_values()
@@ -289,8 +289,9 @@ pub(crate) async fn resolve_history_response_signer_dependencies(
     let http = api
         .sdk_http_client()
         .map_err(|error| format!("build history signer-evidence client: {error}"))?;
+    let source_evidence_digests = source_evidence_digests.into_iter().collect::<Vec<_>>();
     let mut selectors = Vec::new();
-    for content_digest in source_evidence_digests {
+    for content_digest in &source_evidence_digests {
         selectors.push(
             arkret_sdk::GovernanceDependencySelector::AuthenticatedSignerResolutionEvidence {
                 content_digest: content_digest.clone(),
@@ -298,25 +299,66 @@ pub(crate) async fn resolve_history_response_signer_dependencies(
         );
         selectors.push(
             arkret_sdk::GovernanceDependencySelector::MinimalMetadataMlsLeafSignerEvidence {
-                content_digest,
+                content_digest: content_digest.clone(),
             },
         );
     }
-    selectors.extend(
-        release_service_evidence_digests
-            .into_iter()
-            .map(|content_digest| {
-                arkret_sdk::GovernanceDependencySelector::AuthenticatedSignerResolutionEvidence {
-                    content_digest,
-                }
-            }),
-    );
+    let release_selectors = release_service_evidence_digests
+        .into_iter()
+        .map(|content_digest| {
+            arkret_sdk::GovernanceDependencySelector::AuthenticatedSignerResolutionEvidence {
+                content_digest,
+            }
+        })
+        .collect::<Vec<_>>();
     let access = arkret_sdk::SelfHistoryTraversalAccess::RequestReceipt {
         request_receipt_digest: request_receipt_digest.clone(),
     };
-    fetch_dependency_closure_for_realm_with_access(&http, realm_id, selectors, Some(access))
+    // A source digest identifies exactly one of the two current evidence types.
+    // Discovery may report the other type missing; the selected closure may not.
+    let available = fetch_available_dependency_batches_for_realm(
+        &http,
+        realm_id,
+        selectors,
+        Some(access.clone()),
+    )
+    .await?;
+    let available_keys = available.keys().cloned().collect::<BTreeSet<_>>();
+    let mut selected = select_history_source_evidence(source_evidence_digests, &available_keys)?;
+    selected.extend(release_selectors);
+    fetch_dependency_closure_for_realm_with_access(&http, realm_id, selected, Some(access))
         .await
         .map(|items| items.into_values().collect())
+}
+
+fn select_history_source_evidence(
+    digests: Vec<arkret_sdk::Hash>,
+    available: &BTreeSet<DependencySortKey>,
+) -> Result<Vec<arkret_sdk::GovernanceDependencySelector>, String> {
+    let mut selected = Vec::new();
+    for content_digest in digests {
+        let candidates = [
+            arkret_sdk::GovernanceDependencySelector::AuthenticatedSignerResolutionEvidence {
+                content_digest: content_digest.clone(),
+            },
+            arkret_sdk::GovernanceDependencySelector::MinimalMetadataMlsLeafSignerEvidence {
+                content_digest,
+            },
+        ];
+        let mut matches = Vec::new();
+        for candidate in candidates {
+            if available.contains(&selector_key(&candidate)?) {
+                matches.push(candidate);
+            }
+        }
+        if matches.len() != 1 {
+            return Err(
+                "history source digest must resolve to exactly one evidence type".to_owned(),
+            );
+        }
+        selected.extend(matches);
+    }
+    canonical_dependency_selectors(selected)
 }
 
 async fn fetch_proof_with_retry(
@@ -604,6 +646,28 @@ async fn fetch_dependency_batches_for_realm(
     selectors: Vec<arkret_sdk::GovernanceDependencySelector>,
     history_traversal_access: Option<arkret_sdk::SelfHistoryTraversalAccess>,
 ) -> Result<BTreeMap<DependencySortKey, arkret_sdk::GovernanceDependency>, String> {
+    let selectors = canonical_dependency_selectors(selectors)?;
+    let expected_count = selectors.len();
+    let items = fetch_available_dependency_batches_for_realm(
+        http,
+        realm_id,
+        selectors,
+        history_traversal_access,
+    )
+    .await?;
+    if items.len() != expected_count {
+        return Err("governance dependency resolution is incomplete".to_owned());
+    }
+    Ok(items)
+}
+
+async fn fetch_available_dependency_batches_for_realm(
+    http: &arkret_sdk::Client,
+    realm_id: &arkret_sdk::RealmId,
+    selectors: Vec<arkret_sdk::GovernanceDependencySelector>,
+    history_traversal_access: Option<arkret_sdk::SelfHistoryTraversalAccess>,
+) -> Result<BTreeMap<DependencySortKey, arkret_sdk::GovernanceDependency>, String> {
+    let selectors = canonical_dependency_selectors(selectors)?;
     let mut pending = VecDeque::new();
     for chunk in selectors.chunks(MAX_DEPENDENCY_BATCH) {
         pending.push_back(chunk.to_vec());
@@ -644,6 +708,16 @@ async fn fetch_dependency_batches_for_realm(
     Ok(items)
 }
 
+fn canonical_dependency_selectors(
+    selectors: Vec<arkret_sdk::GovernanceDependencySelector>,
+) -> Result<Vec<arkret_sdk::GovernanceDependencySelector>, String> {
+    let mut ordered = BTreeMap::new();
+    for selector in selectors {
+        ordered.insert(selector_key(&selector)?, selector);
+    }
+    Ok(ordered.into_values().collect())
+}
+
 fn selector_key(
     selector: &arkret_sdk::GovernanceDependencySelector,
 ) -> Result<DependencySortKey, String> {
@@ -651,4 +725,62 @@ fn selector_key(
         .canonical_sort_key()
         .map(|(kind, bytes)| (kind.to_owned(), bytes))
         .map_err(|error| format!("canonicalize governance dependency selector: {error}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn history_source_discovery_requires_one_current_evidence_type() {
+        let digest = arkret_sdk::Hash::new(format!("sha256:{}", "a".repeat(64))).unwrap();
+        let ordinary =
+            arkret_sdk::GovernanceDependencySelector::AuthenticatedSignerResolutionEvidence {
+                content_digest: digest.clone(),
+            };
+        let minimal =
+            arkret_sdk::GovernanceDependencySelector::MinimalMetadataMlsLeafSignerEvidence {
+                content_digest: digest.clone(),
+            };
+        for selected in [&ordinary, &minimal] {
+            let available = BTreeSet::from([selector_key(selected).unwrap()]);
+            assert_eq!(
+                select_history_source_evidence(vec![digest.clone(), digest.clone()], &available)
+                    .unwrap(),
+                vec![selected.clone()]
+            );
+        }
+        assert!(select_history_source_evidence(vec![digest.clone()], &BTreeSet::new()).is_err());
+        let ambiguous = BTreeSet::from([
+            selector_key(&ordinary).unwrap(),
+            selector_key(&minimal).unwrap(),
+        ]);
+        assert!(select_history_source_evidence(vec![digest], &ambiguous).is_err());
+    }
+
+    #[test]
+    fn dependency_acquisition_obeys_canonical_selector_wire_order() {
+        let selector = |digit: char| {
+            arkret_sdk::GovernanceDependencySelector::AuthenticatedSignerResolutionEvidence {
+                content_digest: arkret_sdk::Hash::new(format!(
+                    "sha256:{}",
+                    digit.to_string().repeat(64)
+                ))
+                .unwrap(),
+            }
+        };
+        let mut request = arkret_sdk::SelfGovernanceDependencyResolveRequest {
+            realm_id: arkret_sdk::RealmId::new(
+                "ak:realm:AYw-PHWIOTuZhm-EenZx-cCbOziC8pNCrh10oRfqiEmN",
+            )
+            .unwrap(),
+            selectors: vec![selector('b'), selector('a'), selector('b')],
+            byte_limit: arkret_sdk::MAX_GOVERNANCE_DEPENDENCY_RESPONSE_BYTES,
+            history_traversal_access: None,
+        };
+        assert!(request.validate().is_err());
+        request.selectors = canonical_dependency_selectors(request.selectors).unwrap();
+        assert_eq!(request.selectors, vec![selector('a'), selector('b')]);
+        request.validate().unwrap();
+    }
 }

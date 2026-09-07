@@ -304,9 +304,23 @@ pub(crate) fn build_add_member_commit_for_effective_scope_with_binding(
             "verified Sidecar MLS binding differs from the accepted Sidecar view".to_owned(),
         ));
     }
-    let add = group
-        .add_member_with_governance_binding(member_key_package, &governance_binding)
-        .map_err(|err| MlsRuntimeError::Commit(err.to_string()))?;
+    let replacement_actor = (state_store.realm_collaboration_role(realm_id)
+        == Some(arkret_sdk::CollaborationRealmRole::DirectConversation))
+    .then(|| {
+        group.verified_leaf_bindings().ok().and_then(|leaves| {
+            leaves
+                .into_iter()
+                .find(|leaf| leaf.endpoint == member_key_package.endpoint)
+                .map(|leaf| leaf.actor_id)
+        })
+    })
+    .flatten();
+    let add = if let Some(actor) = replacement_actor {
+        group.replace_member_endpoint(member_key_package, &actor, Some(&governance_binding))
+    } else {
+        group.add_member_with_governance_binding(member_key_package, &governance_binding)
+    }
+    .map_err(|err| MlsRuntimeError::Commit(err.to_string()))?;
     crate::mls::governance_proof::install_cached_transition_leaf_bindings_with_hints(
         state_store,
         &mut group,

@@ -6,6 +6,48 @@ use wasm_bindgen_test::*;
 wasm_bindgen_test_configure!(run_in_browser);
 
 #[wasm_bindgen_test(async)]
+async fn binary_secret_and_text_round_trip_across_reopen() {
+    let service_name = format!("binary-secret-test-{}", js_sys::Date::now());
+    let secret = (0_u8..=255).collect::<Vec<_>>();
+    let writer = IndexedDbSecureKeyStore::new_async(&service_name)
+        .await
+        .unwrap();
+    writer
+        .store_secret_bytes_durable("binary", &secret)
+        .await
+        .unwrap();
+    writer
+        .store_secret_durable("text", "text-secret")
+        .await
+        .unwrap();
+    assert_eq!(
+        writer
+            .get_secret_bytes("binary")
+            .unwrap()
+            .unwrap()
+            .as_slice(),
+        secret.as_slice()
+    );
+    drop(writer);
+
+    let reader = IndexedDbSecureKeyStore::new_async(&service_name)
+        .await
+        .unwrap();
+    assert_eq!(
+        reader
+            .get_secret_bytes("binary")
+            .unwrap()
+            .unwrap()
+            .as_slice(),
+        secret.as_slice()
+    );
+    assert_eq!(
+        reader.get_secret("text").unwrap().as_deref(),
+        Some("text-secret")
+    );
+}
+
+#[wasm_bindgen_test(async)]
 async fn large_entry_round_trips_across_reopen() {
     let service_name = format!("capacity-test-{}", js_sys::Date::now());
     let key = "inkson.e2ee_plaintext_cache.v1.capacity-test";

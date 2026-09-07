@@ -183,6 +183,9 @@ fn proposed_group_genesis_binding(
                 .ok_or_else(|| {
                     "pre-Genesis MLS proposal requires the accepted Realm projection".to_owned()
                 })?;
+            if let Some(proposal) = direct_conversation_genesis_proposal(projection) {
+                return Ok(proposal);
+            }
             let scheme = crate::realm_tree::realm_projection_content_scheme(projection)
                 .ok_or_else(|| {
                     "pre-Genesis MLS proposal requires an explicit content scheme".to_owned()
@@ -222,6 +225,28 @@ fn proposed_group_genesis_binding(
         .validate()
         .map_err(|error| format!("invalid proposed MLS Genesis binding: {error}"))?;
     Ok(proposal)
+}
+
+/// The current Direct Conversation profile fixes the exporter scheme. This
+/// is authoring input to the 0->0 proof query, never an accepted binding or a
+/// send-readiness shortcut. The application selects no organization recovery
+/// for a private conversation; the accepted MLS Genesis locks that choice.
+fn direct_conversation_genesis_proposal(
+    projection: &serde_json::Value,
+) -> Option<arkret_sdk::ProposedMlsGroupGenesisBinding> {
+    crate::realm_tree::projected_state_event_values(projection)
+        .filter(|event| event.get("kind").and_then(serde_json::Value::as_str)
+            == Some(arkret_sdk::EventKind::RealmCreate.as_str()))
+        .find_map(|event| {
+            let payload = serde_json::from_value::<arkret_sdk::RealmCreatePayload>(
+                event.get("payload")?.clone(),
+            ).ok()?;
+            arkret_models_collaboration::objects::direct_conversation::DirectConversationRealmRole::validate(&payload.object).ok()?;
+            Some(arkret_sdk::ProposedMlsGroupGenesisBinding {
+                content_scheme: arkret_wire::ContentScheme::MlsExporterAeadV1,
+                durability_policy: Some(arkret_wire::DurabilityPolicy::None),
+            })
+        })
 }
 
 pub(crate) fn group_genesis_binding(
@@ -568,7 +593,9 @@ pub(crate) async fn verify_governance_checkpoint_candidate<S: GovernanceProofSta
     verify_governance_checkpoint_candidate_with_http(&http, state_store, realm_id).await
 }
 
-async fn verify_governance_checkpoint_candidate_with_http<S: GovernanceProofStateStore>(
+pub(crate) async fn verify_governance_checkpoint_candidate_with_http<
+    S: GovernanceProofStateStore,
+>(
     http: &arkret_sdk::http_client::Client,
     state_store: &S,
     realm_id: &str,
@@ -1462,7 +1489,14 @@ pub(crate) fn preview_security_frontier_with_added_keypackages(
     let group = crate::mls::persistence::restore_envelope(&snapshot, &secret, 0)
         .map_err(|error| format!("restore MLS group for Add preview: {error}"))?;
     group
-        .preview_add_members_security_frontier(records, actors)
+        .preview_member_admission_security_frontier(
+            records,
+            actors,
+            effective_scope.realm_id_opt().is_some_and(|realm| {
+                state_store.realm_collaboration_role(realm.as_str())
+                    == Some(arkret_sdk::CollaborationRealmRole::DirectConversation)
+            }),
+        )
         .map_err(|error| format!("stage exact MLS Add frontier: {error}"))
 }
 
@@ -1500,5 +1534,75 @@ mod actor_frontier_tests {
         let retained = security_frontier_without_actors(leaves, &[actors[0].clone()]);
         assert_eq!(retained.len(), 1);
         assert_eq!(retained[0].actor_id, actors[1]);
+    }
+}
+
+#[cfg(test)]
+mod direct_conversation_genesis_tests {
+    use serde_json::json;
+
+    use super::*;
+
+    fn projection() -> serde_json::Value {
+        json!({"state": {"events": [{
+            "kind": "ak.realm.create",
+            "payload": {"object": {
+                "schema": "ak.schema.realm_genesis.v1",
+                "purpose": "direct_conversation",
+                "genesis_salt": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+                "trust_domain": "ak:trust_domain:example.net",
+                "schema_refs": ["ak.schema.realm.v1", "ak.profile.direct_conversation_realm.v1"],
+                "reducer_profile": "ak.reducer.core.v1",
+                "digest_algorithm": "sha256",
+                "security_class": "standard",
+                "encryption_profile": "mls_rfc9420",
+                "notary": {"kind": "single_signer", "signer": {
+                    "actor_id": {"kind": "account", "account_id": {
+                        "principal_id": "ak:did_core:web:alice.example",
+                        "station_id": "ak:did_core:web:station.example"
+                    }},
+                    "verification_method": "did:web:alice.example#key-1",
+                    "key_kind": "ed25519_raw32", "jose_algorithm": "Ed25519",
+                    "frozen_public_key_b64u": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+                    "frozen_public_key_digest": "sha256:66687aadf862bd776c8fc18b8e9f8e20089714856ee233b3902a591d0d5f2925"
+                }}
+            }}
+        }]}})
+    }
+
+    #[test]
+    fn direct_conversation_genesis_proposes_exporter_without_claiming_accepted_binding() {
+        let projection = projection();
+        let proposal = direct_conversation_genesis_proposal(&projection).unwrap();
+        proposal.validate().unwrap();
+        assert_eq!(
+            proposal.content_scheme,
+            arkret_wire::ContentScheme::MlsExporterAeadV1
+        );
+        assert_eq!(
+            proposal.durability_policy,
+            Some(arkret_wire::DurabilityPolicy::None)
+        );
+        assert_eq!(
+            crate::realm_tree::realm_projection_content_scheme(&projection),
+            None
+        );
+        assert!(crate::realm_tree::realm_projection_group_genesis_binding(&projection).is_none());
+    }
+
+    #[test]
+    fn direct_conversation_genesis_requires_both_canonical_purpose_and_profile() {
+        let mut wrong_purpose = projection();
+        wrong_purpose["state"]["events"][0]["payload"]["object"]["purpose"] =
+            json!("collaboration");
+        assert!(direct_conversation_genesis_proposal(&wrong_purpose).is_none());
+        let mut missing_profile = projection();
+        missing_profile["state"]["events"][0]["payload"]["object"]["schema_refs"] =
+            json!(["ak.schema.realm.v1"]);
+        assert!(direct_conversation_genesis_proposal(&missing_profile).is_none());
+        assert!(
+            direct_conversation_genesis_proposal(&json!({"purpose":"direct_conversation"}))
+                .is_none()
+        );
     }
 }

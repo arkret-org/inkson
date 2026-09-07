@@ -344,7 +344,7 @@ pub(crate) async fn ensure_local_mls_key_package_inventory(
         return Ok(None);
     }
     Ok(
-        maintain_local_mls_key_packages(&base_url, &session_credential, &authority, &device_id)
+        maintain_local_mls_key_packages(&base_url, &session_credential, &authority, &device_id, 0)
             .await?
             .latest_key_package_id,
     )
@@ -361,7 +361,10 @@ pub(crate) async fn manual_refill_local_mls_key_packages(
         return Ok(0);
     }
     Ok(
-        maintain_local_mls_key_packages(&base_url, &session_credential, &authority, &device_id)
+        // An expired peer claim can revoke a package without delivering a
+        // Welcome. Explicit refill must publish fresh packages even when the
+        // local inventory still remembers those packages as published.
+        maintain_local_mls_key_packages(&base_url, &session_credential, &authority, &device_id, 8)
             .await?
             .published_count,
     )
@@ -377,6 +380,7 @@ async fn maintain_local_mls_key_packages(
     session_credential: &str,
     authority: &arkret_sdk::AccountId,
     device_id: &arkret_sdk::DeviceId,
+    minimum_new_packages: usize,
 ) -> Result<LocalMlsKeyPackageMaintenanceOutcome, String> {
     let Some(lease) = crate::keypackage_maintenance::acquire(base_url, authority, device_id)
         .await
@@ -404,6 +408,7 @@ async fn maintain_local_mls_key_packages(
         session_credential,
         authority,
         device_id,
+        minimum_new_packages,
     )
     .await;
     let release = lease
@@ -422,6 +427,7 @@ async fn run_local_mls_key_package_maintenance_cycle(
     session_credential: &str,
     authority: &arkret_sdk::AccountId,
     device_id: &arkret_sdk::DeviceId,
+    minimum_new_packages: usize,
 ) -> Result<LocalMlsKeyPackageMaintenanceOutcome, String> {
     const KEYPACKAGE_MIN_AVAILABLE: usize = 8;
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
@@ -523,7 +529,7 @@ async fn run_local_mls_key_package_maintenance_cycle(
     )
     .map_err(|error| format!("store pruned MLS KeyPackage inventory: {error}"))?;
 
-    let deficit = inventory.maintenance_deficit(now, KEYPACKAGE_MIN_AVAILABLE);
+    let deficit = inventory.maintenance_deficit(now, KEYPACKAGE_MIN_AVAILABLE).max(minimum_new_packages);
     if deficit == 0 {
         return Ok(LocalMlsKeyPackageMaintenanceOutcome {
             latest_key_package_id: inventory
@@ -951,7 +957,7 @@ pub(crate) async fn bootstrap_mls_welcome_for_realm(
                 message.get("kind").and_then(Value::as_str) == Some(event_kind_str::MLS_WELCOME)
             })
         });
-    if !has_welcome && state_store.read(|store| store.mls_checkpoint_for(&realm_id).is_none()) {
+    if !has_welcome {
         // The accepted Welcome Event is the durable carrier; the device-message
         // queue is only a notification/acceleration path. If that queue was
         // missed, recover the exact still-live Event from canonical history and
@@ -1015,14 +1021,30 @@ pub(crate) async fn bootstrap_mls_welcome_for_realm(
             &realm_id,
         )
         .await?;
-        Some(
-            crate::mls::governance_proof::verify_governance_checkpoint_candidate(
-                &api,
-                state_store,
-                &realm_id,
-            )
-            .await?,
+        let verified = crate::mls::governance_proof::verify_governance_checkpoint_candidate(
+            &api,
+            state_store,
+            &realm_id,
         )
+        .await?;
+        // A recipient can have a pinned checkpoint from before a replacement
+        // Welcome's base Commit. Previewing against the new closure while
+        // constructing its proof from the old pin cannot resolve that Commit.
+        // Advance only the fully verified closure, retaining every previously
+        // trusted Seal and Event; a projection or a Welcome is not an anchor.
+        state_store.write(|store| {
+            store.advance_verified_mls_governance_checkpoint(&realm_id, verified.clone())?;
+            store.set_realm_seal_view(
+                realm_id.clone(),
+                crate::state::LocalSealView {
+                    frontier: verified.basis.leaves.iter().map(ToString::to_string).collect(),
+                    state_root: None,
+                    ..Default::default()
+                },
+            );
+            Ok::<_, String>(())
+        })?;
+        Some(verified)
     } else {
         None
     };

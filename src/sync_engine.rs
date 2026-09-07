@@ -1606,7 +1606,7 @@ pub fn apply_response(response: &AccountSyncStep, is_full_sync: bool, ctx: &Sync
                 }
                 store.save_realm_tree_projection(id.to_owned(), projection.clone());
                 if let Err(error) =
-                    store.reconcile_mls_genesis_group_state_ref_from_checkpoint(id, None)
+                    store.reconcile_mls_group_state_ref_from_checkpoint(id, None)
                 {
                     tracing::error!(
                         realm_id = %id,

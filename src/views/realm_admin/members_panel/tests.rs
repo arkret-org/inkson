@@ -1060,7 +1060,7 @@ fn raw_pending_invite_does_not_override_join_projection() {
 }
 
 #[test]
-fn admission_candidates_exclude_direct_conversation_realms() {
+fn admission_candidates_include_direct_conversation_with_local_group() {
     let realm_id = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
     let mut store = temp_store("admission-candidate-direct-conversation");
     store.save_realm_tree_projection(
@@ -1083,14 +1083,14 @@ fn admission_candidates_exclude_direct_conversation_realms() {
         realm_id.to_owned(),
         Some(arkret_sdk::CollaborationRealmRole::DirectConversation),
     );
+    assert!(mls_admission_candidate_realms_for_actor(&store, "did:web:alice.example").is_empty());
     store
         .save_mls_checkpoint(realm_id.to_owned(), dummy_mls_checkpoint(realm_id))
         .unwrap();
 
-    assert!(
-        mls_admission_candidate_realms_for_actor(&store, "did:web:alice.example").is_empty(),
-        "the direct-conversation materializer owns its immutable MLS admission events"
-    );
+    let candidates = mls_admission_candidate_realms_for_actor(&store, "did:web:alice.example");
+    assert_eq!(candidates.len(), 1);
+    assert_eq!(candidates[0].0, realm_id);
 }
 
 #[test]

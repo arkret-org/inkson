@@ -63,7 +63,7 @@ use super::{SecureKeyStore, SecureKeyStoreError, WASM_INDEXEDDB_SECURE_KEY_STORE
 pub struct IndexedDbSecureKeyStore {
     service_name: String,
     db_name: String,
-    cache: Arc<Mutex<HashMap<String, String>>>,
+    cache: Arc<Mutex<HashMap<String, Vec<u8>>>>,
     /// Non-extractable AES-GCM CryptoKey, cloned cheaply via JsValue
     /// reference counting. Used by spawn_local persistence tasks. The
     /// The boundary enforces same-thread access at runtime while satisfying
@@ -635,7 +635,7 @@ impl IndexedDbSecureKeyStore {
     async fn load_and_decrypt_cache(
         db: &web_sys::IdbDatabase,
         crypto_key: &wasm_bindgen::JsValue,
-    ) -> Result<HashMap<String, String>, SecureKeyStoreError> {
+    ) -> Result<HashMap<String, Vec<u8>>, SecureKeyStoreError> {
         let entries = Self::idb_all_entries(db, Self::OBJECT_STORE_ENTRIES).await?;
         let mut out = HashMap::with_capacity(entries.len());
         let mut orphaned = Vec::new();
@@ -657,9 +657,7 @@ impl IndexedDbSecureKeyStore {
             };
             match result {
                 Ok(plain) => {
-                    if let Ok(s) = String::from_utf8(plain) {
-                        out.insert(key_name, s);
-                    }
+                    out.insert(key_name, plain);
                 }
                 Err(err) => {
                     tracing::warn!(?err, key=%key_name, "indexedDB entry decrypt failed");
@@ -977,11 +975,11 @@ impl IndexedDbSecureKeyStore {
         db: &web_sys::IdbDatabase,
         crypto_key: &wasm_bindgen::JsValue,
         key: &str,
-        plain: &str,
+        plain: &[u8],
     ) -> Result<(), SecureKeyStoreError> {
         use js_sys::{Object, Reflect, Uint8Array};
         use wasm_bindgen::JsValue;
-        let (iv, ct) = Self::subtle_encrypt(crypto_key, plain.as_bytes()).await?;
+        let (iv, ct) = Self::subtle_encrypt(crypto_key, plain).await?;
         let entry = Object::new();
         let iv_array = Uint8Array::new_with_length(iv.len() as u32);
         iv_array.copy_from(&iv);
@@ -1011,14 +1009,8 @@ impl std::fmt::Debug for IndexedDbSecureKeyStore {
 
 impl SecureKeyStore for IndexedDbSecureKeyStore {
     fn store_secret_bytes(&self, key: &str, value: &[u8]) -> Result<(), SecureKeyStoreError> {
-        // The IndexedDb tier keeps its plaintext cache and SubtleCrypto payload as
-        // UTF-8 strings (unchanged on-disk format). Every inkson caller stores
-        // UTF-8 (base64/JSON) values, and garth's default `store_secret(&str)`
-        // routes through here as valid UTF-8, so reject non-UTF-8 rather than
-        // silently changing the wrapping representation.
-        let value = std::str::from_utf8(value).map_err(|err| {
-            SecureKeyStoreError::Backend(format!("indexeddb secret not utf8: {err}"))
-        })?;
+        // The byte-store contract includes binary MLS secrets. AES-GCM wraps
+        // their exact bytes; text callers use the same representation.
         {
             let mut guard = self
                 .cache
@@ -1056,13 +1048,6 @@ impl SecureKeyStore for IndexedDbSecureKeyStore {
         value: &'a [u8],
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), SecureKeyStoreError>> + 'a>>
     {
-        let value = match std::str::from_utf8(value) {
-            Ok(value) => value,
-            Err(err) => {
-                let err = SecureKeyStoreError::Backend(format!("indexeddb secret not utf8: {err}"));
-                return Box::pin(async move { Err(err) });
-            }
-        };
         Box::pin(async move {
             // AWAIT the real IndexedDB put: unlike `store_secret_bytes`'s
             // fire-and-forget `spawn_local`, this resolves only after the value
@@ -1087,9 +1072,7 @@ impl SecureKeyStore for IndexedDbSecureKeyStore {
             .cache
             .lock()
             .map_err(|err| SecureKeyStoreError::Backend(format!("cache lock: {err}")))?;
-        Ok(guard
-            .get(key)
-            .map(|value| KeyBytes::new(value.as_bytes().to_vec())))
+        Ok(guard.get(key).map(|value| KeyBytes::new(value.clone())))
     }
 
     fn list_secret_keys(&self, prefix: Option<&str>) -> Result<Vec<String>, SecureKeyStoreError> {

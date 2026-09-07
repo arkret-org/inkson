@@ -301,6 +301,12 @@ pub(crate) fn space_participants(
     participants
 }
 
+pub(crate) fn presence_participant_ids(participants: &[SpaceParticipant]) -> Vec<String> {
+    participants.iter().filter_map(|participant| participant.actor_id.as_ref())
+        .map(ToString::to_string).collect::<std::collections::BTreeSet<_>>()
+        .into_iter().collect()
+}
+
 pub(crate) fn display_label_for_actor(
     state_store: &LocalStateStore,
     participants: &[SpaceParticipant],
@@ -315,7 +321,7 @@ pub(crate) fn display_label_for_actor(
     }
     participants
         .iter()
-        .find(|participant| participant.principal_id.as_str() == actor_id)
+        .find(|participant| participant.roster_key() == actor_id)
         .and_then(participant_sender_label)
         .unwrap_or_else(|| crate::views::helpers::actor_display_label(state_store, actor_id))
 }

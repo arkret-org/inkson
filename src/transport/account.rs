@@ -847,9 +847,13 @@ pub(crate) fn direct_conversation_entry_with_local_blockers(
     >,
 ) -> DirectConversationEntry {
     let entry = direct_conversation_entry(outcome);
-    if local_blockers.is_empty() {
-        entry
-    } else if matches!(entry, DirectConversationEntry::Openable) {
+    // Missing history secrets block sending, not entering a conversation to
+    // receive its MLS Welcome and converge keys. The chat's verified MLS gate
+    // remains responsible for enabling Send.
+    if local_blockers.contains(
+        &arkret_sdk::direct_conversation_ops::DirectConversationClientLocalBlocker::PersonalBlocked,
+    ) && matches!(entry, DirectConversationEntry::Openable)
+    {
         DirectConversationEntry::Suspended
     } else {
         entry
@@ -2104,6 +2108,22 @@ mod tests {
                 "send_blockers": []
             }))
             .expect("found Direct Conversation outcome");
+
+        use arkret_sdk::direct_conversation_ops::DirectConversationClientLocalBlocker as Local;
+        let missing_keys = std::collections::BTreeSet::from([Local::HistoryKeyUnavailable]);
+        assert_eq!(
+            direct_conversation_entry_with_local_blockers(&outcome, &missing_keys),
+            DirectConversationEntry::Openable,
+            "the peer must be able to enter and receive its Welcome"
+        );
+        let blocked = std::collections::BTreeSet::from([
+            Local::PersonalBlocked,
+            Local::HistoryKeyUnavailable,
+        ]);
+        assert_eq!(
+            direct_conversation_entry_with_local_blockers(&outcome, &blocked),
+            DirectConversationEntry::Suspended
+        );
 
         preserve_resolved_direct_conversation(
             "did:web:agent.example",

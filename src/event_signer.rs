@@ -711,6 +711,24 @@ impl InksonEventSigner {
             .map_err(|error| EventSignerError::Encoding(error.to_string()))
     }
 
+    /// Sign the canonical binding transcript of a PayloadProof. Its outer
+    /// verification_method already identifies the key, so the protected header
+    /// carries only the algorithm. Sign the RFC 7515 input, not raw bytes.
+    pub fn detached_jws_over_payload(&self, payload: &[u8]) -> Result<String, EventSignerError> {
+        let signing_input =
+            arkret_sdk::signatures::proof::ed25519_detached_jws_signing_input(payload, None)
+                .map_err(|error| EventSignerError::Encoding(error.to_string()))?;
+        let Some(signing_key) = &self.raw_signing_key else {
+            return Err(EventSignerError::RawSigningUnavailable);
+        };
+        let signature = signing_key.sign(signing_input.as_bytes()).to_bytes();
+        if let Ok(mut guard) = self.last_signed_at.lock() {
+            *guard = Some(crate::clock::now_utc());
+        }
+        arkret_sdk::signatures::proof::ed25519_detached_jws_from_signature(&signature, None)
+            .map_err(|error| EventSignerError::Encoding(error.to_string()))
+    }
+
     /// Produce a detached compact JWS (`<b64u header>..<b64u sig>`) with a
     /// `kid` protected-header claim. Unlike [`Self::detached_jws_over`], this
     /// follows RFC 7515 signing input rules and signs
@@ -1382,6 +1400,38 @@ mod tests {
                 .is_err(),
             "raw control-plane signatures must not be detached-JWS signatures"
         );
+    }
+
+    #[test]
+    fn payload_proof_signer_round_trips_and_rejects_tampering() {
+        use arkret_sdk::signatures::proof::PublicKeyMaterial;
+        let _g = reset();
+        let seed = [11u8; 32];
+        let signer = build_ed25519_signer(seed, "did:web:history.example");
+        let binding = br#"{"context":"ak.history_key_response_proof.v1","fixture":"response"}"#;
+        let key = PublicKeyMaterial::Ed25519Raw {
+            bytes: ed25519_dalek::SigningKey::from_bytes(&seed)
+                .verifying_key()
+                .to_bytes()
+                .to_vec(),
+        };
+        let mut proof = arkret_sdk::PayloadProof {
+            kind: "detached_jws".to_owned(),
+            verification_method: DidUrl::new("did:web:history.example#key-1".to_owned()).unwrap(),
+            payload_digest: arkret_sdk::Hash::new(format!("sha256:{}", "a".repeat(64))).unwrap(),
+            created_at: "2026-09-08T00:00:00.000Z".parse().unwrap(),
+            domain: None,
+            audience: None,
+            proof_purpose: None,
+            jws: signer.detached_jws_over_payload(binding).unwrap(),
+        };
+        let verify = arkret_sdk::signatures::verify_ed25519_detached_jws_payload_proof;
+        verify(&proof, binding, &key).unwrap();
+        assert!(verify(&proof, b"changed binding", &key).is_err());
+        proof.jws = signer
+            .detached_jws_over_payload_with_kid(proof.verification_method.as_str(), binding)
+            .unwrap();
+        assert!(verify(&proof, binding, &key).is_err());
     }
 
     #[test]

@@ -22,6 +22,32 @@
 use crate::runtime::input::StateStoreHandle;
 use crate::state::LocalStateStore;
 
+fn creator_bootstrap_lock(key: String) -> std::sync::Arc<tokio::sync::Mutex<()>> {
+    use std::sync::{Arc, Mutex, OnceLock, Weak};
+    type Locks = std::collections::BTreeMap<String, Weak<tokio::sync::Mutex<()>>>;
+    static LOCKS: OnceLock<Mutex<Locks>> = OnceLock::new();
+    let mut locks = LOCKS
+        .get_or_init(Mutex::default)
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
+    locks.retain(|_, lock| lock.strong_count() > 0);
+    if let Some(lock) = locks.get(&key).and_then(Weak::upgrade) {
+        return lock;
+    }
+    let lock = Arc::new(tokio::sync::Mutex::new(()));
+    locks.insert(key, Arc::downgrade(&lock));
+    lock
+}
+
+fn genesis_already_accepted(error: &anyhow::Error) -> bool {
+    crate::api_error::api_error_status_and_envelope(error).is_some_and(|(_, problem)| {
+        problem.code() == arkret_sdk::error_codes::ErrorCode::MLS_GENESIS_ALREADY_EXISTS
+    }) || crate::ephemeral::events_submit_rejected_for_reason(
+        error,
+        &arkret_sdk::ReasonCode::MlsGenesisAlreadyExists,
+    )
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum CreatorGenesisResumeAction {
     Author,
@@ -162,6 +188,14 @@ pub(crate) async fn ensure_creator_realm_mls_genesis(
     if realm_id.is_empty() {
         return Err("realm_id is required for creator MLS bootstrap".to_owned());
     }
+    // Effects and the create flow can overlap. Recheck accepted/local state
+    // only after the preceding attempt finishes, so a second proposal cannot
+    // replace the staged group while its Genesis is being accepted.
+    let lock = creator_bootstrap_lock(format!(
+        "{}|{}|{}|{}",
+        authority.station_id, authority.principal_id, device_id, realm_id
+    ));
+    let _guard = lock.lock().await;
     if state_store.read(|store| !creator_mls_bootstrap_pending(store, realm_id, actor_id)) {
         return Ok(());
     }
@@ -354,11 +388,7 @@ pub(crate) async fn ensure_creator_realm_mls_genesis(
             // already-accepted Event id: encrypted writes bind their
             // `group_state_ref` to it, so merely setting the emitted flag would
             // strand them without a resolvable group state.
-            Err(error)
-                if crate::ephemeral::events_submit_rejected_for_reason(
-                    &error,
-                    &arkret_sdk::ReasonCode::MlsGenesisAlreadyExists,
-                ) => submitter
+            Err(error) if genesis_already_accepted(&error) => submitter
                 .find_mls_genesis_event_id(realm_id)
                 .await
                 .and_then(|event_id| {
@@ -527,6 +557,36 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    #[test]
+    fn creator_bootstrap_serializes_same_group_without_blocking_other_groups() {
+        let first = creator_bootstrap_lock("test-account/device/realm-one".into());
+        let second = creator_bootstrap_lock("test-account/device/realm-one".into());
+        let other = creator_bootstrap_lock("test-account/device/realm-two".into());
+        let guard = first.try_lock().unwrap();
+        assert!(second.try_lock().is_err());
+        assert!(other.try_lock().is_ok());
+        drop(guard);
+        assert!(second.try_lock().is_ok());
+    }
+
+    #[test]
+    fn creator_bootstrap_recognizes_typed_genesis_conflict_without_matching_diagnostic_text() {
+        let conflict = |code: &str, detail: &str| {
+            anyhow::Error::new(arkret_sdk::http_client::Error::Api {
+                status: 409,
+                error: Box::new(arkret_sdk::Problem::from_code(code, detail)),
+            })
+        };
+        assert!(genesis_already_accepted(&conflict(
+            "mls_genesis_already_exists",
+            "already accepted"
+        )));
+        assert!(!genesis_already_accepted(&conflict(
+            "failed_precondition",
+            "mls_genesis_already_exists"
+        )));
+    }
 
     fn temp_store(name: &str) -> LocalStateStore {
         let stamp = std::time::SystemTime::now()

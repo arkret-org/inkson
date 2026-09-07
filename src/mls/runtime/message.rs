@@ -846,13 +846,6 @@ pub(crate) fn decrypt_external_history_candidates_for_event(
             "external history candidate Event binding is inconsistent".to_owned(),
         ));
     }
-    let cipher_suite = state_store
-        .history_epoch_cipher_suite(effective_scope, &payload.group_id, payload.epoch)
-        .ok_or_else(|| {
-            MlsRuntimeError::Decrypt("verified history epoch ciphersuite is unavailable".to_owned())
-        })?;
-    let ciphertext = arkret_sdk::base64url_decode(payload.ciphertext.as_bytes())
-        .map_err(|error| MlsRuntimeError::Decrypt(error.to_string()))?;
     let candidates = state_store
         .history_candidates_for(
             secure_store,
@@ -860,6 +853,16 @@ pub(crate) fn decrypt_external_history_candidates_for_event(
             &payload.group_id,
             payload.epoch,
         )
+        .map_err(|error| MlsRuntimeError::Decrypt(error.to_string()))?;
+    if candidates.is_empty() {
+        return Ok(None);
+    }
+    let cipher_suite = state_store
+        .history_epoch_cipher_suite(effective_scope, &payload.group_id, payload.epoch)
+        .ok_or_else(|| {
+            MlsRuntimeError::Decrypt("verified history epoch ciphersuite is unavailable".to_owned())
+        })?;
+    let ciphertext = arkret_sdk::base64url_decode(payload.ciphertext.as_bytes())
         .map_err(|error| MlsRuntimeError::Decrypt(error.to_string()))?;
     for candidate in candidates {
         // The AEAD attempt and the Event->candidate binding it establishes are
@@ -2435,7 +2438,26 @@ pub(crate) fn encrypt_message_with_device_snapshot(
             return Err(MlsRuntimeError::EncryptionTransitionPending);
         }
     }
-    if sidecar_binding.is_none() {
+    // Direct Conversation §7.2 permits the founder's exporter messages before
+    // the peer's durable Welcome. A full Realm roster already includes the
+    // peer at that point and is not a reason to reject this registered phase.
+    // The exact group-state reference and epoch/binding fences remain required.
+    let provisional_founder = event_kind == event_kind_str::MESSAGE_CREATE
+        && circle.is_none()
+        && sidecar_binding.is_none()
+        && state_store
+            .trusted_mls_governance_checkpoint(realm_id)
+            .is_some_and(|checkpoint| {
+                matches!(
+                    crate::mls::direct_binding::message_authority(
+                        &checkpoint,
+                        &arkret_sdk::ActorId::account(authority.clone()),
+                        state_store.direct_conversation_binding_exists(realm_id),
+                    ),
+                    Some(crate::mls::direct_binding::MessageAuthority::ProvisionalFounder(_))
+                )
+            });
+    if sidecar_binding.is_none() && !provisional_founder {
         ensure_realm_membership_is_covered_for_send(state_store, realm_id, circle, &group)?;
     }
     let use_exporter_aead = sidecar_binding.is_none()

@@ -6,6 +6,7 @@ use super::*;
 #[derive(Clone, Debug, PartialEq)]
 pub(super) enum RealmCreateAuthority {
     Root { controller: arkret_sdk::ActorId },
+    DirectConversation,
 }
 
 pub(super) fn realm_create_authority_cache()
@@ -25,6 +26,15 @@ pub(super) fn realm_create_authority_from_events(
     events.iter().find_map(|event| {
         if event.realm_id.as_str() != realm_id || event.kind != arkret_sdk::EventKind::RealmCreate {
             return None;
+        }
+        if event
+            .payload
+            .get("object")
+            .and_then(|object| object.get("purpose"))
+            .and_then(serde_json::Value::as_str)
+            == Some("direct_conversation")
+        {
+            return Some(RealmCreateAuthority::DirectConversation);
         }
         Some(RealmCreateAuthority::Root {
             controller: event.actor_id.clone(),

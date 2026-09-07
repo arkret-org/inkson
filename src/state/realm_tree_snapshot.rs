@@ -120,6 +120,18 @@ impl LocalStateStore {
         self.load().realm_collaboration_roles.get(realm_id).copied()
     }
 
+    pub fn direct_conversation_binding_exists(&self, realm_id: &str) -> bool {
+        self.load()
+            .realm_tree_projections
+            .get(realm_id)
+            .is_some_and(|projection| {
+                crate::realm_tree::projected_state_event_values(projection).any(|event| {
+                    event.get("kind").and_then(serde_json::Value::as_str)
+                        == Some(arkret_sdk::EventKind::DirectConversationBound.as_str())
+                })
+            })
+    }
+
     pub fn realm_state_snapshot_sync_status(
         &self,
         realm_id: &str,

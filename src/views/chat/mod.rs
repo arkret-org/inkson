@@ -1666,6 +1666,13 @@ pub fn ChatPanel(
             .and_then(|channel| channel.security_encrypted)
             .unwrap_or(selected_realm_security_encrypted)
     };
+    let direct_message_authority = crate::app::SessionContext::get().active_account()
+        .and_then(|account| state_store.read().trusted_mls_governance_checkpoint(&selected_realm_id)
+            .and_then(|checkpoint| crate::mls::direct_binding::message_authority(
+                &checkpoint, &arkret_sdk::ActorId::account(account.authority),
+                state_store.read().direct_conversation_binding_exists(&selected_realm_id))));
+    let provisional_founder = matches!(direct_message_authority,
+        Some(crate::mls::direct_binding::MessageAuthority::ProvisionalFounder(_)));
     let mut selected_realm_pending_mls_binding_reason = state_store
         .read()
         .realm_pending_mls_binding_reason(&selected_realm_id);
@@ -1691,13 +1698,51 @@ pub fn ChatPanel(
                     &authority,
                     &account_device_id,
                 );
-            if roster_matches == Some(false) {
+            let local_group_available =
+                crate::mls::runtime::mls_group_member_actor_ids_for_effective_scope(
+                    &state_store.read(),
+                    secure_store.as_ref(),
+                    &selected_realm_id,
+                    None,
+                    &authority,
+                    &account_device_id,
+                )
+                .is_some();
+            if !local_group_available {
+                selected_realm_pending_mls_binding_reason = Some(
+                    "Waiting for this device's encryption keys. Keep this conversation open to receive the MLS Welcome."
+                        .to_owned(),
+                );
+            } else if provisional_founder && state_store.read()
+                .mls_checkpoint_for_effective_scope(&selected_realm_id, None)
+                .is_none_or(|snapshot| {
+                    let Ok(realm_id) = arkret_sdk::RealmId::new(selected_realm_id.clone()) else {
+                        return true;
+                    };
+                    state_store.read().mls_group_state_ref_for_scope(
+                        &arkret_sdk::ScopeRef::Realm { realm_id },
+                        &snapshot.group_id, snapshot.epoch).is_err()
+                })
+            {
+                selected_realm_pending_mls_binding_reason = Some(
+                    "Waiting for the verified conversation encryption state.".to_owned(),
+                );
+            } else if roster_matches == Some(false) && !provisional_founder {
                 selected_realm_pending_mls_binding_reason = Some(
                     "encryption_transition_pending: synced roster differs from the verified MLS group"
                         .to_owned(),
                 );
             }
         }
+    }
+    if !sidecar_mode && selected_realm_pending_mls_binding_reason.is_none()
+        && state_store.read().realm_collaboration_role(&selected_realm_id)
+            == Some(arkret_sdk::CollaborationRealmRole::DirectConversation)
+        && direct_message_authority.is_none()
+    {
+        selected_realm_pending_mls_binding_reason = Some(
+            "Waiting for verified conversation authority and encryption keys.".to_owned(),
+        );
     }
     let selected_realm_pending_mls_binding = selected_realm_pending_mls_binding_reason.is_some();
     let sidecar_security_label = sidecar_session.as_ref().map(|session| {
@@ -2051,16 +2096,12 @@ pub fn ChatPanel(
         participants.clone()
     };
 
-    let mut participant_ids_for_presence = presence_participants
-        .iter()
-        .map(|participant| participant.principal_id.to_string())
-        .filter(|id| !id.trim().is_empty())
-        .collect::<Vec<_>>();
-    participant_ids_for_presence.sort();
-    participant_ids_for_presence.dedup();
+    let participant_ids_for_presence = presence_participant_ids(&presence_participants);
+    let self_presence_actor = crate::app::SessionContext::get().active_account()
+        .map(|account| arkret_sdk::ActorId::account(account.authority).to_string());
     let has_remote_presence = participant_ids_for_presence
         .iter()
-        .any(|id| id != &principal_id);
+        .any(|id| Some(id) != self_presence_actor.as_ref());
     let presence_sync_key = format!(
         "{}|{}",
         selected_realm_id,
@@ -2107,10 +2148,15 @@ pub fn ChatPanel(
             last_updated,
         }
     });
+    let direct_mls_epoch = direct_mode.then(|| {
+        state_store.read().mls_checkpoint_for_effective_scope(&selected_realm_id, None)
+            .map(|snapshot| snapshot.epoch.to_string())
+    }).flatten();
     rsx! {
         div {
             class: "{shell_class}",
             "data-testid": "chat-panel",
+            "data-mls-epoch": direct_mls_epoch,
             "data-chat-mode": if direct_mode { "direct" } else { "collaboration" },
             "data-initial-sync": if initial_sync_finished() { "complete" } else { "pending" },
             ChatEffects {
@@ -2759,7 +2805,7 @@ pub fn ChatPanel(
                 {
                     let active_typers: Vec<String> = typing_actors()
                         .into_iter()
-                        .filter(|did| did != &principal_id)
+                        .filter(|actor| Some(actor) != self_presence_actor.as_ref())
                         .collect();
                     if !active_typers.is_empty() {
                         let attr_value = active_typers.join(",");

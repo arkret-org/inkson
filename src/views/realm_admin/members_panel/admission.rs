@@ -22,6 +22,10 @@ pub(super) async fn retain_current_history_secret_durable(
         account.principal_id().as_str() == actor_id && account.device_id.as_str() == device_id,
         "MLS history retention identity does not match the active account"
     );
+    state_store
+        .write()
+        .reconcile_mls_group_state_ref_from_checkpoint(realm_id, None)
+        .map_err(anyhow::Error::msg)?;
     let derived = {
         let store = state_store.read();
         crate::mls::runtime::derive_and_retain_realm_history_secret(
@@ -132,6 +136,10 @@ pub(crate) async fn submit_mls_admission_for_invitee(
             destination_id: account.authority.station_id.to_string(),
             target_device_id: Some(target_device_id),
         }
+    } else if state_store.read().realm_collaboration_role(&realm_id)
+        == Some(arkret_sdk::CollaborationRealmRole::DirectConversation)
+    {
+        direct_contact_claim_route(&api.sdk_http_client()?, &invitee_actor).await?
     } else {
         let store = state_store.read();
         accepted_invite_claim_route(&store, &realm_id, &invitee_id).ok_or_else(|| {
@@ -172,6 +180,17 @@ pub(crate) async fn submit_mls_admission_for_invitee(
         &mls_actor_id,
         &device_id,
         &[],
+    )
+    .await?;
+    // Resolve and durably retain the pre-commit epoch before allocating a
+    // one-time peer package. A local export failure must not exhaust the
+    // recipient's package pool on every retry.
+    retain_current_history_secret_durable(
+        state_store,
+        secure_store.as_ref(),
+        &realm_id,
+        &mls_actor_id,
+        &device_id,
     )
     .await?;
     let claim_request_id = crate::mls_api_helpers::generate_mls_claim_request_id()?;
@@ -230,22 +249,6 @@ pub(crate) async fn submit_mls_admission_for_invitee(
         &[(&claim, &claim_receipt)],
     )
     .await?;
-    // History sharing (encryption-and-audit.md): retain the CURRENT (pre-commit)
-    // epoch's `history_secret` BEFORE building the admission commit. The commit
-    // advances the group epoch (N → N+1) and OpenMLS can only export the epoch
-    // the group is currently at, so the only moment to capture epoch N's secret
-    // is here, while the local snapshot is still at N. Without this, the invitee
-    // joins at epoch N+1 and requests the pre-join window [0, N], but the
-    // provider has only ever retained the post-commit epoch (N+1) — its share
-    // range is empty and the late joiner can never decrypt pre-join content.
-    retain_current_history_secret_durable(
-        state_store,
-        secure_store.as_ref(),
-        &realm_id,
-        &mls_actor_id,
-        &device_id,
-    )
-    .await?;
     let requester_device_authorize_event_id = if pairwise_requester.is_none() {
         Some(
             crate::mls::admission::current_requester_device_authorize_event_id(
@@ -301,6 +304,73 @@ pub(crate) async fn submit_mls_admission_for_invitee(
         "retained local-authoritative history_secret for history-key recovery"
     );
     Ok(Some(next_epoch))
+}
+
+/// Contact Event proofs identify the peer endpoint for a founding membership,
+/// which has no Realm invite/accept Event. This is only a claim selector: the
+/// current signed KeyPackage claim and governance proof still authorize Add.
+async fn direct_contact_claim_route(
+    http: &arkret_sdk::http_client::Client,
+    peer: &arkret_sdk::ActorId,
+) -> anyhow::Result<AcceptedInviteClaimRoute> {
+    let account = peer.as_account_id().ok_or_else(|| {
+        anyhow::anyhow!("Direct Conversation human admission requires an exact AccountId")
+    })?;
+    let contacts = http.contacts_list().await?;
+    let row = contacts
+        .contacts
+        .iter()
+        .find(|row| row.peer.contact_actor_id() == *peer)
+        .ok_or_else(|| anyhow::anyhow!("Direct Conversation peer has no accepted Contact row"))?;
+    let refs = [
+        row.request_event_ref.clone(),
+        row.response_event_ref.clone(),
+    ]
+    .into_iter()
+    .flatten()
+    .collect::<Vec<_>>();
+    anyhow::ensure!(
+        !refs.is_empty(),
+        "Contact has no accepted endpoint-bearing Event"
+    );
+    let resolved = http
+        .events_resolve(&arkret_sdk::EventsResolveRequestBody {
+            event_ids: refs.clone(),
+            event_digests: Vec::new(),
+            include_payload: Some(true),
+            history_traversal_access: None,
+            max_response_bytes: Some(arkret_sdk::MAX_PEER_RESOLVE_RESPONSE_BYTES),
+        })
+        .await?;
+    let device = resolved
+        .events
+        .iter()
+        .rev()
+        .find_map(|event| {
+            if event.actor_id != *peer || !refs.contains(&event.event_id) {
+                return None;
+            }
+            let expected = event.event_id.event_digest();
+            let actual = event
+                .event_digest_with_digest_suite(expected.digest_suite().ok()?)
+                .ok()?;
+            if actual != expected.as_str() {
+                return None;
+            }
+            garth::sync_client::accepted_human_event_signing_device(event)
+        })
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "Contact endpoint resolution returned {} Events, {} by the peer, {} with a device proof",
+                resolved.events.len(),
+                resolved.events.iter().filter(|event| event.actor_id == *peer).count(),
+                resolved.events.iter().filter(|event| garth::sync_client::accepted_human_event_signing_device(event).is_some()).count(),
+            )
+        })?;
+    Ok(AcceptedInviteClaimRoute {
+        destination_id: account.station_id.to_string(),
+        target_device_id: Some(device.to_string()),
+    })
 }
 
 #[cfg(test)]
@@ -463,14 +533,6 @@ pub(super) fn admission_joined_member_signature_for_realm(
         .join(",")
 }
 
-pub(super) fn realm_projection_is_direct_conversation(
-    store: &LocalStateStore,
-    realm_id: &str,
-) -> bool {
-    store.realm_collaboration_role(realm_id)
-        == Some(arkret_sdk::CollaborationRealmRole::DirectConversation)
-}
-
 pub(crate) fn mls_admission_candidate_realms_for_actor(
     store: &LocalStateStore,
     actor_id: &str,
@@ -495,12 +557,6 @@ pub(crate) fn mls_admission_candidate_realms_for_actor(
         .filter(|realm_id| {
             store.mls_checkpoint_for(realm_id).is_some()
                 && store.realm_projection_is_mls_encrypted(realm_id)
-                // Direct-conversation materialization owns its immutable
-                // genesis/Commit/Welcome IDs and admits the peer itself. The
-                // generic membership reconciler must never race that flow or
-                // it can advance the same local MLS snapshot under unrelated
-                // Event IDs before the canonical binding is submitted.
-                && !realm_projection_is_direct_conversation(store, realm_id)
         })
         .map(|realm_id| {
             let joined_sig = admission_joined_member_signature_for_realm(store, &realm_id);
@@ -591,6 +647,29 @@ pub(crate) async fn reconcile_mls_admissions_for_realm(
         account.principal_id().as_str() == actor_id && account.device_id.as_str() == device_id,
         "MLS admission reconcile identity does not match the active account"
     );
+    // A locally staged Add may already contain the peer while its durable
+    // Commit/Welcome delivery is still pending. Resume that exact unit before
+    // using the roster to decide there is no admission work left.
+    let submitter = api.event_submitter()?;
+    if submitter
+        .has_pending_mls_admission_for_realm(&realm_id)
+        .await?
+    {
+        submitter
+            .drain_mls_outbound_with_accepted_store(
+                crate::app::runtime_adapter::state_store_handle(state_store),
+            )
+            .await?;
+        if submitter
+            .has_pending_mls_admission_for_realm(&realm_id)
+            .await?
+        {
+            return Ok(MlsAdmissionReconcileOutcome {
+                admitted: 0,
+                deferred: 1,
+            });
+        }
+    }
     // The account projection is intentionally bounded and may expose the new
     // member count before it carries the exact `ak.invite.accept` Event. It is
     // therefore only a wake-up hint, never negative membership evidence. Read
@@ -692,7 +771,75 @@ pub(crate) async fn reconcile_mls_admissions_for_realm(
         .then(|| (self_actor.clone(), Some(device.device_id.to_string())))
     }));
     if pending.is_empty() {
-        return Ok(MlsAdmissionReconcileOutcome::default());
+        let local_state = state_store.read().clone();
+        if local_state.realm_collaboration_role(&realm_id)
+            == Some(arkret_sdk::CollaborationRealmRole::DirectConversation)
+            && !local_state.direct_conversation_binding_exists(&realm_id)
+            && accepted_events.iter().any(|event| {
+                event.kind == arkret_sdk::EventKind::RealmCreate
+                    && event.actor_id.to_string() == self_actor
+            })
+        {
+            // Repair an unfinished endpoint handoff by an ordinary Remove/Add
+            // in the existing group. A new claim still proves current authority.
+            let snapshot = local_state.mls_checkpoint_for(&realm_id).ok_or_else(|| {
+                anyhow::anyhow!("local Direct Conversation MLS state is unavailable")
+            })?;
+            let current = crate::mls::direct_binding::accepted_pair_commit(
+                &accepted_events,
+                &realm_id,
+                &snapshot.group_id,
+                snapshot.epoch,
+            )?;
+            for event in &accepted_events {
+                if event.kind != arkret_sdk::EventKind::MlsWelcome {
+                    continue;
+                }
+                let welcome: arkret_sdk::MlsWelcomePayload =
+                    serde_json::from_value(serde_json::to_value(&event.payload)?)?;
+                if current.event_id != welcome.commit_ref
+                    || welcome.expires_at > crate::clock::now_utc()
+                {
+                    continue;
+                }
+                let arkret_sdk::MlsWelcomeRecipient::Device {
+                    recipient_device_id,
+                } = welcome.recipient
+                else {
+                    continue;
+                };
+                if let Some(principal) = welcome.recipient_principal_id
+                    && let Some(peer) = group_member_ids.iter().find(|peer| {
+                        serde_json::from_str::<arkret_sdk::ActorId>(peer)
+                            .is_ok_and(|actor| actor.signing_principal_id() == &principal)
+                    })
+                {
+                    let route = direct_contact_claim_route(
+                        &http,
+                        &serde_json::from_str::<arkret_sdk::ActorId>(peer)?,
+                    )
+                    .await?;
+                    if route.target_device_id.as_deref() == Some(recipient_device_id.as_str()) {
+                        pending.push((peer.clone(), None));
+                    }
+                }
+            }
+        }
+    }
+    if pending.is_empty() {
+        let local_state = state_store.read().clone();
+        crate::mls::direct_binding::ensure_binding(api, &local_state, &realm_id, &accepted_events)
+            .await?;
+        return Ok(MlsAdmissionReconcileOutcome {
+            admitted: 0,
+            deferred: usize::from(
+                local_state.realm_collaboration_role(&realm_id)
+                    == Some(arkret_sdk::CollaborationRealmRole::DirectConversation)
+                    && !accepted_events
+                        .iter()
+                        .any(|event| event.kind == arkret_sdk::EventKind::DirectConversationBound),
+            ),
+        });
     }
     tracing::warn!(
         target: "mls_admission",

@@ -1,14 +1,12 @@
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use garth::history_runtime::{
-    canonical_ranges_for_epochs, live_attempt_covers_epoch,
-    principal_signer_evidence_coordinates_from_event, ranges_cover,
+    canonical_ranges_for_epochs, live_attempt_covers_epoch, ranges_cover,
     verify_authorization_incarnation_is_retained_join,
 };
 
 use crate::runtime::input::StateStoreHandle;
 use crate::secure_key_store::SecureKeyStore;
-use crate::state::LocalStateStore;
 
 const HISTORY_REQUEST_HPKE_PRIVATE_KEY_PREFIX: &str =
     "inkson.history_request_hpke_x25519.private.v1";
@@ -94,8 +92,8 @@ async fn load_or_create_history_request_hpke_keypair_durable(
         .lock()
         .await;
     let key = history_request_hpke_private_key(request_id);
-    let private_key = match store.get_secret_bytes(&key)? {
-        Some(existing) => existing.as_ref().to_vec(),
+    let private_key = match load_history_request_hpke_private_key(store, request_id)? {
+        Some(existing) => existing,
         None => {
             let mut generated = [0_u8; 32];
             getrandom::fill(&mut generated).map_err(|error| {
@@ -106,7 +104,7 @@ async fn load_or_create_history_request_hpke_keypair_durable(
             store
                 .put_secret(
                     &key,
-                    &generated,
+                    arkret_sdk::base64url_encode(generated).as_bytes(),
                     garth::PutSecretOptions {
                         durability: garth::SecretDurability::DurableBeforeReturn,
                         class: garth::SecretClass::MlsSecret,
@@ -131,13 +129,29 @@ fn load_history_request_hpke_private_key(
     request_id: &arkret_sdk::HistoryRequestId,
 ) -> Result<Option<Vec<u8>>, crate::secure_key_store::SecureKeyStoreError> {
     store
-        .get_secret_bytes(&history_request_hpke_private_key(request_id))
-        .map(|bytes| bytes.map(|bytes| bytes.as_ref().to_vec()))
+        .get_secret_bytes(&history_request_hpke_private_key(request_id))?
+        .map(|bytes| {
+            let decoded = arkret_sdk::base64url_decode(bytes.as_ref()).map_err(|_| {
+                crate::secure_key_store::SecureKeyStoreError::Backend(
+                    "history request HPKE private key is not canonical base64url".to_owned(),
+                )
+            })?;
+            if decoded.len() != 32
+                || arkret_sdk::base64url_encode(&decoded).as_bytes() != bytes.as_ref()
+            {
+                return Err(crate::secure_key_store::SecureKeyStoreError::Backend(
+                    "history request HPKE private key must encode exactly 32 bytes".to_owned(),
+                ));
+            }
+            Ok(decoded)
+        })
+        .transpose()
 }
 
 struct ReceiptTraversal<'a> {
     api: &'a crate::transport::TransportClient,
     state_store: &'a StateStoreHandle,
+    source_member: bool,
 }
 
 impl garth::ReceiptBoundHistoryTraversal for ReceiptTraversal<'_> {
@@ -191,7 +205,13 @@ impl garth::ReceiptBoundHistoryTraversal for ReceiptTraversal<'_> {
         .await
         .map_err(|error| garth::Error::Protocol(error.to_string()))?;
         let cut = crate::mls::governance_acquisition::resolve_history_governance_cut(
-            self.api, retention, access,
+            self.api,
+            retention,
+            if self.source_member {
+                None
+            } else {
+                Some(access)
+            },
         )
         .await
         .map_err(garth::Error::Protocol)?;
@@ -394,7 +414,7 @@ pub async fn author_and_create_ordinary_human_request(
         },
         |bytes| {
             signer
-                .detached_jws_over_payload_with_kid(verification_method.as_str(), bytes)
+                .detached_jws_over_payload(bytes)
                 .map_err(|error| arkret_sdk::WireError::Protocol(error.to_string()))
         },
     )?;
@@ -447,77 +467,53 @@ fn scope_uses_exporter_history(
     })
 }
 
-fn current_member_signer_evidence_coordinates(
-    state_store: &StateStoreHandle,
+async fn readable_history_floor(
     checkpoint: &arkret_sdk::MlsGovernanceVerificationCheckpoint,
     scope: &arkret_sdk::HistoryEffectiveScope,
-    actor_id: &arkret_sdk::DidCoreId,
-    verification_method: &arkret_sdk::DidUrl,
-) -> anyhow::Result<arkret_sdk::SignerEvidenceRef> {
-    if let Some(evidence) = checkpoint
-        .governance_dependencies
-        .iter()
-        .find_map(|dependency| match dependency {
-            arkret_sdk::GovernanceDependency::AuthenticatedSignerResolutionEvidence {
-                authenticated_signer_resolution_evidence,
-                ..
-            } if matches!(
-                authenticated_signer_resolution_evidence.as_ref(),
-                arkret_sdk::AuthenticatedSignerResolutionEvidence::Principal { .. }
-            ) && authenticated_signer_resolution_evidence.signer_id() == actor_id
-                && authenticated_signer_resolution_evidence.verification_method()
-                    == verification_method =>
-            {
-                Some(authenticated_signer_resolution_evidence.as_ref().clone())
-            }
-            _ => None,
-        })
-    {
-        return Ok(evidence.evidence_ref()?);
-    }
+    actor: &arkret_sdk::ActorId,
+    incarnation: &arkret_sdk::AuthorizationIncarnation,
+) -> anyhow::Result<u64> {
+    let join =
+        verify_authorization_incarnation_is_retained_join(checkpoint, scope, actor, incarnation)?;
+    let policy = arkret_sdk::history_access_from_verified_checkpoint(checkpoint, scope).await?;
+    Ok(match policy {
+        arkret_sdk::HistoryAccess::SinceJoin => join,
+        arkret_sdk::HistoryAccess::AllHistoryForCurrentMembers => 0,
+    })
+}
 
-    let realm_id = scope.realm_id();
-    let state = state_store.read(LocalStateStore::load);
-    let events = state
-        .realm_tree_projections
-        .get(realm_id.as_str())
-        .and_then(|projection| projection.pointer("/state/events"))
-        .and_then(serde_json::Value::as_array)
+fn ranges_at_or_after(
+    ranges: Vec<arkret_sdk::EpochRange>,
+    floor: u64,
+) -> Vec<arkret_sdk::EpochRange> {
+    ranges
         .into_iter()
-        .flatten();
-    for value in events {
-        if let Some(evidence_ref) = principal_signer_evidence_coordinates_from_event(
-            value,
-            realm_id,
-            actor_id,
-            verification_method,
-        )? {
-            return Ok(evidence_ref);
-        }
+        .filter_map(|range| {
+            (range.to_epoch >= floor).then_some(arkret_sdk::EpochRange {
+                from_epoch: range.from_epoch.max(floor),
+                to_epoch: range.to_epoch,
+            })
+        })
+        .collect()
+}
+
+async fn current_member_signer_evidence_coordinates(
+    api: &crate::transport::TransportClient,
+    authority: &arkret_sdk::AccountId,
+    device_id: &arkret_sdk::DeviceId,
+) -> anyhow::Result<arkret_sdk::SignerEvidenceRef> {
+    let http = http_client(api)?;
+    let outcome = crate::transport::keys::query_keys(&http, authority, device_id.as_str()).await?;
+    let record = outcome
+        .devices_for(authority)
+        .and_then(|devices| devices.get(device_id))
+        .ok_or_else(|| anyhow::anyhow!("history source has no current attested device"))?;
+    record.validate_attestation_binding(authority, device_id)?;
+    if !record.is_usable_in_generation(outcome.generation_for(authority)) {
+        anyhow::bail!("history source device generation is inactive");
     }
-    for record in &state.raw_operations {
-        if record.realm_id.as_deref() != Some(realm_id.as_str()) {
-            continue;
-        }
-        let values = record
-            .payload
-            .get("event")
-            .into_iter()
-            .chain(std::iter::once(&record.payload));
-        for value in values {
-            if let Some(evidence_ref) = principal_signer_evidence_coordinates_from_event(
-                value,
-                realm_id,
-                actor_id,
-                verification_method,
-            )? {
-                return Ok(evidence_ref);
-            }
-        }
-    }
-    anyhow::bail!(
-        "history source has no exact retained Principal signer-evidence coordinates for its current method"
-    )
+    record.signer_evidence_ref.content_digest()?;
+    Ok(record.signer_evidence_ref.clone())
 }
 
 fn build_signed_member_response(
@@ -551,7 +547,7 @@ fn build_signed_member_response(
             },
             |bytes| {
                 signer
-                    .detached_jws_over_payload_with_kid(verification_method.as_str(), bytes)
+                    .detached_jws_over_payload(bytes)
                     .map_err(|error| arkret_sdk::WireError::Protocol(error.to_string()))
             },
         )?,
@@ -598,7 +594,13 @@ async fn build_member_source_attempt(
 
     let request_receipt_digest = request_record.request_receipt.request_receipt_digest()?;
     let traversal = garth::ReceiptBoundHistoryTraversal::acquire_and_verify(
-        &ReceiptTraversal { api, state_store },
+        // A source uses its ordinary current-member governance visibility.
+        // Another member's receipt never grants requester traversal access.
+        &ReceiptTraversal {
+            api,
+            state_store,
+            source_member: true,
+        },
         &request_record.request_receipt.history_traversal_retention,
         &arkret_sdk::SelfHistoryTraversalAccess::RequestReceipt {
             request_receipt_digest: request_receipt_digest.clone(),
@@ -606,19 +608,27 @@ async fn build_member_source_attempt(
     )
     .await
     .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+    let floor = readable_history_floor(
+        &traversal.checkpoint,
+        &request_record.request.effective_scope,
+        &request_record.request.requester_actor_id,
+        &request_record.request.requester_authorization_incarnation,
+    )
+    .await?;
+    selected.retain(|secret| secret.epoch >= floor);
+    if selected.is_empty() {
+        return Ok(None);
+    }
     let signer = crate::event_signer::active_signer()
         .ok_or_else(|| anyhow::anyhow!("history source has no active endpoint signer"))?;
     if signer.device_id() != Some(source_device_id.as_str()) {
         anyhow::bail!("history source signer is not bound to the explicit current device");
     }
     let verification_method = signer.verification_method_for_principal(source_did)?;
-    let source_signer_evidence_ref = current_member_signer_evidence_coordinates(
-        state_store,
-        &traversal.checkpoint,
-        &request_record.request.effective_scope,
-        source_actor_id,
-        &verification_method,
-    )?;
+    let source_signer_evidence_ref =
+        current_member_signer_evidence_coordinates(api, authority, source_device_id).await?;
+    // The source proof must be inside the newly attested device window.
+    let now = arkret_sdk::canonical::normalize_timestamp_canonical(chrono::Utc::now());
 
     let manifest_response_id = arkret_sdk::HistoryResponseId::new(format!(
         "ak:history_response:{}",
@@ -896,6 +906,17 @@ pub async fn converge_member_history_recovery(
                     continue;
                 }
             };
+        let floor = readable_history_floor(
+            &checkpoint,
+            &scope,
+            &arkret_sdk::ActorId::account(authority.clone()),
+            &incarnation,
+        )
+        .await?;
+        let requested_ranges = ranges_at_or_after(requested_ranges, floor);
+        if requested_ranges.is_empty() {
+            continue;
+        }
         let existing = runtime(state_store)
             .durable_requests()
             .map_err(|error| anyhow::anyhow!(error.to_string()))?
@@ -905,6 +926,11 @@ pub async fn converge_member_history_recovery(
                     && durable.request.requester_actor_id
                         == arkret_sdk::ActorId::account(authority.clone())
                     && durable.request.requester_authorization_incarnation == incarnation
+                    && durable
+                        .request
+                        .requested_ranges
+                        .iter()
+                        .all(|range| range.from_epoch >= floor)
                     && ranges_cover(&durable.request.requested_ranges, &requested_ranges)
                     && durable.request.expires_at > now + chrono::Duration::minutes(1)
             });
@@ -1678,7 +1704,14 @@ pub async fn acquire_and_verify_traversal(
     request_id: &arkret_sdk::HistoryRequestId,
 ) -> anyhow::Result<garth::VerifiedHistoryTraversal> {
     runtime(state_store)
-        .acquire_receipt_bound_traversal(&ReceiptTraversal { api, state_store }, request_id)
+        .acquire_receipt_bound_traversal(
+            &ReceiptTraversal {
+                api,
+                state_store,
+                source_member: false,
+            },
+            request_id,
+        )
         .await
         .map_err(|error| anyhow::anyhow!(error.to_string()))
 }
@@ -1686,6 +1719,42 @@ pub async fn acquire_and_verify_traversal(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn history_ranges_exclude_prejoin_without_losing_authorized_epochs() {
+        let ranges = vec![
+            arkret_sdk::EpochRange {
+                from_epoch: 0,
+                to_epoch: 2,
+            },
+            arkret_sdk::EpochRange {
+                from_epoch: 5,
+                to_epoch: 8,
+            },
+        ];
+        assert_eq!(ranges_at_or_after(ranges.clone(), 0), ranges);
+        assert_eq!(
+            ranges_at_or_after(ranges.clone(), 1),
+            vec![
+                arkret_sdk::EpochRange {
+                    from_epoch: 1,
+                    to_epoch: 2
+                },
+                arkret_sdk::EpochRange {
+                    from_epoch: 5,
+                    to_epoch: 8
+                },
+            ]
+        );
+        assert_eq!(
+            ranges_at_or_after(ranges.clone(), 6),
+            vec![arkret_sdk::EpochRange {
+                from_epoch: 6,
+                to_epoch: 8
+            },]
+        );
+        assert!(ranges_at_or_after(ranges, u64::MAX).is_empty());
+    }
 
     #[tokio::test]
     async fn history_request_hpke_keys_are_durable_and_request_scoped() {
@@ -1711,11 +1780,40 @@ mod tests {
 
         assert_eq!(first_pair, first_retry);
         assert_ne!(first_pair, second_pair);
+        // Browser secure storage wraps UTF-8 values. Random scalar bytes must
+        // never be passed directly: native memory storage alone hid that bug.
+        let stored = store
+            .get_secret_bytes(&history_request_hpke_private_key(&first))
+            .unwrap()
+            .unwrap();
+        let encoded = std::str::from_utf8(stored.as_ref()).unwrap();
+        assert_eq!(encoded, arkret_sdk::base64url_encode(&first_pair.0));
         assert_eq!(
             load_history_request_hpke_private_key(&store, &first)
                 .unwrap()
                 .unwrap(),
             first_pair.0
         );
+    }
+
+    #[tokio::test]
+    async fn history_request_hpke_storage_rejects_unencoded_private_bytes() {
+        let store = crate::secure_key_store::MemorySecureKeyStore::new();
+        let request = arkret_sdk::HistoryRequestId::new(
+            "ak:history_request:01964137-0000-7000-8000-000000000003".to_owned(),
+        )
+        .unwrap();
+        store
+            .put_secret(
+                &history_request_hpke_private_key(&request),
+                &[255; 32],
+                garth::PutSecretOptions {
+                    durability: garth::SecretDurability::DurableBeforeReturn,
+                    class: garth::SecretClass::MlsSecret,
+                },
+            )
+            .await
+            .unwrap();
+        assert!(load_history_request_hpke_private_key(&store, &request).is_err());
     }
 }

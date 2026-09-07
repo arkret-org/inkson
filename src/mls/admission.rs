@@ -187,7 +187,7 @@ async fn current_authorization_incarnation(
     .map_err(|error| format!("derive current MLS Add authorization incarnation: {error}"))
 }
 
-fn build_add_proposal_event(
+fn build_endpoint_admission_proposal_event(
     realm_id: &str,
     effective_scope: Option<&arkret_sdk::ScopeRef>,
     actor_id: &str,
@@ -197,9 +197,11 @@ fn build_add_proposal_event(
     target_authorization_incarnation: arkret_sdk::AuthorizationIncarnation,
     governance_binding: arkret_sdk::MlsGovernanceBindingPayload,
 ) -> Result<crate::operation::LocalOperation, String> {
-    if proposal.proposal_type != "add" {
-        return Err("MLS admission received a non-Add proposal envelope".to_owned());
-    }
+    let proposal_type = match proposal.proposal_type.as_str() {
+        "add" => arkret_sdk::MlsProposalType::Add,
+        "remove" => arkret_sdk::MlsProposalType::Remove,
+        _ => return Err("MLS endpoint admission requires Add or Remove".to_owned()),
+    };
     match (
         &claim.device_id,
         &claim.agent_id,
@@ -214,11 +216,12 @@ fn build_add_proposal_event(
         mls_group_id: arkret_sdk::MlsGroupId::new(proposal.group_id.clone())
             .map_err(|error| format!("invalid MLS proposal group id: {error}"))?,
         base_epoch: proposal.epoch,
-        proposal_type: arkret_sdk::MlsProposalType::Add,
+        proposal_type,
         proposal_bytes_b64: proposal.proposal.clone(),
         proposal_digest: proposal.proposal_digest.clone(),
         target_actor_id: Some(target_actor.clone()),
-        target_authorization_incarnation: Some(target_authorization_incarnation),
+        target_authorization_incarnation: (proposal_type == arkret_sdk::MlsProposalType::Add)
+            .then_some(target_authorization_incarnation),
         governance_binding,
     };
     let mut builder = crate::operation::ak_ops::mls_proposal_with_governance(
@@ -321,16 +324,22 @@ async fn build_realm_mls_admission_events_from_verified_claim(
     let target_actor = crate::mls::governance_proof::claimed_actor_id(claim, claim_receipt)?;
     let target_authorization_incarnation =
         current_authorization_incarnation(state_store, realm_id, None, &target_actor).await?;
-    let proposal = build_add_proposal_event(
-        realm_id,
-        None,
-        &actor_id,
-        claim,
-        &target_actor,
-        &add.proposal,
-        target_authorization_incarnation,
-        commit_basis.governance_binding().clone(),
-    )?;
+    let proposals = add
+        .proposals
+        .iter()
+        .map(|proposal| {
+            build_endpoint_admission_proposal_event(
+                realm_id,
+                None,
+                &actor_id,
+                claim,
+                &target_actor,
+                proposal,
+                target_authorization_incarnation.clone(),
+                commit_basis.governance_binding().clone(),
+            )
+        })
+        .collect::<Result<Vec<_>, _>>()?;
     let governance_binding = commit_basis.governance_binding().clone();
     let welcome_inputs = WelcomePayloadInputs {
         realm_id: realm_id.to_owned(),
@@ -346,7 +355,7 @@ async fn build_realm_mls_admission_events_from_verified_claim(
     };
     Ok(RealmMlsAdmissionEvents {
         commit: MlsAdmissionAuthoringPlan {
-            proposals: vec![proposal],
+            proposals,
             commit_basis,
         },
         welcome: welcome_intent_step(welcome_inputs),
@@ -1051,7 +1060,7 @@ mod tests {
             .unwrap(),
         };
 
-        let human = build_add_proposal_event(
+        let human = build_endpoint_admission_proposal_event(
             realm,
             None,
             "did:web:alice.example",
@@ -1076,6 +1085,24 @@ mod tests {
             )
         );
 
+        let mut remove = proposal.clone();
+        remove.proposal_type = "remove".to_owned();
+        let removal = build_endpoint_admission_proposal_event(
+            realm,
+            None,
+            "did:web:alice.example",
+            &claim,
+            &crate::mls_api_helpers::local_account_actor_id(claim.principal_id.as_str()).unwrap(),
+            &remove,
+            incarnation.clone(),
+            binding.clone(),
+        )
+        .unwrap()
+        .typed_payload::<arkret_wire::event_spec::MlsProposal>()
+        .unwrap();
+        assert_eq!(removal.proposal_type, arkret_sdk::MlsProposalType::Remove);
+        assert!(removal.target_authorization_incarnation.is_none());
+
         claim.device_id = None;
         claim.device_authorize_event_id = None;
         claim.agent_id = Some(claim.principal_id.clone());
@@ -1087,7 +1114,7 @@ mod tests {
             )
             .unwrap(),
         );
-        let native = build_add_proposal_event(
+        let native = build_endpoint_admission_proposal_event(
             realm,
             None,
             "did:web:alice.example",

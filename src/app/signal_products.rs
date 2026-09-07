@@ -178,6 +178,86 @@ impl SignalProductSink for AppSignalProductSink {
         envelope: &'a arkret_wire::SignalEnvelope,
     ) -> LocalBoxFuture<'a> {
         Box::pin(async move {
+            // Control Seals can advance after the MLS epoch (for example the
+            // final Direct Conversation binding). A valid live Signal can
+            // therefore name a Seal newer than our pinned MLS proof. Resolve
+            // and verify the complete closure before the receiver evaluates
+            // it; neither the Signal nor an observed frontier is trusted here.
+            let needs_checkpoint = {
+                let store = self.state_store.peek();
+                store
+                    .trusted_mls_governance_checkpoint(envelope.realm_id.as_str())
+                    .is_some_and(|checkpoint| {
+                        let observed = store.seal_view_for_realm(envelope.realm_id.as_str());
+                        !checkpoint
+                            .accepted_seals
+                            .iter()
+                            .any(|seal| seal.id == envelope.seal_ref)
+                            || (!observed.frontier.is_empty()
+                                && observed
+                                    .frontier
+                                    .iter()
+                                    .map(String::as_str)
+                                    .collect::<std::collections::BTreeSet<_>>()
+                                    != checkpoint
+                                        .basis
+                                        .leaves
+                                        .iter()
+                                        .map(|id| id.as_str())
+                                        .collect())
+                    })
+            };
+            if needs_checkpoint {
+                if let Some(api) = self.authenticated_api() {
+                    let state = crate::app::runtime_adapter::state_store_handle(self.state_store);
+                    match crate::mls::governance_proof::verify_governance_checkpoint_candidate(
+                        &api,
+                        &state,
+                        envelope.realm_id.as_str(),
+                    )
+                    .await
+                    {
+                        Ok(checkpoint) => {
+                            if let Err(error) = state.write(|store| {
+                                let mut observed =
+                                    store.seal_view_for_realm(envelope.realm_id.as_str());
+                                let observed_is_covered = observed.frontier.iter().all(|id| {
+                                    checkpoint
+                                        .accepted_seals
+                                        .iter()
+                                        .any(|seal| seal.id.as_str() == id)
+                                });
+                                let frontier = checkpoint
+                                    .basis
+                                    .leaves
+                                    .iter()
+                                    .map(ToString::to_string)
+                                    .collect();
+                                store.advance_verified_mls_governance_checkpoint(
+                                    envelope.realm_id.as_str(),
+                                    checkpoint,
+                                )?;
+                                if observed_is_covered {
+                                    // Do not overwrite a concurrently observed newer Seal or
+                                    // discard exposed conflict cells while advancing the view.
+                                    observed.frontier = frontier;
+                                    observed.state_root = None;
+                                    store.set_realm_seal_view(
+                                        envelope.realm_id.to_string(),
+                                        observed,
+                                    );
+                                }
+                                Ok::<_, String>(())
+                            }) {
+                                tracing::warn!(%error, "Signal governance checkpoint remains pending");
+                            }
+                        }
+                        Err(error) => {
+                            tracing::warn!(%error, "Signal governance closure verification failed")
+                        }
+                    }
+                }
+            }
             let Some(device) = envelope.sender_device_id.as_ref() else {
                 let Some(api) = self.authenticated_api() else {
                     return;

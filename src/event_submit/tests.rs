@@ -644,6 +644,94 @@ const AUTHORITY_GENESIS_EVENT: &str = "ak:event:ASgi2U7PbVyNs4UpiQAoXKoHv84g07gp
 /// still carry `realm_id` on the wire.
 const AUTHORITY_REALM: &str = "ak:realm:ATOz4l-vKJUCGZDmS_knGS9TjZ64pkOzx-HNGAgY5RGJ";
 const AUTHORITY_CONTROLLER: &str = "did:web:alice.example";
+
+#[test]
+fn direct_conversation_send_evidence_uses_one_sealed_endorsement_or_provisional_founder() {
+    use crate::mls::direct_binding::{MessageAuthority, message_authority};
+    fn reference(label: &str) -> arkret_sdk::EventId {
+        use sha2::{Digest, Sha256};
+        arkret_sdk::EventId::from_digest(
+            arkret_sdk::DigestSuite::Sha256,
+            Sha256::digest(label.as_bytes()).into(),
+        )
+    }
+    let mut create = realm_create_sdk_event(AUTHORITY_GENESIS_EVENT, AUTHORITY_CONTROLLER);
+    create.payload.insert(
+        "object".to_owned(),
+        json!({"purpose":"direct_conversation"}),
+    );
+    let realm = create.realm_id.clone();
+    let founder = create.actor_id.clone();
+    let peer = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+        arkret_sdk::DidCoreId::new("ak:did_core:web:bob.example").unwrap(),
+        arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap(),
+    ));
+    let genesis = sdk_event_with_kind(
+        &reference("group-genesis").to_string(),
+        realm.as_str(),
+        "ak.mls.genesis",
+        AUTHORITY_CONTROLLER,
+    );
+    // This test starts after cryptographic closure verification. It tests the
+    // consumer's authority choice, not signature or Seal verification itself.
+    let mut checkpoint = arkret_sdk::MlsGovernanceVerificationCheckpoint {
+        realm_id: realm.clone(),
+        basis: arkret_sdk::SealBasis { leaves: vec![] },
+        live_digest_suite: arkret_sdk::DigestSuite::Sha256,
+        accepted_seals: vec![],
+        accepted_events: vec![create.clone()],
+        governance_dependencies: vec![],
+    };
+    assert_eq!(message_authority(&checkpoint, &founder, false), None);
+    checkpoint.accepted_events.push(genesis);
+    assert_eq!(
+        message_authority(&checkpoint, &founder, false),
+        Some(MessageAuthority::ProvisionalFounder(
+            create.event_id.clone()
+        ))
+    );
+    assert_eq!(message_authority(&checkpoint, &peer, false), None);
+    assert_eq!(message_authority(&checkpoint, &founder, true), None);
+    let mut bound = sdk_event_with_kind(
+        &reference("binding-one").to_string(),
+        realm.as_str(),
+        "ak.direct_conversation.bound",
+        AUTHORITY_CONTROLLER,
+    );
+    bound.payload = json!({
+        "pair_key":format!("sha256:{}", "11".repeat(32)),
+        "unordered_participant_ids":[founder, peer], "realm_id":realm,
+        "main_strand_id":"ak:strand:AT3p9polsnQ_WOix32QZimMdE2zPe62HptJu2PaO3V1h",
+        "founding_unit_digest":format!("sha256:{}", "22".repeat(32)),
+        "authorization_basis":{"kind":"accepted_contact","event_refs":[
+            reference("contact-request"),reference("contact-response")]},
+        "initial_exact_pair_group_state_ref":reference("pair-commit"),
+        "created_at":"2026-09-07T00:00:00.000Z"
+    })
+    .as_object()
+    .unwrap()
+    .clone()
+    .into_iter()
+    .collect();
+    checkpoint.accepted_events.push(bound.clone());
+    let expected = Some(MessageAuthority::Participant(bound.event_id.clone()));
+    assert_eq!(message_authority(&checkpoint, &founder, false), expected);
+    assert_eq!(message_authority(&checkpoint, &founder, true), expected);
+    assert_eq!(message_authority(&checkpoint, &peer, false), expected);
+    bound.event_id = reference("binding-two");
+    bound.actor_id = peer.clone();
+    bound
+        .payload
+        .insert("created_at".to_owned(), json!("2026-09-07T00:00:02.000Z"));
+    checkpoint.accepted_events.push(bound.clone());
+    assert_eq!(message_authority(&checkpoint, &peer, false), expected);
+    bound.payload.insert(
+        "initial_exact_pair_group_state_ref".to_owned(),
+        json!(reference("different-first-pair")),
+    );
+    checkpoint.accepted_events.push(bound);
+    assert_eq!(message_authority(&checkpoint, &peer, false), None);
+}
 const AUTHORITY_CONTROLLER_CORE: &str = "ak:did_core:web:alice.example";
 fn authority_controller_actor() -> arkret_sdk::ActorId {
     crate::test_support::account_actor(AUTHORITY_CONTROLLER_CORE)
@@ -660,6 +748,27 @@ fn realm_create_authority_resolves_the_root_controller() {
         Some(RealmCreateAuthority::Root {
             controller: authority_controller_actor()
         })
+    );
+}
+
+#[test]
+fn direct_conversation_never_claims_ordinary_realm_owner_authority() {
+    let mut create = realm_create_sdk_event(AUTHORITY_GENESIS_EVENT, AUTHORITY_CONTROLLER);
+    create.payload.insert(
+        "object".to_owned(),
+        json!({"purpose":"direct_conversation"}),
+    );
+    let realm = create.realm_id.to_string();
+    let authority = realm_create_authority_from_events(&[create], &realm);
+    assert_eq!(authority, Some(RealmCreateAuthority::DirectConversation));
+    let intent = sdk_intent_with_kind(
+        &realm,
+        arkret_sdk::EventKind::MessageCreate.as_str(),
+        AUTHORITY_CONTROLLER,
+    );
+    assert_eq!(
+        realm_authority_root_claim(&intent, authority.as_ref()),
+        None
     );
 }
 

@@ -133,11 +133,11 @@ pub(super) fn DiscussionUsersPanel(
                                 &state_store.read(),
                                 &participants,
                                 &live_labels,
-                                participant.principal_id.as_str(),
+                                &principal_id_attr,
                             );
                             let state = presence_states
                                 .read()
-                                .get(participant.principal_id.as_str())
+                                .get(&principal_id_attr)
                                 .cloned()
                                 .unwrap_or_else(|| {
                                     if participant.is_self {
@@ -149,7 +149,7 @@ pub(super) fn DiscussionUsersPanel(
                             let state_for_class = state.clone();
                             let status_message = presence_status_messages
                                 .read()
-                                .get(participant.principal_id.as_str())
+                                .get(&principal_id_attr)
                                 .cloned();
                             rsx! {
                                 div {

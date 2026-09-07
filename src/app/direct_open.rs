@@ -111,14 +111,38 @@ pub(super) fn open_direct_conversation(
                         .await
                     }
                     DirectConversationTarget::Peer { peer_id } => {
-                        crate::transport::account::direct_conversation_resolve(
+                        let outcome = crate::transport::account::direct_conversation_resolve(
                             &api,
                             state_store,
                             &peer_id,
                             None,
                             false,
                         )
-                        .await
+                        .await?;
+                        if matches!(
+                            outcome,
+                            arkret_sdk::DirectConversationResolveOutcome::CreationRequired { .. }
+                        ) {
+                            let submitter = api.event_submitter()?;
+                            let founder = submitter.authority()?.clone();
+                            let peer: arkret_sdk::ActorId = serde_json::from_str(&peer_id)?;
+                            let peer = peer.as_account_id().ok_or_else(|| {
+                                anyhow::anyhow!("human Contact requires an AccountId")
+                            })?;
+                            crate::transport::account::create_direct_conversation_from_resolve(
+                                &submitter, &outcome, &founder, peer,
+                            )
+                            .await?;
+                            return crate::transport::account::direct_conversation_resolve(
+                                &api,
+                                state_store,
+                                &peer_id,
+                                None,
+                                false,
+                            )
+                            .await;
+                        }
+                        Ok(outcome)
                     }
                 }
             })

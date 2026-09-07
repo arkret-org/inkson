@@ -2399,6 +2399,8 @@ impl EventSubmitter {
         let intent = operation.intent();
         self.ensure_recovery_material_ready(intent, join_encryption_profile)
             .await?;
+        self.refresh_direct_message_authority(intent, state_store.as_ref())
+            .await?;
         // `authorization_ref` is a bound member of the semantic intent, so the
         // authority-root claim must be decided BEFORE the intent freezes. The
         // authoring-time stamp then finds the claim already present and leaves
@@ -3117,6 +3119,71 @@ impl EventSubmitter {
         Ok(intent)
     }
 
+    /// Refresh before freezing the semantic intent. A service-observed binding
+    /// closes bootstrap but never substitutes for a locally verified Seal.
+    async fn refresh_direct_message_authority(
+        &self,
+        intent: &EventIntent,
+        state_store: Option<&crate::runtime::input::StateStoreHandle>,
+    ) -> anyhow::Result<()> {
+        if intent.kind() != &arkret_sdk::EventKind::MessageCreate {
+            return Ok(());
+        }
+        let Some(realm) = intent.realm_id_opt() else {
+            return Ok(());
+        };
+        if !matches!(
+            self.realm_create_authority(realm.as_str()).await?,
+            Some(RealmCreateAuthority::DirectConversation)
+        ) {
+            return Ok(());
+        }
+        let store = state_store.or(self.state_store.as_ref()).ok_or_else(|| {
+            anyhow::anyhow!("Direct Conversation requires a verified checkpoint store")
+        })?;
+        for attempt in 0..20 {
+            let observed = self
+                .http
+                .contacts_list()
+                .await?
+                .contacts
+                .into_iter()
+                .filter_map(|row| row.direct_conversation)
+                .any(|binding| binding.realm_id == *realm)
+                || store.read(|state| state.direct_conversation_binding_exists(realm.as_str()));
+            let checkpoint =
+                crate::mls::governance_proof::verify_governance_checkpoint_candidate_with_http(
+                    &self.http,
+                    store,
+                    realm.as_str(),
+                )
+                .await
+                .map_err(anyhow::Error::msg)?;
+            store
+                .write(|state| {
+                    state.advance_verified_mls_governance_checkpoint(
+                        realm.as_str(),
+                        checkpoint.clone(),
+                    )
+                })
+                .map_err(anyhow::Error::msg)?;
+            if checkpoint.basis.leaves.len() == 1
+                && crate::mls::direct_binding::message_authority(
+                    &checkpoint,
+                    intent.actor_id(),
+                    observed,
+                )
+                .is_some()
+            {
+                return Ok(());
+            }
+            if attempt < 19 {
+                crate::runtime_helpers::sleep_for(Duration::from_millis(250)).await;
+            }
+        }
+        anyhow::bail!("Waiting for the verified Direct Conversation binding Seal before sending")
+    }
+
     /// Stamp the registered authority-root claim on an Event the Realm's root
     /// controller authors directly.
     ///
@@ -3147,6 +3214,73 @@ impl EventSubmitter {
                 None
             }
         };
+        if matches!(authority, Some(RealmCreateAuthority::DirectConversation)) {
+            if matches!(
+                intent.kind(),
+                arkret_sdk::EventKind::MlsProposal
+                    | arkret_sdk::EventKind::MlsCommit
+                    | arkret_sdk::EventKind::MlsWelcome
+            ) {
+                let bound = self
+                    .http
+                    .contacts_list()
+                    .await
+                    .ok()
+                    .is_some_and(|contacts| {
+                        contacts
+                            .contacts
+                            .into_iter()
+                            .filter_map(|row| row.direct_conversation)
+                            .any(|binding| binding.realm_id == realm_id)
+                    });
+                if !bound {
+                    let founding_ref = format!(
+                        "ak:event:{}",
+                        realm_id.as_str().trim_start_matches("ak:realm:")
+                    );
+                    return intent.with_authorization_ref(arkret_sdk::AuthorizationRef::new(
+                        arkret_wire::AuthoritySourceId::DIRECT_CONVERSATION_BOOTSTRAP_PARTICIPANT_V1,
+                    ).expect("registered bootstrap authority source"))
+                        .with_ref(arkret_sdk::EventRef::new(founding_ref, "direct_conversation_founding_unit"));
+                }
+            }
+            if intent.kind() != &arkret_sdk::EventKind::MessageCreate {
+                return intent;
+            }
+            if let Some(checkpoint) = self.state_store.as_ref().and_then(|store| {
+                store.read(|state| state.trusted_mls_governance_checkpoint(realm_id.as_str()))
+            }) && checkpoint.basis.leaves.len() == 1
+                && let Some(authority) = crate::mls::direct_binding::message_authority(
+                    &checkpoint,
+                    intent.actor_id(),
+                    self.state_store.as_ref().is_some_and(|store| {
+                        store.read(|state| {
+                            state.direct_conversation_binding_exists(realm_id.as_str())
+                        })
+                    }),
+                )
+                && let Ok(auth_context) = data_event_auth_context(&intent)
+            {
+                use crate::mls::direct_binding::MessageAuthority;
+                let (source, role, reference) = match authority {
+                    MessageAuthority::Participant(reference) => (
+                        arkret_wire::AuthoritySourceId::DIRECT_CONVERSATION_PARTICIPANT_V1,
+                        "direct_conversation_binding", reference),
+                    MessageAuthority::ProvisionalFounder(reference) => (
+                        arkret_wire::AuthoritySourceId::DIRECT_CONVERSATION_BOOTSTRAP_PARTICIPANT_V1,
+                        "direct_conversation_founding_unit", reference),
+                };
+                return intent
+                    .with_authorization_ref(
+                        arkret_sdk::AuthorizationRef::new(source)
+                            .expect("registered Direct Conversation authority source"),
+                    )
+                    .with_ref(arkret_sdk::EventRef::new(reference.to_string(), role))
+                    .with_seal_ref(checkpoint.basis.leaves[0].clone())
+                    .with_auth_context(auth_context);
+            }
+            return intent;
+        }
         // WARN so the wasm console shows it: the browser tracing layer caps at
         // WARN (`main.rs` `set_max_level`), and this decision is the first
         // thing to check whenever an owner write is rejected. The negative is

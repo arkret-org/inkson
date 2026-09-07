@@ -466,13 +466,9 @@ fn live_body_value(plaintext: &garth::SignalPlaintext) -> garth::Result<Value> {
     };
     body.insert(
         "actor_id".to_owned(),
-        Value::String(
-            plaintext
-                .actor_id
-                .signing_principal_id()
-                .as_str()
-                .to_owned(),
-        ),
+        serde_json::to_value(&plaintext.actor_id).map_err(|error| {
+            garth::Error::Protocol(format!("serialize Signal ActorId: {error}"))
+        })?,
     );
     match &plaintext.sender_endpoint {
         arkret_sdk::SignalSequenceEndpoint::AccountDevice { device_id } => {
@@ -830,14 +826,17 @@ mod tests {
     }
 
     #[test]
-    fn the_live_projection_body_carries_the_envelope_derived_expiry() {
+    fn the_live_presence_projection_preserves_actor_identity_and_expiry() {
         let plaintext = plaintext_of(
             garth::SIGNAL_PLAINTEXT_KIND_PRESENCE,
             json!({"kind": "ak.presence", "state": "online"}),
         );
 
         let body = live_body_value(&plaintext).unwrap();
-        assert_eq!(body["actor_id"], json!("ak:did_core:web:alice.example"));
+        assert_eq!(
+            serde_json::from_value::<arkret_sdk::ActorId>(body["actor_id"].clone()).unwrap(),
+            plaintext.actor_id,
+        );
         assert_eq!(
             body["device_id"],
             json!("ak:device:01904100-0000-7000-8000-000000000002")

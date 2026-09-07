@@ -399,6 +399,7 @@ pub(crate) async fn resolve_current_signal_device_evidence(
             account_id: item_account_id,
             device_id: item_device_id,
             device_projection_attestation,
+            signer_evidence_ref,
         } = item
         else {
             continue;
@@ -410,6 +411,7 @@ pub(crate) async fn resolve_current_signal_device_evidence(
             .attestation
             .authorized_generation_ref;
         let record = arkret_models_crypto::QueryDeviceRecord {
+            signer_evidence_ref,
             algorithms: BTreeMap::new(),
             trust_algorithms: Vec::new(),
             device_projection_attestation,

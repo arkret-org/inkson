@@ -26,15 +26,16 @@ fn external_history_decrypt_tasks_in_store(
 ) -> Result<Vec<ExternalHistoryDecryptTask>, String> {
     let state = store.load();
     let mut tasks = Vec::new();
-    for projection in state.realm_tree_projections.values() {
-        let Some(events) = projection
-            .get("state")
-            .and_then(|state| state.get("events"))
+    // The Realm stream persists messages in raw_operations, which is also the
+    // chat feed's source after reload. Account tree snapshots need not contain
+    // those messages, especially ones delivered while this endpoint was offline.
+    let projected_events = state.realm_tree_projections.values().filter_map(|projection| {
+        projection.get("state").and_then(|state| state.get("events"))
             .and_then(serde_json::Value::as_array)
-        else {
-            continue;
-        };
-        for event in events {
+    }).flatten();
+    let durable_events = state.raw_operations.iter().map(|record| &record.payload);
+    let mut seen = std::collections::BTreeSet::new();
+    for event in projected_events.chain(durable_events) {
             let Some(event_id) = event
                 .get("event_id")
                 .and_then(serde_json::Value::as_str)
@@ -103,6 +104,9 @@ fn external_history_decrypt_tasks_in_store(
             ) else {
                 continue;
             };
+            if !seen.insert(event_id.clone()) {
+                continue;
+            }
             tasks.push(ExternalHistoryDecryptTask {
                 realm_id,
                 payload: payload.clone(),
@@ -128,7 +132,6 @@ fn external_history_decrypt_tasks_in_store(
                         .map_err(|_| "verified sender domain is not UTF-8".to_owned())?,
                 },
             });
-        }
     }
     Ok(tasks)
 }
