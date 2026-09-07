@@ -235,7 +235,7 @@ fn select_authoring_station() {
 }
 
 /// Stamp the wire fields the submit pipeline would normally attach
-/// (CBA basis + Ed25519 proof) so the envelope satisfies the reducer-input
+/// (CBS basis + Ed25519 proof) so the envelope satisfies the reducer-input
 /// rules baked into event-envelope.schema.json.
 fn wire_envelope(operation: LocalOperation) -> arkret_sdk::AuthoredEvent {
     wire_envelope_from_intent(operation.into_intent())
@@ -244,7 +244,7 @@ fn wire_envelope(operation: LocalOperation) -> arkret_sdk::AuthoredEvent {
 /// Attach the producer proof to an envelope that is already authored.
 ///
 /// A genesis unit's members are authored together, and every one of them is
-/// CBA-exempt, so there is nothing left to stamp before signing.
+/// CBS-exempt, so there is nothing left to stamp before signing.
 fn sign_authored(envelope: &mut arkret_sdk::AuthoredEvent) {
     let signer_did = TEST_ACTOR_DID;
     let key_id = format!("{signer_did}#device");
@@ -292,7 +292,7 @@ fn authored_realm_bootstrap(
 fn wire_envelope_from_intent(intent: inkson::operation::EventIntent) -> arkret_sdk::AuthoredEvent {
     let mut intent = intent;
     // Control Move: `seal_basis` and nothing from the data-plane pair.
-    if intent.kind().is_control_plane() && !cba_exempt_reducer_kind(intent.kind()) {
+    if intent.kind().is_control_plane() && !cbs_exempt_reducer_kind(intent.kind()) {
         if intent.seal_basis().is_none() {
             intent = intent.with_seal_basis(test_seal_basis());
         }
@@ -324,7 +324,7 @@ fn wire_envelope_from_intent(intent: inkson::operation::EventIntent) -> arkret_s
 /// (realm-and-space.md §2.5). Read from the shared SDK helper rather than a
 /// local hand-list: a second copy of a closed protocol list is exactly the
 /// drift that lets a bootstrap follow-up go untested.
-fn cba_exempt_reducer_kind(kind: &EventKind) -> bool {
+fn cbs_exempt_reducer_kind(kind: &EventKind) -> bool {
     kind == &EventKind::RealmCreate
         || arkret_policy::realm_bootstrap::is_realm_bootstrap_followup_kind(kind)
 }

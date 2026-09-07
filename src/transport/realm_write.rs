@@ -231,7 +231,7 @@ pub async fn transition_member_state(
     let event = build_member_state_transition_event(
         realm_id, actor_id, &member, from_state, to_state, reason,
     )?;
-    // The CBA basis is resolved once, at the authoring boundary, from the Realm
+    // The CBS basis is resolved once, at the authoring boundary, from the Realm
     // Seal frontier. Post-bootstrap transitions (ban / kick / leave / unban)
     // carry effects and the server rejects effects-carrying Control Moves
     // without `seal_basis.leaves`; every caller here is an already-joined actor,

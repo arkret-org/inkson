@@ -140,7 +140,7 @@ fn space_bootstrap_events_use_canonical_create_and_facet_kinds() {
     );
     for event in &events {
         // `OrdinaryRealmBootstrap` is the one context in which a control write
-        // may carry no CBA basis: the genesis transaction predates any accepted
+        // may carry no CBS basis: the genesis transaction predates any accepted
         // Seal. The `Standard` context would demand a `seal_basis` the submit
         // gate has not attached yet.
         arkret_sdk::schema::validate_registered_cell_writes_in_context(

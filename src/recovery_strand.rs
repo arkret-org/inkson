@@ -604,7 +604,7 @@ async fn publish_recovery_policy(
         authorization_lease: submission
             .authorization_lease
             .expect("recovery policy publication uses an explicit authorization lease"),
-        cba_proof_bundles: submission.cba_proof_bundles,
+        cbs_proof_bundles: submission.cbs_proof_bundles,
         control_proposal_ack: submission.control_proposal_ack,
     };
 

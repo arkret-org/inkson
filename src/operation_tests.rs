@@ -916,7 +916,7 @@ fn invite_helpers_emit_canonical_kinds() {
     assert!(!create.payload().contains_key("role"));
     assert!(!create.payload().contains_key("state"));
     assert_registered_payload_valid(&create);
-    // `validate_registered_cell_writes` also runs the CBA plane check, and
+    // `validate_registered_cell_writes` also runs the CBS plane check, and
     // `ak.invite.create` is control-plane: its `seal_basis` is attached by the
     // submit gate, not by authoring. The authoring-time claim is that the
     // registry can derive the writes at all.

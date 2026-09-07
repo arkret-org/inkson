@@ -365,7 +365,7 @@ impl LocalOperation {
         self
     }
 
-    /// Pin the CBA basis this write authors against.
+    /// Pin the CBS basis this write authors against.
     ///
     /// Only a producer that cannot re-resolve one needs this: the authoring
     /// boundary resolves the basis from the accepted Seal view otherwise, and
@@ -434,7 +434,7 @@ pub(crate) const LOCAL_TARGET_REF: &str = "local_target_ref";
 /// validation.
 ///
 /// It produces a [`LocalOperation`], never an `Event`: the actor-chain position,
-/// HLC and CBA basis are not known here, and a builder that authored anyway
+/// HLC and CBS basis are not known here, and a builder that authored anyway
 /// would be handing out an identity it is about to change.
 #[derive(Debug)]
 pub struct TypedOperationBuilder {

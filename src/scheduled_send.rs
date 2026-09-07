@@ -325,7 +325,7 @@ async fn dispatch_due_plan(
         .target_ref(plan.value.message_payload.strand_id.as_str())
         .build_sdk_event("inkson")?;
     // Authoring completes every producer-signed envelope field (actor frontier,
-    // HLC, CBA basis) and derives the one content-bound EventId — only now do
+    // HLC, CBS basis) and derives the one content-bound EventId — only now do
     // the final Event / Message identities exist (spec §4).
     // `submit_scheduled_send_event` then freezes and persists the exact
     // canonical signed bytes before the first network submit.

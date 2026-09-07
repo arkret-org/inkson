@@ -260,7 +260,7 @@ pub(super) fn submit_kanban_operation_event(
         match result {
             Ok(resp) => {
                 // `build_sdk_event` names an event-derived create from its
-                // draft Event id. Final authoring attaches actor-chain/HLC/CBA
+                // draft Event id. Final authoring attaches actor-chain/HLC/CBS
                 // fields and refreshes that content-bound id, so preserve the
                 // accepted id on the optimistic row. The projection uses it to
                 // migrate the temporary object id, and backfill can then merge

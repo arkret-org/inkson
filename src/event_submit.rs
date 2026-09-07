@@ -11,7 +11,7 @@ use std::time::Duration;
 
 #[cfg(test)]
 use arkret_sdk::Problem;
-use arkret_sdk::events::{CbaEffectPlane, cba_cell_family_plane};
+use arkret_sdk::events::{CbsEffectPlane, cbs_cell_family_plane};
 use arkret_wire::{CapabilityActionId, event_kind_str};
 #[cfg(test)]
 use garth::ScheduledSendSubmissionState;
@@ -1974,7 +1974,7 @@ impl EventSubmitter {
     }
 
     /// Mint a DataEvent `seal_ref` head from the membership-gated Realm Seal
-    /// view. Only the CBA data-plane stamping path uses this.
+    /// view. Only the CBS data-plane stamping path uses this.
     pub(crate) async fn current_seal_for(&self, realm_id: &str) -> anyhow::Result<String> {
         let view = self.seals_frontier_realm_view(realm_id).await?;
         Ok(view.sole_leaf()?.to_string())
@@ -2474,7 +2474,7 @@ impl EventSubmitter {
             state_store.as_ref(),
         )?;
         let queued_intent = if explicit_prejoin_digest_suite.is_some() {
-            QueuedEventIntent::with_pinned_cba_basis(intent, digest_suite)
+            QueuedEventIntent::with_pinned_cbs_basis(intent, digest_suite)
         } else {
             QueuedEventIntent::new(intent, digest_suite)
         };
@@ -2950,7 +2950,7 @@ impl EventSubmitter {
             intent = self.stamp_realm_authority_root_claim(intent).await;
         }
         validate_capability_grant_payload(&intent)?;
-        intent = self.stamp_cba_basis_for_intent(intent).await?;
+        intent = self.stamp_cbs_basis_for_intent(intent).await?;
         let (actor_seq, prev_refs) = self.resolve_actor_chain_basis(&intent).await?;
         intent = intent.with_prev_refs(prev_refs);
         let hlc = self.issue_intent_hlc(&intent).await?;
@@ -2959,7 +2959,7 @@ impl EventSubmitter {
             .clone()
             .author_with_digest_suite(actor_seq, hlc, proof_context.digest_suite)
             .map_err(|error| anyhow::anyhow!("author Event: {error}"))?;
-        validate_projected_cba_plane(&event)?;
+        validate_projected_cbs_plane(&event)?;
         // Holder-local reconciliation only. `unsigned` is outside the digest
         // preimage, so this cannot move the identity derived above.
         event.insert_unsigned(
@@ -3063,26 +3063,26 @@ impl EventSubmitter {
         .await
     }
 
-    /// Resolve the CBA basis this attempt authors against.
+    /// Resolve the CBS basis this attempt authors against.
     ///
     /// A basis the producer already pinned on the intent is left alone: a
     /// pre-join `ak.invite.accept` carries the only Seal view its author could
     /// read, and re-resolving it would need membership the invitee lacks.
-    async fn stamp_cba_basis_for_intent(&self, intent: EventIntent) -> anyhow::Result<EventIntent> {
+    async fn stamp_cbs_basis_for_intent(&self, intent: EventIntent) -> anyhow::Result<EventIntent> {
         if intent.seal_ref().is_some()
             || intent.auth_context().is_some()
             || intent.seal_basis().is_some()
-            || cba_exempt_reducer_kind(intent.kind())
+            || cbs_exempt_reducer_kind(intent.kind())
         {
             return Ok(intent);
         }
-        cba_effect_plane_for_intent(intent.kind())?;
+        cbs_effect_plane_for_intent(intent.kind())?;
         if !intent.kind().is_control_plane() && !intent.kind().is_data_plane() {
             return Ok(intent);
         }
         let realm_id = intent.realm_id_opt().cloned().ok_or_else(|| {
             anyhow::anyhow!(
-                "{} needs a CBA basis but carries no Realm scope",
+                "{} needs a CBS basis but carries no Realm scope",
                 intent.kind().as_str()
             )
         })?;
@@ -3092,7 +3092,7 @@ impl EventSubmitter {
         } else {
             if !intent.preconditions().is_empty() {
                 anyhow::bail!(
-                    "DataEvent {} carries preconditions; CBA DataEvents must use seal_ref + auth_context only",
+                    "DataEvent {} carries preconditions; CBS DataEvents must use seal_ref + auth_context only",
                     intent.kind().as_str()
                 );
             }
@@ -3114,7 +3114,7 @@ impl EventSubmitter {
             seal_ref = ?intent.seal_ref().map(arkret_sdk::SealId::as_str),
             has_seal_basis = intent.seal_basis().is_some(),
             authorization_ref = ?intent.authorization_ref(),
-            "authored CBA basis for submit attempt"
+            "authored CBS basis for submit attempt"
         );
         Ok(intent)
     }
@@ -3507,7 +3507,7 @@ impl EventSubmitter {
                     None => self.resolve_actor_chain_basis(&intent).await?,
                 };
                 if !chain.is_genesis_unit() {
-                    intent = self.stamp_cba_basis_for_intent(intent).await?;
+                    intent = self.stamp_cbs_basis_for_intent(intent).await?;
                 }
                 intent = intent.with_prev_refs(prev_refs);
                 let hlc = self.issue_intent_hlc(&intent).await?;
@@ -3534,7 +3534,7 @@ impl EventSubmitter {
                     .author_with_digest_suite(actor_seq, hlc, proof_context.digest_suite)
                     .map_err(|error| anyhow::anyhow!("author unit Event: {error}"))?;
                 if !chain.is_genesis_unit() {
-                    validate_projected_cba_plane(&event)?;
+                    validate_projected_cbs_plane(&event)?;
                 }
                 self.sign_sdk_event_for_intent(&intent, &mut event, proof_context)?;
                 chain.record(&event);
@@ -3702,7 +3702,7 @@ fn mls_genesis_event_id_from_events(
         .map(|event| event.event_id.clone()))
 }
 
-fn cba_exempt_reducer_kind(kind: &arkret_sdk::events::kinds::EventKind) -> bool {
+fn cbs_exempt_reducer_kind(kind: &arkret_sdk::events::kinds::EventKind) -> bool {
     matches!(kind, arkret_sdk::EventKind::RealmCreate)
 }
 

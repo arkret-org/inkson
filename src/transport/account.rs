@@ -740,7 +740,7 @@ pub async fn create_direct_conversation_from_resolve(
             .map_err(anyhow::Error::msg)?,
         events,
         founding_authority_evidence: next_founding_input.founding_authority_evidence.clone(),
-        cba_proof_bundles: Vec::new(),
+        cbs_proof_bundles: Vec::new(),
     };
     direct_conversation_found(submitter, resolve, prepared).await
 }

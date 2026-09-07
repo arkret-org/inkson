@@ -300,7 +300,7 @@ pub fn initial_submission(
         // The submit gate attaches basis closure only when the receiver reports
         // a shortfall; a bounded superset is always acceptable, so nothing is
         // guessed here.
-        cba_proof_bundles: Vec::new(),
+        cbs_proof_bundles: Vec::new(),
         // Control Moves acquire their authority Ack separately, including
         // caller-proven closed anchors. DataEvents keep it absent.
         control_proposal_ack: None,
@@ -407,7 +407,7 @@ pub async fn delayed_initial_submission(
                             .authorization_lease
                             .clone()
                             .expect("delayed submission was constructed with a lease"),
-                        cba_proof_bundles: submission.cba_proof_bundles.clone(),
+                        cbs_proof_bundles: submission.cbs_proof_bundles.clone(),
                     },
                     digest_suite,
                 )

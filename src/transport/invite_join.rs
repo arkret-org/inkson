@@ -154,7 +154,7 @@ fn stamp_invite_join_seal_basis(
     event: crate::operation::LocalOperation,
     candidate: &RealmJoinCandidate,
 ) -> anyhow::Result<crate::operation::LocalOperation> {
-    // Only a reducer-input Event needs a CBA basis at all.
+    // Only a reducer-input Event needs a CBS basis at all.
     if event.seal_basis().is_some()
         || event
             .kind()

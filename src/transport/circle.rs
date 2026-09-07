@@ -4,7 +4,7 @@
 //! live as inherent methods on [`crate::transport::TransportClient`]. `list_circles` is a
 //! pure passthrough over the shared SDK `http-client::Client`;
 //! `submit_circle_scope_rotate_events` signs each rotate event through the
-//! [`crate::event_submit::EventSubmitter`] proof/CBA path and posts the batch
+//! [`crate::event_submit::EventSubmitter`] proof/CBS path and posts the batch
 //! through `submitter.http()`.
 
 use crate::event_submit::EventSubmitter;

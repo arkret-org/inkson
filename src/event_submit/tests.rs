@@ -1043,7 +1043,7 @@ fn stamped_intent_round_trips_through_authoring_without_semantic_drift() {
     .unwrap();
 
     // Mirror one attempt by the outbound drive: an actor-chain position, the
-    // CBA basis it resolved for this attempt, and the holder-local alias.
+    // CBS basis it resolved for this attempt, and the holder-local alias.
     // None of those is part of the operation, so none may make the attempt
     // stop expressing the intent it is bound to.
     let mut authored = intent

@@ -1,4 +1,4 @@
-//! Realm authority-root and CBA authoring decisions.
+//! Realm authority-root and CBS authoring decisions.
 
 use super::*;
 
@@ -78,14 +78,14 @@ pub(super) fn realm_authority_root_claim(
     }
 }
 
-/// CBA plane through which the registered event contract routes this intent.
-pub(super) fn cba_effect_plane_for_intent(
+/// CBS plane through which the registered event contract routes this intent.
+pub(super) fn cbs_effect_plane_for_intent(
     kind: &arkret_sdk::events::kinds::EventKind,
-) -> anyhow::Result<Option<CbaEffectPlane>> {
-    let plane = kind.cba_plane();
+) -> anyhow::Result<Option<CbsEffectPlane>> {
+    let plane = kind.cbs_plane();
     if kind.is_reducer_input() && plane.is_none() {
         anyhow::bail!(
-            "reducer-input kind {} declares no known CBA plane",
+            "reducer-input kind {} declares no known CBS plane",
             kind.as_str()
         );
     }
@@ -93,10 +93,10 @@ pub(super) fn cba_effect_plane_for_intent(
 }
 
 /// Prove the authored event's projected cells all sit on its declared plane.
-pub(super) fn validate_projected_cba_plane(
+pub(super) fn validate_projected_cbs_plane(
     event: &arkret_sdk::AuthoredEvent,
 ) -> anyhow::Result<()> {
-    let Some(plane) = cba_effect_plane_for_intent(&event.kind)? else {
+    let Some(plane) = cbs_effect_plane_for_intent(&event.kind)? else {
         return Ok(());
     };
     let digest_suite = event.digest_suite();
@@ -114,7 +114,7 @@ pub(super) fn validate_projected_cba_plane(
     {
         let cell = arkret_sdk::CellId::from_ref(&write.cell_id)
             .map_err(|error| anyhow::anyhow!("projected cell is invalid: {error}"))?;
-        let cell_plane = cba_cell_family_plane(cell.component()).ok_or_else(|| {
+        let cell_plane = cbs_cell_family_plane(cell.component()).ok_or_else(|| {
             anyhow::anyhow!(
                 "projected cell references unknown cell family {}",
                 cell.component()

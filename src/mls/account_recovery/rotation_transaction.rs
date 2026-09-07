@@ -446,7 +446,7 @@ async fn drive_security_rotation(
                 .map(|rotation| rotation.binding.clone())
                 .collect(),
             authorization_lease: erase_lease,
-            cba_proof_bundles: Vec::new(),
+            cbs_proof_bundles: Vec::new(),
         };
         let erase = match workflow
             .retry_pending_erase(&transaction.transaction_id)
