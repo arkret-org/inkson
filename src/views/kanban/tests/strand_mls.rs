@@ -94,6 +94,7 @@ fn private_strand_display_text_blanks_undecryptable_envelope() {
     assert_eq!(private_strand_display_text(None, Some(&envelope)), "");
     let store = isolated_store_for_tests("private-strand-blank");
     let ctx = MlsDecryptCtx {
+        identity: None,
         state_store: &store,
         realm_id: "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
     };
@@ -118,6 +119,7 @@ fn private_strand_field_text_prefers_local_sidecar_plaintext() {
         "\"author body\"",
     );
     let ctx = MlsDecryptCtx {
+        identity: None,
         state_store: &store,
         realm_id: realm,
     };
@@ -157,6 +159,7 @@ fn private_strand_empty_sidecar_does_not_mask_encrypted_locked_state() {
     let mut store = isolated_store_for_tests("private-strand-empty-sidecar");
     store.save_private_plaintext(realm, strand, KANBAN_ENCRYPTED_CONTENT_PATH, "\"\"");
     let ctx = MlsDecryptCtx {
+        identity: None,
         state_store: &store,
         realm_id: realm,
     };
@@ -207,6 +210,7 @@ fn card_builder_reads_author_plaintext_from_sidecar_without_mls_group() {
         .unwrap(),
     );
     let ctx = MlsDecryptCtx {
+        identity: None,
         state_store: &store,
         realm_id: realm,
     };
@@ -291,6 +295,7 @@ fn encrypted_card_content_is_locked_exactly_when_it_is_unreadable() {
     // Locked: an envelope with no sidecar and no group to decrypt with.
     let locked_store = isolated_store_for_tests("encrypted-card-locked");
     let locked_ctx = MlsDecryptCtx {
+        identity: None,
         state_store: &locked_store,
         realm_id: realm,
     };
@@ -314,6 +319,7 @@ fn encrypted_card_content_is_locked_exactly_when_it_is_unreadable() {
         .unwrap(),
     );
     let unlocked_ctx = MlsDecryptCtx {
+        identity: None,
         state_store: &unlocked_store,
         realm_id: realm,
     };

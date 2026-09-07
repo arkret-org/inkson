@@ -110,7 +110,7 @@ pub(crate) use model::message_operations_from_events;
 use model::*;
 pub(crate) use model::{
     confirmed_sidecar_publish_message_operation, default_discussion_strand_id,
-    verified_chat_sender_domain_for_realm,
+    verified_chat_sender_domain_for_realm, verify_chat_envelope_proof_for_realm,
 };
 use right_panel::{DiscussionSettingsPanel, DiscussionUsersPanel, SidecarDeliveryDiagnostics};
 use timeline::*;

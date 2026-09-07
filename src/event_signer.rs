@@ -625,42 +625,6 @@ impl InksonEventSigner {
         .map_err(|error| EventSignerError::Backend(error.to_string()))
     }
 
-    /// Sign the first post-bootstrap self-PCR Seal. The predecessor is the
-    /// resolved accepted two-Event bootstrap Seal; the first successor is the
-    /// recovery-policy Event required before the first encrypted backup.
-    pub fn sign_self_principal_first_successor_seal(
-        &self,
-        create: &arkret_sdk::Event,
-        authorize: &arkret_sdk::Event,
-        successor: &arkret_sdk::Event,
-        predecessor: &arkret_sdk::Seal,
-        availability: &arkret_sdk::SealAvailabilityReceiptIssueOutcome,
-        hlc: arkret_sdk::Hlc,
-    ) -> Result<arkret_sdk::Seal, EventSignerError> {
-        let device_id = self.device_id.as_deref().ok_or_else(|| {
-            EventSignerError::Encoding(
-                "principal successor Seal requires a bound device_id".to_owned(),
-            )
-        })?;
-        let signer = InksonSealSignerAdapter {
-            owner: self,
-            did: self.did_for_actor(&create.actor_id)?,
-            verification_method: DidUrl::new(format!("{}#{device_id}", self.signer_did))
-                .map_err(|error| EventSignerError::Encoding(error.to_string()))?,
-        };
-        arkret_bootstrap::build_self_principal_first_successor_seal(
-            create,
-            authorize,
-            successor,
-            predecessor,
-            availability,
-            hlc,
-            &signer,
-            &|event| crate::operation::cell_write_projector(event, arkret_sdk::DigestSuite::Sha256),
-        )
-        .map_err(|error| EventSignerError::Backend(error.to_string()))
-    }
-
     pub(crate) fn sign_self_principal_linear_successor_seal(
         &self,
         history: &PrincipalControlHistory,

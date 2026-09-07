@@ -224,52 +224,56 @@ fn proposed_group_genesis_binding(
     Ok(proposal)
 }
 
-fn group_genesis_binding(
-    state_store: &crate::state::LocalStateStore,
+pub(crate) fn group_genesis_binding(
+    checkpoint: &arkret_sdk::MlsGovernanceVerificationCheckpoint,
     effective_scope: &arkret_sdk::ScopeRef,
-) -> Result<arkret_sdk::MlsGroupGenesisBinding, String> {
-    let realm_id = effective_scope
-        .realm_id_opt()
-        .ok_or_else(|| "MLS governance scope has no Realm".to_owned())?;
-    let binding = match effective_scope {
-        arkret_sdk::ScopeRef::Realm { .. } => {
-            let state = state_store.load();
-            let projection = state
-                .realm_tree_projections
-                .get(realm_id.as_str())
-                .ok_or_else(|| {
-                    "MLS governance proof requires the accepted Realm projection".to_owned()
-                })?;
-            crate::realm_tree::realm_projection_group_genesis_binding(projection).ok_or_else(
-                || {
-                    "MLS governance proof requires the exact accepted MLS Genesis binding"
-                        .to_owned()
-                },
-            )?
-        }
-        arkret_sdk::ScopeRef::Circle { circle_id, .. } => {
-            let scheme = state_store
-                .circle_content_scheme(realm_id.as_str(), circle_id.as_str())
-                .ok_or_else(|| {
-                    "MLS governance proof requires the accepted Circle content scheme".to_owned()
-                })?;
-            let content_scheme = match scheme.as_str() {
-                "mls_rfc9420" => arkret_wire::ContentScheme::MlsRfc9420,
-                "mls_exporter_aead_v1" => arkret_wire::ContentScheme::MlsExporterAeadV1,
-                value => return Err(format!("unregistered MLS content scheme {value}")),
-            };
-            arkret_sdk::MlsGroupGenesisBinding {
-                content_scheme,
-                durability_policy: state_store
-                    .circle_durability_policy(realm_id.as_str(), circle_id.as_str()),
-            }
-        }
-        _ => return Err("unsupported MLS governance effective scope".to_owned()),
+    group_id: &arkret_sdk::Base64UrlString,
+) -> Result<Option<arkret_sdk::MlsGroupGenesisBinding>, String> {
+    // The display projection is allowed to omit pre-join history. Security
+    // binding comes from the already verified governance checkpoint instead.
+    let matching = checkpoint
+        .accepted_events
+        .iter()
+        .filter(|event| {
+            event.kind == arkret_sdk::EventKind::MlsGenesis
+                && event.realm_id == checkpoint.realm_id
+                && &event.scope_ref == effective_scope
+                && event
+                    .payload
+                    .get("mls_group_id")
+                    .and_then(serde_json::Value::as_str)
+                    == Some(group_id.as_str())
+        })
+        .collect::<Vec<_>>();
+    if matching.is_empty() {
+        return Ok(None);
+    }
+    if matching.len() != 1 {
+        return Err(format!(
+            "MLS governance checkpoint requires exactly one accepted Genesis for this scope/group; found {}",
+            matching.len(),
+        ));
+    }
+    let payload: arkret_sdk::MlsGenesisPayload = serde_json::from_value(
+        serde_json::to_value(&matching[0].payload)
+            .map_err(|error| format!("serialize accepted MLS Genesis: {error}"))?,
+    )
+    .map_err(|error| format!("invalid accepted MLS Genesis: {error}"))?;
+    if &payload.effective_scope != effective_scope
+        || payload.mls_group_id.as_str() != group_id.as_str()
+        || payload.governance_binding.previous_epoch() != 0
+        || payload.governance_binding.next_epoch() != 0
+    {
+        return Err("accepted MLS Genesis has inconsistent scope/group/epoch binding".to_owned());
+    }
+    let binding = arkret_sdk::MlsGroupGenesisBinding {
+        content_scheme: payload.governance_binding.content_scheme(),
+        durability_policy: payload.governance_binding.durability_policy(),
     };
     binding
         .validate()
-        .map_err(|error| format!("invalid MLS group genesis binding: {error}"))?;
-    Ok(binding)
+        .map_err(|error| format!("invalid MLS group Genesis binding: {error}"))?;
+    Ok(Some(binding))
 }
 
 pub(crate) async fn fetch_verify_and_cache_proof<S: GovernanceProofStateStore>(
@@ -342,7 +346,61 @@ async fn fetch_verify_and_cache_proof_internal<S: GovernanceProofStateStore>(
         Some(proposal) => arkret_sdk::MlsGroupGenesisBinding::from_proposal(proposal)
             .map_err(|error| format!("invalid proposed MLS Genesis binding: {error}"))?,
         None => {
-            state_store.with_read(|store| group_genesis_binding(store, &request.effective_scope))?
+            if let Some(binding) = group_genesis_binding(
+                &base_checkpoint,
+                &request.effective_scope,
+                &request.mls_group_id,
+            )? {
+                binding
+            } else {
+                // Genesis may first appear in this increment. Verify its full
+                // control cut before using any of its fields as security facts;
+                // the display feed may legitimately exclude pre-join Events.
+                let retained = base_checkpoint
+                    .accepted_seals
+                    .iter()
+                    .map(|seal| seal.id.clone())
+                    .collect::<BTreeSet<_>>();
+                let cut_seals = resolved
+                    .seals
+                    .iter()
+                    .filter(|seal| !retained.contains(&seal.id))
+                    .cloned()
+                    .collect::<Vec<_>>();
+                let cut_digests = cut_seals
+                    .iter()
+                    .flat_map(|seal| seal.delta.iter().cloned())
+                    .collect::<BTreeSet<_>>();
+                let cut_events = resolved
+                    .delta_events
+                    .iter()
+                    .filter(|event| cut_digests.contains(&event.event_id.event_digest()))
+                    .cloned()
+                    .collect::<Vec<_>>();
+                let verifier_store = state_store.clone();
+                let checkpoint = arkret_sdk::verify_mls_governance_cut(
+                    &base_checkpoint,
+                    &request.proof_target_basis,
+                    &cut_seals,
+                    &cut_events,
+                    &resolved.dependencies,
+                    move |event, suite, evidence, dependencies| {
+                        verify_agent_history_key(
+                            &verifier_store,
+                            event,
+                            suite,
+                            evidence,
+                            dependencies,
+                        )
+                    },
+                )
+                .await
+                .map_err(|error| format!("verify accepted MLS Genesis cut: {error}"))?;
+                group_genesis_binding(&checkpoint, &request.effective_scope, &request.mls_group_id)?
+                    .ok_or_else(|| {
+                        "verified MLS governance cut has no Genesis for this scope/group".to_owned()
+                    })?
+            }
         }
     };
     let verifier_store = state_store.clone();

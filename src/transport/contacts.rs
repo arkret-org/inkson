@@ -130,12 +130,15 @@ pub(crate) async fn submit_principal_successor_seal(
         principal_event.event_digest_with_digest_suite(arkret_sdk::DigestSuite::Sha256)?,
     )?;
     let outcome = http.events_submit_seal(&seal).await?;
-    if !outcome
-        .accepted_event_digests
-        .iter()
-        .any(|digest| digest == &principal_digest)
+    if outcome.seal_id != seal.id
+        || outcome.post_state_root != seal.state_root
+        || outcome.accepted_event_digests != seal.delta
+        || !outcome
+            .accepted_event_digests
+            .iter()
+            .any(|digest| digest == &principal_digest)
     {
-        anyhow::bail!("Station did not seal the accepted principal Event");
+        anyhow::bail!("Station returned a mismatched principal successor Seal outcome");
     }
     Ok(())
 }

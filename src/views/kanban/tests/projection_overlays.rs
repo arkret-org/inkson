@@ -568,6 +568,7 @@ fn remote_encrypted_strand_update_overlay_marks_private_fields_locked() {
     let remote_operations = strand_update_operations_from_events(&events);
     let store = LocalStateStore::default();
     let ctx = MlsDecryptCtx {
+        identity: None,
         state_store: &store,
         realm_id: TEST_REALM_ID,
     };

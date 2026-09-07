@@ -5,6 +5,7 @@
 //! `sync_engine` and the views; contains no RSX.
 
 mod decrypt;
+pub(crate) use decrypt::try_local_mls_decrypt_core_for_scope_from_verified_sender;
 mod model;
 pub(crate) mod notifications;
 mod sync;

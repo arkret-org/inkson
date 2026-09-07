@@ -3,7 +3,9 @@ pub mod auth;
 mod blob;
 pub mod circle;
 mod contacts;
-pub(crate) use contacts::DEFAULT_CONTACT_SCOPE_NAMES;
+pub(crate) use contacts::{
+    DEFAULT_CONTACT_SCOPE_NAMES, prepare_principal_successor_seal, submit_principal_successor_seal,
+};
 mod context;
 pub(crate) mod describe_cache;
 pub mod directory;

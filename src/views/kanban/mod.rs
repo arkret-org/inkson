@@ -993,6 +993,7 @@ pub fn KanbanPanel(
         let seed_realm_id = local_realm_id.clone();
         let decrypt_realm_id = selected_realm_id.clone();
         let decrypt_authority = authority.clone();
+        let decrypt_device = device_id.clone();
         let self_actor_id = principal_id.clone();
         let seed_columns = initial_columns.clone();
         move || {
@@ -1003,8 +1004,12 @@ pub fn KanbanPanel(
             let raw_operations = decrypt_store.load().raw_operations;
             let projected_containers = lifecycle_container_projection();
             let projected_strands = lifecycle_strand_projection();
-            let decrypt_ctx =
-                mls_decrypt_ctx_if_ready(&decrypt_store, &decrypt_realm_id, &decrypt_authority);
+            let decrypt_ctx = mls_decrypt_ctx_if_ready(
+                &decrypt_store,
+                &decrypt_realm_id,
+                &decrypt_authority,
+                &decrypt_device,
+            );
             if raw_operations.is_empty() && !seed_columns.is_empty() {
                 // Demo / seed-fallback columns: layer local optimistic ops on top.
                 let cols = overlay_local_card_create_records(
@@ -1056,6 +1061,7 @@ pub fn KanbanPanel(
         let memo_realm_id = selected_realm_id.clone();
         let memo_projection_realm_id = projection_realm_id.clone();
         let memo_authority = authority.clone();
+        let memo_device = device_id.clone();
         use_memo(move || {
             let want_synthesis = matches!(card_detail_tab(), CardDetailContentTab::Synthesis)
                 || (editing_card_detail() && card_edit_scope() == CardEditScope::Synthesis);
@@ -1079,7 +1085,8 @@ pub fn KanbanPanel(
                 realm_id: &realm_context,
                 member_rows: &member_rows,
             };
-            let decrypt_ctx = mls_decrypt_ctx_if_ready(&store, &memo_realm_id, &memo_authority);
+            let decrypt_ctx =
+                mls_decrypt_ctx_if_ready(&store, &memo_realm_id, &memo_authority, &memo_device);
             let _active_sidecar = hosted_sidecar_state().filter(|session| {
                 session.source_realm_id == memo_realm_id
                     && session.source_strand_id == card.primary_strand_id

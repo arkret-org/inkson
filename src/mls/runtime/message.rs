@@ -25,7 +25,7 @@ impl std::ops::Deref for PreparedMlsCommit {
     }
 }
 
-fn warn_mls_decrypt_once(
+pub(crate) fn warn_mls_decrypt_once(
     realm_id: &str,
     digest: &str,
     payload_epoch: u64,
@@ -203,28 +203,82 @@ pub(crate) fn encrypted_payload_from_verified_event_context(
     verified_sender_domain: &[u8],
     reaction_routing_window: Option<u64>,
 ) -> Option<arkret_sdk::EncryptedPayload> {
-    let scheme = match effective_scope {
-        arkret_sdk::ScopeRef::Circle {
-            realm_id,
-            circle_id,
-        } => state_store.circle_content_scheme(realm_id.as_str(), circle_id.as_str()),
-        arkret_sdk::ScopeRef::Sidecar { .. } => Some("mls_rfc9420".to_owned()),
-        _ => state_store.realm_content_scheme(effective_scope.realm_id_opt()?.as_str()),
-    }?;
-    let scheme = match scheme.trim() {
-        "mls_rfc9420" => arkret_sdk::EncryptedPayloadScheme::MlsRfc9420,
-        "mls_exporter_aead_v1" => arkret_sdk::EncryptedPayloadScheme::MlsExporterAeadV1,
-        _ => return None,
-    };
     let group_id = effective_scope.canonical_mls_group_id().ok()?;
+    let warn_pending = |reason: &str| {
+        warn_mls_decrypt_once(
+            effective_scope
+                .realm_id_opt()
+                .map(|id| id.as_str())
+                .unwrap_or_default(),
+            envelope
+                .payload_digest()
+                .map(|digest| digest.to_string())
+                .unwrap_or_default()
+                .as_str(),
+            envelope.encryption_context.epoch(),
+            state_store
+                .mls_checkpoint_for_scope(effective_scope)
+                .map(|snapshot| snapshot.epoch),
+            reason,
+        );
+    };
+    let verified_genesis = if !matches!(effective_scope, arkret_sdk::ScopeRef::Sidecar { .. }) {
+        state_store
+            .trusted_mls_governance_checkpoint(effective_scope.realm_id_opt()?.as_str())
+            .map(|checkpoint| {
+                crate::mls::governance_proof::group_genesis_binding(
+                    &checkpoint,
+                    effective_scope,
+                    &arkret_sdk::Base64UrlString::new(group_id.clone()).ok()?,
+                )
+                .map_err(|error| warn_pending(&error))
+                .ok()
+                .flatten()
+            })
+    } else {
+        None
+    };
+    let scheme = if let Some(binding) = verified_genesis {
+        // A since-join display projection may omit or replace its historical
+        // Genesis row. The verified control checkpoint remains authoritative.
+        let binding = binding.or_else(|| {
+            warn_pending(
+                "verified checkpoint has no exact MLS Genesis for the encrypted Event scope/group",
+            );
+            None
+        })?;
+        match binding.content_scheme {
+            arkret_sdk::ContentScheme::MlsRfc9420 => arkret_sdk::EncryptedPayloadScheme::MlsRfc9420,
+            arkret_sdk::ContentScheme::MlsExporterAeadV1 => {
+                arkret_sdk::EncryptedPayloadScheme::MlsExporterAeadV1
+            }
+        }
+    } else {
+        let scheme = match effective_scope {
+            arkret_sdk::ScopeRef::Circle {
+                realm_id,
+                circle_id,
+            } => state_store.circle_content_scheme(realm_id.as_str(), circle_id.as_str()),
+            arkret_sdk::ScopeRef::Sidecar { .. } => Some("mls_rfc9420".to_owned()),
+            _ => state_store.realm_content_scheme(effective_scope.realm_id_opt()?.as_str()),
+        }?;
+        let scheme = match scheme.trim() {
+            "mls_rfc9420" => arkret_sdk::EncryptedPayloadScheme::MlsRfc9420,
+            "mls_exporter_aead_v1" => arkret_sdk::EncryptedPayloadScheme::MlsExporterAeadV1,
+            _ => return None,
+        };
+        scheme
+    };
     let accepted_ref = state_store
         .mls_group_state_ref_for_scope(
             effective_scope,
             &group_id,
             envelope.encryption_context.epoch(),
         )
+        .map_err(|error| warn_pending(&error))
         .ok()?;
     if accepted_ref != *envelope.encryption_context.group_state_ref() {
+        warn_pending("encrypted Event cites a different accepted MLS group-state reference");
         return None;
     }
     let sender_domain = std::str::from_utf8(verified_sender_domain).ok()?;
@@ -236,8 +290,11 @@ pub(crate) fn encrypted_payload_from_verified_event_context(
             sender_domain,
             reaction_routing_window,
         )
+        .map_err(|error| warn_pending(&format!("reconstruct encrypted Event header: {error}")))
         .ok()?;
-    arkret_sdk::mls::encrypted_envelope_to_payload_with_verified_header(envelope, header).ok()
+    arkret_sdk::mls::encrypted_envelope_to_payload_with_verified_header(envelope, header)
+        .map_err(|error| warn_pending(&format!("reconstruct encrypted Event payload: {error}")))
+        .ok()
 }
 
 #[allow(clippy::too_many_arguments)]

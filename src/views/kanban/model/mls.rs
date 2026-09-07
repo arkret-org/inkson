@@ -8,6 +8,7 @@ use super::*;
 pub(crate) struct MlsDecryptCtx<'a> {
     pub(crate) state_store: &'a LocalStateStore,
     pub(crate) realm_id: &'a str,
+    pub(crate) identity: Option<(&'a arkret_sdk::AccountId, &'a str)>,
 }
 
 /// Build a render-time decrypt context only when entering the MLS runtime is
@@ -21,7 +22,8 @@ pub(crate) struct MlsDecryptCtx<'a> {
 pub(crate) fn mls_decrypt_ctx_if_ready<'a>(
     state_store: &'a LocalStateStore,
     realm_id: &'a str,
-    authority: &arkret_sdk::AccountId,
+    authority: &'a arkret_sdk::AccountId,
+    device_id: &'a str,
 ) -> Option<MlsDecryptCtx<'a>> {
     let snapshot_requires_account_secret = state_store.mls_checkpoint_for(realm_id).is_some();
     if snapshot_requires_account_secret {
@@ -40,7 +42,84 @@ pub(crate) fn mls_decrypt_ctx_if_ready<'a>(
     Some(MlsDecryptCtx {
         state_store,
         realm_id,
+        identity: Some((authority, device_id)),
     })
+}
+
+/// A remote patch must be decrypted using its original signed Event, never a
+/// projection's claimed sender or an unrelated author-side field cache.
+pub(crate) fn private_strand_event_field_text(
+    ctx: &MlsDecryptCtx<'_>,
+    event_value: &Value,
+    strand_id: &str,
+    field_path: &str,
+    value: &Value,
+) -> Option<String> {
+    let (authority, device_id) = ctx.identity?;
+    let device_id = arkret_sdk::DeviceId::new(device_id.to_owned()).ok()?;
+    let event: arkret_sdk::Event = serde_json::from_value(event_value.clone()).ok()?;
+    if event.kind != arkret_sdk::EventKind::StrandUpdate
+        || event.realm_id.as_str() != ctx.realm_id
+        || event.scope_ref.realm_id_opt() != Some(&event.realm_id)
+        || event.payload.get("target_ref")?.as_str()? != strand_id
+    {
+        return None;
+    }
+    let patch = event.payload.get("patch")?.as_object()?;
+    let signed_op = patch_op_for_private_path(patch, field_path)?;
+    let signed_op: arkret_wire::patch::PatchOp =
+        serde_json::from_value(signed_op.into_owned()).ok()?;
+    if signed_op.op() != arkret_wire::patch::PatchOpKind::Set || signed_op.value() != Some(value) {
+        return None;
+    }
+    let warn_pending = |reason: &str| {
+        crate::mls::runtime::warn_mls_decrypt_once(
+            ctx.realm_id,
+            event.event_id.event_digest().as_str(),
+            value
+                .pointer("/encryption_context/epoch")
+                .and_then(Value::as_u64)
+                .unwrap_or_default(),
+            ctx.state_store
+                .mls_checkpoint_for_scope(&event.scope_ref)
+                .map(|snapshot| snapshot.epoch),
+            reason,
+        )
+    };
+    let sender = crate::views::chat::verified_chat_sender_domain_for_realm(
+        ctx.realm_id,
+        event_value,
+        Some(ctx.state_store),
+        Some((authority, authority.principal_id.as_str(), &device_id)),
+    )
+    .or_else(|| {
+        let verdict = crate::views::chat::verify_chat_envelope_proof_for_realm(
+            ctx.realm_id,
+            event_value,
+            Some(ctx.state_store),
+            Some((authority, authority.principal_id.as_str(), &device_id)),
+        );
+        warn_pending(&format!("Strand sender proof is {verdict:?}"));
+        None
+    })?;
+    let plaintext =
+        crate::state::projection::try_local_mls_decrypt_core_for_scope_from_verified_sender(
+            ctx.state_store,
+            ctx.realm_id,
+            authority,
+            &device_id,
+            value,
+            &event.scope_ref,
+            event.kind.as_str(),
+            &sender,
+            None,
+        )
+        .or_else(|| {
+            warn_pending("Strand verified envelope or receive state is unavailable");
+            None
+        })?;
+    let plaintext: Value = serde_json::from_slice(&plaintext).ok()?;
+    Some(strand_body_display_text(Some(&plaintext)))
 }
 
 fn should_enter_mls_decrypt_runtime(

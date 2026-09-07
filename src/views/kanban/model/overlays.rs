@@ -383,6 +383,7 @@ pub(crate) fn local_card_update_from_raw_operation(
         decrypt_ctx: Option<&MlsDecryptCtx<'_>>,
         strand_id: &str,
         field_path: &str,
+        event: Option<&Value>,
     ) -> Option<PrivateFieldOverlay> {
         let op: arkret_wire::patch::PatchOp = serde_json::from_value(op.clone()).ok()?;
         match op.op() {
@@ -390,6 +391,24 @@ pub(crate) fn local_card_update_from_raw_operation(
             arkret_wire::patch::PatchOpKind::Set => {
                 let value = op.value()?;
                 if value_is_mls_envelope(value) {
+                    if let (Some(ctx), Some(event)) = (decrypt_ctx, event)
+                        && let Some((authority, _)) = ctx.identity
+                    {
+                        let actor = event.get("actor_id").cloned().and_then(|value| {
+                            serde_json::from_value::<arkret_sdk::ActorId>(value).ok()
+                        });
+                        if actor.as_ref().and_then(arkret_sdk::ActorId::as_account_id)
+                            != Some(authority)
+                        {
+                            return Some(
+                                private_strand_event_field_text(
+                                    ctx, event, strand_id, field_path, value,
+                                )
+                                .map(PrivateFieldOverlay::Set)
+                                .unwrap_or(PrivateFieldOverlay::Locked),
+                            );
+                        }
+                    }
                     let text =
                         private_strand_field_text(decrypt_ctx, strand_id, field_path, Some(value));
                     if !text.trim().is_empty() {
@@ -412,10 +431,11 @@ pub(crate) fn local_card_update_from_raw_operation(
         paths: &[&'static str],
         decrypt_ctx: Option<&MlsDecryptCtx<'_>>,
         strand_id: &str,
+        event: Option<&Value>,
     ) -> Option<PrivateFieldOverlay> {
         paths.iter().find_map(|path| {
             let op = patch_op_for_private_path(patch, path)?;
-            extract_private_set_unset(op.as_ref(), decrypt_ctx, strand_id, path)
+            extract_private_set_unset(op.as_ref(), decrypt_ctx, strand_id, path, event)
         })
     }
 
@@ -430,12 +450,14 @@ pub(crate) fn local_card_update_from_raw_operation(
         KANBAN_DESCRIPTION_PRIVATE_FIELD_PATHS,
         decrypt_ctx,
         &strand_id,
+        payload.get("event"),
     );
     let synthesis = extract_private_for_paths(
         patch,
         KANBAN_SYNTHESIS_PRIVATE_FIELD_PATHS,
         decrypt_ctx,
         &strand_id,
+        payload.get("event"),
     );
     fn extract_direct_field_patch(patch: &Map<String, Value>, field: &str) -> Option<Value> {
         let metadata_path = format!("metadata.fields.{field}");

@@ -532,12 +532,19 @@ pub(crate) struct MlsAdmissionReconcileOutcome {
 pub(super) fn cache_exact_accepted_realm_mls_genesis(
     store: &mut LocalStateStore,
     realm_id: &str,
-    accepted_events: &[arkret_sdk::Event],
 ) -> anyhow::Result<()> {
     let snapshot = store
         .mls_checkpoint_for(realm_id)
         .ok_or_else(|| anyhow::anyhow!("MLS admission requires a local Realm group snapshot"))?;
-    let matching = accepted_events
+    // Display history may start at the recipient's join. The pinned control
+    // checkpoint retains the verified Genesis needed for the installed group.
+    let checkpoint = store
+        .trusted_mls_governance_checkpoint(realm_id)
+        .ok_or_else(|| {
+            anyhow::anyhow!("MLS admission requires a verified governance checkpoint")
+        })?;
+    let matching = checkpoint
+        .accepted_events
         .iter()
         .filter(|event| {
             event.realm_id.as_str() == realm_id
@@ -602,7 +609,7 @@ pub(crate) async fn reconcile_mls_admissions_for_realm(
             &realm_id,
             &accepted_events,
         );
-        cache_exact_accepted_realm_mls_genesis(&mut store, &realm_id, &accepted_events)?;
+        cache_exact_accepted_realm_mls_genesis(&mut store, &realm_id)?;
     }
     // Only Realms this device can admit into: holding MLS state ⇒ able to build
     // the commit + Welcome. Without a snapshot we are not an admit-capable

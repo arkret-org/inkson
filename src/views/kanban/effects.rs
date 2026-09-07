@@ -9,6 +9,8 @@ struct KanbanProjectionSnapshot {
 async fn fetch_kanban_projection_snapshot(
     api: crate::transport::TransportClient,
     realm_id: &str,
+    did_cache: crate::runtime::input::ValueCell<arkret_sdk::identity::DidResolutionCache>,
+    state_store: crate::runtime::input::StateStoreHandle,
 ) -> anyhow::Result<KanbanProjectionSnapshot> {
     let http = api.sdk_http_client()?;
     // Read the current-object baseline first. The following backfill is at the
@@ -45,6 +47,22 @@ async fn fetch_kanban_projection_snapshot(
         .backfill(realm_id)
         .await?
         .complete_events("kanban current projection")?;
+    // A Realm backfill can carry senders absent from account sync. Populate
+    // their verified device authority before the synchronous decrypt/render
+    // path runs, using the same proof resolver as the discussion backfill.
+    if !state_store.read(|store| store.realm_projection_is_minimal_metadata(realm_id)) {
+        let values = events
+            .iter()
+            .map(serde_json::to_value)
+            .collect::<Result<Vec<_>, _>>()?;
+        crate::sync_engine::prefetch_persistent_event_sender_keys_from_values(
+            &api,
+            &values,
+            did_cache,
+            state_store,
+        )
+        .await;
+    }
     Ok(KanbanProjectionSnapshot {
         containers: spaces,
         strands,
@@ -69,6 +87,7 @@ pub(super) fn KanbanEffects(
     realm_live_epoch: Signal<u64>,
 ) -> Element {
     let mut state_store = crate::app::SessionContext::get().state_store;
+    let did_cache = use_context::<Signal<arkret_sdk::identity::DidResolutionCache>>();
     let navigator = use_navigator();
     // Board-create operation ids still pending as of the last reconciliation
     // pass. Remembered across passes so the receipt migration below can detect
@@ -367,7 +386,13 @@ pub(super) fn KanbanEffects(
             } else {
                 let realm_id = lifecycle_realm_id.clone();
                 match with_authed_api(&base, api_token.clone(), move |api| async move {
-                    fetch_kanban_projection_snapshot(api, &realm_id).await
+                    fetch_kanban_projection_snapshot(
+                        api,
+                        &realm_id,
+                        crate::app::runtime_adapter::value_cell(did_cache),
+                        crate::app::runtime_adapter::state_store_handle(state_store),
+                    )
+                    .await
                 })
                 .await
                 {
@@ -471,7 +496,13 @@ pub(super) fn KanbanEffects(
             let projection_res = {
                 let realm_id = lifecycle_realm_id.clone();
                 with_authed_api(&base, api_token, move |api| async move {
-                    fetch_kanban_projection_snapshot(api, &realm_id).await
+                    fetch_kanban_projection_snapshot(
+                        api,
+                        &realm_id,
+                        crate::app::runtime_adapter::value_cell(did_cache),
+                        crate::app::runtime_adapter::state_store_handle(state_store),
+                    )
+                    .await
                 })
                 .await
             };

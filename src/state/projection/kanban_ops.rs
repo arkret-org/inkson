@@ -230,7 +230,14 @@ fn kanban_operation_from_typed(event: &arkret_sdk::Event) -> Option<RawOperation
             .and_then(serde_json::Value::as_str)
             .map(ToOwned::to_owned),
     };
-    let payload = local_event.record_value(&metadata)?;
+    let mut payload = local_event.record_value(&metadata)?;
+    // Keep the signed envelope for authenticated decryption. Reduced patch
+    // values alone cannot establish the sender, scope or ciphertext binding.
+    if event.kind == arkret_sdk::EventKind::StrandUpdate {
+        payload
+            .as_object_mut()?
+            .insert("event".to_owned(), serde_json::to_value(event).ok()?);
+    }
     Some(RawOperationRecord {
         operation_id: operation_id.clone(),
         realm_id: Some(event.realm_id.as_str().to_owned()),
@@ -383,10 +390,12 @@ mod tests {
             arkret_sdk::EventId::new("ak:event:AfqXI4jyBJWA5HRhSr3SdFP5Qb_2V210Q00mFqUjA7_z")
                 .unwrap();
 
+        let original = serde_json::to_value(&event).unwrap();
         let records = kanban_operations_from_client_events(&[garth::ClientEvent::Event(event)]);
 
         assert_eq!(records.len(), 1);
         assert_eq!(records[0].payload["kind"], "ak.strand.update");
+        assert_eq!(records[0].payload["event"], original);
         assert_eq!(
             records[0].payload["body"]["target_ref"],
             "ak:strand:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1"

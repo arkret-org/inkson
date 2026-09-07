@@ -625,7 +625,7 @@ async fn publish_recovery_policy(
                     && attempt + 1 < FRONTIER_RETRY_ATTEMPTS =>
             {
                 if !successor_seal_submitted {
-                    submit_first_recovery_policy_seal(
+                    submit_recovery_policy_seal(
                         api,
                         &principal_core_id,
                         device_id,
@@ -643,7 +643,7 @@ async fn publish_recovery_policy(
     unreachable!("bounded recovery policy retry loop always returns")
 }
 
-async fn submit_first_recovery_policy_seal(
+async fn submit_recovery_policy_seal(
     api: &TransportClient,
     principal_id: &arkret_sdk::DidCoreId,
     device_id: &arkret_sdk::DeviceId,
@@ -660,50 +660,16 @@ async fn submit_first_recovery_policy_seal(
     {
         anyhow::bail!("accepted PCR genesis unit does not match the recovery-policy Event");
     }
-    let predecessor = api
-        .event_submitter()?
-        .seals_frontier_realm_head(policy_event.realm_id.as_str())
-        .await?;
-    let expected_digest = arkret_sdk::Hash::new(
-        policy_event.event_digest_with_digest_suite(arkret_sdk::DigestSuite::Sha256)?,
-    )?;
-    let availability = http
-        .seal_availability_receipts_issue(&arkret_sdk::SealAvailabilityReceiptIssueRequest {
-            realm_id: policy_event.realm_id.clone(),
-            predecessor_refs: vec![predecessor.id.clone()],
-            event_digests: vec![expected_digest.clone()],
-        })
-        .await?;
     let signer = crate::event_signer::active_signer()
         .ok_or_else(|| anyhow::anyhow!("device signer is unavailable"))?;
     if signer.device_id() != Some(device_id.as_str()) {
         anyhow::bail!("active device signer does not match the recovery-policy device");
     }
-    let hlc = crate::signing_stamp::issue_protocol_hlc(
-        principal_id.as_str(),
-        device_id.as_str(),
-        policy_event.realm_id.as_str(),
-    )?;
-    let seal = signer
-        .sign_self_principal_first_successor_seal(
-            create,
-            authorize,
-            policy_event,
-            &predecessor,
-            &availability,
-            hlc,
-        )
-        .map_err(|error| anyhow::anyhow!("sign recovery-policy successor Seal: {error}"))?;
-    let expected_id = seal.id.clone();
-    let expected_state_root = seal.state_root.clone();
-    let outcome = http.events_submit_seal(&seal).await?;
-    if outcome.seal_id != expected_id
-        || outcome.accepted_event_digests != vec![expected_digest]
-        || outcome.post_state_root != expected_state_root
-    {
-        anyhow::bail!("Station returned a mismatched recovery-policy Seal outcome");
-    }
-    Ok(())
+    // Other legitimate PCR operations, such as invite consent, can already
+    // precede the first recovery policy. Reproduce the actual accepted
+    // history instead of assuming this policy occupies actor_seq=2.
+    let context = crate::transport::prepare_principal_successor_seal(&http, policy_event).await?;
+    crate::transport::submit_principal_successor_seal(&http, context, policy_event).await
 }
 
 fn recovery_policy_frontier_pending(error: &anyhow::Error) -> bool {
