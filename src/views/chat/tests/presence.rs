@@ -173,15 +173,9 @@ fn presence_projection_refresh_key_changes_without_a_cursor_advance() {
     let online = vec![presence_body(&bob, "online", 0)];
     let mut offline = online.clone();
     offline[0]["state"] = json!("offline");
-    let key = presence_projection_refresh_key("realm", "cursor-7", &online);
-    assert_eq!(
-        key,
-        presence_projection_refresh_key("realm", "cursor-7", &online)
-    );
-    assert_ne!(
-        key,
-        presence_projection_refresh_key("realm", "cursor-7", &offline)
-    );
+    let key = presence_projection_refresh_key("realm", &online);
+    assert_eq!(key, presence_projection_refresh_key("realm", &online));
+    assert_ne!(key, presence_projection_refresh_key("realm", &offline));
 }
 
 #[test]

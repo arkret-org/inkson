@@ -179,6 +179,7 @@ fn CardMarkdownEditor(
 #[component]
 fn CardDetailEditActions(
     status: String,
+    #[props(default)] save_disabled: bool,
     on_save: EventHandler<()>,
     on_cancel: EventHandler<()>,
 ) -> Element {
@@ -197,6 +198,7 @@ fn CardDetailEditActions(
                 variant: ButtonVariant::Primary,
                 r#type: "button",
                 "data-testid": "card-detail-save-button",
+                disabled: save_disabled,
                 onclick: move |_| on_save.call(()),
                 {crate::i18n::tr("common.save")}
             }

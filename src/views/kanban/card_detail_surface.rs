@@ -26,6 +26,16 @@ struct SidecarTrackEditContext {
     source_strand_id: String,
 }
 
+fn canonicalized_edit_target(
+    previous: &str,
+    next: &str,
+    aliases: &BTreeMap<String, String>,
+) -> bool {
+    !previous.is_empty()
+        && previous != next
+        && resolve_event_derived_target_alias(aliases, previous) == next
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) struct SuspendedTrackEdit {
     pub(super) scope: CardEditScope,
@@ -271,6 +281,14 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
         };
         let previous = sidecar_edit_context_seen.peek().clone();
         if previous == next {
+            return;
+        }
+        // A pending card receiving its Event-derived Strand ID is the same
+        // editing target. Keep all drafts and the active editor across that
+        // identity reconciliation; only a different card suspends the edit.
+        let aliases = event_derived_target_aliases(&state_store.read().load().raw_operations);
+        if canonicalized_edit_target(&previous.source_strand_id, &next.source_strand_id, &aliases) {
+            sidecar_edit_context_seen.set(next);
             return;
         }
         if editing_card_detail() {
@@ -776,6 +794,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                             }
                                                         }
                                                         CardDetailEditActions {
+                                                                    save_disabled: arkret_sdk::StrandId::new(card.id.clone()).is_err(),
                                                             status: card_detail_edit_status(),
                                                             on_save: {
                                                                 let base = base_url.clone();
@@ -958,6 +977,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                     }
                                                                 }
                                                                 CardDetailEditActions {
+                                                                    save_disabled: arkret_sdk::StrandId::new(card.id.clone()).is_err(),
                                                                     status: card_detail_edit_status(),
                                                                     on_save: {
                                                                         let base = base_url.clone();
@@ -1330,6 +1350,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                                             }
                                                                                         }
                                                                                         CardDetailEditActions {
+                                                                    save_disabled: arkret_sdk::StrandId::new(card.id.clone()).is_err(),
                                                                                             status: card_detail_edit_status(),
                                                                                             on_save: {
                                                                                                 let base = base_url.clone();
@@ -1421,6 +1442,7 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                     }
                                                                 }
                                                                 CardDetailEditActions {
+                                                                    save_disabled: arkret_sdk::StrandId::new(card.id.clone()).is_err(),
                                                                     status: card_detail_edit_status(),
                                                                     on_save: {
                                                                         let base = base_url.clone();
@@ -2688,5 +2710,34 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                     }
                 }
             }
+    }
+}
+
+#[cfg(test)]
+mod edit_identity_tests {
+    use super::*;
+
+    #[test]
+    fn card_identity_reconciliation_preserves_the_draft_only_for_its_resolved_target() {
+        let aliases = BTreeMap::from([
+            ("pending-card".to_owned(), "submitted-card".to_owned()),
+            ("submitted-card".to_owned(), "accepted-strand".to_owned()),
+        ]);
+        assert!(canonicalized_edit_target(
+            "pending-card",
+            "accepted-strand",
+            &aliases
+        ));
+        assert!(!canonicalized_edit_target(
+            "pending-card",
+            "other-strand",
+            &aliases
+        ));
+        assert!(!canonicalized_edit_target("", "accepted-strand", &aliases));
+        assert!(!canonicalized_edit_target(
+            "unknown-card",
+            "accepted-strand",
+            &aliases
+        ));
     }
 }

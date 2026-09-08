@@ -468,84 +468,89 @@ pub(super) fn ChatEffects(
         let presence_labels_for_sync = presence_labels;
         let presence_status_messages_for_sync = presence_status_messages;
         let self_label_for_sync = account_display_label.clone();
-        use_effect(move || {
-            if token().trim().is_empty()
-                || realm.trim().is_empty()
-                || strand.trim().is_empty()
-                || !has_remote_presence
-            {
-                return;
-            }
-            let cursor = sync_cursor();
-            if cursor.trim().is_empty() {
-                return;
-            }
-            // `presence_projection` is written through the reactive state-store
-            // handle. The account cursor can already have been published by a
-            // concurrent sync path, though, so cursor alone cannot invalidate a
-            // previously rendered offline fallback. Read the projection before
-            // the dedup guard and include its content in the refresh key.
-            let snapshot = state_store.read().load();
-            let next_sync_key = presence_projection_refresh_key(
-                &presence_sync_key,
-                &cursor,
-                &snapshot.presence_projection,
-            );
-            if presence_sync_key_seen.peek().as_str() == next_sync_key {
-                return;
-            }
-            presence_sync_key_seen.set(next_sync_key);
-
-            let active_typing =
-                typing_actor_snapshot_from_signals(&snapshot.presence_projection, &strand, &actor);
-            if typing_actors_for_sync.peek().as_slice() != active_typing.actors.as_slice()
-                || *typing_next_expires_at_ms_for_sync.peek() != active_typing.next_expires_at_ms
-            {
-                event_sink.emit(ChatProjectionEvent::Typing {
-                    actors: active_typing.actors.clone(),
-                    expires_at_ms: active_typing.next_expires_at_ms,
-                });
-            }
-
-            let (next_presence, next_labels, next_status_messages) =
-                presence_maps_from_sync_events(
+        use_effect(use_reactive!(
+            |realm,
+             actor,
+             strand,
+             participants_for_sync,
+             self_label_for_sync,
+             has_remote_presence,
+             presence_sync_key| {
+                if token().trim().is_empty()
+                    || realm.trim().is_empty()
+                    || strand.trim().is_empty()
+                    || !has_remote_presence
+                {
+                    return;
+                }
+                // Signal is a cursorless rail. Its admitted live projection and
+                // the visible roster drive this effect independently of account
+                // sync progress, including a roster that arrives after mount.
+                let snapshot = state_store.read().load();
+                let next_sync_key = presence_projection_refresh_key(
+                    &presence_sync_key,
                     &snapshot.presence_projection,
-                    &participants_for_sync,
+                );
+                if presence_sync_key_seen.peek().as_str() == next_sync_key {
+                    return;
+                }
+                presence_sync_key_seen.set(next_sync_key);
+
+                let active_typing = typing_actor_snapshot_from_signals(
+                    &snapshot.presence_projection,
+                    &strand,
                     &actor,
-                    &self_label_for_sync,
-                )
-                .unwrap_or_else(|| {
-                    let mut next_presence = std::collections::BTreeMap::<String, String>::new();
-                    let mut next_labels = std::collections::BTreeMap::<String, String>::new();
-                    for did in &participants_for_sync {
-                        if did == &actor {
-                            next_presence.insert(did.clone(), "online".to_owned());
-                            if let Some(label) =
-                                clean_participant_display_name(&self_label_for_sync, Some(did))
-                            {
-                                next_labels.insert(did.clone(), label);
-                            }
-                        } else {
-                            next_presence.insert(did.clone(), "offline".to_owned());
-                        }
-                    }
-                    (
-                        next_presence,
-                        next_labels,
-                        std::collections::BTreeMap::new(),
+                );
+                if typing_actors_for_sync.peek().as_slice() != active_typing.actors.as_slice()
+                    || *typing_next_expires_at_ms_for_sync.peek()
+                        != active_typing.next_expires_at_ms
+                {
+                    event_sink.emit(ChatProjectionEvent::Typing {
+                        actors: active_typing.actors.clone(),
+                        expires_at_ms: active_typing.next_expires_at_ms,
+                    });
+                }
+
+                let (next_presence, next_labels, next_status_messages) =
+                    presence_maps_from_sync_events(
+                        &snapshot.presence_projection,
+                        &participants_for_sync,
+                        &actor,
+                        &self_label_for_sync,
                     )
-                });
-            if *presence_states_for_sync.peek() != next_presence
-                || *presence_labels_for_sync.peek() != next_labels
-                || *presence_status_messages_for_sync.peek() != next_status_messages
-            {
-                event_sink.emit(ChatProjectionEvent::Presence {
-                    states: next_presence,
-                    labels: next_labels,
-                    status_messages: next_status_messages,
-                });
+                    .unwrap_or_else(|| {
+                        let mut next_presence = std::collections::BTreeMap::<String, String>::new();
+                        let mut next_labels = std::collections::BTreeMap::<String, String>::new();
+                        for did in &participants_for_sync {
+                            if did == &actor {
+                                next_presence.insert(did.clone(), "online".to_owned());
+                                if let Some(label) =
+                                    clean_participant_display_name(&self_label_for_sync, Some(did))
+                                {
+                                    next_labels.insert(did.clone(), label);
+                                }
+                            } else {
+                                next_presence.insert(did.clone(), "offline".to_owned());
+                            }
+                        }
+                        (
+                            next_presence,
+                            next_labels,
+                            std::collections::BTreeMap::new(),
+                        )
+                    });
+                if *presence_states_for_sync.peek() != next_presence
+                    || *presence_labels_for_sync.peek() != next_labels
+                    || *presence_status_messages_for_sync.peek() != next_status_messages
+                {
+                    event_sink.emit(ChatProjectionEvent::Presence {
+                        states: next_presence,
+                        labels: next_labels,
+                        status_messages: next_status_messages,
+                    });
+                }
             }
-        });
+        ));
     }
     let authority_for_initial_sync = authority.clone();
     use_effect(move || {
