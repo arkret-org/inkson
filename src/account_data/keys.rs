@@ -152,7 +152,7 @@ pub fn private_view_account_data_key(view_id: &str) -> anyhow::Result<String> {
 }
 
 pub fn notification_inbox_account_data_key(notification_id: &str) -> anyhow::Result<String> {
-    let notification_id = arkret_sdk::NotificationId::new(notification_id.to_owned())
+    let notification_id = arkret_sdk::NotificationIdentity::new(notification_id.to_owned())
         .map_err(|error| anyhow::anyhow!(error.to_string()))?;
     Ok(arkret_sdk::notification_inbox_account_data_key(
         &notification_id,

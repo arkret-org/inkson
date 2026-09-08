@@ -294,26 +294,22 @@ fn hydrate_pending_invite_uses_typed_local_membership() {
 
 #[test]
 fn hydrate_notifications_uses_local_read_overlay_over_projection() {
+    let notification = event(
+        1,
+        arkret_sdk::NotificationKind::Mention,
+        "ak:realm:AVFSR4O2uTcP6zGsyewp0OdaGeDZBXQAUZ9VIEKLSXYo",
+        None,
+        json!({"body": "hello"}),
+    );
     let mut local_state = ClientLocalState::default();
     local_state.notification_client_state.insert(
-        "ak:notification:0196419b-0000-7000-8000-000000000001".to_owned(),
+        notification.notification_id().to_owned(),
         NotificationClientState {
             read: true,
             archived: false,
         },
     );
-    let notifications = hydrate_notifications(
-        vec![event(
-            1,
-            arkret_sdk::NotificationKind::Mention,
-            "ak:realm:AVFSR4O2uTcP6zGsyewp0OdaGeDZBXQAUZ9VIEKLSXYo",
-            None,
-            json!({"body": "hello"}),
-        )],
-        &local_state,
-        None,
-        None,
-    );
+    let notifications = hydrate_notifications(vec![notification], &local_state, None, None);
 
     assert_eq!(notifications.len(), 1);
     assert!(notifications[0].read);

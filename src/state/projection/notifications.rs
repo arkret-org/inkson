@@ -288,10 +288,17 @@ pub(crate) fn test_event_notification(
     });
     StoredNotification::Event {
         notification: Notification {
-            id: arkret_sdk::NotificationId::new(format!(
-                "ak:notification:0196419b-0000-7000-8000-{ordinal:012x}"
-            ))
-            .expect("valid test notification id"),
+            id: arkret_sdk::derive_notification_projection_id(
+                crate::mls_api_helpers::local_account_actor_id("did:web:alice.example")
+                    .expect("valid test actor")
+                    .as_account_id()
+                    .expect("account"),
+                &arkret_sdk::RealmId::new(realm_id.to_owned()).expect("Realm"),
+                &arkret_sdk::EventId::new(source_event_id.clone()).expect("Event"),
+                &kind,
+            )
+            .expect("valid test notification id")
+            .into(),
             schema: arkret_sdk::NotificationSchema::V1,
             actor_id: crate::mls_api_helpers::local_account_actor_id("did:web:alice.example")
                 .expect("valid test actor"),

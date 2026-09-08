@@ -19,7 +19,7 @@ pub fn notification_inbox_value(
     origin_device_id: &str,
 ) -> anyhow::Result<NotificationInboxValue> {
     let value = NotificationInboxValue {
-        notification_id: arkret_sdk::NotificationId::new(notification_id.to_owned())
+        notification_id: arkret_sdk::NotificationIdentity::new(notification_id.to_owned())
             .map_err(|error| anyhow::anyhow!(error.to_string()))?,
         state,
         updated_hlc: arkret_sdk::Hlc::new(updated_hlc.to_owned())
