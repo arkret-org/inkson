@@ -67,7 +67,6 @@ pub(super) fn NewSpaceSection(
     mut new_space_summary: Signal<String>,
     mut new_space_kind: Signal<String>,
     mut new_space_parent_id: Signal<String>,
-    mut new_space_default_realm_id: Signal<String>,
     mut new_space_context_seen: Signal<String>,
     mut new_space_state: Signal<String>,
     mut new_space_created_id: Signal<String>,
@@ -90,7 +89,6 @@ pub(super) fn NewSpaceSection(
 
     let new_space_kind_selected = use_memo(move || Some(new_space_kind()));
     let new_space_parent_id_selected = use_memo(move || Some(new_space_parent_id()));
-    let new_space_default_realm_id_selected = use_memo(move || Some(new_space_default_realm_id()));
 
     // M-UX-CONTEXT-1: the sidebar's per-row "+" action sets
     // `new_space_context_node` to the clicked Realm / Space and routes
@@ -181,7 +179,6 @@ pub(super) fn NewSpaceSection(
     let new_space_summary_value = new_space_summary();
     let new_space_kind_value = new_space_kind();
     let _new_space_parent_id_value = new_space_parent_id();
-    let _new_space_default_realm_id_value = new_space_default_realm_id();
     let new_space_state_value = new_space_state();
     let new_space_created_id_value = new_space_created_id();
     let new_space_created_id_label = short_protocol_id(&new_space_created_id_value);
@@ -300,9 +297,7 @@ pub(super) fn NewSpaceSection(
                         }
                         // Spec realm-and-space.md §3.2 — optional
                         // parent. Picker is filtered by realm_id
-                        // (Realms aren't valid parents per §2.1;
-                        // cross-Realm parents are valid but live
-                        // under `default_realm_id`).
+                        // (Realms are not valid parents per §2.1).
                         div { class: "setup-field setup-field-span-2",
                             label { {tr("setup.space.field.parent")} }
                             if new_space_realm_id_value.trim().is_empty() {
@@ -342,56 +337,6 @@ pub(super) fn NewSpaceSection(
                         }
                     }
 
-                    // Spec realm-and-space.md §3.2 — `default_realm_id`
-                    // points new resources created from this Space at
-                    // a different Realm. Most users leave this empty
-                    // (= inherit home Realm). Folded as advanced.
-                    details { class: "setup-advanced",
-                        "data-testid": "new-space-advanced",
-                        summary { class: "setup-advanced-summary",
-                            {tr("setup.space.advanced_summary")}
-                        }
-                        div { class: "workflow-form setup-form-grid",
-                            div { class: "setup-field setup-field-span-2",
-                                label { {tr("setup.space.default_realm.label")} }
-                                if available_realms.is_empty() {
-                                    div { class: "muted", {tr("setup.space.default_realm.empty")} }
-                                } else {
-                                    Select::<String> {
-                                        "data-testid": "new-space-default-realm-ref-input",
-                                        value: Some(new_space_default_realm_id_selected.into()),
-                                        on_value_change: move |v: Option<String>| {
-                                            if let Some(v) = v {
-                                                new_space_default_realm_id.set(v);
-                                            }
-                                        },
-                                        SelectOption::<String> {
-                                            index: 0usize,
-                                            value: "".to_string(),
-                                            text_value: tr("setup.space.default_realm.inherit"),
-                                            {tr("setup.space.default_realm.inherit")}
-                                        }
-                                        for (i, (id, title)) in available_realms.iter().enumerate() {
-                                            {
-                                                let id_label = short_protocol_id(id);
-                                                rsx! {
-                                                    SelectOption::<String> {
-                                                        index: i + 1,
-                                                        value: id.to_string(),
-                                                        text_value: "{title} ({id_label})",
-                                                        "{title} ({id_label})"
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                                div { class: "muted",
-                                    {tr("setup.space.default_realm.hint")}
-                                }
-                            }
-                        }
-                    }
                     div { class: "actions setup-nav-actions",
                         Button {
                             variant: ButtonVariant::Primary,
@@ -409,7 +354,6 @@ pub(super) fn NewSpaceSection(
                                 let summary = new_space_summary();
                                 let kind = new_space_kind();
                                 let parent_id = new_space_parent_id();
-                                let default_realm_id = new_space_default_realm_id();
                                         let actor = principal_id_for_create.clone();
                                 new_space_state.set(tr("setup.space.state.submitting_create"));
                                 spawn(async move {
@@ -425,11 +369,6 @@ pub(super) fn NewSpaceSection(
                                             } else {
                                                 Some(parent_id.as_str())
                                             };
-                                            let default_realm_opt = if default_realm_id.trim().is_empty() {
-                                                None
-                                            } else {
-                                                Some(default_realm_id.as_str())
-                                            };
                                             match crate::transport::realm_write::create_space_under_realm(
                                                 &submitter,
                                                 &realm_id,
@@ -438,7 +377,6 @@ pub(super) fn NewSpaceSection(
                                                 summary_opt,
                                                 &kind,
                                                 parent_opt,
-                                                default_realm_opt,
                                             ).await {
                                                 Ok(space) => {
                                                     // Persist a tagged Space projection so
@@ -457,7 +395,6 @@ pub(super) fn NewSpaceSection(
                                                                 title: title.clone(),
                                                                 summary: summary.clone(),
                                                                 parent_space_id: parent_opt.map(str::to_owned),
-                                                                default_realm_id: default_realm_opt.map(str::to_owned),
                                                             },
                                                         )
                                                         .into_value();

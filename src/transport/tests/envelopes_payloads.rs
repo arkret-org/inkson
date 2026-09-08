@@ -497,7 +497,6 @@ fn space_create_payload_matches_spec_schema() {
         Some("Q3 planning"),
         "board",
         None,
-        None,
     )
     .unwrap();
     // `object.created_at` is the same producer-signed timestamp the envelope

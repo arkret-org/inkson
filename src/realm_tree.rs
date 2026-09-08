@@ -63,7 +63,6 @@ pub(crate) struct SpaceProjectionInput {
     pub title: String,
     pub summary: String,
     pub parent_space_id: Option<String>,
-    pub default_realm_id: Option<String>,
 }
 
 /// Optimistic local Realm/Space projection body written to the sidebar
@@ -160,13 +159,11 @@ impl OptimisticRealmTreeProjection {
             title,
             summary,
             parent_space_id,
-            default_realm_id,
         } = input;
         Self::Space(Box::new(SpaceProjectionBody {
             realm_id,
             space_kind: kind.clone(),
             parent_space_id,
-            default_realm_id,
             summary: SpaceProjectionSummary {
                 title,
                 summary,
@@ -232,8 +229,6 @@ pub(crate) struct SpaceProjectionBody {
     space_kind: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     parent_space_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    default_realm_id: Option<String>,
     summary: SpaceProjectionSummary,
     #[serde(rename = "timeline")]
     event_feed: ProjectionEventFeed,
@@ -1403,9 +1398,6 @@ mod tests {
             title: "Specs".to_owned(),
             summary: "Spec work".to_owned(),
             parent_space_id: Some("ak:space:parent".to_owned()),
-            default_realm_id: Some(
-                "ak:realm:A-acoX0-9_g-lyPSEFQ3Dcqq43BtmQvHsFu10frgX6Zc".to_owned(),
-            ),
         })
         .into_value();
 
@@ -1416,10 +1408,7 @@ mod tests {
         );
         assert_eq!(body["kind"], "collection");
         assert_eq!(body["parent_space_id"], "ak:space:parent");
-        assert_eq!(
-            body["default_realm_id"],
-            "ak:realm:A-acoX0-9_g-lyPSEFQ3Dcqq43BtmQvHsFu10frgX6Zc"
-        );
+        assert!(body.get("default_realm_id").is_none());
         assert_eq!(body["summary"]["kind"], "collection");
         assert_eq!(body["timeline"]["events"], json!([]));
     }

@@ -862,7 +862,6 @@ pub fn build_space_create_event(
     summary: Option<&str>,
     kind: &str,
     parent_space_id: Option<&str>,
-    default_realm_id: Option<&str>,
 ) -> anyhow::Result<crate::operation::LocalOperation> {
     let created_at = event_timestamp();
     // Build the canonical Space object via the SDK strong type so that
@@ -892,14 +891,6 @@ pub fn build_space_create_event(
         space_object.parent_space_id = Some(
             arkret_sdk::SpaceId::new(parent.trim().to_owned())
                 .map_err(|e| anyhow::anyhow!("invalid parent_space_id: {e:?}"))?,
-        );
-    }
-    if let Some(default_realm) = default_realm_id
-        && !default_realm.trim().is_empty()
-    {
-        space_object.default_realm_id = Some(
-            arkret_sdk::RealmId::new(trim_realm_id(default_realm.trim()))
-                .map_err(|e| anyhow::anyhow!("invalid default_realm_id: {e:?}"))?,
         );
     }
     // Preserve the envelope timestamp on the wire object (SDK defaults

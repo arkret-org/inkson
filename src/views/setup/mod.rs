@@ -75,7 +75,6 @@ pub fn SetupPanel(
     let new_space_summary = use_signal(String::new);
     let new_space_kind = use_signal(|| "space".to_owned());
     let new_space_parent_id = use_signal(String::new);
-    let new_space_default_realm_id = use_signal(String::new);
     let new_space_context_seen = use_signal(String::new);
     let new_space_state = use_signal(|| tr("setup.state.draft"));
     let new_space_created_id = use_signal(String::new);
@@ -123,7 +122,6 @@ pub fn SetupPanel(
                     new_space_summary,
                     new_space_kind,
                     new_space_parent_id,
-                    new_space_default_realm_id,
                     new_space_context_seen,
                     new_space_state,
                     new_space_created_id,

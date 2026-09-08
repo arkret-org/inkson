@@ -2795,15 +2795,10 @@ fn setup_policy_hint_strings(dict: &mut TranslationDict) {
 fn setup_space_strings(dict: &mut TranslationDict) {
     dict.set("setup.space.new_space", "New Space");
     dict.set("setup.space.parent.root", "(root — no parent)");
-    dict.set("setup.space.default_realm.label", "default_realm_id");
-    dict.set(
-        "setup.space.default_realm.inherit",
-        "(inherit — use home Realm)",
-    );
     dict.set("setup.space.not_created", "not created yet");
     dict.set(
         "setup.space.wire_shape.body",
-        "ak.space.create event + optional parent_space_id / default_realm_id. Lifecycle actions below dispatch ak.space.archive / restore / tombstone.",
+        "ak.space.create event + optional parent_space_id. Lifecycle actions below dispatch ak.space.archive / restore / tombstone.",
     );
     dict.set(
         "setup.space.lifecycle.hint",
@@ -2851,14 +2846,6 @@ fn setup_space_strings(dict: &mut TranslationDict) {
     dict.set(
         "setup.space.advanced_summary",
         "Advanced (cross-Realm default for new resources)",
-    );
-    dict.set(
-        "setup.space.default_realm.empty",
-        "Need at least one Realm to point at.",
-    );
-    dict.set(
-        "setup.space.default_realm.hint",
-        "New Strands / Morphs / Views created from this Space land in this Realm by default. Doesn't grant access — the user still needs membership.",
     );
     dict.set("setup.space.action.create", "Create Space");
     dict.set("setup.space.outcome", "Outcome");

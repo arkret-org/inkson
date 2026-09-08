@@ -490,7 +490,6 @@ fn build_space_create_event_matches_event_schema() {
         Some("Quarterly launch tracking"),
         "list",
         None,
-        None,
     )
     .expect("build_space_create_event succeeds");
     let envelope = wire_envelope(envelope);

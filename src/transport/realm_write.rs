@@ -142,7 +142,6 @@ pub async fn create_space_under_realm(
     summary: Option<&str>,
     kind: &str,
     parent_space_id: Option<&str>,
-    default_realm_id: Option<&str>,
 ) -> anyhow::Result<SpaceCreateResult> {
     let actor_id = actor_id.trim();
     if actor_id.is_empty() {
@@ -158,15 +157,8 @@ pub async fn create_space_under_realm(
             "realm_id is required for ak.space.create — Space must live inside a Realm"
         ));
     }
-    let event = build_space_create_event(
-        realm_id,
-        actor_id,
-        title,
-        summary,
-        kind,
-        parent_space_id,
-        default_realm_id,
-    )?;
+    let event =
+        build_space_create_event(realm_id, actor_id, title, summary, kind, parent_space_id)?;
     // The Space is named by its create Event, so its id exists only once that
     // Event has been authored and accepted. Reading it from the receipt is the
     // difference between naming the Space that was created and naming one that

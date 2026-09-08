@@ -2321,15 +2321,10 @@ fn setup_policy_hint_strings(dict: &mut TranslationDict) {
 fn setup_space_strings(dict: &mut TranslationDict) {
     dict.set("setup.space.new_space", "新建空间");
     dict.set("setup.space.parent.root", "（根层级——无父级）");
-    dict.set("setup.space.default_realm.label", "default_realm_id");
-    dict.set(
-        "setup.space.default_realm.inherit",
-        "（继承——使用所属 Realm）",
-    );
     dict.set("setup.space.not_created", "尚未创建");
     dict.set(
         "setup.space.wire_shape.body",
-        "ak.space.create 事件 + 可选的 parent_space_id / default_realm_id。下方的生命周期操作会派发 ak.space.archive / restore / tombstone。",
+        "ak.space.create 事件 + 可选的 parent_space_id。下方的生命周期操作会派发 ak.space.archive / restore / tombstone。",
     );
     dict.set("setup.space.lifecycle.hint", "归档 / 恢复 / 墓碑标记");
     dict.set(
@@ -2362,14 +2357,6 @@ fn setup_space_strings(dict: &mut TranslationDict) {
     dict.set(
         "setup.space.advanced_summary",
         "高级（新资源的跨 Realm 默认值）",
-    );
-    dict.set(
-        "setup.space.default_realm.empty",
-        "至少需要一个可指向的 Realm。",
-    );
-    dict.set(
-        "setup.space.default_realm.hint",
-        "从这个空间创建的流程 / 变换 / 视图默认落在该 Realm。这不授予访问权限——用户仍需要成员资格。",
     );
     dict.set("setup.space.action.create", "创建空间");
     dict.set("setup.space.outcome", "结果");
