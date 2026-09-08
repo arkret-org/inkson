@@ -5,7 +5,6 @@ use std::time::Duration;
 use anyhow::{Context as _, anyhow};
 use arkret_sdk::EventPayloadExt as _;
 use chrono::{DateTime, Timelike as _, Utc};
-use dioxus::prelude::WritableExt as _;
 use url::Url;
 
 use crate::state::{
@@ -361,7 +360,7 @@ pub async fn complete_account_handoff_binding(
     checkpoint: &PendingPrincipalRegistration,
     recovery_key: &str,
     dpop: &crate::identity::account_auth::grant_dpop::DpopHandle,
-    mut state_store: dioxus::prelude::SyncSignal<crate::state::LocalStateStore>,
+    state_store: &crate::runtime::input::StateStoreHandle,
     mut on_challenge_rate_limit: impl FnMut(Duration),
 ) -> anyhow::Result<IdentityBindingCompletion> {
     let expected_account_subject = handoff
@@ -580,11 +579,10 @@ pub async fn complete_account_handoff_binding(
         let mut durable = register_request_prepared_checkpoint(checkpoint)?;
         durable.binding_receipt = Some(binding_receipt.clone());
         durable.pcr_genesis_receipt = Some(pcr_genesis_receipt.clone());
-        let barrier = {
-            let mut store = state_store.write();
+        let barrier = state_store.write(|store| {
             store.set_pending_principal_registration(Some(durable))?;
-            store.begin_durable_flush()?
-        };
+            store.begin_durable_flush()
+        })?;
         barrier.wait().await?;
     }
 
@@ -632,14 +630,13 @@ fn register_request_prepared_checkpoint(
 
 async fn persist_register_request_prepared_checkpoint(
     checkpoint: &PendingPrincipalRegistration,
-    mut state_store: dioxus::prelude::SyncSignal<crate::state::LocalStateStore>,
+    state_store: &crate::runtime::input::StateStoreHandle,
 ) -> anyhow::Result<()> {
     let prepared = register_request_prepared_checkpoint(checkpoint)?;
-    let barrier = {
-        let mut store = state_store.write();
+    let barrier = state_store.write(|store| {
         store.set_pending_principal_registration(Some(prepared))?;
-        store.begin_durable_flush()?
-    };
+        store.begin_durable_flush()
+    })?;
     barrier.wait().await
 }
 

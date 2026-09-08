@@ -79,7 +79,11 @@ pub fn OnboardingPanel(
             return;
         }
         spawn(async move {
-            match crate::identity::account_auth::refresh_pending_onboarding(state_store).await {
+            match crate::identity::account_auth::refresh_pending_onboarding(
+                &crate::app::runtime_adapter::state_store_handle(state_store),
+            )
+            .await
+            {
                 Ok(()) => server_reconciliation.set(ServerReconciliationStatus::Ready),
                 Err(error) => {
                     tracing::warn!(

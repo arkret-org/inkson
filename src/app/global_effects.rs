@@ -154,14 +154,13 @@ pub(super) fn GlobalEffects(
                 };
                 let base = account.server_url.to_string();
                 let authority = account.authority;
+                let store = super::runtime_adapter::state_store_handle(state_store);
                 let tick_result = crate::transport::auth::with_event_submitter(
                     &base,
                     session,
                     |submitter| async move {
                         crate::scheduled_send::dispatch_due_scheduled_sends(
-                            &submitter,
-                            &authority,
-                            state_store,
+                            &submitter, &authority, &store,
                         )
                         .await
                     },

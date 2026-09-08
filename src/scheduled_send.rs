@@ -14,7 +14,6 @@
 use std::collections::BTreeMap;
 
 use chrono::{DateTime, Utc};
-use dioxus::prelude::{ReadableExt, SyncSignal, WritableExt};
 use serde_json::Value;
 
 use crate::event_submit::EventSubmitter;
@@ -211,14 +210,12 @@ fn realm_id_for_strand_from_projections(
 /// principal-private state, so retirement is the account-data delete.
 async fn retire_scheduled_send_plan(
     submitter: &EventSubmitter,
-    mut state_store: SyncSignal<LocalStateStore>,
+    state_store: &crate::runtime::input::StateStoreHandle,
     account_data_key: &str,
     scheduled_send_id: &str,
 ) -> anyhow::Result<()> {
     crate::transport::account::cancel_scheduled_send_plan(submitter, scheduled_send_id).await?;
-    state_store
-        .write()
-        .remove_scheduled_send_account_data_entry(account_data_key);
+    state_store.write(|store| store.remove_scheduled_send_account_data_entry(account_data_key));
     Ok(())
 }
 
@@ -228,7 +225,7 @@ async fn retire_scheduled_send_plan(
 pub(crate) async fn dispatch_due_scheduled_sends(
     submitter: &EventSubmitter,
     authority: &arkret_sdk::AccountId,
-    state_store: SyncSignal<LocalStateStore>,
+    state_store: &crate::runtime::input::StateStoreHandle,
 ) -> anyhow::Result<usize> {
     if submitter.authority()? != authority {
         anyhow::bail!(
@@ -250,7 +247,8 @@ pub(crate) async fn dispatch_due_scheduled_sends(
             "scheduled-send dispatch: durable outbound drain deferred"
         );
     }
-    let due = due_scheduled_send_plans(authority, &state_store.read(), crate::clock::now_utc());
+    let due = state_store
+        .read(|store| due_scheduled_send_plans(authority, store, crate::clock::now_utc()));
     if due.is_empty() {
         return Ok(0);
     }
@@ -275,7 +273,7 @@ async fn dispatch_due_plan(
     submitter: &EventSubmitter,
     authority: &arkret_sdk::AccountId,
     actor_id: &str,
-    state_store: SyncSignal<LocalStateStore>,
+    state_store: &crate::runtime::input::StateStoreHandle,
     plan: &DueScheduledSendPlan,
 ) -> anyhow::Result<bool> {
     let scheduled_send_id = plan.value.scheduled_send_id.clone();
@@ -307,7 +305,7 @@ async fn dispatch_due_plan(
         return Ok(false);
     }
 
-    let state = state_store.read().load();
+    let state = state_store.read(|store| store.load());
     let Some(realm_id) = scheduled_send_target_realm(&state, &plan.value) else {
         tracing::warn!(
             scheduled_send_id = %scheduled_send_id,

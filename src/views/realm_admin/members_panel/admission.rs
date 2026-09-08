@@ -292,7 +292,7 @@ pub(crate) async fn submit_mls_admission_for_invitee(
             mls_actor_id,
             device_id.clone(),
             admission.snapshot,
-            state_store,
+            &crate::app::runtime_adapter::state_store_handle(state_store),
         )
         .await?;
     tracing::debug!(

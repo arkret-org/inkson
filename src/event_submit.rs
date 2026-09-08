@@ -2526,7 +2526,7 @@ impl EventSubmitter {
         actor_id: String,
         device_id: String,
         snapshot: crate::mls::persistence::MlsLocalCheckpointEnvelope,
-        state_store: dioxus::prelude::SyncSignal<crate::state::LocalStateStore>,
+        state_store: &crate::runtime::input::StateStoreHandle,
     ) -> anyhow::Result<SubmitEventResult> {
         if welcomes.is_empty() {
             anyhow::bail!("MLS admission requires at least one Welcome");
@@ -2629,8 +2629,8 @@ impl EventSubmitter {
                     snapshot: snapshot.into_queued(),
                 }),
             )?,
-            Some(crate::app::runtime_adapter::state_store_handle(state_store)),
-            Some(crate::app::runtime_adapter::state_store_handle(state_store)),
+            Some(state_store.clone()),
+            Some(state_store.clone()),
         )
         .await
     }

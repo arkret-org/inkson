@@ -21,7 +21,6 @@
 
 use std::collections::BTreeMap;
 
-use dioxus::prelude::{SyncSignal, WritableExt};
 use serde_json::Value;
 
 use crate::event_submit::EventSubmitter;
@@ -643,7 +642,7 @@ pub async fn set_invite_receive_policy(
 /// [`direct_conversation_found`].
 pub async fn direct_conversation_resolve(
     api: &crate::transport::TransportClient,
-    mut state_store: SyncSignal<crate::state::LocalStateStore>,
+    state_store: &crate::runtime::input::StateStoreHandle,
     peer: &str,
     peer_controller: Option<&str>,
     enable_owned_agent_reply: bool,
@@ -672,7 +671,7 @@ pub async fn direct_conversation_resolve(
         );
     }
     if direct_conversation_coordinates(&outcome).is_some() {
-        remember_direct_conversation_peer(&mut state_store, peer, &outcome);
+        remember_direct_conversation_peer(state_store, peer, &outcome);
     }
     Ok(outcome)
 }
@@ -861,20 +860,22 @@ pub(crate) fn direct_conversation_entry_with_local_blockers(
 }
 
 fn remember_direct_conversation_peer(
-    state_store: &mut SyncSignal<crate::state::LocalStateStore>,
+    state_store: &crate::runtime::input::StateStoreHandle,
     peer: &str,
     outcome: &arkret_sdk::direct_conversation_ops::DirectConversationResolveOutcome,
 ) {
     let Some(coordinates) = direct_conversation_coordinates(outcome) else {
         return;
     };
-    state_store.write().save_plain_local_data(
-        direct_conversation_peer_cache_key(
-            coordinates.realm_id.as_str(),
-            coordinates.main_strand_id.as_str(),
-        ),
-        peer,
-    );
+    state_store.write(|store| {
+        store.save_plain_local_data(
+            direct_conversation_peer_cache_key(
+                coordinates.realm_id.as_str(),
+                coordinates.main_strand_id.as_str(),
+            ),
+            peer,
+        );
+    });
 }
 
 pub(crate) fn cached_direct_conversation_peer(
@@ -908,7 +909,7 @@ fn preserve_resolved_direct_conversation(
 
 async fn ensure_owned_agent_direct_reply(
     http: &arkret_sdk::http_client::Client,
-    mut state_store: SyncSignal<crate::state::LocalStateStore>,
+    state_store: &crate::runtime::input::StateStoreHandle,
     agent_id: &str,
     outcome: &arkret_sdk::direct_conversation_ops::DirectConversationResolveOutcome,
 ) -> anyhow::Result<()> {
@@ -946,12 +947,13 @@ async fn ensure_owned_agent_direct_reply(
     // coverage repair immediately so the first human message does not have to
     // discover the stale MLS accumulator by failing once.
     state_store
-        .write()
-        .record_mls_coverage_stale(
-            scope.realm_id().as_str().to_owned(),
-            None,
-            "agent reply participation grant changed the Realm governance frontier",
-        )
+        .write(|store| {
+            store.record_mls_coverage_stale(
+                scope.realm_id().as_str().to_owned(),
+                None,
+                "agent reply participation grant changed the Realm governance frontier",
+            )
+        })
         .map_err(anyhow::Error::msg)?;
     Ok(())
 }

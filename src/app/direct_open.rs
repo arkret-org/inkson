@@ -65,6 +65,10 @@ pub(super) fn open_direct_conversation(
     mut direct_chat_opening: Signal<Option<String>>,
     target: DirectConversationTarget,
 ) {
+    // The transport half of this flow takes the host-neutral handle, not the
+    // Dioxus signal: `crate::transport` is engine code on its way to garth and
+    // must not name a UI runtime type. Wrapping here is the host's job.
+    let state_store = super::runtime_adapter::state_store_handle(state_store);
     spawn(async move {
         let subject = target.subject().to_owned();
         let failure_message = target.failure_message();
@@ -90,7 +94,7 @@ pub(super) fn open_direct_conversation(
                         .to_string();
                         crate::transport::account::direct_conversation_resolve(
                             &api,
-                            state_store,
+                            &state_store,
                             &agent_actor,
                             Some(&serde_json::to_string(&authority)?),
                             true,
@@ -103,7 +107,7 @@ pub(super) fn open_direct_conversation(
                     } => {
                         crate::transport::account::direct_conversation_resolve(
                             &api,
-                            state_store,
+                            &state_store,
                             &agent_id,
                             Some(&controller),
                             false,
@@ -113,7 +117,7 @@ pub(super) fn open_direct_conversation(
                     DirectConversationTarget::Peer { peer_id } => {
                         let outcome = crate::transport::account::direct_conversation_resolve(
                             &api,
-                            state_store,
+                            &state_store,
                             &peer_id,
                             None,
                             false,
@@ -135,7 +139,7 @@ pub(super) fn open_direct_conversation(
                             .await?;
                             return crate::transport::account::direct_conversation_resolve(
                                 &api,
-                                state_store,
+                                &state_store,
                                 &peer_id,
                                 None,
                                 false,

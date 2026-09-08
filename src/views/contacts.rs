@@ -504,10 +504,13 @@ fn ContactRow(
                                 row_status.set(tr("contacts.dm.opening"));
                                 spawn(async move {
                                     let resolve_peer = peer.clone();
+                                    let state_store =
+                                        crate::app::runtime_adapter::state_store_handle(state_store);
+                                    let resolve_store = state_store.clone();
                                     match with_authed_api(&base, api_token.clone(), |api| async move {
                                         crate::transport::account::direct_conversation_resolve(
                                             &api,
-                                            state_store,
+                                            &resolve_store,
                                             &resolve_peer,
                                             None,
                                             false,
@@ -517,11 +520,13 @@ fn ContactRow(
                                     {
                                         Ok(outcome) => {
                                             use crate::transport::account::DirectConversationEntry;
-                                            let local_blockers = crate::transport::account::direct_conversation_client_local_blockers(
-                                                &state_store.read(),
-                                                &peer,
-                                                &outcome,
-                                            );
+                                            let local_blockers = state_store.read(|store| {
+                                                crate::transport::account::direct_conversation_client_local_blockers(
+                                                    store,
+                                                    &peer,
+                                                    &outcome,
+                                                )
+                                            });
                                             match crate::transport::account::direct_conversation_entry_with_local_blockers(
                                                 &outcome,
                                                 &local_blockers,

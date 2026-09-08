@@ -1,7 +1,5 @@
 //! Server-authoritative onboarding reconciliation.
 
-use dioxus::prelude::*;
-
 use crate::state::{
     LocalStateStore, PendingAccountHandoff, PendingIdentityAbandonment,
     PendingPrincipalRegistrationStage,
@@ -27,20 +25,21 @@ fn account_client(
 }
 
 pub async fn refresh_pending_onboarding(
-    mut state_store: SyncSignal<LocalStateStore>,
+    state_store: &crate::runtime::input::StateStoreHandle,
 ) -> anyhow::Result<()> {
     let handoff = state_store
-        .peek()
-        .pending_account_handoff()
+        .read(|store| store.pending_account_handoff())
         .ok_or_else(|| anyhow::anyhow!("no account handoff is pending"))?;
     let pending_device_id = arkret_sdk::DeviceId::new(handoff.device_id.clone())?;
     let pending_store = crate::secure_key_store::PendingLocalStore::new(pending_device_id.clone());
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-    let pending_dpop = super::grant_dpop::load_or_recover_pending_device_key_with_secure_store(
-        &mut state_store.write(),
-        secure_store.as_ref(),
-        &pending_store,
-    )?;
+    let pending_dpop = state_store.write(|store| {
+        super::grant_dpop::load_or_recover_pending_device_key_with_secure_store(
+            store,
+            secure_store.as_ref(),
+            &pending_store,
+        )
+    })?;
     let dpop = match pending_dpop {
         Some(dpop) => dpop,
         None => {
@@ -78,7 +77,7 @@ pub async fn refresh_pending_onboarding(
         .await?;
     snapshot.validate()?;
     let reconciled = reconcile_onboarding_state(handoff, snapshot)?;
-    persist_reconciled_handoff(&mut state_store.write(), reconciled)
+    state_store.write(|store| persist_reconciled_handoff(store, reconciled))
 }
 
 fn reconcile_onboarding_state(

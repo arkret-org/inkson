@@ -187,7 +187,7 @@ pub(super) async fn create_and_bind_identity(
                 &checkpoint,
                 recovery_key,
                 &dpop,
-                state_store,
+                &crate::app::runtime_adapter::state_store_handle(state_store),
                 |delay| {
                     let seconds = delay.as_millis().div_ceil(1_000).max(1);
                     status.set(format!(
