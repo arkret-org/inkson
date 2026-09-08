@@ -403,10 +403,13 @@ pub async fn delayed_initial_submission(
                 http.issue_control_proposal_ack(
                     &arkret_wire::ControlProposalAckIssueRequest {
                         event: event.clone(),
-                        authorization_lease: submission
-                            .authorization_lease
-                            .clone()
-                            .expect("delayed submission was constructed with a lease"),
+                        publication_mode: arkret_wire::ControlProposalPublicationMode::Delayed,
+                        authorization_lease: Some(
+                            submission
+                                .authorization_lease
+                                .clone()
+                                .expect("delayed submission was constructed with a lease"),
+                        ),
                         cbs_proof_bundles: submission.cbs_proof_bundles.clone(),
                     },
                     digest_suite,
