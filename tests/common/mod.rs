@@ -64,8 +64,7 @@ pub fn test_notary(signer_did: &str) -> arkret_sdk::NotaryValue {
 
 /// The pinned signing stamp for position `actor_seq`.
 pub fn pinned_hlc(actor_seq: u64) -> arkret_sdk::Hlc {
-    arkret_sdk::Hlc::new(format!("01970e589d21-{actor_seq:04}-a13f9c2e"))
-        .expect("a pinned test HLC parses")
+    arkret_test_kit::pinned_hlc(u16::try_from(actor_seq).expect("fixture HLC counter"))
 }
 
 /// Finalize `operation` at the first position of its actor chain.

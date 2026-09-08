@@ -958,3 +958,15 @@ fn decoder_handles_problem_and_non_problem() {
     assert_eq!(fallback.code(), "http_status");
     assert!(fallback.detail.contains("503"));
 }
+
+#[test]
+fn authoring_fixture_hlc_keeps_the_numeric_sequence_past_nine() {
+    assert_eq!(
+        common::pinned_hlc(10).as_str(),
+        "01970e589d21-000a-a13f9c2e"
+    );
+    assert_eq!(
+        common::pinned_hlc(16).as_str(),
+        "01970e589d21-0010-a13f9c2e"
+    );
+}

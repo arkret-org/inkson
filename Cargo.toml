@@ -332,6 +332,7 @@ web-sys = { workspace = true, features = [
 chrono = { workspace = true }
 
 [dev-dependencies]
+arkret-test-kit = { path = "../arkret-rust-sdk/crates/test-kit" }
 arkret-schema-conformance = { version = "0.3.0", path = "../arkret-rust-sdk/crates/schema-conformance", default-features = false }
 arkret-sdk = { workspace = true, features = ["mls-test-utils"] }
 arkret-wire = { version = "0.3.0", path = "../arkret-rust-sdk/crates/wire", default-features = false, features = ["test-support"] }
