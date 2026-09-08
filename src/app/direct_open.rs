@@ -90,16 +90,38 @@ pub(super) fn open_direct_conversation(
                         let agent_actor = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
                             crate::mls_api_helpers::principal_core_id(&agent_id)?,
                             authority.station_id.clone(),
-                        ))
-                        .to_string();
-                        crate::transport::account::direct_conversation_resolve(
+                        ));
+                        let outcome = crate::transport::account::direct_conversation_resolve(
                             &api,
                             &state_store,
-                            &agent_actor,
+                            &agent_actor.to_string(),
                             Some(&serde_json::to_string(&authority)?),
                             true,
                         )
-                        .await
+                        .await?;
+                        if matches!(
+                            outcome,
+                            arkret_sdk::DirectConversationResolveOutcome::CreationRequired { .. }
+                        ) {
+                            let submitter = api.event_submitter()?;
+                            let founder = submitter.authority()?.clone();
+                            let peer = agent_actor.as_account_id().ok_or_else(|| {
+                                anyhow::anyhow!("owned Agent requires an account-shaped actor id")
+                            })?;
+                            crate::transport::account::create_direct_conversation_from_resolve(
+                                &submitter, &outcome, &founder, peer,
+                            )
+                            .await?;
+                            return crate::transport::account::direct_conversation_resolve(
+                                &api,
+                                &state_store,
+                                &agent_actor.to_string(),
+                                Some(&serde_json::to_string(&authority)?),
+                                true,
+                            )
+                            .await;
+                        }
+                        Ok(outcome)
                     }
                     DirectConversationTarget::ContactAgent {
                         agent_id,
