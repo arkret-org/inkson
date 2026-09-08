@@ -324,6 +324,15 @@ pub(super) fn submit_column_order_updates(
     if updates.is_empty() {
         return;
     }
+    // Reordering rewrites every List's rank. Do not emit a partial reorder
+    // while any List still has only its holder-local create handle.
+    if updates
+        .iter()
+        .any(|(column_id, _)| arkret_sdk::SpaceId::new(column_id.clone()).is_err())
+    {
+        board_status.set("Wait for all lists to finish creating before reordering.".to_owned());
+        return;
+    }
     let update_count = updates.len();
     board_status.set(format!(
         "Column order sending... ({update_count} rank updates)"

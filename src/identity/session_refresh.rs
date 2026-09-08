@@ -612,6 +612,7 @@ fn persisted_session_grant_from_state(
         session_private_key_pem: session_private_key_pem.to_string(),
         grant_id: state.grant_id.as_str().to_owned(),
         audience_id: state.audience_id.clone(),
+        granted_scope: state.granted_scope.clone(),
         account_id: state.account_id.clone(),
         device_id: device_id.clone(),
         station_url: station_url.clone(),
@@ -636,7 +637,7 @@ fn session_grant_state_from_persisted(
         grant_jwt: grant.grant_jwt.clone(),
         expires_at,
         audience_id: grant.audience_id.clone(),
-        granted_scope: Vec::new(),
+        granted_scope: grant.granted_scope.clone(),
         // Reconstructed-from-persistence state: the client persistence layer does
         // not retain the session public key, and garth's refresh flow never reads
         // it (only the wire refresh outcome supplies the rotated key). Pass `None`
@@ -805,6 +806,7 @@ mod tests {
             grant_id: "ak:session_grant:AY6DJbBwavsGTQuBZZiqqw9MVcqPZ8QX8invQ3i2kpi7".to_owned(),
             audience_id: arkret_sdk::DidCoreId::new("ak:did_core:webvh:z6mkfixture:soland.example")
                 .unwrap(),
+            granted_scope: Vec::new(),
             account_id: arkret_sdk::AccountId::new(
                 arkret_sdk::DidCoreId::new(principal_id.to_owned()).unwrap(),
                 arkret_sdk::DidCoreId::new(
@@ -820,6 +822,29 @@ mod tests {
             grant_expires_at: Some(Utc::now() + chrono::Duration::hours(1)),
             stored_at: Utc::now(),
         }
+    }
+
+    #[test]
+    fn persisted_session_retains_the_issued_scope_after_reload() {
+        let handle = test_device_handle();
+        let mut original = test_grant_state();
+        original.granted_scope = vec!["ak:self:read".to_owned(), "ak:self:write".to_owned()];
+        let persisted = persisted_session_grant_from_state(
+            &original,
+            &Url::parse("https://soland.example").unwrap(),
+            &handle,
+        )
+        .unwrap();
+        let encoded = serde_json::to_vec(&persisted).unwrap();
+        let reloaded: PersistedSessionGrant = serde_json::from_slice(&encoded).unwrap();
+        let restored = session_grant_state_from_persisted(&reloaded, &handle, Utc::now()).unwrap();
+        assert_eq!(restored.granted_scope, original.granted_scope);
+        assert_eq!(restored.account_id, original.account_id);
+        assert_eq!(restored.grant_id, original.grant_id);
+
+        let mut incomplete = serde_json::to_value(&persisted).unwrap();
+        incomplete.as_object_mut().unwrap().remove("granted_scope");
+        assert!(serde_json::from_value::<PersistedSessionGrant>(incomplete).is_err());
     }
 
     #[test]

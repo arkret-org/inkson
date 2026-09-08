@@ -1682,6 +1682,7 @@ pub fn KanbanPanel(
                     div {
                         class: "{column_div_class}",
                         "data-testid": "kanban-column",
+                        "data-column-draft": if arkret_sdk::SpaceId::new(column_id.clone()).is_ok() { "false" } else { "true" },
                         ondragover: {
                             let column_id = column_id.clone();
                             move |event: DragEvent| {
@@ -1800,7 +1801,8 @@ pub fn KanbanPanel(
                                 button {
                                     class: "column-drag-handle",
                                     "data-testid": "column-drag-handle",
-                                    draggable: "true",
+                                    disabled: columns().iter().any(|column| arkret_sdk::SpaceId::new(column.id.clone()).is_err()),
+                                    draggable: if columns().iter().all(|column| arkret_sdk::SpaceId::new(column.id.clone()).is_ok()) { "true" } else { "false" },
                                     title: "Drag column {column.title}",
                                     "aria-label": "Drag column {column.title}",
                                     ondragstart: {

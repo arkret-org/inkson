@@ -1,37 +1,12 @@
-//! Media-plane service-route evaluation — the client half of
-//! `service-surface.md` §2.6 / L183 and `federation.md` §6.4.
-//!
-//! The RTC token exchange (`crate::media::rtc`) only accepts
-//! evaluator-produced [`garth::RouteResolution`] material as issuer anchors.
-//! This module makes that material real on this host:
-//!
-//! 1. [`InksonServiceRouteStore`] — the durable anti-rollback ledger (`{service_kind,
-//!    last_seen_record_sequence, last_seen_record_digest}` plus notice / quarantine state). Native
-//!    persists one JSON file per `(service_id, service_kind)` under the app data dir with
-//!    write-temp-then-rename; wasm persists one localStorage entry per pair. Every save is wrapped
-//!    in single-key CAS semantics (a persisted version counter must match the version this instance
-//!    loaded) and a monotonic guard: the floor can never be lowered or erased and a quarantine can
-//!    never be silently cleared. Restart / cache eviction therefore cannot lower the floor.
-//! 2. [`fetch_route_material`] — SSRF-guarded, size-bounded fetches of the signed
-//!    `ServiceResolutionRecord`, the target's DID document and the role-scoped `ServiceDescribe`,
-//!    materialized through [`garth::authenticate_fetched_record`] /
-//!    [`garth::describe_route_binding`]. The candidate origins come from the realm's accepted
-//!    `ak.realm.media_service` cell and are treated as untrusted hints — every byte is
-//!    independently verified against the target-signed record.
-//! 3. [`evaluate_media_routes`] — runs [`garth::ServiceRouteEvaluator`] (durable floor advance,
-//!    gap/fork quarantine, describe reverse binding) over the fetched material and returns the
-//!    `Vec<RouteResolution>` the call panel passes into [`crate::media::rtc::MediaJoinRequest`].
-//!    Any failure is a hard error the caller surfaces — never an empty "try anyway" vector.
-
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Mutex;
 
 use anyhow::Context as _;
 use arkret_models_identity::{
-    ServiceResolutionRecord, canonical_service_current_record_path,
-    validate_service_current_record_url,
+    AuthenticatedServiceResolution, canonical_service_resolution_path,
+    validate_service_resolution_url,
 };
-use arkret_sdk::identity::{DidKeyResolver, DidResolver as _, DidWebResolver};
+use arkret_sdk::identity::{DidResolver as _, DidWebResolver, DidWebvhResolver};
 use arkret_sdk::{Did, DidCoreId};
 use chrono::{DateTime, Utc};
 use garth::{
@@ -43,9 +18,9 @@ use serde_json::Value;
 
 pub(crate) const MEDIA_SERVICE_KIND: &str = "media_service";
 
-/// Hard byte ceiling for fetched route material (record / describe), matching
+/// Hard byte ceiling for fetched DID route evidence and describe, matching
 /// the SDK service-resolution transport bound (`service-surface.md` §2.6).
-const ROUTE_FETCH_MAX_BYTES: usize = 64 * 1024;
+const ROUTE_FETCH_MAX_BYTES: usize = arkret_sdk::http_client::SERVICE_RESOLUTION_FETCH_MAX_BYTES;
 
 // ─── Durable anti-rollback ledger ────────────────────────────────────────────
 
@@ -61,7 +36,7 @@ struct PersistedRouteLedger {
 ///
 /// Fail-closed by construction: a corrupt or identity-mismatched persisted
 /// entry is an error (never `None`, which would allow silent re-anchoring at
-/// sequence 0), a lowered / erased floor is refused, and clearing a
+/// an unanchored method state), a regressed / erased method state is refused, and clearing a
 /// quarantine requires deliberate out-of-band intervention rather than a
 /// routine save.
 pub struct InksonServiceRouteStore {
@@ -168,33 +143,54 @@ impl InksonServiceRouteStore {
             return Ok(None);
         };
         // Corrupt bytes are an error, not an empty ledger: returning `None`
-        // here would let a fresh floor re-anchor below the durable one.
+        // here would let silently replace the accepted method state.
         serde_json::from_str(&text).map(Some).map_err(|error| {
             garth::Error::Protocol(format!("service_route_ledger_corrupt: {error}"))
         })
     }
 }
 
-/// The durable floor may only stand still or advance; a quarantine may not be
+/// The durable method state may only stand still or advance; a quarantine may not be
 /// silently cleared by a routine save.
 fn guard_monotonic(
     previous: &ServiceRouteDurableSnapshot,
     next: &ServiceRouteDurableSnapshot,
 ) -> garth::Result<()> {
-    match (&previous.floor, &next.floor) {
+    match (&previous.method_state, &next.method_state) {
         (Some(prev), Some(new)) => {
-            if new.record_sequence < prev.record_sequence
-                || (new.record_sequence == prev.record_sequence
-                    && new.record_digest != prev.record_digest)
+            if new.verified_at < prev.verified_at
+                || (prev.did.method() == "web" && new.did != prev.did)
             {
                 return Err(garth::Error::Protocol(
-                    "service_route_floor_regression_refused".to_owned(),
+                    "service_method_state_regression_refused".into(),
                 ));
+            }
+            if prev.did.method() == "webvh" {
+                let sequence = |version: &str| {
+                    version
+                        .split('-')
+                        .next()
+                        .and_then(|v| v.parse::<u64>().ok())
+                };
+                let before = sequence(&prev.version_id).ok_or_else(|| {
+                    garth::Error::Protocol("invalid persisted method version".into())
+                })?;
+                let after = sequence(&new.version_id)
+                    .ok_or_else(|| garth::Error::Protocol("invalid next method version".into()))?;
+                if after < before
+                    || (after == before
+                        && (new.method_history_head != prev.method_history_head
+                            || new.did != prev.did))
+                {
+                    return Err(garth::Error::Protocol(
+                        "service_method_state_regression_refused".into(),
+                    ));
+                }
             }
         }
         (Some(_), None) => {
             return Err(garth::Error::Protocol(
-                "service_route_floor_erase_refused".to_owned(),
+                "service_method_state_erase_refused".into(),
             ));
         }
         (None, _) => {}
@@ -287,8 +283,7 @@ pub(crate) struct FetchedRouteMaterial {
 /// Candidate origins (`https://host[:port]/`) for each anchored media
 /// `service_id`, read from the realm's accepted `ak.realm.media_service`
 /// cell (`ice_config_endpoint` + `foci[].token_endpoint`). Untrusted hints:
-/// the fetched record is independently verified against the target's own
-/// signature and method adapter before any of it is trusted.
+/// the fetched DID evidence is independently verified against current method state.
 pub(crate) fn media_service_route_origins(
     state: &crate::state::ClientLocalState,
     realm_id: &str,
@@ -349,6 +344,15 @@ pub(crate) async fn fetch_route_material(
     candidate_origins: &[String],
     now: DateTime<Utc>,
 ) -> anyhow::Result<FetchedRouteMaterial> {
+    if let Some(state) = InksonServiceRouteStore::open_default()
+        .load_route_state(service_id, MEDIA_SERVICE_KIND)?
+        .and_then(|snapshot| snapshot.method_state)
+    {
+        if let Ok(material) = fetch_route_material_from_did(http, service_id, &state.did, now).await
+        {
+            return Ok(material);
+        }
+    }
     let Some((first_origin, remaining_origins)) = candidate_origins.split_first() else {
         anyhow::bail!("realm media_service cell carries no endpoint origin for {service_id}");
     };
@@ -366,62 +370,76 @@ pub(crate) async fn fetch_route_material(
     Err(last_error)
 }
 
+async fn fetch_route_material_from_did(
+    http: &reqwest::Client,
+    service_id: &DidCoreId,
+    did: &Did,
+    now: DateTime<Utc>,
+) -> anyhow::Result<FetchedRouteMaterial> {
+    let (current, log_entries, witness_records) = fetch_current_service_material(http, did).await?;
+    let resolution = match did.method() {
+        "webvh" => arkret_identity::build_authenticated_webvh_service_resolution(
+            service_id.clone(),
+            MEDIA_SERVICE_KIND.into(),
+            current.document.clone(),
+            log_entries,
+            witness_records,
+            now,
+        )?,
+        "web" => arkret_identity::build_authenticated_did_web_service_resolution(
+            service_id.clone(),
+            MEDIA_SERVICE_KIND.into(),
+            current.document.clone(),
+            now,
+        )?,
+        _ => anyhow::bail!("unsupported persisted service method"),
+    };
+    let candidate = garth::authenticate_fetched_resolution(resolution, current, now)?;
+    fetch_route_describe(http, candidate, now).await
+}
+
 async fn fetch_route_material_from_origin(
     http: &reqwest::Client,
     service_id: &DidCoreId,
     origin: &str,
     now: DateTime<Utc>,
 ) -> anyhow::Result<FetchedRouteMaterial> {
-    // First hop: the current signed ServiceResolutionRecord at the canonical
-    // derived locator. The locator shape (canonical HTTPS, exact path) is
-    // validated before any request leaves the process.
-    let record_url = format!(
+    let resolution_url = format!(
         "{}{}",
         origin.trim_end_matches('/'),
-        canonical_service_current_record_path(service_id)
+        canonical_service_resolution_path(service_id)
     );
-    validate_service_current_record_url(&record_url, service_id)
-        .map_err(|error| anyhow::anyhow!("derived record locator rejected: {error}"))?;
-    let (_, record_bytes) =
-        crate::identity::did_resolver::fetch_did_bytes(http, &record_url, ROUTE_FETCH_MAX_BYTES)
-            .await
-            .with_context(|| format!("service resolution fetch refused or failed: {record_url}"))?;
-    let record: ServiceResolutionRecord =
-        arkret_sdk::canonical::canonical::from_canonical_json_slice(&record_bytes)
-            .map_err(|error| anyhow::anyhow!("service resolution record not canonical: {error}"))?;
+    validate_service_resolution_url(&resolution_url, service_id)?;
+    let (_, resolution_bytes) = crate::identity::did_resolver::fetch_arkret_bytes(
+        http,
+        &resolution_url,
+        ROUTE_FETCH_MAX_BYTES,
+        arkret_sdk::ServiceOperationId::OPEN_SERVICE_READ_RESOLUTION_V1,
+    )
+    .await
+    .with_context(|| format!("service resolution fetch refused: {resolution_url}"))?;
+    let resolution: AuthenticatedServiceResolution =
+        arkret_sdk::canonical::canonical::from_canonical_json_slice(&resolution_bytes)?;
     anyhow::ensure!(
-        &record.record.service_id == service_id,
-        "fetched service resolution targets a different service"
+        &resolution.service_id == service_id && resolution.service_kind == MEDIA_SERVICE_KIND,
+        "service resolution identity mismatch"
     );
+    let current_document =
+        fetch_current_service_document(http, &resolution.normalized_did_document.id).await?;
+    let candidate = garth::authenticate_fetched_resolution(resolution, current_document, now)?;
+    fetch_route_describe(http, candidate, now).await
+}
 
-    // Method-scoped DID document for the record's DID.
-    let did: Did = record.record.did.clone();
-    let document = match did.method() {
-        "web" => {
-            let outcome = crate::identity::did_resolver::fetch_did_web_document(http, &did)
-                .await
-                .with_context(|| format!("did:web document fetch refused for {did}"))?;
-            DidWebResolver::new()
-                .insert_from_https_response(&did, outcome)
-                .map_err(|error| anyhow::anyhow!("did:web document rejected: {error}"))?
-        }
-        "key" => {
-            DidKeyResolver::new()
-                .resolve_did(&did)
-                .map_err(|error| anyhow::anyhow!("did:key expansion failed: {error}"))?
-                .document
-        }
-        other => anyhow::bail!("no client route adapter for did method {other:?} (fail closed)"),
-    };
-
-    // Materialize + verify (route binding, method coordinates, target proof).
-    let resolution = garth::authenticate_fetched_record(record.clone(), document, now)
-        .map_err(|error| anyhow::anyhow!("route material verification failed: {error}"))?;
-
+async fn fetch_route_describe(
+    http: &reqwest::Client,
+    candidate: ServiceRouteCandidate,
+    now: DateTime<Utc>,
+) -> anyhow::Result<FetchedRouteMaterial> {
+    let projection = candidate.resolution.projection()?;
     // Second hop: role-scoped describe confirmation from the *verified* base.
     let describe_url = format!(
         "{}_arkret/describe?service_kind={MEDIA_SERVICE_KIND}",
-        record.record.base_url
+        projection.base_url
     );
     let (_, describe_bytes) = crate::identity::did_resolver::fetch_arkret_bytes(
         http,
@@ -434,18 +452,18 @@ async fn fetch_route_material_from_origin(
     let describe: arkret_models_discovery::ServiceDescribe =
         serde_json::from_slice(&describe_bytes)
             .map_err(|error| anyhow::anyhow!("ServiceDescribe parse failed: {error}"))?;
-    let describe = garth::describe_route_binding(&record, &describe, now)
+    let describe = garth::describe_route_binding(&candidate.resolution, &describe, now)
         .map_err(|error| anyhow::anyhow!("describe reverse binding failed: {error}"))?;
 
     Ok(FetchedRouteMaterial {
-        candidate: ServiceRouteCandidate { resolution },
+        candidate,
         describe,
     })
 }
 
 // ─── Evaluation ──────────────────────────────────────────────────────────────
 
-/// Run the evaluator (durable floor advance / gap-fork quarantine / describe
+/// Run the evaluator (durable method state advance / fork quarantine / describe
 /// reverse binding) over prefetched material for one service.
 pub(crate) fn resolve_route_with_material<S: ServiceRouteStateStore>(
     evaluator: &mut ServiceRouteEvaluator<S>,
@@ -463,7 +481,7 @@ pub(crate) fn resolve_route_with_material<S: ServiceRouteStateStore>(
 /// Produce the evaluator-verified route material the RTC token exchange
 /// requires, one [`RouteResolution`] per anchored media `service_id`.
 ///
-/// Fail-closed: any fetch, verification, floor or quarantine failure is a
+/// Fail-closed: any fetch, verification, method state or quarantine failure is a
 /// hard error — the caller must surface it and refuse the join, never degrade
 /// to an empty route set.
 pub async fn evaluate_media_routes(
@@ -502,265 +520,158 @@ pub async fn evaluate_media_routes(
     Ok(routes)
 }
 
+/// Fresh method-scoped fetch shared by media and Directory consumers.
+pub(crate) async fn fetch_current_service_document(
+    http: &reqwest::Client,
+    did: &Did,
+) -> anyhow::Result<arkret_identity::ResolvedDid> {
+    Ok(fetch_current_service_material(http, did).await?.0)
+}
+
+async fn fetch_current_service_material(
+    http: &reqwest::Client,
+    did: &Did,
+) -> anyhow::Result<(arkret_identity::ResolvedDid, Vec<Value>, Vec<Value>)> {
+    let expected_core = arkret_sdk::project_did_to_core_id(did)?;
+    let mut current_did = did.clone();
+    for _ in 0..4 {
+        let did = &current_did;
+        match did.method() {
+            "web" => {
+                let outcome = crate::identity::did_resolver::fetch_did_web_document(http, did)
+                    .await
+                    .context("did:web current fetch failed")?;
+                return Ok((
+                    arkret_identity::ResolvedDid::proofless(
+                        DidWebResolver::new().insert_from_https_response(did, outcome)?,
+                    ),
+                    Vec::new(),
+                    Vec::new(),
+                ));
+            }
+            "webvh" => {
+                let log_url = DidWebvhResolver::log_url(did)?;
+                let (log_type, log_body) = crate::identity::did_resolver::fetch_did_bytes(
+                    http,
+                    &log_url,
+                    ROUTE_FETCH_MAX_BYTES,
+                )
+                .await
+                .context("did:webvh current log fetch failed")?;
+                let discovered =
+                    arkret_identity::discover_webvh_current_did(&expected_core, &log_body)?;
+                if discovered != current_did {
+                    current_did = discovered;
+                    continue;
+                }
+                let doc_url = DidWebvhResolver::document_url(did)?;
+                let (doc_type, doc_body) = crate::identity::did_resolver::fetch_did_bytes(
+                    http,
+                    &doc_url,
+                    arkret_identity::DID_WEB_MAX_DOCUMENT_BYTES,
+                )
+                .await
+                .context("did:webvh current document fetch failed")?;
+                let mut resolver = DidWebvhResolver::new();
+                resolver.insert_from_https_response(
+                    did,
+                    arkret_identity::DidWebvhDocumentOutcome {
+                        url: doc_url,
+                        content_type: doc_type,
+                        body: doc_body,
+                    },
+                )?;
+                let verified_log =
+                    arkret_identity::verify_did_webvh_v1_chain_bytes(did, &log_body)?;
+                resolver.ingest_log(
+                    did,
+                    arkret_identity::DidWebvhLogOutcome {
+                        url: log_url,
+                        content_type: log_type,
+                        body: log_body,
+                    },
+                )?;
+                let mut witness_records = Vec::new();
+                let witness_url = DidWebvhResolver::witness_url(did)?;
+                if let Some((_, bytes)) = crate::identity::did_resolver::fetch_did_bytes(
+                    http,
+                    &witness_url,
+                    ROUTE_FETCH_MAX_BYTES,
+                )
+                .await
+                {
+                    resolver.ingest_witness_records(did, &bytes)?;
+                    witness_records = serde_json::from_slice(&bytes)?;
+                }
+                return Ok((
+                    resolver.resolve_did(did)?,
+                    verified_log.raw_entries,
+                    witness_records,
+                ));
+            }
+            _ => anyhow::bail!("unsupported service DID method"),
+        }
+    }
+    anyhow::bail!("DID portability discovery exceeded hop limit")
+}
+
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
-    use arkret_models_identity::ServiceResolutionLastSeenFloor;
-    use arkret_sdk::Hash;
-    use chrono::{Duration, TimeZone as _};
-    use garth::service_route_material::test_fixture::signed_web_route_fixture;
+    use garth::service_route_material::test_fixture::current_web_route_fixture;
 
     use super::*;
-
-    fn floor_snapshot(
-        service_id: &DidCoreId,
-        sequence: u64,
-        digest: char,
-        now: DateTime<Utc>,
-    ) -> ServiceRouteDurableSnapshot {
+    fn state(now: DateTime<Utc>) -> ServiceRouteDurableSnapshot {
+        let now = DateTime::from_timestamp_millis(now.timestamp_millis()).unwrap();
+        let fixture = current_web_route_fixture("media.example", MEDIA_SERVICE_KIND, 31);
+        let projection = fixture.resolution.projection().unwrap();
         ServiceRouteDurableSnapshot {
-            service_id: service_id.clone(),
-            service_kind: MEDIA_SERVICE_KIND.to_owned(),
-            floor: Some(ServiceResolutionLastSeenFloor {
-                service_id: service_id.clone(),
-                service_kind: MEDIA_SERVICE_KIND.to_owned(),
-                record_sequence: sequence,
-                record_digest: Hash::new(format!("sha256:{}", digest.to_string().repeat(64)))
-                    .unwrap(),
+            service_id: projection.service_id.clone(),
+            service_kind: MEDIA_SERVICE_KIND.into(),
+            method_state: Some(arkret_models_identity::ServiceMethodState {
+                service_id: projection.service_id,
+                service_kind: MEDIA_SERVICE_KIND.into(),
+                did: projection.did,
+                method_history_head: projection.method_history_head,
+                version_id: projection.version_id,
                 verified_at: now,
             }),
-            notice: None,
             quarantine: None,
         }
     }
-
-    fn temp_root(tag: &str) -> std::path::PathBuf {
-        std::env::temp_dir().join(format!(
-            "inkson-route-store-{tag}-{}",
-            crate::operation::uuid_v7()
-        ))
-    }
-
-    fn now_fixture() -> DateTime<Utc> {
-        Utc.with_ymd_and_hms(2026, 8, 20, 1, 0, 0).unwrap()
-    }
-
-    fn material_for(
-        fixture: &garth::service_route_material::test_fixture::SignedRouteFixture,
-        now: DateTime<Utc>,
-    ) -> FetchedRouteMaterial {
-        let resolution = garth::authenticate_fetched_record(
-            fixture.record.clone(),
-            fixture.document.clone(),
-            now,
-        )
-        .unwrap();
-        FetchedRouteMaterial {
-            candidate: ServiceRouteCandidate { resolution },
-            describe: garth::describe_route_binding(&fixture.record, &fixture.describe, now)
-                .unwrap(),
-        }
-    }
-
     #[test]
-    fn durable_store_survives_restart_and_keeps_the_floor() {
-        let root = temp_root("restart");
-        let now = now_fixture();
-        let fixture =
-            signed_web_route_fixture("media.example", MEDIA_SERVICE_KIND, now, 0, None, 31);
-
-        // First "process": anchor at sequence 0.
-        {
-            let mut evaluator = ServiceRouteEvaluator::new(
-                InksonServiceRouteStore::at_root(root.clone()),
-                Duration::minutes(5),
-            )
+    fn native_method_state_survives_restart_and_cas_rejects_stale_writer() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().to_path_buf();
+        let snapshot = state(Utc::now());
+        let mut first = InksonServiceRouteStore::at_root(root.clone());
+        let mut stale = InksonServiceRouteStore::at_root(root.clone());
+        first
+            .load_route_state(&snapshot.service_id, MEDIA_SERVICE_KIND)
             .unwrap();
-            let route = resolve_route_with_material(
-                &mut evaluator,
-                &fixture.service_id,
-                material_for(&fixture, now),
-                now,
-            )
+        stale
+            .load_route_state(&snapshot.service_id, MEDIA_SERVICE_KIND)
             .unwrap();
-            assert_eq!(route.route().record_sequence, 0);
-        }
-
-        // Second "process": the durable floor is still there.
-        let store = InksonServiceRouteStore::at_root(root.clone());
-        let snapshot = store
-            .load_route_state(&fixture.service_id, MEDIA_SERVICE_KIND)
-            .unwrap()
-            .expect("floor must survive restart");
-        assert_eq!(snapshot.floor.as_ref().unwrap().record_sequence, 0);
-
-        // Third "process": a freshly signed rollback offer (same sequence,
-        // different digest) is quarantined, and the floor stays.
-        let later = now + Duration::minutes(2);
-        let rollback =
-            signed_web_route_fixture("media.example", MEDIA_SERVICE_KIND, later, 0, None, 31);
-        let mut evaluator = ServiceRouteEvaluator::new(
-            InksonServiceRouteStore::at_root(root.clone()),
-            Duration::minutes(5),
-        )
-        .unwrap();
-        let error = resolve_route_with_material(
-            &mut evaluator,
-            &rollback.service_id,
-            material_for(&rollback, later),
-            later,
-        )
-        .unwrap_err();
-        assert!(error.to_string().contains("service_route_gap_or_fork"));
-        let store = InksonServiceRouteStore::at_root(root);
-        let snapshot = store
-            .load_route_state(&fixture.service_id, MEDIA_SERVICE_KIND)
-            .unwrap()
-            .unwrap();
-        assert!(snapshot.quarantine.is_some());
-        assert_eq!(snapshot.floor.unwrap().record_sequence, 0);
-    }
-
-    #[test]
-    fn store_refuses_floor_regression_and_quarantine_clear() {
-        let root = temp_root("monotonic");
-        let now = now_fixture();
-        let fixture =
-            signed_web_route_fixture("media.example", MEDIA_SERVICE_KIND, now, 0, None, 31);
-        let service_id = fixture.service_id.clone();
-        let floor_at =
-            |sequence: u64, digest: char| floor_snapshot(&service_id, sequence, digest, now);
-
-        let mut store = InksonServiceRouteStore::at_root(root.clone());
-        assert!(
-            store
-                .load_route_state(&service_id, MEDIA_SERVICE_KIND)
-                .unwrap()
-                .is_none()
-        );
-        store.save_route_state(&floor_at(3, 'a')).unwrap();
-
-        // Lower sequence → refused.
-        let mut fresh = InksonServiceRouteStore::at_root(root.clone());
-        fresh
-            .load_route_state(&service_id, MEDIA_SERVICE_KIND)
-            .unwrap();
-        let error = fresh.save_route_state(&floor_at(2, 'a')).unwrap_err();
-        assert!(
-            error
-                .to_string()
-                .contains("service_route_floor_regression_refused")
-        );
-
-        // Same sequence, different digest → refused.
-        let error = fresh.save_route_state(&floor_at(3, 'b')).unwrap_err();
-        assert!(
-            error
-                .to_string()
-                .contains("service_route_floor_regression_refused")
-        );
-
-        // Quarantine may not be silently cleared.
-        let mut quarantined = floor_at(3, 'a');
-        quarantined.quarantine = Some(garth::RouteForkQuarantine {
-            service_id: service_id.clone(),
-            service_kind: MEDIA_SERVICE_KIND.to_owned(),
-            expected_sequence: 3,
-            expected_digest: Hash::new(format!("sha256:{}", "a".repeat(64))).unwrap(),
-            observed_sequence: 3,
-            observed_digest: Hash::new(format!("sha256:{}", "b".repeat(64))).unwrap(),
-            reason: "fork".to_owned(),
-            quarantined_at: now,
-        });
-        fresh.save_route_state(&quarantined).unwrap();
-        let mut third = InksonServiceRouteStore::at_root(root);
-        third
-            .load_route_state(&service_id, MEDIA_SERVICE_KIND)
-            .unwrap();
-        let error = third.save_route_state(&floor_at(3, 'a')).unwrap_err();
-        assert!(
-            error
-                .to_string()
-                .contains("service_route_quarantine_clear_refused")
-        );
-    }
-
-    #[test]
-    fn store_save_uses_single_key_cas() {
-        let root = temp_root("cas");
-        let now = now_fixture();
-        let fixture =
-            signed_web_route_fixture("media.example", MEDIA_SERVICE_KIND, now, 0, None, 31);
-        let service_id = fixture.service_id.clone();
-        let snapshot = floor_snapshot(&service_id, 1, 'c', now);
-
-        let mut writer_a = InksonServiceRouteStore::at_root(root.clone());
-        writer_a
-            .load_route_state(&service_id, MEDIA_SERVICE_KIND)
-            .unwrap();
-        let mut writer_b = InksonServiceRouteStore::at_root(root);
-        writer_b
-            .load_route_state(&service_id, MEDIA_SERVICE_KIND)
-            .unwrap();
-
-        writer_b.save_route_state(&snapshot).unwrap();
-        // Writer A loaded version 0 but the persisted entry is now version 1:
-        // its save must be refused instead of silently clobbering.
-        let error = writer_a.save_route_state(&snapshot).unwrap_err();
-        assert!(
-            error
-                .to_string()
-                .contains("service_route_ledger_write_conflict")
-        );
-    }
-
-    #[test]
-    fn corrupt_ledger_entry_fails_closed_instead_of_reanchoring() {
-        let root = temp_root("corrupt");
-        let now = now_fixture();
-        let fixture =
-            signed_web_route_fixture("media.example", MEDIA_SERVICE_KIND, now, 0, None, 31);
-        let service_id = fixture.service_id.clone();
-        let key = InksonServiceRouteStore::ledger_key(&service_id, MEDIA_SERVICE_KIND);
-        std::fs::create_dir_all(&root).unwrap();
-        std::fs::write(root.join(format!("{key}.json")), b"{not json").unwrap();
-        let store = InksonServiceRouteStore::at_root(root);
-        let error = store
-            .load_route_state(&service_id, MEDIA_SERVICE_KIND)
-            .unwrap_err();
-        assert!(error.to_string().contains("service_route_ledger_corrupt"));
-    }
-
-    #[test]
-    fn media_service_route_origins_reads_realm_cell_endpoints() {
-        let mut state = crate::state::ClientLocalState::default();
-        state.raw_operations.push(crate::state::RawOperationRecord {
-            operation_id: "op-1".to_owned(),
-            realm_id: Some("ak:realm:AVxu7KCm9qmiOqakDKBXUia9rbZ3NBurP875XbqG1rbs".to_owned()),
-            received_at: chrono::Utc::now(),
-            payload: serde_json::json!({
-                "kind": "ak.realm.media_service",
-                "body": {
-                    "service_id": "ak:did_core:web:media.example",
-                    "ice_config_endpoint": "https://media.example/_arkret/self/rtc/ice-config",
-                    "foci": [
-                        {"focus_id": "fra-1", "type": "livekit",
-                         "token_endpoint": "https://media.example/_arkret/self/rtc/token"},
-                        {"focus_id": "us-east-1", "type": "livekit",
-                         "token_endpoint": "https://media-use.example/_arkret/self/rtc/token"}
-                    ]
-                }
-            }),
-        });
-        let origins = media_service_route_origins(
-            &state,
-            "ak:realm:AVxu7KCm9qmiOqakDKBXUia9rbZ3NBurP875XbqG1rbs",
-        );
+        first.save_route_state(&snapshot).unwrap();
+        assert!(stale.save_route_state(&snapshot).is_err());
+        let restarted = InksonServiceRouteStore::at_root(root.clone());
         assert_eq!(
-            origins.get("ak:did_core:web:media.example").unwrap(),
-            &vec![
-                "https://media-use.example/".to_owned(),
-                "https://media.example/".to_owned(),
-            ]
+            restarted
+                .load_route_state(&snapshot.service_id, MEDIA_SERVICE_KIND)
+                .unwrap(),
+            Some(snapshot)
         );
+    }
+    #[test]
+    fn accepted_method_state_and_quarantine_cannot_be_erased() {
+        let snapshot = state(Utc::now());
+        let mut erased = snapshot.clone();
+        erased.method_state = None;
+        assert!(guard_monotonic(&snapshot, &erased).is_err());
+        let mut quarantined = snapshot.clone();
+        quarantined.quarantine = Some(garth::RouteForkQuarantine {
+            reason: "native fork".into(),
+            quarantined_at: Utc::now(),
+        });
+        assert!(guard_monotonic(&quarantined, &snapshot).is_err());
     }
 }

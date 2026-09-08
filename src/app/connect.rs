@@ -1798,9 +1798,10 @@ pub(super) fn connect(
                                         )
                                         .map_err(anyhow::Error::msg)?;
                                         let revision = entry
-                                            .get("revision")
+                                            .get("expected_revision")
                                             .and_then(serde_json::Value::as_u64)
-                                            .ok_or_else(|| anyhow::anyhow!("ak.account.blocklist is missing revision"))?;
+                                            .and_then(|revision| revision.checked_add(1))
+                                            .ok_or_else(|| anyhow::anyhow!("ak.account.blocklist has no valid accepted revision"))?;
                                         if payload.version != revision {
                                             anyhow::bail!(
                                                 "ak.account.blocklist payload version {} differs from Account Data revision {revision}",

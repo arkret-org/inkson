@@ -1490,6 +1490,8 @@ pub struct PersistedSessionGrant {
     pub grant_id: String,
     /// Stable service identity the grant is bound to.
     pub audience_id: arkret_sdk::DidCoreId,
+    /// Exact granted scope returned by issuance; refresh cannot change it.
+    pub granted_scope: Vec<String>,
     /// Complete Station-bound account identity authorized by the grant.
     pub account_id: arkret_sdk::AccountId,
     /// Device id bound to the grant.

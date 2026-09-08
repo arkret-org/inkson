@@ -12,10 +12,7 @@ use std::sync::{Mutex, OnceLock, PoisonError};
 
 use arkret_models_discovery::{DirectoryActorSearchOutcome, DirectoryOrganizationSearchOutcome};
 use chrono::{Duration, Utc};
-use garth::{
-    MemoryServiceRouteStateStore, PrefetchedRouteSource, ServiceRouteCandidate,
-    ServiceRouteEvaluator,
-};
+use garth::{PrefetchedRouteSource, ServiceRouteEvaluator};
 
 use crate::directory_helpers::{ResolveHandleContext, resolve_handle_request_body};
 use crate::models::{DirectoryRealmResolutionOutcome, ResolveHandleView};
@@ -24,7 +21,8 @@ use crate::wire_helpers::validate_cursor;
 const DIRECTORY_ROUTE_CACHE_CAPACITY: usize = 16;
 const DIRECTORY_ROUTE_CACHE_TTL_SECONDS: i64 = 300;
 
-type DirectoryRouteEvaluator = ServiceRouteEvaluator<MemoryServiceRouteStateStore>;
+type DirectoryRouteEvaluator =
+    ServiceRouteEvaluator<crate::media::service_route::InksonServiceRouteStore>;
 
 struct DirectoryRouteCacheEntry {
     candidate_base: String,
@@ -109,20 +107,23 @@ pub async fn verified_directory_client(
         .open_service_resolution(&service_id)
         .await
         .map_err(|error| anyhow::anyhow!("Directory service resolution failed: {error}"))?;
-    let describe_binding = garth::describe_route_binding(
-        &authenticated_resolution.service_resolution_record,
-        &description,
-        now,
-    )
-    .map_err(|error| anyhow::anyhow!("Directory describe reverse binding failed: {error}"))?;
+    let describe_binding =
+        garth::describe_route_binding(&authenticated_resolution, &description, now).map_err(
+            |error| anyhow::anyhow!("Directory describe reverse binding failed: {error}"),
+        )?;
     anyhow::ensure!(
         describe_binding.base_url == *advertised_base,
         "Directory selected transport disagrees with its signed route"
     );
 
-    let mut source = PrefetchedRouteSource::new(Some(ServiceRouteCandidate {
-        resolution: authenticated_resolution,
-    }));
+    let current_document = crate::media::service_route::fetch_current_service_document(
+        &reqwest::Client::new(),
+        &authenticated_resolution.normalized_did_document.id,
+    )
+    .await?;
+    let authenticated_candidate =
+        garth::authenticate_fetched_resolution(authenticated_resolution, current_document, now)?;
+    let mut source = PrefetchedRouteSource::new(Some(authenticated_candidate));
     source.insert_describe(describe_binding);
 
     let route_base = {
@@ -136,7 +137,7 @@ pub async fn verified_directory_client(
             let entry = cache.remove(index);
             if entry.service_id != service_id {
                 cache.push(entry);
-                anyhow::bail!("Directory candidate changed service identity without handover");
+                anyhow::bail!("Directory candidate changed service identity");
             }
             entry
         } else {
@@ -147,7 +148,7 @@ pub async fn verified_directory_client(
                 valid_until: now,
                 last_used_at: now,
                 evaluator: ServiceRouteEvaluator::new(
-                    MemoryServiceRouteStateStore::default(),
+                    crate::media::service_route::InksonServiceRouteStore::open_default(),
                     Duration::seconds(DIRECTORY_ROUTE_CACHE_TTL_SECONDS),
                 )
                 .map_err(|error| anyhow::anyhow!("create Directory route evaluator: {error}"))?,

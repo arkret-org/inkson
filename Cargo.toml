@@ -105,6 +105,7 @@ path = "src/bin/inkson-wire.rs"
 required-features = ["spec-conformance"]
 
 [dependencies]
+rand_chacha = "0.10"
 # Feature-unification alias: `getrandom@0.2` is pulled in transitively by the
 # crypto stack (rand_core 0.6 → p256/k256/hpke-rs/openmls and Arkret owner
 # crates). On `wasm32-unknown-unknown` that 0.2.x dep needs the

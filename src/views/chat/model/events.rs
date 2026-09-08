@@ -1985,7 +1985,9 @@ pub(crate) fn typing_actor_snapshot_from_signals(
 }
 
 fn signal_actor_identity(value: &Value) -> Option<String> {
-    serde_json::from_value::<arkret_sdk::ActorId>(value.clone()).ok().map(|actor| actor.to_string())
+    serde_json::from_value::<arkret_sdk::ActorId>(value.clone())
+        .ok()
+        .map(|actor| actor.to_string())
 }
 
 pub(crate) fn sync_presence_actor(event: &Value) -> Option<String> {
@@ -1994,7 +1996,9 @@ pub(crate) fn sync_presence_actor(event: &Value) -> Option<String> {
 
 /// Only the canonical, admitted Signal projection is consumed here.
 pub(crate) fn sync_presence_state(event: &Value) -> Option<String> {
-    event.get("state").and_then(Value::as_str)
+    event
+        .get("state")
+        .and_then(Value::as_str)
         .and_then(arkret_sdk::PresenceStatus::parse_wire)
         .map(|state| state.as_wire().to_owned())
 }
@@ -2057,10 +2061,14 @@ pub(crate) fn presence_maps_from_sync_events(
     let participant_by_identity = participants
         .iter()
         .filter_map(|participant| {
-            serde_json::from_str::<arkret_sdk::ActorId>(participant).ok().map(|actor| (actor.to_string(), participant.clone()))
+            serde_json::from_str::<arkret_sdk::ActorId>(participant)
+                .ok()
+                .map(|actor| (actor.to_string(), participant.clone()))
         })
         .collect::<std::collections::BTreeMap<_, _>>();
-    let account_identity = serde_json::from_str::<arkret_sdk::ActorId>(principal_id).ok().map(|actor| actor.to_string());
+    let account_identity = serde_json::from_str::<arkret_sdk::ActorId>(principal_id)
+        .ok()
+        .map(|actor| actor.to_string());
     let mut states = std::collections::BTreeMap::<String, String>::new();
     let mut labels = std::collections::BTreeMap::<String, String>::new();
     let mut status_messages = std::collections::BTreeMap::<String, String>::new();
@@ -2088,9 +2096,7 @@ pub(crate) fn presence_maps_from_sync_events(
         ),
     >::new();
     for event in events {
-        let Some(actor_core) =
-            sync_presence_actor(event)
-        else {
+        let Some(actor_core) = sync_presence_actor(event) else {
             continue;
         };
         let Some(actor) = participant_by_identity.get(&actor_core).cloned() else {

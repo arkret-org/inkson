@@ -29,109 +29,116 @@ fn external_history_decrypt_tasks_in_store(
     // The Realm stream persists messages in raw_operations, which is also the
     // chat feed's source after reload. Account tree snapshots need not contain
     // those messages, especially ones delivered while this endpoint was offline.
-    let projected_events = state.realm_tree_projections.values().filter_map(|projection| {
-        projection.get("state").and_then(|state| state.get("events"))
-            .and_then(serde_json::Value::as_array)
-    }).flatten();
+    let projected_events = state
+        .realm_tree_projections
+        .values()
+        .filter_map(|projection| {
+            projection
+                .get("state")
+                .and_then(|state| state.get("events"))
+                .and_then(serde_json::Value::as_array)
+        })
+        .flatten();
     let durable_events = state.raw_operations.iter().map(|record| &record.payload);
     let mut seen = std::collections::BTreeSet::new();
     for event in projected_events.chain(durable_events) {
-            let Some(event_id) = event
-                .get("event_id")
+        let Some(event_id) = event
+            .get("event_id")
+            .and_then(serde_json::Value::as_str)
+            .and_then(|value| arkret_sdk::EventId::new(value.to_owned()).ok())
+        else {
+            continue;
+        };
+        let Some(effective_scope) = event
+            .get("scope_ref")
+            .or_else(|| event.get("effective_scope"))
+            .cloned()
+            .and_then(|value| serde_json::from_value::<arkret_sdk::ScopeRef>(value).ok())
+        else {
+            continue;
+        };
+        let Some(realm_id) = effective_scope
+            .realm_id_opt()
+            .map(|realm_id| realm_id.as_str().to_owned())
+        else {
+            continue;
+        };
+        let encrypted = event
+            .pointer("/payload/content/encrypted_content")
+            .or_else(|| event.pointer("/payload/encrypted_content"))
+            .or_else(|| event.pointer("/content/encrypted_content"))
+            .or_else(|| event.get("encrypted_content"));
+        let Some(envelope) = encrypted
+            .cloned()
+            .and_then(|value| serde_json::from_value::<arkret_sdk::EncryptedEnvelope>(value).ok())
+        else {
+            continue;
+        };
+        let Some(sender_domain) = crate::views::chat::verified_chat_sender_domain_for_realm(
+            &realm_id,
+            event,
+            Some(store),
+            Some((authority, actor_id, device_id)),
+        ) else {
+            continue;
+        };
+        let Some(event_kind) = event.get("kind").and_then(serde_json::Value::as_str) else {
+            continue;
+        };
+        let reaction_routing_window = if matches!(
+            event_kind,
+            arkret_wire::event_kind_str::REACTION_ADD
+                | arkret_wire::event_kind_str::REACTION_REMOVE
+        ) {
+            let Some(created_at) = event
+                .get("created_at")
                 .and_then(serde_json::Value::as_str)
-                .and_then(|value| arkret_sdk::EventId::new(value.to_owned()).ok())
+                .and_then(|value| value.parse::<chrono::DateTime<chrono::Utc>>().ok())
             else {
                 continue;
             };
-            let Some(effective_scope) = event
-                .get("scope_ref")
-                .or_else(|| event.get("effective_scope"))
-                .cloned()
-                .and_then(|value| serde_json::from_value::<arkret_sdk::ScopeRef>(value).ok())
-            else {
-                continue;
-            };
-            let Some(realm_id) = effective_scope
-                .realm_id_opt()
-                .map(|realm_id| realm_id.as_str().to_owned())
-            else {
-                continue;
-            };
-            let encrypted = event
-                .pointer("/payload/content/encrypted_content")
-                .or_else(|| event.pointer("/payload/encrypted_content"))
-                .or_else(|| event.pointer("/content/encrypted_content"))
-                .or_else(|| event.get("encrypted_content"));
-            let Some(envelope) = encrypted.cloned().and_then(|value| {
-                serde_json::from_value::<arkret_sdk::EncryptedEnvelope>(value).ok()
-            }) else {
-                continue;
-            };
-            let Some(sender_domain) = crate::views::chat::verified_chat_sender_domain_for_realm(
-                &realm_id,
-                event,
-                Some(store),
-                Some((authority, actor_id, device_id)),
-            ) else {
-                continue;
-            };
-            let Some(event_kind) = event.get("kind").and_then(serde_json::Value::as_str) else {
-                continue;
-            };
-            let reaction_routing_window = if matches!(
-                event_kind,
-                arkret_wire::event_kind_str::REACTION_ADD
-                    | arkret_wire::event_kind_str::REACTION_REMOVE
-            ) {
-                let Some(created_at) = event
-                    .get("created_at")
-                    .and_then(serde_json::Value::as_str)
-                    .and_then(|value| value.parse::<chrono::DateTime<chrono::Utc>>().ok())
-                else {
-                    continue;
-                };
-                Some(created_at.timestamp_millis().div_euclid(3_600_000) as u64)
-            } else {
-                None
-            };
-            let Some(payload) = super::message::encrypted_payload_from_verified_event_context(
-                store,
-                &envelope,
-                &effective_scope,
-                event_kind,
-                &sender_domain,
-                reaction_routing_window,
-            ) else {
-                continue;
-            };
-            if !seen.insert(event_id.clone()) {
-                continue;
-            }
-            tasks.push(ExternalHistoryDecryptTask {
-                realm_id,
-                payload: payload.clone(),
-                effective_scope: effective_scope.clone(),
-                binding_key: arkret_sdk::EventCandidateBindingKey {
-                    effective_scope: match effective_scope {
-                        arkret_sdk::ScopeRef::Realm { realm_id } => {
-                            arkret_sdk::HistoryEffectiveScope::Realm { realm_id }
-                        }
-                        arkret_sdk::ScopeRef::Circle {
-                            realm_id,
-                            circle_id,
-                        } => arkret_sdk::HistoryEffectiveScope::Circle {
-                            realm_id,
-                            circle_id,
-                        },
-                        _ => continue,
+            Some(created_at.timestamp_millis().div_euclid(3_600_000) as u64)
+        } else {
+            None
+        };
+        let Some(payload) = super::message::encrypted_payload_from_verified_event_context(
+            store,
+            &envelope,
+            &effective_scope,
+            event_kind,
+            &sender_domain,
+            reaction_routing_window,
+        ) else {
+            continue;
+        };
+        if !seen.insert(event_id.clone()) {
+            continue;
+        }
+        tasks.push(ExternalHistoryDecryptTask {
+            realm_id,
+            payload: payload.clone(),
+            effective_scope: effective_scope.clone(),
+            binding_key: arkret_sdk::EventCandidateBindingKey {
+                effective_scope: match effective_scope {
+                    arkret_sdk::ScopeRef::Realm { realm_id } => {
+                        arkret_sdk::HistoryEffectiveScope::Realm { realm_id }
+                    }
+                    arkret_sdk::ScopeRef::Circle {
+                        realm_id,
+                        circle_id,
+                    } => arkret_sdk::HistoryEffectiveScope::Circle {
+                        realm_id,
+                        circle_id,
                     },
-                    mls_group_id: payload.group_id.clone(),
-                    epoch: payload.epoch,
-                    event_id,
-                    verified_sender_domain: String::from_utf8(sender_domain)
-                        .map_err(|_| "verified sender domain is not UTF-8".to_owned())?,
+                    _ => continue,
                 },
-            });
+                mls_group_id: payload.group_id.clone(),
+                epoch: payload.epoch,
+                event_id,
+                verified_sender_domain: String::from_utf8(sender_domain)
+                    .map_err(|_| "verified sender domain is not UTF-8".to_owned())?,
+            },
+        });
     }
     Ok(tasks)
 }

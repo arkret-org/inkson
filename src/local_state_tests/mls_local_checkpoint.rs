@@ -47,6 +47,7 @@ fn logout_session_clear_shreds_memory_and_preserves_encrypted_e2ee_state() {
         session_private_key_pem: "pem".to_owned(),
         grant_id: "g-alice".to_owned(),
         audience_id: arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap(),
+        granted_scope: Vec::new(),
         account_id: arkret_sdk::AccountId::new(
             crate::mls_api_helpers::principal_core_id(actor).unwrap(),
             arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap(),

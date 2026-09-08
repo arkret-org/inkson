@@ -20,12 +20,9 @@ pub fn build_account_data_set(
     value: Value,
     expected_revision: u64,
 ) -> anyhow::Result<TypedOperationBuilder> {
-    let value_field = if private_account_data_key_prefix(key).is_some() {
-        "encrypted_payload"
-    } else {
-        "body"
-    };
-    let (body, encrypted_payload) = if value_field == "encrypted_payload" {
+    let descriptor = arkret_schema::account_data_pattern(key)
+        .ok_or_else(|| anyhow::anyhow!("unregistered account_data key: {key}"))?;
+    let (body, encrypted_payload) = if descriptor.storage == "encrypted_account_data" {
         let Value::Object(value) = value else {
             anyhow::bail!("private account_data encrypted_payload must be an object");
         };

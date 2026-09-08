@@ -382,8 +382,59 @@ async fn recover_mls_checkpoint_for_encrypted_write(
         return Ok(());
     }
 
+    // A cold Realm route can render the board from its summary before its
+    // accepted create Event arrives. Absence of that authority fact does not
+    // prove this device needs a Welcome or a history restore. Await the same
+    // canonical projection used by the creator bootstrap gate; never infer
+    // creator authority from the session or the board owner.
+    for attempt in 0..50 {
+        let has_creator_authority = {
+            let store = state_store.read();
+            let state = store.load();
+            garth::realm_authority_root_controller_for_realm(
+                &state.realm_tree_projections,
+                realm_id,
+            )
+            .is_some()
+        };
+        if has_creator_authority {
+            break;
+        }
+        if attempt == 49 {
+            return Err(
+                "encryption_transition_pending: waiting for the accepted Realm creation state"
+                    .to_owned(),
+            );
+        }
+        crate::runtime_helpers::sleep_for(std::time::Duration::from_millis(200)).await;
+    }
+
     let mut failures = Vec::new();
     let store_handle = crate::app::runtime_adapter::state_store_handle(state_store);
+    if crate::mls::creator_bootstrap::creator_mls_bootstrap_pending(
+        &state_store.read(),
+        realm_id,
+        actor_id,
+    ) {
+        let api = crate::transport::auth::authed_api_ready(base_url, session_credential.to_owned())
+            .await
+            .map_err(|error| format!("creator MLS bootstrap transport: {error}"))?;
+        if let Err(error) = crate::mls::creator_bootstrap::ensure_creator_realm_mls_genesis(
+            &api,
+            &store_handle,
+            realm_id,
+            authority,
+            device_id,
+        )
+        .await
+        {
+            failures.push(format!("creator bootstrap: {error}"));
+        }
+    }
+    if encrypted_realm_write_mls_ready(&state_store.read(), realm_id, authority) {
+        return Ok(());
+    }
+
     match crate::app::bootstrap_mls_welcome_for_realm(
         base_url.to_owned(),
         session_credential.to_owned(),
@@ -443,30 +494,6 @@ async fn recover_mls_checkpoint_for_encrypted_write(
                 }
             }
             Err(error) => failures.push(format!("history backup: {}", error.display())),
-        }
-    }
-    if encrypted_realm_write_mls_ready(&state_store.read(), realm_id, authority) {
-        return Ok(());
-    }
-
-    if crate::mls::creator_bootstrap::creator_mls_bootstrap_pending(
-        &state_store.read(),
-        realm_id,
-        actor_id,
-    ) {
-        let api = crate::transport::auth::authed_api_ready(base_url, session_credential.to_owned())
-            .await
-            .map_err(|error| format!("creator MLS bootstrap transport: {error}"))?;
-        if let Err(error) = crate::mls::creator_bootstrap::ensure_creator_realm_mls_genesis(
-            &api,
-            &store_handle,
-            realm_id,
-            authority,
-            device_id,
-        )
-        .await
-        {
-            failures.push(format!("creator bootstrap: {error}"));
         }
     }
     if encrypted_realm_write_mls_ready(&state_store.read(), realm_id, authority) {

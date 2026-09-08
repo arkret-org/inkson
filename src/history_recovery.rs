@@ -60,10 +60,7 @@ impl garth::HistoryResponseCapabilityOpener for ResponseCapabilityOpener<'_> {
             release_id: receipt.release_id.clone(),
             release_service_binding_ref: receipt.release_service_binding_ref.clone(),
             release_service_resolution_ref: receipt.release_service_resolution_ref.clone(),
-            release_service_resolution_sequence: receipt.release_service_resolution_sequence,
-            release_service_resolution_record_digest: receipt
-                .release_service_resolution_record_digest
-                .clone(),
+            release_service_resolution_digest: receipt.release_service_resolution_digest.clone(),
             release_service_route_digest: receipt.release_service_route_digest.clone(),
             expires_at: receipt.expires_at,
         };

@@ -1160,6 +1160,7 @@ pub fn english_translations() -> TranslationDict {
         "chat.watch_level.tooltip",
         "Choose how often this Strand notifies you.",
     );
+    dict.set("chat.watch_level.prefix", "Notifications");
     dict.set("chat.watch_level.mentions_only", "Mentions only");
     dict.set("chat.watch_level.participating", "Participating");
     dict.set("chat.watch_level.all", "All");

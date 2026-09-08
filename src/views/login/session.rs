@@ -1245,6 +1245,7 @@ pub(super) fn persisted_session_grant_from_state(
         session_private_key_pem: session_private_key_pem.to_owned(),
         grant_id: grant.grant_id.as_str().to_owned(),
         audience_id: grant.audience_id.clone(),
+        granted_scope: grant.granted_scope.clone(),
         account_id: grant.account_id.clone(),
         device_id,
         station_url,

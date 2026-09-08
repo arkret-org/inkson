@@ -32,7 +32,7 @@ pub(crate) fn refresh_notifications(
             let response = crate::client_core::account_subscribe_snapshot(&http, None).await?;
             // `invite-addressing.md` §7 - the notify branch's durable carrier is
             // the holder-private `ak.account.invite_delivery` cell, and the
-            // account-subscribe stream never carries CAS-only cells. The live
+            // account-subscribe stream may race with this refresh. The live
             // to-device fanout is a wake, not the record of truth, so a surface
             // that renders invites has to read the cell itself; otherwise an
             // invite whose wake was missed stays invisible until the next cold

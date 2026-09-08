@@ -47,17 +47,14 @@ pub(crate) struct PrincipalSuccessorSealContext {
 
 pub(crate) async fn prepare_principal_successor_seal(
     http: &arkret_sdk::http_client::Client,
-    contact_event: &arkret_sdk::Event,
+    principal_event: &arkret_sdk::Event,
 ) -> anyhow::Result<PrincipalSuccessorSealContext> {
     let signer = crate::event_signer::active_signer()
         .ok_or_else(|| anyhow::anyhow!("active device signer is required for principal commit"))?;
     let principal = arkret_sdk::Did::new(signer.signer_did().to_owned())?;
     let principal_id = arkret_sdk::project_did_to_core_id(&principal)?;
-    let actor_id = crate::mls_api_helpers::local_account_actor_id(principal_id.as_str())?;
-    if contact_event.actor_id != actor_id {
-        anyhow::bail!("prepared principal Event actor does not match the active signer");
-    }
-    let control_realm = contact_event.realm_id.clone();
+    let actor_id = principal_successor_actor(&principal_event.actor_id, &principal_id)?;
+    let control_realm = principal_event.realm_id.clone();
     let view = http.seals_frontier(control_realm.clone()).await?.frontier;
     if view.realm_id != control_realm {
         anyhow::bail!("principal control frontier returned a different Realm");
@@ -81,6 +78,38 @@ pub(crate) async fn prepare_principal_successor_seal(
         control_realm,
         predecessor,
     })
+}
+
+fn principal_successor_actor(
+    actor_id: &arkret_sdk::ActorId,
+    signer_principal: &arkret_sdk::DidCoreId,
+) -> anyhow::Result<arkret_sdk::ActorId> {
+    let account = actor_id.as_account_id().ok_or_else(|| {
+        anyhow::anyhow!("principal successor Seal requires an account Event actor")
+    })?;
+    if &account.principal_id != signer_principal {
+        anyhow::bail!("prepared principal Event actor does not match the active signer");
+    }
+    // First enrollment runs before app connect. The signed Event already
+    // supplies the exact AccountId; no ambient Station may replace it.
+    Ok(actor_id.clone())
+}
+
+#[cfg(test)]
+mod principal_successor_tests {
+    #[test]
+    fn successor_preserves_the_signed_account_before_app_connect() {
+        let principal = arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example").unwrap();
+        let station = arkret_sdk::DidCoreId::new("ak:did_core:web:enrollment.example").unwrap();
+        let actor =
+            arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(principal.clone(), station));
+        assert_eq!(
+            super::principal_successor_actor(&actor, &principal).unwrap(),
+            actor
+        );
+        let other = arkret_sdk::DidCoreId::new("ak:did_core:web:bob.example").unwrap();
+        assert!(super::principal_successor_actor(&actor, &other).is_err());
+    }
 }
 
 pub(crate) async fn submit_principal_successor_seal(

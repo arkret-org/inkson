@@ -158,7 +158,7 @@ pub(super) fn DiscussionUsersPanel(
                                     "data-actor-id": "{principal_id_attr}",
                                     "data-presence-state": "{state}",
                                     span { class: "presence-dot presence-dot-{state}" }
-                                    span { class: "presence-name", title: "{principal_id_attr",
+                                    span { class: "presence-name", title: "{principal_id_attr}",
                                         "{display}"
                                         if participant.is_self {
                                             SelfAttributionBadge {

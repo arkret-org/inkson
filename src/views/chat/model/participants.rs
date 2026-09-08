@@ -302,9 +302,13 @@ pub(crate) fn space_participants(
 }
 
 pub(crate) fn presence_participant_ids(participants: &[SpaceParticipant]) -> Vec<String> {
-    participants.iter().filter_map(|participant| participant.actor_id.as_ref())
-        .map(ToString::to_string).collect::<std::collections::BTreeSet<_>>()
-        .into_iter().collect()
+    participants
+        .iter()
+        .filter_map(|participant| participant.actor_id.as_ref())
+        .map(ToString::to_string)
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect()
 }
 
 pub(crate) fn display_label_for_actor(

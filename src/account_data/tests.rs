@@ -679,7 +679,7 @@ fn build_account_data_set_emits_canonical_kind() {
         "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-",
         "did:web:alice",
         "ak.read_receipt.preferences",
-        json!({"send": false}),
+        json!({"ciphertext": "opaque"}),
         0,
     )
     .unwrap()
@@ -687,8 +687,35 @@ fn build_account_data_set_emits_canonical_kind() {
     assert_eq!(op.kind(), "ak.account_data.set");
     assert_eq!(op.payload()["key"], "ak.read_receipt.preferences");
     assert!(op.payload().get("holder_principal_id").is_none());
-    assert_eq!(op.payload()["body"]["send"], false);
+    assert_eq!(op.payload()["encrypted_payload"]["ciphertext"], "opaque");
+    assert!(!op.payload().contains_key("body"));
     assert!(op.payload()["updated_at"].is_string());
+}
+
+#[test]
+fn singleton_private_account_data_uses_registered_encrypted_carrier() {
+    for key in [
+        arkret_sdk::AccountDataKey::ACCOUNT_BLOCKLIST,
+        arkret_sdk::AccountDataKey::DND_SCHEDULE,
+        arkret_sdk::AccountDataKey::CLIENT_UI_STATE,
+    ] {
+        let op = build_account_data_set(
+            "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-",
+            "did:web:alice",
+            key,
+            json!({"ciphertext": "opaque"}),
+            7,
+        )
+        .unwrap()
+        .build("node");
+        assert_eq!(
+            op.payload()["encrypted_payload"]["ciphertext"],
+            "opaque",
+            "{key}"
+        );
+        assert!(!op.payload().contains_key("body"), "{key}");
+        assert_eq!(op.payload()["expected_revision"], 7);
+    }
 }
 
 #[test]

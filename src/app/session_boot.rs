@@ -635,6 +635,7 @@ pub(super) async fn inject_test_session_grant(
         session_private_key_pem: String::new(),
         grant_id,
         audience_id: arkret_sdk::DidCoreId::new(audience.clone()).ok()?,
+        granted_scope: Vec::new(),
         account_id: fixture_account_id,
         device_id: arkret_sdk::DeviceId::new(device_id.to_owned()).ok()?,
         // MUST match the active server so the bootstrap does not discard the

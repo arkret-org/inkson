@@ -344,7 +344,7 @@ pub(crate) async fn ensure_local_mls_key_package_inventory(
         return Ok(None);
     }
     Ok(
-        maintain_local_mls_key_packages(&base_url, &session_credential, &authority, &device_id, 0)
+        maintain_local_mls_key_packages(&base_url, &session_credential, &authority, &device_id)
             .await?
             .latest_key_package_id,
     )
@@ -361,10 +361,7 @@ pub(crate) async fn manual_refill_local_mls_key_packages(
         return Ok(0);
     }
     Ok(
-        // An expired peer claim can revoke a package without delivering a
-        // Welcome. Explicit refill must publish fresh packages even when the
-        // local inventory still remembers those packages as published.
-        maintain_local_mls_key_packages(&base_url, &session_credential, &authority, &device_id, 8)
+        maintain_local_mls_key_packages(&base_url, &session_credential, &authority, &device_id)
             .await?
             .published_count,
     )
@@ -380,7 +377,6 @@ async fn maintain_local_mls_key_packages(
     session_credential: &str,
     authority: &arkret_sdk::AccountId,
     device_id: &arkret_sdk::DeviceId,
-    minimum_new_packages: usize,
 ) -> Result<LocalMlsKeyPackageMaintenanceOutcome, String> {
     let Some(lease) = crate::keypackage_maintenance::acquire(base_url, authority, device_id)
         .await
@@ -408,7 +404,6 @@ async fn maintain_local_mls_key_packages(
         session_credential,
         authority,
         device_id,
-        minimum_new_packages,
     )
     .await;
     let release = lease
@@ -427,7 +422,6 @@ async fn run_local_mls_key_package_maintenance_cycle(
     session_credential: &str,
     authority: &arkret_sdk::AccountId,
     device_id: &arkret_sdk::DeviceId,
-    minimum_new_packages: usize,
 ) -> Result<LocalMlsKeyPackageMaintenanceOutcome, String> {
     const KEYPACKAGE_MIN_AVAILABLE: usize = 8;
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
@@ -529,7 +523,7 @@ async fn run_local_mls_key_package_maintenance_cycle(
     )
     .map_err(|error| format!("store pruned MLS KeyPackage inventory: {error}"))?;
 
-    let deficit = inventory.maintenance_deficit(now, KEYPACKAGE_MIN_AVAILABLE).max(minimum_new_packages);
+    let deficit = inventory.maintenance_deficit(now, KEYPACKAGE_MIN_AVAILABLE);
     if deficit == 0 {
         return Ok(LocalMlsKeyPackageMaintenanceOutcome {
             latest_key_package_id: inventory
@@ -1037,7 +1031,12 @@ pub(crate) async fn bootstrap_mls_welcome_for_realm(
             store.set_realm_seal_view(
                 realm_id.clone(),
                 crate::state::LocalSealView {
-                    frontier: verified.basis.leaves.iter().map(ToString::to_string).collect(),
+                    frontier: verified
+                        .basis
+                        .leaves
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect(),
                     state_root: None,
                     ..Default::default()
                 },

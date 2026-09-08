@@ -277,7 +277,7 @@ fn inkson_accepts_server_contract_payloads() {
             "realm_id": "ak:realm:AZQnaSleDidYaYIvfwYy3au5gnd_DSinxyUHEl7ewtxk",
             "service_id": "ak:did_core:web:server.local",
             "service_resolution": {
-                "current_record_url": "https://server.local/_arkret/open/services/ak%3Adid_core%3Aweb%3Aserver.local/resolution"
+                "resolution_url": "https://server.local/_arkret/open/services/ak%3Adid_core%3Aweb%3Aserver.local/resolution"
             },
             "service_kind": "station",
             "role": "joined_member_station",

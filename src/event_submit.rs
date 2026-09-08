@@ -1962,12 +1962,35 @@ impl EventSubmitter {
             .open_service_resolution(&service_id)
             .await
             .map_err(anyhow::Error::from)?;
-        let evidence = arkret_identity::service_signer_evidence_from_authenticated_resolution(
-            resolution,
-            &service_id,
-            chrono::Utc::now(),
+        let now = chrono::Utc::now();
+        let current = crate::media::service_route::fetch_current_service_document(
+            &reqwest::Client::new(),
+            &resolution.normalized_did_document.id,
         )
-        .map_err(anyhow::Error::from)?;
+        .await?;
+        arkret_identity::verify_current_service_resolution(
+            &resolution,
+            &service_id,
+            "station",
+            &current,
+            now,
+        )?;
+        let document =
+            arkret_identity::authenticated_service_document_at(&resolution, &service_id, now)?;
+        // This client selects the Station deployment's notary method, not its
+        // Account Authority method. Other authorized assertion methods may
+        // coexist; the exact selected method still requires authenticated
+        // historical evidence before its key is frozen into Realm genesis.
+        let method = arkret_sdk::DidUrl::new(format!("{}#notary-key", document.id))
+            .map_err(anyhow::Error::msg)?;
+        let evidence =
+            arkret_identity::service_signer_evidence_for_method_from_authenticated_resolution(
+                resolution,
+                &service_id,
+                method,
+                now,
+            )
+            .map_err(anyhow::Error::from)?;
         let descriptor = arkret_sdk::ed25519_notary_signer_descriptor_from_evidence(&evidence)
             .map_err(anyhow::Error::from)?;
         Ok(arkret_sdk::NotaryValue::single_signer(descriptor))
@@ -3309,6 +3332,20 @@ impl EventSubmitter {
         &self,
         realm_id: &str,
     ) -> anyhow::Result<Option<RealmCreateAuthority>> {
+        // Realm founding intent is immutable. A locally verified governance
+        // checkpoint supplies it even when this device has not authored yet
+        // and the network is unavailable; an unverified UI projection cannot.
+        if let Some(checkpoint) = self
+            .state_store
+            .as_ref()
+            .and_then(|store| store.read(|state| state.trusted_mls_governance_checkpoint(realm_id)))
+        {
+            if let Some(authority) =
+                realm_create_authority_from_events(&checkpoint.accepted_events, realm_id)
+            {
+                return Ok(Some(authority));
+            }
+        }
         if let Some(cached) = realm_create_authority_cache()
             .lock()
             .unwrap_or_else(PoisonError::into_inner)

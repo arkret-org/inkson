@@ -23,16 +23,34 @@ fn presence_roster_keeps_station_identity_through_projection_and_render_lookup()
     let foreign = presence_actor("bob.example", "other.example");
     let mut roster = Vec::new();
     for actor in [&me, &bob, &foreign] {
-        upsert_participant(&mut roster, actor, SpaceParticipantRole::Member,
-            me.signing_principal_id().as_str(), None, None);
+        upsert_participant(
+            &mut roster,
+            actor,
+            SpaceParticipantRole::Member,
+            me.signing_principal_id().as_str(),
+            None,
+            None,
+        );
     }
     let ids = presence_participant_ids(&roster);
     assert_eq!(ids.len(), 3);
-    let (states, _, _) = presence_maps_from_sync_events(
-        &[presence_body(&bob, "online", 0)], &ids, &me.to_string(), "Me").unwrap();
+    let (states, ..) = presence_maps_from_sync_events(
+        &[presence_body(&bob, "online", 0)],
+        &ids,
+        &me.to_string(),
+        "Me",
+    )
+    .unwrap();
     for participant in roster {
-        let expected = if participant.actor_id.as_ref() == Some(&foreign) { "offline" } else { "online" };
-        assert_eq!(states.get(&participant.roster_key()).map(String::as_str), Some(expected));
+        let expected = if participant.actor_id.as_ref() == Some(&foreign) {
+            "offline"
+        } else {
+            "online"
+        };
+        assert_eq!(
+            states.get(&participant.roster_key()).map(String::as_str),
+            Some(expected)
+        );
     }
 }
 

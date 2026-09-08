@@ -422,102 +422,60 @@ fn realm_genesis_seal(input: Value) -> Result<Value> {
 }
 
 fn mock_service_authority() -> Result<MockServiceAuthority> {
-    use arkret_identity::{DidKeyResolver, DidResolver};
-    use arkret_sdk::{
-        AuthenticatedServiceResolution, Did, DidUrl, ResolutionCommitment,
-        ResolutionDidBindingEvidenceKind, ResolutionDidBindingEvidenceReceipt,
-        ResolutionMethodEvidenceBoundary, ResolutionMethodHistoryEvidence,
-        ServiceResolutionRecordCore, route_binding_describe_digest, sign_service_resolution_record,
+    use arkret_identity::{
+        DidResolver as _, DidWebvhDocumentOutcome, DidWebvhLogOutcome, DidWebvhResolver,
     };
-    use chrono::Duration;
-    use ed25519_dalek::SigningKey;
-
-    let signing_key = SigningKey::from_bytes(&[31_u8; 32]);
-    let key_material =
-        arkret_sdk::ed25519_pubkey_to_did_key_multibase(signing_key.verifying_key().as_bytes());
-    let did = Did::new(format!("did:key:{key_material}"))?;
+    use rand_core::SeedableRng as _;
+    let endpoint = url::Url::parse("https://server.local/")?;
+    let at =
+        chrono::DateTime::parse_from_rfc3339("2026-06-01T00:00:00Z")?.with_timezone(&chrono::Utc);
+    let mut rng = rand_chacha::ChaCha20Rng::seed_from_u64(31);
+    let prepared = arkret_signatures::webvh::prepare_service_inception_with_did_key_seed(
+        &mut rng,
+        &arkret_signatures::webvh::ServiceInceptionInput {
+            principal_endpoint: &endpoint,
+            local_id: "service",
+            also_known_as: &[],
+            version_time: at,
+            did_key_fragment: Some("signing-1"),
+        },
+        &[31; 32],
+    )?;
+    let did = arkret_sdk::Did::new(prepared.did.clone())?;
     let service_id = arkret_wire::project_did_to_core_id(&did)?;
-    let verification_method =
-        DidUrl::new(format!("{did}#{key_material}")).map_err(|error| anyhow::anyhow!(error))?;
-    let document = DidKeyResolver::new().resolve_did(&did)?.document;
-    let document_digest = arkret_sdk::identity::document_canonical_digest(&document)
-        .map_err(|error| anyhow::anyhow!(error))?;
-    let did_digest = arkret_sdk::canonical::sha256_digest(did.as_str().as_bytes());
-    let history_position = format!("synthetic-did-{did_digest}");
-    let commitment = ResolutionCommitment {
-        did: did.clone(),
-        method_history_head: history_position.clone(),
-        version_id: history_position.clone(),
-    };
-    let describe_digest = route_binding_describe_digest(
-        &service_id,
-        "station",
-        &commitment,
-        "https://server.local/_arkret",
+    let verification_method = arkret_sdk::DidUrl::new(prepared.did_key_id.clone())?;
+    let mut resolver = DidWebvhResolver::new();
+    resolver.insert_from_https_response(
+        &did,
+        DidWebvhDocumentOutcome {
+            url: DidWebvhResolver::document_url(&did)?,
+            content_type: "application/json".into(),
+            body: serde_json::to_vec(&prepared.log_entry["state"])?,
+        },
     )?;
-    let issued_at = chrono::Utc::now() - Duration::seconds(1);
-    let record = sign_service_resolution_record(
-        ServiceResolutionRecordCore {
-            service_id: service_id.clone(),
-            service_kind: "station".to_owned(),
-            did,
-            method_history_head: history_position.clone(),
-            version_id: history_position.clone(),
-            resolution_event_ref: format!("did-key-did-{did_digest}"),
-            record_sequence: 0,
-            previous_record_digest: None,
-            current_record_url: format!(
-                "https://server.local{}",
-                arkret_sdk::canonical_service_current_record_path(&service_id)
-            ),
-            base_url: "https://server.local/".to_owned(),
-            describe_digest,
-            issued_at,
-            refresh_after: issued_at + Duration::minutes(30),
-            expires_at: issued_at + Duration::hours(1),
+    resolver.ingest_log(
+        &did,
+        DidWebvhLogOutcome {
+            url: DidWebvhResolver::log_url(&did)?,
+            content_type: "application/jsonl".into(),
+            body: serde_json::to_vec(&prepared.log_entry)?,
         },
-        verification_method.clone(),
-        &signing_key,
     )?;
-    let evidence = ResolutionMethodHistoryEvidence::DidKeyExpansion {
-        boundary: ResolutionMethodEvidenceBoundary {
-            from_method_history_head: history_position.clone(),
-            from_version_id: history_position.clone(),
-            to_method_history_head: history_position.clone(),
-            to_version_id: history_position,
-        },
-        evidence: ResolutionDidBindingEvidenceReceipt {
-            kind: ResolutionDidBindingEvidenceKind::AkDidBindingEvidenceV1,
-            method: "key".to_owned(),
-            document_digest,
-            method_proofs: Vec::new(),
-        },
-    };
-    let resolution = AuthenticatedServiceResolution {
-        service_resolution_record: record,
-        method_history_evidence: evidence,
-        normalized_did_document: document,
-    };
-    arkret_identity::verify_authenticated_service_resolution_history(
-        &resolution,
-        &service_id,
+    let resolution = arkret_identity::build_authenticated_webvh_service_resolution(
+        service_id.clone(),
+        "station".into(),
+        resolver.resolve_did(&did)?.document,
+        vec![prepared.log_entry.clone()],
+        vec![],
         chrono::Utc::now(),
     )?;
     Ok(MockServiceAuthority {
         resolution,
-        signing_key,
+        signing_key: ed25519_dalek::SigningKey::from_bytes(&[31; 32]),
         service_id,
-        did: signer_did_from_method(&verification_method)?,
+        did,
         verification_method,
     })
-}
-
-fn signer_did_from_method(method: &arkret_sdk::DidUrl) -> Result<arkret_sdk::Did> {
-    let (controller, _) = method
-        .as_str()
-        .split_once('#')
-        .context("mock service verification method has no fragment")?;
-    arkret_sdk::Did::new(controller.to_owned()).map_err(anyhow::Error::msg)
 }
 
 fn service_resolution() -> Result<Value> {
@@ -535,14 +493,11 @@ fn principal_locator(input: Value) -> Result<Value> {
     let locator_ref_digest = arkret_sdk::Hash::new(arkret_sdk::canonical::sha256_digest(
         b"inkson-e2e-invite-locator",
     ))?;
-    let service_resolution = arkret_sdk::ServiceResolutionCarrier::CurrentRecordUrl {
-        current_record_url: authority
-            .resolution
-            .service_resolution_record
-            .record
-            .current_record_url
-            .clone(),
-        pinned_record_digest: None,
+    let service_resolution = arkret_sdk::ServiceResolutionCarrier::ResolutionUrl {
+        resolution_url: format!(
+            "https://server.local{}",
+            arkret_sdk::canonical_service_resolution_path(&authority.service_id)
+        ),
     };
     let mut locator = arkret_sdk::PrincipalLocator {
         schema: arkret_sdk::PrincipalLocator::SCHEMA.to_owned(),

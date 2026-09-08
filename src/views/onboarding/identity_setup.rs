@@ -247,6 +247,7 @@ pub(super) async fn create_and_bind_identity(
             session_private_key_pem: completion.session_private_key_pem,
             grant_id: completion.session_grant.grant_id.to_string(),
             audience_id: completion.session_grant.audience_id.clone(),
+            granted_scope: completion.session_grant.granted_scope.clone(),
             account_id: completion.session_grant.account_id.clone(),
             device_id: arkret_sdk::DeviceId::new(device.to_owned())?,
             station_url: url::Url::parse(&handoff.station_url)?,

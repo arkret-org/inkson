@@ -264,7 +264,8 @@ pub(super) fn KanbanEffects(
     });
 
     use_effect(move || {
-        sync_selected_card_from_columns(selected_card, &columns());
+        let raw_operations = state_store.read().load().raw_operations;
+        sync_selected_card_from_columns(selected_card, &columns(), &raw_operations);
     });
 
     {

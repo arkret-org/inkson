@@ -1791,6 +1791,11 @@ pub async fn submit_read_cursor_advance(
     if crate::mls_api_helpers::principal_core_id(&marker.actor)? != authority.principal_id {
         anyhow::bail!("read marker actor does not belong to the authenticated account");
     }
+    // A notification may be read before this device ever opens its Realm.
+    // Resolve and verify the digest-suite authority before signing the cursor.
+    submitter
+        .ensure_realm_governance_checkpoint(&marker.body.realm_id)
+        .await?;
     let payload = arkret_sdk::ReadCursor {
         schema: marker.body.schema.clone(),
         actor_id: arkret_sdk::ActorId::account(authority.clone()),

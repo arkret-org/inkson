@@ -272,16 +272,13 @@ fn resolved_account_invite_address(
                 "handle result Station has no derivable HTTPS origin; use a principal locator"
             )
         })?;
-    let current_record_url = format!(
+    let resolution_url = format!(
         "https://{host}{}",
-        arkret_sdk::canonical_service_current_record_path(&account_id.station_id)
+        arkret_sdk::canonical_service_resolution_path(&account_id.station_id)
     );
     let target = arkret_sdk::InviteAddress {
         account_id: account_id.clone(),
-        service_resolution: arkret_sdk::ServiceResolutionCarrier::CurrentRecordUrl {
-            current_record_url,
-            pinned_record_digest: None,
-        },
+        service_resolution: arkret_sdk::ServiceResolutionCarrier::ResolutionUrl { resolution_url },
         route_assistance: None,
     };
     target.validate()?;
@@ -554,7 +551,7 @@ mod invite_addressing_tests {
             "schema": arkret_sdk::SchemaId::PRINCIPAL_LOCATOR_V1,
             "account_id": {"principal_id": "ak:did_core:web:bob.example", "station_id": "ak:did_core:web:ps.bob.example"},
             "service_resolution": {
-                "current_record_url": "https://ps.bob.example/_arkret/open/services/ak%3Adid_core%3Aweb%3Aps.bob.example/resolution"
+                "resolution_url": "https://ps.bob.example/_arkret/open/services/ak%3Adid_core%3Aweb%3Aps.bob.example/resolution"
             },
             "issued_at": "2026-06-07T00:00:00.000Z",
             "expires_at": "2026-06-07T00:15:00.000Z",
@@ -671,7 +668,7 @@ mod invite_addressing_tests {
         let raw_invite_address = json!({
             "account_id": {"principal_id": "ak:did_core:web:bob.example", "station_id": "ak:did_core:web:ps.bob.example"},
             "service_resolution": {
-                "current_record_url": "https://ps.bob.example/_arkret/open/services/ak%3Adid_core%3Aweb%3Aps.bob.example/resolution"
+                "resolution_url": "https://ps.bob.example/_arkret/open/services/ak%3Adid_core%3Aweb%3Aps.bob.example/resolution"
             },
         })
         .to_string();

@@ -49,11 +49,14 @@ pub(crate) fn local_created_card(
 pub(crate) fn sync_selected_card_from_columns(
     mut selected_card: Signal<Option<KanbanCard>>,
     columns: &[KanbanColumn],
+    raw_operations: &[RawOperationRecord],
 ) {
     let Some(current) = selected_card.read().clone() else {
         return;
     };
-    let Some(next) = find_card_by_strand_id(columns, &current.id) else {
+    let aliases = event_derived_target_aliases(raw_operations);
+    let strand_id = resolve_event_derived_target_alias(&aliases, &current.id);
+    let Some(next) = find_card_by_strand_id(columns, &strand_id) else {
         return;
     };
     if next != current {

@@ -221,6 +221,7 @@ fn session_grant(grant_expires_in: i64) -> PersistedSessionGrant {
         session_private_key_pem: "PEM".to_owned(),
         grant_id: "grant-1".to_owned(),
         audience_id: arkret_sdk::DidCoreId::new("ak:did_core:web:local.host").unwrap(),
+        granted_scope: Vec::new(),
         account_id: arkret_sdk::AccountId::new(
             crate::mls_api_helpers::principal_core_id("did:web:alice.example").unwrap(),
             arkret_sdk::DidCoreId::new("ak:did_core:web:local.host").unwrap(),

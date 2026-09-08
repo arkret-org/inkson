@@ -281,6 +281,7 @@ pub(super) async fn issue_recovery_completion_grant(
         session_private_key_pem: holder.session_signing_key_pkcs8_pem()?.to_string(),
         grant_id: session.grant_id.to_string(),
         audience_id: session.audience_id.clone(),
+        granted_scope: session.granted_scope.clone(),
         account_id: session.account_id.clone(),
         device_id: arkret_sdk::DeviceId::new(handoff.device_id.clone())?,
         station_url: url::Url::parse(&handoff.station_url)?,

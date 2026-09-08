@@ -198,14 +198,8 @@ const currentPrincipalServiceResolution = inksonWire<Record<string, any>>(
   "service-resolution",
   {},
 );
-const currentPrincipalServiceRecord =
-  currentPrincipalServiceResolution.service_resolution_record.record;
-export const CURRENT_STATION_ID = String(
-  currentPrincipalServiceRecord.service_id,
-);
-export const CURRENT_STATION_DID = String(
-  currentPrincipalServiceRecord.did,
-);
+export const CURRENT_STATION_ID = String(currentPrincipalServiceResolution.service_id);
+export const CURRENT_STATION_DID = String(currentPrincipalServiceResolution.normalized_did_document.did);
 
 function canonicalJson(value: unknown): string {
   assertJsonTransportable(value, "$");
@@ -1207,6 +1201,16 @@ export async function mockArkretApi(
         contentType: "text/html",
         body: '<!doctype html><main data-testid="coauth-login"><h1>Sign in</h1><p>coauth</p><a href="/register">Create account</a><a href="/recovery">Lost password or account</a></main>',
       });
+    }
+    if (url.hostname === "server.local" && url.pathname === "/webvh/service/did.json") {
+      const entries = currentPrincipalServiceResolution.method_history_evidence.log_entries;
+      return route.fulfill({ status: 200, contentType: "application/did+json", body: JSON.stringify(entries[entries.length - 1].state) });
+    }
+    if (url.hostname === "server.local" && url.pathname === "/webvh/service/did.jsonl") {
+      return route.fulfill({ status: 200, contentType: "application/jsonl", body: currentPrincipalServiceResolution.method_history_evidence.log_entries.map((entry: unknown) => JSON.stringify(entry)).join("\n") + "\n" });
+    }
+    if (url.hostname === "server.local" && url.pathname === "/webvh/service/did-witness.json") {
+      return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(currentPrincipalServiceResolution.method_history_evidence.witness_records) });
     }
     if (!url.pathname.startsWith("/_arkret/")) {
       return route.continue();
@@ -4362,8 +4366,8 @@ function principalServiceDescribe() {
     service_id: CURRENT_STATION_ID,
     service_resolution: {
       did: CURRENT_STATION_DID,
-      method_history_head: currentPrincipalServiceRecord.method_history_head,
-      version_id: currentPrincipalServiceRecord.version_id,
+      method_history_head: currentPrincipalServiceResolution.method_history_evidence.boundary.to_method_history_head,
+      version_id: currentPrincipalServiceResolution.method_history_evidence.boundary.to_version_id,
     },
     trust_domain: "ak:trust_domain:server.local",
     service_kind: "station",
@@ -4520,7 +4524,7 @@ function joinCandidate() {
     realm_id: DEMO_REALM,
     service_id: CURRENT_STATION_ID,
     service_resolution: {
-      current_record_url: currentPrincipalServiceRecord.current_record_url,
+      resolution_url: `https://server.local/_arkret/open/services/${encodeURIComponent(CURRENT_STATION_ID)}/resolution`,
     },
     service_kind: "station",
     role: "joined_member_station",

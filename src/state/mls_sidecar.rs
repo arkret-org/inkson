@@ -1185,8 +1185,12 @@ impl LocalStateStore {
             return Ok(false);
         };
         let scope = mls_realm_or_circle_scope(realm_id, circle_id)?;
-        let transition_ids =
-            checkpoint_mls_group_state_event_ids(&self.cached, &scope, &snapshot.group_id, snapshot.epoch);
+        let transition_ids = checkpoint_mls_group_state_event_ids(
+            &self.cached,
+            &scope,
+            &snapshot.group_id,
+            snapshot.epoch,
+        );
         let [event_id] = transition_ids.as_slice() else {
             if transition_ids.len() > 1 {
                 return Err("verified checkpoint has ambiguous MLS transition Events".to_owned());
@@ -1589,24 +1593,37 @@ mod tests {
 
     #[test]
     fn verified_commit_restores_missing_nonzero_epoch_reference() {
-        let path = std::env::temp_dir().join(format!("inkson-commit-anchor-{}.json", chrono::Utc::now().timestamp_nanos_opt().unwrap()));
+        let path = std::env::temp_dir().join(format!(
+            "inkson-commit-anchor-{}.json",
+            chrono::Utc::now().timestamp_nanos_opt().unwrap()
+        ));
         let realm = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
-        let id = arkret_sdk::EventId::new("ak:event:AXBcp13trH3bPXvj0eHppCpGqJZWL9yqE3cf2Tl43vyk").unwrap();
+        let id = arkret_sdk::EventId::new("ak:event:AXBcp13trH3bPXvj0eHppCpGqJZWL9yqE3cf2Tl43vyk")
+            .unwrap();
         let group = "AQID";
         let binding = arkret_sdk::MlsGovernanceBindingPayload::realm(
-            arkret_sdk::RealmId::new(realm).unwrap(), group, 0, 1,
+            arkret_sdk::RealmId::new(realm).unwrap(),
+            group,
+            0,
+            1,
             arkret_sdk::Hash::new(format!("sha256:{}", "a5".repeat(32))).unwrap(),
             arkret_sdk::ContentScheme::MlsExporterAeadV1,
             Some(arkret_sdk::DurabilityPolicy::None),
             arkret_sdk::ProfileId::MLS_GOVERNANCE_BINDING_FULL_V1,
             arkret_sdk::CORE_REDUCER_PROFILE,
-        ).unwrap();
+        )
+        .unwrap();
         let commit = arkret_sdk::MlsCommitEnvelope {
-            group_id: group.into(), epoch: 1, commit: arkret_sdk::base64url_encode(b"commit"),
-            commit_digest: arkret_sdk::Hash::new(arkret_sdk::canonical::sha256_digest(b"commit")).unwrap(),
+            group_id: group.into(),
+            epoch: 1,
+            commit: arkret_sdk::base64url_encode(b"commit"),
+            commit_digest: arkret_sdk::Hash::new(arkret_sdk::canonical::sha256_digest(b"commit"))
+                .unwrap(),
             ratchet_tree: None,
         };
-        let payload = arkret_sdk::MlsCommitPayload::new(0, id.to_string(), Vec::new(), &commit, binding).unwrap();
+        let payload =
+            arkret_sdk::MlsCommitPayload::new(0, id.to_string(), Vec::new(), &commit, binding)
+                .unwrap();
         let event = serde_json::from_value(json!({
             "event_id": id, "kind": "ak.mls.commit", "realm_id": realm,
             "scope_ref": {"kind":"realm", "realm_id":realm},
@@ -1615,18 +1632,44 @@ mod tests {
             "hlc":"01970e589d21-0001-a13f9c2e", "prev_refs":[], "payload":payload, "proofs":[]
         })).unwrap();
         let mut store = LocalStateStore::with_path(&path);
-        let snapshot = crate::mls::persistence::encrypt_state(realm, group, 1, b"snapshot", "test-secret", &[7;16]);
+        let snapshot = crate::mls::persistence::encrypt_state(
+            realm,
+            group,
+            1,
+            b"snapshot",
+            "test-secret",
+            &[7; 16],
+        );
         store.save_mls_checkpoint(realm, snapshot).unwrap();
-        assert!(!store.reconcile_mls_group_state_ref_from_checkpoint(realm, None).unwrap());
+        assert!(
+            !store
+                .reconcile_mls_group_state_ref_from_checkpoint(realm, None)
+                .unwrap()
+        );
         // Post-verification fixture: projection rows remain insufficient.
-        store.cached.mls_governance_checkpoints.insert(realm.into(), arkret_sdk::MlsGovernanceVerificationCheckpoint {
-            realm_id: arkret_sdk::RealmId::new(realm).unwrap(),
-            basis: arkret_sdk::SealBasis { leaves: Vec::new() },
-            live_digest_suite: arkret_sdk::DigestSuite::Sha256,
-            accepted_seals: Vec::new(), accepted_events: vec![event], governance_dependencies: Vec::new(),
-        });
-        assert!(store.reconcile_mls_group_state_ref_from_checkpoint(realm, None).unwrap());
-        assert_eq!(store.mls_checkpoint_for(realm).unwrap().group_state_event_id, Some(id));
+        store.cached.mls_governance_checkpoints.insert(
+            realm.into(),
+            arkret_sdk::MlsGovernanceVerificationCheckpoint {
+                realm_id: arkret_sdk::RealmId::new(realm).unwrap(),
+                basis: arkret_sdk::SealBasis { leaves: Vec::new() },
+                live_digest_suite: arkret_sdk::DigestSuite::Sha256,
+                accepted_seals: Vec::new(),
+                accepted_events: vec![event],
+                governance_dependencies: Vec::new(),
+            },
+        );
+        assert!(
+            store
+                .reconcile_mls_group_state_ref_from_checkpoint(realm, None)
+                .unwrap()
+        );
+        assert_eq!(
+            store
+                .mls_checkpoint_for(realm)
+                .unwrap()
+                .group_state_event_id,
+            Some(id)
+        );
         let _ = std::fs::remove_file(path);
     }
 

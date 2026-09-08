@@ -456,7 +456,8 @@ pub(super) fn ChatEffects(
 
     {
         let realm = selected_realm_id.clone();
-        let actor = crate::app::SessionContext::get().active_account()
+        let actor = crate::app::SessionContext::get()
+            .active_account()
             .map(|account| arkret_sdk::ActorId::account(account.authority).to_string())
             .unwrap_or_default();
         let strand = selected_channel_value.clone();

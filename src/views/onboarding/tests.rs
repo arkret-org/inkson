@@ -244,6 +244,7 @@ fn accepted_account_client_uses_the_accepted_dpop_session() {
         session_private_key_pem: String::new(),
         grant_id: "ak:session_grant:Af0GheZX08ev4L1fQoFdngIpe5c_9Lk7SQqfN4jztzDW".to_owned(),
         audience_id: account.authority.station_id.clone(),
+        granted_scope: Vec::new(),
         account_id: account.authority.clone(),
         device_id: account.device_id.clone(),
         station_url: account.server_url.clone(),

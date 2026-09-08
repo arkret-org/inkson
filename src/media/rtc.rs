@@ -295,7 +295,9 @@ impl MediaJoinRequest {
                 .ok_or(RtcClientError::TokenIssuerUnauthorised)?;
             let cached = route.route();
             let authenticated = route.authenticated_resolution();
-            let record = &authenticated.service_resolution_record.record;
+            let record = authenticated
+                .projection()
+                .map_err(|_| RtcClientError::TokenIssuerUnauthorised)?;
             if cached.service_kind != "media_service"
                 || record.service_kind != "media_service"
                 || record.service_id != *service_id
@@ -1021,13 +1023,13 @@ mod tests {
     #[test]
     fn evaluator_route_material_satisfies_token_issuer_anchors() {
         use chrono::TimeZone as _;
-        use garth::service_route_material::test_fixture::signed_web_route_fixture;
+        use garth::service_route_material::test_fixture::current_web_route_fixture;
 
         let now = chrono::Utc.with_ymd_and_hms(2026, 8, 20, 1, 0, 0).unwrap();
-        let fixture = signed_web_route_fixture("media.example", "media_service", now, 0, None, 31);
-        let resolution = garth::authenticate_fetched_record(
-            fixture.record.clone(),
-            fixture.document.clone(),
+        let fixture = current_web_route_fixture("media.example", "media_service", 31);
+        let resolution = garth::authenticate_fetched_resolution(
+            fixture.resolution.clone(),
+            arkret_identity::ResolvedDid::proofless(fixture.document.clone()),
             now,
         )
         .expect("fixture record must authenticate");
@@ -1036,10 +1038,9 @@ mod tests {
             chrono::Duration::minutes(1),
         )
         .unwrap();
-        let mut source =
-            garth::PrefetchedRouteSource::new(Some(garth::ServiceRouteCandidate { resolution }));
+        let mut source = garth::PrefetchedRouteSource::new(Some(resolution));
         source.insert_describe(
-            garth::describe_route_binding(&fixture.record, &fixture.describe, now).unwrap(),
+            garth::describe_route_binding(&fixture.resolution, &fixture.describe, now).unwrap(),
         );
         let route = evaluator
             .resolve(&fixture.service_id, "media_service", now, &mut source)

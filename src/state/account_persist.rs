@@ -618,6 +618,7 @@ mod tests {
             grant_id: "ak:session_grant:AY6DJbBwavsGTQuBZZiqqw9MVcqPZ8QX8invQ3i2kpi7".to_owned(),
             audience_id: arkret_sdk::DidCoreId::new("ak:did_core:webvh:z6mkfixture:soland.example")
                 .unwrap(),
+            granted_scope: Vec::new(),
             account_id: arkret_sdk::AccountId::new(
                 arkret_sdk::DidCoreId::new(
                     "ak:did_core:webvh:z6mkfixture:alice.example".to_owned(),
