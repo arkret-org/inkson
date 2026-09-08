@@ -85,7 +85,7 @@ pub(super) enum ChatProjectionEvent {
     MergeChannels(Vec<ChannelEntity>),
     MergeMessages(Vec<ChatMessage>),
     ReplaceMessages(Vec<ChatMessage>),
-    MergePollCards(Vec<crate::messaging::polls::PollCard>),
+    ReplacePollProjection(Vec<crate::messaging::polls::PollCard>),
     AccountDisplayName(String),
 }
 
@@ -154,8 +154,8 @@ impl ChatProjectionSink {
                 merge_chat_messages(&mut self.0.messages.write(), messages);
             }
             ChatProjectionEvent::ReplaceMessages(messages) => self.0.messages.set(messages),
-            ChatProjectionEvent::MergePollCards(cards) => {
-                merge_poll_cards(&mut self.0.poll_cards.write(), cards);
+            ChatProjectionEvent::ReplacePollProjection(cards) => {
+                replace_poll_projection(&mut self.0.poll_cards.write(), cards);
             }
             ChatProjectionEvent::AccountDisplayName(name) => {
                 self.0.account_display_name.set(name);
@@ -1161,7 +1161,7 @@ impl ChatController {
         mut self,
         context: ChatCommandContext,
         message_id: String,
-        poll_ref: String,
+        poll_ref: arkret_sdk::MessageId,
         option_id: String,
     ) {
         if let Some(message) = self
@@ -1186,6 +1186,15 @@ impl ChatController {
                 .and_then(|channel| channel.scope_circle.as_ref())
                 .map(|scope| scope.circle_id.clone()),
         };
+        let actor_key = arkret_sdk::ActorId::account(context.authority.clone());
+        let response_heads = self
+            .poll_cards
+            .read()
+            .iter()
+            .find(|card| card.poll_ref.as_ref() == Some(&poll_ref))
+            .and_then(|card| card.response_heads.get(&actor_key))
+            .cloned()
+            .unwrap_or_default();
         let state_store = crate::app::SessionContext::get().state_store;
         let base_url = context.base_url;
         let realm_id = context.selected_realm_id;
@@ -1201,9 +1210,10 @@ impl ChatController {
                         &realm_id,
                         actor.as_str(),
                         &strand_id,
-                        &poll_ref,
+                        poll_ref.as_str(),
                         &[option_id],
-                    )?;
+                    )?
+                    .with_causal_refs(response_heads);
                     super::poll_submission::submit_poll_operation(
                         &api,
                         state_store,

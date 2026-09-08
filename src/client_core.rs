@@ -956,6 +956,7 @@ mod tests {
                     "11".repeat(32)
                 ))
                 .unwrap(),
+                applet_installation_digest: None,
                 accepted_at: event.created_at,
                 jws: "header..admission".to_owned(),
             }

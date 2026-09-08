@@ -599,9 +599,7 @@ pub(super) fn ChatEffects(
             if !local_messages.is_empty() {
                 event_sink.emit(ChatProjectionEvent::MergeMessages(local_messages));
             }
-            if !local_poll_cards.is_empty() {
-                event_sink.emit(ChatProjectionEvent::MergePollCards(local_poll_cards));
-            }
+            event_sink.emit(ChatProjectionEvent::ReplacePollProjection(local_poll_cards));
             let principal_id_for_decrypt = principal_id.clone();
             let authority_for_decrypt = authority_for_initial_sync.clone();
             let device_id_for_decrypt = device_id.clone();
@@ -647,7 +645,6 @@ pub(super) fn ChatEffects(
                     );
                 }
                 let mut loaded_messages = Vec::new();
-                let mut loaded_poll_cards = Vec::new();
                 if let Ok(account) =
                     async { crate::transport::account::account_me(&api.sdk_http_client()?).await }
                         .await
@@ -687,11 +684,6 @@ pub(super) fn ChatEffects(
                     )
                     .await;
                     loaded_messages.extend(chat_messages_from_sync_realms_with_sidecar(
-                        &sync.realm_projections,
-                        Some(&state_store.read()),
-                        decrypt_identity,
-                    ));
-                    loaded_poll_cards.extend(poll_cards_from_sync_realms_with_sidecar(
                         &sync.realm_projections,
                         Some(&state_store.read()),
                         decrypt_identity,
@@ -781,12 +773,6 @@ pub(super) fn ChatEffects(
                                 Some(&state_store.read()),
                                 decrypt_identity,
                             ));
-                            loaded_poll_cards.extend(poll_cards_from_events_with_sidecar(
-                                &selected_realm_for_load,
-                                &backfill_events,
-                                Some(&state_store.read()),
-                                decrypt_identity,
-                            ));
                         }
                     }
                 }
@@ -802,9 +788,18 @@ pub(super) fn ChatEffects(
                 if !loaded_messages.is_empty() {
                     event_sink.emit(ChatProjectionEvent::MergeMessages(loaded_messages));
                 }
-                if !loaded_poll_cards.is_empty() {
-                    event_sink.emit(ChatProjectionEvent::MergePollCards(loaded_poll_cards));
-                }
+                // Tally only the durable accepted union, never one backfill page.
+                let loaded_poll_cards = {
+                    let store = state_store.read();
+                    poll_cards_from_local_state_with_sidecar(
+                        &store.load(),
+                        Some(&store),
+                        decrypt_identity,
+                    )
+                };
+                event_sink.emit(ChatProjectionEvent::ReplacePollProjection(
+                    loaded_poll_cards,
+                ));
                 event_sink.emit(ChatProjectionEvent::InitialSync {
                     requested: true,
                     finished: true,
@@ -853,15 +848,8 @@ pub(super) fn ChatEffects(
                 .into_iter()
                 .filter(|message| message.realm_id == realm)
                 .collect::<Vec<_>>();
-                let realm_events = snapshot
-                    .raw_operations
-                    .iter()
-                    .filter(|record| record.realm_id.as_deref() == Some(realm.as_str()))
-                    .map(|record| record.payload.clone())
-                    .collect::<Vec<_>>();
-                let poll_cards = poll_cards_from_events_with_sidecar(
-                    &realm,
-                    &realm_events,
+                let poll_cards = poll_cards_from_local_state_with_sidecar(
+                    &snapshot,
                     Some(&store),
                     decrypt_identity,
                 );
@@ -870,9 +858,7 @@ pub(super) fn ChatEffects(
             if !next_messages.is_empty() {
                 event_sink.emit(ChatProjectionEvent::MergeMessages(next_messages));
             }
-            if !next_poll_cards.is_empty() {
-                event_sink.emit(ChatProjectionEvent::MergePollCards(next_poll_cards));
-            }
+            event_sink.emit(ChatProjectionEvent::ReplacePollProjection(next_poll_cards));
         });
     }
 

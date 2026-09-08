@@ -203,7 +203,7 @@ pub(super) fn send_poll(
                     .find(|card| card.message_id == local_message_id)
                     && let Some(message_ref) = message_ref
                 {
-                    card.poll_id = message_ref;
+                    card.poll_ref = arkret_sdk::MessageId::new(message_ref).ok();
                 }
                 status_msg.set("Poll sent".to_owned());
             }

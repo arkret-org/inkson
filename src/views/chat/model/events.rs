@@ -1699,9 +1699,27 @@ pub(crate) fn poll_cards_from_events_with_sidecar(
     decrypt_identity: Option<(&arkret_sdk::AccountId, &str, &arkret_sdk::DeviceId)>,
 ) -> Vec<crate::messaging::polls::PollCard> {
     let mut cards = Vec::<crate::messaging::polls::PollCard>::new();
-    let mut by_poll_id = std::collections::BTreeMap::<String, usize>::new();
+    use arkret_models_collaboration::poll::{
+        PollPartition, PollResponseFact, PollResponseSet, validate_poll_selections,
+    };
+    let mut facts = PollResponseSet::default();
+    let mut responses = Vec::new();
+    let mut card_scopes = std::collections::BTreeMap::new();
     for event in events {
         let candidates = message_candidates(event);
+        let signed_scope = candidates
+            .iter()
+            .copied()
+            .find(|candidate| {
+                candidate.get("actor_id").is_some() && candidate.get("proofs").is_some()
+            })
+            .and_then(|envelope| envelope.get("scope_ref"))
+            .and_then(|scope| serde_json::from_value::<arkret_sdk::ScopeRef>(scope.clone()).ok());
+        let realm_id = match &signed_scope {
+            Some(arkret_sdk::ScopeRef::Realm { realm_id })
+            | Some(arkret_sdk::ScopeRef::Circle { realm_id, .. }) => realm_id.as_str(),
+            _ => realm_id,
+        };
         let proof_verdict =
             verify_chat_envelope_proof_for_realm(realm_id, event, state_store, decrypt_identity);
         if proof_verdict == ChatProofVerdict::Rejected {
@@ -1753,23 +1771,91 @@ pub(crate) fn poll_cards_from_events_with_sidecar(
                     verified_sender_domain.as_deref(),
                 )
             });
-        let Some(content) = direct_content
+        let content = direct_content
             .or(private_content)
-            .or(decrypted_content.flatten())
-        else {
+            .or(decrypted_content.flatten());
+        let envelope = candidates.iter().copied().find(|candidate| {
+            candidate.get("actor_id").is_some() && candidate.get("proofs").is_some()
+        });
+        let identity = (proof_verdict == ChatProofVerdict::Verified)
+            .then(|| {
+                envelope.and_then(|envelope| {
+                    let event_id: arkret_sdk::EventId =
+                        serde_json::from_value(envelope.get("event_id")?.clone()).ok()?;
+                    let actor_id: arkret_sdk::ActorId =
+                        serde_json::from_value(envelope.get("actor_id")?.clone()).ok()?;
+                    Some((event_id.event_digest(), actor_id, envelope))
+                })
+            })
+            .flatten();
+        if let Some((digest, _, envelope)) = &identity {
+            let kind = envelope.get("kind").and_then(Value::as_str);
+            let known_content_kind = content
+                .as_ref()
+                .and_then(|c| c.get("kind"))
+                .and_then(Value::as_str)
+                .or_else(|| {
+                    candidates
+                        .iter()
+                        .find_map(|c| c.pointer("/content/kind").and_then(Value::as_str))
+                });
+            if kind.is_some_and(|kind| kind != "ak.message.create")
+                || known_content_kind.is_some_and(|kind| {
+                    kind != "ak.content.poll.response" && kind != "ak.content.encrypted"
+                })
+            {
+                let _ = facts.observe_non_response(digest.clone());
+            }
+        }
+        let Some(content) = content else {
             continue;
         };
-        if let Some((poll_ref, selections)) =
-            crate::messaging::polls::poll_response_from_content(&content)
-        {
-            let Some(actor) = message_actor_from_candidates(&candidates) else {
-                continue;
-            };
-            if let Some(index) = by_poll_id.get(&poll_ref).copied() {
-                cards[index].vote_choices(&actor, &selections);
-            }
+        let scope = signed_scope.clone().and_then(|scope| match scope {
+            arkret_sdk::ScopeRef::Realm { realm_id } => Some((realm_id, None)),
+            arkret_sdk::ScopeRef::Circle {
+                realm_id,
+                circle_id,
+            } => Some((realm_id, Some(circle_id))),
+            _ => None,
+        });
+        let Ok(block) = serde_json::from_value::<
+            arkret_models_collaboration::events_payloads::PollContentBlock,
+        >(content) else {
+            continue;
+        };
+        if block.validate().is_err() {
             continue;
         }
+        let definition = match block {
+            arkret_models_collaboration::events_payloads::PollContentBlock::Response(block) => {
+                if let (Some((digest, actor_id, envelope)), Some((realm_id, scope_circle_id))) =
+                    (identity, scope)
+                {
+                    if let Ok(causal_refs) = serde_json::from_value::<Vec<arkret_sdk::Hash>>(
+                        envelope
+                            .get("causal_refs")
+                            .cloned()
+                            .unwrap_or_else(|| serde_json::json!([])),
+                    ) {
+                        responses.push((
+                            digest,
+                            PollPartition {
+                                realm_id,
+                                scope_circle_id,
+                                poll_ref: block.poll_response.poll_ref,
+                                actor_id,
+                            },
+                            causal_refs,
+                            block.poll_response.selections,
+                        ));
+                    }
+                }
+                continue;
+            }
+            arkret_models_collaboration::events_payloads::PollContentBlock::Definition(block) => {
+                block
+            }
+        };
         let Some(message) =
             chat_message_from_event_with_sidecar(realm_id, event, state_store, decrypt_identity)
         else {
@@ -1778,13 +1864,78 @@ pub(crate) fn poll_cards_from_events_with_sidecar(
         // The card's tally identity is the wire message id (`ak:message:…`,
         // what `poll_response.poll_ref` points at); the event id stays the
         // local render identity.
-        if let Some(card) = crate::messaging::polls::PollCard::from_content(
+        let Some(poll_ref) = message
+            .protocol_message_id
+            .as_ref()
+            .and_then(|id| arkret_sdk::MessageId::new(id.clone()).ok())
+        else {
+            continue;
+        };
+        let card = crate::messaging::polls::PollCard::from_definition(
             message.id.clone(),
-            message.protocol_message_id.as_deref(),
-            &content,
-        ) {
-            by_poll_id.insert(card.poll_id.clone(), cards.len());
-            cards.push(card);
+            &poll_ref,
+            &definition,
+        );
+        if identity.is_some()
+            && let Some((realm_id, circle_id)) = scope
+        {
+            card_scopes.insert((realm_id, circle_id, poll_ref), cards.len());
+        }
+        cards.push(card);
+    }
+    for (digest, partition, causal_refs, selections) in responses {
+        let key = (
+            partition.realm_id.clone(),
+            partition.scope_circle_id.clone(),
+            partition.poll_ref.clone(),
+        );
+        let Some(index) = card_scopes.get(&key).copied() else {
+            continue;
+        };
+        let card = &cards[index];
+        let answers = card
+            .options
+            .iter()
+            .map(|option| option.id.clone())
+            .collect();
+        let Ok(selections) = validate_poll_selections(
+            &selections,
+            &answers,
+            usize::try_from(card.max_selections).unwrap_or(usize::MAX),
+        ) else {
+            continue;
+        };
+        if facts
+            .insert(
+                digest,
+                PollResponseFact {
+                    partition,
+                    selections,
+                    causal_refs: causal_refs.into_iter().collect(),
+                },
+            )
+            .is_err()
+        {
+            return Vec::new();
+        }
+    }
+    for (partition, outcome) in facts.project() {
+        let key = (
+            partition.realm_id,
+            partition.scope_circle_id,
+            partition.poll_ref.clone(),
+        );
+        let Some(index) = card_scopes.get(&key).copied() else {
+            continue;
+        };
+        let card = &mut cards[index];
+        let actor = partition.actor_id;
+        card.response_heads
+            .insert(actor.clone(), outcome.heads.into_iter().collect());
+        for (option, voters) in card.options.iter().zip(card.votes.iter_mut()) {
+            if outcome.selections.contains(&option.id) {
+                voters.push(actor.clone());
+            }
         }
     }
     cards
@@ -1901,30 +2052,6 @@ pub(crate) fn chat_messages_from_sync_realms_with_sidecar(
         ));
     }
     messages
-}
-
-pub(crate) fn poll_cards_from_sync_realms_with_sidecar(
-    realms: &std::collections::BTreeMap<String, Value>,
-    state_store: Option<&LocalStateStore>,
-    decrypt_identity: Option<(&arkret_sdk::AccountId, &str, &arkret_sdk::DeviceId)>,
-) -> Vec<crate::messaging::polls::PollCard> {
-    let mut cards = Vec::new();
-    for (realm_id, body) in realms {
-        let Some(wire_events) = body
-            .get("timeline")
-            .and_then(|projection| projection.get("events"))
-            .and_then(Value::as_array)
-        else {
-            continue;
-        };
-        cards.extend(poll_cards_from_events_with_sidecar(
-            realm_id,
-            wire_events,
-            state_store,
-            decrypt_identity,
-        ));
-    }
-    cards
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

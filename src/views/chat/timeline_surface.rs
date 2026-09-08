@@ -955,9 +955,9 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
                                         .cloned();
                                     match card_lookup {
                                         Some(card) => {
-                                            let poll_id = card.poll_id.clone();
+                                            let poll_id = card.poll_ref.as_ref().map_or_else(|| card.message_id.clone(), ToString::to_string);
                                             let total = card.total_votes();
-                                            let voted = card.actor_has_voted(principal_id.as_str());
+                                            let voted = card.actor_has_voted(&arkret_sdk::ActorId::account(command_context.authority.clone()));
                                             rsx! {
                                                 div {
                                                     class: "poll-card message-event-poll",
@@ -979,7 +979,7 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
                                                             let option_index_attr = idx as i64;
                                                             let option_label = option.label.clone();
                                                             let option_id = option.id.clone();
-                                                            let card_poll_id = poll_id.clone();
+                                                            let card_poll_ref = card.poll_ref.clone();
                                                             let card_message_id = card.message_id.clone();
                                                             let card_closed = card.closed;
                                                             rsx! {
@@ -993,18 +993,17 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
                                                                             variant: ButtonVariant::Secondary,
                                                                             class: "poll-option poll-vote-button",
                                                                             "data-testid": "poll-option",
-                                                                            disabled: card_closed,
+                                                                            disabled: card_closed || card_poll_ref.is_none(),
                                                                             onclick: {
                                                                                 let context = command_context.clone();
                                                                                 let message_id = card_message_id.clone();
-                                                                                let poll_ref = card_poll_id.clone();
+                                                                                let poll_ref = card_poll_ref.clone();
                                                                                 let option_id = option_id.clone();
-                                                                                move |_| controller.vote_poll(
-                                                                                    context.clone(),
-                                                                                    message_id.clone(),
-                                                                                    poll_ref.clone(),
-                                                                                    option_id.clone(),
-                                                                                )
+                                                                                move |_| {
+                                                                                    if let Some(poll_ref) = &poll_ref {
+                                                                                        controller.vote_poll(context.clone(), message_id.clone(), poll_ref.clone(), option_id.clone());
+                                                                                    }
+                                                                                }
                                                                             },
                                                                             "{option_label}"
                                                                         }

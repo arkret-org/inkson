@@ -194,7 +194,7 @@ fn rebuild_restores_authors_own_encrypted_poll_from_content_sidecar() {
     let cards = poll_cards_from_events_with_sidecar(realm, &[event], Some(&store), None);
 
     assert_eq!(cards.len(), 1);
-    assert_eq!(cards[0].poll_id, message_id);
+    assert_eq!(cards[0].poll_ref.as_ref().unwrap().as_str(), message_id);
     assert_eq!(cards[0].question, "Deploy now?");
     assert_eq!(cards[0].options.len(), 2);
     assert_eq!(cards[0].options[1].label, "After backup");
@@ -209,20 +209,26 @@ fn poll_projection_merge_preserves_optimistic_message_render_id() {
     let wire_poll_id = "ak:message:AUg3kgXpMvW4kMuGtTepFkRVooX03jTSKInIfDj4dDvu";
     let mut optimistic =
         crate::messaging::polls::PollCard::from_draft("poll-local".to_owned(), &draft);
-    optimistic.poll_id = wire_poll_id.to_owned();
+    optimistic.poll_ref = Some(arkret_sdk::MessageId::new(wire_poll_id).unwrap());
     let mut projected = crate::messaging::polls::PollCard::from_draft(
         "ak:event:ApfLd21JpG9eFxiZSOjnlVNQnQV8Bu7OP_TAtMdAAa30".to_owned(),
         &draft,
     );
-    projected.poll_id = wire_poll_id.to_owned();
-    projected.vote("ak:did_core:web:bob.example", 1);
+    projected.poll_ref = Some(arkret_sdk::MessageId::new(wire_poll_id).unwrap());
+    projected.votes[1].push(serde_json::from_value(serde_json::json!({"kind":"account","account_id":{"principal_id":"ak:did_core:web:bob.example","station_id":"ak:did_core:web:station.example"}})).unwrap());
     let mut cards = vec![optimistic];
 
-    merge_poll_cards(&mut cards, vec![projected]);
+    replace_poll_projection(&mut cards, vec![projected]);
 
     assert_eq!(cards.len(), 1);
     assert_eq!(cards[0].message_id, "poll-local");
     assert_eq!(cards[0].votes_for(1), 1);
+    let pending = crate::messaging::polls::PollCard::from_draft("pending-local".to_owned(), &draft);
+    cards.push(pending);
+    replace_poll_projection(&mut cards, Vec::new());
+    assert_eq!(cards.len(), 1);
+    assert_eq!(cards[0].message_id, "pending-local");
+    assert!(cards[0].poll_ref.is_none());
 }
 
 #[test]

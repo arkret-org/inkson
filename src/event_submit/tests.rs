@@ -1130,6 +1130,7 @@ fn queued_mls_admission_round_trips_exact_welcome_material() {
                 "11".repeat(32)
             ))
             .unwrap(),
+            applet_installation_digest: None,
             accepted_at: authored_proposal.created_at,
             jws: "header..admission".to_owned(),
         }

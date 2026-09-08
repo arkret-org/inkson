@@ -297,14 +297,17 @@ pub(crate) fn restore_pending_messages_from_private_plaintext_sidecar(
     changed
 }
 
-pub(crate) fn merge_poll_cards(
+pub(crate) fn replace_poll_projection(
     target: &mut Vec<crate::messaging::polls::PollCard>,
     incoming: Vec<crate::messaging::polls::PollCard>,
 ) {
+    target.retain(|card| {
+        card.poll_ref.is_none() || incoming.iter().any(|next| next.poll_ref == card.poll_ref)
+    });
     for card in incoming {
         if let Some(existing) = target
             .iter_mut()
-            .find(|candidate| candidate.poll_id == card.poll_id)
+            .find(|candidate| candidate.poll_ref.is_some() && candidate.poll_ref == card.poll_ref)
         {
             // The optimistic message keeps its local render id when the
             // accepted create is merged by wire message id. Keep the poll
