@@ -598,6 +598,8 @@ pub fn runtime_key_pairing_error_message(error: impl std::fmt::Display) -> Strin
         || normalized.contains("proof")
     {
         "Runtime key mismatch. Regenerate the runtime key request from the same runtime key and bootstrap."
+    } else if normalized.contains("controller station") {
+        "The controller's server is unavailable or not configured correctly. Ask the server administrator to check its Station configuration and retry."
     } else if normalized.contains("controller") || normalized.contains("accountable") {
         "Controller mismatch. Sign in as this agent's controller and retry."
     } else {

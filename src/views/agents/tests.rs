@@ -416,6 +416,16 @@ mod agent_tests {
 
     #[test]
     fn runtime_key_pairing_error_message_classifies_known_failures() {
+        for error in [
+            "controller Station is not configured",
+            "controller Station is not configured or its trusted identity is unavailable",
+            "controller Station device signing-key directory bearer is not configured",
+            "controller Station device signing-key directory rejected the request",
+        ] {
+            let message = runtime_key_pairing_error_message(error);
+            assert!(message.contains("server administrator"));
+            assert!(!message.contains("Controller mismatch"));
+        }
         assert!(
             runtime_key_pairing_error_message("pairing_request_expired")
                 .contains("Pairing expired")
