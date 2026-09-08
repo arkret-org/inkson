@@ -990,6 +990,12 @@ pub(super) fn RealmsSection(
                                                         // RealmCreateResult with the new
                                                         // `ak:realm:*` id under `realm_id`.
                                                         let realm_id = realm.realm_id.clone();
+                                                        tracing::debug!(
+                                                            realm_id = %realm_id,
+                                                            phase = "realm_founding",
+                                                            state = "accepted",
+                                                            "Realm setup phase completed"
+                                                        );
                                                         selected_realm_id.set(realm_id.clone());
                                                         created_realm_id.set(realm_id.clone());
                                                         // Optimistic sidebar update goes
@@ -1047,6 +1053,12 @@ pub(super) fn RealmsSection(
                                                         // Seal checkpoint. MLS setup also needs it, but the
                                                         // requirement is Realm-wide rather than encryption-
                                                         // specific, so establish it before exposing Done.
+                                                        tracing::debug!(
+                                                            realm_id = %realm_id,
+                                                            phase = "governance_checkpoint",
+                                                            state = "pending",
+                                                            "Realm setup phase started"
+                                                        );
                                                         if let Err(err) = crate::mls::creator_bootstrap::ensure_realm_governance_checkpoint(
                                                             &api,
                                                             crate::app::runtime_adapter::state_store_handle(state_store),
@@ -1054,6 +1066,13 @@ pub(super) fn RealmsSection(
                                                         )
                                                         .await
                                                         {
+                                                            tracing::warn!(
+                                                                realm_id = %realm_id,
+                                                                phase = "governance_checkpoint",
+                                                                state = "failed",
+                                                                error = %err,
+                                                                "Realm setup phase failed"
+                                                            );
                                                             let message = BootstrapProgressStrings::fill(
                                                                 &strings.created_then_failed,
                                                                 &[
@@ -1070,6 +1089,12 @@ pub(super) fn RealmsSection(
                                                             );
                                                             return;
                                                         }
+                                                        tracing::debug!(
+                                                            realm_id = %realm_id,
+                                                            phase = "governance_checkpoint",
+                                                            state = "accepted",
+                                                            "Realm setup phase completed"
+                                                        );
                                                         if let Err(err) = create_initial_default_discussion(
                                                             &api,
                                                             &realm_id,
@@ -1108,6 +1133,12 @@ pub(super) fn RealmsSection(
                                                         if garth::encryption_profile_is_encrypted(
                                                             &encryption_profile,
                                                         ) {
+                                                            tracing::debug!(
+                                                                realm_id = %realm_id,
+                                                                phase = "mls_genesis",
+                                                                state = "pending",
+                                                                "Realm setup phase started"
+                                                            );
                                                             // Acquiring the accepted Seal view, verifying + pinning the
                                                             // governance proof, creating the epoch-0 group and landing
                                                             // `ak.mls.genesis` all live in the shared creator bootstrap so
@@ -1123,8 +1154,22 @@ pub(super) fn RealmsSection(
                                                                 )
                                                                 .await
                                                                 {
-                                                                    Ok(()) => {}
+                                                                    Ok(()) => {
+                                                                        tracing::debug!(
+                                                                            realm_id = %realm_id,
+                                                                            phase = "mls_genesis",
+                                                                            state = "accepted",
+                                                                            "Realm setup phase completed"
+                                                                        );
+                                                                    }
                                                                     Err(err) => {
+                                                                        tracing::warn!(
+                                                                            realm_id = %realm_id,
+                                                                            phase = "mls_genesis",
+                                                                            state = "failed",
+                                                                            error = %err,
+                                                                            "Realm setup phase failed"
+                                                                        );
                                                                         let message = BootstrapProgressStrings::fill(
                                                                             &strings.created_then_failed,
                                                                             &[
