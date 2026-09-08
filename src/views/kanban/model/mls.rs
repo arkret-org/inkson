@@ -233,9 +233,9 @@ pub(crate) fn private_strand_field_locked(
 
 /// Resolve a projected private Strand field without its signed Event context.
 ///
-/// 1. **Local plaintext sidecar** (`save_private_plaintext`) — stored as the JSON-serialized
-///    patch value, parsed through `strand_body_display_text` to keep write/read symmetric.
-///    Event overlays independently try verified decryption, including for the same Account.
+/// 1. **Local plaintext sidecar** (`save_private_plaintext`) — stored as the JSON-serialized patch
+///    value, parsed through `strand_body_display_text` to keep write/read symmetric. Event overlays
+///    independently try verified decryption, including for the same Account.
 /// 2. **Blank** — encrypted content without its verified outer Event context; never leaks the raw
 ///    envelope.
 ///
