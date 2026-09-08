@@ -624,25 +624,38 @@ pub(super) fn ChatEffects(
                     });
                     return;
                 };
-                if !selected_realm_for_load.trim().is_empty()
-                    && let Err(error) =
+                if !selected_realm_for_load.trim().is_empty() {
+                    tracing::debug!(
+                        realm_id = %selected_realm_for_load,
+                        phase = "governance_checkpoint",
+                        "chat initial sync phase started"
+                    );
+                    if let Err(error) =
                         crate::mls::creator_bootstrap::ensure_realm_governance_checkpoint(
                             &api,
                             crate::app::runtime_adapter::state_store_handle(state_store),
                             &selected_realm_for_load,
                         )
                         .await
-                {
-                    // A removed member can still enter this shell, but cannot
-                    // reacquire Realm governance state. Other members must pin
-                    // the verified checkpoint before the UI reports authoring
-                    // readiness, so a later offline operation is fully
-                    // authorable from synchronized state.
-                    tracing::warn!(
-                        realm_id = %selected_realm_for_load,
-                        %error,
-                        "chat initial sync could not pin Realm governance checkpoint"
-                    );
+                    {
+                        // A removed member can still enter this shell, but cannot
+                        // reacquire Realm governance state. Other members must pin
+                        // the verified checkpoint before the UI reports authoring
+                        // readiness, so a later offline operation is fully
+                        // authorable from synchronized state.
+                        tracing::warn!(
+                            realm_id = %selected_realm_for_load,
+                            phase = "governance_checkpoint",
+                            %error,
+                            "chat initial sync could not pin Realm governance checkpoint"
+                        );
+                    } else {
+                        tracing::debug!(
+                            realm_id = %selected_realm_for_load,
+                            phase = "governance_checkpoint",
+                            "chat initial sync phase completed"
+                        );
+                    }
                 }
                 let mut loaded_messages = Vec::new();
                 if let Ok(account) =
@@ -664,6 +677,12 @@ pub(super) fn ChatEffects(
                     && let Ok(sync) =
                         crate::client_core::account_subscribe_snapshot(&http, None).await
                 {
+                    tracing::debug!(
+                        realm_id = %selected_realm_for_load,
+                        phase = "account_snapshot",
+                        projected_realms = sync.realm_projections.len(),
+                        "chat initial sync phase completed"
+                    );
                     {
                         let mut store = state_store.write();
                         store.save_sync_cursor(sync.cursor.clone());
@@ -671,18 +690,25 @@ pub(super) fn ChatEffects(
                             store.save_realm_tree_projection(realm_id.clone(), projection.clone());
                         }
                     }
-                    crate::sync_engine::prefetch_persistent_event_sender_keys(
-                        &api,
-                        &sync,
-                        crate::app::runtime_adapter::value_cell(did_cache),
-                        crate::app::runtime_adapter::state_store_handle(state_store),
-                        |realm_id| {
-                            state_store
-                                .read()
-                                .realm_projection_is_minimal_metadata(realm_id)
-                        },
-                    )
-                    .await;
+                    let sender_keys_refreshed =
+                        crate::sync_engine::prefetch_persistent_event_sender_keys(
+                            &api,
+                            &sync,
+                            crate::app::runtime_adapter::value_cell(did_cache),
+                            crate::app::runtime_adapter::state_store_handle(state_store),
+                            |realm_id| {
+                                state_store
+                                    .read()
+                                    .realm_projection_is_minimal_metadata(realm_id)
+                            },
+                        )
+                        .await;
+                    tracing::debug!(
+                        realm_id = %selected_realm_for_load,
+                        phase = "sender_key_prefetch",
+                        sender_keys_refreshed,
+                        "chat initial sync phase completed"
+                    );
                     loaded_messages.extend(chat_messages_from_sync_realms_with_sidecar(
                         &sync.realm_projections,
                         Some(&state_store.read()),
@@ -705,10 +731,29 @@ pub(super) fn ChatEffects(
                     // gate forever when a quiet or partially projected Realm
                     // leaves the request open.
                     let backfill = tokio::select! {
-                        result = sub.backfill(&selected_realm_for_load) => result.ok(),
+                        result = sub.backfill(&selected_realm_for_load) => match result {
+                            Ok(backfill) => {
+                                tracing::debug!(
+                                    realm_id = %selected_realm_for_load,
+                                    phase = "realm_backfill",
+                                    "chat initial sync phase completed"
+                                );
+                                Some(backfill)
+                            }
+                            Err(error) => {
+                                tracing::warn!(
+                                    realm_id = %selected_realm_for_load,
+                                    phase = "realm_backfill",
+                                    %error,
+                                    "chat initial backfill failed; continuing from snapshot and delta sync"
+                                );
+                                None
+                            }
+                        },
                         _ = crate::runtime_helpers::sleep_for(CHAT_INITIAL_BACKFILL_TIMEOUT) => {
                             tracing::warn!(
                                 realm_id = %selected_realm_for_load,
+                                phase = "realm_backfill",
                                 timeout_seconds = CHAT_INITIAL_BACKFILL_TIMEOUT.as_secs(),
                                 "chat initial backfill timed out; continuing from snapshot and delta sync"
                             );
