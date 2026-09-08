@@ -1176,7 +1176,9 @@ async fn submit_source_routed_sidecar_message(
     let metadata_bytes = serde_json::to_vec(&message_metadata)?;
     let message_id = new_chat_local_id();
     let seal_view = state_store.read().seal_view_for_realm(source_realm_id);
+    let api = crate::transport::auth::authed_api_with_sync(base_url, api_token.clone(), None)?;
     let build = crate::views::secure_send::build_secure_send(
+        &api,
         state_store,
         &seal_view,
         source_realm_id,
@@ -1211,7 +1213,6 @@ async fn submit_source_routed_sidecar_message(
         };
         barrier.wait().await?;
     }
-    let api = crate::transport::auth::authed_api_with_sync(base_url, api_token.clone(), None)?;
     let outcome = crate::views::secure_send::submit_secure_send(
         &api,
         state_store,

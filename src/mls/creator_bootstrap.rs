@@ -439,7 +439,7 @@ pub(crate) async fn ensure_creator_realm_mls_genesis(
         });
     if !checkpoint_has_genesis {
         let checkpoint =
-            wait_for_verified_genesis_checkpoint(api, state_store, realm_id, &accepted_event_id)
+            wait_for_verified_transition_checkpoint(api, state_store, realm_id, &accepted_event_id)
                 .await?;
         let basis = checkpoint.basis.clone();
         state_store.write(|store| {
@@ -487,17 +487,114 @@ pub(crate) async fn ensure_creator_realm_mls_genesis(
     Ok(())
 }
 
-async fn wait_for_verified_genesis_checkpoint(
+/// Reconcile a durable local epoch with the verified accepted frontier before
+/// exporting its history secret or encrypting. An accepted Event id alone is
+/// not enough: invite/bootstrap paths can record it before the next Seal is
+/// locally verified.
+pub(crate) async fn ensure_local_mls_transition_ready(
+    api: &crate::transport::TransportClient,
+    state_store: &StateStoreHandle,
+    effective_scope: &arkret_sdk::ScopeRef,
+    authority: &arkret_sdk::AccountId,
+    device_id: &arkret_sdk::DeviceId,
+) -> Result<(), String> {
+    if matches!(effective_scope, arkret_sdk::ScopeRef::Sidecar { .. }) {
+        return Ok(());
+    }
+    let snapshot = state_store
+        .read(|store| store.mls_checkpoint_for_scope(effective_scope))
+        .ok_or_else(|| "checkpoint-proven MLS group state is pending".to_owned())?;
+    if state_store
+        .read(|store| {
+            store.accepted_mls_transition_evidence(
+                effective_scope,
+                &snapshot.group_id,
+                snapshot.epoch,
+            )
+        })
+        .is_ok()
+    {
+        return Ok(());
+    }
+    let transition = snapshot
+        .group_state_event_id
+        .as_ref()
+        .ok_or_else(|| "local MLS snapshot has no accepted transition reference".to_owned())?;
+    let realm_id = effective_scope
+        .realm_id_opt()
+        .ok_or_else(|| "MLS transition has no Realm".to_owned())?;
+    let checkpoint =
+        wait_for_verified_transition_checkpoint(api, state_store, realm_id.as_str(), transition)
+            .await?;
+    let basis = checkpoint.basis.clone();
+    state_store.write(|store| {
+        store.advance_verified_mls_governance_checkpoint(realm_id.as_str(), checkpoint)
+    })?;
+    state_store.write(|store| {
+        let mut view = store.seal_view_for_realm(realm_id.as_str());
+        view.frontier = basis.leaves.iter().map(ToString::to_string).collect();
+        view.state_root = None;
+        store.set_realm_seal_view(realm_id.to_string(), view);
+    });
+    if snapshot.epoch == 0 {
+        let leaves = state_store.read(|store| {
+            crate::mls::governance_proof::current_security_frontier_leaves_for_scope(
+                store,
+                effective_scope,
+                authority,
+                device_id,
+            )
+        })?;
+        let request = state_store.read(|store| {
+            crate::mls::governance_proof::proof_request_for_scope(
+                store,
+                effective_scope.clone(),
+                snapshot.group_id.clone(),
+                0,
+                0,
+                leaves.clone(),
+            )
+        })?;
+        crate::mls::governance_proof::fetch_verify_and_cache_proof(
+            api,
+            state_store.clone(),
+            &request,
+            &leaves,
+        )
+        .await?;
+    }
+    crate::mls::runtime::converge_accepted_mls_artifacts(state_store, authority, device_id).await?;
+    if !state_store.read(|store| {
+        store
+            .accepted_mls_artifact_snapshot()
+            .snapshot
+            .artifacts
+            .contains_key(transition.as_str())
+    }) {
+        return Err("accepted MLS transition has not become durably ready".to_owned());
+    }
+    state_store
+        .read(|store| {
+            store.accepted_mls_transition_evidence(
+                effective_scope,
+                &snapshot.group_id,
+                snapshot.epoch,
+            )
+        })
+        .map(|_| ())
+}
+
+async fn wait_for_verified_transition_checkpoint(
     api: &crate::transport::TransportClient,
     state_store: &StateStoreHandle,
     realm_id: &str,
-    genesis_event_id: &arkret_sdk::EventId,
+    transition_event_id: &arkret_sdk::EventId,
 ) -> Result<arkret_sdk::MlsGovernanceVerificationCheckpoint, String> {
     const ATTEMPTS: usize = 20;
     const DELAY: std::time::Duration = std::time::Duration::from_millis(250);
     let http = api.sdk_http_client().map_err(|error| error.to_string())?;
     for attempt in 0..ATTEMPTS {
-        // Unrelated Control Moves may advance the frontier before Genesis.
+        // Unrelated Control Moves may advance the frontier before the transition.
         // Only a verified cut covering this exact Event closes bootstrap.
         let checkpoint =
             crate::mls::governance_proof::verify_governance_checkpoint_candidate_with_http(
@@ -509,7 +606,7 @@ async fn wait_for_verified_genesis_checkpoint(
         if checkpoint
             .accepted_events
             .iter()
-            .any(|event| &event.event_id == genesis_event_id)
+            .any(|event| &event.event_id == transition_event_id)
         {
             return Ok(checkpoint);
         }
@@ -517,7 +614,7 @@ async fn wait_for_verified_genesis_checkpoint(
             crate::runtime_helpers::sleep_for(DELAY).await;
         }
     }
-    Err("accepted MLS Genesis has no covering verified Realm Seal".to_owned())
+    Err("accepted MLS transition has no covering verified Realm Seal".to_owned())
 }
 
 /// Poll `ak.self.seals.read.frontier.v1` until the Realm has an accepted Seal.

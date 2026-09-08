@@ -1820,6 +1820,15 @@ fn add_feedback_keys(dict: &mut TranslationDict) {
         "feedback.direct_open_failed",
         "Could not open the direct conversation",
     );
+    dict.set("feedback.direct_temporarily_unavailable", "The identity or authorization needed to create this conversation cannot be verified yet. Please try again shortly.");
+    dict.set(
+        "feedback.direct_awaiting_founder",
+        "Waiting for the other participant to create this conversation first.",
+    );
+    dict.set(
+        "feedback.direct_creation_blocked",
+        "Current authorization or runtime state prevents creating this conversation.",
+    );
     dict.set(
         "feedback.directory_search_failed",
         "Directory search failed",

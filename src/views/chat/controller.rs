@@ -974,7 +974,20 @@ impl ChatController {
                     }
                 };
                 let seal_view = state_store.read().seal_view_for_realm(&message.realm_id);
+                let api = match authed_api_with_sync(&base_url, api_token.clone(), wait_for) {
+                    Ok(api) => api,
+                    Err(error) => {
+                        mark_message_command_failed(
+                            &mut messages,
+                            &message_id_for_lookup,
+                            format!("send failed: {error}"),
+                        );
+                        status_msg.set(format!("Message send failed: {error}"));
+                        return;
+                    }
+                };
                 let build = match crate::views::secure_send::build_secure_send(
+                    &api,
                     state_store,
                     &seal_view,
                     &message.realm_id,
@@ -1003,18 +1016,6 @@ impl ChatController {
                     }
                 };
                 let local_operation_id = build.message_local_operation_id.to_string();
-                let api = match authed_api_with_sync(&base_url, api_token.clone(), wait_for) {
-                    Ok(api) => api,
-                    Err(error) => {
-                        mark_message_command_failed(
-                            &mut messages,
-                            &message_id_for_lookup,
-                            format!("send failed: {error}"),
-                        );
-                        status_msg.set(format!("Message send failed: {error}"));
-                        return;
-                    }
-                };
                 let outcome = crate::views::secure_send::submit_secure_send(
                     &api,
                     state_store,

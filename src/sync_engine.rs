@@ -606,7 +606,7 @@ pub async fn run_sync_engine(
                 reason: format!("account runner failed: {class:?}"),
             });
         }
-        Err(error) => ctx.projection_sink.sync_status(SyncStatusEvent::Retryable {
+        Err(error) => ctx.projection_sink.sync_status(SyncStatusEvent::Terminal {
             reason: error.to_string(),
         }),
     }

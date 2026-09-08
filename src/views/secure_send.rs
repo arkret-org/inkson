@@ -240,6 +240,7 @@ pub(crate) struct SecureSendBuild {
 /// `metadata`.
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn build_secure_send(
+    api: &crate::transport::TransportClient,
     state_store: SyncSignal<LocalStateStore>,
     seal_view: &LocalSealView,
     realm_id: &str,
@@ -285,7 +286,20 @@ pub(crate) async fn build_secure_send(
             realm_id: typed_realm_id,
         }
     };
-    let seal_ref = seal_view.move_seal_ref();
+    crate::mls::creator_bootstrap::ensure_local_mls_transition_ready(
+        api,
+        &crate::app::runtime_adapter::state_store_handle(state_store),
+        &effective_scope,
+        authority,
+        device_id,
+    )
+    .await?;
+    let refreshed_seal_view = state_store.read().seal_view_for_realm(realm_id);
+    let seal_ref = if refreshed_seal_view.frontier.is_empty() {
+        seal_view.move_seal_ref()
+    } else {
+        refreshed_seal_view.move_seal_ref()
+    };
     let (
         local_schedule_hash,
         local_member_ids,

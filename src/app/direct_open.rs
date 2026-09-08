@@ -92,14 +92,40 @@ pub(super) fn open_direct_conversation(
                             authority.station_id.clone(),
                         ))
                         .to_string();
-                        crate::transport::account::direct_conversation_resolve(
+                        let outcome = crate::transport::account::direct_conversation_resolve(
                             &api,
                             &state_store,
                             &agent_actor,
                             Some(&serde_json::to_string(&authority)?),
                             true,
                         )
-                        .await
+                        .await?;
+                        if matches!(
+                            outcome,
+                            arkret_sdk::DirectConversationResolveOutcome::CreationRequired { .. }
+                        ) {
+                            let submitter = api.event_submitter()?;
+                            let peer_account = arkret_sdk::AccountId::new(
+                                crate::mls_api_helpers::principal_core_id(&agent_id)?,
+                                authority.station_id.clone(),
+                            );
+                            crate::transport::account::create_direct_conversation_from_resolve(
+                                &submitter,
+                                &outcome,
+                                &authority,
+                                &peer_account,
+                            )
+                            .await?;
+                            return crate::transport::account::direct_conversation_resolve(
+                                &api,
+                                &state_store,
+                                &agent_actor,
+                                Some(&serde_json::to_string(&authority)?),
+                                true,
+                            )
+                            .await;
+                        }
+                        Ok(outcome)
                     }
                     DirectConversationTarget::ContactAgent {
                         agent_id,
@@ -162,8 +188,20 @@ pub(super) fn open_direct_conversation(
                 })
             }
             Ok(response) => {
+                let key = match &response {
+                    arkret_sdk::DirectConversationResolveOutcome::TemporarilyUnavailable {
+                        ..
+                    } => "feedback.direct_temporarily_unavailable",
+                    arkret_sdk::DirectConversationResolveOutcome::AwaitingFounder { .. } => {
+                        "feedback.direct_awaiting_founder"
+                    }
+                    arkret_sdk::DirectConversationResolveOutcome::CreationBlocked { .. } => {
+                        "feedback.direct_creation_blocked"
+                    }
+                    _ => "feedback.direct_open_failed",
+                };
                 crate::components::feedback::toast_error(
-                    "feedback.direct_open_failed",
+                    key,
                     vec![],
                     Some(format!("outcome: {response:?}")),
                 );

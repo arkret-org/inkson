@@ -1279,6 +1279,7 @@ pub(super) fn connect(
                     &mut session_credential,
                     &mut authed,
                 );
+                let device_probe_did_cache = ctx.did_cache.peek().clone();
                 let Some(device_authorization_result) = session_scoped_bootstrap_request(
                     "device authorization check",
                     &session,
@@ -1287,7 +1288,7 @@ pub(super) fn connect(
                         &accepted_account,
                         &device,
                         &authed,
-                        ctx.did_cache.peek().clone(),
+                        device_probe_did_cache,
                     ),
                 )
                 .await
@@ -1322,6 +1323,7 @@ pub(super) fn connect(
                                     return;
                                 };
                                 authed = rebound;
+                                let device_probe_did_cache = ctx.did_cache.peek().clone();
                                 let Some(device_authorization_retry_result) =
                                     session_scoped_bootstrap_request(
                                         "device authorization retry",
@@ -1331,7 +1333,7 @@ pub(super) fn connect(
                                             &accepted_account,
                                             &device,
                                             &authed,
-                                            ctx.did_cache.peek().clone(),
+                                            device_probe_did_cache,
                                         ),
                                     )
                                     .await

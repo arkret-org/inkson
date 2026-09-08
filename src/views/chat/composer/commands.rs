@@ -896,6 +896,20 @@ pub(super) fn send_encrypted_message(
             }
         };
         let seal_view = state_store.read().seal_view_for_realm(&realm);
+        let api = match authed_api_with_sync(&base, api_token.clone(), wait_for) {
+            Ok(api) => api,
+            Err(error) => {
+                fail_optimistic_chat_send(
+                    messages,
+                    chat_draft,
+                    status_msg,
+                    &message_id,
+                    &body,
+                    format!("Send Secure failed: {error}"),
+                );
+                return;
+            }
+        };
         // Shared MLS core: encrypt → forced ak.mls.commit
         // envelope (governance / prev→post epoch /
         // Security Frontier) → spec
@@ -903,6 +917,7 @@ pub(super) fn send_encrypted_message(
         // `ak.schema.encrypted_envelopeis mirrors the
         // shared secure send builder.
         let secure_build = match crate::views::secure_send::build_secure_send(
+            &api,
             state_store,
             &seal_view,
             &realm,
@@ -969,20 +984,6 @@ pub(super) fn send_encrypted_message(
         // keyed on it.
         let msg_local_op_id = secure_build.message_local_operation_id.to_string();
         spawn(async move {
-            let Ok(api) = authed_api_with_sync(&base, api_token.clone(), wait_for) else {
-                // P2: auth/API init failed — without this
-                // arm the optimistic bubble spun forever
-                // and no status was shown.
-                fail_optimistic_chat_send(
-                    messages,
-                    chat_draft,
-                    status_msg,
-                    &message_id_for_failure,
-                    &body_for_restore,
-                    "Send Secure failed: could not start an authenticated session".to_owned(),
-                );
-                return;
-            };
             // Shared submit: forced ak.mls.commit first
             // (persist-on-accept snapshot + §7.10 backup
             // schedule + move record), then the encrypted
