@@ -98,6 +98,12 @@ impl LoginController {
             let pending_device = pending_handoff
                 .as_ref()
                 .map(|handoff| handoff.device_id.clone())
+                .or_else(|| {
+                    reset_state_store
+                        .read()
+                        .pending_login()
+                        .map(|pending| pending.device_id.to_string())
+                })
                 .filter(|device| crate::config::is_valid_device_id(device));
             let resume_account_handoff = if let Some(pending_device) = pending_device.as_deref() {
                 let mut store = reset_state_store.write();

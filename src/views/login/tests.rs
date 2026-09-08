@@ -183,6 +183,85 @@ fn sign_in_recovers_pending_handoff_holder_from_secure_grant_binding_seed() {
 }
 
 #[test]
+fn sign_in_recovers_pending_holder_when_handoff_response_was_lost() {
+    let _scope = crate::secure_key_store::DeviceSeedScopeTestGuard::replace(None);
+    let mut store = crate::state::isolated_store_for_tests("lost-handoff-response");
+    let secure_store = crate::secure_key_store::MemorySecureKeyStore::default();
+    let device_id =
+        arkret_sdk::DeviceId::new("ak:device:019f0000-0000-7000-8000-000000000014".to_owned())
+            .unwrap();
+    let pending_store = crate::secure_key_store::PendingLocalStore::new(device_id.clone());
+    store.begin_pending_login(&device_id, None);
+    let seed = pending_store
+        .ensure_grant_binding_seed(&secure_store)
+        .unwrap()
+        .seed;
+    let expected = dpop_record_for_seed(seed);
+    pending_store
+        .save_signing_seed(&secure_store, &[17; 32])
+        .unwrap();
+
+    assert!(store.pending_account_handoff().is_none());
+    assert!(recover_pending_handoff_for_sign_in(
+        &mut store,
+        &secure_store,
+        device_id.as_str()
+    ));
+    assert_eq!(store.dpop_device_key().unwrap().jkt, expected.jkt);
+    assert!(store.resume_pending_login(&device_id));
+    assert_eq!(
+        store.pending_login().unwrap().dpop_jkt.as_deref(),
+        Some(expected.jkt.as_str())
+    );
+    assert_eq!(
+        pending_store
+            .load_grant_binding_seed(&secure_store)
+            .unwrap()
+            .unwrap()
+            .seed,
+        seed
+    );
+    assert!(store.pending_account_handoff().is_none());
+    assert_eq!(
+        pending_store
+            .load_signing_seed(&secure_store)
+            .unwrap()
+            .unwrap()
+            .seed,
+        [17; 32]
+    );
+}
+
+#[test]
+fn response_loss_resume_rejects_foreign_device_and_holder() {
+    let _scope = crate::secure_key_store::DeviceSeedScopeTestGuard::replace(None);
+    let mut store = crate::state::isolated_store_for_tests("lost-handoff-owner-mismatch");
+    let secure_store = crate::secure_key_store::MemorySecureKeyStore::default();
+    let device_id =
+        arkret_sdk::DeviceId::new("ak:device:019f0000-0000-7000-8000-000000000015".to_owned())
+            .unwrap();
+    let other_device =
+        arkret_sdk::DeviceId::new("ak:device:019f0000-0000-7000-8000-000000000016".to_owned())
+            .unwrap();
+    let pending_store = crate::secure_key_store::PendingLocalStore::new(device_id.clone());
+    store.begin_pending_login(&device_id, Some("different-holder"));
+    pending_store
+        .ensure_grant_binding_seed(&secure_store)
+        .unwrap();
+    assert!(!recover_pending_handoff_for_sign_in(
+        &mut store,
+        &secure_store,
+        device_id.as_str()
+    ));
+    assert!(!store.can_resume_pending_login(&device_id));
+    assert!(!recover_pending_handoff_for_sign_in(
+        &mut store,
+        &secure_store,
+        other_device.as_str()
+    ));
+}
+
+#[test]
 fn sign_in_starts_fresh_when_pending_handoff_holder_is_missing() {
     let mut store = crate::state::isolated_store_for_tests("missing-pending-handoff-holder");
     let secure_store = crate::secure_key_store::MemorySecureKeyStore::default();

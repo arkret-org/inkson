@@ -204,19 +204,30 @@ impl LocalStateStore {
         self.begin_pending_login_inner(device_id, dpop_jkt, false);
     }
 
-    /// Whether the current account has an unfinished identity handoff fenced
-    /// to this exact device and its persisted DPoP holder.
+    /// Whether this exact pending device still holds its authentication key.
+    /// A server may have acquired a lease even when its handoff response was
+    /// lost before the client could persist the checkpoint.
     pub fn can_resume_pending_login(&self, device_id: &arkret_sdk::DeviceId) -> bool {
         let state = self.load();
-        state
-            .pending_account_handoff
+        let Some(dpop) = state
+            .dpop_device_key
             .as_ref()
-            .is_some_and(|handoff| {
-                handoff.device_id == device_id.as_str()
-                    && state.dpop_device_key.as_ref().is_some_and(|dpop| {
-                        !dpop.jkt.trim().is_empty() && handoff.holder_jkt == dpop.jkt
-                    })
-            })
+            .filter(|key| !key.jkt.trim().is_empty())
+        else {
+            return false;
+        };
+        match state.pending_account_handoff.as_ref() {
+            Some(handoff) => {
+                handoff.device_id == device_id.as_str() && handoff.holder_jkt == dpop.jkt
+            }
+            None => self.pending_login().is_some_and(|pending| {
+                pending.device_id == *device_id
+                    && pending
+                        .dpop_jkt
+                        .as_ref()
+                        .is_none_or(|holder| holder == &dpop.jkt)
+            }),
+        }
     }
 
     /// Move a verified unfinished handoff into the anonymous pre-DID namespace.

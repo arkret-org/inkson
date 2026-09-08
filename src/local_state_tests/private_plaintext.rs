@@ -269,6 +269,69 @@ fn e2ee_plaintext_cache_round_trips_through_account_scoped_secure_store() {
 }
 
 #[test]
+fn account_switch_and_reload_isolate_private_plaintext_and_user_projections() {
+    let _scope = crate::secure_key_store::DeviceSeedScopeTestGuard::replace(None);
+    let path = temp_state_path("account-data-isolation-roundtrip");
+    let secure = crate::secure_key_store::MemorySecureKeyStore::new();
+    let realm = "ak:realm:AVFSR4O2uTcP6zGsyewp0OdaGeDZBXQAUZ9VIEKLSXYo";
+    let strand = "ak:strand:AeWYNl1hiGDuy4WCQ03g5lgs2NZzf_SFYgjsfhG-t9cg";
+    let accounts = [
+        ("did:web:alice.example", "ak:did_core:web:station-a.example"),
+        ("did:web:bob.example", "ak:did_core:web:station-a.example"),
+        ("did:web:alice.example", "ak:did_core:web:station-b.example"),
+    ]
+    .map(|(principal, station)| {
+        let did = arkret_sdk::Did::new(principal.to_owned()).unwrap();
+        super::test_account_context_for_authority(
+            &did,
+            super::test_authority_at_server(principal, station),
+        )
+    });
+    let mut store = LocalStateStore::with_path(path.clone());
+    for (index, account) in accounts.iter().enumerate() {
+        store.switch_active_account(account).unwrap();
+        store
+            .hydrate_e2ee_plaintext_cache_with_secure_store(&secure)
+            .unwrap();
+        assert!(store.private_plaintext_for(realm, strand, "body").is_none());
+        assert!(store.load().sync_cursor.is_none());
+        assert!(store.load().realm_tree_projections.is_empty());
+        store.save_private_plaintext(realm, strand, "body", &format!("\"private-{index}\""));
+        store.save_sync_cursor(&format!("cursor-{index}"));
+        store.save_realm_tree_projection(
+            realm,
+            serde_json::json!({"summary": format!("realm-{index}")}),
+        );
+        store
+            .persist_e2ee_plaintext_cache_with_secure_store(&secure)
+            .unwrap();
+    }
+    drop(store);
+    let mut reopened = LocalStateStore::with_path(path);
+    for (index, account) in accounts.iter().enumerate() {
+        reopened.switch_active_account(account).unwrap();
+        reopened
+            .hydrate_e2ee_plaintext_cache_with_secure_store(&secure)
+            .unwrap();
+        assert_eq!(
+            reopened
+                .private_plaintext_for(realm, strand, "body")
+                .unwrap(),
+            format!("\"private-{index}\"")
+        );
+        assert_eq!(
+            reopened.load().sync_cursor.unwrap(),
+            format!("cursor-{index}")
+        );
+        assert_eq!(reopened.load().realm_tree_projections.len(), 1);
+        assert_eq!(
+            reopened.load().realm_tree_projections[realm]["summary"],
+            format!("realm-{index}")
+        );
+    }
+}
+
+#[test]
 fn receive_snapshot_and_plaintext_share_one_secure_entry() {
     use crate::mls::persistence::encrypt_state;
     use crate::secure_key_store::{MemorySecureKeyStore, SecureKeyStore};

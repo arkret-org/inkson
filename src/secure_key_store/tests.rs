@@ -62,6 +62,112 @@ fn signing_seed_round_trips_through_memory_store() {
     assert_eq!(loaded.local_signing_did, saved.local_signing_did);
 }
 
+#[tokio::test]
+async fn account_identity_keys_and_secrets_are_isolated_even_with_the_same_device_id() {
+    use base64::Engine as _;
+    let store = MemorySecureKeyStore::new();
+    let device =
+        arkret_sdk::DeviceId::new("ak:device:01964137-0000-7000-8000-000000000007".to_owned())
+            .unwrap();
+    let accounts = [
+        (
+            "ak:did_core:web:alice.example",
+            "ak:did_core:web:station-a.example",
+        ),
+        (
+            "ak:did_core:web:bob.example",
+            "ak:did_core:web:station-a.example",
+        ),
+        (
+            "ak:did_core:web:alice.example",
+            "ak:did_core:web:station-b.example",
+        ),
+    ]
+    .map(|(principal, station)| {
+        UserLocalStore::new(
+            arkret_sdk::AccountId::new(
+                arkret_sdk::DidCoreId::new(principal.to_owned()).unwrap(),
+                arkret_sdk::DidCoreId::new(station.to_owned()).unwrap(),
+            ),
+            device.clone(),
+        )
+        .unwrap()
+    });
+
+    for (index, account) in accounts.iter().enumerate() {
+        assert!(account.load_signing_seed(&store).unwrap().is_none());
+        assert!(account.load_grant_binding_seed(&store).unwrap().is_none());
+        assert!(
+            account
+                .load_secret(&store, "recovery-key.v1")
+                .unwrap()
+                .is_none()
+        );
+        let value = (index + 1) as u8;
+        account.save_signing_seed(&store, &[value; 32]).unwrap();
+        account.save_device_id(&store, &device).unwrap();
+        account
+            .save_grant_binding_seed_b64url_durable(
+                &store,
+                &base64::engine::general_purpose::URL_SAFE_NO_PAD.encode([value + 10; 32]),
+            )
+            .await
+            .unwrap();
+        account
+            .save_secret(
+                &store,
+                "recovery-key.v1",
+                &format!("account-{index}-recovery"),
+            )
+            .unwrap();
+    }
+
+    // Even an identical pending device coordinate cannot alias user data.
+    let pending = PendingLocalStore::new(device.clone());
+    assert!(pending.load_signing_seed(&store).unwrap().is_none());
+    pending.save_signing_seed(&store, &[99; 32]).unwrap();
+    pending.delete(&store).unwrap();
+    for (index, account) in accounts.iter().enumerate() {
+        let reopened = UserLocalStore::new(account.authority().clone(), device.clone()).unwrap();
+        let value = (index + 1) as u8;
+        assert_eq!(
+            reopened.load_signing_seed(&store).unwrap().unwrap().seed,
+            [value; 32]
+        );
+        assert_eq!(
+            reopened
+                .load_grant_binding_seed(&store)
+                .unwrap()
+                .unwrap()
+                .seed,
+            [value + 10; 32]
+        );
+        assert_eq!(
+            reopened
+                .load_secret(&store, "recovery-key.v1")
+                .unwrap()
+                .unwrap(),
+            format!("account-{index}-recovery")
+        );
+    }
+    accounts[1].delete_device_identity(&store).unwrap();
+    assert!(accounts[1].load_signing_seed(&store).unwrap().is_none());
+    assert!(
+        accounts[1]
+            .load_grant_binding_seed(&store)
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(
+        accounts[0].load_signing_seed(&store).unwrap().unwrap().seed,
+        [1; 32]
+    );
+    assert_eq!(
+        accounts[2].load_signing_seed(&store).unwrap().unwrap().seed,
+        [3; 32]
+    );
+}
+
 /// `ensure_signing_seed` generates a fresh seed when none exists
 /// and is idempotent on subsequent calls.
 #[test]

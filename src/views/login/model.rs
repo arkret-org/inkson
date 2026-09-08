@@ -223,7 +223,16 @@ pub(super) fn recover_pending_handoff_for_sign_in(
         .pending_account_handoff()
         .filter(|handoff| handoff.device_id == device_id)
         .map(|handoff| handoff.holder_jkt);
-    if let Some(expected_holder) = pending_holder {
+    // A lost handoff response can leave a server-side lease before the client
+    // has a handoff checkpoint. The durable pending transaction still owns
+    // its holder key; fresh authentication must not strand that lease by
+    // replacing the key. This conveys no account authority on its own.
+    let pending_login = store.pending_login();
+    if pending_holder.is_some()
+        || pending_login
+            .as_ref()
+            .is_some_and(|pending| pending.device_id == pending_device_id)
+    {
         let pending_store =
             crate::secure_key_store::PendingLocalStore::new(pending_device_id.clone());
         let recovered = match crate::identity::account_auth::grant_dpop::load_or_recover_pending_device_key_with_secure_store(
@@ -248,7 +257,12 @@ pub(super) fn recover_pending_handoff_for_sign_in(
                 return false;
             }
         };
-        if recovered.jkt() != expected_holder {
+        let expected_holder = pending_holder.as_deref().or_else(|| {
+            pending_login
+                .as_ref()
+                .and_then(|pending| pending.dpop_jkt.as_deref())
+        });
+        if expected_holder.is_some_and(|expected| recovered.jkt() != expected) {
             tracing::warn!(
                 device_id,
                 "starting fresh sign-in because the unfinished handoff belongs to a different holder"
