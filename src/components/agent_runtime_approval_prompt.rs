@@ -420,8 +420,27 @@ pub fn AgentRuntimeApprovalPrompt(
                                                 &key_state.principal_control_realm_id,
                                             )
                                             .await?;
-                                            outcome =
-                                                submitter.agent_key_pair(&pair_request).await?;
+                                            // The Station commits the Seal and refreshes the
+                                            // Agent projection on separate durable paths.  The
+                                            // first idempotent read after Seal acceptance can
+                                            // therefore still report `awaiting_accepted_frontier`
+                                            // even though the accepted Event and successor Seal
+                                            // are already present.  Re-read the exact request for
+                                            // a short bounded window; never rebuild or re-sign it.
+                                            for attempt in 0..20 {
+                                                outcome = submitter
+                                                    .agent_key_pair(&pair_request)
+                                                    .await?;
+                                                if outcome.is_active() {
+                                                    break;
+                                                }
+                                                if attempt + 1 < 20 {
+                                                    crate::runtime_helpers::sleep_for(
+                                                        Duration::from_millis(250),
+                                                    )
+                                                    .await;
+                                                }
+                                            }
                                         }
                                         if !outcome.is_active() {
                                             anyhow::bail!(

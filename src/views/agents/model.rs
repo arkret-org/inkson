@@ -688,17 +688,6 @@ pub fn prepare_agent_key_authorize_pairing(
         &request.public_key,
         &request.verification_method,
     )?;
-    let endpoint_fragment = request
-        .verification_method
-        .as_str()
-        .split_once('#')
-        .map(|(_, fragment)| fragment)
-        .ok_or_else(|| anyhow::anyhow!("runtime verification_method has no endpoint fragment"))?;
-    arkret_sdk::DeviceId::new(endpoint_fragment.to_owned()).map_err(|error| {
-        anyhow::anyhow!(
-            "runtime verification_method fragment must be the stable Agent endpoint device_id: {error}"
-        )
-    })?;
     let pairing_digest =
         arkret_models_collaboration::agent_operations::agent_key_pairing_request_binding_digest(
             arkret_wire::ServiceOperationId::GATE_ACCOUNT_COMMAND_PAIR_AGENT_KEY_V1,
@@ -805,7 +794,10 @@ pub fn prepare_agent_key_authorize_pairing(
     let intent = arkret_event_draft::build_agent_key_authorize_intent(
         &payload,
         arkret_sdk::ScopeRef::Realm { realm_id },
-        arkret_sdk::ActorId::service(request.agent_id.clone()),
+        arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+            request.agent_id.clone(),
+            key_state.controller_account_id.station_id.clone(),
+        )),
         arkret_sdk::ActorId::account(key_state.controller_account_id.clone()),
         authorization_ref,
         crate::clock::now_utc_millis(),

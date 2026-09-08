@@ -379,8 +379,7 @@ mod agent_tests {
 
     #[test]
     fn runtime_key_request_summary_exposes_sdk_fingerprint() {
-        let verification_method =
-            "did:web:agents.example:summary#ak:device:01964137-0000-7000-8000-000000000008";
+        let verification_method = "did:web:agents.example:summary#runtime-pairing";
         let raw = serde_json::json!({
             "pairing_request_id": "agent_pairing_request:01999999-0000-7000-8000-00000000feed",
             "agent_id": "ak:did_core:web:agents.example:summary",
@@ -565,6 +564,14 @@ mod agent_tests {
             event.kind.as_str(),
             arkret_sdk::EventKind::AgentKeyAuthorize.as_str()
         );
+        assert_eq!(
+            event.actor_id,
+            arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+                agent_actor_id.clone(),
+                key_state.controller_account_id.station_id.clone(),
+            )),
+            "the Agent event must retain its exact origin Station binding"
+        );
         assert_eq!(event.payload["agent_id"], agent_actor_id.as_str());
         assert_eq!(
             event.payload["verification_method"],
@@ -665,9 +672,8 @@ mod agent_tests {
 
     #[test]
     fn runtime_key_reauthorize_supersedes_same_key_active_authorization() {
-        // Regression: re-pairing an active agent reuses the same stable
-        // endpoint-bound verification method.
-        // verification_method, so the currently-active authorization shares the
+        // Regression: re-pairing an active agent reuses the same stable runtime
+        // key verification_method, so the currently-active authorization shares the
         // new authorization's key_id. `supersedes` MUST still include it —
         // coauth requires an exact match against the authoritative
         // `active_authorizations`. A key_id filter dropped that authorization,
@@ -676,8 +682,7 @@ mod agent_tests {
         let controller = "did:web:controller.example";
         let service_id = "ak:did_core:web:arkret.example";
         let agent = "did:web:agents.example:summary";
-        let verification_method =
-            "did:web:agents.example:summary#ak:device:01964137-0000-7000-8000-000000000008";
+        let verification_method = "did:web:agents.example:summary#runtime-pairing";
         let old_event = "ak:event:AfCohWegfBhEKqSVC-suYPF9jT5A0uR-BnFk1GppvjQz";
         let signer = std::sync::Arc::new(crate::event_signer::build_ed25519_device_signer(
             [41u8; 32],

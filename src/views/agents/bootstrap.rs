@@ -122,12 +122,29 @@ async fn verify_and_pin_agent_pcr_checkpoint<
         resolved.seals.iter().any(|accepted| accepted == seal),
         "resolved Agent PCR governance closure omitted the byte-exact submitted Seal"
     );
-    let has_pinned_checkpoint = state_store.with_read(|store| {
-        store
-            .trusted_mls_governance_checkpoint(seal.realm_id.as_str())
-            .is_some()
-    });
-    let checkpoint = if !has_pinned_checkpoint && seal.predecessor_refs.is_empty() {
+    let material = arkret_bootstrap::materialize_agent_pcr_control(&resolved.events, &|event| {
+        crate::operation::cell_write_projector(event, arkret_sdk::DigestSuite::Sha256)
+    })?;
+    let covered = material
+        .covered_event_digests
+        .iter()
+        .cloned()
+        .collect::<std::collections::BTreeSet<_>>();
+    let control_root =
+        arkret_state::control_event_set_root(&covered, arkret_sdk::DigestSuite::Sha256)?;
+    let completeness_root = arkret_state::control_event_completeness_root(
+        &resolved
+            .events
+            .iter()
+            .cloned()
+            .map(|event| (event, arkret_sdk::DigestSuite::Sha256))
+            .collect::<Vec<_>>(),
+        &covered,
+        arkret_sdk::DigestSuite::Sha256,
+    )?;
+    let pinned_checkpoint = state_store
+        .with_read(|store| store.trusted_mls_governance_checkpoint(seal.realm_id.as_str()));
+    let checkpoint = if pinned_checkpoint.is_none() && seal.predecessor_refs.is_empty() {
         // The generic Realm verifier applies the frozen Agent-DID notary
         // quorum. Agent PCR genesis is the registered exception: its accepted
         // delegation authorizes the controller's current device to sign the
@@ -152,27 +169,6 @@ async fn verify_and_pin_agent_pcr_checkpoint<
                     })),
             "Agent PCR genesis checkpoint Events differ from locally accepted history"
         );
-        let material =
-            arkret_bootstrap::materialize_agent_pcr_control(&resolved.events, &|event| {
-                crate::operation::cell_write_projector(event, arkret_sdk::DigestSuite::Sha256)
-            })?;
-        let covered = material
-            .covered_event_digests
-            .iter()
-            .cloned()
-            .collect::<std::collections::BTreeSet<_>>();
-        let control_root =
-            arkret_state::control_event_set_root(&covered, arkret_sdk::DigestSuite::Sha256)?;
-        let completeness_root = arkret_state::control_event_completeness_root(
-            &resolved
-                .events
-                .iter()
-                .cloned()
-                .map(|event| (event, arkret_sdk::DigestSuite::Sha256))
-                .collect::<Vec<_>>(),
-            &covered,
-            arkret_sdk::DigestSuite::Sha256,
-        )?;
         anyhow::ensure!(
             seal.covered_event_digests == material.covered_event_digests
                 && seal.state_root == material.state_root
@@ -213,25 +209,105 @@ async fn verify_and_pin_agent_pcr_checkpoint<
             governance_dependencies: resolved.dependencies,
         }
     } else {
-        let verifier_store = state_store.clone();
-        arkret_sdk::verify_mls_governance_closure(
-            &seal.realm_id,
-            &resolved.target_basis,
-            &resolved.seals,
-            &resolved.events,
-            &resolved.dependencies,
-            move |event, digest_suite, evidence, dependencies| {
-                crate::mls::governance_proof::verify_agent_history_key(
-                    &verifier_store,
-                    event,
-                    digest_suite,
-                    evidence,
-                    dependencies,
-                )
-            },
-        )
-        .await?
-        .checkpoint
+        // Agent PCR Seals deliberately use the delegated controller device,
+        // not the Agent DID's frozen Realm notary.  Starting from the
+        // byte-exact checkpoint this client already verified and pinned,
+        // validate the locally authored linear successor and advance the
+        // checkpoint without feeding it through the ordinary Realm-notary
+        // verifier.
+        let previous = pinned_checkpoint.ok_or_else(|| {
+            anyhow::anyhow!("Agent PCR successor has no locally verified base checkpoint")
+        })?;
+        anyhow::ensure!(
+            seal.predecessor_refs == previous.basis.leaves,
+            "Agent PCR successor does not extend the complete pinned basis"
+        );
+        let predecessor = previous
+            .accepted_seals
+            .iter()
+            .find(|candidate| previous.basis.leaves.contains(&candidate.id))
+            .ok_or_else(|| anyhow::anyhow!("Agent PCR pinned predecessor is unavailable"))?;
+        anyhow::ensure!(
+            seal.notary_seq == predecessor.notary_seq.saturating_add(1),
+            "Agent PCR successor notary sequence is not linear"
+        );
+        let previous_covered = predecessor
+            .covered_event_digests
+            .iter()
+            .cloned()
+            .collect::<std::collections::BTreeSet<_>>();
+        let expected_delta = material
+            .covered_event_digests
+            .iter()
+            .filter(|digest| !previous_covered.contains(*digest))
+            .cloned()
+            .collect::<Vec<_>>();
+        anyhow::ensure!(
+            seal.delta == expected_delta
+                && seal.covered_event_digests == material.covered_event_digests
+                && seal.state_root == material.state_root
+                && seal.control_event_set_root == control_root
+                && seal.completeness_root == completeness_root,
+            "Agent PCR successor Seal differs from local reducer replay"
+        );
+        anyhow::ensure!(
+            resolved.seals.len() == previous.accepted_seals.len() + 1
+                && previous
+                    .accepted_seals
+                    .iter()
+                    .all(|accepted| resolved.seals.iter().any(|candidate| candidate == accepted)),
+            "resolved Agent PCR successor closure does not preserve the pinned Seal set"
+        );
+        anyhow::ensure!(
+            resolved.events.len() == accepted_events.len()
+                && accepted_events
+                    .iter()
+                    .all(|event| resolved.events.iter().any(|candidate| {
+                        crate::event_submit::accepted_event_preserves_authored_envelope(
+                            candidate,
+                            event,
+                            arkret_sdk::DigestSuite::Sha256,
+                        )
+                        .unwrap_or(false)
+                    })),
+            "resolved Agent PCR successor Events differ from locally accepted history"
+        );
+        seal.validate_id(arkret_sdk::DigestSuite::Sha256)?;
+        let arkret_sdk::NotarySig::Single(signature) = &seal.notary_signature else {
+            anyhow::bail!("Agent PCR successor Seal requires one controller-device signature");
+        };
+        anyhow::ensure!(
+            signature.verification_method.as_str() == signer.verification_method(),
+            "Agent PCR successor Seal was not signed by the active controller device"
+        );
+        let public_key = signer
+            .public_key_base64url()
+            .ok_or_else(|| anyhow::anyhow!("active controller public key is unavailable"))?;
+        let descriptor = arkret_sdk::NotarySignerDescriptor {
+            actor_id: material.controller_actor_id,
+            verification_method: signature.verification_method.clone(),
+            key_kind: arkret_sdk::NotaryKeyKind::Ed25519Raw32,
+            jose_algorithm: arkret_sdk::NotaryJoseAlgorithm::Ed25519,
+            frozen_public_key_digest: arkret_sdk::Hash::new(arkret_sdk::canonical::sha256_digest(
+                arkret_sdk::base64url_decode(&public_key)?,
+            ))?,
+            frozen_public_key_b64u: public_key,
+        };
+        descriptor.validate()?;
+        arkret_signatures::verify_frozen_notary_signature(
+            signature,
+            &descriptor,
+            &seal.canonical_bytes_for_id()?,
+            arkret_sdk::DigestSuite::Sha256,
+        )?;
+        arkret_sdk::MlsGovernanceVerificationCheckpoint {
+            realm_id: seal.realm_id.clone(),
+            basis: resolved.target_basis,
+            live_digest_suite: arkret_sdk::DigestSuite::Sha256,
+            accepted_seals: resolved.seals,
+            accepted_events: resolved.events,
+            governance_dependencies: resolved.dependencies,
+        }
     };
     state_store
         .with_write(|store| {
