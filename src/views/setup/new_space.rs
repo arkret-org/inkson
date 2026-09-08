@@ -215,11 +215,6 @@ pub(super) fn NewSpaceSection(
     };
     let projection_title =
         |id: &str, body: &Value| -> String { crate::realm_tree::projection_title(id, body) };
-    let available_realms: Vec<(String, String)> = projections_snapshot
-        .iter()
-        .filter(|(_, body)| projection_kind(body) == "realm")
-        .map(|(id, body)| (id.clone(), projection_title(id, body)))
-        .collect();
     // Parent picker = every Space already inside the selected Realm,
     // plus a "(root)" sentinel. Realms themselves can't be parents
     // per spec §2.1 (Realms don't have parent/child).

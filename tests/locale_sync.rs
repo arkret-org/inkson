@@ -12,16 +12,12 @@
 //! tiers across their public surface (`inkson::account_data` and
 //! `inkson::i18n`) the way coauth and the settings view reach them.
 
-use std::collections::BTreeMap;
-
-use inkson::account_data::{
-    build_client_ui_body, merge_client_ui_language, set_client_ui_language,
-};
+use inkson::account_data::{merge_client_ui_language, set_client_ui_language};
 use inkson::i18n::{UiLocale, resolve_locale};
 use serde_json::json;
 
 fn published_ui_state_with_language(locale: UiLocale) -> serde_json::Value {
-    let mut body = build_client_ui_body(Some("night"), None, &BTreeMap::new(), None);
+    let mut body = json!({"theme": "night"});
     set_client_ui_language(&mut body, locale);
     body
 }
@@ -76,7 +72,7 @@ fn an_entry_from_a_build_that_shipped_more_locales_is_ignored() {
 #[test]
 fn a_cell_without_a_language_field_keeps_the_local_locale() {
     // Cells written before this field existed carry only theme etc.
-    let published = build_client_ui_body(Some("night"), None, &BTreeMap::new(), None);
+    let published = json!({"theme": "night"});
     assert_eq!(merge_client_ui_language(UiLocale::Zh, &published), None);
 }
 

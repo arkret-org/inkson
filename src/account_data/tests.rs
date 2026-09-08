@@ -1,5 +1,3 @@
-use std::collections::BTreeMap;
-
 use serde_json::json;
 
 use super::*;
@@ -524,49 +522,20 @@ fn blocklist_payload_round_trip_keeps_sdk_closed_types() {
     ));
 }
 
-// ── A4a — ak.client.ui_state shape + merge logic ────────────────────────────
-#[test]
-fn build_client_ui_body_only_emits_present_fields() {
-    let body = build_client_ui_body(Some("light"), None, &BTreeMap::new(), None);
-    assert_eq!(body["theme"], "light");
-    assert!(body.get("sidebar_collapsed").is_none());
-    assert!(body.get("per_realm_view").is_none());
-    assert!(body.get("avatar_blob_ref").is_none());
-
-    let mut per_realm = BTreeMap::new();
-    per_realm.insert(
-        "ak:realm:AQ_DYndfRLGXFTmGil1KY2oQW2AKjYbSN9mi4f-HASKg".to_owned(),
-        "kanban".to_owned(),
-    );
-    let body = build_client_ui_body(Some("night"), Some(true), &per_realm, None);
-    assert_eq!(body["theme"], "night");
-    assert_eq!(body["sidebar_collapsed"], true);
-    assert_eq!(
-        body["per_realm_view"]["ak:realm:AQ_DYndfRLGXFTmGil1KY2oQW2AKjYbSN9mi4f-HASKg"],
-        "kanban"
-    );
-
-    // Empty theme string is dropped (treated as unset).
-    let body = build_client_ui_body(Some(""), Some(false), &BTreeMap::new(), None);
-    assert!(body.get("theme").is_none());
-    assert_eq!(body["sidebar_collapsed"], false);
-}
-
 // ── A4b — avatar_blob_ref round-trip through ak.client.ui_state ─────────────
 #[test]
-fn avatar_blob_ref_round_trips_through_client_ui() {
+fn avatar_blob_ref_reads_and_tombstones_client_ui() {
     let blob_ref =
         "ak:blob:sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
-    let body = build_client_ui_body(Some("light"), None, &BTreeMap::new(), Some(blob_ref));
+    let body = json!({"theme": "light", "avatar_blob_ref": blob_ref});
     assert_eq!(body["avatar_blob_ref"], blob_ref);
     assert_eq!(
         avatar_blob_ref_from_client_ui(&body),
         Some(blob_ref.to_owned())
     );
 
-    // Empty / whitespace-only references are preserved as an explicit
-    // tombstone so another device can clear its local avatar cache.
-    let tombstoned = build_client_ui_body(None, None, &BTreeMap::new(), Some("   "));
+    // An explicit tombstone clears the avatar cache on another device.
+    let tombstoned = json!({"avatar_blob_ref": ""});
     assert_eq!(tombstoned["avatar_blob_ref"], "");
     assert_eq!(avatar_blob_ref_from_client_ui(&tombstoned), None);
     assert!(avatar_blob_ref_tombstoned_from_client_ui(&tombstoned));
