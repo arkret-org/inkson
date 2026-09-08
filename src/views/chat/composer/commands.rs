@@ -151,52 +151,59 @@ pub(super) fn send_typing_signal(target: TypingSignalTarget, api_token: String, 
     });
 }
 
-/// Submit a poll create and settle the optimistic message row it left behind.
-///
-/// The poll's own plaintext is stored under the accepted message id, which
-/// only exists once the server names the Event — so the sidecar write has to
-/// happen here rather than at compose time.
+/// Submit a poll and adopt the accepted Message identity for its optimistic row.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn send_poll(
     controller: ChatController,
     base_url: String,
     api_token: String,
     operation: crate::operation::LocalOperation,
-    poll_kind: arkret_sdk::EventKind,
-    poll_content: Option<String>,
+    protection: super::super::poll_submission::PollSubmissionContext,
     local_message_id: String,
     realm_id: String,
     strand_id: String,
 ) {
     let mut messages = controller.messages;
+    let mut poll_cards = controller.poll_cards;
     let mut status_msg = controller.status_msg;
-    let mut state_store = crate::app::SessionContext::get().state_store;
+    let state_store = crate::app::SessionContext::get().state_store;
     spawn(async move {
-        match crate::transport::auth::with_authed_api(&base_url, api_token, |api| async move {
-            api.event_submitter()?.submit_sdk_event(&operation).await
-        })
-        .await
-        {
-            Ok(accepted) => {
-                if let (Some(message_id), Some(content)) = (
-                    crate::messaging::polls::poll_message_ref(&poll_kind, &accepted.event_id),
-                    poll_content,
-                ) {
-                    state_store.write().save_private_plaintext(
-                        &realm_id,
-                        &strand_id,
-                        &format!("message-content:{message_id}"),
-                        &content,
-                    );
-                }
+        let result =
+            crate::transport::auth::with_authed_api(&base_url, api_token, |api| async move {
+                super::super::poll_submission::submit_poll_operation(
+                    &api,
+                    state_store,
+                    &protection,
+                    &operation,
+                    &realm_id,
+                    &strand_id,
+                )
+                .await
+            })
+            .await;
+        match result {
+            Ok(event_id) => {
+                let message_ref = crate::messaging::polls::poll_message_ref(
+                    &arkret_sdk::EventKind::MessageCreate,
+                    &event_id,
+                );
                 if let Some(found) = messages
                     .write()
                     .iter_mut()
                     .find(|candidate| candidate.matches_id_or_protocol(&local_message_id))
                 {
+                    found.protocol_message_id = message_ref.clone();
                     found.pending = false;
                     found.failed = false;
                     found.error = None;
+                }
+                if let Some(card) = poll_cards
+                    .write()
+                    .iter_mut()
+                    .find(|card| card.message_id == local_message_id)
+                    && let Some(message_ref) = message_ref
+                {
+                    card.poll_id = message_ref;
                 }
                 status_msg.set("Poll sent".to_owned());
             }
@@ -947,7 +954,6 @@ pub(super) fn send_encrypted_message(
                 return;
             }
         };
-        let base = base.clone();
         let realm_for_record = realm.clone();
         let device_for_sidecar_backup = did.clone();
         // X9: capture identifiers needed by the

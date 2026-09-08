@@ -365,6 +365,11 @@ impl LocalOperation {
         self
     }
 
+    pub fn with_causal_refs(mut self, causal_refs: Vec<arkret_sdk::Hash>) -> Self {
+        self.intent = self.intent.with_causal_refs(causal_refs);
+        self
+    }
+
     /// Pin the CBS basis this write authors against.
     ///
     /// Only a producer that cannot re-resolve one needs this: the authoring

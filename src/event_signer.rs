@@ -108,8 +108,18 @@ impl PrincipalControlHistory {
         &self.events
     }
 
-    pub(crate) fn last(&self) -> Option<&arkret_sdk::Event> {
-        self.events.last()
+    pub(crate) fn require_event(
+        &self,
+        id: &arkret_sdk::EventId,
+    ) -> anyhow::Result<&arkret_sdk::Event> {
+        self.events
+            .iter()
+            .find(|event| &event.event_id == id)
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "accepted principal Event {id} is absent from the scoped control history"
+                )
+            })
     }
 
     pub(crate) fn into_events(self) -> Vec<arkret_sdk::Event> {
@@ -1225,6 +1235,21 @@ mod tests {
 
     const TEST_REALM_ID: &str = "ak:realm:AS8XThowW7JnZc80U10gJh-_lqkA-iSQ-LAvBXj6_9O5";
     const TEST_DEVICE_ID: &str = "ak:device:01964137-0000-7000-8000-000000000001";
+
+    #[test]
+    fn principal_history_finds_the_requested_event_after_a_later_append() {
+        let first = message_event("did:web:alice.example", "first").into_event();
+        let later = message_event("did:web:alice.example", "later").into_event();
+        let missing = message_event("did:web:alice.example", "missing").into_event();
+        let history = PrincipalControlHistory {
+            events: vec![first.clone(), later],
+        };
+        assert_eq!(
+            history.require_event(&first.event_id).unwrap().event_id,
+            first.event_id
+        );
+        assert!(history.require_event(&missing.event_id).is_err());
+    }
 
     fn reset() -> impl Drop {
         ActiveSignerTestGuard::replace(None)

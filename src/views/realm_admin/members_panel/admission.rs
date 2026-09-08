@@ -127,7 +127,52 @@ pub(crate) async fn submit_mls_admission_for_invitee(
         .as_ref()
         .map(|requester| requester.actor_id.to_string())
         .unwrap_or_else(|| actor_id.clone());
-    let claim_route = if let Some(target_device_id) = target_device_id_override {
+    let is_direct = state_store.read().realm_collaboration_role(&realm_id)
+        == Some(arkret_sdk::CollaborationRealmRole::DirectConversation);
+    let target_agent = if is_direct && target_device_id_override.is_none() {
+        let http = api.sdk_http_client()?;
+        match http.agent_get(invitee_principal).await {
+            Ok(view) => {
+                anyhow::ensure!(
+                    view.agent.lifecycle == arkret_sdk::AgentLifecycleState::Active,
+                    "Agent is not active"
+                );
+                let keys = view
+                    .key_state
+                    .context("Agent runtime key state is unavailable")?;
+                anyhow::ensure!(
+                    keys.controller_account_id == account.authority
+                        && invitee_actor.route_service_id() == &account.authority.station_id,
+                    "Agent claim does not belong to the current controller Account"
+                );
+                let key = keys
+                    .active_authorizations
+                    .iter()
+                    .find(|key| {
+                        Some(&key.authorized_event_ref) == keys.authorized_event_ref.as_ref()
+                            && key
+                                .expires_at
+                                .is_none_or(|expiry| expiry > crate::clock::now_utc())
+                    })
+                    .context("Agent has no current authorized runtime key")?;
+                Some(arkret_sdk::MlsEndpointIdentity::agent_runtime(
+                    keys.agent_id,
+                    key.verification_method.clone(),
+                    key.authorized_event_ref.clone(),
+                )?)
+            }
+            Err(arkret_sdk::http_client::Error::Api { status: 404, .. }) => None,
+            Err(error) => return Err(error.into()),
+        }
+    } else {
+        None
+    };
+    let claim_route = if target_agent.is_some() {
+        AcceptedInviteClaimRoute {
+            destination_id: invitee_actor.route_service_id().to_string(),
+            target_device_id: None,
+        }
+    } else if let Some(target_device_id) = target_device_id_override {
         anyhow::ensure!(
             invitee_actor == arkret_sdk::ActorId::account(account.authority.clone()),
             "device-targeted MLS admission is restricted to the active Account ActorId"
@@ -148,7 +193,11 @@ pub(crate) async fn submit_mls_admission_for_invitee(
             )
         })?
     };
-    let target_device_id = claim_target_device_id(&claim_route, pairwise_requester.is_some())?;
+    let target_device_id = if target_agent.is_some() {
+        None
+    } else {
+        claim_target_device_id(&claim_route, pairwise_requester.is_some())?
+    };
     let group_id = {
         let store = state_store.read();
         store
@@ -220,6 +269,7 @@ pub(crate) async fn submit_mls_admission_for_invitee(
                 &claim_request_id,
                 target_device_id,
                 &group_id,
+                target_agent.as_ref(),
             )
             .await?
     };

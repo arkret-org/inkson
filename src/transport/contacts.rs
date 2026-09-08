@@ -124,9 +124,7 @@ pub(crate) async fn submit_principal_successor_seal(
         "principal successor Seal construction",
     )
     .await?;
-    if history.last().map(|event| &event.event_id) != Some(&principal_event.event_id) {
-        anyhow::bail!("accepted principal Event is not the actor frontier");
-    }
+    history.require_event(&principal_event.event_id)?;
 
     let signer = crate::event_signer::active_signer()
         .ok_or_else(|| anyhow::anyhow!("active device signer is required for principal Seal"))?;

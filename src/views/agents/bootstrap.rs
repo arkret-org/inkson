@@ -495,9 +495,8 @@ pub(crate) async fn seal_self_principal_event_current(
         "controller self-PCR successor Seal construction",
     )
     .await?;
-    if history.last().map(|event| &event.event_id) != Some(expected_event_id) {
-        anyhow::bail!("accepted controller self-PCR Event is not the actor frontier");
-    }
+    history.require_event(expected_event_id)?;
+    let expected_digest = expected_event_id.event_digest();
     let signer = crate::event_signer::active_signer()
         .ok_or_else(|| anyhow::anyhow!("active controller signer is unavailable"))?;
     let device_id = signer
@@ -515,6 +514,9 @@ pub(crate) async fn seal_self_principal_event_current(
     let seal = signer
         .sign_self_principal_linear_successor_seal(&history, &predecessor, &availability, hlc)
         .map_err(|error| anyhow::anyhow!("sign controller self-PCR successor Seal: {error}"))?;
+    if !seal.delta.contains(&expected_digest) {
+        anyhow::bail!("controller self-PCR successor Seal does not cover the requested Event");
+    }
     let expected_digests = seal.delta.clone();
     let outcome = http.events_submit_seal(&seal).await?;
     if outcome.seal_id != seal.id

@@ -397,19 +397,21 @@ pub(crate) fn local_card_update_from_raw_operation(
                     if let (Some(ctx), Some(event)) = (decrypt_ctx, event)
                         && let Some((authority, _)) = ctx.identity
                     {
+                        // Another device of the same Account has no author-local
+                        // sidecar. Verify and decrypt its Event just like any
+                        // other accepted sender before consulting that cache.
+                        if let Some(text) = private_strand_event_field_text(
+                            ctx, event, strand_id, field_path, value,
+                        ) {
+                            return Some(PrivateFieldOverlay::Set(text));
+                        }
                         let actor = event.get("actor_id").cloned().and_then(|value| {
                             serde_json::from_value::<arkret_sdk::ActorId>(value).ok()
                         });
                         if actor.as_ref().and_then(arkret_sdk::ActorId::as_account_id)
                             != Some(authority)
                         {
-                            return Some(
-                                private_strand_event_field_text(
-                                    ctx, event, strand_id, field_path, value,
-                                )
-                                .map(PrivateFieldOverlay::Set)
-                                .unwrap_or(PrivateFieldOverlay::Locked),
-                            );
+                            return Some(PrivateFieldOverlay::Locked);
                         }
                     }
                     let text =

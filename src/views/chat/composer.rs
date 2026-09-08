@@ -301,7 +301,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
     let scheduled_send_authority = sidecar_authority.clone();
     let plaintext_sidecar_authority = sidecar_authority.clone();
     let plaintext_sidecar_did = sidecar_did.clone();
-    let secure_sidecar_authority = sidecar_authority;
+    let secure_sidecar_authority = sidecar_authority.clone();
     let secure_sidecar_did = sidecar_did;
     rsx! {
             if !visible_channels_empty {
@@ -821,13 +821,21 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                             Button {
                                 variant: ButtonVariant::Primary,
                                 r#type: "button",
-                                "data-testid": "poll-create-button",
+                                "data-testid": "send-poll-button",
                                 disabled: !draft.is_sendable(),
                                 onclick: {
                                     let base = base_url.clone();
                                     let realm = selected_realm_id.clone();
                                     let actor = principal_id.clone();
                                     let selected_strand = selected_channel_value.clone();
+                                    let protection = super::poll_submission::PollSubmissionContext {
+                                        authority: sidecar_authority.clone(),
+                                        device_id: device_id.clone(),
+                                        encrypted: selected_channel_security_encrypted,
+                                        circle_id: selected_channel_info.as_ref()
+                                            .and_then(|channel| channel.scope_circle.as_ref())
+                                            .map(|scope| scope.circle_id.clone()),
+                                    };
                                     move |_| {
                                         let Some(draft_snapshot) = poll_draft.read().clone() else {
                                             return;
@@ -836,10 +844,8 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                             return;
                                         }
                                         let poll_id = crate::messaging::polls::new_poll_id();
-                                        // Build the canonical poll_block op up front (synchronous)
-                                        // so the optimistic card can adopt the stamped wire
-                                        // message id — the identity later
-                                        // `poll_response.poll_ref` votes point at.
+                                        // Build the content draft; the accepted Event receipt
+                                        // will supply the Message identity used by responses.
                                         let op = match crate::messaging::polls::build_poll_create_op(
                                             &realm,
                                             &actor,
@@ -861,19 +867,9 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                         // card is keyed by the holder-local operation id until
                                         // then, and the author-owned plaintext sidecar is keyed
                                         // by the accepted id inside the submit arm below.
-                                        let poll_content = op
-                                            .payload()
-                                            .get("content")
-                                            .and_then(|content| serde_json::to_string(content).ok());
-                                        let poll_kind = op.kind().clone();
-                                        let message_ref: Option<String> = None;
-                                        let mut card = crate::messaging::polls::PollCard::from_draft(
-                                            poll_id.clone(),
-                                            &draft_snapshot,
+                                        let card = crate::messaging::polls::PollCard::from_draft(
+                                            poll_id.clone(), &draft_snapshot,
                                         );
-                                        if let Some(message_ref) = message_ref.clone() {
-                                            card.poll_id = message_ref;
-                                        }
                                         // Optimistic UI: surface the
                                         // poll card immediately, then push
                                         // a synthetic ChatMessage so chat
@@ -882,7 +878,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                         messages.write().push(ChatMessage {
                                             realm_id: realm.clone(),
                                             id: poll_id.clone(),
-                                            protocol_message_id: message_ref,
+                                            protocol_message_id: None,
                                             actor_id: crate::mls_api_helpers::local_account_actor_id(&actor).ok(),
                                             sender: actor.clone(),
                                             executed_by: None,
@@ -909,8 +905,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                             base.clone(),
                                             token(),
                                             op,
-                                            poll_kind,
-                                            poll_content,
+                                            protection.clone(),
                                             poll_id.clone(),
                                             realm.clone(),
                                             selected_strand.clone(),
@@ -918,103 +913,6 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                     }
                                 },
                                 "Send poll"
-                            }
-                            // Cotest also references `send-poll-button`
-                            // — wire it to the same handler so both
-                            // testids resolve.
-                            Button {
-                                variant: ButtonVariant::Secondary,
-                                r#type: "button",
-                                "data-testid": "send-poll-button",
-                                onclick: {
-                                    let base = base_url.clone();
-                                    let realm = selected_realm_id.clone();
-                                    let actor = principal_id.clone();
-                                    let selected_strand = selected_channel_value.clone();
-                                    move |_| {
-                                        let Some(draft_snapshot) = poll_draft.read().clone() else {
-                                            return;
-                                        };
-                                        if !draft_snapshot.is_sendable() {
-                                            return;
-                                        }
-                                        let poll_id = crate::messaging::polls::new_poll_id();
-                                        // Same canonical poll_block flow as the primary
-                                        // `poll-create-button` handler above.
-                                        let op = match crate::messaging::polls::build_poll_create_op(
-                                            &realm,
-                                            &actor,
-                                            &selected_strand,
-                                            &draft_snapshot,
-                                        ) {
-                                            Ok(op) => op.with_local_operation_id(
-                                                crate::operation::LocalOperationId::from_holder_key(
-                                                    poll_id.clone(),
-                                                ),
-                                            ),
-                                            Err(error) => {
-                                                status_msg.set(format!("Poll send failed: {error}"));
-                                                return;
-                                            }
-                                        };
-                                        // The Message id is `retype(event_id)`, so it exists
-                                        // only once the poll Event is accepted. The optimistic
-                                        // card is keyed by the holder-local operation id until
-                                        // then, and the author-owned plaintext sidecar is keyed
-                                        // by the accepted id inside the submit arm below.
-                                        let poll_content = op
-                                            .payload()
-                                            .get("content")
-                                            .and_then(|content| serde_json::to_string(content).ok());
-                                        let poll_kind = op.kind().clone();
-                                        let message_ref: Option<String> = None;
-                                        let mut card = crate::messaging::polls::PollCard::from_draft(
-                                            poll_id.clone(),
-                                            &draft_snapshot,
-                                        );
-                                        if let Some(message_ref) = message_ref.clone() {
-                                            card.poll_id = message_ref;
-                                        }
-                                        poll_cards.write().push(card);
-                                        messages.write().push(ChatMessage {
-                                            realm_id: realm.clone(),
-                                            id: poll_id.clone(),
-                                            protocol_message_id: message_ref,
-                                            actor_id: crate::mls_api_helpers::local_account_actor_id(&actor).ok(),
-                                            sender: actor.clone(),
-                                            executed_by: None,
-                                            body: format!("[poll] {}", draft_snapshot.question),
-                                            content_format: None,
-                                            timestamp: chrono::Utc::now().format("%H:%M").to_string(),
-                                            created_at: Some(chrono::Utc::now()),
-                                            strand_id: selected_strand.clone(),
-                                            reply_to: None,
-                                            reactions: Vec::new(),
-                                            redacted: false,
-                                            edited: false,
-                                            revisions: Vec::new(),
-                                            pending: true,
-                                            failed: false,
-                                            error: None,
-                                            mentions: Vec::new(),
-                                            crypto_state: MessageCryptoState::Plaintext,
-                                        });
-                                        poll_draft.set(None);
-
-                                        commands::send_poll(
-                                            controller,
-                                            base.clone(),
-                                            token(),
-                                            op,
-                                            poll_kind,
-                                            poll_content,
-                                            poll_id.clone(),
-                                            realm.clone(),
-                                            selected_strand.clone(),
-                                        );
-                                    }
-                                },
-                                "Send"
                             }
                             Button {
                                 variant: ButtonVariant::Secondary,

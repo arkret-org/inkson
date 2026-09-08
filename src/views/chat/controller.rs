@@ -1163,16 +1163,7 @@ impl ChatController {
         message_id: String,
         poll_ref: String,
         option_id: String,
-        option_index: usize,
     ) {
-        if let Some(card) = self
-            .poll_cards
-            .write()
-            .iter_mut()
-            .find(|card| card.message_id == message_id)
-        {
-            card.vote(context.principal_id.as_str(), option_index);
-        }
         if let Some(message) = self
             .messages
             .write()
@@ -1183,6 +1174,19 @@ impl ChatController {
             message.failed = false;
             message.error = None;
         }
+        let protection = super::poll_submission::PollSubmissionContext {
+            authority: context.authority.clone(),
+            device_id: context.device_id.clone(),
+            encrypted: context.selected_channel_security_encrypted,
+            circle_id: self
+                .channels
+                .read()
+                .iter()
+                .find(|channel| channel.strand_id == context.selected_channel_id)
+                .and_then(|channel| channel.scope_circle.as_ref())
+                .map(|scope| scope.circle_id.clone()),
+        };
+        let state_store = crate::app::SessionContext::get().state_store;
         let base_url = context.base_url;
         let realm_id = context.selected_realm_id;
         let strand_id = context.selected_channel_id;
@@ -1200,7 +1204,15 @@ impl ChatController {
                         &poll_ref,
                         &[option_id],
                     )?;
-                    api.event_submitter()?.submit_sdk_event(&operation).await
+                    super::poll_submission::submit_poll_operation(
+                        &api,
+                        state_store,
+                        &protection,
+                        &operation,
+                        &realm_id,
+                        &strand_id,
+                    )
+                    .await
                 })
                 .await;
             match result {

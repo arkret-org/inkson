@@ -70,6 +70,7 @@ fn keypackage_claim_request_carries_required_capabilities() {
         "AAAAAAAAAAAAAAAAAAAAAA",
         Some("ak:device:0196419b-0000-7000-8000-000000000001"),
         "mls-group-1",
+        None,
     )
     .expect("claim request builds");
 
@@ -114,6 +115,45 @@ fn keypackage_claim_request_carries_required_capabilities() {
     );
     assert_eq!(wire["claim_request_id"], json!("AAAAAAAAAAAAAAAAAAAAAA"));
     assert!(wire.get("claim_nonce").is_none());
+
+    let endpoint = arkret_sdk::MlsEndpointIdentity::agent_runtime(
+        arkret_sdk::DidCoreId::new("ak:did_core:web:agent.example").unwrap(),
+        arkret_sdk::DidUrl::new("did:web:agent.example#runtime").unwrap(),
+        requester_device_authorize_event_id.clone(),
+    )
+    .unwrap();
+    let agent_body = mls_api_helpers::build_mls_keypackage_claim_request(
+        "ak:did_core:web:agent.example",
+        "ak:realm:AZQnaSleDidYaYIvfwYy3au5gnd_DSinxyUHEl7ewtxk",
+        "ak:did_core:web:bob.example",
+        requester_device_id,
+        &requester_device_authorize_event_id,
+        "ak:did_core:web:source.example",
+        "ak:did_core:web:destination.example",
+        "AAAAAAAAAAAAAAAAAAAAAA",
+        None,
+        "mls-group-1",
+        Some(&endpoint),
+    )
+    .unwrap();
+    assert!(agent_body.target_account_id.is_none());
+    assert!(agent_body.target_device_ids.is_empty());
+    assert_eq!(
+        agent_body.target_agent_id.as_ref().unwrap().as_str(),
+        "ak:did_core:web:agent.example"
+    );
+    assert_eq!(
+        agent_body
+            .target_agent_verification_method
+            .as_ref()
+            .unwrap()
+            .as_str(),
+        "did:web:agent.example#runtime"
+    );
+    assert_eq!(
+        agent_body.target_agent_key_authorize_event_id.as_ref(),
+        Some(&requester_device_authorize_event_id)
+    );
 }
 
 #[test]
@@ -140,6 +180,7 @@ fn keypackage_claim_request_rejects_cross_principal_signer() {
         "AAAAAAAAAAAAAAAAAAAAAA",
         Some("ak:device:0196419b-0000-7000-8000-000000000001"),
         "mls-group-1",
+        None,
     )
     .expect_err("a signer for another principal must be rejected");
 

@@ -113,7 +113,7 @@ pub(crate) async fn ensure_binding(
     let plan =
         arkret_sdk::direct_conversation_ops::DirectConversationFoundingPlan::from_events(exact)?;
     let peer_membership: arkret_sdk::MembershipPayload =
-        serde_json::from_value(serde_json::to_value(&exact[1].payload)?)?;
+        serde_json::from_value(serde_json::to_value(&exact[2].payload)?)?;
     let participants = vec![create.actor_id.clone(), peer_membership.member_id];
     let self_actor = ActorId::account(account.authority.clone());
     anyhow::ensure!(

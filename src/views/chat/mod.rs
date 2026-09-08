@@ -34,6 +34,7 @@ mod composer;
 mod controller;
 mod effects;
 mod model;
+mod poll_submission;
 mod right_panel;
 mod scheduled_send_panel;
 mod timeline;

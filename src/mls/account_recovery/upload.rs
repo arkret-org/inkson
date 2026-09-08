@@ -209,11 +209,7 @@ async fn ensure_initial_active_series(
         "key-backup active-series successor Seal construction",
     )
     .await?;
-    if history.last().map(|event| &event.event_id) != Some(&active_series_event_id) {
-        return Err(anyhow!(
-            "accepted {wire_kind} active-series Event is not the actor frontier"
-        ));
-    }
+    let active_series_event = history.require_event(&active_series_event_id)?;
     let signer = crate::event_signer::active_signer()
         .ok_or_else(|| anyhow!("active device signer is required"))?;
     let hlc =
@@ -230,11 +226,7 @@ async fn ensure_initial_active_series(
         .sign_self_principal_linear_successor_seal(&history, &frontier, &availability, hlc)
         .map_err(|error| anyhow!("sign {wire_kind} active-series successor Seal: {error}"))?;
     let active_series_digest = arkret_sdk::Hash::new(
-        history
-            .events()
-            .last()
-            .expect("checked")
-            .event_digest_with_digest_suite(arkret_sdk::DigestSuite::Sha256)?,
+        active_series_event.event_digest_with_digest_suite(arkret_sdk::DigestSuite::Sha256)?,
     )?;
     let seal_outcome = http.events_submit_seal(&seal).await?;
     if !seal_outcome

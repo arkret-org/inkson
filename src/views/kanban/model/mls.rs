@@ -231,14 +231,11 @@ pub(crate) fn private_strand_field_locked(
     true
 }
 
-/// X5.2 — resolve the display text for an author-private strand field
-/// (canonically `encrypted_content`) with a 3-tier precedence:
+/// Resolve a projected private Strand field without its signed Event context.
 ///
-/// 1. **Local plaintext sidecar** (`save_private_plaintext`) — the author's own content, the ONLY
-///    source the author can ever see for their own encrypted fields (OpenMLS refuses to decrypt the
-///    author's own ciphertext). Stored as the JSON-serialized patch value, so we parse it back and
-///    run it through `strand_body_display_text` exactly as the decrypt tier would, keeping
-///    write+read symmetric.
+/// 1. **Local plaintext sidecar** (`save_private_plaintext`) — stored as the JSON-serialized
+///    patch value, parsed through `strand_body_display_text` to keep write/read symmetric.
+///    Event overlays independently try verified decryption, including for the same Account.
 /// 2. **Blank** — encrypted content without its verified outer Event context; never leaks the raw
 ///    envelope.
 ///

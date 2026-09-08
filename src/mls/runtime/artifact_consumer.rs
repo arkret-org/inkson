@@ -205,6 +205,39 @@ impl HostArtifactApplicator {
                 let previous = previous.ok_or_else(|| {
                     protocol("accepted MLS Commit has no Garth ready base snapshot")
                 })?;
+                let recovered_staging = self.state.read(|store| {
+                    let snapshot = store.staged_mls_checkpoint_for_scope_and_group(
+                        payload.governance_binding().effective_scope(),
+                        payload.mls_group_id(),
+                    )?;
+                    if snapshot.group_state_event_id.as_ref() != Some(&event.event_id)
+                        || snapshot.epoch != payload.next_epoch()
+                        || event.actor_id != arkret_sdk::ActorId::account(self.authority.clone())
+                    {
+                        return None;
+                    }
+                    let local = store.load();
+                    let proof = local.mls_governance_proofs.values().find(|proof| {
+                        proof.governance_binding == *payload.governance_binding()
+                            && proof.request.previous_epoch == payload.base_epoch()
+                            && proof.request.next_epoch == payload.next_epoch()
+                    })?;
+                    Some(LocalAuthoredCommitStaging {
+                        event_id: event.event_id.clone(),
+                        snapshot: snapshot.into_queued(),
+                        proof_leaves: proof.request.local_mls_leaves.clone(),
+                    })
+                });
+                if let Some(staging) = recovered_staging.as_ref()
+                    && let Some((scope, binding, group)) = restore_local_authored_commit(
+                        staging,
+                        &event.event_id,
+                        &payload,
+                        snapshot_secret,
+                    )?
+                {
+                    return Ok((scope, binding, group, event.clone()));
+                }
                 if let Some(staging) = self.local_authored_commit.as_ref()
                     && let Some((scope, binding, group)) = restore_local_authored_commit(
                         staging,

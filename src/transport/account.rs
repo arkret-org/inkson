@@ -725,6 +725,7 @@ pub async fn create_direct_conversation_from_resolve(
         peer_account,
         notary,
         trust_domain,
+        &next_founding_input.founding_authority_evidence,
     )?;
     let signed = submitter.author_event_unit(steps).await?;
     let events: [arkret_sdk::EventInitialSubmission; 4] = signed
@@ -738,7 +739,6 @@ pub async fn create_direct_conversation_from_resolve(
         idempotency_key: arkret_sdk::IdempotencyKey::new(crate::operation::uuid_v7())
             .map_err(anyhow::Error::msg)?,
         events,
-        founding_authority_evidence: next_founding_input.founding_authority_evidence.clone(),
         cbs_proof_bundles: Vec::new(),
     };
     direct_conversation_found(submitter, resolve, prepared).await

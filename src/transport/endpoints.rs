@@ -269,6 +269,7 @@ impl MlsEndpoints<'_> {
         claim_request_id: &str,
         target_device_id: Option<&str>,
         mls_group_id: &str,
+        target_agent: Option<&arkret_sdk::MlsEndpointIdentity>,
     ) -> anyhow::Result<arkret_sdk::KeyPackagesClaimOutcome> {
         let destination_id = destination_id
             .map(str::trim)
@@ -297,6 +298,7 @@ impl MlsEndpoints<'_> {
             claim_request_id,
             target_device_id,
             mls_group_id,
+            target_agent,
         )?;
         let expected_request = body.unsigned_request();
         let expected_service_binding = body.service_binding.clone();

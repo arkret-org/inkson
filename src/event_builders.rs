@@ -648,8 +648,14 @@ pub fn build_direct_conversation_founding_steps(
     peer_actor: &arkret_sdk::AccountId,
     notary: arkret_sdk::NotaryValue,
     trust_domain: arkret_sdk::TrustDomainId,
+    evidence: &arkret_sdk::DirectConversationFoundingAuthorityEvidence,
 ) -> anyhow::Result<Vec<crate::event_submit::EventUnitStep>> {
     let created_at = event_timestamp();
+    let founding_ref = evidence.founding_ref();
+    let owned_agent = matches!(
+        evidence,
+        arkret_sdk::DirectConversationFoundingAuthorityEvidence::ControllerAgent { .. }
+    );
     let founder_actor = founder_actor.clone();
     let peer_actor = peer_actor.clone();
     let create_payload = arkret_sdk::direct_conversation_realm_create_payload(
@@ -664,6 +670,7 @@ pub fn build_direct_conversation_founding_steps(
     let founder = founder_actor.clone();
     let create_step: crate::event_submit::EventUnitStep = {
         let founder = founder.clone();
+        let founding_ref = founding_ref.clone();
         Box::new(move |_authored| {
             // A genesis scope carries no Realm id; the SDK derives it from this
             // Event. The value passed here only names the scope constructor and
@@ -677,6 +684,7 @@ pub fn build_direct_conversation_founding_steps(
                 )
                 .preconditions(vec![create_precondition])
                 .requirements(event_requirements_with_schema(SchemaId::REALM_GENESIS_V1))
+                .refs(vec![founding_ref.clone()])
                 .created_at(created_at)
                 .build_sdk_event("inkson")?
                 .into_intent(),
@@ -686,15 +694,24 @@ pub fn build_direct_conversation_founding_steps(
 
     let member_step: crate::event_submit::EventUnitStep = {
         let founder = founder.clone();
+        let founding_ref = founding_ref.clone();
         let founder_actor = founder_actor.clone();
         let peer_actor = peer_actor.clone();
         Box::new(move |authored| {
             let create = &authored[0];
-            let membership = arkret_sdk::direct_conversation_peer_membership_bootstrap(
+            let mut membership = arkret_sdk::direct_conversation_peer_membership_bootstrap(
                 create.realm_id.clone(),
                 &founder_actor,
                 [founder_actor.clone(), peer_actor.clone()],
             )?;
+            if owned_agent {
+                membership.agent_controller_binding =
+                    Some(arkret_sdk::AgentControllerMembershipBinding {
+                        controller_account_id: founder_actor.clone(),
+                        controller_membership_generation_ref: authored[1].event_id.clone(),
+                        controller_terminal_event_ref: None,
+                    });
+            }
             let peer_actor_id = arkret_sdk::ActorId::account(peer_actor.clone());
             let peer_actor_key = peer_actor_id.canonical_key()?;
             let member_cell_subject = arkret_sdk::composite_subject(&[peer_actor_key.as_str()])?;
@@ -708,6 +725,7 @@ pub fn build_direct_conversation_founding_steps(
                 )
                 .target_ref(member_cell_subject)
                 .preconditions(vec![head_eq_precondition(&member_cell, Value::Null)?])
+                .refs(vec![founding_ref.clone()])
                 .created_at(created_at)
                 .build_sdk_event("inkson")?
                 .into_intent(),
@@ -717,6 +735,7 @@ pub fn build_direct_conversation_founding_steps(
 
     let strand_step: crate::event_submit::EventUnitStep = {
         let founder = founder.clone();
+        let founding_ref = founding_ref.clone();
         let founder_actor = founder_actor.clone();
         Box::new(move |authored| {
             let create = &authored[0];
@@ -732,6 +751,7 @@ pub fn build_direct_conversation_founding_steps(
                     founder.station_id.clone(),
                     strand_payload,
                 )
+                .refs(vec![founding_ref.clone()])
                 .created_at(created_at)
                 .build_sdk_event("inkson")?
                 .into_intent(),
@@ -741,6 +761,7 @@ pub fn build_direct_conversation_founding_steps(
 
     let founder_member_step: crate::event_submit::EventUnitStep = {
         let founder = founder.clone();
+        let founding_ref = founding_ref.clone();
         let founder_actor = founder_actor.clone();
         Box::new(move |authored| {
             let create = &authored[0];
@@ -766,6 +787,7 @@ pub fn build_direct_conversation_founding_steps(
                     &founder_member_cell,
                     Value::Null,
                 )?])
+                .refs(vec![founding_ref.clone()])
                 .created_at(created_at)
                 .build_sdk_event("inkson")?
                 .into_intent(),
@@ -775,9 +797,9 @@ pub fn build_direct_conversation_founding_steps(
 
     Ok(vec![
         create_step,
+        founder_member_step,
         member_step,
         strand_step,
-        founder_member_step,
     ])
 }
 

@@ -1004,7 +1004,6 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
                                                                                     message_id.clone(),
                                                                                     poll_ref.clone(),
                                                                                     option_id.clone(),
-                                                                                    idx,
                                                                                 )
                                                                             },
                                                                             "{option_label}"

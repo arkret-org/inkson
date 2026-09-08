@@ -293,6 +293,7 @@ pub(crate) fn build_mls_keypackage_claim_request(
     claim_request_id: &str,
     target_device_id: Option<&str>,
     mls_group_id: &str,
+    target_agent: Option<&arkret_sdk::MlsEndpointIdentity>,
 ) -> anyhow::Result<arkret_sdk::KeyPackagesClaimRequestBody> {
     let requester_core_id = principal_core_id(requester)?;
     let signer = crate::event_signer::active_signer()
@@ -319,6 +320,7 @@ pub(crate) fn build_mls_keypackage_claim_request(
         target_device_id,
         None,
         mls_group_id,
+        target_agent,
     )
 }
 
@@ -364,6 +366,7 @@ pub(crate) fn build_pairwise_mls_keypackage_claim_request(
         target_device_id,
         Some(target_pairwise_verification_method),
         mls_group_id,
+        None,
     )
 }
 
@@ -392,6 +395,7 @@ fn build_mls_keypackage_claim_request_with_requester(
     target_device_id: Option<&str>,
     target_pairwise_verification_method: Option<arkret_sdk::DidUrl>,
     mls_group_id: &str,
+    target_agent: Option<&arkret_sdk::MlsEndpointIdentity>,
 ) -> anyhow::Result<arkret_sdk::KeyPackagesClaimRequestBody> {
     let target_device_ids = target_device_id
         .map(str::trim)
@@ -403,9 +407,31 @@ fn build_mls_keypackage_claim_request_with_requester(
     let source_id = arkret_sdk::DidCoreId::new(source_id.trim().to_owned())?;
     let destination_id = arkret_sdk::DidCoreId::new(destination_id.trim().to_owned())?;
     let target_core_id = principal_core_id(target_principal_id)?;
-    let target_account_id = target_pairwise_verification_method
-        .is_none()
-        .then(|| arkret_sdk::AccountId::new(target_core_id, destination_id.clone()));
+    let (target_agent_id, target_agent_verification_method, target_agent_key_authorize_event_id) =
+        match target_agent {
+            Some(arkret_sdk::MlsEndpointIdentity::AgentRuntime {
+                agent_id,
+                verification_method,
+                agent_key_authorize_event_id,
+            }) => {
+                anyhow::ensure!(
+                    *agent_id == target_core_id
+                        && target_device_ids.is_empty()
+                        && target_pairwise_verification_method.is_none(),
+                    "Agent claim selector does not match the requested peer"
+                );
+                (
+                    Some(agent_id.clone()),
+                    Some(verification_method.clone()),
+                    Some(agent_key_authorize_event_id.clone()),
+                )
+            }
+            Some(_) => anyhow::bail!("Agent claim selector requires a runtime endpoint"),
+            None => (None, None, None),
+        };
+    let target_account_id = (target_pairwise_verification_method.is_none()
+        && target_agent_id.is_none())
+    .then(|| arkret_sdk::AccountId::new(target_core_id, destination_id.clone()));
     let requester_account_id = matches!(&requester_authority, ClaimRequester::Device { .. })
         .then(|| arkret_sdk::AccountId::new(requester.clone(), source_id.clone()));
     let signed_at = crate::clock::now_utc();
@@ -424,9 +450,9 @@ fn build_mls_keypackage_claim_request_with_requester(
         expires_at: signed_at + chrono::Duration::minutes(5),
         target_device_ids,
         target_keypackage_ref: None,
-        target_agent_id: None,
-        target_agent_verification_method: None,
-        target_agent_key_authorize_event_id: None,
+        target_agent_id,
+        target_agent_verification_method,
+        target_agent_key_authorize_event_id,
         target_pairwise_verification_method,
         timeout_ms: Some(30_000),
         strand_id: None,
