@@ -255,7 +255,10 @@ impl AgentAdminController {
             let id_for_status = id.clone();
             let status_changed_at = crate::clock::now_utc_millis();
             let controller_account_id = key_state.controller_account_id.clone();
-            let agent_actor_id = arkret_sdk::ActorId::service(key_state.agent_id.clone());
+            let agent_actor_id = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+                key_state.agent_id.clone(),
+                key_state.controller_account_id.station_id.clone(),
+            ));
             let controller_actor_id =
                 arkret_sdk::ActorId::account(key_state.controller_account_id.clone());
             let intent = if enabled {
@@ -354,6 +357,13 @@ impl AgentAdminController {
                         .await
                         .map_err(anyhow::Error::from)?
                 };
+                {
+                    let mut cache_store = state_store;
+                    cache_store
+                        .write()
+                        .invalidate_agent_current_contexts(&agent_actor_id)
+                        .map_err(anyhow::Error::msg)?;
+                }
                 let post_seal_warning = bootstrap::ensure_agent_pcr_seal_current(
                     &submitter,
                     submitter.http(),
@@ -413,6 +423,7 @@ impl AgentAdminController {
             mut deactivate_dialog_open,
             mut deactivate_confirm,
             owned_agents_rev,
+            state_store,
             ..
         } = self;
         spawn(async move {
@@ -447,11 +458,14 @@ impl AgentAdminController {
             };
             let changed_at = crate::clock::now_utc_millis();
             let controller_account_id = key_state.controller_account_id.clone();
-            let agent_actor_id = arkret_sdk::ActorId::service(key_state.agent_id.clone());
+            let agent_actor_id = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+                key_state.agent_id.clone(),
+                key_state.controller_account_id.station_id.clone(),
+            ));
             let controller_actor_id =
                 arkret_sdk::ActorId::account(key_state.controller_account_id.clone());
             let operation = match arkret_event_draft::build_agent_deactivate_intent(
-                agent_actor_id,
+                agent_actor_id.clone(),
                 controller_actor_id,
                 arkret_sdk::ScopeRef::Realm {
                     realm_id: key_state.principal_control_realm_id.clone(),
@@ -490,11 +504,19 @@ impl AgentAdminController {
                     reason: Some(reason),
                     lifecycle_event,
                 };
-                submitter
+                let outcome = submitter
                     .http()
                     .agent_deactivate(&id, &body)
                     .await
-                    .map_err(anyhow::Error::from)
+                    .map_err(anyhow::Error::from)?;
+                {
+                    let mut cache_store = state_store;
+                    cache_store
+                        .write()
+                        .invalidate_agent_current_contexts(&agent_actor_id)
+                        .map_err(anyhow::Error::msg)?;
+                }
+                Ok(outcome)
             })
             .await;
 

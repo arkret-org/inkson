@@ -662,15 +662,36 @@ mod tests {
     }
 
     #[test]
-    fn identity_creation_expired_classifier_accepts_coauth_wire_message() {
+    fn identity_creation_expired_classifier_requires_structured_terminal_reason() {
         let error = anyhow::Error::new(arkret_sdk::http_client::Error::Api {
             status: 409,
-            error: Box::new(Problem::from_code(
-                arkret_sdk::error_codes::ErrorCode::FAILED_PRECONDITION,
-                "reason_code=identity_creation_challenge_expired; lease, fence, reservation, or challenge is stale",
-            )),
+            error: Box::new(
+                Problem::from_code(
+                    arkret_sdk::error_codes::ErrorCode::FAILED_PRECONDITION,
+                    "identity binding challenge expired",
+                )
+                .with_extension(
+                    "reason_code",
+                    serde_json::json!(
+                        arkret_sdk::error_codes::ReasonCode::IDENTITY_CREATION_CHALLENGE_EXPIRED
+                    ),
+                ),
+            ),
         });
 
         assert!(is_identity_creation_challenge_expired_error(&error));
+        for detail in [
+            "lease, fence, reservation, or challenge is stale",
+            "reason_code=identity_creation_challenge_expired; expired",
+        ] {
+            let error = anyhow::Error::new(arkret_sdk::http_client::Error::Api {
+                status: 409,
+                error: Box::new(Problem::from_code(
+                    arkret_sdk::error_codes::ErrorCode::FAILED_PRECONDITION,
+                    detail,
+                )),
+            });
+            assert!(!is_identity_creation_challenge_expired_error(&error));
+        }
     }
 }

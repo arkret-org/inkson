@@ -79,6 +79,7 @@ impl LocalStateStore {
                 "a different MLS governance checkpoint is already pinned for this Realm".to_owned(),
             );
         }
+        self.invalidate_agent_contexts_for_governance(&checkpoint);
         self.cached
             .mls_governance_checkpoints
             .insert(realm_id.to_owned(), checkpoint);
@@ -127,6 +128,7 @@ impl LocalStateStore {
                 );
             }
         }
+        self.invalidate_agent_contexts_for_governance(&checkpoint);
         self.cached
             .mls_governance_checkpoints
             .insert(realm_id.to_owned(), checkpoint);

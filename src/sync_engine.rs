@@ -487,9 +487,7 @@ impl
             crate::identity::agent_signer_evidence::prefetch_from_realm_projections(
                 http,
                 &response.realm_projections,
-                &response.updates.agent_signer_evidence,
                 &self.ctx.state_store,
-                self.ctx.did_cache.clone(),
             )
             .await;
         let state_store_for_profiles = self.ctx.state_store.clone();

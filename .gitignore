@@ -12,3 +12,4 @@ _*.md
 /_*_todos.md
 .claude/
 .codex*
+.agent*

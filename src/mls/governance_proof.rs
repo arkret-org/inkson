@@ -481,78 +481,24 @@ pub(crate) fn verify_agent_history_key<'a, S: GovernanceProofStateStore>(
     evidence: &'a arkret_sdk::AuthenticatedSignerResolutionEvidence,
     dependencies: &'a [arkret_sdk::GovernanceDependency],
 ) -> arkret_sdk::VerifyAgentHistoryKeyFuture<'a> {
-    let state_store = state_store.clone();
+    let _ = state_store;
+    let trust_root = std::sync::Arc::new(evidence.clone());
+    let trust_dependencies = std::sync::Arc::new(dependencies.to_vec());
     Box::pin(async move {
         arkret_sdk::verify_agent_historical_event_key(
             event,
             evidence,
             dependencies,
             move |request| {
-                let state_store = state_store.clone();
-                Box::pin(async move { verify_agent_external_trust(&state_store, request) })
+                let root = trust_root.clone();
+                let dependencies = trust_dependencies.clone();
+                Box::pin(async move {
+                    arkret_sdk::verify_agent_portable_trust(request, &root, &dependencies)
+                })
             },
         )
         .await
     })
-}
-
-pub(crate) fn verify_agent_external_trust<S: GovernanceProofStateStore>(
-    state_store: &S,
-    request: arkret_sdk::AgentHistoricalTrustRequest<'_>,
-) -> Result<(), arkret_sdk::WireError> {
-    match request {
-        arkret_sdk::AgentHistoricalTrustRequest::PcrSeal(seal) => {
-            let checkpoint = state_store
-                .with_read(|store| store.trusted_mls_governance_checkpoint(seal.realm_id.as_str()))
-                .ok_or_else(|| {
-                    arkret_sdk::WireError::Protocol(
-                        "Agent PCR has no locally verified governance checkpoint".to_owned(),
-                    )
-                })?;
-            checkpoint
-                .accepted_seals
-                .iter()
-                .any(|accepted| accepted == seal)
-                .then_some(())
-                .ok_or_else(|| {
-                    arkret_sdk::WireError::Protocol(
-                        "Agent PCR Seal is not byte-exact in the verified checkpoint".to_owned(),
-                    )
-                })
-        }
-        arkret_sdk::AgentHistoricalTrustRequest::LifecycleWitness(witness) => {
-            let checkpoint = state_store
-                .with_read(|store| {
-                    store.trusted_mls_governance_checkpoint(witness.seal.realm_id.as_str())
-                })
-                .ok_or_else(|| {
-                    arkret_sdk::WireError::Protocol(
-                        "Agent lifecycle has no locally verified governance checkpoint".to_owned(),
-                    )
-                })?;
-            let seal_is_accepted = checkpoint
-                .accepted_seals
-                .iter()
-                .any(|accepted| accepted == &witness.seal);
-            let event_is_accepted = checkpoint
-                .accepted_events
-                .iter()
-                .any(|accepted| accepted == &witness.accepted_status_event);
-            (seal_is_accepted && event_is_accepted)
-                .then_some(())
-                .ok_or_else(|| {
-                    arkret_sdk::WireError::Protocol(
-                        "Agent lifecycle witness is not byte-exact in the verified checkpoint"
-                            .to_owned(),
-                    )
-                })
-        }
-        arkret_sdk::AgentHistoricalTrustRequest::Transparency(_) => {
-            Err(arkret_sdk::WireError::Protocol(
-                "Agent transparency has no independently pinned local witness policy".to_owned(),
-            ))
-        }
-    }
 }
 
 pub(crate) async fn ensure_governance_checkpoint<S: GovernanceProofStateStore>(

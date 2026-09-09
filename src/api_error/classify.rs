@@ -197,10 +197,8 @@ pub fn is_identity_creation_challenge_expired_error(error: &anyhow::Error) -> bo
             .and_then(serde_json::Value::as_str);
         status == StatusCode::CONFLICT
             && envelope.code() == arkret_sdk::error_codes::ErrorCode::FAILED_PRECONDITION
-            && (reason == Some("identity_creation_challenge_expired")
-                || envelope
-                    .detail
-                    .contains("reason_code=identity_creation_challenge_expired"))
+            && reason
+                == Some(arkret_sdk::error_codes::ReasonCode::IDENTITY_CREATION_CHALLENGE_EXPIRED)
     })
 }
 

@@ -1527,18 +1527,17 @@ async fn verify_history_external_source_key(
             signer_evidence,
             dependencies,
         } => {
-            let verifier_store = state_store;
+            let trust_root = std::sync::Arc::new(signer_evidence.clone());
+            let trust_dependencies = std::sync::Arc::new(dependencies.to_vec());
             arkret_sdk::verify_agent_history_source_key(
                 source_record,
                 signer_evidence,
                 dependencies,
                 move |request| {
-                    let verifier_store = verifier_store.clone();
+                    let root = trust_root.clone();
+                    let dependencies = trust_dependencies.clone();
                     Box::pin(async move {
-                        crate::mls::governance_proof::verify_agent_external_trust(
-                            &verifier_store,
-                            request,
-                        )
+                        arkret_sdk::verify_agent_portable_trust(request, &root, &dependencies)
                     })
                 },
             )

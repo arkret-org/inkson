@@ -391,7 +391,8 @@ pub(crate) async fn resolve_current_signal_device_evidence(
         sdk_http,
         envelope,
         recipient_account_id,
-        anchor,
+        Vec::new(),
+        Vec::new(),
     )
     .await?;
     for item in outcome.response.evidences {

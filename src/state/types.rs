@@ -840,12 +840,10 @@ pub struct MlsCoverageStale {
     deny_unknown_fields
 )]
 pub enum CachedAgentSignerEvidenceContext {
-    CurrentSignal {
-        operation_id: arkret_sdk::ProtocolOperationId,
-        request_digest: arkret_sdk::Hash,
-        verifier_id: arkret_sdk::DidCoreId,
-        audience: arkret_sdk::DidCoreId,
-        challenge: arkret_sdk::NonEmptyString,
+    CurrentRelation {
+        agent_actor_id: arkret_sdk::ActorId,
+        realm_id: arkret_sdk::RealmId,
+        recipient_account_id: arkret_sdk::AccountId,
     },
     HistoricalEvent {
         realm_id: arkret_sdk::RealmId,
@@ -859,9 +857,14 @@ pub enum CachedAgentSignerEvidenceContext {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct CachedAgentSignerEvidence {
     pub evidence: arkret_sdk::AgentSignerEvidence,
+    pub invalidated: bool,
+    pub signer_evidence_root: arkret_sdk::AuthenticatedSignerResolutionEvidence,
+    pub signer_evidence_dependencies: Vec<arkret_sdk::AuthenticatedSignerResolutionEvidence>,
+    #[serde(skip)]
+    pub verified_current_key: Option<arkret_sdk::VerifiedAgentCurrentContext>,
+    #[serde(skip)]
+    pub verified_historical_key: Option<[u8; 32]>,
     pub verification_context: CachedAgentSignerEvidenceContext,
-    pub verification_method_public_keys:
-        BTreeMap<String, arkret_sdk::signatures::PublicKeyMaterial>,
     pub cached_at_unix_ms: u64,
 }
 

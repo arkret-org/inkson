@@ -551,7 +551,9 @@ pub fn agent_inception_notary(
     agent_did: &arkret_sdk::Did,
     root_public_key_multibase: &str,
 ) -> anyhow::Result<arkret_sdk::NotaryValue> {
-    let actor_id = arkret_sdk::ActorId::service(arkret_sdk::project_did_to_core_id(agent_did)?);
+    let actor_id = crate::mls_api_helpers::local_account_actor_id(
+        arkret_sdk::project_did_to_core_id(agent_did)?.as_str(),
+    )?;
     let public_key = arkret_sdk::decode_ed25519_multibase(root_public_key_multibase)?;
     let descriptor = arkret_sdk::NotarySignerDescriptor {
         actor_id,

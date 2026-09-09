@@ -943,9 +943,10 @@ mod tests {
     #[test]
     fn agent_pcr_control_uses_the_delegated_local_authority() {
         let mut managed = event();
-        managed.actor_id = arkret_sdk::ActorId::service(
+        managed.actor_id = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
             arkret_sdk::DidCoreId::new("ak:did_core:web:agent.example").unwrap(),
-        );
+            managed.actor_id.route_service_id().clone(),
+        ));
         let controller = arkret_sdk::Did::new("did:web:alice.example").unwrap();
         managed.executed_by = Some(
             crate::mls_api_helpers::local_account_actor_id(
@@ -992,9 +993,10 @@ mod tests {
         );
 
         let mut managed = event();
-        managed.actor_id = arkret_sdk::ActorId::service(
+        managed.actor_id = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
             arkret_sdk::DidCoreId::new("ak:did_core:web:agent.example").unwrap(),
-        );
+            managed.actor_id.route_service_id().clone(),
+        ));
         managed.executed_by = Some(
             crate::mls_api_helpers::local_account_actor_id("ak:did_core:web:alice.example")
                 .unwrap(),

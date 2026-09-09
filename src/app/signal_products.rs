@@ -259,6 +259,14 @@ impl SignalProductSink for AppSignalProductSink {
                 }
             }
             let Some(device) = envelope.sender_device_id.as_ref() else {
+                if crate::identity::agent_signer_evidence::cached_current_signal_sender_evidence(
+                    &self.state_store.peek(),
+                    envelope,
+                )
+                .is_some()
+                {
+                    return;
+                }
                 let Some(api) = self.authenticated_api() else {
                     tracing::warn!("Agent Signal evidence has no authenticated API");
                     return;
@@ -268,27 +276,19 @@ impl SignalProductSink for AppSignalProductSink {
                 ) else {
                     return;
                 };
-                let anchor = crate::identity::did_resolver::ResolverDidAnchor::from_profile(
-                    crate::identity::did_resolver::DeploymentProfile::PersonalNode,
-                    self.did_cache.peek().clone(),
-                );
-                let Some(recipient_principal_id) = self.principal_id.peek().clone() else {
-                    tracing::warn!("Agent Signal evidence recipient principal is unavailable");
-                    return;
-                };
-                let Ok(recipient_station_id) =
-                    http.describe().await.map(|value| value.service_id).map_err(
-                        |error| tracing::warn!(%error, "Agent Signal recipient describe failed"),
-                    )
-                else {
+                let Some(recipient_account_id) = self.state_store.peek().active_authority() else {
+                    tracing::warn!("Agent Signal evidence recipient Account is unavailable");
                     return;
                 };
                 if let Some(entry) =
                     crate::identity::agent_signer_evidence::resolve_current_signal_sender_evidence(
                         &http,
                         envelope,
-                        arkret_sdk::AccountId::new(recipient_principal_id, recipient_station_id),
-                        &anchor,
+                        recipient_account_id,
+                        self.state_store.peek().cached_agent_signer_evidence(
+                            envelope.sender_actor_id.signing_principal_id(),
+                            &envelope.proof.verification_method,
+                        ),
                     )
                     .await
                 {
@@ -300,8 +300,6 @@ impl SignalProductSink for AppSignalProductSink {
                         tracing::warn!(%error, "verified Agent Signal evidence could not be stored");
                     }
                 }
-                let mut did_cache = self.did_cache;
-                did_cache.set(anchor.into_cache());
                 return;
             };
             let actor = envelope.sender_actor_id.to_string();

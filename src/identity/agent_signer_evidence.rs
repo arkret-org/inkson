@@ -1,26 +1,19 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use arkret_sdk::signatures::agent_evidence::{
-    AgentEvidenceCommonContext, AgentEvidenceRejectedReason, AgentEvidenceStateVerificationContext,
-    AgentSignerEvidenceVerdict, CurrentAgentSignerEvidenceValidationContext,
-    HistoricalAgentSignerEvidenceValidationContext, agent_authorization_dot_matches_event,
-    validate_current_agent_signer_evidence, validate_historical_agent_signer_evidence,
-    verify_agent_evidence_state,
-};
-use arkret_sdk::signatures::{Ed25519DetachedJwsVerifier, PublicKeyMaterial};
+use arkret_sdk::signatures::PublicKeyMaterial;
 use arkret_sdk::{
     AgentSignerEvidence, AgentSignerEvidenceQueryRequestBody, AgentSignerEvidenceQuerySelector,
-    Did, DidCoreId, DidUrl, Hash, NotarySig, RealmId,
+    Did, DidCoreId, DidUrl, RealmId,
 };
 use serde_json::Value;
 
-use crate::identity::device_directory::DidAnchor as _;
 use crate::state::{CachedAgentSignerEvidence, CachedAgentSignerEvidenceContext, LocalStateStore};
 
 const MAX_SCAN_DEPTH: usize = 32;
 
 #[derive(Clone)]
 struct EventAgentSelector {
+    accepted_event: arkret_sdk::Event,
     realm_id: RealmId,
     agent_actor_id: arkret_sdk::ActorId,
     agent_id: DidCoreId,
@@ -49,14 +42,12 @@ pub(crate) struct OrdinaryAgentMlsBinding<'a> {
 pub(crate) async fn prefetch_from_realm_projections(
     http: &arkret_sdk::http_client::Client,
     projections: &BTreeMap<String, Value>,
-    bundled_evidence: &[AgentSignerEvidence],
     state_store: &crate::runtime::input::StateStoreHandle,
-    did_cache: crate::runtime::input::ValueCell<arkret_sdk::identity::DidResolutionCache>,
 ) -> bool {
-    let Ok(receiver_id) = http.describe().await.map(|view| view.service_id) else {
-        tracing::warn!(
-            "Agent signer evidence prefetch could not resolve the receiving service identity"
-        );
+    let Some(receiver_id) = state_store
+        .read(|store| store.active_authority())
+        .map(|account| account.station_id)
+    else {
         return false;
     };
     let mut selectors = BTreeSet::new();
@@ -67,26 +58,36 @@ pub(crate) async fn prefetch_from_realm_projections(
         return false;
     }
 
-    let anchor = crate::identity::did_resolver::ResolverDidAnchor::from_profile(
-        crate::identity::did_resolver::DeploymentProfile::PersonalNode,
-        did_cache.get(),
-    );
     let mut changed = false;
     let mut satisfied = BTreeSet::new();
-    for evidence in bundled_evidence {
-        let Some(receipt) = historical_receipt(evidence) else {
-            continue;
-        };
-        let candidates = selectors
-            .iter()
-            .filter(|selector| historical_receipt_matches_selector(receipt, selector));
-        for selector in candidates {
-            let Some(entry) = verify_for_cache(http, &anchor, evidence.clone(), selector).await
+    for selector in &selectors {
+        let entries = state_store.read(|store| {
+            store.cached_agent_signer_evidence(&selector.agent_id, &selector.verification_method)
+        });
+        for entry in entries {
+            let Some(admission) = historical_admission(&entry.evidence) else {
+                continue;
+            };
+            if !historical_admission_matches_selector(admission, selector) {
+                continue;
+            }
+            if entry.verified_historical_key.is_some() {
+                satisfied.insert(selector_cache_key(selector));
+                break;
+            }
+            let root = entry.signer_evidence_root.clone();
+            let Some(restored) = verify_for_cache(
+                http,
+                root,
+                Some(entry.signer_evidence_dependencies),
+                selector,
+            )
+            .await
             else {
                 continue;
             };
             if state_store
-                .write(|store| store.store_verified_agent_signer_evidence(entry))
+                .write(|store| store.store_verified_agent_signer_evidence(restored))
                 .is_ok()
             {
                 changed = true;
@@ -131,25 +132,21 @@ pub(crate) async fn prefetch_from_realm_projections(
                         let arkret_sdk::AuthenticatedSignerResolutionEvidence::Agent {
                             agent_signer_evidence: evidence,
                             ..
-                        } = root
+                        } = &root
                         else {
                             continue;
                         };
-                        let Some(receipt) = historical_receipt(&evidence) else {
+                        let Some(receipt) = historical_admission(&evidence) else {
                             continue;
                         };
                         let Some(selector_index) = pending_selectors.iter().position(|selector| {
-                            historical_receipt_matches_selector(receipt, selector)
+                            historical_admission_matches_selector(receipt, selector)
                         }) else {
                             continue;
                         };
-                        let Some(entry) = verify_for_cache(
-                            http,
-                            &anchor,
-                            *evidence,
-                            &pending_selectors[selector_index],
-                        )
-                        .await
+                        let Some(entry) =
+                            verify_for_cache(http, root, None, &pending_selectors[selector_index])
+                                .await
                         else {
                             continue;
                         };
@@ -186,14 +183,13 @@ pub(crate) async fn prefetch_from_realm_projections(
             if attempt < 3 {
                 // The accepted Event can reach the account stream a few
                 // milliseconds before either the evidence projection or its
-                // DID key material is observable. Stop only after evidence is
+                // immutable signer dependencies are observable. Stop only after evidence is
                 // fully verified and cached, not merely after a non-empty
                 // query response.
                 crate::runtime_helpers::sleep_for(std::time::Duration::from_millis(500)).await;
             }
         }
     }
-    did_cache.set(anchor.into_cache());
     changed
 }
 
@@ -205,89 +201,205 @@ fn selector_cache_key(selector: &EventAgentSelector) -> (String, String, String)
     )
 }
 
-fn signal_request_digest(envelope: &arkret_wire::SignalEnvelope) -> Option<Hash> {
-    Hash::new(crate::canonical::canonical_sha256(envelope).ok()?).ok()
-}
-
-/// Resolve and verify a current Agent authority object for this exact Signal.
-///
-/// Current observations are deliberately request-bound and acquired through
-/// the standard self-to-peer proxy. The origin-signed response is verified
-/// before its inner Agent root can enter the exact-context cache.
+/// Refresh only missing or expired authority; messages never bind this query.
 pub(crate) async fn resolve_current_signal_sender_evidence(
     http: &arkret_sdk::http_client::Client,
     envelope: &arkret_wire::SignalEnvelope,
     recipient_account_id: arkret_sdk::AccountId,
-    anchor: &crate::identity::did_resolver::ResolverDidAnchor,
+    cached_entries: Vec<CachedAgentSignerEvidence>,
+) -> Option<CachedAgentSignerEvidence> {
+    resolve_current_signal_sender_evidence_with_clock(
+        http,
+        envelope,
+        recipient_account_id,
+        cached_entries,
+        &garth::SystemClock,
+    )
+    .await
+}
+
+async fn resolve_current_signal_sender_evidence_with_clock(
+    http: &arkret_sdk::http_client::Client,
+    envelope: &arkret_wire::SignalEnvelope,
+    recipient_account_id: arkret_sdk::AccountId,
+    mut cached_entries: Vec<CachedAgentSignerEvidence>,
+    clock: &impl garth::HostClock,
 ) -> Option<CachedAgentSignerEvidence> {
     if envelope.sender_device_id.is_some() {
         return None;
     }
+    let now = clock.now();
+    let mut states = BTreeMap::new();
+    let mut dependencies = BTreeMap::new();
+    for entry in &mut cached_entries {
+        if entry.invalidated {
+            continue;
+        }
+        let CachedAgentSignerEvidenceContext::CurrentRelation {
+            agent_actor_id,
+            realm_id,
+            recipient_account_id: cached_recipient,
+        } = &entry.verification_context
+        else {
+            continue;
+        };
+        if agent_actor_id != &envelope.sender_actor_id
+            || realm_id != &envelope.realm_id
+            || cached_recipient != &recipient_account_id
+        {
+            continue;
+        }
+        if entry.verified_current_key.is_none() {
+            let arkret_sdk::AuthenticatedSignerResolutionEvidence::Agent {
+                agent_signer_evidence,
+                ..
+            } = &entry.signer_evidence_root
+            else {
+                continue;
+            };
+            entry.evidence = *agent_signer_evidence.clone();
+            let root = &entry.signer_evidence_root;
+            // Re-authenticate persisted immutable bytes at their signed observation.
+            // The resulting token still retains the original deadline for permits(now).
+            entry.verified_current_key = verify_current_root(
+                root,
+                &entry.signer_evidence_dependencies,
+                agent_actor_id,
+                &envelope.proof.verification_method,
+                admission_evidence(&entry.evidence).valid_from(),
+                None,
+            )
+            .await;
+        }
+        let Some(key) = entry.verified_current_key.as_ref() else {
+            continue;
+        };
+        if key.key().permits(
+            &envelope.sender_actor_id,
+            &envelope.proof.verification_method,
+            now,
+        ) {
+            return Some(entry.clone());
+        }
+        let state = authority_state_evidence(&entry.evidence);
+        states.insert(state.state_digest.clone(), state.state.clone());
+        for dependency in &entry.signer_evidence_dependencies {
+            dependencies.insert(dependency.evidence_ref().ok()?, dependency.clone());
+        }
+    }
     let (request, outcome) = crate::identity::current_signer_evidence::query_for_signal(
         http,
         envelope,
-        recipient_account_id,
-        anchor,
+        recipient_account_id.clone(),
+        states.keys().cloned().take(64).collect(),
+        dependencies.keys().cloned().take(64).collect(),
     )
     .await?;
-    if outcome.response.evidences.is_empty() {
-        tracing::warn!("current Agent Signal authority returned no evidence");
-    }
-    let operation_id = request.agent_observation_operation_id().ok()?;
-    let context = CachedAgentSignerEvidenceContext::CurrentSignal {
-        operation_id,
-        request_digest: request.request_digest.clone(),
-        verifier_id: request.recipient_account_id.station_id.clone(),
-        audience: request.recipient_account_id.principal_id.clone(),
-        challenge: request.challenge.clone(),
+    let dependencies = dependencies.into_values().collect::<Vec<_>>();
+    let context = CachedAgentSignerEvidenceContext::CurrentRelation {
+        agent_actor_id: envelope.sender_actor_id.clone(),
+        realm_id: envelope.realm_id.clone(),
+        recipient_account_id,
     };
-    let agent_id = envelope.sender_actor_id.signing_principal_id().clone();
-    let verification_method = envelope.proof.verification_method.clone();
     let mut verified = Vec::new();
     for item in outcome.response.evidences {
-        let arkret_models_collaboration::CurrentSignerEvidenceItem::Agent {
-            authenticated_signer_evidence:
-                arkret_sdk::AuthenticatedSignerResolutionEvidence::Agent {
-                    signer_id,
-                    verification_method: resolved_method,
-                    agent_signer_evidence,
-                    ..
-                },
+        if !request.queries.contains(&item.selector()) {
+            return None;
+        }
+        let Ok((root, closure)) = item.hydrate_agent(&request, &states, &dependencies) else {
+            continue;
+        };
+        let Some(key) = verify_current_root(
+            &root,
+            &closure,
+            &envelope.sender_actor_id,
+            &envelope.proof.verification_method,
+            clock.now(),
+            cached_entries
+                .iter()
+                .find_map(|entry| entry.verified_current_key.as_ref()),
+        )
+        .await
+        else {
+            continue;
+        };
+        let arkret_sdk::AuthenticatedSignerResolutionEvidence::Agent {
+            agent_signer_evidence,
             ..
-        } = item
+        } = &root
         else {
             continue;
         };
-        if signer_id != agent_id || resolved_method != verification_method {
-            continue;
-        }
-        let evidence = *agent_signer_evidence;
-        if !current_evidence_matches_context(&evidence, &context) {
-            tracing::warn!("current Agent Signal evidence does not match the requested context");
-            continue;
-        }
-        let Some(entry) =
-            materialize_verified_cache_entry(http, anchor, evidence, context.clone()).await
-        else {
-            tracing::warn!("current Agent Signal evidence failed independent materialization");
-            continue;
-        };
-        let Some(key) =
-            validate_current_entry(&entry, &envelope.sender_actor_id, &verification_method)
-        else {
-            tracing::warn!("current Agent Signal evidence failed current authority validation");
-            continue;
-        };
-        verified.push((key, entry));
+        verified.push(CachedAgentSignerEvidence {
+            invalidated: false,
+            evidence: *agent_signer_evidence.clone(),
+            signer_evidence_root: root,
+            signer_evidence_dependencies: closure,
+            verified_current_key: Some(key),
+            verification_context: context.clone(),
+            verified_historical_key: None,
+            cached_at_unix_ms: crate::clock::now_unix_ms(),
+        });
     }
-    let (first_key, first_entry) = verified.pop()?;
-    if verified.iter().any(|(key, _)| key != &first_key) {
+    let first = verified.pop()?;
+    if verified
+        .iter()
+        .any(|entry| entry.verified_current_key != first.verified_current_key)
+    {
         return None;
     }
-    Some(first_entry)
+    Some(first)
 }
 
-/// Read the exact-context Agent key prepared for this Signal admission.
+fn governance_dependencies(
+    evidence: &[arkret_sdk::AuthenticatedSignerResolutionEvidence],
+) -> Option<Vec<arkret_sdk::GovernanceDependency>> {
+    evidence
+        .iter()
+        .map(|item| {
+            Some(arkret_sdk::GovernanceDependency::AuthenticatedSignerResolutionEvidence {
+        selector: arkret_sdk::GovernanceDependencySelector::AuthenticatedSignerResolutionEvidence {
+            content_digest: item.canonical_sha256_digest().ok()?,
+        },
+        authenticated_signer_resolution_evidence: Box::new(item.clone()),
+    })
+        })
+        .collect()
+}
+
+async fn verify_current_root(
+    root: &arkret_sdk::AuthenticatedSignerResolutionEvidence,
+    closure: &[arkret_sdk::AuthenticatedSignerResolutionEvidence],
+    actor: &arkret_sdk::ActorId,
+    method: &DidUrl,
+    now: chrono::DateTime<chrono::Utc>,
+    previous: Option<&arkret_sdk::VerifiedAgentCurrentContext>,
+) -> Option<arkret_sdk::VerifiedAgentCurrentContext> {
+    let dependencies = governance_dependencies(closure)?;
+    let owned_root = std::sync::Arc::new(root.clone());
+    let owned_dependencies = std::sync::Arc::new(dependencies.clone());
+    arkret_sdk::verify_agent_current_context(
+        actor,
+        method,
+        root,
+        &dependencies,
+        now,
+        previous,
+        move |request| {
+            let root = owned_root.clone();
+            let dependencies = owned_dependencies.clone();
+            Box::pin(async move {
+                arkret_sdk::verify_agent_portable_trust(request, &root, &dependencies)
+            })
+        },
+    )
+    .await
+    .map_err(|error| tracing::warn!(%error, "Agent portable authority verification failed"))
+    .ok()
+}
+
+/// Return a previously authenticated relationship token; each message still
+/// passes actor/method, MLS scope/epoch, producer signature and replay checks.
 pub(crate) fn cached_current_signal_sender_evidence(
     store: &LocalStateStore,
     envelope: &arkret_wire::SignalEnvelope,
@@ -295,41 +407,46 @@ pub(crate) fn cached_current_signal_sender_evidence(
     if envelope.sender_device_id.is_some() {
         return None;
     }
-    let request_digest = signal_request_digest(envelope)?;
-    let agent_actor_id = &envelope.sender_actor_id;
-    let agent_id = agent_actor_id.signing_principal_id();
-    let verification_method = &envelope.proof.verification_method;
     let mut verified = Vec::new();
-    for entry in store.cached_agent_signer_evidence(agent_id, verification_method) {
-        let CachedAgentSignerEvidenceContext::CurrentSignal {
-            request_digest: cached_digest,
+    for entry in store.cached_agent_signer_evidence(
+        envelope.sender_actor_id.signing_principal_id(),
+        &envelope.proof.verification_method,
+    ) {
+        let CachedAgentSignerEvidenceContext::CurrentRelation {
+            agent_actor_id,
+            realm_id,
             ..
         } = &entry.verification_context
         else {
             continue;
         };
-        if cached_digest != &request_digest {
+        if agent_actor_id != &envelope.sender_actor_id || realm_id != &envelope.realm_id {
             continue;
         }
-        let Some(key) = validate_current_entry(&entry, agent_actor_id, verification_method) else {
+        let Some(key) = entry.verified_current_key.as_ref() else {
             continue;
         };
-        verified.push((
-            key,
-            signing_key_binding(&entry.evidence)
-                .agent_key_authorize_event_id
-                .clone(),
-        ));
+        if !key.key().permits(
+            &envelope.sender_actor_id,
+            &envelope.proof.verification_method,
+            crate::clock::now_utc(),
+        ) {
+            continue;
+        }
+        verified.push((*key.key().key(), key.key().authorization_ref().clone()));
     }
-    let (first_key, first_event) = verified.pop()?;
-    if verified.iter().any(|(key, _)| key != &first_key) {
+    let (key, authorization) = verified.pop()?;
+    if verified
+        .iter()
+        .any(|(other, auth)| *other != key || *auth != authorization)
+    {
         return None;
     }
     Some((
         PublicKeyMaterial::Ed25519Raw {
-            bytes: first_key.to_vec(),
+            bytes: key.to_vec(),
         },
-        first_event,
+        authorization,
     ))
 }
 
@@ -347,7 +464,7 @@ pub(crate) fn verify_cached_event(
     }
     let mut saw_rejected = false;
     for entry in entries {
-        let Some(receipt) = historical_receipt(&entry.evidence) else {
+        let Some(receipt) = historical_admission(&entry.evidence) else {
             saw_rejected = true;
             continue;
         };
@@ -364,6 +481,7 @@ pub(crate) fn verify_cached_event(
             continue;
         }
         let selector = EventAgentSelector {
+            accepted_event: event.clone(),
             realm_id: event.realm_id.clone(),
             agent_actor_id: event.actor_id.clone(),
             agent_id: agent_id.clone(),
@@ -380,9 +498,12 @@ pub(crate) fn verify_cached_event(
                     continue;
                 }
             },
-            receiver_id: receipt.receiver_id.clone(),
+            receiver_id: match receipt.receiver_id() {
+                Ok(value) => value,
+                Err(_) => continue,
+            },
         };
-        if !historical_receipt_matches_selector(receipt, &selector) {
+        if !historical_admission_matches_selector(receipt, &selector) {
             saw_rejected = true;
             continue;
         }
@@ -467,10 +588,11 @@ pub(crate) fn verified_cached_agent_event_endpoint(
     }
     let mut digests = BTreeSet::new();
     for entry in store.cached_agent_signer_evidence(&agent_id, &verification_method) {
-        let Some(receipt) = historical_receipt(&entry.evidence) else {
+        let Some(receipt) = historical_admission(&entry.evidence) else {
             continue;
         };
         let selector = EventAgentSelector {
+            accepted_event: event.clone(),
             realm_id: event.realm_id.clone(),
             agent_actor_id: event.actor_id.clone(),
             agent_id: agent_id.clone(),
@@ -480,9 +602,12 @@ pub(crate) fn verified_cached_agent_event_endpoint(
             producer_signer_resolution_evidence_ref: admission
                 .producer_signer_resolution_evidence_ref
                 .clone()?,
-            receiver_id: receipt.receiver_id.clone(),
+            receiver_id: match receipt.receiver_id() {
+                Ok(value) => value,
+                Err(_) => continue,
+            },
         };
-        if !historical_receipt_matches_selector(receipt, &selector) {
+        if !historical_admission_matches_selector(receipt, &selector) {
             continue;
         }
         let CachedAgentSignerEvidenceContext::HistoricalEvent {
@@ -527,470 +652,118 @@ pub(crate) fn verified_cached_agent_event_endpoint(
 
 async fn verify_for_cache(
     http: &arkret_sdk::http_client::Client,
-    anchor: &crate::identity::did_resolver::ResolverDidAnchor,
-    evidence: AgentSignerEvidence,
+    root: arkret_sdk::AuthenticatedSignerResolutionEvidence,
+    cached_dependencies: Option<Vec<arkret_sdk::AuthenticatedSignerResolutionEvidence>>,
     selector: &EventAgentSelector,
 ) -> Option<CachedAgentSignerEvidence> {
-    let verification_context = CachedAgentSignerEvidenceContext::HistoricalEvent {
-        realm_id: selector.realm_id.clone(),
-        event_id: selector.event_id.clone(),
-        producer_accepted_at: selector.producer_accepted_at,
-        producer_signer_resolution_evidence_ref: selector
-            .producer_signer_resolution_evidence_ref
-            .clone(),
-        receiver_id: selector.receiver_id.clone(),
+    let closure = match cached_dependencies {
+        Some(value) => value,
+        None => fetch_signer_dependencies(http, &root, &selector.realm_id).await?,
     };
-    let entry =
-        materialize_verified_cache_entry(http, anchor, evidence, verification_context).await?;
-    validate_cached_historical(&entry, selector)
-        .is_some()
-        .then_some(entry)
-}
-
-async fn materialize_verified_cache_entry(
-    http: &arkret_sdk::http_client::Client,
-    anchor: &crate::identity::did_resolver::ResolverDidAnchor,
-    evidence: AgentSignerEvidence,
-    verification_context: CachedAgentSignerEvidenceContext,
-) -> Option<CachedAgentSignerEvidence> {
-    let admission = admission_evidence(&evidence);
-    let snapshot = &admission.agent_authority_state_evidence;
-    let binding = &snapshot.state.signing_key_binding;
-    let gate = &admission.controller_account_gate_attestation;
-    let (outer_source_id, outer_verification_method) = match &evidence {
-        AgentSignerEvidence::CurrentAdmission {
-            outer_attestation, ..
-        } => (
-            &outer_attestation.source_id,
-            &outer_attestation.verification_method,
-        ),
-        AgentSignerEvidence::HistoricalEvent {
-            outer_attestation, ..
-        } => (
-            &outer_attestation.source_id,
-            &outer_attestation.verification_method,
-        ),
-    };
-    let mut verification_method_public_keys = BTreeMap::new();
-    let controller_method = &binding.controller_proof.verification_method;
-    verification_method_public_keys.insert(
-        controller_method.as_str().to_owned(),
-        resolve_method_key(http, anchor, controller_method).await?,
-    );
-    for (service_id, method) in [
-        (
-            &snapshot.lease.authority_id,
-            &snapshot.lease.verification_method,
-        ),
-        (&gate.authority_id, &gate.verification_method),
-        (outer_source_id, outer_verification_method),
-    ] {
-        if verification_method_public_keys.contains_key(method.as_str()) {
-            continue;
-        }
-        let key = resolve_source_service_method_key(http, anchor, service_id, method).await?;
-        verification_method_public_keys.insert(method.as_str().to_owned(), key);
-    }
-    if let Some(receipt) = historical_receipt(&evidence) {
-        let method =
-            arkret_sdk::signatures::agent_evidence::historical_receipt_verification_method(receipt)
-                .ok()?;
-        if !verification_method_public_keys.contains_key(method.as_str()) {
-            let key =
-                resolve_source_service_method_key(http, anchor, &receipt.receiver_id, &method)
-                    .await?;
-            verification_method_public_keys.insert(method.as_str().to_owned(), key);
-        }
-    }
-    for seal in seal_lineage(&evidence) {
-        for method in seal_signature_methods(seal)? {
-            if verification_method_public_keys.contains_key(method.as_str()) {
-                continue;
-            }
-            let key = resolve_method_key(http, anchor, &method).await?;
-            verification_method_public_keys.insert(method.as_str().to_owned(), key);
-        }
-    }
-    let lifecycle_event = &snapshot.state.agent_lifecycle_witness.accepted_status_event;
-    for proof in &lifecycle_event.proofs {
-        let arkret_sdk::EventProof::StationAdmission(proof) = proof else {
-            continue;
-        };
-        let method = &proof.verification_method;
-        if verification_method_public_keys.contains_key(method.as_str()) {
-            continue;
-        }
-        let key = resolve_source_service_method_key(
-            http,
-            anchor,
-            lifecycle_event.actor_id.route_service_id(),
-            method,
-        )
-        .await?;
-        verification_method_public_keys.insert(method.as_str().to_owned(), key);
-    }
-    let entry = CachedAgentSignerEvidence {
-        evidence,
-        verification_context,
-        verification_method_public_keys,
-        cached_at_unix_ms: crate::clock::now_unix_ms(),
-    };
-    Some(entry)
-}
-
-fn current_evidence_matches_context(
-    evidence: &AgentSignerEvidence,
-    context: &CachedAgentSignerEvidenceContext,
-) -> bool {
-    let (
-        AgentSignerEvidence::CurrentAdmission {
-            current_observation,
-            ..
-        },
-        CachedAgentSignerEvidenceContext::CurrentSignal {
-            operation_id,
-            request_digest,
-            verifier_id,
-            audience,
-            challenge,
-        },
-    ) = (evidence, context)
-    else {
-        return false;
-    };
-    current_observation.operation_id == *operation_id
-        && current_observation.request_digest == *request_digest
-        && current_observation.verifier_id == *verifier_id
-        && current_observation.audience_id == *audience
-        && current_observation.challenge == *challenge
-}
-
-fn verify_seal_signature(
-    entry: &CachedAgentSignerEvidence,
-    seal: &arkret_sdk::Seal,
-) -> Result<(), AgentEvidenceRejectedReason> {
-    let snapshot = authority_state_evidence(&entry.evidence);
-    let allowed = [
-        snapshot.state.authority_id.as_str(),
-        snapshot
-            .state
-            .signing_key_binding
-            .controller_principal_id
-            .as_str(),
-    ];
-    let canonical = seal
-        .canonical_bytes_for_id()
-        .map_err(|_| AgentEvidenceRejectedReason::SigningKeyMismatch)?;
-    let expected_digest = arkret_sdk::Hash::new(arkret_sdk::canonical::sha256_digest(&canonical))
-        .map_err(|_| AgentEvidenceRejectedReason::SigningKeyMismatch)?;
-    let signatures = match &seal.notary_signature {
-        NotarySig::Single(signature) => vec![signature],
-        NotarySig::Multi(multi) if !multi.signatures.is_empty() => {
-            multi.signatures.iter().collect()
-        }
-        NotarySig::Multi(_) => {
-            return Err(AgentEvidenceRejectedReason::SigningKeyMismatch);
-        }
-    };
-    if signatures.into_iter().all(|signature| {
-        let controller = signature
-            .verification_method
-            .split_once('#')
-            .map_or(signature.verification_method.as_str(), |(did, _)| did);
-        signature.payload_digest == expected_digest
-            && allowed.contains(&controller)
-            && entry
-                .verification_method_public_keys
-                .get(signature.verification_method.as_str())
-                .is_some_and(|key| {
-                    Ed25519DetachedJwsVerifier::new()
-                        .verify_detached_jws(&signature.jws, &canonical, key)
-                        .is_ok()
-                })
-    }) {
-        Ok(())
-    } else {
-        Err(AgentEvidenceRejectedReason::SigningKeyMismatch)
-    }
-}
-
-fn authorization_record_digests(evidence: &AgentSignerEvidence) -> Option<(Hash, Hash)> {
-    let binding = signing_key_binding(evidence);
-    authority_state_evidence(evidence)
-        .state
-        .key_state_witness
-        .cell_value
-        .iter()
-        .find_map(|entry| {
-            if !agent_authorization_dot_matches_event(
-                entry.tag.as_str(),
-                binding.agent_key_authorize_event_id.as_str(),
-            ) {
-                return None;
-            }
-            let record = entry.value.as_object()?;
-            let public_key_digest = Hash::new(record.get("public_key_digest")?.as_str()?).ok()?;
-            let binding_digest =
-                Hash::new(record.get("signing_key_binding_digest")?.as_str()?).ok()?;
-            Some((public_key_digest, binding_digest))
-        })
-}
-
-fn verify_lifecycle_signature(
-    entry: &CachedAgentSignerEvidence,
-    witness: &arkret_sdk::AgentLifecycleWitness,
-) -> Result<(), AgentEvidenceRejectedReason> {
-    arkret_sdk::signatures::agent_evidence::verify_agent_lifecycle_event_signature(
-        witness,
-        &|method| {
-            entry
-                .verification_method_public_keys
-                .get(method.as_str())
-                .cloned()
+    let dependencies = governance_dependencies(&closure)?;
+    let owned_root = std::sync::Arc::new(root.clone());
+    let owned_dependencies = std::sync::Arc::new(dependencies.clone());
+    let key = arkret_sdk::verify_agent_historical_event_key(
+        &selector.accepted_event,
+        &root,
+        &dependencies,
+        move |request| {
+            let root = owned_root.clone();
+            let dependencies = owned_dependencies.clone();
+            Box::pin(async move {
+                arkret_sdk::verify_agent_portable_trust(request, &root, &dependencies)
+            })
         },
     )
-}
-
-fn verified_evidence_state(
-    entry: &CachedAgentSignerEvidence,
-    signer_actor_id: &arkret_sdk::ActorId,
-) -> Option<(
-    arkret_sdk::signatures::agent_evidence::VerifiedAgentEvidenceState,
-    Hash,
-    Hash,
-)> {
-    let binding = signing_key_binding(&entry.evidence);
-    let (public_key_digest, binding_digest) = authorization_record_digests(&entry.evidence)?;
-    let verify_seal = |seal: &arkret_sdk::Seal| verify_seal_signature(entry, seal);
-    let verify_lifecycle =
-        |witness: &arkret_sdk::AgentLifecycleWitness| verify_lifecycle_signature(entry, witness);
-    let context = AgentEvidenceStateVerificationContext {
-        signer_id: &binding.agent_id,
-        signer_actor_id,
-        agent_key_id: &binding.agent_key_id,
-        controller_principal_id: &binding.controller_principal_id,
-        agent_key_authorize_event_id: &binding.agent_key_authorize_event_id,
-        authorize_public_key_digest: &public_key_digest,
-        authorize_signing_key_binding_digest: &binding_digest,
-        verify_seal_signature: &verify_seal,
-        verify_lifecycle_reducer: &verify_lifecycle,
+    .await
+    .map_err(|error| tracing::warn!(%error, "Agent historical closure verification failed"))
+    .ok()?;
+    let arkret_sdk::AuthenticatedSignerResolutionEvidence::Agent {
+        agent_signer_evidence,
+        ..
+    } = &root
+    else {
+        return None;
     };
-    let state = verify_agent_evidence_state(admission_evidence(&entry.evidence), &context).ok()?;
-    Some((state, public_key_digest, binding_digest))
-}
-
-fn common_validation_context<'a>(
-    entry: &'a CachedAgentSignerEvidence,
-    state: &'a arkret_sdk::signatures::agent_evidence::VerifiedAgentEvidenceState,
-    public_key_digest: &'a Hash,
-    binding_digest: &'a Hash,
-) -> Option<AgentEvidenceCommonContext<'a>> {
-    let admission = admission_evidence(&entry.evidence);
-    let snapshot = &admission.agent_authority_state_evidence;
-    let binding = &snapshot.state.signing_key_binding;
-    let gate = &admission.controller_account_gate_attestation;
-    Some(AgentEvidenceCommonContext {
-        signer_id: &binding.agent_id,
-        agent_key_id: &binding.agent_key_id,
-        controller_principal_id: &binding.controller_principal_id,
-        verification_method: &binding.verification_method,
-        agent_key_authorize_event_id: &binding.agent_key_authorize_event_id,
-        authorize_public_key_digest: public_key_digest,
-        authorize_signing_key_binding_digest: binding_digest,
-        expected_authority_id: &snapshot.state.authority_id,
-        expected_authority_verification_method: &snapshot.lease.verification_method,
-        expected_account_authority_id: &gate.authority_id,
-        expected_account_authority_verification_method: &gate.verification_method,
-        controller_public_key: entry
-            .verification_method_public_keys
-            .get(binding.controller_proof.verification_method.as_str())?,
-        authority_public_key: entry
-            .verification_method_public_keys
-            .get(snapshot.lease.verification_method.as_str())?,
-        account_authority_public_key: entry
-            .verification_method_public_keys
-            .get(gate.verification_method.as_str())?,
-        verified_state: state,
-        require_transparency: false,
-        transparency_verified: false,
-        now: crate::clock::now_utc(),
+    Some(CachedAgentSignerEvidence {
+        invalidated: false,
+        evidence: *agent_signer_evidence.clone(),
+        signer_evidence_root: root,
+        signer_evidence_dependencies: closure,
+        verified_current_key: None,
+        verified_historical_key: Some(key.ed25519_bytes().ok()?),
+        verification_context: CachedAgentSignerEvidenceContext::HistoricalEvent {
+            realm_id: selector.realm_id.clone(),
+            event_id: selector.event_id.clone(),
+            producer_accepted_at: selector.producer_accepted_at,
+            producer_signer_resolution_evidence_ref: selector
+                .producer_signer_resolution_evidence_ref
+                .clone(),
+            receiver_id: selector.receiver_id.clone(),
+        },
+        cached_at_unix_ms: crate::clock::now_unix_ms(),
     })
 }
 
-fn validate_current_entry(
-    entry: &CachedAgentSignerEvidence,
-    expected_agent_actor_id: &arkret_sdk::ActorId,
-    expected_verification_method: &DidUrl,
-) -> Option<[u8; 32]> {
-    let CachedAgentSignerEvidenceContext::CurrentSignal {
-        operation_id,
-        request_digest,
-        verifier_id,
-        audience,
-        challenge,
-    } = &entry.verification_context
-    else {
-        return None;
-    };
-    if expected_agent_actor_id.as_account_id().is_none()
-        || expected_agent_actor_id.signing_principal_id()
-            != &signing_key_binding(&entry.evidence).agent_id
-        || *expected_verification_method != signing_key_binding(&entry.evidence).verification_method
-    {
-        return None;
+async fn fetch_signer_dependencies(
+    http: &arkret_sdk::http_client::Client,
+    root: &arkret_sdk::AuthenticatedSignerResolutionEvidence,
+    realm_id: &RealmId,
+) -> Option<Vec<arkret_sdk::AuthenticatedSignerResolutionEvidence>> {
+    let mut collected = BTreeMap::new();
+    let mut pending =
+        arkret_sdk::governance_attester_evidence_selectors(std::iter::once(root)).ok()?;
+    while !pending.is_empty() {
+        if collected.len() + pending.len() > 64 {
+            return None;
+        }
+        let request = arkret_sdk::SelfGovernanceDependencyResolveRequest {
+            realm_id: realm_id.clone(),
+            selectors: pending.clone(),
+            byte_limit: arkret_sdk::MAX_GOVERNANCE_DEPENDENCY_RESPONSE_BYTES,
+            history_traversal_access: None,
+        };
+        let response = http.governance_dependencies_resolve(&request).await.ok()?;
+        response.validate_for_self_request(&request).ok()?;
+        if response.items.len() != pending.len() {
+            return None;
+        }
+        for item in response.items {
+            if !pending.contains(item.selector()) {
+                return None;
+            }
+            let arkret_sdk::GovernanceDependency::AuthenticatedSignerResolutionEvidence {
+                authenticated_signer_resolution_evidence,
+                ..
+            } = item
+            else {
+                return None;
+            };
+            let digest = authenticated_signer_resolution_evidence
+                .canonical_sha256_digest()
+                .ok()?;
+            collected.insert(digest, *authenticated_signer_resolution_evidence);
+        }
+        pending = arkret_sdk::governance_attester_evidence_selectors(collected.values()).ok()?;
+        pending.retain(|selector| match selector {
+            arkret_sdk::GovernanceDependencySelector::AuthenticatedSignerResolutionEvidence {
+                content_digest,
+            } => !collected.contains_key(content_digest),
+            _ => true,
+        });
     }
-    let (state, public_key_digest, binding_digest) =
-        verified_evidence_state(entry, expected_agent_actor_id)?;
-    let common = common_validation_context(entry, &state, &public_key_digest, &binding_digest)?;
-    match validate_current_agent_signer_evidence(
-        Some(&entry.evidence),
-        &CurrentAgentSignerEvidenceValidationContext {
-            common,
-            operation_id,
-            request_digest,
-            verifier_id,
-            audience,
-            challenge,
-        },
-    ) {
-        AgentSignerEvidenceVerdict::Verified(verified) => Some(*verified.key()),
-        AgentSignerEvidenceVerdict::Unresolved(_) | AgentSignerEvidenceVerdict::Rejected(_) => None,
-    }
+    Some(collected.into_values().collect())
 }
 
 fn validate_cached_historical(
     entry: &CachedAgentSignerEvidence,
     selector: &EventAgentSelector,
 ) -> Option<[u8; 32]> {
-    let (state, public_key_digest, binding_digest) =
-        verified_evidence_state(entry, &selector.agent_actor_id)?;
-    let common = common_validation_context(entry, &state, &public_key_digest, &binding_digest)?;
-    // The ordinary resolver only exposes the current DID/service document.
-    // Until the client has ingested and validated the complete DID history,
-    // it cannot honestly resolve a protected receipt kid at accepted_at.
-    let resolve_receiver = |method: &DidUrl, _: chrono::DateTime<chrono::Utc>| {
-        entry
-            .verification_method_public_keys
-            .get(method.as_str())
-            .cloned()
-    };
-    match validate_historical_agent_signer_evidence(
-        Some(&entry.evidence),
-        &HistoricalAgentSignerEvidenceValidationContext {
-            common,
-            event_id: &selector.event_id,
-            realm_id: &selector.realm_id,
-            producer_accepted_at: selector.producer_accepted_at,
-            producer_signer_resolution_evidence_ref: &selector
-                .producer_signer_resolution_evidence_ref,
-            receiver_id: &selector.receiver_id,
-            resolve_receiver_historical_key: &resolve_receiver,
-        },
-    ) {
-        AgentSignerEvidenceVerdict::Verified(verified) => Some(*verified.key()),
-        AgentSignerEvidenceVerdict::Unresolved(_) | AgentSignerEvidenceVerdict::Rejected(_) => None,
-    }
-}
-
-/// The Seal's notary verification methods, typed. `PayloadSignature`'s
-/// `verification_method` is a `DidUrl` since the P0-A migration, so no
-/// re-parsing is needed here.
-fn seal_signature_methods(seal: &arkret_sdk::Seal) -> Option<Vec<DidUrl>> {
-    match &seal.notary_signature {
-        NotarySig::Single(signature) => Some(vec![signature.verification_method.clone()]),
-        NotarySig::Multi(multi) if !multi.signatures.is_empty() => Some(
-            multi
-                .signatures
-                .iter()
-                .map(|signature| signature.verification_method.clone())
-                .collect(),
-        ),
-        NotarySig::Multi(_) => None,
-    }
-}
-
-async fn resolve_method_key(
-    http: &arkret_sdk::http_client::Client,
-    anchor: &crate::identity::did_resolver::ResolverDidAnchor,
-    method: &DidUrl,
-) -> Option<PublicKeyMaterial> {
-    let (controller, fragment) = method.as_str().split_once('#')?;
-    let fragment = fragment.split_once('?').map_or(fragment, |(head, _)| head);
-    let controller_did = Did::new(controller.to_owned()).ok()?;
-    if arkret_sdk::DeviceId::new(fragment.to_owned()).is_ok() {
-        return crate::identity::device_directory::resolve_device_signing_key_with_http(
-            http, anchor, controller, fragment,
-        )
-        .await
-        .ok()
-        .flatten();
-    }
-    let fetch_client = reqwest::Client::new();
-    if !anchor
-        .ensure_actor_document(&fetch_client, &controller_did)
-        .await
-    {
+    let admission = historical_admission(&entry.evidence)?;
+    if !historical_admission_matches_selector(admission, selector) {
         return None;
     }
-    let document = anchor.resolve_did_document(&controller_did)?;
-    let value = document
-        .verification_methods
-        .get(method.as_str())
-        .or_else(|| document.verification_methods.get(fragment))
-        .or_else(|| document.verification_methods.get(&format!("#{fragment}")))?;
-    public_key_material_from_document(value)
-}
-
-async fn resolve_source_service_method_key(
-    http: &arkret_sdk::http_client::Client,
-    anchor: &crate::identity::did_resolver::ResolverDidAnchor,
-    source_id: &DidCoreId,
-    method: &DidUrl,
-) -> Option<PublicKeyMaterial> {
-    if method
-        .as_str()
-        .split_once('#')
-        .map(|(controller, _)| controller)
-        .and_then(|controller| Did::new(controller.to_owned()).ok())
-        .and_then(|did| arkret_sdk::project_did_to_core_id(&did).ok())
-        .as_ref()
-        != Some(source_id)
-    {
-        return None;
-    }
-    let source_did = Did::new(method.as_str().split_once('#')?.0.to_owned()).ok()?;
-    if let Some(key) = resolve_method_key(http, anchor, method).await {
-        return Some(key);
-    }
-    let description = http.describe().await.ok()?;
-    if source_id != &description.service_id {
-        return None;
-    }
-    let fetch_client = reqwest::Client::new();
-    if !anchor
-        .ensure_trusted_same_origin_service_document(&fetch_client, http.base_url(), &source_did)
-        .await
-    {
-        return None;
-    }
-    let document = anchor.resolve_did_document(&source_did)?;
-    let fragment = method.as_str().split_once('#')?.1;
-    let fragment = fragment.split_once('?').map_or(fragment, |(head, _)| head);
-    let value = document
-        .verification_methods
-        .get(method.as_str())
-        .or_else(|| document.verification_methods.get(fragment))
-        .or_else(|| document.verification_methods.get(&format!("#{fragment}")))?;
-    public_key_material_from_document(value)
-}
-
-fn public_key_material_from_document(value: &str) -> Option<PublicKeyMaterial> {
-    crate::identity::device_directory::public_key_from_directory_value(value).or_else(|| {
-        serde_json::from_str::<Value>(value)
-            .ok()
-            .map(|value| PublicKeyMaterial::Jwk { value })
-            .filter(|key| key.ed25519_bytes().is_ok())
-    })
+    entry.verified_historical_key
 }
 
 fn admission_evidence(evidence: &AgentSignerEvidence) -> &arkret_sdk::AgentAdmissionEvidence {
@@ -1014,34 +787,29 @@ fn signing_key_binding(evidence: &AgentSignerEvidence) -> &arkret_sdk::AgentSign
     &authority_state_evidence(evidence).state.signing_key_binding
 }
 
-fn seal_lineage(evidence: &AgentSignerEvidence) -> &[arkret_sdk::Seal] {
-    &authority_state_evidence(evidence).state.seal_lineages
-}
-
-fn historical_receipt(
+fn historical_admission(
     evidence: &AgentSignerEvidence,
-) -> Option<&arkret_sdk::AgentEventAdmissionReceipt> {
+) -> Option<&arkret_sdk::AgentEventAdmission> {
     match evidence {
         AgentSignerEvidence::HistoricalEvent {
-            event_admission_receipt,
-            ..
-        } => Some(event_admission_receipt),
+            event_admission, ..
+        } => Some(event_admission),
         AgentSignerEvidence::CurrentAdmission { .. } => None,
     }
 }
 
-fn historical_receipt_matches_selector(
-    receipt: &arkret_sdk::AgentEventAdmissionReceipt,
+fn historical_admission_matches_selector(
+    admission: &arkret_sdk::AgentEventAdmission,
     selector: &EventAgentSelector,
 ) -> bool {
-    receipt.realm_id == selector.realm_id
-        && receipt.agent_id == selector.agent_id
-        && receipt.verification_method == selector.verification_method
-        && receipt.event_id == selector.event_id
-        && receipt.producer_accepted_at == selector.producer_accepted_at
-        && receipt.producer_signer_resolution_evidence_ref
-            == selector.producer_signer_resolution_evidence_ref
-        && receipt.receiver_id == selector.receiver_id
+    admission.realm_id() == &selector.realm_id
+        && admission.agent_id() == &selector.agent_id
+        && admission.verification_method().ok() == Some(&selector.verification_method)
+        && admission.event_id() == &selector.event_id
+        && admission.producer_accepted_at().ok() == Some(selector.producer_accepted_at)
+        && admission.producer_signer_resolution_evidence_ref().ok()
+            == Some(&selector.producer_signer_resolution_evidence_ref)
+        && admission.receiver_id().ok().as_ref() == Some(&selector.receiver_id)
 }
 
 fn event_agent_identity(envelope: &Value) -> Option<(arkret_sdk::Event, DidCoreId, DidUrl)> {
@@ -1064,7 +832,9 @@ fn event_agent_identity(envelope: &Value) -> Option<(arkret_sdk::Event, DidCoreI
                 .verification_method
                 .as_str()
                 .split_once('#')
-                .is_some_and(|(controller, _)| controller == agent_id.as_str())
+                .and_then(|(controller, _)| Did::new(controller.to_owned()).ok())
+                .and_then(|did| arkret_sdk::project_did_to_core_id(&did).ok())
+                .is_some_and(|controller| controller == agent_id)
         })?
         .verification_method
         .clone();
@@ -1134,6 +904,7 @@ fn selector_from_object(
     }
     let admission = origin_admission(&event)?;
     Some(EventAgentSelector {
+        accepted_event: event.clone(),
         realm_id,
         agent_actor_id: event.actor_id.clone(),
         agent_id,
@@ -1185,3 +956,167 @@ impl PartialEq for EventAgentSelector {
 }
 
 impl Eq for EventAgentSelector {}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+pub(crate) mod cache_tests {
+    use chrono::{DateTime, Utc};
+
+    use super::*;
+
+    #[derive(serde::Deserialize)]
+    struct Fixture {
+        actor: arkret_sdk::ActorId,
+        verification_method: DidUrl,
+        realm_id: RealmId,
+        recipient_account_id: arkret_sdk::AccountId,
+        valid_from: DateTime<Utc>,
+        root: arkret_sdk::AuthenticatedSignerResolutionEvidence,
+        dependencies: Vec<arkret_sdk::AuthenticatedSignerResolutionEvidence>,
+    }
+
+    #[derive(Clone)]
+    struct FixedClock(DateTime<Utc>);
+
+    impl garth::HostClock for FixedClock {
+        fn now(&self) -> DateTime<Utc> {
+            self.0
+        }
+    }
+
+    fn fixture() -> Fixture {
+        serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../arkret-rust-sdk/crates/sdk/tests/fixtures/agent-current-context.json"
+        )))
+        .unwrap()
+    }
+
+    fn envelope(fixture: &Fixture) -> arkret_wire::SignalEnvelope {
+        serde_json::from_value(serde_json::json!({
+            "realm_id": fixture.realm_id,
+            "scope_ref": {"kind":"realm", "realm_id":fixture.realm_id},
+            "sender_actor_id": fixture.actor,
+            "seal_ref": format!("ak:seal:sha256:{}", "a".repeat(64)),
+            "signal_class": "session",
+            "sent_at": arkret_sdk::canonical::format_timestamp_canonical(fixture.valid_from),
+            "expires_at": arkret_sdk::canonical::format_timestamp_canonical(fixture.valid_from + chrono::Duration::seconds(10)),
+            "encrypted_payload": {
+                "scheme": arkret_wire::signal::SIGNAL_AEAD_SCHEME,
+                "key_ref": {"algorithm":"MLS-EXPORTER-AEAD", "group_state_ref":"ak:event:AZVgkcivLIz2PjwUcjuT5bTb6295nnowDbSQak0QfNCa"},
+                "purpose": arkret_wire::signal::SIGNAL_AEAD_PURPOSE,
+                "aead_profile":"MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519",
+                "epoch":4, "nonce":"AAAAAAAAAAAAAAAA", "ciphertext":"AAAAAAAAAAAAAAAAAAAAAA",
+                "aad_digest":format!("sha256:{}", "0".repeat(64))
+            },
+            "proof": {"kind":arkret_sdk::proof_kind::DETACHED_JWS,
+                "verification_method":fixture.verification_method,
+                "envelope_digest":format!("sha256:{}", "0".repeat(64)), "jws":""}
+        })).unwrap()
+    }
+
+    async fn entry(fixture: &Fixture) -> CachedAgentSignerEvidence {
+        let context = verify_current_root(
+            &fixture.root,
+            &fixture.dependencies,
+            &fixture.actor,
+            &fixture.verification_method,
+            fixture.valid_from,
+            None,
+        )
+        .await
+        .expect("signed producer fixture must verify");
+        let arkret_sdk::AuthenticatedSignerResolutionEvidence::Agent {
+            agent_signer_evidence,
+            ..
+        } = &fixture.root
+        else {
+            panic!("Agent fixture")
+        };
+        CachedAgentSignerEvidence {
+            evidence: *agent_signer_evidence.clone(),
+            invalidated: false,
+            signer_evidence_root: fixture.root.clone(),
+            signer_evidence_dependencies: fixture.dependencies.clone(),
+            verified_current_key: Some(context),
+            verified_historical_key: None,
+            verification_context: CachedAgentSignerEvidenceContext::CurrentRelation {
+                agent_actor_id: fixture.actor.clone(),
+                realm_id: fixture.realm_id.clone(),
+                recipient_account_id: fixture.recipient_account_id.clone(),
+            },
+            cached_at_unix_ms: fixture.valid_from.timestamp_millis() as u64,
+        }
+    }
+
+    pub(crate) async fn signed_fixture_entry() -> CachedAgentSignerEvidence {
+        entry(&fixture()).await
+    }
+
+    #[tokio::test]
+    async fn agent_cache_reuses_signed_context_across_messages_and_persisted_reconnect_without_query()
+     {
+        let fixture = fixture();
+        let mut entry = entry(&fixture).await;
+        let mut envelope = envelope(&fixture);
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let http = arkret_sdk::http_client::Client::builder(
+            format!("http://{}/", listener.local_addr().unwrap())
+                .parse()
+                .unwrap(),
+        )
+        .allow_insecure_localhost()
+        .build()
+        .unwrap();
+        let original_expiry = entry
+            .verified_current_key
+            .as_ref()
+            .unwrap()
+            .key()
+            .expires_at();
+        for message in 0..3 {
+            envelope.sent_at = fixture.valid_from + chrono::Duration::milliseconds(message);
+            entry = tokio::time::timeout(
+                std::time::Duration::from_secs(2),
+                resolve_current_signal_sender_evidence_with_clock(
+                    &http,
+                    &envelope,
+                    fixture.recipient_account_id.clone(),
+                    vec![entry],
+                    &FixedClock(envelope.sent_at),
+                ),
+            )
+            .await
+            .expect("cache hit must not wait for HTTP")
+            .expect("valid current context");
+        }
+        let saved = serde_json::to_vec(&entry).unwrap();
+        let restored: CachedAgentSignerEvidence = serde_json::from_slice(&saved).unwrap();
+        assert!(restored.verified_current_key.is_none());
+        let restored = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            resolve_current_signal_sender_evidence_with_clock(
+                &http,
+                &envelope,
+                fixture.recipient_account_id.clone(),
+                vec![restored],
+                &FixedClock(envelope.sent_at),
+            ),
+        )
+        .await
+        .expect("reconnect must verify cached bytes without HTTP")
+        .expect("restored current context");
+        assert_eq!(
+            restored
+                .verified_current_key
+                .as_ref()
+                .unwrap()
+                .key()
+                .expires_at(),
+            original_expiry
+        );
+        assert!(
+            matches!(listener.accept(), Err(error) if error.kind() == std::io::ErrorKind::WouldBlock)
+        );
+    }
+}
