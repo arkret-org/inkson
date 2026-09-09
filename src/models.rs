@@ -812,7 +812,7 @@ mod tests {
             },
             state: arkret_sdk::ContactState::Accepted,
             request_event_ref: None,
-            request_receipt: None,
+            request_message: None,
             response_event_ref: Some(
                 arkret_sdk::EventId::new(
                     "ak:event:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19".to_owned(),
@@ -835,10 +835,8 @@ mod tests {
             granted_by_peer_scopes: vec![ContactScope::Invite],
             bidirectional_scopes: Vec::new(),
             effective_scopes: Some(Vec::new()),
-            peer_host_id: None,
             continuity_evidence: None,
             direct_conversation: None,
-            peer_host_resolution: None,
             contact_agent_projections: Vec::new(),
         };
         assert!(super::contact_grants_me_invite(&row));

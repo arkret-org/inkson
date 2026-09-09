@@ -25,7 +25,6 @@ pub(super) fn ChatEffects(
 ) -> Element {
     let base_url = crate::app::SessionContext::base_url_string();
     let mut state_store = crate::app::SessionContext::get().state_store;
-    let did_cache = use_context::<Signal<arkret_sdk::identity::DidResolutionCache>>();
     use_member_handle_cache(
         controller,
         base_url.clone(),
@@ -694,7 +693,6 @@ pub(super) fn ChatEffects(
                         crate::sync_engine::prefetch_persistent_event_sender_keys(
                             &api,
                             &sync,
-                            crate::app::runtime_adapter::value_cell(did_cache),
                             crate::app::runtime_adapter::state_store_handle(state_store),
                             |realm_id| {
                                 state_store
@@ -804,7 +802,6 @@ pub(super) fn ChatEffects(
                                 crate::sync_engine::prefetch_persistent_event_sender_keys_from_values(
                                 &api,
                                 &backfill_events,
-                                crate::app::runtime_adapter::value_cell(did_cache),
                                 crate::app::runtime_adapter::state_store_handle(state_store),
                             )
                             .await;

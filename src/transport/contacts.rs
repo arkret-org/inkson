@@ -42,7 +42,7 @@ mod default_scope_tests {
 pub(crate) struct PrincipalSuccessorSealContext {
     actor_id: arkret_sdk::ActorId,
     control_realm: arkret_sdk::RealmId,
-    predecessor: arkret_sdk::Seal,
+    predecessor: arkret_sdk::SealId,
 }
 
 pub(crate) async fn prepare_principal_successor_seal(
@@ -59,20 +59,7 @@ pub(crate) async fn prepare_principal_successor_seal(
     if view.realm_id != control_realm {
         anyhow::bail!("principal control frontier returned a different Realm");
     }
-    // The successor Seal binds the predecessor's own signed roots, so the
-    // frontier leaf is resolved instead of trusting a service root hint.
-    let leaf = view.sole_leaf()?.clone();
-    let predecessor = http
-        .seals_resolve(&arkret_sdk::SelfSealResolveRequestBody {
-            realm_id: control_realm.clone(),
-            seal_refs: vec![leaf.clone()],
-            history_traversal_access: None,
-        })
-        .await?
-        .seals
-        .into_iter()
-        .find(|seal| seal.id == leaf)
-        .ok_or_else(|| anyhow::anyhow!("accepted principal control Seal leaf did not resolve"))?;
+    let predecessor = view.sole_leaf()?.clone();
     Ok(PrincipalSuccessorSealContext {
         actor_id,
         control_realm,
@@ -117,45 +104,20 @@ pub(crate) async fn submit_principal_successor_seal(
     context: PrincipalSuccessorSealContext,
     principal_event: &arkret_sdk::Event,
 ) -> anyhow::Result<()> {
-    let history = crate::event_signer::PrincipalControlHistory::load(
+    anyhow::ensure!(
+        principal_event.actor_id == context.actor_id
+            && principal_event.realm_id == context.control_realm,
+        "principal Seal Event differs from the frozen account/Realm"
+    );
+    let principal_digest = principal_event.event_id.event_digest();
+    let seal = crate::event_signer::prepare_and_sign_pcr_successor(
         http,
         &context.actor_id,
         &context.control_realm,
-        "principal successor Seal construction",
+        vec![context.predecessor],
+        vec![principal_digest.clone()],
     )
     .await?;
-    history.require_event(&principal_event.event_id)?;
-
-    let signer = crate::event_signer::active_signer()
-        .ok_or_else(|| anyhow::anyhow!("active device signer is required for principal Seal"))?;
-    let device_id = signer
-        .device_id()
-        .ok_or_else(|| anyhow::anyhow!("principal Seal signer requires a bound device_id"))?;
-    let hlc = crate::signing_stamp::issue_protocol_hlc(
-        context.actor_id.signing_principal_id().as_str(),
-        device_id,
-        context.control_realm.as_str(),
-    )?;
-    let delta =
-        crate::event_signer::pcr_successor_delta_digests(history.events(), &context.predecessor)?;
-    let availability = crate::event_signer::issue_pcr_successor_availability(
-        http,
-        &context.control_realm,
-        &context.predecessor,
-        delta,
-    )
-    .await?;
-    let seal = signer
-        .sign_self_principal_linear_successor_seal(
-            &history,
-            &context.predecessor,
-            &availability,
-            hlc,
-        )
-        .map_err(|error| anyhow::anyhow!("sign principal successor Seal: {error}"))?;
-    let principal_digest = arkret_sdk::Hash::new(
-        principal_event.event_digest_with_digest_suite(arkret_sdk::DigestSuite::Sha256)?,
-    )?;
     let outcome = http.events_submit_seal(&seal).await?;
     if outcome.seal_id != seal.id
         || outcome.post_state_root != seal.state_root
@@ -208,6 +170,9 @@ pub(crate) fn sign_prepared_contact_event(
     let mut event = draft.unsigned_event_for_kind(expected_kind)?;
     let signer = crate::event_signer::active_signer()
         .ok_or_else(|| anyhow::anyhow!("active device signer is required for Contact commit"))?;
+    let principal =
+        arkret_sdk::project_did_to_core_id(&arkret_sdk::Did::new(signer.signer_did().to_owned())?)?;
+    principal_successor_actor(&event.actor_id, &principal)?;
     signer.sign_sdk_event_with_context(
         &mut event,
         crate::event_signer::EventProofContext::default(),
@@ -268,7 +233,6 @@ impl crate::transport::TransportClient {
             },
             granted_to_peer_scopes,
             introduction_evidence: addressing.introduction_evidence,
-            previous_terminal_contact_round_id: None,
             continuity_evidence: None,
             message: message
                 .map(str::trim)

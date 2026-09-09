@@ -828,7 +828,7 @@ mod tests {
                 },
                 state,
                 request_event_ref: None,
-                request_receipt: None,
+                request_message: None,
                 response_event_ref: None,
                 tombstone_event_ref: None,
                 next_prepare_input: (state == arkret_sdk::ContactState::Accepted).then(|| {
@@ -848,7 +848,6 @@ mod tests {
                 granted_by_peer_scopes: Vec::new(),
                 bidirectional_scopes: Vec::new(),
                 effective_scopes: Some(Vec::new()),
-                peer_host_id: None,
                 continuity_evidence: None,
                 direct_conversation: direct_ready.then(|| arkret_sdk::DirectConversationSummary {
                     realm_id: arkret_sdk::RealmId::new(
@@ -865,7 +864,6 @@ mod tests {
                     .unwrap(),
                     state: arkret_sdk::DirectConversationSummaryState::Found,
                 }),
-                peer_host_resolution: None,
                 contact_agent_projections: Vec::new(),
             }
         }

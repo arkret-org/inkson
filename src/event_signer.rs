@@ -48,7 +48,6 @@
 //! guard then routes through their backend instead of the in-process
 //! seed.
 
-use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex, OnceLock};
 
 use arkret_sdk::signatures::proof::EventSigner as SdkEventSigner;
@@ -62,15 +61,7 @@ use ed25519_dalek::{Signer as _, SigningKey};
 use crate::identity::verification_method_controller;
 use crate::operation::{Audience, AuthoredEvent, ProofMode, current_proof_mode};
 
-/// Complete canonical history for one actor in one Principal Control Realm.
-///
-/// The representation and only construction path are intentionally confined
-/// to this module. Linear self-PCR
-/// successor signing accepts this type instead of an arbitrary Event slice so
-/// callers cannot accidentally feed it a Realm projection scan. Actor-scoped
-/// durable reads are the protocol source for principal control history; the
-/// Realm filter is applied locally because an actor-scoped scan can span more
-/// than one Realm.
+/// Legacy active-series pointer discovery; ordinary Seal signing does not use this history.
 pub(crate) struct PrincipalControlHistory {
     events: Vec<arkret_sdk::Event>,
 }
@@ -107,70 +98,35 @@ impl PrincipalControlHistory {
     pub(crate) fn events(&self) -> &[arkret_sdk::Event] {
         &self.events
     }
-
-    pub(crate) fn require_event(
-        &self,
-        id: &arkret_sdk::EventId,
-    ) -> anyhow::Result<&arkret_sdk::Event> {
-        self.events
-            .iter()
-            .find(|event| &event.event_id == id)
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "accepted principal Event {id} is absent from the scoped control history"
-                )
-            })
-    }
-
-    pub(crate) fn into_events(self) -> Vec<arkret_sdk::Event> {
-        self.events
-    }
 }
 
-pub(crate) fn pcr_successor_delta_digests(
-    events: &[arkret_sdk::Event],
-    predecessor: &arkret_sdk::Seal,
-) -> anyhow::Result<Vec<arkret_sdk::Hash>> {
-    let predecessor_covered = predecessor
-        .covered_event_digests
-        .iter()
-        .cloned()
-        .collect::<BTreeSet<_>>();
-    let target = events
-        .iter()
-        .map(|event| {
-            arkret_sdk::Hash::new(
-                event.event_digest_with_digest_suite(arkret_sdk::DigestSuite::Sha256)?,
-            )
-            .map_err(Into::into)
-        })
-        .collect::<anyhow::Result<BTreeSet<_>>>()?;
-    if !predecessor_covered.is_subset(&target) {
-        anyhow::bail!("PCR predecessor coverage is not a subset of accepted Event history");
-    }
-    let delta = target
-        .difference(&predecessor_covered)
-        .cloned()
-        .collect::<Vec<_>>();
-    if delta.is_empty() {
-        anyhow::bail!("PCR successor has no uncovered Event delta");
-    }
-    Ok(delta)
-}
-
-pub(crate) async fn issue_pcr_successor_availability(
+pub(crate) async fn prepare_and_sign_pcr_successor(
     http: &arkret_sdk::http_client::Client,
+    actor_id: &arkret_sdk::ActorId,
     realm_id: &arkret_sdk::RealmId,
-    predecessor: &arkret_sdk::Seal,
+    predecessor_refs: Vec<arkret_sdk::SealId>,
     event_digests: Vec<arkret_sdk::Hash>,
-) -> anyhow::Result<arkret_sdk::SealAvailabilityReceiptIssueOutcome> {
-    Ok(http
-        .seal_availability_receipts_issue(&arkret_sdk::SealAvailabilityReceiptIssueRequest {
-            realm_id: realm_id.clone(),
-            predecessor_refs: vec![predecessor.id.clone()],
-            event_digests,
-        })
-        .await?)
+) -> anyhow::Result<arkret_sdk::Seal> {
+    let signer =
+        active_signer().ok_or_else(|| anyhow::anyhow!("active PCR device signer is required"))?;
+    let device_id = signer
+        .device_id()
+        .ok_or_else(|| anyhow::anyhow!("PCR signer requires a bound device"))?;
+    let hlc = crate::signing_stamp::issue_protocol_hlc(
+        actor_id.signing_principal_id().as_str(),
+        device_id,
+        realm_id.as_str(),
+    )?;
+    let request = arkret_sdk::SealPrepareRequest {
+        realm_id: realm_id.clone(),
+        predecessor_refs,
+        event_digests,
+        hlc,
+    };
+    let prepared = http.seals_prepare(&request).await?;
+    signer
+        .sign_prepared_pcr_seal(actor_id, &request, &prepared)
+        .map_err(Into::into)
 }
 
 /// Errors produced by the active-write signing pipeline.
@@ -635,54 +591,34 @@ impl InksonEventSigner {
         .map_err(|error| EventSignerError::Backend(error.to_string()))
     }
 
-    pub(crate) fn sign_self_principal_linear_successor_seal(
+    pub(crate) fn sign_prepared_pcr_seal(
         &self,
-        history: &PrincipalControlHistory,
-        predecessor: &arkret_sdk::Seal,
-        availability: &arkret_sdk::SealAvailabilityReceiptIssueOutcome,
-        hlc: arkret_sdk::Hlc,
+        actor_id: &arkret_sdk::ActorId,
+        request: &arkret_sdk::SealPrepareRequest,
+        prepared: &arkret_sdk::SealPrepareOutcome,
     ) -> Result<arkret_sdk::Seal, EventSignerError> {
-        let events = history.events();
-        let principal = events.first().ok_or_else(|| {
-            EventSignerError::Encoding(
-                "principal successor Seal requires accepted Event history".to_owned(),
-            )
-        })?;
         let device_id = self.device_id.as_deref().ok_or_else(|| {
-            EventSignerError::Encoding(
-                "principal successor Seal requires a bound device_id".to_owned(),
-            )
+            EventSignerError::Encoding("PCR signing requires a bound device".to_owned())
         })?;
         let signer = InksonSealSignerAdapter {
             owner: self,
-            did: self.did_for_actor(&principal.actor_id)?,
+            did: self.did_for_actor(actor_id)?,
             verification_method: DidUrl::new(format!("{}#{device_id}", self.signer_did))
                 .map_err(|error| EventSignerError::Encoding(error.to_string()))?,
         };
-        arkret_bootstrap::build_self_principal_linear_successor_seal(
-            events,
-            predecessor,
-            availability,
-            hlc,
-            &signer,
-            &|event| crate::operation::cell_write_projector(event, arkret_sdk::DigestSuite::Sha256),
-        )
-        .map_err(|error| EventSignerError::Backend(error.to_string()))
+        prepared
+            .sign(request, &signer)
+            .map_err(|error| EventSignerError::Backend(error.to_string()))
     }
 
-    /// Sign a Agent PCR Seal as the controller device named by the
-    /// Agent DID's accepted delegation. The wire signer is rebound to the
-    /// controller DID and the authenticated `<controller>#<device_id>` method.
-    pub fn sign_agent_pcr_event_seal(
+    pub fn sign_agent_pcr_bootstrap_seal(
         &self,
         controller_did: &arkret_sdk::Did,
         events: &[arkret_sdk::Event],
-        predecessor: Option<&arkret_sdk::Seal>,
-        availability: Option<&arkret_sdk::SealAvailabilityReceiptIssueOutcome>,
         hlc: arkret_sdk::Hlc,
     ) -> Result<arkret_sdk::Seal, EventSignerError> {
         let device_id = self.device_id.as_deref().ok_or_else(|| {
-            EventSignerError::Encoding("Agent PCR Seal requires a bound device_id".to_owned())
+            EventSignerError::Encoding("Agent PCR bootstrap requires a bound device".to_owned())
         })?;
         let signer = InksonSealSignerAdapter {
             owner: self,
@@ -690,14 +626,9 @@ impl InksonEventSigner {
             verification_method: DidUrl::new(format!("{controller_did}#{device_id}"))
                 .map_err(|error| EventSignerError::Encoding(error.to_string()))?,
         };
-        arkret_bootstrap::build_agent_pcr_event_seal(
-            events,
-            predecessor,
-            availability,
-            hlc,
-            &signer,
-            &|event| crate::operation::cell_write_projector(event, arkret_sdk::DigestSuite::Sha256),
-        )
+        arkret_bootstrap::build_agent_pcr_bootstrap_seal(events, hlc, &signer, &|event| {
+            crate::operation::cell_write_projector(event, arkret_sdk::DigestSuite::Sha256)
+        })
         .map_err(|error| EventSignerError::Backend(error.to_string()))
     }
 
@@ -1235,21 +1166,6 @@ mod tests {
 
     const TEST_REALM_ID: &str = "ak:realm:AS8XThowW7JnZc80U10gJh-_lqkA-iSQ-LAvBXj6_9O5";
     const TEST_DEVICE_ID: &str = "ak:device:01964137-0000-7000-8000-000000000001";
-
-    #[test]
-    fn principal_history_finds_the_requested_event_after_a_later_append() {
-        let first = message_event("did:web:alice.example", "first").into_event();
-        let later = message_event("did:web:alice.example", "later").into_event();
-        let missing = message_event("did:web:alice.example", "missing").into_event();
-        let history = PrincipalControlHistory {
-            events: vec![first.clone(), later],
-        };
-        assert_eq!(
-            history.require_event(&first.event_id).unwrap().event_id,
-            first.event_id
-        );
-        assert!(history.require_event(&missing.event_id).is_err());
-    }
 
     fn reset() -> impl Drop {
         ActiveSignerTestGuard::replace(None)

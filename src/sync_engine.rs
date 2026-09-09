@@ -138,7 +138,6 @@ pub struct SyncEngineContext {
     /// lifecycle reset remains responsible for clearing it. Realm projections
     /// carrying only a principal core never select or invalidate an authority
     /// instance through this handle.
-    pub did_cache: crate::runtime::input::ValueCell<arkret_sdk::identity::DidResolutionCache>,
     pub session: crate::runtime::session::SessionCoordinator,
     pub client_runtime: crate::client_core::InksonClientRuntime,
     pub effect: crate::runtime::effects::EffectHandle,
@@ -494,7 +493,6 @@ impl
         let device_keys_changed = prefetch_persistent_event_sender_keys(
             &api,
             &response,
-            self.ctx.did_cache.clone(),
             self.ctx.state_store.clone(),
             |realm_id| {
                 state_store_for_profiles
@@ -505,13 +503,7 @@ impl
         if agent_evidence_changed || device_keys_changed {
             refresh_projection_events_from_sync_response(&response, step.initial, &self.ctx);
         }
-        prefetch_member_identity_proof_keys(
-            &api,
-            &response,
-            self.ctx.did_cache.clone(),
-            self.ctx.state_store.clone(),
-        )
-        .await;
+        prefetch_member_identity_proof_keys(&api, &response, self.ctx.state_store.clone()).await;
         if let Err(error) = process_to_device_delivery(&api, &response, &self.ctx).await {
             return Ok(self.classify_error(error));
         }
@@ -1332,7 +1324,6 @@ pub(crate) async fn prefetch_persistent_event_sender_keys<
 >(
     api: &TransportClient,
     response: &AccountSyncStep,
-    did_cache: crate::runtime::input::ValueCell<arkret_sdk::identity::DidResolutionCache>,
     state_store: S,
     is_minimal_metadata_realm: impl Fn(&str) -> bool,
 ) -> bool {
@@ -1340,7 +1331,7 @@ pub(crate) async fn prefetch_persistent_event_sender_keys<
         &response.realm_projections,
         &is_minimal_metadata_realm,
     );
-    prefetch_persistent_event_sender_key_pairs(api, pairs, did_cache, state_store).await
+    prefetch_persistent_event_sender_key_pairs(api, pairs, state_store).await
 }
 
 /// MID-5: resolve the authoritative device signing key for every
@@ -1354,20 +1345,13 @@ async fn prefetch_member_identity_proof_keys<
 >(
     api: &TransportClient,
     response: &AccountSyncStep,
-    did_cache: crate::runtime::input::ValueCell<arkret_sdk::identity::DidResolutionCache>,
     state_store: S,
 ) -> bool {
     let mut pairs = BTreeSet::<(String, String)>::new();
     for body in response.realm_projections.values() {
         collect_member_identity_proof_devices_from_value(body, 0, &mut pairs);
     }
-    prefetch_persistent_event_sender_key_pairs(
-        api,
-        pairs.into_iter().collect(),
-        did_cache,
-        state_store,
-    )
-    .await
+    prefetch_persistent_event_sender_key_pairs(api, pairs.into_iter().collect(), state_store).await
 }
 
 pub(crate) async fn prefetch_persistent_event_sender_keys_from_values<
@@ -1375,35 +1359,21 @@ pub(crate) async fn prefetch_persistent_event_sender_keys_from_values<
 >(
     api: &TransportClient,
     values: &[Value],
-    did_cache: crate::runtime::input::ValueCell<arkret_sdk::identity::DidResolutionCache>,
     state_store: S,
 ) -> bool {
     let mut pairs = BTreeSet::<(String, String)>::new();
     for value in values {
         collect_proof_sender_devices_from_value(value, 0, &mut pairs);
     }
-    prefetch_persistent_event_sender_key_pairs(
-        api,
-        pairs.into_iter().collect(),
-        did_cache,
-        state_store,
-    )
-    .await
+    prefetch_persistent_event_sender_key_pairs(api, pairs.into_iter().collect(), state_store).await
 }
 
-/// DID-P2-B: `state_store` is the durable accepted-binding handle.
-///
-/// This is the ordinary sync/render device-key path, so it is exactly the path
-/// the "restart ⇒ resolver network delta 0" criterion is about. The anchor is
-/// hydrated from the persisted bindings before it resolves anything and its
-/// acceptances are written back afterwards; a DID that was accepted before the
-/// restart is served from local state and never reaches the network.
+/// Fetch only missing device facts from the authenticated account Station.
 async fn prefetch_persistent_event_sender_key_pairs<
     S: crate::mls::governance_proof::GovernanceProofStateStore,
 >(
     api: &TransportClient,
     pairs: Vec<(String, String)>,
-    did_cache: crate::runtime::input::ValueCell<arkret_sdk::identity::DidResolutionCache>,
     state_store: S,
 ) -> bool {
     if pairs.is_empty() {
@@ -1422,32 +1392,19 @@ async fn prefetch_persistent_event_sender_key_pairs<
         return false;
     }
 
-    let did_cache = did_cache;
-    // Fail closed: without a canonical policy digest there is no store key to
-    // scope acceptances to, and inventing one would collide two policies onto
-    // one key. Skipping the prefetch only costs a later authority resolution.
-    let binding_scope = match crate::identity::did_binding::DidBindingScope::for_server(
-        crate::identity::did_resolver::DeploymentProfile::PersonalNode,
-        api.base_url().as_str(),
-    ) {
-        Ok(scope) => scope,
-        Err(error) => {
-            tracing::warn!(%error, "skipping device-key prefetch: resolver policy digest failed");
+    let Some(authority) = state_store.with_read(|store| store.active_authority()) else {
+        return false;
+    };
+    for (actor, device) in missing {
+        if state_store
+            .with_read(|store| store.active_authority())
+            .as_ref()
+            != Some(&authority)
+        {
             return false;
         }
-    };
-    let anchor = crate::identity::did_resolver::ResolverDidAnchor::from_persisted_bindings(
-        crate::identity::did_resolver::DeploymentProfile::PersonalNode,
-        did_cache.get(),
-        binding_scope,
-        arkret_sdk::identity::DidBindingPurpose::DeviceSigner,
-        state_store.with_read(crate::state::LocalStateStore::accepted_did_bindings),
-    );
-    crate::identity::device_directory::refresh_device_keys(api, &anchor, &missing).await;
-    let (cache, records) = anchor.into_cache_and_bindings();
-    did_cache.set(cache);
-    if let Some(records) = records {
-        state_store.with_write(|store| store.store_accepted_did_bindings(records));
+        let _ = crate::identity::device_directory::resolve_device_signing_key(api, &actor, &device)
+            .await;
     }
     true
 }

@@ -37,295 +37,45 @@ fn agent_initial_seal_required(error: &anyhow::Error) -> bool {
     crate::api_error::is_realm_seal_frontier_pending_error(error)
 }
 
-fn has_agent_pcr_create(events: &[arkret_sdk::Event]) -> bool {
-    events.iter().any(|event| {
-        event.kind == arkret_sdk::EventKind::RealmCreate
-            && event.executed_by.is_some()
-            && event
-                .payload
-                .get("object")
-                .and_then(|object| object.get("purpose"))
-                .and_then(serde_json::Value::as_str)
-                == Some("agent_control")
-    })
+fn is_agent_pcr_genesis(event: &arkret_sdk::Event) -> bool {
+    event.kind == arkret_sdk::EventKind::RealmCreate
+        && event.executed_by.is_some()
+        && event
+            .payload
+            .get("object")
+            .and_then(|object| object.get("purpose"))
+            .and_then(serde_json::Value::as_str)
+            == Some("agent_control")
 }
 
-async fn submit_agent_pcr_seal(
+async fn read_agent_pcr_genesis(
     http: &arkret_sdk::http_client::Client,
-    signer: &crate::event_signer::InksonEventSigner,
-    controller_did: &arkret_sdk::Did,
-    device_id: &str,
-    realm_id: &str,
-    events: &[arkret_sdk::Event],
-    predecessor: Option<&arkret_sdk::Seal>,
-) -> anyhow::Result<arkret_sdk::Seal> {
-    let hlc =
-        crate::signing_stamp::issue_protocol_hlc(controller_did.as_str(), device_id, realm_id)?;
-    let availability = match predecessor {
-        Some(predecessor) => {
-            let delta = crate::event_signer::pcr_successor_delta_digests(events, predecessor)?;
-            Some(
-                crate::event_signer::issue_pcr_successor_availability(
-                    http,
-                    &arkret_sdk::RealmId::new(realm_id.to_owned())?,
-                    predecessor,
-                    delta,
-                )
-                .await?,
-            )
-        }
-        None => None,
-    };
-    let seal = signer
-        .sign_agent_pcr_event_seal(
-            controller_did,
-            events,
-            predecessor,
-            availability.as_ref(),
-            hlc,
-        )
-        .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-    // `accepted_event_digests` is a set in `Seal.delta`'s normalization
-    // (byte-wise ascending, unique), which is what makes this comparison
-    // well-defined; reducer apply order is a different sequence.
-    let expected_digests = seal.delta.clone();
-    let outcome = http.events_submit_seal(&seal).await?;
-    if outcome.seal_id != seal.id
-        || outcome.accepted_event_digests != expected_digests
-        || outcome.post_state_root != seal.state_root
-    {
-        anyhow::bail!("Station returned a mismatched Agent PCR Seal outcome");
-    }
-    Ok(seal)
-}
-
-async fn verify_and_pin_agent_pcr_checkpoint<
-    S: crate::mls::governance_proof::GovernanceProofStateStore,
->(
-    http: &arkret_sdk::http_client::Client,
-    state_store: S,
-    signer: &crate::event_signer::InksonEventSigner,
-    accepted_events: &[arkret_sdk::Event],
-    seal: &arkret_sdk::Seal,
-) -> anyhow::Result<()> {
-    let target_basis = arkret_sdk::SealBasis {
-        leaves: vec![seal.id.clone()],
-    };
-    let resolved = crate::mls::governance_acquisition::resolve_mls_governance_checkpoint_with_http(
-        http,
-        &seal.realm_id,
-        &target_basis,
-    )
-    .await
-    .map_err(anyhow::Error::msg)?;
-    anyhow::ensure!(
-        resolved.seals.iter().any(|accepted| accepted == seal),
-        "resolved Agent PCR governance closure omitted the byte-exact submitted Seal"
-    );
-    let material = arkret_bootstrap::materialize_agent_pcr_control(&resolved.events, &|event| {
-        crate::operation::cell_write_projector(event, arkret_sdk::DigestSuite::Sha256)
-    })?;
-    let covered = material
-        .covered_event_digests
-        .iter()
-        .cloned()
-        .collect::<std::collections::BTreeSet<_>>();
-    let control_root =
-        arkret_state::control_event_set_root(&covered, arkret_sdk::DigestSuite::Sha256)?;
-    let completeness_root = arkret_state::control_event_completeness_root(
-        &resolved
-            .events
-            .iter()
-            .cloned()
-            .map(|event| (event, arkret_sdk::DigestSuite::Sha256))
-            .collect::<Vec<_>>(),
-        &covered,
-        arkret_sdk::DigestSuite::Sha256,
-    )?;
-    let pinned_checkpoint = state_store
-        .with_read(|store| store.trusted_mls_governance_checkpoint(seal.realm_id.as_str()));
-    let checkpoint = if pinned_checkpoint.is_none() && seal.predecessor_refs.is_empty() {
-        // The generic Realm verifier applies the frozen Agent-DID notary
-        // quorum. Agent PCR genesis is the registered exception: its accepted
-        // delegation authorizes the controller's current device to sign the
-        // first Seal. This client authored that exact Event and Seal, so verify
-        // the resolved bytes against the local authority and recompute every
-        // signed root before installing the initial checkpoint.
-        anyhow::ensure!(
-            resolved.seals.as_slice() == std::slice::from_ref(seal),
-            "Agent PCR genesis checkpoint contains an unexpected Seal"
-        );
-        anyhow::ensure!(
-            resolved.events.len() == accepted_events.len()
-                && accepted_events
-                    .iter()
-                    .all(|event| resolved.events.iter().any(|candidate| {
-                        crate::event_submit::accepted_event_preserves_authored_envelope(
-                            candidate,
-                            event,
-                            arkret_sdk::DigestSuite::Sha256,
-                        )
-                        .unwrap_or(false)
-                    })),
-            "Agent PCR genesis checkpoint Events differ from locally accepted history"
-        );
-        anyhow::ensure!(
-            seal.covered_event_digests == material.covered_event_digests
-                && seal.state_root == material.state_root
-                && seal.control_event_set_root == control_root
-                && seal.completeness_root == completeness_root,
-            "Agent PCR genesis Seal roots differ from local reducer replay"
-        );
-        seal.validate_id(arkret_sdk::DigestSuite::Sha256)?;
-        let arkret_sdk::NotarySig::Single(signature) = &seal.notary_signature else {
-            anyhow::bail!("Agent PCR genesis Seal requires one controller-device signature");
-        };
-        let public_key = signer
-            .public_key_base64url()
-            .ok_or_else(|| anyhow::anyhow!("active controller public key is unavailable"))?;
-        let descriptor = arkret_sdk::NotarySignerDescriptor {
-            actor_id: material.controller_actor_id,
-            verification_method: signature.verification_method.clone(),
-            key_kind: arkret_sdk::NotaryKeyKind::Ed25519Raw32,
-            jose_algorithm: arkret_sdk::NotaryJoseAlgorithm::Ed25519,
-            frozen_public_key_digest: arkret_sdk::Hash::new(arkret_sdk::canonical::sha256_digest(
-                arkret_sdk::base64url_decode(&public_key)?,
-            ))?,
-            frozen_public_key_b64u: public_key,
-        };
-        descriptor.validate()?;
-        arkret_signatures::verify_frozen_notary_signature(
-            signature,
-            &descriptor,
-            &seal.canonical_bytes_for_id()?,
-            arkret_sdk::DigestSuite::Sha256,
-        )?;
-        arkret_sdk::MlsGovernanceVerificationCheckpoint {
-            realm_id: seal.realm_id.clone(),
-            basis: resolved.target_basis,
-            live_digest_suite: arkret_sdk::DigestSuite::Sha256,
-            accepted_seals: resolved.seals,
-            accepted_events: resolved.events,
-            governance_dependencies: resolved.dependencies,
-        }
-    } else {
-        // Agent PCR Seals deliberately use the delegated controller device,
-        // not the Agent DID's frozen Realm notary.  Starting from the
-        // byte-exact checkpoint this client already verified and pinned,
-        // validate the locally authored linear successor and advance the
-        // checkpoint without feeding it through the ordinary Realm-notary
-        // verifier.
-        let previous = pinned_checkpoint.ok_or_else(|| {
-            anyhow::anyhow!("Agent PCR successor has no locally verified base checkpoint")
-        })?;
-        anyhow::ensure!(
-            seal.predecessor_refs == previous.basis.leaves,
-            "Agent PCR successor does not extend the complete pinned basis"
-        );
-        let predecessor = previous
-            .accepted_seals
-            .iter()
-            .find(|candidate| previous.basis.leaves.contains(&candidate.id))
-            .ok_or_else(|| anyhow::anyhow!("Agent PCR pinned predecessor is unavailable"))?;
-        anyhow::ensure!(
-            seal.notary_seq == predecessor.notary_seq.saturating_add(1),
-            "Agent PCR successor notary sequence is not linear"
-        );
-        let previous_covered = predecessor
-            .covered_event_digests
-            .iter()
-            .cloned()
-            .collect::<std::collections::BTreeSet<_>>();
-        let expected_delta = material
-            .covered_event_digests
-            .iter()
-            .filter(|digest| !previous_covered.contains(*digest))
-            .cloned()
-            .collect::<Vec<_>>();
-        anyhow::ensure!(
-            seal.delta == expected_delta
-                && seal.covered_event_digests == material.covered_event_digests
-                && seal.state_root == material.state_root
-                && seal.control_event_set_root == control_root
-                && seal.completeness_root == completeness_root,
-            "Agent PCR successor Seal differs from local reducer replay"
-        );
-        anyhow::ensure!(
-            resolved.seals.len() == previous.accepted_seals.len() + 1
-                && previous
-                    .accepted_seals
-                    .iter()
-                    .all(|accepted| resolved.seals.iter().any(|candidate| candidate == accepted)),
-            "resolved Agent PCR successor closure does not preserve the pinned Seal set"
-        );
-        anyhow::ensure!(
-            resolved.events.len() == accepted_events.len()
-                && accepted_events
-                    .iter()
-                    .all(|event| resolved.events.iter().any(|candidate| {
-                        crate::event_submit::accepted_event_preserves_authored_envelope(
-                            candidate,
-                            event,
-                            arkret_sdk::DigestSuite::Sha256,
-                        )
-                        .unwrap_or(false)
-                    })),
-            "resolved Agent PCR successor Events differ from locally accepted history"
-        );
-        seal.validate_id(arkret_sdk::DigestSuite::Sha256)?;
-        let arkret_sdk::NotarySig::Single(signature) = &seal.notary_signature else {
-            anyhow::bail!("Agent PCR successor Seal requires one controller-device signature");
-        };
-        anyhow::ensure!(
-            signature.verification_method.as_str() == signer.verification_method(),
-            "Agent PCR successor Seal was not signed by the active controller device"
-        );
-        let public_key = signer
-            .public_key_base64url()
-            .ok_or_else(|| anyhow::anyhow!("active controller public key is unavailable"))?;
-        let descriptor = arkret_sdk::NotarySignerDescriptor {
-            actor_id: material.controller_actor_id,
-            verification_method: signature.verification_method.clone(),
-            key_kind: arkret_sdk::NotaryKeyKind::Ed25519Raw32,
-            jose_algorithm: arkret_sdk::NotaryJoseAlgorithm::Ed25519,
-            frozen_public_key_digest: arkret_sdk::Hash::new(arkret_sdk::canonical::sha256_digest(
-                arkret_sdk::base64url_decode(&public_key)?,
-            ))?,
-            frozen_public_key_b64u: public_key,
-        };
-        descriptor.validate()?;
-        arkret_signatures::verify_frozen_notary_signature(
-            signature,
-            &descriptor,
-            &seal.canonical_bytes_for_id()?,
-            arkret_sdk::DigestSuite::Sha256,
-        )?;
-        arkret_sdk::MlsGovernanceVerificationCheckpoint {
-            realm_id: seal.realm_id.clone(),
-            basis: resolved.target_basis,
-            live_digest_suite: arkret_sdk::DigestSuite::Sha256,
-            accepted_seals: resolved.seals,
-            accepted_events: resolved.events,
-            governance_dependencies: resolved.dependencies,
-        }
-    };
-    state_store
-        .with_write(|store| {
-            store.advance_verified_mls_governance_checkpoint(seal.realm_id.as_str(), checkpoint)
+    agent_id: &arkret_sdk::ActorId,
+    realm_id: &arkret_sdk::RealmId,
+) -> anyhow::Result<arkret_sdk::Event> {
+    let page = http
+        .events_read(&arkret_sdk::EventsQueryPostRequestBody {
+            realm_ids: vec![realm_id.clone()],
+            actor_ids: vec![agent_id.clone()],
+            order: Some("ascending".to_owned()),
+            limit: Some(1),
+            ..Default::default()
         })
-        .map_err(anyhow::Error::msg)
+        .await?;
+    let mut events = crate::models::require_complete_event_rows(&page.events, "Agent PCR genesis")?;
+    let event = events
+        .pop()
+        .ok_or_else(|| anyhow::anyhow!("Agent PCR genesis is unavailable"))?;
+    anyhow::ensure!(
+        is_agent_pcr_genesis(&event) && &event.realm_id == realm_id && &event.actor_id == agent_id,
+        "Agent PCR genesis result has the wrong binding"
+    );
+    Ok(event)
 }
 
-// Invariant assertions: each `expect` message names the check that
-// establishes it a few lines earlier. Rewriting them as `?` would add
-// error paths no caller can reach.
-#[allow(clippy::expect_used)]
-/// Close all currently accepted Agent PCR Events into a Seal signed by
-/// the active controller device. The accepted head returned by frontier can
-/// lag the Event log and is the predecessor for the successor authored here.
-pub(crate) async fn ensure_agent_pcr_seal_current<
-    S: crate::mls::governance_proof::GovernanceProofStateStore,
->(
+/// Seal bounded pending batches using the Account Station's validated input.
+/// A known Event's final acceptance is checked by its operation caller.
+pub(crate) async fn ensure_agent_pcr_seal_current(
     submitter: &crate::event_submit::EventSubmitter,
     http: &arkret_sdk::http_client::Client,
     signer: &crate::event_signer::InksonEventSigner,
@@ -333,145 +83,88 @@ pub(crate) async fn ensure_agent_pcr_seal_current<
     device_id: &str,
     agent_id: &arkret_sdk::ActorId,
     realm_id: &str,
-    state_store: S,
     pending_genesis: Option<&arkret_sdk::Event>,
 ) -> anyhow::Result<(arkret_sdk::RealmSealFrontierView, arkret_sdk::Seal)> {
-    let current = submitter
-        .seals_frontier_agent_head(realm_id, controller_did, state_store.clone())
-        .await;
-    if current
-        .as_ref()
-        .is_err_and(agent_seal_head_receipt_unavailable)
-    {
-        return Err(current.expect_err("checked managed PCR signed-head receipt error"));
-    }
-    let realm_id_typed = arkret_sdk::RealmId::new(realm_id.to_owned())?;
-    let accepted_events = if current.as_ref().is_err_and(agent_initial_seal_required) {
-        match pending_genesis {
-            Some(genesis) => {
-                anyhow::ensure!(
-                    genesis.kind == arkret_sdk::EventKind::RealmCreate
-                        && genesis.realm_id == realm_id_typed
-                        && &genesis.actor_id == agent_id,
-                    "pending Agent PCR genesis does not match the requested control Realm"
-                );
-                vec![genesis.clone()]
-            }
-            None => crate::event_signer::PrincipalControlHistory::load(
-                http,
-                agent_id,
-                &realm_id_typed,
-                "Agent PCR Seal materialization",
-            )
-            .await?
-            .into_events(),
-        }
-    } else {
-        crate::event_signer::PrincipalControlHistory::load(
-            http,
-            agent_id,
-            &realm_id_typed,
-            "Agent PCR Seal materialization",
-        )
-        .await?
-        .into_events()
-    };
-    let material = arkret_bootstrap::materialize_agent_pcr_control(&accepted_events, &|event| {
-        crate::operation::cell_write_projector(event, arkret_sdk::DigestSuite::Sha256)
-    })
-    .map_err(|error| anyhow::anyhow!("Agent PCR materialization failed: {error}"))?;
-
-    let submitted = match current {
-        Ok((view, head)) => {
-            if head.covered_event_digests == material.covered_event_digests {
-                if head.state_root != material.state_root {
-                    anyhow::bail!("accepted Agent PCR Seal state differs from accepted Events");
-                }
-                return Ok((view, head));
-            }
-            Some(
-                submit_agent_pcr_seal(
-                    http,
-                    signer,
-                    controller_did,
-                    device_id,
-                    realm_id,
-                    &accepted_events,
-                    Some(&head),
-                )
-                .await?,
-            )
-        }
-        Err(error) if agent_initial_seal_required(&error) => Some({
-            // Re-publish the exact genesis before the first Seal. New
-            // servers return the stored duplicate receipt; servers
-            // upgraded from the pre-receipt managed-PCR path use this
-            // idempotent retry to attach the first valid Control Proposal Ack
-            // and rebuild the durable pending index that the atomic Seal
-            // commit consumes.
-            if pending_genesis.is_none() {
-                let creates = accepted_events
-                    .iter()
-                    .filter(|event| {
-                        event.kind == arkret_sdk::EventKind::RealmCreate
-                            && event.realm_id.as_str() == realm_id
-                    })
-                    .collect::<Vec<_>>();
-                let [create] = creates.as_slice() else {
-                    anyhow::bail!(
-                        "Agent PCR initial Seal requires exactly one accepted create Event"
-                    );
-                };
-                let submission = crate::authorization_lease::standard_initial_submission(
-                    http,
-                    create,
-                    arkret_sdk::DigestSuite::Sha256,
-                )
-                .await?;
-                http.events_submit(&submission).await?;
-            }
-            submit_agent_pcr_seal(
-                http,
-                signer,
-                controller_did,
+    let realm = arkret_sdk::RealmId::new(realm_id.to_owned())?;
+    let authority = submitter.authority()?;
+    anyhow::ensure!(
+        arkret_sdk::project_did_to_core_id(controller_did)? == authority.principal_id,
+        "controller DID differs from the authenticated account"
+    );
+    let controller_actor = arkret_sdk::ActorId::account(authority.clone());
+    let current = submitter.seals_frontier_agent_head(realm_id).await;
+    let (mut view, mut head) = match current {
+        Ok(current) => current,
+        Err(error) if agent_initial_seal_required(&error) => {
+            let genesis = match pending_genesis {
+                Some(event) => event.clone(),
+                None => read_agent_pcr_genesis(http, agent_id, &realm).await?,
+            };
+            anyhow::ensure!(
+                is_agent_pcr_genesis(&genesis)
+                    && genesis.realm_id == realm
+                    && &genesis.actor_id == agent_id,
+                "Agent PCR bootstrap differs from the requested Realm/actor"
+            );
+            let hlc = crate::signing_stamp::issue_protocol_hlc(
+                controller_did.as_str(),
                 device_id,
                 realm_id,
-                &accepted_events,
-                None,
-            )
-            .await?
-        }),
+            )?;
+            let seal = signer.sign_agent_pcr_bootstrap_seal(controller_did, &[genesis], hlc)?;
+            let outcome = http.events_submit_seal(&seal).await?;
+            anyhow::ensure!(
+                outcome.seal_id == seal.id
+                    && outcome.post_state_root == seal.state_root
+                    && outcome.accepted_event_digests == seal.delta,
+                "Station returned a mismatched Agent PCR genesis Seal outcome"
+            );
+            let current = submitter.seals_frontier_agent_head(realm_id).await?;
+            anyhow::ensure!(
+                current.1 == seal,
+                "accepted Agent PCR genesis differs from the signed body"
+            );
+            current
+        }
         Err(error) => return Err(error),
     };
-
-    let expected = submitted.expect("managed PCR Seal submission branch always returns a Seal");
-    verify_and_pin_agent_pcr_checkpoint(
-        http,
-        state_store.clone(),
-        signer,
-        &accepted_events,
-        &expected,
-    )
-    .await?;
-    let view = submitter.seals_frontier_realm_view(realm_id).await?;
-    if view.sole_leaf().ok() != Some(&expected.id)
-        || expected.covered_event_digests != material.covered_event_digests
-    {
-        anyhow::bail!("accepted Agent PCR Seal differs from the submitted successor");
+    for _ in 0..64 {
+        let pending = http
+            .pcr_pending_control(&arkret_sdk::PcrPendingControlRequest {
+                realm_id: realm.clone(),
+                predecessor_refs: view.seal_basis.leaves.clone(),
+                limit: 1,
+            })
+            .await?;
+        if pending.event_digests.is_empty() {
+            return Ok((view, head));
+        }
+        let seal = crate::event_signer::prepare_and_sign_pcr_successor(
+            http,
+            &controller_actor,
+            &realm,
+            view.seal_basis.leaves.clone(),
+            pending.event_digests,
+        )
+        .await?;
+        let outcome = http.events_submit_seal(&seal).await?;
+        anyhow::ensure!(
+            outcome.seal_id == seal.id
+                && outcome.post_state_root == seal.state_root
+                && outcome.accepted_event_digests == seal.delta,
+            "Station returned a mismatched Agent PCR successor Seal outcome"
+        );
+        (view, head) = submitter.seals_frontier_agent_head(realm_id).await?;
+        anyhow::ensure!(
+            head == seal,
+            "Agent PCR frontier differs from the signed successor"
+        );
     }
-    Ok((view, expected))
+    anyhow::bail!(
+        "Agent PCR still has pending work after the bounded signing pass; retry to continue"
+    )
 }
 
-pub(crate) fn agent_seal_head_receipt_unavailable(error: &anyhow::Error) -> bool {
-    error
-        .to_string()
-        .contains("seals/frontier omitted the accepted Agent PCR Seal head")
-}
-
-/// Seal one newly accepted controller self-PCR Event with the active
-/// controller device.  The server may durably admit the Control Move, but it
-/// cannot manufacture the principal's notary signature; publication is not
-/// authoritative until this successor Seal is accepted.
 pub(crate) async fn seal_self_principal_event_current(
     api: &crate::transport::TransportClient,
     controller_did: &arkret_sdk::Did,
@@ -488,32 +181,15 @@ pub(crate) async fn seal_self_principal_event_current(
         anyhow::bail!("controller DID does not belong to the authenticated account");
     }
     let controller_actor_id = arkret_sdk::ActorId::account(controller_authority.clone());
-    let history = crate::event_signer::PrincipalControlHistory::load(
+    let expected_digest = expected_event_id.event_digest();
+    let seal = crate::event_signer::prepare_and_sign_pcr_successor(
         &http,
         &controller_actor_id,
         realm_id,
-        "controller self-PCR successor Seal construction",
+        vec![predecessor.id.clone()],
+        vec![expected_digest.clone()],
     )
     .await?;
-    history.require_event(expected_event_id)?;
-    let expected_digest = expected_event_id.event_digest();
-    let signer = crate::event_signer::active_signer()
-        .ok_or_else(|| anyhow::anyhow!("active controller signer is unavailable"))?;
-    let device_id = signer
-        .device_id()
-        .ok_or_else(|| anyhow::anyhow!("active controller signer has no bound device id"))?;
-    let hlc = crate::signing_stamp::issue_protocol_hlc(
-        controller_did.as_str(),
-        device_id,
-        realm_id.as_str(),
-    )?;
-    let delta = crate::event_signer::pcr_successor_delta_digests(history.events(), &predecessor)?;
-    let availability =
-        crate::event_signer::issue_pcr_successor_availability(&http, realm_id, &predecessor, delta)
-            .await?;
-    let seal = signer
-        .sign_self_principal_linear_successor_seal(&history, &predecessor, &availability, hlc)
-        .map_err(|error| anyhow::anyhow!("sign controller self-PCR successor Seal: {error}"))?;
     if !seal.delta.contains(&expected_digest) {
         anyhow::bail!("controller self-PCR successor Seal does not cover the requested Event");
     }
@@ -532,7 +208,7 @@ pub(crate) async fn seal_self_principal_event_current(
 /// Agent-PCR Events into accepted authorization state.
 pub(crate) async fn seal_agent_pcr_current(
     api: &crate::transport::TransportClient,
-    state_store: SyncSignal<LocalStateStore>,
+    mut state_store: SyncSignal<LocalStateStore>,
     account: &crate::config::ActiveAccountContext,
     agent_id: &arkret_sdk::DidCoreId,
     realm_id: &arkret_sdk::RealmId,
@@ -560,10 +236,17 @@ pub(crate) async fn seal_agent_pcr_current(
         device_id.as_str(),
         &agent_actor_id,
         realm_id.as_str(),
-        crate::app::runtime_adapter::state_store_handle(state_store),
         None,
     )
     .await?;
+    state_store.write().set_realm_seal_view(
+        realm_id.to_string(),
+        crate::state::LocalSealView {
+            frontier: vec![seal.id.to_string()],
+            state_root: Some(seal.state_root.to_string()),
+            ..Default::default()
+        },
+    );
     Ok(seal)
 }
 
@@ -592,21 +275,7 @@ pub(crate) async fn bootstrap_provisioned_agent(
         agent_id.clone(),
         account.authority.station_id.clone(),
     ));
-    let accepted_events = crate::event_signer::PrincipalControlHistory::load(
-        &http,
-        &agent_actor_id,
-        realm_id,
-        "Agent PCR bootstrap",
-    )
-    .await?
-    .into_events();
     let realm_id = realm_id.as_str();
-
-    if !has_agent_pcr_create(&accepted_events) {
-        anyhow::bail!(
-            "Agent PCR genesis is not accepted; provisioning must submit the exact locally frozen create Event before recovery bootstrap"
-        );
-    }
 
     let (_, initial_frontier_seal) = ensure_agent_pcr_seal_current(
         &submitter,
@@ -616,7 +285,6 @@ pub(crate) async fn bootstrap_provisioned_agent(
         device_id.as_str(),
         &agent_actor_id,
         realm_id,
-        crate::app::runtime_adapter::state_store_handle(state_store),
         None,
     )
     .await?;
@@ -686,15 +354,15 @@ mod tests {
         let event = delegated_create(serde_json::json!({
             "object": {"purpose": arkret_sdk::RealmPurpose::AgentControl}
         }));
-        assert!(has_agent_pcr_create(std::slice::from_ref(&event)));
+        assert!(is_agent_pcr_genesis(&event));
 
         let mut undelegated = event.clone();
         undelegated.executed_by = None;
-        assert!(!has_agent_pcr_create(&[undelegated]));
+        assert!(!is_agent_pcr_genesis(&undelegated));
 
         let mut other_kind = event;
         other_kind.kind = arkret_sdk::EventKind::MessageCreate;
-        assert!(!has_agent_pcr_create(&[other_kind]));
+        assert!(!is_agent_pcr_genesis(&other_kind));
     }
 
     #[test]
@@ -705,11 +373,10 @@ mod tests {
             serde_json::json!({"fields": {"purpose": "agent_control"}}),
             serde_json::json!({}),
         ] {
-            assert!(!has_agent_pcr_create(&[delegated_create(
+            assert!(!is_agent_pcr_genesis(&delegated_create(
                 serde_json::json!({"object": object}),
-            )]));
+            )));
         }
-        assert!(!has_agent_pcr_create(&[]));
     }
 
     #[test]

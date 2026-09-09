@@ -101,7 +101,7 @@ fn contact_remark_set_tombstone_and_display_name() {
         },
         state: arkret_sdk::ContactState::Accepted,
         request_event_ref: None,
-        request_receipt: None,
+        request_message: None,
         response_event_ref: None,
         tombstone_event_ref: None,
         next_prepare_input: None,
@@ -109,10 +109,8 @@ fn contact_remark_set_tombstone_and_display_name() {
         granted_by_peer_scopes: Vec::new(),
         bidirectional_scopes: Vec::new(),
         effective_scopes: None,
-        peer_host_id: None,
         continuity_evidence: None,
         direct_conversation: None,
-        peer_host_resolution: None,
         contact_agent_projections: Vec::new(),
     };
     store.replace_accepted_human_contacts(std::slice::from_ref(&accepted));

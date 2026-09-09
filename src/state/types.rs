@@ -561,51 +561,6 @@ pub struct CachedMlsGovernanceProof {
     pub verified_at: DateTime<Utc>,
 }
 
-/// DID-P2-B — decode the persisted accepted-binding rows, **dropping** any row
-/// that no longer validates instead of trusting it or failing the whole blob.
-///
-/// [`arkret_sdk::identity::AcceptedDidBinding`] has a hand-written
-/// `Deserialize` that routes through its validating constructor: it recomputes
-/// the pinned document's canonical digest, compares it to the digest the
-/// binding recorded, and checks `document.id == binding.did()`. A row whose
-/// document was edited on disk therefore fails to deserialize.
-///
-/// Decoding row-by-row (rather than letting the derived `Vec` deserializer
-/// propagate the first failure) is deliberate and matters twice over:
-///
-/// - **one bad row must not destroy the account.** `read_account_state` treats *any*
-///   `ClientLocalState` decode failure as a corrupt blob and starts from defaults, so a strict
-///   vector would escalate "one tampered binding" into "lose every draft, cursor and MLS snapshot".
-/// - **local state is not an authority.** A record that fails must degrade into a resolver miss,
-///   not into an accepted binding — the same rule the in-memory store applies.
-pub fn decode_accepted_did_bindings(
-    rows: Vec<Value>,
-) -> Vec<arkret_sdk::identity::AcceptedDidBinding> {
-    rows.into_iter()
-        .filter_map(|row| match serde_json::from_value(row) {
-            Ok(accepted) => Some(accepted),
-            Err(error) => {
-                tracing::warn!(
-                    %error,
-                    "dropping a persisted DID binding that no longer matches its pinned document"
-                );
-                None
-            }
-        })
-        .collect()
-}
-
-fn deserialize_accepted_did_bindings<'de, D>(
-    deserializer: D,
-) -> Result<Vec<arkret_sdk::identity::AcceptedDidBinding>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    Ok(decode_accepted_did_bindings(Vec::<Value>::deserialize(
-        deserializer,
-    )?))
-}
-
 /// Closed result of the client-local accepted-device normalization performed
 /// for a bound account handoff (account-lifecycle.md section 2.1.2).
 ///
@@ -722,7 +677,6 @@ pub struct PendingPrincipalRegistration {
     /// Canonical bytes of the method-native did:webvh inception entry. The
     /// registration terminal re-reads did.jsonl and compares entry 0 against
     /// this frozen value before adopting the identity.
-    pub did_entry0_canonical_base64url: String,
     /// Complete client-authored, root/device-signed PCR genesis unit.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pcr_genesis_unit: Option<arkret_wire::PcrGenesisUnit>,
@@ -1148,28 +1102,6 @@ pub struct ClientLocalState {
     #[serde(default)]
     pub mls_governance_checkpoints:
         BTreeMap<String, arkret_sdk::MlsGovernanceVerificationCheckpoint>,
-    /// DID-P2-B — accepted DID bindings that survive a restart.
-    ///
-    /// Scope: this vector lives inside the **per-account** `ClientLocalState`
-    /// entry (`inkson.local_state.v1.account.<authority_digest>` on wasm, a sibling account
-    /// file on native), so principal scoping is structural — account B's blob is
-    /// a different key and can never be read while account A is active. The
-    /// residual scoping dimension *inside* one account is the trust domain
-    /// (which server / deployment the acceptance was made against); that is
-    /// carried in each binding's own `trust_domain` and is cleared selectively
-    /// by [`LocalStateStore::clear_accepted_did_bindings_outside_trust_domain`].
-    ///
-    /// Stored as a `Vec` rather than a map because the lookup key is the SDK's
-    /// six-dimension [`arkret_sdk::identity::VerifiedDidBindingKey`], which is
-    /// not a string; the in-memory SDK store owns keying and de-duplication and
-    /// this is only its deterministic snapshot.
-    ///
-    /// The element type is the SDK's [`arkret_sdk::identity::AcceptedDidBinding`]
-    /// verbatim (no parallel local binding model). It serializes as
-    /// `{binding, document}` and re-validates the pairing on the way back in;
-    /// [`decode_accepted_did_bindings`] turns a failed row into a dropped row.
-    #[serde(default, deserialize_with = "deserialize_accepted_did_bindings")]
-    pub accepted_did_bindings: Vec<arkret_sdk::identity::AcceptedDidBinding>,
     /// X5.1 — local-only plaintext sidecar for the author's own encrypted
     /// private strand fields. Keyed `realm_id -> strand_id -> field_path ->
     /// plaintext` where `field_path` is the dotted private patch path
@@ -1567,7 +1499,6 @@ impl Default for ClientLocalState {
             mls_coverage_stale: BTreeMap::new(),
             mls_governance_proofs: BTreeMap::new(),
             mls_governance_checkpoints: BTreeMap::new(),
-            accepted_did_bindings: Vec::new(),
             mls_private_plaintext: BTreeMap::new(),
             mls_decrypted_plaintext: BTreeMap::new(),
             authenticated_identity_links: BTreeMap::new(),

@@ -1,18 +1,9 @@
-// TRUST-CACHE: contact card / contact list per AKP B-E §1 — these
-// surfaces MAY consult the locally cached HandleClaim `status` (verified
-// badge, mention autocomplete fields). On cache miss or any
-// identity-handles.md §6.1.2 trigger the UI MUST downgrade to an
-// "unverified" badge. For authority surfaces (wallet disclosure /
-// accept invite / audit-trail review) callers MUST first-party verify
-// the DID Document via `crate::identity::did_resolver::build_default_resolver`
-// instead of relying on the cached status view surfaced here.
-
 use arkret_sdk::contact_operations::ContactScope;
 use dioxus::prelude::*;
 use dioxus_primitives::checkbox::CheckboxState;
 use dioxus_router::hooks::use_navigator;
 
-use crate::components::{DismissiblePopup, TrustCacheBadge};
+use crate::components::DismissiblePopup;
 use crate::i18n::tr;
 use crate::models::ContactListRow;
 use crate::routes::Route;
@@ -249,6 +240,9 @@ fn ContactRow(
             "data-testid": "contact-row",
             "data-peer": "{peer}",
             "data-state": "{state_wire}",
+            if let Some(message) = &contact.request_message {
+                p { class: "contact-request-message", "data-testid": "contact-request-message", "{message}" }
+            }
             div { class: "event-head",
                 span { "{state_label}" }
                 span { class: "mono", title: "{peer}", "{peer_label}" }
@@ -256,7 +250,7 @@ fn ContactRow(
                 // peer DID's state in the session-scoped resolution cache. UX
                 // hint only; it does not replace authority validation (see the
                 // TRUST-CACHE comment at the top of the file).
-                TrustCacheBadge { peer: peer_principal.clone() }
+
             }
             if advanced && !contact.bidirectional_scopes.is_empty() {
                 div { class: "muted",

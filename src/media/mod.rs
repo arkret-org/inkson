@@ -1,3 +1,4 @@
+mod http_fetch;
 pub mod rtc;
 pub mod service_route;
 

@@ -509,20 +509,6 @@ fn AppBootstrap() -> Element {
     // operator signal — distinct from any Realm-role `is_admin` placeholder.
     let is_server_admin =
         use_context_provider(|| crate::views::realm_admin::ServerAdminSignal(Signal::new(false))).0;
-    // Y1 - session-scoped DID resolution cache handle.
-    //
-    // Mount point note: inkson app state is a set of scattered `use_signal`
-    // handles rather than one aggregate struct, so this follows the same
-    // minimal-intrusion pattern: provide a shared
-    // `Signal<DidResolutionCache>` with `use_context_provider`.
-    //   * Authority resolution sites can fetch it via `use_context::<Signal<DidResolutionCache>>()`
-    //     and use `did_resolver::resolve_with_cache` for cache-first resolution.
-    //   * `SyncEffects` copies the same handle into `SyncEngineContext.did_cache` so the Y2
-    //     invalidation hook can invalidate/clear while ingesting projections.
-    // The cache is pure in-memory state, is not persisted, and only lives for a
-    // single login session, matching the `DidResolutionCache` docs.
-    let did_cache =
-        use_context_provider(|| Signal::new(arkret_sdk::identity::DidResolutionCache::default()));
     let did_resolution_health = use_signal(crate::components::DidResolutionHealth::healthy);
     let mut theme = use_signal(move || initial_theme);
     {
@@ -660,7 +646,6 @@ fn AppBootstrap() -> Element {
                     base_url,
                     token,
                     principal_id,
-                    did_cache,
                     state_store,
                 ),
             ));
@@ -1146,7 +1131,6 @@ fn AppBootstrap() -> Element {
         runtime: connection_runtime,
         base_url,
         state_store,
-        did_cache,
         personal_handles_lookup_key,
         server_menu_open,
         session: runtime_services.session.clone(),
@@ -1174,7 +1158,6 @@ fn AppBootstrap() -> Element {
                 connection_runtime,
                 mobile_connect_session.clone(),
                 state_store,
-                did_cache,
             ),
         }
     };

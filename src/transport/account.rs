@@ -302,10 +302,10 @@ pub async fn respond_contact(
                 "Contact {action} for `{requester}` requires a fresh pending_incoming list row"
             )
         })?;
-    let receipt = row.request_receipt.ok_or_else(|| {
-        anyhow::anyhow!("pending_incoming Contact row omitted its signed request_receipt")
-    })?;
-    submit_contact_response(http, receipt, action).await
+    let request_event_ref = row
+        .request_event_ref
+        .ok_or_else(|| anyhow::anyhow!("pending_incoming Contact row omitted request_event_ref"))?;
+    submit_contact_response(http, row.peer, request_event_ref, action).await
 }
 
 pub async fn respond_contact_with_request_id(
@@ -331,15 +331,16 @@ pub async fn respond_contact_with_request_id(
                 "Contact {action} for `{requester}` requires a fresh list row carrying request Event `{request_event_ref}`"
             )
         })?;
-    let receipt = row.request_receipt.ok_or_else(|| {
-        anyhow::anyhow!("pending_incoming Contact row omitted its signed request_receipt")
-    })?;
-    submit_contact_response(http, receipt, action).await
+    let request_event_ref = row
+        .request_event_ref
+        .ok_or_else(|| anyhow::anyhow!("pending_incoming Contact row omitted request_event_ref"))?;
+    submit_contact_response(http, row.peer, request_event_ref, action).await
 }
 
 async fn submit_contact_response(
     http: &arkret_sdk::http_client::Client,
-    request_receipt: arkret_sdk::contact_operations::RequestAcceptanceReceipt,
+    peer: arkret_sdk::contact_operations::ContactPeer,
+    request_event_ref: arkret_sdk::EventId,
     action: &str,
 ) -> anyhow::Result<()> {
     use arkret_sdk::contact_operations::{
@@ -349,7 +350,6 @@ async fn submit_contact_response(
         ContactRejectRequestBody,
     };
 
-    verify_contact_request_receipt(http, &request_receipt).await?;
     let nonce = crate::operation::uuid_v7();
     let operation_id =
         arkret_sdk::ProtocolOperationId::new(format!("ak:operation:contact.{action}.{nonce}"))
@@ -361,7 +361,8 @@ async fn submit_contact_response(
             phase: ContactPreparePhase::Prepare,
             operation_id: operation_id.clone(),
             idempotency_key: idempotency_key.clone(),
-            request_receipt,
+            peer: peer.clone(),
+            request_event_ref: request_event_ref.clone(),
             action: ContactAcceptAction::Accept,
             granted_to_peer_scopes: crate::transport::contacts::default_contact_scopes(),
         });
@@ -383,6 +384,17 @@ async fn submit_contact_response(
         };
         if returned_operation_id != operation_id {
             anyhow::bail!("Contact accept prepare changed operation_id");
+        }
+        let draft_event =
+            event_draft.unsigned_event_for_kind(arkret_wire::event_kind_str::CONTACT_ACCEPTED)?;
+        let draft_payload: arkret_sdk::ContactAcceptedPayload =
+            serde_json::from_value(serde_json::to_value(&draft_event.payload)?)?;
+        if draft_payload.peer != peer
+            || draft_payload.request_event_ref != request_event_ref
+            || draft_payload.granted_to_peer_scopes
+                != crate::transport::contacts::default_contact_scopes()
+        {
+            anyhow::bail!("Contact prepare changed the selected proposal or response intent");
         }
         let signed_event = crate::transport::contacts::sign_prepared_contact_event(
             &event_draft,
@@ -418,7 +430,8 @@ async fn submit_contact_response(
             phase: ContactPreparePhase::Prepare,
             operation_id: operation_id.clone(),
             idempotency_key: idempotency_key.clone(),
-            request_receipt,
+            peer: peer.clone(),
+            request_event_ref: request_event_ref.clone(),
             action: ContactRejectAction::Reject,
         });
         let prepared: ContactOperationOutcome =
@@ -440,6 +453,13 @@ async fn submit_contact_response(
         };
         if returned_operation_id != operation_id {
             anyhow::bail!("Contact reject prepare changed operation_id");
+        }
+        let draft_event =
+            event_draft.unsigned_event_for_kind(arkret_wire::event_kind_str::CONTACT_REJECTED)?;
+        let draft_payload: arkret_sdk::ContactRejectedPayload =
+            serde_json::from_value(serde_json::to_value(&draft_event.payload)?)?;
+        if draft_payload.peer != peer || draft_payload.request_event_ref != request_event_ref {
+            anyhow::bail!("Contact prepare changed the selected proposal or response intent");
         }
         let signed_event = crate::transport::contacts::sign_prepared_contact_event(
             &event_draft,
@@ -476,116 +496,6 @@ async fn submit_contact_response(
     } else {
         anyhow::bail!("unsupported Contact response action `{action}`")
     }
-}
-
-/// Verify the source-service receipt against the exact verified request Event and
-/// the issuer key that was active when the source accepted it.  The list row is
-/// only a carrier; none of its summary fields are an authority input here.
-async fn verify_contact_request_receipt(
-    http: &arkret_sdk::http_client::Client,
-    receipt: &arkret_sdk::contact_operations::RequestAcceptanceReceipt,
-) -> anyhow::Result<()> {
-    receipt.validate_shape()?;
-    let expected_request_digest = receipt.core.request_digest();
-    let resolved = http
-        .events_resolve(&arkret_sdk::EventsResolveRequestBody {
-            event_ids: vec![receipt.core.request_event_ref.clone()],
-            event_digests: vec![expected_request_digest.clone()],
-            include_payload: Some(true),
-            history_traversal_access: None,
-            max_response_bytes: Some(arkret_sdk::MAX_PEER_RESOLVE_RESPONSE_BYTES),
-        })
-        .await?;
-    let request = resolved
-        .events
-        .iter()
-        .find(|event| event.event_id == receipt.core.request_event_ref)
-        .ok_or_else(|| anyhow::anyhow!("Contact request receipt Event is not accepted"))?;
-    let request_digest = arkret_sdk::Hash::new(
-        request.event_digest_with_digest_suite(expected_request_digest.digest_suite()?)?,
-    )?;
-    if request_digest != expected_request_digest {
-        anyhow::bail!("Contact request receipt does not bind the exact resolved Event");
-    }
-    let issuer_did = arkret_sdk::Did::new(
-        receipt
-            .signature
-            .verification_method
-            .as_str()
-            .split_once('#')
-            .map(|(controller, _)| controller.to_owned())
-            .ok_or_else(|| anyhow::anyhow!("Contact receipt verification method omits fragment"))?,
-    )?;
-    if arkret_sdk::project_did_to_core_id(&issuer_did)? != receipt.core.issuer_id {
-        anyhow::bail!("Contact receipt proof controller differs from issuer");
-    }
-    let history =
-        crate::identity::history::fetch_complete_identity_history(http, &issuer_did).await?;
-    if history.did != issuer_did
-        || history.method != arkret_sdk::DidMethodUri::Webvh
-        || history.native_history == Some(false)
-        || history.has_more
-        || history.next_cursor.is_some()
-    {
-        anyhow::bail!("Contact receipt issuer did not return complete native did:webvh history");
-    }
-    let history_point = arkret_signatures::webvh::validate_webvh_history_at(
-        &issuer_did,
-        &history.entries,
-        receipt.core.accepted_at,
-    )
-    .map_err(|error| anyhow::anyhow!("invalid Contact receipt issuer history: {error}"))?;
-    let document: arkret_sdk::DidDocument = serde_json::from_value(history_point.document)?;
-    let verification_method = receipt.signature.verification_method.as_str();
-    if !did_document_assertion_method_contains(&document, verification_method) {
-        anyhow::bail!(
-            "Contact receipt verification method was not an assertionMethod at acceptance"
-        );
-    }
-    let resolved_key =
-        arkret_sdk::resolve_verification_method_key_from_document(&document, verification_method)?;
-    if resolved_key.absolutize(&issuer_did)? != receipt.signature.verification_method {
-        anyhow::bail!("Contact receipt verification method resolved to another issuer key");
-    }
-    let verifying_key =
-        ed25519_dalek::VerifyingKey::from_bytes(&resolved_key.public_key.ed25519_bytes()?)?;
-    arkret_sdk::verify_contact_request_acceptance_receipt(
-        receipt,
-        &request.event_id,
-        &verifying_key,
-    )?;
-    Ok(())
-}
-
-fn did_document_assertion_method_contains(
-    document: &arkret_sdk::DidDocument,
-    expected: &str,
-) -> bool {
-    fn matches_reference(issuer: &arkret_sdk::Did, reference: &str, expected: &str) -> bool {
-        if reference == expected {
-            return true;
-        }
-        reference
-            .strip_prefix('#')
-            .is_some_and(|fragment| expected == format!("{}#{fragment}", issuer.as_str()))
-    }
-
-    document
-        .raw_properties
-        .get("assertionMethod")
-        .and_then(serde_json::Value::as_array)
-        .is_some_and(|methods| {
-            methods.iter().any(|method| match method {
-                serde_json::Value::String(reference) => {
-                    matches_reference(&document.id, reference, expected)
-                }
-                serde_json::Value::Object(object) => object
-                    .get("id")
-                    .and_then(serde_json::Value::as_str)
-                    .is_some_and(|reference| matches_reference(&document.id, reference, expected)),
-                _ => false,
-            })
-        })
 }
 
 pub async fn contacts(http: &arkret_sdk::http_client::Client) -> anyhow::Result<ContactList> {

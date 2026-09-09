@@ -2520,7 +2520,6 @@ fn route_label_strings(dict: &mut TranslationDict) {
 /// `zh.rs`'s `prompt_copy_strings`, and the parity test enforces it.
 fn prompt_copy_strings(dict: &mut TranslationDict) {
     dict.set("did_health.label.degraded", "受限");
-    dict.set("did_health.label.stale_cache", "缓存过旧");
     dict.set("did_health.label.metadata", "元数据");
     dict.set("did_health.label.outage", "离线");
     dict.set("did_health.label.server_metadata", "服务器元数据");
@@ -2528,14 +2527,6 @@ fn prompt_copy_strings(dict: &mut TranslationDict) {
     dict.set("did_health.title.metadata_mismatch", "身份信息格式不匹配");
     dict.set("did_health.title.unavailable", "身份核验离线");
     dict.set("did_health.title.service_unavailable", "身份服务不可用");
-    dict.set(
-        "did_health.detail.fresh_cache",
-        "身份核验当前离线;仅显示最近确认过的信息,仅供参考。",
-    );
-    dict.set(
-        "did_health.detail.stale_cache",
-        "身份核验当前离线,已保存的信息可能已过期。涉及信任的操作已暂停。",
-    );
     dict.set(
         "did_health.detail.metadata_mismatch",
         "身份服务已响应，但当前应用无法读取其数据格式。请刷新或更新应用；身份检查会自动重试。",
@@ -2545,8 +2536,8 @@ fn prompt_copy_strings(dict: &mut TranslationDict) {
         "部分身份核验当前不可用。涉及信任的操作仍处于暂停状态。",
     );
     dict.set(
-        "did_health.detail.no_cache",
-        "身份核验离线,且没有已保存的信息。涉及信任的操作已暂停。",
+        "did_health.detail.unavailable",
+        "身份服务暂时不可用，等待服务器恢复。已保存的内容仍可查看。",
     );
     dict.set(
         "did_health.detail.server_metadata",

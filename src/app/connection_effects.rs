@@ -52,7 +52,6 @@ pub(super) fn ConnectionEffects(state: ConnectionEffectState) -> Element {
     } = SessionContext::get();
     let runtime_services = use_context::<crate::runtime::services::RuntimeServices>();
     let navigator = use_navigator();
-    let did_cache = use_context::<Signal<arkret_sdk::identity::DidResolutionCache>>();
     let mut device_authorization_recheck_key = use_signal(String::new);
     let mut device_authorization_recheck_attempt = use_signal(|| 0_u32);
 
@@ -149,13 +148,7 @@ pub(super) fn ConnectionEffects(state: ConnectionEffectState) -> Element {
             spawn(async move {
                 let result =
                     crate::transport::auth::with_authed_api(&base, session, |api| async move {
-                        super::connect::probe_device_authorization(
-                            &account,
-                            &device,
-                            &api,
-                            did_cache.peek().clone(),
-                        )
-                        .await
+                        super::connect::probe_device_authorization(&account, &device, &api).await
                     })
                     .await;
                 match result {
@@ -259,7 +252,7 @@ pub(super) fn ConnectionEffects(state: ConnectionEffectState) -> Element {
                 base,
                 principal_id(),
                 device_id(),
-                runtime.connect_context(runtime_services.session.clone(), state_store, did_cache),
+                runtime.connect_context(runtime_services.session.clone(), state_store),
             );
         } else if !base.trim().is_empty() {
             let bootstrap_state = session_boot_state_from_bootstrap_material(

@@ -2175,38 +2175,24 @@ impl EventSubmitter {
         Ok((view, state.receipts))
     }
 
-    /// Return the accepted head needed to author the next Agent PCR
-    /// Seal. The head can intentionally lag accepted Events. It is accepted
-    /// only when its exact bytes occur in the locally replayed checkpoint.
-    pub(crate) async fn seals_frontier_agent_head<
-        S: crate::mls::governance_proof::GovernanceProofStateStore,
-    >(
+    /// Consume the exact accepted PCR head returned by the Account Station.
+    pub(crate) async fn seals_frontier_agent_head(
         &self,
         realm_id: &str,
-        _controller_did: &arkret_sdk::Did,
-        state_store: S,
     ) -> anyhow::Result<(arkret_sdk::RealmSealFrontierView, arkret_sdk::Seal)> {
         let (view, receipts) = self.seals_frontier_realm_state(realm_id).await?;
-        let receipt = receipts.first().ok_or_else(|| {
-            anyhow::anyhow!("seals/frontier omitted the accepted Agent PCR Seal head")
-        })?;
-        let seal = receipt.seal.clone();
-        let checkpoint = state_store
-            .with_read(|store| store.trusted_mls_governance_checkpoint(realm_id))
-            .ok_or_else(|| anyhow::anyhow!("Agent PCR has no verified governance checkpoint"))?;
-        if !checkpoint
-            .accepted_seals
-            .iter()
-            .any(|accepted| accepted == &seal)
-        {
-            anyhow::bail!("Agent PCR Seal head is not byte-exact in the verified checkpoint");
-        }
-        // The frontier view carries no service-derived roots: the resolved
-        // Seal's own signed roots are the only authority, so only identity is
-        // cross-checked here.
-        if seal.realm_id != view.realm_id || Some(&seal.id) != view.sole_leaf().ok() {
-            anyhow::bail!("Agent PCR Seal head differs from its frontier view");
-        }
+        let leaf = view.sole_leaf()?;
+        let seal = receipts
+            .into_iter()
+            .find(|receipt| &receipt.seal.id == leaf)
+            .ok_or_else(|| {
+                anyhow::anyhow!("seals/frontier omitted the accepted Agent PCR Seal head")
+            })?
+            .seal;
+        anyhow::ensure!(
+            seal.realm_id == view.realm_id,
+            "Agent PCR head has the wrong Realm binding"
+        );
         Ok((view, seal))
     }
 

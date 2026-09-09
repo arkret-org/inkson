@@ -171,9 +171,6 @@ impl garth::SignalDecryptor for MlsSignalDecryptor {
             // (`crates/mls/src/signal.rs::signal_suite_for`), so the shared restore
             // helper's epoch gate drops a Signal naming any other epoch rather than
             // routing around it. No decryption queue, no downgrade, no backfill.
-            validate_signal_governance(&self.state_store, envelope)
-                .await
-                .map_err(|error| garth::Error::Protocol(error.to_string()))?;
             let (session, accepted_group_state_ref) = self
                 .state_store
                 .read(|store| {
@@ -227,41 +224,6 @@ impl garth::SignalDecryptor for MlsSignalDecryptor {
                 .map_err(|error| garth::Error::Protocol(error.to_string()))
         })
     }
-}
-
-/// Read the two durable governance facts this Realm's Signal admission needs
-/// and hand the decision to Garth.
-///
-/// The store reads stay here because they are host state; the judgment
-/// (`signal.md` §1/§4) is protocol and lives in
-/// [`garth::admit_signal_governance`], so every client reaches the same verdict.
-async fn validate_signal_governance(
-    state_store: &crate::runtime::input::StateStoreHandle,
-    envelope: &arkret_wire::SignalEnvelope,
-) -> anyhow::Result<()> {
-    let realm = envelope.realm_id.as_str();
-    let (has_pending_binding, has_stale_coverage, checkpoint, observed) =
-        state_store.read(|store| {
-            (
-                store.realm_has_pending_mls_binding(realm),
-                store
-                    .mls_coverage_stale_reason(
-                        realm,
-                        envelope.scope_ref.circle_id().map(|id| id.as_str()),
-                    )
-                    .is_some(),
-                store.trusted_mls_governance_checkpoint(realm),
-                store.seal_view_for_realm(realm),
-            )
-        });
-    if has_pending_binding || has_stale_coverage {
-        anyhow::bail!("Signal scope has pending or stale MLS governance coverage");
-    }
-    let checkpoint = checkpoint
-        .ok_or_else(|| anyhow::anyhow!("Signal requires a verified governance checkpoint"))?;
-    garth::admit_signal_governance(&checkpoint, &observed, envelope, crate::clock::now_utc())
-        .await
-        .map_err(|error| anyhow::anyhow!(error.to_string()))
 }
 
 /// Routes admitted plaintext to the three product consumers.

@@ -9,7 +9,6 @@ struct KanbanProjectionSnapshot {
 async fn fetch_kanban_projection_snapshot(
     api: crate::transport::TransportClient,
     realm_id: &str,
-    did_cache: crate::runtime::input::ValueCell<arkret_sdk::identity::DidResolutionCache>,
     state_store: crate::runtime::input::StateStoreHandle,
 ) -> anyhow::Result<KanbanProjectionSnapshot> {
     let http = api.sdk_http_client()?;
@@ -58,7 +57,6 @@ async fn fetch_kanban_projection_snapshot(
         crate::sync_engine::prefetch_persistent_event_sender_keys_from_values(
             &api,
             &values,
-            did_cache,
             state_store,
         )
         .await;
@@ -87,7 +85,6 @@ pub(super) fn KanbanEffects(
     realm_live_epoch: Signal<u64>,
 ) -> Element {
     let mut state_store = crate::app::SessionContext::get().state_store;
-    let did_cache = use_context::<Signal<arkret_sdk::identity::DidResolutionCache>>();
     let navigator = use_navigator();
     // Board-create operation ids still pending as of the last reconciliation
     // pass. Remembered across passes so the receipt migration below can detect
@@ -390,7 +387,6 @@ pub(super) fn KanbanEffects(
                     fetch_kanban_projection_snapshot(
                         api,
                         &realm_id,
-                        crate::app::runtime_adapter::value_cell(did_cache),
                         crate::app::runtime_adapter::state_store_handle(state_store),
                     )
                     .await
@@ -500,7 +496,6 @@ pub(super) fn KanbanEffects(
                     fetch_kanban_projection_snapshot(
                         api,
                         &realm_id,
-                        crate::app::runtime_adapter::value_cell(did_cache),
                         crate::app::runtime_adapter::state_store_handle(state_store),
                     )
                     .await

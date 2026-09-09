@@ -401,10 +401,9 @@ pub(super) struct ConnectContext {
     /// Session DID-resolution cache handle. Root identity verification uses a
     /// complete retained history instead of depending on this cache. Downstream
     /// resolver back-fills are shared with SyncEngine for reuse.
-    pub(super) did_cache: Signal<arkret_sdk::identity::DidResolutionCache>,
     /// App-shell DID resolution health banner state. The root identity
     /// describe probe updates this on every connect/manual refresh; authority
-    /// resolution remains fail-closed in `did_resolver`.
+    /// resolution availability is reported by the configured Station.
     pub(super) did_resolution_health: Signal<crate::components::DidResolutionHealth>,
 }
 
@@ -503,7 +502,6 @@ pub(super) async fn probe_device_authorization(
     account: &crate::config::ActiveAccountContext,
     device: &str,
     principal_api: &TransportClient,
-    did_cache: arkret_sdk::identity::DidResolutionCache,
 ) -> anyhow::Result<(bool, bool)> {
     // The account-viewer helpers read `devices[]` leniently via `Value`
     // accessors; serialize the typed `AccountView` back to its wire JSON.
@@ -511,7 +509,7 @@ pub(super) async fn probe_device_authorization(
         &crate::transport::keys::list_devices(&principal_api.sdk_http_client()?).await?,
     )?;
     let signer_matches_directory =
-        current_event_signer_matches_directory(principal_api, account, device, did_cache).await?;
+        current_event_signer_matches_directory(principal_api, account, device).await?;
     Ok(device_authorization_probe_from_account_viewer(
         &viewer,
         device,
@@ -528,7 +526,6 @@ async fn current_event_signer_matches_directory(
     principal_api: &TransportClient,
     account: &crate::config::ActiveAccountContext,
     device: &str,
-    did_cache: arkret_sdk::identity::DidResolutionCache,
 ) -> anyhow::Result<bool> {
     let signer = match crate::event_signer::active_signer() {
         Some(signer) => signer,
@@ -547,6 +544,7 @@ async fn current_event_signer_matches_directory(
     let Some(public_key) = signer.public_key_multibase() else {
         return Ok(false);
     };
+    let device_cache_epoch = crate::identity::device_directory::cache_epoch();
     let outcome =
         crate::transport::keys::query_keys(&principal_api.sdk_http_client()?, account_id, device)
             .await?;
@@ -566,15 +564,13 @@ async fn current_event_signer_matches_directory(
     if !signer_matches {
         return Ok(false);
     }
-    let anchor = crate::identity::did_resolver::ResolverDidAnchor::from_profile(
-        crate::identity::did_resolver::DeploymentProfile::PersonalNode,
-        did_cache,
-    );
     let accepted_key =
         crate::identity::device_directory::cache_accepted_device_evidence_from_outcome(
-            &outcome, &anchor, account_id, device,
-        )
-        .await;
+            device_cache_epoch,
+            &outcome,
+            account_id,
+            device,
+        );
     if accepted_key.as_ref()
         != crate::identity::device_directory::public_key_from_directory_value(&expected_key)
             .as_ref()
@@ -635,6 +631,7 @@ pub(super) fn connect(
         // describe below repopulate it. Steady-state session refreshes then
         // reuse that cache instead of re-probing `/_arkret/describe`.
         crate::identity::account_auth::clear_authority_resolver_cache();
+        crate::identity::device_directory::reset_session_cache();
         did_resolution_health.set(crate::components::DidResolutionHealth::healthy());
         needs_device_authorization.set(false);
         device_authorization_check_complete.set(false);
@@ -743,12 +740,7 @@ pub(super) fn connect(
                     }
                     Err(error) => {
                         tracing::warn!(?error, "identity describe probe failed");
-                        let cache = ctx.did_cache.read();
-                        crate::components::DidResolutionHealth::from_probe_error(
-                            &error,
-                            &cache,
-                            chrono::Utc::now(),
-                        )
+                        crate::components::DidResolutionHealth::from_probe_error(&error)
                     }
                 };
                 did_resolution_health.set(identity_health);
@@ -1155,16 +1147,6 @@ pub(super) fn connect(
                         // the freshly-wiped state.
                         let mut sync_generation = ctx.sync_generation;
                         sync_generation.set(sync_generation() + 1);
-                        // DID-P2-B step 5: the persisted accepted bindings are
-                        // scoped structurally (they live in the incoming
-                        // account's own entry, which `switch_active_account`
-                        // just loaded), but the *in-memory* session cache is
-                        // not — it is one signal shared by whoever is signed
-                        // in. Clearing it here is what stops the previous
-                        // principal's resolved documents from being reused for
-                        // the new one.
-                        let mut session_did_cache = ctx.did_cache;
-                        session_did_cache.write().clear();
                     } else {
                         // No previous identity to displace — just record
                         // who the scope now belongs to (don't wipe: a
@@ -1173,31 +1155,6 @@ pub(super) fn connect(
                     principal_id.set(canonical_runtime_principal.clone());
                 }
                 principal_id.set(canonical_runtime_principal);
-                // DID-P2-B step 5, trust-domain half: an account entry can be
-                // re-pointed at a different Station. A binding accepted
-                // against the previous deployment must not authorize anything
-                // under the new one, so anything outside the *current* trust
-                // domain is dropped now rather than left to expire. Same-domain
-                // reconnects are a no-op (nothing to remove ⇒ no flush).
-                {
-                    // Only the trust-domain half is needed here, and it is
-                    // infallible: a resolver-policy digest failure must not be
-                    // able to skip this cross-deployment cleanup.
-                    let trust_domain =
-                        crate::identity::did_binding::DidBindingScope::trust_domain_for(&base);
-                    let dropped = state_store
-                        .write()
-                        .clear_accepted_did_bindings_outside_trust_domain(&trust_domain);
-                    if dropped > 0 {
-                        tracing::info!(
-                            dropped,
-                            trust_domain = %trust_domain,
-                            "dropped accepted DID bindings from a previous trust domain"
-                        );
-                        let mut session_did_cache = ctx.did_cache;
-                        session_did_cache.write().clear();
-                    }
-                }
                 if let Some(personal_handle) = account_personal_handle {
                     account_primary_handle.set(personal_handle.clone());
                     let handles = merge_personal_handles(&personal_handles(), [personal_handle]);
@@ -1279,17 +1236,11 @@ pub(super) fn connect(
                     &mut session_credential,
                     &mut authed,
                 );
-                let device_probe_did_cache = ctx.did_cache.peek().clone();
                 let Some(device_authorization_result) = session_scoped_bootstrap_request(
                     "device authorization check",
                     &session,
                     bootstrap_session_generation,
-                    probe_device_authorization(
-                        &accepted_account,
-                        &device,
-                        &authed,
-                        device_probe_did_cache,
-                    ),
+                    probe_device_authorization(&accepted_account, &device, &authed),
                 )
                 .await
                 else {
@@ -1323,7 +1274,6 @@ pub(super) fn connect(
                                     return;
                                 };
                                 authed = rebound;
-                                let device_probe_did_cache = ctx.did_cache.peek().clone();
                                 let Some(device_authorization_retry_result) =
                                     session_scoped_bootstrap_request(
                                         "device authorization retry",
@@ -1333,7 +1283,6 @@ pub(super) fn connect(
                                             &accepted_account,
                                             &device,
                                             &authed,
-                                            device_probe_did_cache,
                                         ),
                                     )
                                     .await
@@ -2004,7 +1953,6 @@ pub(super) fn connect(
                         crate::sync_engine::prefetch_persistent_event_sender_keys(
                             &authed,
                             &sync,
-                            super::runtime_adapter::value_cell(ctx.did_cache),
                             super::runtime_adapter::state_store_handle(state_store),
                             |realm_id| {
                                 state_store
@@ -2258,13 +2206,8 @@ pub(super) fn connect(
                 server_probe_status.set(format!("server describe skipped: invalid URL: {error}"));
                 crate::operation::set_authoring_station_id(None);
                 server_description.set(None);
-                let cache = ctx.did_cache.read();
-                did_resolution_health.set(
-                    crate::components::DidResolutionHealth::from_identity_probe_failure(
-                        &cache,
-                        chrono::Utc::now(),
-                    ),
-                );
+                did_resolution_health
+                    .set(crate::components::DidResolutionHealth::unsupported_station());
             }
         }
         if session.generation() != bootstrap_session_generation {

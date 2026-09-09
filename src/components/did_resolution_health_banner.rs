@@ -1,19 +1,13 @@
 //! App-level DID resolution health banner.
 //!
-//! Authority-grade DID checks still fail closed in `did_resolver`; this module
-//! only renders a session-wide warning when the identity describe probe says
-//! live resolution is unavailable or falling back to cached evidence.
+//! Renders the availability of the configured Station identity service.
 
-use arkret_sdk::identity::DidResolutionCache;
-use chrono::{DateTime, Utc};
 use dioxus::prelude::*;
 
 use super::UiIcon;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DidResolutionHealthReason {
-    IdentityDescribeFailedFreshCache,
-    IdentityDescribeFailedStaleCache,
-    IdentityDescribeFailedNoCache,
+    IdentityDescribeFailed,
     UnsupportedIdentityProtocol,
     UnsupportedStation,
 }
@@ -60,33 +54,15 @@ impl DidResolutionHealth {
         }
     }
 
-    pub fn from_identity_probe_failure(cache: &DidResolutionCache, now: DateTime<Utc>) -> Self {
-        if cache.has_fresh_entry(now) {
-            Self::Degraded {
-                reason: DidResolutionHealthReason::IdentityDescribeFailedFreshCache,
-            }
-        } else if cache.has_only_stale_entries(now) {
-            Self::Degraded {
-                reason: DidResolutionHealthReason::IdentityDescribeFailedStaleCache,
-            }
-        } else {
-            Self::Outage {
-                reason: DidResolutionHealthReason::IdentityDescribeFailedNoCache,
-            }
-        }
-    }
-
-    pub(crate) fn from_probe_error(
-        error: &anyhow::Error,
-        cache: &DidResolutionCache,
-        now: DateTime<Utc>,
-    ) -> Self {
+    pub(crate) fn from_probe_error(error: &anyhow::Error) -> Self {
         if crate::api_error::is_response_format_error(error) {
             Self::Degraded {
                 reason: DidResolutionHealthReason::UnsupportedIdentityProtocol,
             }
         } else {
-            Self::from_identity_probe_failure(cache, now)
+            Self::Outage {
+                reason: DidResolutionHealthReason::IdentityDescribeFailed,
+            }
         }
     }
 
@@ -94,22 +70,6 @@ impl DidResolutionHealth {
         match self {
             Self::Healthy => None,
             Self::Degraded { reason } => Some(match reason {
-                DidResolutionHealthReason::IdentityDescribeFailedFreshCache => {
-                    DidResolutionHealthPresentation {
-                        token: "degraded",
-                        label: "did_health.label.degraded",
-                        title: "did_health.title.degraded",
-                        detail: "did_health.detail.fresh_cache",
-                    }
-                }
-                DidResolutionHealthReason::IdentityDescribeFailedStaleCache => {
-                    DidResolutionHealthPresentation {
-                        token: "degraded",
-                        label: "did_health.label.stale_cache",
-                        title: "did_health.title.degraded",
-                        detail: "did_health.detail.stale_cache",
-                    }
-                }
                 DidResolutionHealthReason::UnsupportedIdentityProtocol => {
                     DidResolutionHealthPresentation {
                         token: "degraded",
@@ -118,7 +78,7 @@ impl DidResolutionHealth {
                         detail: "did_health.detail.metadata_mismatch",
                     }
                 }
-                DidResolutionHealthReason::IdentityDescribeFailedNoCache
+                DidResolutionHealthReason::IdentityDescribeFailed
                 | DidResolutionHealthReason::UnsupportedStation => {
                     DidResolutionHealthPresentation {
                         token: "degraded",
@@ -129,12 +89,12 @@ impl DidResolutionHealth {
                 }
             }),
             Self::Outage { reason } => Some(match reason {
-                DidResolutionHealthReason::IdentityDescribeFailedNoCache => {
+                DidResolutionHealthReason::IdentityDescribeFailed => {
                     DidResolutionHealthPresentation {
                         token: "outage",
                         label: "did_health.label.outage",
                         title: "did_health.title.unavailable",
-                        detail: "did_health.detail.no_cache",
+                        detail: "did_health.detail.unavailable",
                     }
                 }
                 DidResolutionHealthReason::UnsupportedStation => DidResolutionHealthPresentation {
@@ -143,9 +103,7 @@ impl DidResolutionHealth {
                     title: "did_health.title.service_unavailable",
                     detail: "did_health.detail.server_metadata",
                 },
-                DidResolutionHealthReason::IdentityDescribeFailedFreshCache
-                | DidResolutionHealthReason::IdentityDescribeFailedStaleCache
-                | DidResolutionHealthReason::UnsupportedIdentityProtocol => {
+                DidResolutionHealthReason::UnsupportedIdentityProtocol => {
                     DidResolutionHealthPresentation {
                         token: "outage",
                         label: "did_health.label.outage",
@@ -200,10 +158,7 @@ pub fn DidResolutionHealthBanner(health: Signal<DidResolutionHealth>) -> Element
 
 #[cfg(test)]
 mod tests {
-    use arkret_sdk::{
-        Did, DidDocument, ServiceDescribe, ServiceKind, TransportBinding, TrustDomainId,
-    };
-    use chrono::Duration;
+    use arkret_sdk::{Did, ServiceDescribe, ServiceKind, TransportBinding, TrustDomainId};
 
     use super::*;
 
@@ -220,22 +175,6 @@ mod tests {
         )
     }
 
-    fn cache_with_entry(ttl: Duration, now: DateTime<Utc>) -> DidResolutionCache {
-        let cache = DidResolutionCache::new(8);
-        let did = Did::new("did:web:alice.example".to_owned()).expect("valid did");
-        let document = DidDocument::new(did.clone(), "owner", "z6Mksample");
-        // `did:web` publishes no method proof.
-        cache
-            .insert(
-                did,
-                arkret_sdk::identity::ResolvedDid::proofless(document),
-                now,
-                ttl,
-            )
-            .unwrap();
-        cache
-    }
-
     #[test]
     fn successful_v1_identity_description_is_healthy() {
         let description = identity_description();
@@ -246,47 +185,11 @@ mod tests {
     }
 
     #[test]
-    fn probe_failure_with_fresh_cache_is_degraded() {
-        let now = Utc::now();
-        let cache = cache_with_entry(Duration::seconds(60), now);
-        assert_eq!(
-            DidResolutionHealth::from_identity_probe_failure(&cache, now + Duration::seconds(30)),
-            DidResolutionHealth::Degraded {
-                reason: DidResolutionHealthReason::IdentityDescribeFailedFreshCache
-            }
-        );
-    }
-
-    #[test]
-    fn probe_failure_with_only_stale_cache_is_degraded() {
-        let now = Utc::now();
-        let cache = cache_with_entry(Duration::seconds(60), now);
-        assert_eq!(
-            DidResolutionHealth::from_identity_probe_failure(&cache, now + Duration::seconds(60)),
-            DidResolutionHealth::Degraded {
-                reason: DidResolutionHealthReason::IdentityDescribeFailedStaleCache
-            }
-        );
-    }
-
-    #[test]
-    fn probe_failure_without_cache_is_outage() {
-        let cache = DidResolutionCache::new(8);
-        assert_eq!(
-            DidResolutionHealth::from_identity_probe_failure(&cache, Utc::now()),
-            DidResolutionHealth::Outage {
-                reason: DidResolutionHealthReason::IdentityDescribeFailedNoCache
-            }
-        );
-    }
-
-    #[test]
     fn response_format_failure_is_metadata_mismatch_and_can_recover() {
         let decode = serde_json::from_str::<ServiceKind>("\"unknown_service\"").unwrap_err();
         let error = anyhow::Error::new(arkret_sdk::http_client::Error::Json(decode))
             .context("identity describe");
-        let cache = DidResolutionCache::new(8);
-        let health = DidResolutionHealth::from_probe_error(&error, &cache, Utc::now());
+        let health = DidResolutionHealth::from_probe_error(&error);
         assert_eq!(
             health,
             DidResolutionHealth::Degraded {
@@ -306,11 +209,10 @@ mod tests {
         let error = anyhow::Error::new(arkret_sdk::http_client::Error::Http(
             "connection refused".into(),
         ));
-        let cache = DidResolutionCache::new(8);
         assert_eq!(
-            DidResolutionHealth::from_probe_error(&error, &cache, Utc::now()),
+            DidResolutionHealth::from_probe_error(&error),
             DidResolutionHealth::Outage {
-                reason: DidResolutionHealthReason::IdentityDescribeFailedNoCache
+                reason: DidResolutionHealthReason::IdentityDescribeFailed
             }
         );
     }

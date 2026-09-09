@@ -94,7 +94,6 @@ pub(super) struct AppSignalProductSink {
     base_url: Signal<String>,
     token: Signal<String>,
     principal_id: Signal<Option<arkret_sdk::DidCoreId>>,
-    did_cache: Signal<arkret_sdk::identity::DidResolutionCache>,
     state_store: SyncSignal<crate::state::LocalStateStore>,
     authz_verdicts: RefCell<BTreeMap<String, CachedVerdict>>,
 }
@@ -107,7 +106,6 @@ impl AppSignalProductSink {
         base_url: Signal<String>,
         token: Signal<String>,
         principal_id: Signal<Option<arkret_sdk::DidCoreId>>,
-        did_cache: Signal<arkret_sdk::identity::DidResolutionCache>,
         state_store: SyncSignal<crate::state::LocalStateStore>,
     ) -> Self {
         Self {
@@ -117,7 +115,6 @@ impl AppSignalProductSink {
             base_url,
             token,
             principal_id,
-            did_cache,
             state_store,
             authz_verdicts: RefCell::new(BTreeMap::new()),
         }
@@ -346,19 +343,12 @@ impl SignalProductSink for AppSignalProductSink {
             else {
                 return;
             };
-            let anchor = crate::identity::did_resolver::ResolverDidAnchor::from_profile(
-                crate::identity::did_resolver::DeploymentProfile::PersonalNode,
-                self.did_cache.peek().clone(),
-            );
             let _ = crate::identity::device_directory::resolve_current_signal_device_evidence(
                 &http,
-                &anchor,
                 envelope,
                 arkret_sdk::AccountId::new(recipient_principal_id, recipient_station_id),
             )
             .await;
-            let mut did_cache = self.did_cache;
-            did_cache.set(anchor.into_cache());
         })
     }
 

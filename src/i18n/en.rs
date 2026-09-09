@@ -3030,7 +3030,6 @@ fn route_label_strings(dict: &mut TranslationDict) {
 /// `zh.rs`'s `prompt_copy_strings`, and the parity test enforces it.
 fn prompt_copy_strings(dict: &mut TranslationDict) {
     dict.set("did_health.label.degraded", "Limited");
-    dict.set("did_health.label.stale_cache", "Outdated cache");
     dict.set("did_health.label.metadata", "Metadata");
     dict.set("did_health.label.outage", "Offline");
     dict.set("did_health.label.server_metadata", "Server metadata");
@@ -3047,14 +3046,12 @@ fn prompt_copy_strings(dict: &mut TranslationDict) {
         "did_health.title.service_unavailable",
         "Identity service unavailable",
     );
-    dict.set("did_health.detail.fresh_cache", "Identity checks are offline right now; showing recently confirmed information for display only.");
-    dict.set("did_health.detail.stale_cache", "Identity checks are offline right now, and the saved information is out of date. Actions that need trust are paused.");
     dict.set("did_health.detail.metadata_mismatch", "The identity service responded, but this app cannot read its response format. Refresh or update the app. Identity checks will retry automatically.");
     dict.set(
         "did_health.detail.partial",
         "Some identity checks are unavailable right now. Actions that need trust remain paused.",
     );
-    dict.set("did_health.detail.no_cache", "Identity checks are offline and no saved information is available. Actions that need trust are paused.");
+    dict.set("did_health.detail.unavailable", "The identity service is unavailable. Saved content remains available while the server recovers.");
     dict.set("did_health.detail.server_metadata", "This server did not provide the expected identity metadata, so identity checks are blocked.");
     dict.set(
         "did_health.detail.blocked",

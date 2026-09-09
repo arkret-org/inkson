@@ -468,6 +468,9 @@ fn ContactRequestNotification(
         div { class: "event", "data-testid": "contact-request-notification",
             strong { {crate::i18n::tr("notifications.contact_request.title")} }
             span { "{label}" }
+            if let Some(message) = &contact.request_message {
+                p { class: "contact-request-message", "data-testid": "contact-request-message", "{message}" }
+            }
             Button {
                 variant: ButtonVariant::Primary,
                 "data-testid": "notification-contact-accept",

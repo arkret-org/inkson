@@ -4,32 +4,10 @@ use std::collections::{BTreeMap, HashMap};
 use std::sync::{LazyLock, RwLock};
 
 use arkret_sdk::signatures::PublicKeyMaterial;
-use arkret_sdk::{Did, DidDocument};
 use arkret_wire::event_kind_str;
 
 use super::verification_method_controller;
 use crate::transport::TransportClient;
-
-#[cfg(not(target_arch = "wasm32"))]
-pub type DidAnchorFuture<'a> =
-    std::pin::Pin<Box<dyn std::future::Future<Output = bool> + Send + 'a>>;
-#[cfg(target_arch = "wasm32")]
-pub type DidAnchorFuture<'a> = std::pin::Pin<Box<dyn std::future::Future<Output = bool> + 'a>>;
-
-/// Retained for DID-resolution callers. Device authorization no longer reads
-/// business authority from the DID document.
-pub trait DidAnchor: Send + Sync {
-    fn resolve_did_document(&self, actor: &Did) -> Option<DidDocument>;
-
-    fn ensure_actor_document<'a>(
-        &'a self,
-        http: &'a reqwest::Client,
-        actor: &'a Did,
-    ) -> DidAnchorFuture<'a> {
-        let _ = (http, actor);
-        Box::pin(async { true })
-    }
-}
 
 const POSITIVE_TTL_MS: u64 = 5 * 60 * 1000;
 const NEGATIVE_TTL_MS: u64 = 30 * 1000;
@@ -59,8 +37,41 @@ struct CacheEntry {
 }
 
 type CacheKey = (arkret_sdk::AccountId, String);
-static CACHE: LazyLock<RwLock<HashMap<CacheKey, CacheEntry>>> =
-    LazyLock::new(|| RwLock::new(HashMap::new()));
+#[derive(Default)]
+struct DeviceKeyCache {
+    epoch: u64,
+    entries: HashMap<CacheKey, CacheEntry>,
+}
+
+impl std::ops::Deref for DeviceKeyCache {
+    type Target = HashMap<CacheKey, CacheEntry>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.entries
+    }
+}
+
+impl std::ops::DerefMut for DeviceKeyCache {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.entries
+    }
+}
+
+static CACHE: LazyLock<RwLock<DeviceKeyCache>> =
+    LazyLock::new(|| RwLock::new(DeviceKeyCache::default()));
+
+pub(crate) fn cache_epoch() -> u64 {
+    CACHE
+        .read()
+        .unwrap_or_else(|poison| poison.into_inner())
+        .epoch
+}
+
+pub(crate) fn reset_session_cache() {
+    let mut cache = CACHE.write().unwrap_or_else(|poison| poison.into_inner());
+    cache.epoch = cache.epoch.wrapping_add(1);
+    cache.entries.clear();
+}
 
 #[derive(Clone)]
 pub enum CacheLookup {
@@ -136,7 +147,8 @@ pub fn cached_signal_sender_evidence(
     }
 }
 
-fn store_entry(
+fn store_entry_at_epoch(
+    expected_epoch: u64,
     actor: &str,
     device: &str,
     key: Option<PublicKeyMaterial>,
@@ -161,6 +173,9 @@ fn store_entry(
         return false;
     }
     let mut guard = CACHE.write().unwrap_or_else(|poison| poison.into_inner());
+    if guard.epoch != expected_epoch {
+        return false;
+    }
     // Retain bounded in-memory watermarks after TTL or invalidation so an
     // out-of-order response cannot revive an already superseded projection.
     guard.retain(|_, entry| entry.expires_at_ms > now || entry.verified_projection.is_some());
@@ -252,9 +267,8 @@ pub fn public_key_from_directory_value(value: &str) -> Option<PublicKeyMaterial>
     Some(material)
 }
 
-async fn accepted_device_evidence(
+fn accepted_device_evidence(
     outcome: &arkret_models_crypto::KeysQueryOutcome,
-    anchor: &dyn DidAnchor,
     account_id: &arkret_sdk::AccountId,
     device: &str,
 ) -> Option<(
@@ -274,38 +288,10 @@ async fn accepted_device_evidence(
         .validate_attestation_binding(account_id, &device)
         .ok()?;
     let attestation = &record.device_projection_attestation;
-    let method_did =
-        arkret_sdk::verification_method_did(attestation.proof.verification_method.as_str()).ok()?;
-    let document = match anchor.resolve_did_document(&method_did) {
-        Some(document) => document,
-        None => {
-            let http = reqwest::Client::new();
-            if !anchor.ensure_actor_document(&http, &method_did).await {
-                return None;
-            }
-            anchor.resolve_did_document(&method_did)?
-        }
-    };
-    arkret_sdk::identity::validate_verification_method_relationship(
-        &document,
-        &attestation.proof.verification_method,
-        &method_did,
-        arkret_sdk::identity::DidVerificationRelationship::AssertionMethod,
-    )
-    .ok()?;
-    let method = arkret_sdk::resolve_verification_method_key_from_document(
-        &document,
-        attestation.proof.verification_method.as_str(),
-    )
-    .ok()?;
-    let verifying_key =
-        ed25519_dalek::VerifyingKey::from_bytes(&method.public_key.ed25519_bytes().ok()?).ok()?;
-    arkret_sdk::signatures::device_projection::verify_device_projection_attestation(
-        attestation,
-        &verifying_key,
-        chrono::Utc::now(),
-    )
-    .ok()?;
+    let now = chrono::Utc::now();
+    if attestation.attestation.attested_at > now || now >= attestation.attestation.expires_at {
+        return None;
+    }
     let key =
         public_key_from_directory_value(attestation.attestation.device_signing_key_did.as_str())?;
     let authority = attestation.attestation.account_id.clone();
@@ -327,13 +313,13 @@ async fn accepted_device_evidence(
     ))
 }
 
-pub(crate) async fn cache_accepted_device_evidence_from_outcome(
+pub(crate) fn cache_accepted_device_evidence_from_outcome(
+    expected_epoch: u64,
     outcome: &arkret_models_crypto::KeysQueryOutcome,
-    anchor: &dyn DidAnchor,
     account_id: &arkret_sdk::AccountId,
     device: &str,
 ) -> Option<PublicKeyMaterial> {
-    let resolved = accepted_device_evidence(outcome, anchor, account_id, device).await;
+    let resolved = accepted_device_evidence(outcome, account_id, device);
     let key = resolved.as_ref().map(|(key, ..)| key.clone());
     let authorize_event_id = resolved.as_ref().map(|(_, event_id, ..)| event_id.clone());
     let authority = resolved
@@ -343,7 +329,8 @@ pub(crate) async fn cache_accepted_device_evidence_from_outcome(
         .as_ref()
         .map(|(_, _, _, expires_at_ms, _)| *expires_at_ms);
     let version = resolved.map(|(_, _, _, _, version)| version);
-    let stored = store_entry(
+    let stored = store_entry_at_epoch(
+        expected_epoch,
         &account_id.to_string(),
         device,
         key.clone(),
@@ -357,16 +344,14 @@ pub(crate) async fn cache_accepted_device_evidence_from_outcome(
 
 pub async fn resolve_device_signing_key(
     api: &TransportClient,
-    anchor: &dyn DidAnchor,
     actor: &str,
     device: &str,
 ) -> anyhow::Result<Option<PublicKeyMaterial>> {
-    resolve_device_signing_key_with_http(&api.sdk_http_client()?, anchor, actor, device).await
+    resolve_device_signing_key_with_http(&api.sdk_http_client()?, actor, device).await
 }
 
 pub async fn resolve_device_signing_key_with_http(
     sdk_http: &arkret_sdk::http_client::Client,
-    anchor: &dyn DidAnchor,
     actor: &str,
     device: &str,
 ) -> anyhow::Result<Option<PublicKeyMaterial>> {
@@ -375,16 +360,22 @@ pub async fn resolve_device_signing_key_with_http(
             "device query requires an exact AccountId; a bare DID has no Station binding"
         )
     })?;
+    let expected_epoch = cache_epoch();
     let outcome = crate::transport::keys::query_keys(sdk_http, &account_id, device).await?;
-    Ok(cache_accepted_device_evidence_from_outcome(&outcome, anchor, &account_id, device).await)
+    Ok(cache_accepted_device_evidence_from_outcome(
+        expected_epoch,
+        &outcome,
+        &account_id,
+        device,
+    ))
 }
 
 pub(crate) async fn resolve_current_signal_device_evidence(
     sdk_http: &arkret_sdk::http_client::Client,
-    anchor: &crate::identity::did_resolver::ResolverDidAnchor,
     envelope: &arkret_wire::SignalEnvelope,
     recipient_account_id: arkret_sdk::AccountId,
 ) -> Option<PublicKeyMaterial> {
+    let expected_epoch = cache_epoch();
     let account_id = envelope.sender_actor_id.as_account_id()?.clone();
     let device_id = envelope.sender_device_id.as_ref()?.clone();
     let (_, outcome) = crate::identity::current_signer_evidence::query_for_signal(
@@ -433,24 +424,13 @@ pub(crate) async fn resolve_current_signal_device_evidence(
             }],
         };
         return cache_accepted_device_evidence_from_outcome(
+            expected_epoch,
             &outcome,
-            anchor,
             &account_id,
             device_id.as_str(),
-        )
-        .await;
+        );
     }
     None
-}
-
-pub async fn refresh_device_keys(
-    api: &TransportClient,
-    anchor: &dyn DidAnchor,
-    pairs: &[(String, String)],
-) {
-    for (actor, device) in pairs {
-        let _ = resolve_device_signing_key(api, anchor, actor, device).await;
-    }
 }
 
 fn verification_method_controller_matches_signer(
@@ -614,6 +594,28 @@ pub fn invalidate_actor(actor: &str) -> usize {
 }
 
 #[cfg(test)]
+fn store_entry(
+    actor: &str,
+    device: &str,
+    key: Option<PublicKeyMaterial>,
+    authorize_event_id: Option<arkret_sdk::EventId>,
+    authority: Option<arkret_sdk::AccountId>,
+    expires_at: Option<u64>,
+    version: Option<VerifiedProjectionVersion>,
+) -> bool {
+    store_entry_at_epoch(
+        cache_epoch(),
+        actor,
+        device,
+        key,
+        authorize_event_id,
+        authority,
+        expires_at,
+        version,
+    )
+}
+
+#[cfg(test)]
 fn test_account_selector(actor: &str) -> String {
     account_from_selector(actor)
         .map(|account| account.to_string())
@@ -700,17 +702,8 @@ mod verification_method_controller_tests {
         verification_method_controller_matches_signer,
     };
 
-    #[tokio::test]
-    async fn a_projection_key_must_be_a_current_station_assertion_method() {
-        struct PinnedAnchor(arkret_sdk::DidDocument);
-        impl super::DidAnchor for PinnedAnchor {
-            fn resolve_did_document(
-                &self,
-                did: &arkret_sdk::Did,
-            ) -> Option<arkret_sdk::DidDocument> {
-                (&self.0.id == did).then(|| self.0.clone())
-            }
-        }
+    #[test]
+    fn trusted_device_result_requires_exact_binding_and_current_generation() {
         let station_did = arkret_sdk::Did::new("did:web:projection-station.example").unwrap();
         let method = arkret_sdk::DidUrl::new(format!("{station_did}#assertion")).unwrap();
         let account = arkret_sdk::AccountId::new(
@@ -746,10 +739,11 @@ mod verification_method_controller_tests {
                 &signing_key,
             )
             .unwrap();
-        let outcome: arkret_models_crypto::KeysQueryOutcome =
+        let mut outcome: arkret_models_crypto::KeysQueryOutcome =
             serde_json::from_value(serde_json::json!({
                 "device_keys": [{"account_id": account, "device_keys": {
                     device.as_str(): {
+                        "signer_evidence_ref": "ak:signer_evidence:sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                         "algorithms": {}, "trust_algorithms": [],
                         "device_projection_attestation": attestation
                     }
@@ -761,54 +755,24 @@ mod verification_method_controller_tests {
                 }}]
             }))
             .unwrap();
-        let mut document: arkret_sdk::DidDocument = serde_json::from_value(serde_json::json!({
-            "id": station_did,
-            "verificationMethod": [{
-                "id": method,
-                "controller": station_did,
-                "type": "Multikey",
-                "publicKeyMultibase": public_key
-            }]
-        }))
-        .unwrap();
-        assert!(
-            super::accepted_device_evidence(
-                &outcome,
-                &PinnedAnchor(document.clone()),
-                &account,
-                device.as_str(),
-            )
-            .await
-            .is_none()
-        );
-        document.raw_properties.insert(
-            "assertionMethod".to_owned(),
-            serde_json::json!(["#another-key"]),
-        );
-        assert!(
-            super::accepted_device_evidence(
-                &outcome,
-                &PinnedAnchor(document.clone()),
-                &account,
-                device.as_str(),
-            )
-            .await
-            .is_none()
-        );
-        document.raw_properties.insert(
-            "assertionMethod".to_owned(),
-            serde_json::json!(["#assertion"]),
-        );
-        assert!(
-            super::accepted_device_evidence(
-                &outcome,
-                &PinnedAnchor(document),
-                &account,
-                device.as_str(),
-            )
-            .await
-            .is_some()
-        );
+        assert!(super::accepted_device_evidence(&outcome, &account, device.as_str()).is_some());
+        let other_device = "ak:device:0196419b-0000-7000-8000-000000000002";
+        assert!(super::accepted_device_evidence(&outcome, &account, other_device).is_none());
+        outcome.device_generations[0]
+            .generation_state
+            .current_device_generation_ref = 8;
+        assert!(super::accepted_device_evidence(&outcome, &account, device.as_str()).is_none());
+        outcome.device_generations[0]
+            .generation_state
+            .current_device_generation_ref = 7;
+        outcome.device_keys[0]
+            .device_keys
+            .get_mut(&device)
+            .unwrap()
+            .device_projection_attestation
+            .attestation
+            .expires_at = now;
+        assert!(super::accepted_device_evidence(&outcome, &account, device.as_str()).is_none());
     }
 
     #[test]

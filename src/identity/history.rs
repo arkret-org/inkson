@@ -1,6 +1,6 @@
-//! Complete method-native DID history retrieval shared by registration and
-//! recovery. Pagination is completed before any cryptographic consumer sees
-//! the result, and every page is required to describe one stable DID/method.
+//! Complete method-native DID history retrieval for recovery. Pagination is completed before any
+//! cryptographic consumer sees the result, and every page is required to describe one stable
+//! DID/method.
 
 pub(crate) async fn fetch_complete_identity_history(
     http: &arkret_sdk::http_client::Client,
@@ -43,36 +43,4 @@ pub(crate) async fn fetch_complete_identity_history(
         next_cursor: None,
         has_more: false,
     })
-}
-
-pub(crate) struct FrozenAuthorityHistoryResolver {
-    did: arkret_sdk::Did,
-    history: serde_json::Value,
-}
-
-impl FrozenAuthorityHistoryResolver {
-    pub(crate) fn new(history: &arkret_sdk::IdentityLogListOutcome) -> anyhow::Result<Self> {
-        Ok(Self {
-            did: history.did.clone(),
-            history: serde_json::to_value(history)?,
-        })
-    }
-}
-
-impl arkret_sdk::AuthorityDidHistoryResolver for FrozenAuthorityHistoryResolver {
-    fn resolve_complete_history(
-        &self,
-        did: &arkret_sdk::Did,
-    ) -> Result<arkret_sdk::IdentityLogListOutcome, arkret_sdk::AuthorityHistoryUnavailable> {
-        if did != &self.did {
-            return Err(arkret_sdk::AuthorityHistoryUnavailable {
-                message: "resolver was pinned to another Account Authority".to_owned(),
-            });
-        }
-        serde_json::from_value(self.history.clone()).map_err(|error| {
-            arkret_sdk::AuthorityHistoryUnavailable {
-                message: format!("decode frozen Account Authority history: {error}"),
-            }
-        })
-    }
 }

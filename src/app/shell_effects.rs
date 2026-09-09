@@ -48,7 +48,6 @@ pub(super) fn ShellEffects(state: ShellEffectState) -> Element {
         ..
     } = SessionContext::get();
     let navigator = use_navigator();
-    let did_cache = use_context::<Signal<arkret_sdk::identity::DidResolutionCache>>();
 
     // Recheck failed bootstrap probes independently of session refresh. A
     // successful probe clears the banner without logging out or reloading.
@@ -76,11 +75,7 @@ pub(super) fn ShellEffects(state: ShellEffectState) -> Element {
                 Ok(description) => {
                     crate::components::DidResolutionHealth::from_identity_description(&description)
                 }
-                Err(error) => crate::components::DidResolutionHealth::from_probe_error(
-                    &error,
-                    &did_cache.peek(),
-                    chrono::Utc::now(),
-                ),
+                Err(error) => crate::components::DidResolutionHealth::from_probe_error(&error),
             });
         }
     });

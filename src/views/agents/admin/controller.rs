@@ -322,7 +322,6 @@ impl AgentAdminController {
                     device_id.as_str(),
                     &agent_actor_id,
                     key_state.principal_control_realm_id.as_str(),
-                    crate::app::runtime_adapter::state_store_handle(state_store),
                     None,
                 )
                 .await?;
@@ -372,7 +371,6 @@ impl AgentAdminController {
                     device_id.as_str(),
                     &agent_actor_id,
                     key_state.principal_control_realm_id.as_str(),
-                    crate::app::runtime_adapter::state_store_handle(state_store),
                     None,
                 )
                 .await
@@ -1073,7 +1071,6 @@ impl AgentAdminController {
             }
             let pcr_realm_for_seal = principal_control_realm_id.clone();
             let agent_id_for_seal = agent_id.clone();
-            let state_store_for_seal = state_store;
             let account_for_seal = account.clone();
             if let Err(error) = with_authed_api(&base, api_token.clone(), move |api| async move {
                 let signer = crate::event_signer::active_signer()
@@ -1099,7 +1096,6 @@ impl AgentAdminController {
                     device_id.as_str(),
                     &agent_actor_id,
                     pcr_realm_for_seal.as_str(),
-                    crate::app::runtime_adapter::state_store_handle(state_store_for_seal),
                     Some(&frozen_genesis),
                 )
                 .await

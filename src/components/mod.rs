@@ -50,7 +50,6 @@ pub mod sync_badge;
 /// persistence routed through the caller's local-state path.
 pub mod theme_switcher;
 /// Verification and identity-cache status badges.
-pub mod verify_badges;
 pub mod visibility_pill;
 pub mod write_state;
 
@@ -90,7 +89,6 @@ pub use shortcut_help::{
 };
 pub use sync_badge::{SyncBadge, SyncBadgeState};
 pub use theme_switcher::{ThemeMode, ThemeSwitcher};
-pub use verify_badges::{TrustCacheBadge, TrustCacheState, trust_cache_state};
 pub use visibility_pill::{
     Discoverability, HistoryAccess, JoinRule, VisibilityPill, VisibilityPillRow,
 };

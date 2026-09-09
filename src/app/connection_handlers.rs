@@ -40,7 +40,6 @@ impl ConnectionRuntimeSignals {
         self,
         session: crate::runtime::session::SessionCoordinator,
         state_store: SyncSignal<LocalStateStore>,
-        did_cache: Signal<arkret_sdk::identity::DidResolutionCache>,
     ) -> ConnectContext {
         ConnectContext {
             session,
@@ -70,7 +69,6 @@ impl ConnectionRuntimeSignals {
             sync_bootstrap_complete: self.sync_bootstrap_complete,
             session_boot_state: self.session_boot_state,
             bootstrap_pending: self.bootstrap_pending,
-            did_cache,
             did_resolution_health: self.did_resolution_health,
         }
     }
@@ -83,7 +81,6 @@ pub(super) fn refresh_connection(
     runtime: ConnectionRuntimeSignals,
     session: crate::runtime::session::SessionCoordinator,
     state_store: SyncSignal<LocalStateStore>,
-    did_cache: Signal<arkret_sdk::identity::DidResolutionCache>,
 ) {
     let mut sync_generation = runtime.sync_generation;
     let mut sync_bootstrap_complete = runtime.sync_bootstrap_complete;
@@ -93,7 +90,7 @@ pub(super) fn refresh_connection(
         base,
         (runtime.principal_id)(),
         (runtime.device_id)(),
-        runtime.connect_context(session, state_store, did_cache),
+        runtime.connect_context(session, state_store),
     );
 }
 
@@ -102,7 +99,6 @@ pub(super) struct ServerSwitchHandlerContext {
     pub(super) runtime: ConnectionRuntimeSignals,
     pub(super) base_url: Signal<String>,
     pub(super) state_store: SyncSignal<LocalStateStore>,
-    pub(super) did_cache: Signal<arkret_sdk::identity::DidResolutionCache>,
     pub(super) personal_handles_lookup_key: Signal<String>,
     pub(super) server_menu_open: Signal<bool>,
     pub(super) session: crate::runtime::session::SessionCoordinator,
@@ -149,7 +145,7 @@ pub(super) fn switch_server_and_connect(option_url: String, ctx: ServerSwitchHan
         next_url,
         (runtime.principal_id)(),
         (runtime.device_id)(),
-        runtime.connect_context(ctx.session, ctx.state_store, ctx.did_cache),
+        runtime.connect_context(ctx.session, ctx.state_store),
     );
 }
 

@@ -77,9 +77,6 @@ pub fn prepare_registration_checkpoint(
             .clone(),
         backup_hpke_public_key_multibase: key_material.backup_hpke_public_key_multikey.clone(),
         recovery_key_fingerprint: crate::recovery_crypto::fingerprint_recovery_key(recovery_key),
-        did_entry0_canonical_base64url: arkret_sdk::base64url_encode(
-            &arkret_sdk::canonical::canonical_json_bytes(&draft.log_entry)?,
-        ),
         did_operation: draft.submit_body,
         pcr_genesis_unit: None,
         initial_session: None,
@@ -163,9 +160,6 @@ pub fn recover_registration_checkpoint_from_reservation(
             .clone(),
         backup_hpke_public_key_multibase: key_material.backup_hpke_public_key_multikey.clone(),
         recovery_key_fingerprint: crate::recovery_crypto::fingerprint_recovery_key(recovery_key),
-        did_entry0_canonical_base64url: arkret_sdk::base64url_encode(
-            &arkret_sdk::canonical::canonical_json_bytes(&reserved.did_operation.operation)?,
-        ),
         did_operation: reserved.did_operation,
         pcr_genesis_unit: None,
         initial_session: None,
@@ -572,9 +566,8 @@ pub async fn complete_account_handoff_binding(
         .clone()
         .context("Account Authority omitted PCR genesis receipt")?;
 
-    // Preserve the exact typed response before any follow-up resolution. A
-    // transient authority-history failure can be retried without discarding
-    // the signed proof or substituting a later response.
+    // Preserve the exact response with the frozen request before installing
+    // the session, so a restart resumes the same registration terminal.
     {
         let mut durable = register_request_prepared_checkpoint(checkpoint)?;
         durable.binding_receipt = Some(binding_receipt.clone());
@@ -586,13 +579,7 @@ pub async fn complete_account_handoff_binding(
         barrier.wait().await?;
     }
 
-    verify_registration_terminal_evidence(
-        checkpoint,
-        &register_request,
-        &binding_receipt,
-        &account_client,
-    )
-    .await?;
+    check_registration_result_binding(checkpoint, &register_request, &binding_receipt)?;
     let grant = register_outcome
         .session_grant_outcome
         .context("Account Authority omitted initial Standard grant")?;
@@ -717,72 +704,16 @@ fn bounded_identity_binding_challenge_retry_delay(
     (delay.saturating_add(IDENTITY_BINDING_CHALLENGE_DEADLINE_GUARD) < usable_for).then_some(delay)
 }
 
-async fn verify_registration_terminal_evidence(
+fn check_registration_result_binding(
     checkpoint: &PendingPrincipalRegistration,
     request: &arkret_sdk::AccountRegisterRequestBody,
     receipt: &arkret_sdk::AccountBindingReceipt,
-    _account_client: &arkret_sdk::http_client::Client,
 ) -> anyhow::Result<()> {
-    let authority_did = arkret_sdk::Did::new(
-        receipt
-            .proof
-            .verification_method
-            .as_str()
-            .split_once('#')
-            .map(|(controller, _)| controller.to_owned())
-            .context("Account Authority receipt proof omits DID fragment")?,
-    )?;
-    if arkret_sdk::project_did_to_core_id(&authority_did)? != receipt.account_authority_id {
-        anyhow::bail!("Account Authority receipt proof controller mismatch");
-    }
-    // Both the Account Authority service DID and the newly-created principal
-    // DID are method histories hosted by the configured Station.
-    // The Account Authority client only serves gate/account operations; its
-    // human root is not an identity registry and cannot resolve either log.
-    let principal_client =
-        arkret_sdk::http_client::ClientBuilder::new(Url::parse(&checkpoint.station_url)?)
-            .allow_insecure_localhost()
-            .build()?;
-    let authority_history = crate::identity::history::fetch_complete_identity_history(
-        &principal_client,
-        &authority_did,
-    )
-    .await
-    .context("fetch complete Account Authority DID history from Station")?;
-    let authority_resolver =
-        crate::identity::history::FrozenAuthorityHistoryResolver::new(&authority_history)?;
-    garth::verify_binding_receipt_at_issuance(receipt, &authority_resolver)
-        .map_err(|error| anyhow!("verify Account Authority receipt at issuance: {error}"))?;
-
-    let principal_did = checkpoint.did.clone();
-    let history = crate::identity::history::fetch_complete_identity_history(
-        &principal_client,
-        &principal_did,
-    )
-    .await
-    .context("fetch complete principal did.jsonl history")?;
-    if history.method != arkret_sdk::DidMethodUri::Webvh || history.native_history != Some(true) {
-        anyhow::bail!("principal history is not a native did:webvh history");
-    }
-    let entry0 = history
-        .entries
-        .first()
-        .context("principal did.jsonl is empty after accepted registration")?;
-    let observed_entry0 =
-        arkret_sdk::base64url_encode(&arkret_sdk::canonical::canonical_json_bytes(entry0)?);
-    if observed_entry0 != checkpoint.did_entry0_canonical_base64url {
-        anyhow::bail!("principal did.jsonl entry 0 differs from the frozen inception bytes");
-    }
-
-    let did_operation = checkpoint.did_operation.clone();
-    let frozen_entry =
-        serde_json::Value::Object(did_operation.operation.clone().into_iter().collect());
-    if entry0 != &frozen_entry {
-        anyhow::bail!("principal did.jsonl entry 0 differs from the frozen operation");
-    }
+    receipt.validate_shape()?;
+    let did_operation = &checkpoint.did_operation;
     let validated =
-        arkret_sdk::signatures::webvh::validate_principal_inception_operation(&did_operation)
-            .map_err(|error| anyhow!("revalidate accepted principal inception: {error}"))?;
+        arkret_sdk::signatures::webvh::validate_principal_inception_operation(did_operation)
+            .map_err(|error| anyhow!("validate frozen principal inception: {error}"))?;
     let registration = request
         .identity_creation
         .as_ref()
@@ -794,7 +725,7 @@ async fn verify_registration_terminal_evidence(
         || validated.log_head_digest != registration.control_proof.log_head_digest
         || validated.control_key_digest != registration.control_proof.control_key_digest
     {
-        anyhow::bail!("accepted DID history does not reproduce the signed registration pins");
+        anyhow::bail!("registration result does not match the frozen inception pins");
     }
     Ok(())
 }

@@ -410,7 +410,7 @@ async fn fetch_route_material_from_origin(
         canonical_service_resolution_path(service_id)
     );
     validate_service_resolution_url(&resolution_url, service_id)?;
-    let (_, resolution_bytes) = crate::identity::did_resolver::fetch_arkret_bytes(
+    let (_, resolution_bytes) = super::http_fetch::fetch_arkret_bytes(
         http,
         &resolution_url,
         ROUTE_FETCH_MAX_BYTES,
@@ -441,7 +441,7 @@ async fn fetch_route_describe(
         "{}_arkret/describe?service_kind={MEDIA_SERVICE_KIND}",
         projection.base_url
     );
-    let (_, describe_bytes) = crate::identity::did_resolver::fetch_arkret_bytes(
+    let (_, describe_bytes) = super::http_fetch::fetch_arkret_bytes(
         http,
         &describe_url,
         ROUTE_FETCH_MAX_BYTES,
@@ -538,7 +538,7 @@ async fn fetch_current_service_material(
         let did = &current_did;
         match did.method() {
             "web" => {
-                let outcome = crate::identity::did_resolver::fetch_did_web_document(http, did)
+                let outcome = super::http_fetch::fetch_did_web_document(http, did)
                     .await
                     .context("did:web current fetch failed")?;
                 return Ok((
@@ -551,13 +551,10 @@ async fn fetch_current_service_material(
             }
             "webvh" => {
                 let log_url = DidWebvhResolver::log_url(did)?;
-                let (log_type, log_body) = crate::identity::did_resolver::fetch_did_bytes(
-                    http,
-                    &log_url,
-                    ROUTE_FETCH_MAX_BYTES,
-                )
-                .await
-                .context("did:webvh current log fetch failed")?;
+                let (log_type, log_body) =
+                    super::http_fetch::fetch_did_bytes(http, &log_url, ROUTE_FETCH_MAX_BYTES)
+                        .await
+                        .context("did:webvh current log fetch failed")?;
                 let discovered =
                     arkret_identity::discover_webvh_current_did(&expected_core, &log_body)?;
                 if discovered != current_did {
@@ -565,7 +562,7 @@ async fn fetch_current_service_material(
                     continue;
                 }
                 let doc_url = DidWebvhResolver::document_url(did)?;
-                let (doc_type, doc_body) = crate::identity::did_resolver::fetch_did_bytes(
+                let (doc_type, doc_body) = super::http_fetch::fetch_did_bytes(
                     http,
                     &doc_url,
                     arkret_identity::DID_WEB_MAX_DOCUMENT_BYTES,
@@ -593,12 +590,9 @@ async fn fetch_current_service_material(
                 )?;
                 let mut witness_records = Vec::new();
                 let witness_url = DidWebvhResolver::witness_url(did)?;
-                if let Some((_, bytes)) = crate::identity::did_resolver::fetch_did_bytes(
-                    http,
-                    &witness_url,
-                    ROUTE_FETCH_MAX_BYTES,
-                )
-                .await
+                if let Some((_, bytes)) =
+                    super::http_fetch::fetch_did_bytes(http, &witness_url, ROUTE_FETCH_MAX_BYTES)
+                        .await
                 {
                     resolver.ingest_witness_records(did, &bytes)?;
                     witness_records = serde_json::from_slice(&bytes)?;

@@ -72,7 +72,6 @@ pub(crate) use history_runtime::{InksonHistoryRuntimeStore, history_runtime};
 pub(crate) use history_source_outbox::{InksonHistorySourceBlobStore, history_source_outbox};
 
 mod agent_evidence;
-mod did_bindings;
 mod mls_governance;
 
 mod e2ee_secure_cache;
