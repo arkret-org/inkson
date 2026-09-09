@@ -354,55 +354,6 @@ pub(crate) fn realm_projection_group_genesis_binding(
     resolved
 }
 
-/// Replace only the cached MLS Genesis carrier with the exact canonical Event
-/// obtained from a complete accepted-history read. Genesis is immutable, so a
-/// stale or optimistic copy is not compatibility state and must not survive.
-pub(crate) fn replace_realm_projection_mls_genesis(
-    body: &mut Value,
-    accepted_genesis: Value,
-) -> bool {
-    let before = body.clone();
-    let Some(object) = body.as_object_mut() else {
-        return false;
-    };
-    for container_name in ["state_after", "state"] {
-        let Some(events) = object
-            .get_mut(container_name)
-            .and_then(|container| container.get_mut("events"))
-            .and_then(Value::as_array_mut)
-        else {
-            continue;
-        };
-        events.retain(|event| {
-            event
-                .get("kind")
-                .or_else(|| event.get("type"))
-                .and_then(Value::as_str)
-                != Some(event_kind_str::MLS_GENESIS)
-        });
-    }
-    let state = object
-        .entry("state")
-        .or_insert_with(|| serde_json::json!({"events": []}));
-    if !state.is_object() {
-        *state = serde_json::json!({"events": []});
-    }
-    let Value::Object(state_object) = state else {
-        return false;
-    };
-    let events = state_object
-        .entry("events")
-        .or_insert_with(|| Value::Array(Vec::new()));
-    if !events.is_array() {
-        *events = Value::Array(Vec::new());
-    }
-    let Value::Array(events) = events else {
-        return false;
-    };
-    events.push(accepted_genesis);
-    *body != before
-}
-
 /// Resolve the Realm's immutable content scheme from the accepted MLS Genesis.
 /// An explicit top-level value remains available only for pre-Genesis local
 /// authoring. A canonical create Event cannot carry this field and is never a
@@ -1253,44 +1204,6 @@ mod tests {
         });
 
         assert_eq!(realm_projection_group_genesis_binding(&projection), None);
-    }
-
-    #[test]
-    fn canonical_genesis_replaces_stale_projection_copy() {
-        let mut projection = json!({
-            "state_after": {"events": [{
-                "event_id": "ak:event:stale",
-                "kind": "ak.mls.genesis",
-                "payload": {"governance_binding": {"content_scheme": "mls_rfc9420"}}
-            }]},
-            "state": {"events": [{"kind": "ak.realm.create", "payload": {"object": {}}}]}
-        });
-        let accepted = json!({
-            "event_id": "ak:event:accepted",
-            "kind": "ak.mls.genesis",
-            "payload": {"governance_binding": {
-                "content_scheme": "mls_exporter_aead_v1",
-                "durability_policy": "none"
-            }}
-        });
-
-        assert!(replace_realm_projection_mls_genesis(
-            &mut projection,
-            accepted
-        ));
-        assert!(
-            projection["state_after"]["events"]
-                .as_array()
-                .unwrap()
-                .is_empty()
-        );
-        assert_eq!(
-            realm_projection_group_genesis_binding(&projection),
-            Some(arkret_sdk::MlsGroupGenesisBinding {
-                content_scheme: arkret_wire::ContentScheme::MlsExporterAeadV1,
-                durability_policy: Some(arkret_wire::DurabilityPolicy::None),
-            })
-        );
     }
 
     #[test]

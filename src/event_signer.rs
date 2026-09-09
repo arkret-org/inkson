@@ -61,45 +61,6 @@ use ed25519_dalek::{Signer as _, SigningKey};
 use crate::identity::verification_method_controller;
 use crate::operation::{Audience, AuthoredEvent, ProofMode, current_proof_mode};
 
-/// Legacy active-series pointer discovery; ordinary Seal signing does not use this history.
-pub(crate) struct PrincipalControlHistory {
-    events: Vec<arkret_sdk::Event>,
-}
-
-impl PrincipalControlHistory {
-    pub(crate) async fn load(
-        http: &arkret_sdk::http_client::Client,
-        actor_id: &arkret_sdk::ActorId,
-        realm_id: &arkret_sdk::RealmId,
-        purpose: &str,
-    ) -> anyhow::Result<Self> {
-        let rows = http.events_read_all_pages_for_actor(actor_id).await?.events;
-        let mut events = crate::models::require_complete_event_rows(&rows, purpose)?
-            .into_iter()
-            .filter(|event| {
-                &event.actor_id == actor_id
-                    && event.realm_id == *realm_id
-                    && event.kind.is_control_plane()
-            })
-            .collect::<Vec<_>>();
-        events.sort_by(|left, right| {
-            left.actor_seq
-                .cmp(&right.actor_seq)
-                .then_with(|| left.event_id.cmp(&right.event_id))
-        });
-        if events.is_empty() {
-            anyhow::bail!(
-                "{purpose} found no canonical Events for actor {actor_id} in Realm {realm_id}"
-            );
-        }
-        Ok(Self { events })
-    }
-
-    pub(crate) fn events(&self) -> &[arkret_sdk::Event] {
-        &self.events
-    }
-}
-
 pub(crate) async fn prepare_and_sign_pcr_successor(
     http: &arkret_sdk::http_client::Client,
     actor_id: &arkret_sdk::ActorId,

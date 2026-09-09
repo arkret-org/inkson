@@ -159,32 +159,43 @@ pub(crate) async fn current_requester_device_authorize_event_id(
 }
 
 async fn current_authorization_incarnation(
+    http: &arkret_sdk::http_client::Client,
     state_store: &LocalStateStore,
     realm_id: &str,
-    circle_id: Option<&str>,
+    authority: &arkret_sdk::AccountId,
     target: &arkret_sdk::ActorId,
 ) -> Result<arkret_sdk::AuthorizationIncarnation, String> {
-    let realm_id = arkret_sdk::RealmId::new(realm_id.to_owned())
-        .map_err(|error| format!("invalid MLS admission Realm id: {error}"))?;
-    let checkpoint = state_store
-        .trusted_mls_governance_checkpoint(realm_id.as_str())
-        .ok_or_else(|| "MLS admission has no durable verified governance checkpoint".to_owned())?;
-    if checkpoint.realm_id != realm_id {
-        return Err("MLS admission checkpoint belongs to another Realm".to_owned());
+    let epoch = crate::identity::device_directory::cache_epoch();
+    let request = arkret_sdk::MembershipAuthorityRequest {
+        effective_scope: arkret_sdk::HistoryEffectiveScope::Realm {
+            realm_id: realm_id
+                .parse()
+                .map_err(|error| format!("invalid admission Realm: {error}"))?,
+        },
+        actor_id: target.clone(),
+        seal_basis: arkret_sdk::SealBasis {
+            leaves: state_store
+                .seal_view_for_realm(realm_id)
+                .frontier
+                .iter()
+                .map(|leaf| {
+                    leaf.parse()
+                        .map_err(|error| format!("invalid admission frontier: {error}"))
+                })
+                .collect::<Result<_, _>>()?,
+        },
+    };
+    let outcome = http
+        .membership_authority(&request)
+        .await
+        .map_err(|error| error.to_string())?;
+    outcome
+        .validate_for_account(&request, authority)
+        .map_err(|error| error.to_string())?;
+    if epoch != crate::identity::device_directory::cache_epoch() {
+        return Err("account session changed during MLS membership query".to_owned());
     }
-    let circle_id = circle_id
-        .map(|circle_id| {
-            arkret_sdk::CircleId::new(circle_id.to_owned())
-                .map_err(|error| format!("invalid MLS admission Circle id: {error}"))
-        })
-        .transpose()?;
-    arkret_sdk::current_authorization_incarnation_from_verified_checkpoint(
-        &checkpoint,
-        target,
-        circle_id.as_ref(),
-    )
-    .await
-    .map_err(|error| format!("derive current MLS Add authorization incarnation: {error}"))
+    Ok(outcome.authorization_incarnation)
 }
 
 fn build_endpoint_admission_proposal_event(
@@ -240,6 +251,7 @@ fn build_endpoint_admission_proposal_event(
 }
 
 pub(crate) async fn build_realm_mls_admission_events_from_claim(
+    http: &arkret_sdk::http_client::Client,
     state_store: &LocalStateStore,
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
@@ -252,6 +264,7 @@ pub(crate) async fn build_realm_mls_admission_events_from_claim(
     claim_receipt: &arkret_sdk::PeerKeyPackageClaimReceipt,
 ) -> Result<RealmMlsAdmissionEvents, String> {
     build_realm_mls_admission_events_from_verified_claim(
+        http,
         state_store,
         secure_store,
         realm_id,
@@ -268,6 +281,7 @@ pub(crate) async fn build_realm_mls_admission_events_from_claim(
 
 #[allow(clippy::too_many_arguments)]
 async fn build_realm_mls_admission_events_from_verified_claim(
+    http: &arkret_sdk::http_client::Client,
     state_store: &LocalStateStore,
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
@@ -295,6 +309,10 @@ async fn build_realm_mls_admission_events_from_verified_claim(
         claim_request_id,
         claim_receipt,
     )?;
+    let target_actor = crate::mls::governance_proof::claimed_actor_id(claim, claim_receipt)?;
+    let target_authorization_incarnation =
+        current_authorization_incarnation(http, state_store, realm_id, authority, &target_actor)
+            .await?;
     let member_key_package = crate::mls_api_helpers::keypackage_claim_record_to_mls_record(claim)
         .map_err(|err| format!("MLS KeyPackage claim decode failed: {err}"))?;
     let member_authority_hint =
@@ -321,9 +339,6 @@ async fn build_realm_mls_admission_events_from_verified_claim(
         None,
     )
     .await?;
-    let target_actor = crate::mls::governance_proof::claimed_actor_id(claim, claim_receipt)?;
-    let target_authorization_incarnation =
-        current_authorization_incarnation(state_store, realm_id, None, &target_actor).await?;
     let proposals = add
         .proposals
         .iter()
@@ -1299,7 +1314,12 @@ mod tests {
             arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example".to_owned()).unwrap(),
         );
         let alice_device = arkret_sdk::DeviceId::new(alice_device.to_owned()).unwrap();
+        let http = arkret_sdk::http_client::Client::builder("http://127.0.0.1:9/".parse().unwrap())
+            .allow_insecure_localhost()
+            .build()
+            .unwrap();
         let error = build_realm_mls_admission_events_from_claim(
+            &http,
             &alice_state,
             &secure,
             realm,

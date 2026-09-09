@@ -72,7 +72,7 @@ pub fn RecoveryPanel(token: Signal<String>, device_id: Signal<String>) -> Elemen
     let mut restore_loading = use_signal(|| false);
     let mut restore_loaded_once = use_signal(|| false);
     let mut backup_rows = use_signal(Vec::<BackupSummaryRow>::new);
-    let mut backup_next_cursor = use_signal(|| None::<arkret_sdk::Cursor>);
+    let mut backup_next_cursor = use_signal(|| None::<arkret_wire::Cursor>);
 
     // Server-side Recovery-Key backup marker (written by the upload paths via
     // `mark_mls_recovery_backup_configured`). Drives the section sync badge.
@@ -525,13 +525,15 @@ pub fn RecoveryPanel(token: Signal<String>, device_id: Signal<String>) -> Elemen
                                     status_inventory_loaded_tpl.clone();
                                 let status_fetch_failed_tpl = status_fetch_failed_tpl.clone();
                                 spawn(async move {
-                                    match with_authed_api(&base, api_token, |api| async move {
+                                    let expected_token = api_token.clone();
+                                    let outcome = with_authed_api(&base, api_token, |api| async move {
                                         api.list_key_backups_page(&arkret_sdk::KeyBackupsListQuery {
                                             series_id: None, backup_kind: None, cursor, limit: Some(50),
                                         }).await
                                     })
-                                    .await
-                                    {
+                                    .await;
+                                    if token() != expected_token { return; }
+                                    match outcome {
                                         Ok(payload) => {
                                             backup_next_cursor.set(payload.next_cursor.clone());
                                             let payload =
@@ -576,7 +578,7 @@ pub fn RecoveryPanel(token: Signal<String>, device_id: Signal<String>) -> Elemen
                         variant: ButtonVariant::Secondary,
                         "data-testid": "restore-clear-button",
                         title: tr("recovery.panel.clear_title"),
-                        disabled: backup_rows().is_empty(),
+                        disabled: restore_loading() || backup_rows().is_empty(),
                         onclick: move |_| {
                             backup_rows.set(Vec::new());
                             backup_next_cursor.set(None);

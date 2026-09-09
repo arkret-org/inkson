@@ -558,7 +558,6 @@ fn recovery_auto_prompt_local_only_key_is_prompted_once_per_fingerprint() {
 }
 
 // Shared hermetic state-store fixture from `local_state`.
-use arkret_wire::SchemaId;
 
 #[cfg(not(target_arch = "wasm32"))]
 use crate::state::isolated_store_for_tests as isolated_store;

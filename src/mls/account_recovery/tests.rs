@@ -129,9 +129,12 @@ fn recovery_hpke_backup() -> Value {
 }
 
 fn active_series_pointer(backup_kind: &str, active_series_id: &str) -> (String, Value) {
-    (backup_kind.to_owned(), serde_json::json!({
-        "state": "active", "active_series_id": active_series_id, "series_pointer_version": 1,
-    }))
+    (
+        backup_kind.to_owned(),
+        serde_json::json!({
+            "state": "active", "active_series_id": active_series_id, "series_pointer_version": 1,
+        }),
+    )
 }
 
 fn current_series(pointers: Vec<(String, Value)>) -> Value {
@@ -141,7 +144,9 @@ fn current_series(pointers: Vec<(String, Value)>) -> Value {
         "seal_basis": {"leaves": [format!("ak:seal:sha256:{}", "b".repeat(64))]},
         "secret_storage": {"state":"absent"}, "mls_history": {"state":"absent"},
     });
-    for (kind, pointer) in pointers { state[&kind] = pointer; }
+    for (kind, pointer) in pointers {
+        state[&kind] = pointer;
+    }
     state
 }
 
@@ -716,15 +721,14 @@ fn select_account_secret_fails_closed_when_active_series_is_missing() {
 }
 
 #[test]
-fn select_account_secret_infers_the_only_series_without_an_active_record() {
+fn select_account_secret_rejects_the_only_series_when_pointer_is_absent() {
     let backup = wrap();
     let payload = serde_json::json!({
         "active_series": current_series(vec![]),
         "backups": [backup.clone()]
     });
 
-    let found = select_mls_account_secret_backup(&payload).expect("unique series is unambiguous");
-    assert_eq!(found["backup_id"], backup["backup_id"]);
+    assert!(select_mls_account_secret_backup(&payload).is_none());
 }
 
 #[test]
@@ -743,13 +747,11 @@ fn select_account_secret_rejects_multiple_series_without_an_active_record() {
 }
 
 #[test]
-fn select_account_secret_accepts_the_only_series_without_a_pointer_projection() {
+fn select_account_secret_rejects_the_only_series_without_current_state() {
     let backup = recovery_hpke_backup();
     let payload = serde_json::json!({ "backups": [backup.clone()] });
 
-    let selected = select_mls_account_secret_recovery_public_key_backup(&payload)
-        .expect("sole series is unambiguous");
-    assert_eq!(selected["backup_id"], backup["backup_id"]);
+    assert!(select_mls_account_secret_recovery_public_key_backup(&payload).is_none());
 }
 
 #[test]
@@ -765,11 +767,10 @@ fn select_account_secret_rejects_multiple_series_without_a_pointer_projection() 
 }
 
 #[test]
-fn verify_account_secret_accepts_the_only_series_without_a_pointer_projection() {
+fn verify_account_secret_rejects_the_only_series_without_current_state() {
     let payload = serde_json::json!({ "backups": [recovery_hpke_backup()] });
 
-    verify_active_backup_series(&payload, BackupKind::SecretStorage.as_str())
-        .expect("sole series is authoritative and must verify");
+    assert!(verify_active_backup_series(&payload, BackupKind::SecretStorage.as_str()).is_err());
 }
 
 #[test]

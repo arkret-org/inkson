@@ -218,7 +218,7 @@ pub(crate) async fn submit_mls_admission_for_invitee(
     // Verify the current governance frontier before consuming a one-time
     // KeyPackage. The roster projection only schedules this attempt; it never
     // authorizes the claim or the resulting Add commit.
-    ensure_mls_governance_proof_for_next_commit(
+    ensure_mls_governance_result_for_next_commit(
         api,
         state_store,
         &realm_id,
@@ -286,7 +286,7 @@ pub(crate) async fn submit_mls_admission_for_invitee(
     );
     // Refresh after the claim as well: membership/policy may have advanced
     // while the remote claim request was in flight.
-    ensure_mls_governance_proof_for_next_commit(
+    ensure_mls_governance_result_for_next_commit(
         api,
         state_store,
         &realm_id,
@@ -309,6 +309,7 @@ pub(crate) async fn submit_mls_admission_for_invitee(
     };
     let local_state = state_store.read().clone();
     let admission = crate::mls::admission::build_realm_mls_admission_events_from_claim(
+        &api.sdk_http_client()?,
         &local_state,
         secure_store.as_ref(),
         &realm_id,
@@ -326,7 +327,7 @@ pub(crate) async fn submit_mls_admission_for_invitee(
     let invitee_device_id = claim.device_id.clone();
     // Persist the entire fail-closed admission saga before the first write.
     // The durable outbound item submits Commit first, then the exact signed
-    // Welcome. Only the checkpoint-proven accepted-artifact consumer may publish
+    // Welcome. Only the Station-accepted artifact consumer may publish
     // the snapshot/history secret. A page close between any two steps resumes
     // from the same immutable material on the next sync drain instead of
     // consuming the KeyPackage and losing the Welcome.
@@ -631,54 +632,6 @@ pub(crate) struct MlsAdmissionReconcileOutcome {
     pub deferred: usize,
 }
 
-pub(super) fn cache_exact_accepted_realm_mls_genesis(
-    store: &mut LocalStateStore,
-    realm_id: &str,
-) -> anyhow::Result<()> {
-    let snapshot = store
-        .mls_checkpoint_for(realm_id)
-        .ok_or_else(|| anyhow::anyhow!("MLS admission requires a local Realm group snapshot"))?;
-    // Display history may start at the recipient's join. The pinned control
-    // checkpoint retains the verified Genesis needed for the installed group.
-    let checkpoint = store
-        .trusted_mls_governance_checkpoint(realm_id)
-        .ok_or_else(|| {
-            anyhow::anyhow!("MLS admission requires a verified governance checkpoint")
-        })?;
-    let matching = checkpoint
-        .accepted_events
-        .iter()
-        .filter(|event| {
-            event.realm_id.as_str() == realm_id
-                && event.kind.as_str() == event_kind_str::MLS_GENESIS
-                && matches!(
-                    &event.scope_ref,
-                    arkret_sdk::ScopeRef::Realm { realm_id: scope_realm }
-                        if scope_realm.as_str() == realm_id
-                )
-                && event.payload.get("epoch").and_then(Value::as_u64) == Some(0)
-                && event.payload.get("mls_group_id").and_then(Value::as_str)
-                    == Some(snapshot.group_id.as_str())
-        })
-        .collect::<Vec<_>>();
-    anyhow::ensure!(
-        matching.len() == 1,
-        "MLS admission requires exactly one accepted Realm Genesis for the local group; found {}",
-        matching.len()
-    );
-    let accepted_genesis = serde_json::to_value(matching[0])?;
-    let mut projection = store
-        .load()
-        .realm_tree_projections
-        .get(realm_id)
-        .cloned()
-        .ok_or_else(|| anyhow::anyhow!("MLS admission requires the accepted Realm projection"))?;
-    if crate::realm_tree::replace_realm_projection_mls_genesis(&mut projection, accepted_genesis) {
-        store.save_realm_tree_projection(realm_id.to_owned(), projection);
-    }
-    Ok(())
-}
-
 pub(crate) async fn reconcile_mls_admissions_for_realm(
     api: &crate::transport::TransportClient,
     mut state_store: SyncSignal<LocalStateStore>,
@@ -734,7 +687,6 @@ pub(crate) async fn reconcile_mls_admissions_for_realm(
             &realm_id,
             &accepted_events,
         );
-        cache_exact_accepted_realm_mls_genesis(&mut store, &realm_id)?;
     }
     // Only Realms this device can admit into: holding MLS state ⇒ able to build
     // the commit + Welcome. Without a snapshot we are not an admit-capable
@@ -1125,7 +1077,7 @@ pub(super) async fn ensure_mls_genesis_frontier_for_invite(
     }
 }
 
-pub(super) async fn ensure_mls_governance_proof_for_next_commit(
+pub(super) async fn ensure_mls_governance_result_for_next_commit(
     api: &crate::transport::TransportClient,
     state_store: SyncSignal<LocalStateStore>,
     realm_id: &str,
@@ -1215,65 +1167,52 @@ pub(super) async fn refresh_mls_governance_target_basis(
     const ATTEMPTS: usize = 20;
     const DELAY: std::time::Duration = std::time::Duration::from_millis(250);
 
-    let checkpoint = {
-        let store = state_store.read();
-        store
-            .trusted_mls_governance_checkpoint(realm_id)
-            .ok_or_else(|| anyhow::anyhow!("MLS governance checkpoint is unavailable"))?
-    };
-    let base_basis = checkpoint.basis.clone();
-    let mut requires_membership_advance = false;
-    for (claim, receipt) in added_claims {
-        let Ok(actor) = crate::mls::governance_proof::claimed_actor_id(claim, receipt) else {
-            requires_membership_advance = true;
-            break;
-        };
-        if arkret_sdk::current_authorization_incarnation_from_verified_checkpoint(
-            &checkpoint,
-            &actor,
-            None,
-        )
-        .await
-        .is_err()
-        {
-            requires_membership_advance = true;
-            break;
-        }
-    }
+    let account = crate::app::SessionContext::get()
+        .active_account()
+        .ok_or_else(|| anyhow::anyhow!("active account context is unavailable"))?;
+    let epoch = crate::identity::device_directory::cache_epoch();
+    let actors = added_claims
+        .iter()
+        .map(|(claim, receipt)| crate::mls::governance_proof::claimed_actor_id(claim, receipt))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(anyhow::Error::msg)?;
+    let http = api.sdk_http_client()?;
     let submitter = api.event_submitter()?;
     for attempt in 0..ATTEMPTS {
-        match submitter.seals_frontier_realm_view(realm_id).await {
-            Ok(view) if !requires_membership_advance || view.seal_basis != base_basis => {
-                state_store.write().set_realm_seal_view(
-                    realm_id.to_owned(),
-                    crate::state::LocalSealView {
-                        frontier: view
-                            .seal_basis
-                            .leaves
-                            .iter()
-                            .map(ToString::to_string)
-                            .collect(),
-                        ..Default::default()
+        let result: anyhow::Result<_> = async {
+            let view = submitter.seals_frontier_realm_view(realm_id).await?;
+            for actor in &actors {
+                let request = arkret_sdk::MembershipAuthorityRequest {
+                    effective_scope: arkret_sdk::HistoryEffectiveScope::Realm {
+                        realm_id: view.realm_id.clone(),
                     },
-                );
+                    actor_id: actor.clone(),
+                    seal_basis: view.seal_basis.clone(),
+                };
+                let outcome = http.membership_authority(&request).await?;
+                outcome.validate_for_account(&request, &account.authority)?;
+            }
+            Ok(view)
+        }
+        .await;
+        anyhow::ensure!(
+            epoch == crate::identity::device_directory::cache_epoch(),
+            "account session changed during MLS membership refresh"
+        );
+        match result {
+            Ok(view) => {
+                state_store.write().cache_realm_governance_frontier(view).map_err(anyhow::Error::msg)?;
                 return Ok(());
             }
-            Ok(_) if attempt + 1 < ATTEMPTS => {
-                crate::runtime_helpers::sleep_for(DELAY).await;
-            }
-            Ok(_) => {
-                anyhow::bail!(
-                    "joined MLS Add target was not covered by a newer accepted Realm Seal frontier"
-                );
-            }
-            Err(error)
-                if attempt + 1 < ATTEMPTS
-                    && crate::api_error::is_realm_seal_frontier_pending_error(&error) =>
-            {
+            Err(error) if attempt + 1 < ATTEMPTS && (
+                crate::api_error::is_realm_seal_frontier_pending_error(&error)
+                || error.downcast_ref::<arkret_sdk::http_client::Error>().is_some_and(|error| matches!(error,
+                    arkret_sdk::http_client::Error::Api { error, .. }
+                    if matches!(error.code(), "not_found" | "state_mismatch" | "frontier_unavailable")))) => {
                 crate::runtime_helpers::sleep_for(DELAY).await;
             }
             Err(error) => return Err(error),
         }
     }
-    unreachable!("Realm Seal frontier refresh returns on its final attempt")
+    unreachable!("Realm membership refresh returns on its final attempt")
 }

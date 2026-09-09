@@ -147,7 +147,6 @@ fn load_history_request_hpke_private_key(
 struct ReceiptTraversal<'a> {
     api: &'a crate::transport::TransportClient,
     state_store: &'a StateStoreHandle,
-    source_member: bool,
 }
 
 impl garth::ReceiptBoundHistoryTraversal for ReceiptTraversal<'_> {
@@ -203,11 +202,7 @@ impl garth::ReceiptBoundHistoryTraversal for ReceiptTraversal<'_> {
         let cut = crate::mls::governance_acquisition::resolve_history_governance_cut(
             self.api,
             retention,
-            if self.source_member {
-                None
-            } else {
-                Some(access)
-            },
+            Some(access),
         )
         .await
         .map_err(garth::Error::Protocol)?;
@@ -262,38 +257,44 @@ pub struct OrdinaryHumanHistoryRequestPlan {
     pub expires_at: chrono::DateTime<chrono::Utc>,
 }
 
-fn request_trust_bases(
+async fn current_history_authority(
     state_store: &StateStoreHandle,
+    api: &crate::transport::TransportClient,
+    authority: &arkret_sdk::AccountId,
     scope: &arkret_sdk::HistoryEffectiveScope,
-) -> anyhow::Result<(
-    arkret_sdk::SealBasis,
-    arkret_sdk::SealBasis,
-    arkret_sdk::MlsGovernanceVerificationCheckpoint,
-)> {
-    let checkpoint = state_store
-        .read(|store| store.trusted_mls_governance_checkpoint(scope.realm_id().as_str()))
-        .ok_or_else(|| anyhow::anyhow!("history request has no durable verified governance pin"))?;
-    if &checkpoint.realm_id != scope.realm_id() {
-        anyhow::bail!("history request governance pin belongs to another Realm");
-    }
-    let mut bootstrap_leaves = checkpoint
-        .accepted_seals
-        .iter()
-        .filter(|seal| seal.predecessor_refs.is_empty())
-        .map(|seal| seal.id.clone())
-        .collect::<Vec<_>>();
-    bootstrap_leaves.sort();
-    bootstrap_leaves.dedup();
-    let trusted_history_base_basis = arkret_sdk::SealBasis {
-        leaves: bootstrap_leaves,
+    actor: &arkret_sdk::ActorId,
+) -> anyhow::Result<arkret_sdk::HistoryAuthorityOutcome> {
+    let epoch = crate::identity::device_directory::cache_epoch();
+    let observed = state_store.read(|store| {
+        store
+            .seal_view_for_realm(scope.realm_id().as_str())
+            .frontier
+            .clone()
+    });
+    let http = http_client(api)?;
+    let view = http
+        .seals_frontier(scope.realm_id().clone())
+        .await?
+        .frontier;
+    let query = arkret_sdk::HistoryAuthorityRequest {
+        effective_scope: scope.clone(),
+        actor_id: actor.clone(),
+        seal_basis: view.seal_basis,
     };
-    trusted_history_base_basis.validate_protocol_bounds()?;
-    checkpoint.basis.validate_protocol_bounds()?;
-    Ok((
-        trusted_history_base_basis,
-        checkpoint.basis.clone(),
-        checkpoint,
-    ))
+    let outcome = http.history_authority(&query).await?;
+    outcome.validate_for_account(&query, authority)?;
+    anyhow::ensure!(
+        epoch == crate::identity::device_directory::cache_epoch(),
+        "account session changed during history authority query"
+    );
+    anyhow::ensure!(
+        state_store.read(|store| store
+            .seal_view_for_realm(scope.realm_id().as_str())
+            .frontier
+            == observed),
+        "observed history frontier changed during authority query"
+    );
+    Ok(outcome)
 }
 
 async fn current_ordinary_human_endpoint_authorization(
@@ -336,10 +337,9 @@ async fn current_ordinary_human_endpoint_authorization(
     })
 }
 
-/// Author the closed ordinary-human request from durable governance and PCR
-/// facts, then persist the immutable pending intent before transport. An exact
-/// request-id retry reuses the already durable request, including both bases,
-/// ranges, endpoint authorization and recipient key.
+/// Author the closed ordinary-human intent from current Station authority and
+/// endpoint facts. Persist it before transport; exact retries reuse its signed
+/// ranges, endpoint authorization and recipient key without governance pins.
 pub async fn author_and_create_ordinary_human_request(
     state_store: &StateStoreHandle,
     api: &crate::transport::TransportClient,
@@ -353,15 +353,25 @@ pub async fn author_and_create_ordinary_human_request(
     if requester_principal_id != authority.principal_id {
         anyhow::bail!("history request actor differs from the explicit account authority");
     }
-    let (_, _, checkpoint) = request_trust_bases(state_store, &plan.effective_scope)?;
-    let join_epoch = arkret_sdk::history_join_epoch_from_verified_checkpoint(
-        &checkpoint,
+    let history = current_history_authority(
+        state_store,
+        api,
+        authority,
         &plan.effective_scope,
         &arkret_sdk::ActorId::account(authority.clone()),
-        &plan.requester_authorization_incarnation,
     )
-    .await?
-    .ok_or_else(|| anyhow::anyhow!("history membership is ready; MLS lineage is pending"))?;
+    .await?;
+    anyhow::ensure!(
+        history.authorization_incarnation == plan.requester_authorization_incarnation,
+        "history request membership changed before authoring"
+    );
+    anyhow::ensure!(
+        plan.requested_ranges
+            .iter()
+            .all(|range| range.from_epoch >= history.history_floor_epoch),
+        "history request range is below the current scope floor"
+    );
+    let join_epoch = history.join_epoch;
     if let Ok(durable) = runtime(state_store).durable_request(&plan.request_id) {
         if durable.request.effective_scope != plan.effective_scope
             || durable.request.requested_ranges != plan.requested_ranges
@@ -381,8 +391,6 @@ pub async fn author_and_create_ordinary_human_request(
     let http = http_client(api)?;
     let endpoint_authorization =
         current_ordinary_human_endpoint_authorization(&http, authority, device_id).await?;
-    let (trusted_history_base_basis, trusted_current_basis, _) =
-        request_trust_bases(state_store, &plan.effective_scope)?;
     let (_, public_key) =
         load_or_create_history_request_hpke_keypair_durable(secure_store, &plan.request_id).await?;
     let signer = crate::event_signer::active_signer()
@@ -403,8 +411,6 @@ pub async fn author_and_create_ordinary_human_request(
             requester_author_profile: arkret_sdk::AuthorProfile::OrdinaryHuman,
             requester_endpoint_authorization: endpoint_authorization.clone(),
             requester_authorization_incarnation: plan.requester_authorization_incarnation.clone(),
-            trusted_history_base_basis: trusted_history_base_basis.clone(),
-            trusted_current_basis: trusted_current_basis.clone(),
             requested_ranges: plan.requested_ranges.clone(),
             recipient_hpke_public_key: URL_SAFE_NO_PAD.encode(&public_key),
             expires_at: plan.expires_at,
@@ -462,35 +468,6 @@ fn scope_uses_exporter_history(
         } => store
             .circle_content_scheme(realm_id.as_str(), circle_id.as_str())
             .is_some_and(|scheme| scheme == "mls_exporter_aead_v1"),
-    })
-}
-
-async fn readable_history_floor(
-    checkpoint: &arkret_sdk::MlsGovernanceVerificationCheckpoint,
-    scope: &arkret_sdk::HistoryEffectiveScope,
-    actor: &arkret_sdk::ActorId,
-    incarnation: &arkret_sdk::AuthorizationIncarnation,
-) -> anyhow::Result<u64> {
-    let (membership, join_epoch) =
-        arkret_sdk::verified_member_history_from_checkpoint(checkpoint, scope, actor).await?;
-    if membership.incarnation() != incarnation {
-        anyhow::bail!("history request authorization incarnation differs from its verified cut");
-    }
-    readable_history_floor_for_member(checkpoint, &membership, join_epoch).await
-}
-
-async fn readable_history_floor_for_member(
-    checkpoint: &arkret_sdk::MlsGovernanceVerificationCheckpoint,
-    membership: &arkret_state::history_authorization::VerifiedMembership,
-    join_epoch: Option<u64>,
-) -> anyhow::Result<u64> {
-    let join = join_epoch
-        .ok_or_else(|| anyhow::anyhow!("history membership is ready; MLS lineage is pending"))?;
-    let policy =
-        arkret_sdk::history_access_from_verified_checkpoint(checkpoint, membership.scope()).await?;
-    Ok(match policy {
-        arkret_sdk::HistoryAccess::SinceJoin => join,
-        arkret_sdk::HistoryAccess::AllHistoryForCurrentMembers => 0,
     })
 }
 
@@ -605,29 +582,20 @@ async fn build_member_source_attempt(
     }
 
     let request_receipt_digest = request_record.request_receipt.request_receipt_digest()?;
-    let traversal = garth::ReceiptBoundHistoryTraversal::acquire_and_verify(
-        // A source uses its ordinary current-member governance visibility.
-        // Another member's receipt never grants requester traversal access.
-        &ReceiptTraversal {
-            api,
-            state_store,
-            source_member: true,
-        },
-        &request_record.request_receipt.history_traversal_retention,
-        &arkret_sdk::SelfHistoryTraversalAccess::RequestReceipt {
-            request_receipt_digest: request_receipt_digest.clone(),
-        },
-    )
-    .await
-    .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-    let floor = readable_history_floor(
-        &traversal.checkpoint,
+    let history = current_history_authority(
+        state_store,
+        api,
+        authority,
         &request_record.request.effective_scope,
         &request_record.request.requester_actor_id,
-        &request_record.request.requester_authorization_incarnation,
     )
     .await?;
-    selected.retain(|secret| secret.epoch >= floor);
+    anyhow::ensure!(
+        history.authorization_incarnation
+            == request_record.request.requester_authorization_incarnation,
+        "history target has left or rejoined since its request"
+    );
+    selected.retain(|secret| secret.epoch >= history.history_floor_epoch);
     if selected.is_empty() {
         return Ok(None);
     }
@@ -891,38 +859,24 @@ pub async fn converge_member_history_recovery(
         if requested_ranges.is_empty() || !scope_uses_exporter_history(state_store, &scope) {
             continue;
         }
-        let checkpoint = match request_trust_bases(state_store, &scope) {
-            Ok((_, _, checkpoint)) => checkpoint,
-            Err(error) => {
-                outcome.pending_errors += 1;
-                tracing::warn!(%error, "private history request governance cut remains pending");
-                continue;
-            }
-        };
-        let (membership, join_epoch) = match arkret_sdk::verified_member_history_from_checkpoint(
-            &checkpoint,
+        let history = match current_history_authority(
+            state_store,
+            api,
+            authority,
             &scope,
             &arkret_sdk::ActorId::account(authority.clone()),
         )
         .await
         {
-            Ok(membership) => membership,
+            Ok(history) => history,
             Err(error) => {
                 outcome.pending_errors += 1;
-                tracing::warn!(%error, "private history requester membership remains pending");
+                tracing::warn!(%error, "private history current authority remains pending");
                 continue;
             }
         };
-        let incarnation = membership.incarnation().clone();
-        let floor =
-            match readable_history_floor_for_member(&checkpoint, &membership, join_epoch).await {
-                Ok(floor) => floor,
-                Err(error) => {
-                    outcome.pending_errors += 1;
-                    tracing::warn!(%error, "private history scope floor remains pending");
-                    continue;
-                }
-            };
+        let incarnation = history.authorization_incarnation;
+        let floor = history.history_floor_epoch;
         let requested_ranges = ranges_at_or_after(requested_ranges, floor);
         if requested_ranges.is_empty() {
             continue;
@@ -1723,14 +1677,7 @@ pub async fn acquire_and_verify_traversal(
     request_id: &arkret_sdk::HistoryRequestId,
 ) -> anyhow::Result<garth::VerifiedHistoryTraversal> {
     runtime(state_store)
-        .acquire_receipt_bound_traversal(
-            &ReceiptTraversal {
-                api,
-                state_store,
-                source_member: false,
-            },
-            request_id,
-        )
+        .acquire_receipt_bound_traversal(&ReceiptTraversal { api, state_store }, request_id)
         .await
         .map_err(|error| anyhow::anyhow!(error.to_string()))
 }

@@ -1641,8 +1641,7 @@ impl EventSubmitter {
         &self,
         state_store: crate::runtime::input::StateStoreHandle,
     ) -> anyhow::Result<usize> {
-        self.drain_mls_outbound_inner(Some(state_store))
-            .await
+        self.drain_mls_outbound_inner(Some(state_store)).await
     }
 
     async fn drain_mls_outbound_inner(
@@ -2370,7 +2369,6 @@ impl EventSubmitter {
                 authoring_generation,
                 post_accept,
             )?,
-            state_store,
             None,
         )
         .await
@@ -2392,7 +2390,7 @@ impl EventSubmitter {
             signed_event,
             authoring_generation,
         )?;
-        self.enqueue_and_drive_sdk_event(queued, None, None).await
+        self.enqueue_and_drive_sdk_event(queued, None).await
     }
 
     /// Persist an MLS Add commit together with the exact signed Welcome(s) and
@@ -2513,7 +2511,6 @@ impl EventSubmitter {
                 }),
             )?,
             Some(state_store.clone()),
-            Some(state_store.clone()),
         )
         .await
     }
@@ -2521,7 +2518,6 @@ impl EventSubmitter {
     async fn enqueue_and_drive_sdk_event(
         &self,
         queued: QueuedSdkEvent,
-        state_store: Option<crate::runtime::input::StateStoreHandle>,
         accepted_mls_state_store: Option<crate::runtime::input::StateStoreHandle>,
     ) -> anyhow::Result<SubmitEventResult> {
         let mut transaction_id = queued.local_operation_id.clone();

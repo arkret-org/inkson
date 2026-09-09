@@ -145,14 +145,22 @@ impl crate::transport::TransportClient {
 
     pub async fn list_key_backups(&self) -> anyhow::Result<arkret_sdk::KeysBackupsList> {
         self.list_key_backups_page(&arkret_sdk::KeyBackupsListQuery {
-            series_id: None, backup_kind: None, cursor: None, limit: None,
-        }).await
+            series_id: None,
+            backup_kind: None,
+            cursor: None,
+            limit: None,
+        })
+        .await
     }
 
     pub async fn list_key_backups_page(
-        &self, query: &arkret_sdk::KeyBackupsListQuery,
+        &self,
+        query: &arkret_sdk::KeyBackupsListQuery,
     ) -> anyhow::Result<arkret_sdk::KeysBackupsList> {
-        self.sdk_http_client()?.list_key_backups(query).await.map_err(anyhow::Error::from)
+        self.sdk_http_client()?
+            .list_key_backups(query)
+            .await
+            .map_err(anyhow::Error::from)
     }
 
     // ── REC-1 recovery policy + session (6.1 / 6.3) ─────────────────────────

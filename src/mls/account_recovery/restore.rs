@@ -162,8 +162,10 @@ pub(super) fn validate_backup_account(
         return Err(anyhow!("backup restore principal binding mismatch"));
     }
     let current: arkret_sdk::BackupActiveSeriesState = serde_json::from_value(
-        list_payload.get("active_series").cloned()
-            .ok_or_else(|| anyhow!("current backup pointers are unavailable"))?
+        list_payload
+            .get("active_series")
+            .cloned()
+            .ok_or_else(|| anyhow!("current backup pointers are unavailable"))?,
     )?;
     current.validate()?;
     if current.account_id != *authority {
@@ -207,9 +209,14 @@ pub async fn fetch_mls_restore_payload(
     actor_id: &str,
 ) -> Result<Value> {
     use arkret_sdk::{BackupKind, KeyBackupsListQuery};
-    let discovery = api.list_key_backups_page(&KeyBackupsListQuery {
-        series_id: None, backup_kind: None, cursor: None, limit: Some(1),
-    }).await?;
+    let discovery = api
+        .list_key_backups_page(&KeyBackupsListQuery {
+            series_id: None,
+            backup_kind: None,
+            cursor: None,
+            limit: Some(1),
+        })
+        .await?;
     let current = discovery.active_series;
     if current.account_id.principal_id != crate::mls_api_helpers::principal_core_id(actor_id)? {
         return Err(anyhow!("backup discovery account binding mismatch"));
@@ -217,22 +224,33 @@ pub async fn fetch_mls_restore_payload(
     let mut backups = Vec::new();
     let mut bytes = 0usize;
     for kind in [BackupKind::SecretStorage, BackupKind::MlsHistory] {
-        let Some(series_id) = current.pointer(kind).series_id() else { continue; };
+        let Some(series_id) = current.pointer(kind).series_id() else {
+            continue;
+        };
         let mut query = KeyBackupsListQuery {
-            series_id: Some(series_id.clone()), backup_kind: Some(kind), cursor: None, limit: Some(200),
+            series_id: Some(series_id.clone()),
+            backup_kind: Some(kind),
+            cursor: None,
+            limit: Some(200),
         };
         let mut seen = std::collections::BTreeSet::new();
         loop {
             let page = api.list_key_backups_page(&query).await?;
             if page.active_series != current {
-                return Err(anyhow!("backup state changed during recovery discovery; retry"));
+                return Err(anyhow!(
+                    "backup state changed during recovery discovery; retry"
+                ));
             }
             bytes = bytes.saturating_add(serde_json::to_vec(&page)?.len());
             if bytes > 8 * 1024 * 1024 || backups.len() + page.backups.len() > 4096 {
-                return Err(anyhow!("active backup series exceeds this device's recovery metadata budget"));
+                return Err(anyhow!(
+                    "active backup series exceeds this device's recovery metadata budget"
+                ));
             }
             backups.extend(page.backups);
-            let Some(cursor) = page.next_cursor else { break; };
+            let Some(cursor) = page.next_cursor else {
+                break;
+            };
             if !seen.insert(cursor.to_string()) {
                 return Err(anyhow!("backup listing repeated its cursor"));
             }
@@ -343,9 +361,8 @@ async fn hydrate_mls_restore_payload_with_unlock_proof(
             .and_then(Value::as_str)
             .unwrap_or_default();
         if let Ok(class) = arkret_sdk::BackupKind::try_from(backup_kind) {
-            let active_series = garth::mls::backup_selection::active_series_id_for_backup_class(
-                &payload, class,
-            );
+            let active_series =
+                garth::mls::backup_selection::active_series_id_for_backup_class(&payload, class);
             if entry.get("series_id").and_then(Value::as_str) != active_series {
                 continue;
             }
@@ -607,8 +624,7 @@ pub async fn restore_mls_history_with_local_secret_from_payload(
     actor_id: &str,
 ) -> RestoreReport {
     let mut report = RestoreReport::default();
-    if let Err(error) = validate_backup_account(list_payload, authority, actor_id)
-    {
+    if let Err(error) = validate_backup_account(list_payload, authority, actor_id) {
         report.failed = 1;
         report.first_error = Some(error.to_string());
         return report;
@@ -868,4 +884,3 @@ pub fn mls_backup_prompt_required(
         Ok(Some(_))
     )
 }
-

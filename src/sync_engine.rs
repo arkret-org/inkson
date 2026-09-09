@@ -459,10 +459,7 @@ impl
                 "account post-commit deferred durable outbound drain"
             );
         }
-        if let Err(error) = submitter
-            .drain_mls_outbound()
-            .await
-        {
+        if let Err(error) = submitter.drain_mls_outbound().await {
             tracing::debug!(?error, "account post-commit deferred MLS outbound drain");
         }
 

@@ -136,11 +136,19 @@ async fn ensure_initial_active_series(
 ) -> Result<()> {
     let wire_kind = super::rotation_transaction::wire_backup_kind(backup_kind);
     let http = api.sdk_http_client()?;
-    let current = api.list_key_backups_page(&arkret_sdk::KeyBackupsListQuery {
-        series_id: None, backup_kind: None, cursor: None, limit: Some(1),
-    }).await?.active_series;
+    let current = api
+        .list_key_backups_page(&arkret_sdk::KeyBackupsListQuery {
+            series_id: None,
+            backup_kind: None,
+            cursor: None,
+            limit: Some(1),
+        })
+        .await?
+        .active_series;
     if current.account_id != *authority || current.control_realm_id != *control_realm {
-        return Err(anyhow!("backup pointer response belongs to another account or PCR"));
+        return Err(anyhow!(
+            "backup pointer response belongs to another account or PCR"
+        ));
     }
     let kind = arkret_sdk::BackupKind::try_from(wire_kind).map_err(anyhow::Error::msg)?;
     let active = current.pointer(kind).series_id().map(|id| id.as_str());
