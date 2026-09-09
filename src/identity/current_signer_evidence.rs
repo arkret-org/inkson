@@ -18,7 +18,10 @@ pub(crate) async fn query_for_signal(
     CurrentSignerEvidenceQueryRequestBody,
     CurrentSignerEvidenceQueryOutcome,
 )> {
-    envelope.validate_structural().ok()?;
+    envelope
+        .validate_structural()
+        .map_err(|error| tracing::warn!(%error, "current Signal evidence envelope is invalid"))
+        .ok()?;
     let selector = match envelope.sender_device_id.as_ref() {
         Some(device_id) => CurrentSignerEvidenceSelector::AccountDevice {
             account_id: envelope.sender_actor_id.as_account_id()?.clone(),
@@ -44,8 +47,17 @@ pub(crate) async fn query_for_signal(
         challenge: arkret_sdk::NonEmptyString::new(format!("ak.challenge:{nonce}")).ok()?,
         queries: vec![selector],
     };
-    request.validate_for_envelope(envelope).ok()?;
-    let outcome = http.current_signer_evidence_query(&request).await.ok()?;
+    request
+        .validate_for_envelope(envelope)
+        .map_err(|error| tracing::warn!(%error, "current Signal evidence request is invalid"))
+        .ok()?;
+    let outcome = http
+        .current_signer_evidence_query(&request)
+        .await
+        .map_err(|error| {
+            tracing::warn!(%error, "current Signal signer evidence query failed");
+        })
+        .ok()?;
     let method_did =
         arkret_sdk::verification_method_did(outcome.proof.verification_method.as_str()).ok()?;
     let document = match anchor.resolve_did_document(&method_did) {
@@ -53,6 +65,7 @@ pub(crate) async fn query_for_signal(
         None => {
             let client = reqwest::Client::new();
             if !anchor.ensure_actor_document(&client, &method_did).await {
+                tracing::warn!(did = %method_did, "current Signal evidence proof DID is unavailable");
                 return None;
             }
             anchor.resolve_did_document(&method_did)?
@@ -64,11 +77,13 @@ pub(crate) async fn query_for_signal(
         &method_did,
         arkret_sdk::identity::DidVerificationRelationship::AssertionMethod,
     )
+    .map_err(|error| tracing::warn!(%error, "current Signal evidence proof method relationship is invalid"))
     .ok()?;
     let key = arkret_sdk::resolve_verification_method_key_from_document(
         &document,
         outcome.proof.verification_method.as_str(),
     )
+    .map_err(|error| tracing::warn!(%error, "current Signal evidence proof key is unavailable"))
     .ok()?;
     let key =
         ed25519_dalek::VerifyingKey::from_bytes(&key.public_key.ed25519_bytes().ok()?).ok()?;
@@ -77,6 +92,7 @@ pub(crate) async fn query_for_signal(
         &key,
         chrono::Utc::now(),
     )
+    .map_err(|error| tracing::warn!(%error, "current Signal evidence proof verification failed"))
     .ok()?;
     Some((request, outcome))
 }

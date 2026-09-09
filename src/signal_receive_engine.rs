@@ -723,7 +723,6 @@ mod tests {
                 .unwrap(),
                 envelope_digest: arkret_sdk::Hash::new(format!("sha256:{}", "0".repeat(64)))
                     .unwrap(),
-                created_at: at(0),
                 domain: None,
                 audience: None,
                 jws: String::new(),

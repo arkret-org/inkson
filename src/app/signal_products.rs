@@ -260,9 +260,12 @@ impl SignalProductSink for AppSignalProductSink {
             }
             let Some(device) = envelope.sender_device_id.as_ref() else {
                 let Some(api) = self.authenticated_api() else {
+                    tracing::warn!("Agent Signal evidence has no authenticated API");
                     return;
                 };
-                let Ok(http) = api.sdk_http_client() else {
+                let Ok(http) = api.sdk_http_client().map_err(
+                    |error| tracing::warn!(%error, "Agent Signal evidence client is unavailable"),
+                ) else {
                     return;
                 };
                 let anchor = crate::identity::did_resolver::ResolverDidAnchor::from_profile(
@@ -270,9 +273,13 @@ impl SignalProductSink for AppSignalProductSink {
                     self.did_cache.peek().clone(),
                 );
                 let Some(recipient_principal_id) = self.principal_id.peek().clone() else {
+                    tracing::warn!("Agent Signal evidence recipient principal is unavailable");
                     return;
                 };
-                let Ok(recipient_station_id) = http.describe().await.map(|value| value.service_id)
+                let Ok(recipient_station_id) =
+                    http.describe().await.map(|value| value.service_id).map_err(
+                        |error| tracing::warn!(%error, "Agent Signal recipient describe failed"),
+                    )
                 else {
                     return;
                 };
@@ -286,9 +293,12 @@ impl SignalProductSink for AppSignalProductSink {
                     .await
                 {
                     let mut state_store = self.state_store;
-                    let _ = state_store
+                    if let Err(error) = state_store
                         .write()
-                        .store_verified_agent_signer_evidence(entry);
+                        .store_verified_agent_signer_evidence(entry)
+                    {
+                        tracing::warn!(%error, "verified Agent Signal evidence could not be stored");
+                    }
                 }
                 let mut did_cache = self.did_cache;
                 did_cache.set(anchor.into_cache());

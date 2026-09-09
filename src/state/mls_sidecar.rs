@@ -197,7 +197,7 @@ impl LocalStateStore {
             .checked_add(1)
             .ok_or_else(|| "accepted MLS artifact revision overflow".to_owned())?;
 
-        for event_id in snapshot.ready_groups.values() {
+        for (group_key, event_id) in &snapshot.ready_groups {
             let artifact = snapshot.artifacts.get(event_id).ok_or_else(|| {
                 "accepted MLS ready index references a missing artifact".to_owned()
             })?;
@@ -206,6 +206,14 @@ impl LocalStateStore {
                     != Some(&artifact.winning_transition_ref)
             {
                 return Err("accepted MLS ready artifact is not winner-bound".to_owned());
+            }
+            // An unrelated artifact publication must not rewind this group's
+            // receive ratchets or overwrite a locally staged next epoch.
+            let previous = &self.cached.accepted_mls_artifacts.snapshot;
+            if previous.ready_groups.get(group_key) == Some(event_id)
+                && previous.artifacts.get(event_id) == Some(artifact)
+            {
+                continue;
             }
             let payload = serde_json::to_value(&artifact.event.payload)
                 .map_err(|error| format!("encode accepted MLS Event payload: {error}"))?;
@@ -238,7 +246,7 @@ impl LocalStateStore {
             );
             if let Some(current) = self.cached.mls_local_checkpoints.get(&scope_key)
                 && current.group_id == envelope.group_id
-                && current.epoch < envelope.epoch
+                && current.epoch != envelope.epoch
             {
                 self.cached.mls_historical_checkpoints.insert(
                     historical_mls_state_key(&scope_key, &current.group_id, current.epoch),
@@ -1590,6 +1598,123 @@ mod tests {
     use serde_json::json;
 
     use super::LocalStateStore;
+
+    #[test]
+    fn accepted_publication_preserves_staging_and_unchanged_receive_state() {
+        let path = std::env::temp_dir().join(format!(
+            "inkson-accepted-cas-{}.json",
+            chrono::Utc::now().timestamp_nanos_opt().unwrap()
+        ));
+        let realm = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
+        let id = arkret_sdk::EventId::new("ak:event:AXBcp13trH3bPXvj0eHppCpGqJZWL9yqE3cf2Tl43vyk")
+            .unwrap();
+        let group = "AQID";
+        let binding = arkret_sdk::MlsGovernanceBindingPayload::realm(
+            arkret_sdk::RealmId::new(realm).unwrap(),
+            group,
+            0,
+            1,
+            arkret_sdk::Hash::new(format!("sha256:{}", "a5".repeat(32))).unwrap(),
+            arkret_sdk::ContentScheme::MlsExporterAeadV1,
+            Some(arkret_sdk::DurabilityPolicy::None),
+            arkret_sdk::ProfileId::MLS_GOVERNANCE_BINDING_FULL_V1,
+            arkret_sdk::CORE_REDUCER_PROFILE,
+        )
+        .unwrap();
+        let commit = arkret_sdk::MlsCommitEnvelope {
+            group_id: group.into(),
+            epoch: 1,
+            commit: arkret_sdk::base64url_encode(b"commit"),
+            commit_digest: arkret_sdk::Hash::new(arkret_sdk::canonical::sha256_digest(b"commit"))
+                .unwrap(),
+            ratchet_tree: None,
+        };
+        let payload =
+            arkret_sdk::MlsCommitPayload::new(0, id.to_string(), Vec::new(), &commit, binding)
+                .unwrap();
+        let event = serde_json::from_value(json!({
+            "event_id": id, "kind": "ak.mls.commit", "realm_id": realm,
+            "scope_ref": {"kind":"realm", "realm_id":realm},
+            "actor_id": {"kind":"account", "account_id": {"principal_id":"ak:did_core:web:alice.example", "station_id":"ak:did_core:web:station.example"}},
+            "actor_seq": 1, "created_at":"2026-05-19T00:00:00.000Z",
+            "hlc":"01970e589d21-0001-a13f9c2e", "prev_refs":[], "payload":payload, "proofs":[]
+        })).unwrap();
+        let mut accepted = crate::mls::persistence::encrypt_state(
+            realm,
+            group,
+            1,
+            b"accepted",
+            "test-secret",
+            &[7; 16],
+        );
+        accepted.group_state_event_id = Some(id.clone());
+        let staged = crate::mls::persistence::encrypt_state(
+            realm,
+            group,
+            2,
+            b"staged",
+            "test-secret",
+            &[8; 16],
+        );
+        let mut store = LocalStateStore::with_path(&path);
+        store.save_mls_checkpoint(realm, staged.clone()).unwrap();
+        let artifact = garth::DurableAcceptedMlsArtifact {
+            event,
+            event_digest: arkret_sdk::Hash::new(format!("sha256:{}", "a5".repeat(32))).unwrap(),
+            winning_transition_ref: id.clone(),
+            snapshot: accepted.into_queued(),
+            history_secret: garth::QueuedMlsHistorySecret {
+                group_id: group.into(),
+                epoch: 1,
+                transition_ref: id.clone(),
+                ciphertext: vec![1],
+            },
+        };
+        let mut state = garth::AcceptedMlsArtifactState::default();
+        state.artifacts.insert(id.to_string(), artifact);
+        state.ready_groups.insert(group.into(), id.to_string());
+        assert!(
+            store
+                .compare_and_swap_accepted_mls_artifacts(0, &state)
+                .unwrap()
+                .is_some()
+        );
+        let archived = store
+            .cached
+            .mls_historical_checkpoints
+            .values()
+            .find(|value| value.epoch == 2)
+            .unwrap();
+        assert_eq!(archived, &staged);
+        let mut ratcheted = store
+            .cached
+            .mls_local_checkpoints
+            .get(realm)
+            .unwrap()
+            .clone();
+        ratcheted.ciphertext_hex = "ad".repeat(32);
+        store
+            .cached
+            .mls_local_checkpoints
+            .insert(realm.into(), ratcheted.clone());
+        assert!(
+            store
+                .compare_and_swap_accepted_mls_artifacts(1, &state)
+                .unwrap()
+                .is_some()
+        );
+        assert_eq!(
+            store.cached.mls_local_checkpoints.get(realm),
+            Some(&ratcheted)
+        );
+        assert!(
+            store
+                .compare_and_swap_accepted_mls_artifacts(1, &state)
+                .unwrap()
+                .is_none()
+        );
+        let _ = std::fs::remove_file(path);
+    }
 
     #[test]
     fn verified_commit_restores_missing_nonzero_epoch_reference() {

@@ -230,6 +230,9 @@ pub(crate) async fn resolve_current_signal_sender_evidence(
         anchor,
     )
     .await?;
+    if outcome.response.evidences.is_empty() {
+        tracing::warn!("current Agent Signal authority returned no evidence");
+    }
     let operation_id = request.agent_observation_operation_id().ok()?;
     let context = CachedAgentSignerEvidenceContext::CurrentSignal {
         operation_id,
@@ -260,16 +263,19 @@ pub(crate) async fn resolve_current_signal_sender_evidence(
         }
         let evidence = *agent_signer_evidence;
         if !current_evidence_matches_context(&evidence, &context) {
+            tracing::warn!("current Agent Signal evidence does not match the requested context");
             continue;
         }
         let Some(entry) =
             materialize_verified_cache_entry(http, anchor, evidence, context.clone()).await
         else {
+            tracing::warn!("current Agent Signal evidence failed independent materialization");
             continue;
         };
         let Some(key) =
             validate_current_entry(&entry, &envelope.sender_actor_id, &verification_method)
         else {
+            tracing::warn!("current Agent Signal evidence failed current authority validation");
             continue;
         };
         verified.push((key, entry));

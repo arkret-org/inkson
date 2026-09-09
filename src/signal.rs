@@ -784,7 +784,6 @@ fn seal_signal_envelope_with_signer(
             verification_method: verification_method.clone(),
             envelope_digest: arkret_sdk::Hash::new(format!("sha256:{}", "0".repeat(64)))?,
             // `signal.md` §1: proof created_at MUST equal the outer sent_at.
-            created_at: header.sent_at,
             domain: None,
             audience: None,
             jws: String::new(),
@@ -856,7 +855,6 @@ pub(crate) mod test_support {
                 verification_method: verification_method.clone(),
                 envelope_digest: arkret_sdk::Hash::new(format!("sha256:{}", "0".repeat(64)))
                     .unwrap(),
-                created_at: header.sent_at,
                 domain: None,
                 audience: None,
                 jws: String::new(),
@@ -1138,7 +1136,7 @@ mod tests {
     /// Restates the deleted `presence_proof_round_trips_through_ephemeral_sdk_verifier`
     /// test. The plaintext ephemeral binding context is gone; the v1 transcript
     /// is `ak.signal_proof.v1` over `envelope_digest` plus the sender binding,
-    /// with `proof.created_at` byte-equal to the header `sent_at`.
+    /// with the proof timestamp sourced from the header `sent_at`.
     ///
     /// The ciphertext here is opaque filler: this asserts the proof transcript
     /// and the AAD-to-header binding, neither of which depends on the AEAD.
@@ -1195,7 +1193,6 @@ mod tests {
                     .unwrap(),
                 envelope_digest: arkret_sdk::Hash::new(format!("sha256:{}", "0".repeat(64)))
                     .unwrap(),
-                created_at: header.sent_at,
                 domain: None,
                 audience: None,
                 jws: String::new(),

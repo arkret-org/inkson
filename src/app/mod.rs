@@ -1402,6 +1402,7 @@ fn AppBootstrap() -> Element {
                 crate::components::AgentRuntimeApprovalPrompt {
                     token,
                     principal_id,
+                    server_description,
                 }
                 if active_prompt == AccountHealthPrompt::RecommendedEncryptionFloor
                     && !recovery_key_setup_prompt()

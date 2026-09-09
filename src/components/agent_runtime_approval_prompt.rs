@@ -39,6 +39,7 @@ struct PendingAgentRuntimeApproval {
 pub fn AgentRuntimeApprovalPrompt(
     token: Signal<String>,
     principal_id: Signal<Option<arkret_sdk::DidCoreId>>,
+    server_description: Signal<Option<arkret_sdk::ServiceDescribe>>,
 ) -> Element {
     let mut pending = use_signal(|| None::<PendingAgentRuntimeApproval>);
     let mut handled = use_signal(HashSet::<OpaqueLocalId>::new);
@@ -90,6 +91,7 @@ pub fn AgentRuntimeApprovalPrompt(
             spawn(async move {
                 match fetch_agent_runtime_approval(&server_url, api_token, notification).await {
                     Ok(Some(request)) => {
+                        tracing::info!(agent_id = %request.agent_id, "agent runtime approval discovered through account notification");
                         status.set(String::new());
                         pending.set(Some(request));
                     }
@@ -119,7 +121,9 @@ pub fn AgentRuntimeApprovalPrompt(
                     continue;
                 }
 
-                if !fallback_poll_environment_ready() {
+                if !fallback_poll_environment_ready()
+                    || !approval_fallback_allowed(server_description.read().as_ref())
+                {
                     crate::runtime_helpers::sleep_for(APPROVAL_FALLBACK_POLL_INTERVAL).await;
                     continue;
                 }
@@ -144,6 +148,7 @@ pub fn AgentRuntimeApprovalPrompt(
                 .await
                 {
                     Ok(Some(request)) => {
+                        tracing::info!(agent_id = %request.agent_id, "agent runtime approval discovered through unsupported-notification fallback");
                         status.set(String::new());
                         pending.set(Some(request));
                         false
@@ -660,11 +665,21 @@ fn timestamp_has_expired(value: &str) -> bool {
 }
 
 fn approval_fallback_delay(failed: bool) -> Duration {
-    if !failed {
-        return APPROVAL_FALLBACK_POLL_INTERVAL;
-    }
     let jitter = crate::clock::now_unix_ms() % 6;
-    APPROVAL_FALLBACK_MAX_INTERVAL.saturating_sub(Duration::from_secs(jitter))
+    if failed {
+        APPROVAL_FALLBACK_MAX_INTERVAL.saturating_sub(Duration::from_secs(jitter))
+    } else {
+        APPROVAL_FALLBACK_POLL_INTERVAL.saturating_add(Duration::from_secs(jitter))
+    }
+}
+
+fn approval_fallback_allowed(description: Option<&arkret_sdk::ServiceDescribe>) -> bool {
+    description.is_some_and(|description| {
+        !description
+            .supported_features
+            .iter()
+            .any(|feature| feature == "ak.feature.agent_runtime_approval_notifications.v1")
+    })
 }
 
 fn fallback_poll_environment_ready() -> bool {
@@ -680,5 +695,23 @@ fn fallback_poll_environment_ready() -> bool {
     #[cfg(not(target_arch = "wasm32"))]
     {
         true
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn approval_list_fallback_requires_a_resolved_service_without_notifications() {
+        assert!(!approval_fallback_allowed(None));
+        let mut description =
+            crate::transport::websocket::tests_support::describe_without_websocket();
+        description.supported_features.clear();
+        assert!(approval_fallback_allowed(Some(&description)));
+        description
+            .supported_features
+            .push("ak.feature.agent_runtime_approval_notifications.v1".to_owned());
+        assert!(!approval_fallback_allowed(Some(&description)));
     }
 }
