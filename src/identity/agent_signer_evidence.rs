@@ -962,10 +962,11 @@ pub(crate) mod cache_tests {
     }
 
     fn fixture() -> Fixture {
-        serde_json::from_str(include_str!(concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../arkret-rust-sdk/crates/sdk/tests/fixtures/agent-current-context.json"
-        )))
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../arkret-rust-sdk/crates/sdk/tests/fixtures/agent-current-context.json");
+        serde_json::from_slice(
+            &std::fs::read(path).expect("public Agent context fixture must be generated first"),
+        )
         .unwrap()
     }
 

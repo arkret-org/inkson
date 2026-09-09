@@ -50,6 +50,37 @@ fn directory_prefetch_needed(lookup: &crate::identity::device_directory::CacheLo
     matches!(lookup, crate::identity::device_directory::CacheLookup::Miss)
 }
 
+async fn prefetch_agent_sender_evidence(
+    mut state_store: SyncSignal<crate::state::LocalStateStore>,
+    http: &arkret_sdk::http_client::Client,
+    envelope: &arkret_wire::SignalEnvelope,
+    recipient_account_id: arkret_sdk::AccountId,
+) {
+    // Release the signal read guard before suspending on the evidence query.
+    // A temporary in the awaited argument list retains the lock while Realm
+    // deliveries need to write, and also blocks caching a successful response.
+    let cached_entries = state_store.peek().cached_agent_signer_evidence(
+        envelope.sender_actor_id.signing_principal_id(),
+        &envelope.proof.verification_method,
+    );
+    if let Some(entry) =
+        crate::identity::agent_signer_evidence::resolve_current_signal_sender_evidence(
+            http,
+            envelope,
+            recipient_account_id,
+            cached_entries,
+        )
+        .await
+    {
+        if let Err(error) = state_store
+            .write()
+            .store_verified_agent_signer_evidence(entry)
+        {
+            tracing::warn!(%error, "verified Agent Signal evidence could not be stored");
+        }
+    }
+}
+
 #[derive(Clone, Copy)]
 struct CachedVerdict {
     allowed: bool,
@@ -280,26 +311,13 @@ impl SignalProductSink for AppSignalProductSink {
                     tracing::warn!("Agent Signal evidence recipient Account is unavailable");
                     return;
                 };
-                if let Some(entry) =
-                    crate::identity::agent_signer_evidence::resolve_current_signal_sender_evidence(
-                        &http,
-                        envelope,
-                        recipient_account_id,
-                        self.state_store.peek().cached_agent_signer_evidence(
-                            envelope.sender_actor_id.signing_principal_id(),
-                            &envelope.proof.verification_method,
-                        ),
-                    )
-                    .await
-                {
-                    let mut state_store = self.state_store;
-                    if let Err(error) = state_store
-                        .write()
-                        .store_verified_agent_signer_evidence(entry)
-                    {
-                        tracing::warn!(%error, "verified Agent Signal evidence could not be stored");
-                    }
-                }
+                prefetch_agent_sender_evidence(
+                    self.state_store,
+                    &http,
+                    envelope,
+                    recipient_account_id,
+                )
+                .await;
                 return;
             };
             let actor = envelope.sender_actor_id.to_string();
@@ -420,6 +438,95 @@ impl SignalProductSink for AppSignalProductSink {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(not(target_arch = "wasm32"))]
+    #[tokio::test]
+    async fn agent_evidence_query_releases_state_lock_while_waiting_for_network() {
+        let station = arkret_sdk::DidCoreId::new("ak:did_core:web:station.example").unwrap();
+        let actor = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+            arkret_sdk::DidCoreId::new("ak:did_core:web:agent.example").unwrap(),
+            station.clone(),
+        ));
+        let recipient = arkret_sdk::AccountId::new(
+            arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example").unwrap(),
+            station,
+        );
+        let realm = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
+        let now = crate::clock::now_utc();
+        let mut envelope: arkret_wire::SignalEnvelope = serde_json::from_value(serde_json::json!({
+            "realm_id": realm,
+            "scope_ref": {"kind": "realm", "realm_id": realm},
+            "sender_actor_id": actor,
+            "seal_ref": format!("ak:seal:sha256:{}", "a".repeat(64)),
+            "signal_class": "session",
+            "sent_at": arkret_sdk::canonical::format_timestamp_canonical(now),
+            "expires_at": arkret_sdk::canonical::format_timestamp_canonical(now + chrono::Duration::seconds(10)),
+            "encrypted_payload": {
+                "scheme": arkret_wire::signal::SIGNAL_AEAD_SCHEME,
+                "key_ref": {"algorithm": "MLS-EXPORTER-AEAD", "group_state_ref": "ak:event:AZVgkcivLIz2PjwUcjuT5bTb6295nnowDbSQak0QfNCa"},
+                "purpose": arkret_wire::signal::SIGNAL_AEAD_PURPOSE,
+                "aead_profile": "MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519",
+                "epoch": 4, "nonce": "AAAAAAAAAAAAAAAA", "ciphertext": "AAAAAAAAAAAAAAAAAAAAAA",
+                "aad_digest": format!("sha256:{}", "0".repeat(64))
+            },
+            "proof": {"kind": arkret_sdk::proof_kind::DETACHED_JWS,
+                "verification_method": "did:web:agent.example#runtime",
+                "envelope_digest": format!("sha256:{}", "0".repeat(64)), "jws": ""}
+        }))
+        .unwrap();
+        envelope.encrypted_payload.aad_digest = envelope.expected_aad_digest().unwrap();
+        envelope.proof.envelope_digest = envelope.envelope_digest().unwrap();
+        // This test stops at the query; it does not claim signature admission.
+        envelope.proof.jws = arkret_wire::test_support::structural_only_detached_jws(
+            &envelope.proof.envelope_digest,
+        );
+        envelope.validate_structural().unwrap();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let http = arkret_sdk::http_client::Client::builder(
+            format!("http://{}/", listener.local_addr().unwrap())
+                .parse()
+                .unwrap(),
+        )
+        .allow_insecure_localhost()
+        .build()
+        .unwrap();
+        let dom = VirtualDom::new(|| rsx! {});
+        let mut state_store = dom.in_scope(ScopeId::ROOT, || {
+            SyncSignal::new_maybe_sync_in_scope(
+                crate::state::LocalStateStore::with_path(std::env::temp_dir().join(format!(
+                    "inkson-agent-signal-lock-{}.json",
+                    std::process::id()
+                ))),
+                ScopeId::ROOT,
+            )
+        });
+        let mut query = Box::pin(prefetch_agent_sender_evidence(
+            state_store,
+            &http,
+            &envelope,
+            recipient,
+        ));
+        let _connection = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            tokio::select! {
+                result = listener.accept() => result.unwrap(),
+                () = &mut query => panic!("the evidence query must reach the network"),
+            }
+        })
+        .await
+        .expect("evidence request reached the stalled server");
+        let (written, observed) = tokio::sync::oneshot::channel();
+        let writer = std::thread::spawn(move || {
+            let _guard = state_store.write();
+            let _ = written.send(());
+        });
+        let writable = tokio::time::timeout(std::time::Duration::from_secs(2), observed).await;
+        // Release a regressed guard before joining so a failing test cannot hang.
+        drop(query);
+        writer.join().unwrap();
+        writable
+            .expect("Realm state must remain writable during an Agent evidence query")
+            .unwrap();
+    }
 
     #[test]
     fn signal_authorization_preserves_the_verified_actor_and_station() {
