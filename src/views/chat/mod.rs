@@ -752,11 +752,10 @@ async fn ensure_owned_agent_sidecar(
     let source_realm = arkret_sdk::RealmId::new(realm_id.to_owned())?;
     let source_digest_suite = state_store
         .read()
-        .trusted_mls_governance_checkpoint(source_realm.as_str())
+        .station_realm_digest_suite(source_realm.as_str())
         .ok_or_else(|| {
-            anyhow::anyhow!("native Sidecar source Realm has no verified governance checkpoint")
-        })?
-        .live_digest_suite;
+            anyhow::anyhow!("native Sidecar source Realm is waiting for its Station frontier")
+        })?;
     let source_strand = arkret_sdk::StrandId::new(strand_id.to_owned())?;
     let mut addressed = addressed_agent_ids
         .iter()

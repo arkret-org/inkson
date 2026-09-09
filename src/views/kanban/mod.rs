@@ -870,15 +870,12 @@ pub fn KanbanPanel(
     let navigator = use_navigator();
     let route = use_route::<Route>();
     let local_realm_id = local_projection_realm_id(&selected_realm_id, &projection_realm_id);
-    // A Realm write cannot be authored until the accepted governance closure
-    // has been verified and pinned locally. The Realm events engine actively
-    // acquires a missing checkpoint; gating the create affordance here avoids
-    // enqueueing a request that is known to fail during that short recovery
-    // window. The durable same-operation retry below still covers races and
-    // transient failures after the click.
-    let governance_checkpoint_ready = state_store
+    // Authoring uses the authenticated Station's current digest suite. The
+    // Realm events engine refreshes this bounded result independently of history.
+    // Durable same-operation retry still covers changes after the click.
+    let station_frontier_ready = state_store
         .read()
-        .trusted_mls_governance_checkpoint(&selected_realm_id)
+        .station_realm_digest_suite(&selected_realm_id)
         .is_some();
     // The board id lives in the URL (`/kanban/<realm>/board/<board>` and
     // its `/task/<strand>` extension). Seeding `selected_board`
@@ -1510,11 +1507,11 @@ pub fn KanbanPanel(
                                     Button {
                                         variant: ButtonVariant::Primary,
                                         "data-testid": "create-board-space-button",
-                                        disabled: !event_write_ready || !governance_checkpoint_ready,
-                                        title: if governance_checkpoint_ready {
+                                        disabled: !event_write_ready || !station_frontier_ready,
+                                        title: if station_frontier_ready {
                                             "Create Board"
                                         } else {
-                                            "Waiting for verified Realm governance"
+                                            "Waiting for the Realm Station frontier"
                                         },
                                         onclick: {
                                             let base = base_url.clone();

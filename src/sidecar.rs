@@ -1243,6 +1243,9 @@ pub(crate) async fn sync_sidecar_exchange_background(
     let mut outcome = SidecarBackgroundSyncOutcome::default();
     for (realm_id, realm_views) in views_by_realm {
         outcome.sidecar_views += realm_views.len();
+        api.event_submitter()?
+            .refresh_realm_governance_frontier(&realm_id)
+            .await?;
         let backfill = api.event_submitter()?.backfill(&realm_id).await?;
         let accepted_events = backfill.complete_events("Sidecar context recovery")?;
         let locators =
@@ -1425,9 +1428,7 @@ fn refold_sidecar_exchanges_with_decrypt_report(
         if scope_hints.is_empty() {
             return SidecarRefoldOutcome::default();
         }
-        let Some(digest_suite) = store_ref
-            .trusted_mls_governance_checkpoint(realm_id)
-            .map(|checkpoint| checkpoint.live_digest_suite)
+        let Some(digest_suite) = store_ref.station_realm_digest_suite(realm_id)
         else {
             return SidecarRefoldOutcome {
                 backfill_required: true,
@@ -2558,14 +2559,23 @@ mod tests {
         ));
         let mut store = crate::state::LocalStateStore::with_path(path);
         let realm_id = "ak:realm:AUqzNZlfuL-7z087TbZhKOdYyKUNPAa2o_neyoFRh3o2";
-        crate::mls::governance_proof::seed_test_governance_result(
-            &mut store,
-            realm_id,
-            None,
-            arkret_sdk::base64url_encode(realm_id.as_bytes()),
-            0,
-            0,
-        );
+        store
+            .cache_realm_governance_frontier(arkret_sdk::RealmSealFrontierView::new(
+                arkret_sdk::RealmId::new(realm_id).unwrap(),
+                arkret_sdk::SealBasis {
+                    leaves: vec![arkret_sdk::SealId::new(
+                        "ak:seal:sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                    ).unwrap()],
+                },
+                arkret_sdk::DigestSuite::Sha256,
+                arkret_sdk::ControlGovernanceHealth::healthy(),
+                arkret_sdk::RealmSealFrontierObservationCoordinate {
+                    service_id: controller_account().station_id,
+                    sequence: 1,
+                    observed_at: crate::clock::now_utc(),
+                },
+            ))
+            .unwrap();
         store
     }
 
