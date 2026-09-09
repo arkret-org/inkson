@@ -2,7 +2,6 @@ use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use garth::history_runtime::{
     canonical_ranges_for_epochs, live_attempt_covers_epoch, ranges_cover,
-    verify_authorization_incarnation_is_retained_join,
 };
 
 use crate::runtime::input::StateStoreHandle;
@@ -355,12 +354,14 @@ pub async fn author_and_create_ordinary_human_request(
         anyhow::bail!("history request actor differs from the explicit account authority");
     }
     let (_, _, checkpoint) = request_trust_bases(state_store, &plan.effective_scope)?;
-    let join_epoch = verify_authorization_incarnation_is_retained_join(
+    let join_epoch = arkret_sdk::history_join_epoch_from_verified_checkpoint(
         &checkpoint,
         &plan.effective_scope,
         &arkret_sdk::ActorId::account(authority.clone()),
         &plan.requester_authorization_incarnation,
-    )?;
+    )
+    .await?
+    .ok_or_else(|| anyhow::anyhow!("history membership is ready; MLS lineage is pending"))?;
     if let Ok(durable) = runtime(state_store).durable_request(&plan.request_id) {
         if durable.request.effective_scope != plan.effective_scope
             || durable.request.requested_ranges != plan.requested_ranges
@@ -470,8 +471,14 @@ async fn readable_history_floor(
     actor: &arkret_sdk::ActorId,
     incarnation: &arkret_sdk::AuthorizationIncarnation,
 ) -> anyhow::Result<u64> {
-    let join =
-        verify_authorization_incarnation_is_retained_join(checkpoint, scope, actor, incarnation)?;
+    let join = arkret_sdk::history_join_epoch_from_verified_checkpoint(
+        checkpoint,
+        scope,
+        actor,
+        incarnation,
+    )
+    .await?
+    .ok_or_else(|| anyhow::anyhow!("history membership is ready; MLS lineage is pending"))?;
     let policy = arkret_sdk::history_access_from_verified_checkpoint(checkpoint, scope).await?;
     Ok(match policy {
         arkret_sdk::HistoryAccess::SinceJoin => join,
@@ -903,13 +910,21 @@ pub async fn converge_member_history_recovery(
                     continue;
                 }
             };
-        let floor = readable_history_floor(
+        let floor = match readable_history_floor(
             &checkpoint,
             &scope,
             &arkret_sdk::ActorId::account(authority.clone()),
             &incarnation,
         )
-        .await?;
+        .await
+        {
+            Ok(floor) => floor,
+            Err(error) => {
+                outcome.pending_errors += 1;
+                tracing::warn!(%error, "private history scope floor remains pending");
+                continue;
+            }
+        };
         let requested_ranges = ranges_at_or_after(requested_ranges, floor);
         if requested_ranges.is_empty() {
             continue;

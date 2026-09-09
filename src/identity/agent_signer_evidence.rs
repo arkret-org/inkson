@@ -407,34 +407,12 @@ pub(crate) fn cached_current_signal_sender_evidence(
     if envelope.sender_device_id.is_some() {
         return None;
     }
-    let mut verified = Vec::new();
-    for entry in store.cached_agent_signer_evidence(
-        envelope.sender_actor_id.signing_principal_id(),
+    let mut verified = store.verified_agent_current_keys(
+        &envelope.sender_actor_id,
+        &envelope.realm_id,
         &envelope.proof.verification_method,
-    ) {
-        let CachedAgentSignerEvidenceContext::CurrentRelation {
-            agent_actor_id,
-            realm_id,
-            ..
-        } = &entry.verification_context
-        else {
-            continue;
-        };
-        if agent_actor_id != &envelope.sender_actor_id || realm_id != &envelope.realm_id {
-            continue;
-        }
-        let Some(key) = entry.verified_current_key.as_ref() else {
-            continue;
-        };
-        if !key.key().permits(
-            &envelope.sender_actor_id,
-            &envelope.proof.verification_method,
-            crate::clock::now_utc(),
-        ) {
-            continue;
-        }
-        verified.push((*key.key().key(), key.key().authorization_ref().clone()));
-    }
+        crate::clock::now_utc(),
+    );
     let (key, authorization) = verified.pop()?;
     if verified
         .iter()

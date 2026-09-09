@@ -3,12 +3,60 @@ use super::*;
 const AGENT_EVIDENCE_CACHE_MAX: usize = 4096;
 
 impl LocalStateStore {
+    fn agent_evidence_cache(
+        &self,
+    ) -> std::borrow::Cow<'_, BTreeMap<String, CachedAgentSignerEvidence>> {
+        if self.loaded.load(std::sync::atomic::Ordering::Relaxed)
+            && self.cached_account_key.as_deref() == Some(self.effective_account_key().as_str())
+        {
+            std::borrow::Cow::Borrowed(&self.cached.agent_signer_evidence)
+        } else {
+            std::borrow::Cow::Owned(self.load().agent_signer_evidence)
+        }
+    }
+
+    pub(crate) fn verified_agent_current_keys(
+        &self,
+        actor: &arkret_sdk::ActorId,
+        realm: &arkret_sdk::RealmId,
+        method: &arkret_sdk::DidUrl,
+        now: chrono::DateTime<chrono::Utc>,
+    ) -> Vec<([u8; 32], arkret_sdk::EventId)> {
+        if !self.loaded.load(std::sync::atomic::Ordering::Relaxed)
+            || self.cached_account_key.as_deref() != Some(self.effective_account_key().as_str())
+        {
+            return Vec::new();
+        }
+        self.cached
+            .agent_signer_evidence
+            .values()
+            .filter_map(|entry| {
+                if entry.invalidated {
+                    return None;
+                }
+                let CachedAgentSignerEvidenceContext::CurrentRelation {
+                    agent_actor_id,
+                    realm_id,
+                    ..
+                } = &entry.verification_context
+                else {
+                    return None;
+                };
+                if agent_actor_id != actor || realm_id != realm {
+                    return None;
+                }
+                let key = entry.verified_current_key.as_ref()?.key();
+                key.permits(actor, method, now)
+                    .then(|| (*key.key(), key.authorization_ref().clone()))
+            })
+            .collect()
+    }
+
     pub fn cached_agent_signer_evidence_for_agent(
         &self,
         agent_id: &arkret_sdk::DidCoreId,
     ) -> Vec<CachedAgentSignerEvidence> {
-        self.load()
-            .agent_signer_evidence
+        self.agent_evidence_cache()
             .values()
             .filter(|entry| {
                 !entry.invalidated
@@ -23,8 +71,7 @@ impl LocalStateStore {
         agent_id: &arkret_sdk::DidCoreId,
         verification_method: &arkret_sdk::DidUrl,
     ) -> Vec<CachedAgentSignerEvidence> {
-        self.load()
-            .agent_signer_evidence
+        self.agent_evidence_cache()
             .values()
             .filter(|entry| {
                 let binding = agent_signer_evidence_binding(&entry.evidence);
@@ -99,6 +146,12 @@ impl LocalStateStore {
                 }
                 let existing_binding = agent_signer_evidence_binding(&existing.evidence);
                 if existing_binding.agent_id != binding.agent_id
+                    || agent_signer_evidence_authority_state(&existing.evidence)
+                        .state
+                        .authority_id
+                        != agent_signer_evidence_authority_state(&entry.evidence)
+                            .state
+                            .authority_id
                     || existing_binding.verification_method != binding.verification_method
                     || existing_binding.agent_key_authorize_event_id
                         != binding.agent_key_authorize_event_id
@@ -156,6 +209,12 @@ impl LocalStateStore {
                     &existing.verification_context,
                     CachedAgentSignerEvidenceContext::CurrentRelation { .. }
                 ) && existing_binding.agent_id == binding.agent_id
+                    && agent_signer_evidence_authority_state(&existing.evidence)
+                        .state
+                        .authority_id
+                        == agent_signer_evidence_authority_state(&entry.evidence)
+                            .state
+                            .authority_id
                     && existing_binding.verification_method == binding.verification_method
                     && agent_signer_evidence_frontier(&existing.evidence)
                         != agent_signer_evidence_frontier(&entry.evidence)
@@ -258,11 +317,22 @@ impl AgentCacheSubjects<'_> {
                         .get("agent_id")
                         .and_then(serde_json::Value::as_str)
                         == Some(self.actor.signing_principal_id().as_str())
-                    && event
+                    && (event
                         .payload
                         .get("key_id")
                         .and_then(serde_json::Value::as_str)
                         == Some(self.key_id)
+                        || (event.kind.as_str() == "ak.agent.key.authorize"
+                            && event
+                                .payload
+                                .get("supersedes")
+                                .and_then(serde_json::Value::as_array)
+                                .is_some_and(|items| {
+                                    items.iter().any(|item| {
+                                        item.get("key_id").and_then(serde_json::Value::as_str)
+                                            == Some(self.key_id)
+                                    })
+                                })))
             }
             "ak.self.agent.pause" | "ak.self.agent.resume" | "ak.self.agent.deactivate" => {
                 event.realm_id == *self.pcr && event.actor_id == *self.actor
@@ -290,10 +360,13 @@ fn agent_context_matches_checkpoint(
     !checkpoint.accepted_events.iter().any(|event| {
         subjects.matches_change(event)
             && checkpoint.accepted_seals.iter().any(|seal| {
-                seal.sealed_at > authority.lease.issued_at
-                    && seal
-                        .covered_event_digests
-                        .contains(&event.event_id.event_digest())
+                seal.covered_event_digests
+                    .contains(&event.event_id.event_digest())
+                    && !seal_lineage_covers(
+                        &authority.state.seal_lineages,
+                        authority.state.frontier_seal_id.as_str(),
+                        seal.id.as_str(),
+                    )
             })
     })
 }
@@ -359,6 +432,18 @@ mod tests {
                 serde_json::json!({"agent_id": did("agent"), "key_id": "other-key"})
             )));
         }
+        assert!(subjects.matches_change(&change(
+            "ak.agent.key.authorize",
+            actor("owner", "station"),
+            serde_json::json!({"agent_id":did("agent"), "key_id":"replacement-key",
+                "supersedes":[{"key_id":"runtime-key"}]}),
+        )));
+        assert!(!subjects.matches_change(&change(
+            "ak.agent.key.authorize",
+            actor("owner", "station"),
+            serde_json::json!({"agent_id":did("agent"), "key_id":"replacement-key",
+                "supersedes":[{"key_id":"unrelated-key"}]}),
+        )));
         for kind in [
             "ak.self.agent.pause",
             "ak.self.agent.resume",
@@ -435,9 +520,12 @@ mod tests {
         revoke.scope_ref = arkret_sdk::ScopeRef::Realm {
             realm_id: revoke.realm_id.clone(),
         };
-        // This fixture enters the cache after governance verification. The
-        // later Seal time, not an earlier Station receipt, is the change point.
+        // This fixture enters the cache after governance verification. A fresh
+        // lease cannot replace the required ancestry of the observed change.
         let mut covering_seal = authority.state.agent_lifecycle_witness.seal.clone();
+        covering_seal.id =
+            arkret_sdk::SealId::new(format!("ak:seal:sha256:{}", "fd".repeat(32))).unwrap();
+        covering_seal.predecessor_refs = vec![authority.state.frontier_seal_id.clone()];
         covering_seal.sealed_at = authority.lease.issued_at + chrono::Duration::seconds(1);
         covering_seal.covered_event_digests = vec![revoke.event_id.event_digest()];
         let checkpoint = arkret_sdk::MlsGovernanceVerificationCheckpoint {
@@ -450,6 +538,31 @@ mod tests {
             accepted_events: vec![revoke.clone()],
             governance_dependencies: vec![],
         };
+        assert!(!agent_context_matches_checkpoint(&entry, &checkpoint));
+        let mut refreshed = entry.clone();
+        let arkret_sdk::AgentSignerEvidence::CurrentAdmission {
+            admission_evidence, ..
+        } = &mut refreshed.evidence
+        else {
+            panic!("current fixture")
+        };
+        let refreshed_authority = &mut admission_evidence.agent_authority_state_evidence;
+        refreshed_authority.lease.issued_at =
+            authority.lease.issued_at + chrono::Duration::seconds(2);
+        assert!(!agent_context_matches_checkpoint(&refreshed, &checkpoint));
+        let arkret_sdk::AgentSignerEvidence::CurrentAdmission {
+            admission_evidence, ..
+        } = &mut refreshed.evidence
+        else {
+            panic!("current fixture")
+        };
+        let refreshed_authority = &mut admission_evidence.agent_authority_state_evidence;
+        refreshed_authority.state.frontier_seal_id = checkpoint.accepted_seals[0].id.clone();
+        refreshed_authority
+            .state
+            .seal_lineages
+            .push(checkpoint.accepted_seals[0].clone());
+        assert!(agent_context_matches_checkpoint(&refreshed, &checkpoint));
         let mut historical = entry.clone();
         historical.verified_historical_key =
             Some(*entry.verified_current_key.as_ref().unwrap().key().key());
@@ -500,6 +613,17 @@ mod tests {
         store
             .store_verified_agent_signer_evidence(historical.clone())
             .unwrap();
+        assert_eq!(
+            store
+                .verified_agent_current_keys(
+                    agent_actor_id,
+                    realm_id,
+                    &authority.state.signing_key_binding.verification_method,
+                    authority.lease.issued_at,
+                )
+                .len(),
+            1
+        );
         store
             .invalidate_agent_current_contexts(&actor("unrelated-agent", "station"))
             .unwrap();
@@ -517,6 +641,16 @@ mod tests {
         store
             .invalidate_agent_current_contexts(agent_actor_id)
             .unwrap();
+        assert!(
+            store
+                .verified_agent_current_keys(
+                    agent_actor_id,
+                    realm_id,
+                    &authority.state.signing_key_binding.verification_method,
+                    authority.lease.issued_at,
+                )
+                .is_empty()
+        );
         assert!(
             store
                 .store_verified_agent_signer_evidence(entry.clone())
