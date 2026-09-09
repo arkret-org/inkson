@@ -384,6 +384,14 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("settings.section.audit", "审计日志");
     dict.set("settings.section.developer", "开发者工具");
     dict.set("settings.account.identity", "账号身份");
+    dict.set("settings.profile.display_name", "显示名称");
+    dict.set("settings.profile.bio", "个人简介");
+    dict.set("settings.profile.save", "保存资料");
+    dict.set("settings.profile.saving", "正在保存资料…");
+    dict.set("settings.profile.saved", "资料已保存");
+    dict.set("settings.profile.save_failed", "资料保存失败");
+    dict.set("settings.profile.display_name_required", "显示名称不能为空");
+    dict.set("settings.profile.invalid_display_name", "显示名称无效");
     dict.set("settings.account.no_device_session", "没有已认证的设备会话");
     dict.set("settings.account.handles", "账号标识");
     dict.set("settings.account.current_device", "当前设备");

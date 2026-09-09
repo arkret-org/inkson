@@ -1637,6 +1637,20 @@ pub fn english_translations() -> TranslationDict {
     dict.set("settings.avatar.pan_y", "Vertical");
     dict.set("settings.avatar.error", "Avatar upload failed");
     dict.set("settings.account.identity", "Account identity");
+    dict.set("settings.profile.display_name", "Display name");
+    dict.set("settings.profile.bio", "Bio");
+    dict.set("settings.profile.save", "Save profile");
+    dict.set("settings.profile.saving", "Saving profile…");
+    dict.set("settings.profile.saved", "Profile saved");
+    dict.set("settings.profile.save_failed", "Profile save failed");
+    dict.set(
+        "settings.profile.display_name_required",
+        "Display name is required",
+    );
+    dict.set(
+        "settings.profile.invalid_display_name",
+        "Invalid display name",
+    );
     dict.set(
         "settings.account.no_device_session",
         "No authenticated device session",

@@ -29,6 +29,10 @@ pub(super) struct SettingsController {
     /// Bumped so every rendered `<img>` for the account avatar re-fetches
     /// after an upload or a removal, instead of showing the cached bytes.
     pub avatar_refresh_nonce: Signal<u64>,
+    pub profile_display_name: Signal<String>,
+    pub profile_bio: Signal<String>,
+    pub profile_text_status: Signal<String>,
+    pub profile_text_saving: Signal<bool>,
     pub mimi_directory: Signal<String>,
     pub mimi_receipt: Signal<String>,
     pub push_state: Signal<String>,
@@ -39,6 +43,79 @@ pub(super) struct SettingsController {
 }
 
 impl SettingsController {
+    /// Publish display name and bio through the same create/update authoring
+    /// path as avatar changes. Local mirrors advance only after acceptance.
+    pub(super) fn save_profile_text(
+        self,
+        base: String,
+        api_token: String,
+        first_profile_display_name: String,
+    ) {
+        let SettingsController {
+            profile_display_name,
+            profile_bio,
+            mut profile_text_status,
+            mut profile_text_saving,
+            state_store,
+            ..
+        } = self;
+        let display_name = profile_display_name().trim().to_owned();
+        let bio = profile_bio().trim().to_owned();
+        if display_name.is_empty() {
+            profile_text_status.set(crate::i18n::tr("settings.profile.display_name_required"));
+            return;
+        }
+        if let Err(error) = arkret_sdk::validate_single_line_display_text(&display_name, 128) {
+            profile_text_status.set(format!(
+                "{}: {error}",
+                crate::i18n::tr("settings.profile.invalid_display_name")
+            ));
+            return;
+        }
+        profile_text_saving.set(true);
+        profile_text_status.set(crate::i18n::tr("settings.profile.saving"));
+        spawn(async move {
+            let authority_evidence = state_store.read().recovery_material_evidence();
+            let result = async {
+                let authority_evidence = authority_evidence.ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "profile update requires durable accepted PCR authority evidence"
+                    )
+                })?;
+                crate::transport::auth::with_event_submitter(
+                    &base,
+                    api_token,
+                    move |submitter| async move {
+                        crate::transport::account::update_profile(
+                            &submitter,
+                            &authority_evidence,
+                            &first_profile_display_name,
+                            Some(&display_name),
+                            Some(&bio),
+                            None,
+                        )
+                        .await
+                    },
+                )
+                .await
+                .map_err(|error| anyhow::anyhow!(error.display()))
+            }
+            .await;
+            profile_text_saving.set(false);
+            match result {
+                Ok(_) => {
+                    profile_text_status.set(crate::i18n::tr("settings.profile.saved"));
+                }
+                Err(error) => {
+                    profile_text_status.set(format!(
+                        "{}: {error}",
+                        crate::i18n::tr("settings.profile.save_failed")
+                    ));
+                }
+            }
+        });
+    }
+
     /// Issue the account's first invite locator when the panel opens for a
     /// signed-in account that has none.
     pub(super) fn issue_first_invite_locator(self, base: String, api_token: String) {

@@ -593,6 +593,11 @@ pub fn SettingsPanel(
     let mut avatar_crop_x = use_signal(|| 0_i32);
     let mut avatar_crop_y = use_signal(|| 0_i32);
     let mut avatar_refresh_nonce = use_signal(|| 0_u64);
+    let mut profile_display_name = use_signal(|| account_primary_handle.clone());
+    let mut profile_bio = use_signal(String::new);
+    let mut profile_text_status = use_signal(String::new);
+    let mut profile_text_saving = use_signal(|| false);
+    let mut profile_hydration_subject = use_signal(String::new);
     let mimi_directory = use_signal(|| crate::i18n::tr("settings.mimi.not_loaded"));
     let mimi_receipt = use_signal(|| crate::i18n::tr("settings.mimi.no_receipt"));
     let realm_watch_overrides = state_store.read().realm_watch_levels();
@@ -621,12 +626,61 @@ pub fn SettingsPanel(
         avatar_crop_x,
         avatar_crop_y,
         avatar_refresh_nonce,
+        profile_display_name,
+        profile_bio,
+        profile_text_status,
+        profile_text_saving,
         mimi_directory,
         mimi_receipt,
         push_state,
         theme,
         state_store,
     };
+    {
+        let current_account = principal_id();
+        let current_token = token();
+        let current_base_url = base_url();
+        use_effect(move || {
+            if current_account.trim().is_empty() || current_token.trim().is_empty() {
+                profile_hydration_subject.set(String::new());
+                return;
+            }
+            if current_account == profile_hydration_subject() {
+                return;
+            }
+            profile_hydration_subject.set(current_account.clone());
+            let base = current_base_url.clone();
+            let api_token = current_token.clone();
+            spawn(async move {
+                match with_authed_sdk_client(&base, api_token, |http| async move {
+                    crate::transport::account::account_viewer(&http)
+                        .await
+                        .map_err(anyhow::Error::from)
+                })
+                .await
+                {
+                    Ok(viewer) => {
+                        if let Some(profile) = viewer.profile {
+                            let profile = profile.into_inner();
+                            profile_display_name.set(profile.display_name);
+                            profile_bio.set(
+                                profile
+                                    .profile_fields
+                                    .get("bio")
+                                    .and_then(serde_json::Value::as_str)
+                                    .unwrap_or_default()
+                                    .to_owned(),
+                            );
+                        }
+                    }
+                    Err(error) => tracing::warn!(
+                        %error,
+                        "account profile viewer could not hydrate settings editor"
+                    ),
+                }
+            });
+        });
+    }
     {
         let current_account = principal_id();
         let current_token = token();
@@ -790,6 +844,53 @@ pub fn SettingsPanel(
                             div { class: "event settings-card-span-2 settings-avatar-card", "data-testid": "settings-avatar-card",
                                 div { class: "event-head",
                                     span { {crate::i18n::tr("settings.account.identity")} }
+                                }
+                                div { class: "settings-profile-fields", "data-testid": "settings-profile-fields",
+                                    label { class: "form-field",
+                                        span { {crate::i18n::tr("settings.profile.display_name")} }
+                                        input {
+                                            r#type: "text",
+                                            "data-testid": "settings-profile-display-name",
+                                            maxlength: "128",
+                                            value: "{profile_display_name}",
+                                            disabled: profile_text_saving(),
+                                            oninput: move |event: FormEvent| profile_display_name.set(event.value()),
+                                        }
+                                    }
+                                    label { class: "form-field",
+                                        span { {crate::i18n::tr("settings.profile.bio")} }
+                                        textarea {
+                                            "data-testid": "settings-profile-bio",
+                                            value: "{profile_bio}",
+                                            disabled: profile_text_saving(),
+                                            oninput: move |event: FormEvent| profile_bio.set(event.value()),
+                                        }
+                                    }
+                                    div { class: "actions",
+                                        Button {
+                                            variant: ButtonVariant::Primary,
+                                            "data-testid": "settings-profile-save",
+                                            disabled: profile_text_saving(),
+                                            onclick: {
+                                                let base = base_url();
+                                                let api_token = token();
+                                                let first_profile_display_name = account_primary_handle.clone();
+                                                move |_| controller.save_profile_text(
+                                                    base.clone(),
+                                                    api_token.clone(),
+                                                    first_profile_display_name.clone(),
+                                                )
+                                            },
+                                            if profile_text_saving() {
+                                                {crate::i18n::tr("settings.profile.saving")}
+                                            } else {
+                                                {crate::i18n::tr("settings.profile.save")}
+                                            }
+                                        }
+                                    }
+                                    if !profile_text_status().is_empty() {
+                                        div { class: "muted", "data-testid": "settings-profile-status", "{profile_text_status}" }
+                                    }
                                 }
                                 div { class: "settings-avatar-actions",
                                     {
