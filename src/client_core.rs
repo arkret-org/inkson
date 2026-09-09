@@ -593,7 +593,6 @@ pub async fn account_subscribe_snapshot_outcome(
         after,
         catchup: Some(true),
         filter: None,
-        subscriptions: None,
     };
     match http.account_subscribe_batch(&request).await {
         Ok(batch) => Ok(AccountSubscribeSnapshotResult::Batch(batch)),

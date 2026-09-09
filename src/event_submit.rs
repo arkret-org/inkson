@@ -287,31 +287,7 @@ impl EventOutboundSubmitter<'_> {
     }
 
     async fn verify_covering_seal(&self, event: &arkret_sdk::Event) -> anyhow::Result<()> {
-        let state_store = self.state_store.clone();
-        let digest_suite = verify_event_is_covered_by_accepted_seal(
-            &self.owner.http,
-            event,
-            move |event, digest_suite, evidence, dependencies| {
-                let state_store = state_store.clone();
-                Box::pin(async move {
-                    let state_store = state_store.as_ref().ok_or_else(|| {
-                        arkret_sdk::WireError::Protocol(
-                            "Agent Event verification requires a durable governance trust store"
-                                .to_owned(),
-                        )
-                    })?;
-                    crate::mls::governance_proof::verify_agent_history_key(
-                        state_store,
-                        event,
-                        digest_suite,
-                        evidence,
-                        dependencies,
-                    )
-                    .await
-                })
-            },
-        )
-        .await?;
+        let digest_suite = require_server_sealed_event(&self.owner.http, event).await?;
         let digest = arkret_sdk::Hash::new(event.event_digest_with_digest_suite(digest_suite)?)?;
         let outcome = self
             .owner
@@ -647,52 +623,25 @@ impl EventOutboundSubmitter<'_> {
     }
 }
 
-pub(crate) async fn verify_event_is_covered_by_accepted_seal<VerifyAgentHistoryKey>(
+/// Consume the authenticated Account Station's exact durable acceptance
+/// result. This checks local signing intent, not foreign governance history.
+pub(crate) async fn require_server_sealed_event(
     http: &arkret_sdk::http_client::Client,
     event: &arkret_sdk::Event,
-    verify_agent_history_key: VerifyAgentHistoryKey,
-) -> anyhow::Result<arkret_sdk::DigestSuite>
-where
-    VerifyAgentHistoryKey: for<'a> Fn(
-            &'a arkret_sdk::Event,
-            arkret_sdk::DigestSuite,
-            &'a arkret_sdk::AuthenticatedSignerResolutionEvidence,
-            &'a [arkret_sdk::GovernanceDependency],
-        ) -> arkret_sdk::VerifyAgentHistoryKeyFuture<'a>
-        + Clone
-        + arkret_sdk::VerifyAgentHistoryKeySend
-        + 'static,
-{
-    let frontier = http.seals_frontier(event.realm_id.clone()).await?.frontier;
-    let resolved = crate::mls::governance_acquisition::resolve_mls_governance_checkpoint_with_http(
-        http,
-        &event.realm_id,
-        &frontier.seal_basis,
-    )
-    .await
-    .map_err(anyhow::Error::msg)?;
-    let verified = arkret_sdk::verify_mls_governance_closure(
-        &event.realm_id,
-        &resolved.target_basis,
-        &resolved.seals,
-        &resolved.events,
-        &resolved.dependencies,
-        verify_agent_history_key,
-    )
-    .await?;
-    let digest = arkret_sdk::signed_event_digest_claim(event)?;
-    let digest_suite = verified
-        .event_digest_suites
-        .get(&digest)
-        .copied()
-        .ok_or_else(|| anyhow::anyhow!("Event {} has no accepted covering Seal", event.event_id))?;
+) -> anyhow::Result<arkret_sdk::DigestSuite> {
+    let digest_suite = event.event_id.digest_suite_code().digest_suite();
     event.verify_event_id_matches_content_with_digest_suite(digest_suite)?;
-    let exact_event_is_accepted = verified.checkpoint.accepted_events.iter().any(|accepted| {
-        accepted_event_preserves_authored_envelope(accepted, event, digest_suite).unwrap_or(false)
-    });
-    if !exact_event_is_accepted {
+    let request = arkret_sdk::ControlProposalDecisionReadRequestBody {
+        realm_id: event.realm_id.clone(),
+        proposal_digest: event.event_id.event_digest(),
+    };
+    let outcome = http.read_control_proposal_decision(&request).await?;
+    if outcome.proposal_event_kind != event.kind.as_str()
+        || outcome.proposal_state != arkret_sdk::ControlProposalState::Sealed
+        || outcome.accepted_seal_id.is_none()
+    {
         anyhow::bail!(
-            "Event {} does not preserve its exact producer-authored envelope in the verified accepted closure",
+            "Event {} has no server-confirmed covering Seal",
             event.event_id
         );
     }

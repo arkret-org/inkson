@@ -295,6 +295,7 @@ pub fn initial_submission(
 ) -> anyhow::Result<arkret_wire::EventInitialSubmission> {
     let authorization_lease = lease_for_event(event, crate::clock::now_utc())?;
     Ok(arkret_wire::EventInitialSubmission {
+        mls_frontier_leaves: None,
         event: event.clone(),
         authorization_lease: Some(authorization_lease),
         // The submit gate attaches basis closure only when the receiver reports
