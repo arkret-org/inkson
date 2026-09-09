@@ -595,8 +595,8 @@ pub fn SettingsPanel(
     let mut avatar_refresh_nonce = use_signal(|| 0_u64);
     let mut profile_display_name = use_signal(|| account_primary_handle.clone());
     let mut profile_bio = use_signal(String::new);
-    let mut profile_text_status = use_signal(String::new);
-    let mut profile_text_saving = use_signal(|| false);
+    let profile_text_status = use_signal(String::new);
+    let profile_text_saving = use_signal(|| false);
     let mut profile_hydration_subject = use_signal(String::new);
     let mimi_directory = use_signal(|| crate::i18n::tr("settings.mimi.not_loaded"));
     let mimi_receipt = use_signal(|| crate::i18n::tr("settings.mimi.no_receipt"));
@@ -674,7 +674,7 @@ pub fn SettingsPanel(
                         }
                     }
                     Err(error) => tracing::warn!(
-                        %error,
+                        ?error,
                         "account profile viewer could not hydrate settings editor"
                     ),
                 }
