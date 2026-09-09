@@ -354,35 +354,6 @@ impl LocalStateStore {
 
     pub(crate) const SECURE_SESSION_GRANT_KEY: &'static str = "auth.session_grant.v1";
 
-    fn active_series_highest_seen_key(actor_id: &arkret_sdk::ActorId, backup_kind: &str) -> String {
-        format!("{actor_id}\u{1f}{backup_kind}")
-    }
-
-    pub(crate) fn observe_key_backup_active_series_version(
-        &mut self,
-        actor_id: &arkret_sdk::ActorId,
-        backup_kind: &str,
-        version: u64,
-    ) -> anyhow::Result<()> {
-        self.ensure_cached_loaded();
-        let key = Self::active_series_highest_seen_key(actor_id, backup_kind);
-        if self
-            .cached
-            .key_backup_active_series_highest_seen
-            .get(&key)
-            .is_some_and(|highest| version < *highest)
-        {
-            anyhow::bail!("backup_frontier_stale");
-        }
-        if self.cached.key_backup_active_series_highest_seen.get(&key) == Some(&version) {
-            return Ok(());
-        }
-        self.cached
-            .key_backup_active_series_highest_seen
-            .insert(key, version);
-        self.flush()
-    }
-
     pub(crate) fn enqueue_local_projection_command(
         &mut self,
         operation_id: impl Into<String>,

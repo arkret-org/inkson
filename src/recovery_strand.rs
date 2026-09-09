@@ -76,109 +76,34 @@ pub async fn submit_principal_bootstrap_seal(
     Ok(())
 }
 
-/// Establish the first durable governance trust anchor for a newly accepted
-/// Principal Control Realm.
-///
-/// Submitting the bootstrap Seal changes server state only.  Event authoring
-/// deliberately refuses to infer a Realm digest suite from an unverified
-/// frontier, so onboarding must resolve, verify, and durably pin the exact
-/// accepted Seal closure before it can author the genesis recovery policy.
-/// Re-entry after response loss is safe: an already-pinned checkpoint is
-/// accepted only when it contains this byte-exact bootstrap Seal.
-pub async fn ensure_principal_bootstrap_governance_checkpoint(
+/// Refresh the Account Station's accepted PCR frontier after bootstrap submission.
+/// The exact bootstrap bytes are checked through the existing accepted Seal lookup;
+/// subsequent authoring consumes the Station's current digest suite and complete basis.
+pub async fn refresh_principal_bootstrap_frontier(
     api: &TransportClient,
     state_store: &crate::runtime::input::StateStoreHandle,
     bootstrap_seal: &arkret_sdk::Seal,
-) -> anyhow::Result<arkret_sdk::MlsGovernanceVerificationCheckpoint> {
-    if let Some(checkpoint) = state_store
-        .read(|store| store.trusted_mls_governance_checkpoint(bootstrap_seal.realm_id.as_str()))
-    {
-        checkpoint.validate_checkpoint().map_err(|error| {
-            anyhow::anyhow!("invalid pinned PCR governance checkpoint: {error}")
-        })?;
-        if !checkpoint
-            .accepted_seals
-            .iter()
-            .any(|accepted| accepted == bootstrap_seal)
-        {
-            anyhow::bail!(
-                "pinned PCR governance checkpoint does not contain the byte-exact bootstrap Seal"
-            );
-        }
-        return Ok(checkpoint);
-    }
-
-    let target_basis = arkret_sdk::SealBasis {
-        leaves: vec![bootstrap_seal.id.clone()],
-    };
-    let resolved = crate::mls::governance_acquisition::resolve_mls_governance_checkpoint(
-        api,
-        &bootstrap_seal.realm_id,
-        &target_basis,
+) -> anyhow::Result<()> {
+    let http = api.sdk_http_client()?;
+    let accepted = http
+        .seals_resolve(&arkret_sdk::SelfSealResolveRequestBody {
+            realm_id: bootstrap_seal.realm_id.clone(),
+            seal_refs: vec![bootstrap_seal.id.clone()],
+            history_traversal_access: None,
+        })
+        .await?;
+    anyhow::ensure!(
+        accepted.seals.as_slice() == [bootstrap_seal.clone()],
+        "Station has not accepted the exact PCR bootstrap Seal"
+    );
+    crate::mls::governance_proof::refresh_realm_frontier_with_http(
+        &http,
+        state_store.clone(),
+        bootstrap_seal.realm_id.as_str(),
     )
     .await
     .map_err(anyhow::Error::msg)?;
-    if !resolved
-        .seals
-        .iter()
-        .any(|accepted| accepted == bootstrap_seal)
-    {
-        anyhow::bail!(
-            "resolved PCR governance closure does not contain the byte-exact bootstrap Seal"
-        );
-    }
-    let verifier_store = state_store.clone();
-    let verified = arkret_sdk::verify_mls_governance_closure(
-        &bootstrap_seal.realm_id,
-        &resolved.target_basis,
-        &resolved.seals,
-        &resolved.events,
-        &resolved.dependencies,
-        move |event, digest_suite, evidence, dependencies| {
-            crate::mls::governance_proof::verify_agent_history_key(
-                &verifier_store,
-                event,
-                digest_suite,
-                evidence,
-                dependencies,
-            )
-        },
-    )
-    .await?
-    .checkpoint;
-    if !verified
-        .accepted_seals
-        .iter()
-        .any(|accepted| accepted == bootstrap_seal)
-    {
-        anyhow::bail!(
-            "verified PCR governance checkpoint does not contain the byte-exact bootstrap Seal"
-        );
-    }
-
-    let barrier = state_store.write(|store| {
-        store
-            .pin_mls_governance_checkpoint(bootstrap_seal.realm_id.as_str(), verified.clone())
-            .map_err(anyhow::Error::msg)?;
-        store.begin_durable_flush()
-    })?;
-    barrier.wait().await?;
-
-    let pinned = state_store
-        .read(|store| store.trusted_mls_governance_checkpoint(bootstrap_seal.realm_id.as_str()))
-        .ok_or_else(|| {
-            anyhow::anyhow!("PCR governance checkpoint was not durable after pinning")
-        })?;
-    if !pinned
-        .accepted_seals
-        .iter()
-        .any(|accepted| accepted == bootstrap_seal)
-    {
-        anyhow::bail!(
-            "durable PCR governance checkpoint does not contain the byte-exact bootstrap Seal"
-        );
-    }
-    Ok(pinned)
+    Ok(())
 }
 
 pub async fn verify_recovery_material_evidence(

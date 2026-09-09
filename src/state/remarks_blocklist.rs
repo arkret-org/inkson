@@ -1,16 +1,5 @@
 use super::*;
 
-fn verified_bundle_covers_observed_head(
-    bundle: &arkret_sdk::MlsGovernanceProofBundle,
-    accepted_heads: &BTreeSet<&str>,
-) -> bool {
-    bundle
-        .proof_material
-        .seal_descriptors
-        .iter()
-        .any(|descriptor| accepted_heads.contains(descriptor.seal_ref.as_str()))
-}
-
 impl LocalStateStore {
     /// Return the stored remark for `realm_id`, if any. `None` means the
     /// user has not set a local override and the public Realm title
@@ -367,23 +356,25 @@ impl LocalStateStore {
         if self.cached.seal_views.get(&realm_id) == Some(&view) {
             return; // seal view unchanged — skip flush
         }
-        let accepted_heads = view
-            .frontier
-            .iter()
-            .map(String::as_str)
-            .collect::<BTreeSet<_>>();
-        self.cached.mls_governance_proofs.retain(|_, entry| {
-            entry.request.effective_scope.realm_id_opt().map(|id| id.as_str())
+        self.cached.mls_governance_results.retain(|_, entry| {
+            entry
+                .request
+                .effective_scope
+                .realm_id_opt()
+                .map(|id| id.as_str())
                 != Some(realm_id.as_str())
                 || entry
-                    .proof_target_basis
+                    .request
+                    .seal_basis
                     .leaves
                     .iter()
-                    .all(|seal| accepted_heads.contains(seal.as_str()))
-                // Sync and proof acquisition race independently. A lagging
-                // frontier may still be an authenticated predecessor of the
-                // freshly verified accepted Seal and must not evict its proof.
-                || verified_bundle_covers_observed_head(&entry.bundle, &accepted_heads)
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    == view.frontier
+        });
+        self.cached.mls_accepted_artifacts.retain(|_, entry| {
+            entry.event.realm_id.as_str() != realm_id.as_str()
+                || entry.observed_frontier == view.frontier
         });
         self.cached.seal_views.insert(realm_id, view);
         let _ = self.flush();
@@ -416,45 +407,5 @@ impl LocalStateStore {
     /// [`LocalSealView::move_seal_ref`].
     pub fn seal_ref_for_realm_move(&self, realm_id: &str) -> String {
         self.seal_view_for_realm(realm_id).move_seal_ref()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use std::collections::BTreeSet;
-
-    use super::verified_bundle_covers_observed_head;
-
-    #[test]
-    fn verified_bundle_recognizes_an_observed_predecessor_head() {
-        let bundle = arkret_sdk::MlsGovernanceProofBundle {
-            query_digest: arkret_sdk::Hash::new(format!("sha256:{}", "00".repeat(32))).unwrap(),
-            frontier_projection: arkret_sdk::MlsGovernanceFrontierProjection {
-                frontier_registry_digest: arkret_sdk::Hash::new(format!(
-                    "sha256:{}",
-                    "11".repeat(32)
-                ))
-                .unwrap(),
-                branches: Vec::new(),
-            },
-            proof_material: arkret_sdk::MlsGovernanceTypedProofMaterial {
-                seal_descriptors: vec![arkret_sdk::MlsGovernanceSealDescriptor {
-                    seal_ref: arkret_sdk::SealId::new(
-                        "ak:seal:sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-                    )
-                    .unwrap(),
-                }],
-                seal_predecessor_edges: Vec::new(),
-                event_ids: Vec::new(),
-            },
-            page_digest: arkret_sdk::Hash::new(format!("sha256:{}", "33".repeat(32))).unwrap(),
-        };
-        let previous = BTreeSet::from([
-            "ak:seal:sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-        ]);
-        let unrelated = BTreeSet::from(["ak:seal:sha256:unrelated"]);
-
-        assert!(verified_bundle_covers_observed_head(&bundle, &previous));
-        assert!(!verified_bundle_covers_observed_head(&bundle, &unrelated));
     }
 }

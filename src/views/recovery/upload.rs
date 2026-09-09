@@ -111,7 +111,7 @@ pub(crate) fn upload_recovery_key_account_backup(
                 anyhow::bail!("recovery authority evidence does not match the active session");
             }
             crate::recovery_strand::verify_recovery_authority_evidence(&api, &evidence).await?;
-            crate::recovery_strand::ensure_principal_bootstrap_governance_checkpoint(
+            crate::recovery_strand::refresh_principal_bootstrap_frontier(
                 &api,
                 &governance_state_store,
                 &evidence.bootstrap_seal,

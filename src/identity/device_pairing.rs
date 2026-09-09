@@ -214,7 +214,7 @@ pub async fn author_pairing_request_body(
         crate::identity::principal_control::resolve_accepted(&http, &principal_actor).await?;
     let submitter = api.event_submitter()?;
     submitter
-        .ensure_realm_governance_checkpoint(realm_id.as_str())
+        .refresh_realm_governance_frontier(realm_id.as_str())
         .await?;
     let authorize = crate::operation::TypedOperationBuilder::new::<
         arkret_sdk::event_spec::DeviceAuthorize,

@@ -1,16 +1,30 @@
-//! Host adapter for Garth's checkpoint-proven accepted MLS artifact consumer.
+//! Host adapter for Garth's Station-accepted MLS artifact consumer.
 
 use crate::runtime::input::StateStoreHandle;
 
 #[derive(Clone)]
 struct HostArtifactStore {
     state: StateStoreHandle,
+    authority: arkret_sdk::AccountId,
+    session_epoch: u64,
+}
+
+impl HostArtifactStore {
+    fn ensure_session(&self, store: &crate::state::LocalStateStore) -> garth::Result<()> {
+        if store.active_authority().as_ref() != Some(&self.authority)
+            || crate::identity::device_directory::cache_epoch() != self.session_epoch
+        {
+            return Err(protocol("MLS artifact consumer session changed"));
+        }
+        Ok(())
+    }
 }
 
 impl garth::AcceptedMlsArtifactStore for HostArtifactStore {
     fn load_accepted_mls_artifacts(
         &self,
     ) -> garth::Result<garth::VersionedAcceptedMlsArtifactState> {
+        self.state.read(|store| self.ensure_session(store))?;
         Ok(self
             .state
             .read(|store| store.accepted_mls_artifact_snapshot()))
@@ -23,7 +37,11 @@ impl garth::AcceptedMlsArtifactStore for HostArtifactStore {
     ) -> garth::Result<bool> {
         let barrier = self
             .state
-            .write(|store| store.compare_and_swap_accepted_mls_artifacts(revision, snapshot))
+            .write(|store| {
+                self.ensure_session(store)
+                    .map_err(|error| error.to_string())?;
+                store.compare_and_swap_accepted_mls_artifacts(revision, snapshot)
+            })
             .map_err(garth::Error::Protocol)?;
         let Some(barrier) = barrier else {
             return Ok(false);
@@ -202,141 +220,15 @@ impl HostArtifactApplicator {
         else {
             return Ok(None);
         };
-        let existing = self
+        let accepted = self
             .state
-            .read(|store| store.trusted_mls_governance_checkpoint(event.realm_id.as_str()))
-            .ok_or_else(|| protocol("accepted own Commit has no verified governance closure"))?;
-        let digest = arkret_sdk::signed_event_digest_claim(event).map_err(protocol)?;
-        let mut accepting = existing
-            .accepted_seals
-            .iter()
-            .filter(|seal| seal.delta.contains(&digest));
-        let seal = accepting
-            .next()
-            .ok_or_else(|| protocol("accepted own Commit has no accepting Seal"))?;
-        if accepting.next().is_some() {
+            .read(|store| store.cached_mls_accepted_artifact(&event.event_id))
+            .ok_or_else(|| protocol("accepted own Commit has no current Station result"))?;
+        if accepted.outcome.mls_frontier_leaves != leaves
+            || accepted.outcome.governance_binding != binding
+        {
             return Err(protocol(
-                "accepted own Commit has ambiguous accepting Seals",
-            ));
-        }
-        // Rebuild historical authority only from the complete verified closure.
-        // Neither a current directory lookup nor the local snapshot proves it.
-        let verifier = self.state.clone();
-        let checkpoint = arkret_sdk::derive_verified_mls_governance_checkpoint_at_basis(
-            &existing,
-            &seal.seal_basis(),
-            move |event, suite, evidence, dependencies| {
-                crate::mls::governance_proof::verify_agent_history_key(
-                    &verifier,
-                    event,
-                    suite,
-                    evidence,
-                    dependencies,
-                )
-            },
-        )
-        .await
-        .map_err(protocol)?;
-        let request = arkret_sdk::MlsGovernanceProofRequestBody {
-            profile: arkret_sdk::MlsGovernanceProofProfile::GroupSecurityFrontier,
-            effective_scope: scope.clone(),
-            mls_group_id: arkret_sdk::Base64UrlString::new(payload.mls_group_id())
-                .map_err(protocol)?,
-            local_mls_leaves: leaves.clone(),
-            proof_base_basis: checkpoint.basis.clone(),
-            proof_target_basis: checkpoint.basis.clone(),
-            byte_limit: arkret_sdk::MLS_GOVERNANCE_PROOF_MAX_BYTES,
-            frontier_purpose: arkret_sdk::MlsGovernanceFrontierPurpose::GroupBinding,
-            base_group_state_ref: Some(
-                arkret_sdk::EventId::new(payload.base_epoch_ref()).map_err(protocol)?,
-            ),
-            proposed_group_genesis_binding: None,
-            previous_epoch: payload.base_epoch(),
-            next_epoch: payload.next_epoch(),
-            binding_profile: arkret_sdk::MlsGovernanceBindingProfile::AkSecurityFrontierV1,
-        };
-        let genesis = crate::mls::governance_proof::group_genesis_binding(
-            &checkpoint,
-            &scope,
-            &request.mls_group_id,
-        )
-        .map_err(protocol)?
-        .ok_or_else(|| protocol("accepted own Commit has no verified Genesis binding"))?;
-        let verifier = self.state.clone();
-        let bundle = arkret_sdk::materialize_mls_governance_frontier(
-            &request,
-            &checkpoint,
-            &genesis,
-            &leaves,
-            move |event, suite, evidence, dependencies| {
-                crate::mls::governance_proof::verify_agent_history_key(
-                    &verifier,
-                    event,
-                    suite,
-                    evidence,
-                    dependencies,
-                )
-            },
-        )
-        .await
-        .map_err(protocol)?;
-        // A zero-transition proof still resolves its target Seals and sparse
-        // provenance. The checkpoint owns these authenticated objects, but it
-        // is not a substitute for the verifier's exact descriptor inputs.
-        let resolved_seals = bundle
-            .proof_material
-            .seal_descriptors
-            .iter()
-            .map(|descriptor| {
-                checkpoint
-                    .accepted_seals
-                    .iter()
-                    .find(|seal| seal.id == descriptor.seal_ref)
-                    .cloned()
-                    .ok_or_else(|| protocol("local frontier Seal is absent from its checkpoint"))
-            })
-            .collect::<garth::Result<Vec<_>>>()?;
-        let provenance_events = bundle
-            .proof_material
-            .event_ids
-            .iter()
-            .map(|event_id| {
-                checkpoint
-                    .accepted_events
-                    .iter()
-                    .find(|event| &event.event_id == event_id)
-                    .cloned()
-                    .ok_or_else(|| {
-                        protocol("local frontier provenance is absent from its checkpoint")
-                    })
-            })
-            .collect::<garth::Result<Vec<_>>>()?;
-        let verifier = self.state.clone();
-        let verified = arkret_sdk::verify_mls_governance_frontier(
-            &request,
-            &bundle,
-            &checkpoint,
-            &resolved_seals,
-            &[],
-            &provenance_events,
-            &[],
-            &genesis,
-            &leaves,
-            move |event, suite, evidence, dependencies| {
-                crate::mls::governance_proof::verify_agent_history_key(
-                    &verifier,
-                    event,
-                    suite,
-                    evidence,
-                    dependencies,
-                )
-            },
-        )
-        .await
-        .map_err(protocol)?;
-        if &verified.security_frontier_digest != binding.security_frontier_digest() {
-            return Err(protocol(
-                "accepted own Commit local leaf set differs from its historical security frontier",
+                "accepted own Commit staging differs from the Station's retained leaf input",
             ));
         }
         Ok(Some((scope, binding, group, event.clone())))
@@ -349,19 +241,15 @@ impl HostArtifactApplicator {
         let transition_ref = &payload.commit_ref;
         self.state
             .read(|store| {
-                store.trusted_mls_governance_checkpoint(
-                    payload.governance_binding.realm_id().as_str(),
-                )
+                let local = store.load();
+                local
+                    .mls_accepted_artifacts
+                    .values()
+                    .filter_map(|entry| store.cached_mls_accepted_artifact(&entry.event.event_id))
+                    .find(|entry| entry.transition.event_id == *transition_ref)
+                    .map(|entry| entry.transition)
             })
-            .and_then(|checkpoint| {
-                checkpoint
-                    .accepted_events
-                    .into_iter()
-                    .find(|event| &event.event_id == transition_ref)
-            })
-            .ok_or_else(|| {
-                protocol("accepted Welcome winning Commit is absent from its checkpoint")
-            })
+            .ok_or_else(|| protocol("accepted Welcome transition has no current Station result"))
     }
 
     fn prepare_group(
@@ -417,24 +305,14 @@ impl HostArtifactApplicator {
                             snapshot.group_state_event_id.as_ref() == Some(&event.event_id)
                                 && snapshot.group_id == payload.mls_group_id()
                                 && snapshot.epoch == payload.next_epoch()
-                        }).cloned();
-                    let proof = local.mls_governance_proofs.values().find(|proof| {
-                        proof.governance_binding == *payload.governance_binding()
-                            && proof.request.previous_epoch == payload.base_epoch()
-                            && proof.request.next_epoch == payload.next_epoch()
-                    });
-                    if snapshot.is_none() || proof.is_none() {
-                        tracing::warn!(event_id = %event.event_id,
-                            snapshot_present = snapshot.is_some(), proof_present = proof.is_some(),
-                            checkpoints = ?local.mls_local_checkpoints.values().chain(local.mls_historical_checkpoints.values()).map(|value| (value.epoch, value.group_state_event_id.as_ref())).collect::<Vec<_>>(),
-                            "accepted own MLS Commit staging is incomplete");
-                    }
+                        })
+                        .cloned();
+                    let accepted = store.cached_mls_accepted_artifact(&event.event_id)?;
                     let snapshot = snapshot?;
-                    let proof = proof?;
                     Some(LocalAuthoredCommitStaging {
                         event_id: event.event_id.clone(),
                         snapshot: snapshot.into_queued(),
-                        proof_leaves: proof.request.local_mls_leaves.clone(),
+                        proof_leaves: accepted.outcome.mls_frontier_leaves.clone(),
                     })
                 });
                 if let Some(staging) = recovered_staging.as_ref()
@@ -467,24 +345,16 @@ impl HostArtifactApplicator {
                 let realm_id = scope
                     .realm_id_opt()
                     .ok_or_else(|| protocol("accepted MLS Commit has no Realm scope"))?;
-                let checkpoint = self
+                let accepted = self
                     .state
-                    .read(|store| store.trusted_mls_governance_checkpoint(realm_id.as_str()))
-                    .ok_or_else(|| protocol("accepted MLS Commit has no verified checkpoint"))?;
+                    .read(|store| store.cached_mls_accepted_artifact(&event.event_id))
+                    .ok_or_else(|| protocol("accepted MLS Commit has no current Station result"))?;
                 for proposal_ref in payload.proposal_refs() {
-                    let mut matches = checkpoint
-                        .accepted_events
-                        .iter()
-                        .filter(|candidate| &candidate.event_id == proposal_ref);
-                    let proposal_event = matches.next().ok_or_else(|| {
+                    let proposal_event = accepted.proposals.get(proposal_ref).ok_or_else(|| {
                         protocol("accepted MLS Commit references an unavailable Proposal")
                     })?;
-                    if matches.next().is_some()
-                        || proposal_event.kind != arkret_sdk::EventKind::MlsProposal
-                    {
-                        return Err(protocol(
-                            "accepted MLS Commit proposal reference is ambiguous or has the wrong kind",
-                        ));
+                    if proposal_event.kind != arkret_sdk::EventKind::MlsProposal {
+                        return Err(protocol("MLS Commit reference does not name a Proposal"));
                     }
                     let proposal = event_payload::<arkret_sdk::MlsProposalPayload>(proposal_event)?;
                     if proposal.mls_group_id.as_str() != payload.mls_group_id()
@@ -794,62 +664,31 @@ fn locally_executable(
     }
 }
 
-fn ordered_mls_artifacts(events: &[arkret_sdk::Event]) -> Result<Vec<&arkret_sdk::Event>, String> {
-    let mut ordered = Vec::new();
-    for event in events {
-        let key = match event.kind {
-            arkret_sdk::EventKind::MlsGenesis => (0, 0),
-            arkret_sdk::EventKind::MlsCommit => (
-                event_payload::<arkret_sdk::MlsCommitPayload>(event)
-                    .map_err(|error| error.to_string())?
-                    .next_epoch(),
-                1,
-            ),
-            arkret_sdk::EventKind::MlsWelcome => (
-                event_payload::<arkret_sdk::MlsWelcomePayload>(event)
-                    .map_err(|error| error.to_string())?
-                    .epoch,
-                2,
-            ),
-            _ => continue,
-        };
-        ordered.push((key, event));
-    }
-    ordered.sort_by_key(|(key, _)| *key);
-    Ok(ordered.into_iter().map(|(_, event)| event).collect())
-}
-
-/// Apply all locally executable MLS artifacts in current verified checkpoints.
-/// No projection Event or to-device envelope can enter this path directly.
+/// Consume only explicitly acquired, session-current artifact results.
 pub(crate) async fn converge_accepted_mls_artifacts(
     state: &StateStoreHandle,
     authority: &arkret_sdk::AccountId,
     device_id: &arkret_sdk::DeviceId,
 ) -> Result<usize, String> {
-    let frontiers = {
-        let local = state.read(crate::state::LocalStateStore::load);
-        local
-            .mls_governance_proofs
-            .values()
-            .filter_map(|proof| {
-                let realm = proof.request.effective_scope.realm_id_opt()?;
-                let checkpoint = local.mls_governance_checkpoints.get(realm.as_str())?;
-                (checkpoint.basis == proof.proof_target_basis).then(|| {
-                    arkret_sdk::VerifiedMlsGovernanceFrontier {
-                        proof_target_basis: proof.proof_target_basis.clone(),
-                        security_frontier_digest: proof
-                            .governance_binding
-                            .security_frontier_digest()
-                            .clone(),
-                        page_digest: proof.bundle.page_digest.clone(),
-                        target_checkpoint: checkpoint.clone(),
-                    }
-                })
-            })
+    let mut entries = state.read(|store| {
+        store
+            .load()
+            .mls_accepted_artifacts
+            .keys()
+            .filter_map(|key| arkret_sdk::EventId::new(key.clone()).ok())
+            .filter_map(|id| store.cached_mls_accepted_artifact(&id))
             .collect::<Vec<_>>()
-    };
+    });
+    entries.sort_by_key(|entry| {
+        (
+            entry.outcome.transition_head.next_epoch,
+            entry.event.kind == arkret_sdk::EventKind::MlsWelcome,
+        )
+    });
     let consumer = garth::AcceptedMlsArtifactConsumer::new(HostArtifactStore {
         state: state.clone(),
+        authority: authority.clone(),
+        session_epoch: crate::identity::device_directory::cache_epoch(),
     });
     let applicator = HostArtifactApplicator {
         state: state.clone(),
@@ -858,38 +697,26 @@ pub(crate) async fn converge_accepted_mls_artifacts(
         local_authored_commit: None,
     };
     let mut applied = 0;
-    for frontier in frontiers {
-        for event in ordered_mls_artifacts(&frontier.target_checkpoint.accepted_events)? {
-            if !garth::is_checkpoint_winning_accepted_mls_artifact(
-                &frontier.target_checkpoint,
-                &event.event_id,
-            )
+    for entry in entries {
+        if &entry.authority != authority
+            || !state.read(|store| {
+                locally_executable(&consumer, store, &entry.event, authority, device_id)
+            })?
+        {
+            continue;
+        }
+        let committed = consumer
+            .consume(&entry.request, &entry.outcome, &entry.event, &applicator)
             .await
-            .map_err(|error| error.to_string())?
-            {
-                continue;
-            }
-            if !state
-                .read(|store| locally_executable(&consumer, store, event, authority, device_id))?
-            {
-                continue;
-            }
-            let committed = consumer
-                .consume(&frontier, &event.event_id, &applicator)
-                .await
-                .map_err(|error| error.to_string())?;
-            if committed.outcome == garth::AcceptedMlsArtifactCommitOutcome::Applied {
-                applied += 1;
-            }
+            .map_err(|error| error.to_string())?;
+        if committed.outcome == garth::AcceptedMlsArtifactCommitOutcome::Applied {
+            applied += 1;
         }
     }
     Ok(applied)
 }
 
-/// Materialize one exact locally-authored Commit after its accepted checkpoint
-/// and post-transition proof have been verified. Unlike the background
-/// best-effort scan, every missing or non-winning input is an error: a durable
-/// admission unit must never turn a skipped Commit into a successful no-op.
+/// Apply one exact locally authored Commit after the Station accepted it.
 pub(crate) async fn converge_accepted_local_commit(
     state: &StateStoreHandle,
     authority: &arkret_sdk::AccountId,
@@ -897,54 +724,18 @@ pub(crate) async fn converge_accepted_local_commit(
     event_id: &arkret_sdk::EventId,
     staged_snapshot: &garth::QueuedMlsLocalCheckpoint,
 ) -> Result<garth::AcceptedMlsArtifactCommitOutcome, String> {
-    let local = state.read(crate::state::LocalStateStore::load);
-    let checkpoint = local
-        .mls_governance_checkpoints
-        .get(staged_snapshot.realm_id.as_str())
-        .cloned()
-        .ok_or_else(|| "locally authored MLS Commit has no pinned checkpoint".to_owned())?;
-    let event = checkpoint
-        .accepted_events
-        .iter()
-        .find(|event| &event.event_id == event_id)
-        .cloned()
-        .ok_or_else(|| {
-            "locally authored MLS Commit is absent from its accepted checkpoint".to_owned()
-        })?;
-    if event.kind != arkret_sdk::EventKind::MlsCommit {
-        return Err("locally authored MLS transition is not an ak.mls.commit Event".to_owned());
-    }
-    let payload =
-        event_payload::<arkret_sdk::MlsCommitPayload>(&event).map_err(|error| error.to_string())?;
-    let mut proofs = local.mls_governance_proofs.values().filter(|proof| {
-        proof.proof_target_basis == checkpoint.basis
-            && proof.request.effective_scope == *payload.governance_binding().effective_scope()
-            && proof.request.mls_group_id.as_str() == payload.mls_group_id()
-            && proof.request.previous_epoch == payload.base_epoch()
-            && proof.request.next_epoch == payload.next_epoch()
-            && proof.governance_binding == *payload.governance_binding()
-    });
-    let proof = proofs
-        .next()
-        .cloned()
-        .ok_or_else(|| "locally authored MLS Commit has no exact verified proof".to_owned())?;
-    if proofs.next().is_some() {
-        return Err("locally authored MLS Commit has multiple exact verified proofs".to_owned());
-    }
-    let frontier = arkret_sdk::VerifiedMlsGovernanceFrontier {
-        proof_target_basis: proof.proof_target_basis,
-        security_frontier_digest: proof.governance_binding.security_frontier_digest().clone(),
-        page_digest: proof.bundle.page_digest,
-        target_checkpoint: checkpoint,
-    };
-    if !garth::is_checkpoint_winning_accepted_mls_artifact(&frontier.target_checkpoint, event_id)
-        .await
-        .map_err(|error| error.to_string())?
-    {
-        return Err("locally authored MLS Commit is not the checkpoint winner".to_owned());
+    let entry = state
+        .read(|store| store.cached_mls_accepted_artifact(event_id))
+        .ok_or_else(|| "locally authored MLS Commit has no current Station result".to_owned())?;
+    if &entry.authority != authority || entry.event.kind != arkret_sdk::EventKind::MlsCommit {
+        return Err(
+            "local MLS artifact differs from the active account or Commit intent".to_owned(),
+        );
     }
     let consumer = garth::AcceptedMlsArtifactConsumer::new(HostArtifactStore {
         state: state.clone(),
+        authority: authority.clone(),
+        session_epoch: crate::identity::device_directory::cache_epoch(),
     });
     let applicator = HostArtifactApplicator {
         state: state.clone(),
@@ -953,34 +744,11 @@ pub(crate) async fn converge_accepted_local_commit(
         local_authored_commit: Some(LocalAuthoredCommitStaging {
             event_id: event_id.clone(),
             snapshot: staged_snapshot.clone(),
-            proof_leaves: proof.request.local_mls_leaves,
+            proof_leaves: entry.outcome.mls_frontier_leaves.clone(),
         }),
     };
-    // Earlier locally authored transitions may have been staged before this
-    // admission. Materialize their exact winning ancestry first so the final
-    // Commit extends the durable base instead of bypassing it.
-    for predecessor in ordered_mls_artifacts(&frontier.target_checkpoint.accepted_events)? {
-        if &predecessor.event_id == event_id {
-            break;
-        }
-        if garth::is_checkpoint_winning_accepted_mls_artifact(
-            &frontier.target_checkpoint,
-            &predecessor.event_id,
-        )
-        .await
-        .map_err(|error| error.to_string())?
-            && state.read(|store| {
-                locally_executable(&consumer, store, predecessor, authority, device_id)
-            })?
-        {
-            consumer
-                .consume(&frontier, &predecessor.event_id, &applicator)
-                .await
-                .map_err(|error| error.to_string())?;
-        }
-    }
     consumer
-        .consume(&frontier, event_id, &applicator)
+        .consume(&entry.request, &entry.outcome, &entry.event, &applicator)
         .await
         .map(|committed| committed.outcome)
         .map_err(|error| error.to_string())

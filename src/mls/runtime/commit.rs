@@ -82,7 +82,7 @@ pub fn force_epoch_rotation_commit_for_effective_scope(
     let mut group = crate::mls::persistence::restore_envelope(&snapshot, &secret, epoch_floor)
         .map_err(|err| MlsRuntimeError::CheckpointRestore(err.to_string()))?;
     let previous_governance_binding = current_governance_binding_predecessor(&group)?;
-    let proof_request = crate::mls::governance_proof::proof_request(
+    let proof_request = crate::mls::governance_proof::frontier_request(
         state_store,
         realm_id,
         circle,
@@ -95,7 +95,7 @@ pub fn force_epoch_rotation_commit_for_effective_scope(
     )
     .map_err(MlsRuntimeError::Commit)?;
     let governance_binding =
-        crate::mls::governance_proof::cached_verified_binding(state_store, &proof_request)
+        crate::mls::governance_proof::cached_frontier_binding(state_store, &proof_request)
             .map_err(MlsRuntimeError::Commit)?;
     let commit_envelope = group
         .update_governance_binding(&governance_binding)

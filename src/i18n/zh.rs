@@ -919,6 +919,8 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("recovery.panel.fetching", "正在获取备份时间…");
     dict.set("recovery.panel.fetch_failed", "备份时间:{error}");
     dict.set("recovery.panel.loading", "加载中…");
+    dict.set("recovery.panel.next_page", "下一页");
+    dict.set("recovery.panel.partial_page", "当前仅显示这一页备份，后面还有更多。清空列表后可从第一页重新读取。");
     dict.set("recovery.panel.refresh", "刷新备份时间");
     dict.set(
         "recovery.panel.clear_title",

@@ -81,46 +81,6 @@ fn attach_group_state_ref_to_snapshot(
     true
 }
 
-fn checkpoint_mls_group_state_event_ids(
-    state: &ClientLocalState,
-    effective_scope: &arkret_sdk::ScopeRef,
-    group_id: &str,
-    epoch: u64,
-) -> Vec<arkret_sdk::EventId> {
-    let Some(realm_id) = effective_scope.realm_id_opt() else {
-        return Vec::new();
-    };
-    let Some(checkpoint) = state.mls_governance_checkpoints.get(realm_id.as_str()) else {
-        return Vec::new();
-    };
-    checkpoint
-        .accepted_events
-        .iter()
-        .filter_map(|event| match event.kind {
-            arkret_sdk::EventKind::MlsGenesis if epoch == 0 => {
-                let payload = serde_json::from_value::<arkret_sdk::MlsGenesisPayload>(
-                    serde_json::to_value(&event.payload).ok()?,
-                )
-                .ok()?;
-                (payload.mls_group_id.as_str() == group_id
-                    && payload.effective_scope == *effective_scope)
-                    .then(|| event.event_id.clone())
-            }
-            arkret_sdk::EventKind::MlsCommit => {
-                let payload = serde_json::from_value::<arkret_sdk::MlsCommitPayload>(
-                    serde_json::to_value(&event.payload).ok()?,
-                )
-                .ok()?;
-                (payload.next_epoch() == epoch
-                    && payload.mls_group_id() == group_id
-                    && payload.governance_binding().effective_scope() == effective_scope)
-                    .then(|| event.event_id.clone())
-            }
-            _ => None,
-        })
-        .collect()
-}
-
 #[derive(Clone, Debug)]
 pub(crate) struct AcceptedMlsTransitionEvidence {
     pub(crate) effective_scope: arkret_sdk::HistoryEffectiveScope,
@@ -180,7 +140,7 @@ impl LocalStateStore {
         self.load().accepted_mls_artifacts
     }
 
-    /// Atomically publish the checkpoint-proven Garth artifact snapshot and
+    /// Atomically publish the Station-accepted Garth artifact snapshot and
     /// mirror its ready states into the existing MLS lookup indexes. The
     /// returned barrier is the only success boundary used by the Garth CAS
     /// adapter; callers must await it before treating the group as ready.
@@ -420,9 +380,7 @@ impl LocalStateStore {
     // ── Local-authoritative MLS history-secret persistence ─────────
 
     /// Resolve the exact accepted transition tuple for a durable local MLS
-    /// snapshot. Only the locally verified governance checkpoint is accepted;
-    /// a projection row or current Event id alone cannot manufacture
-    /// `local_authoritative` status.
+    /// snapshot, using the Station result committed atomically with the crypto state.
     pub(crate) fn accepted_current_realm_mls_transition_evidence(
         &self,
         realm_id: &str,
@@ -441,9 +399,7 @@ impl LocalStateStore {
     }
 
     /// Resolve the exact accepted transition tuple for a durable local MLS
-    /// snapshot. Only the locally verified governance checkpoint is accepted;
-    /// a projection row or current Event id alone cannot manufacture
-    /// `local_authoritative` status.
+    /// snapshot, using the Station result committed atomically with the crypto state.
     pub(crate) fn accepted_mls_transition_evidence(
         &self,
         effective_scope: &arkret_sdk::ScopeRef,
@@ -470,64 +426,16 @@ impl LocalStateStore {
         let transition_ref = snapshot.group_state_event_id.clone().ok_or_else(|| {
             "local-authoritative export has no accepted transition reference".to_owned()
         })?;
-        let realm_id = effective_scope
-            .realm_id_opt()
-            .ok_or_else(|| "history export requires Realm or Circle scope".to_owned())?;
-        let checkpoint = self
-            .trusted_mls_governance_checkpoint(realm_id.as_str())
-            .ok_or_else(|| {
-                "local-authoritative export has no verified governance checkpoint".to_owned()
-            })?;
-        checkpoint
-            .validate_checkpoint()
-            .map_err(|error| error.to_string())?;
-        let event = checkpoint
-            .accepted_events
-            .iter()
-            .find(|event| event.event_id == transition_ref)
-            .ok_or_else(|| {
-                "accepted transition is absent from the verified governance checkpoint".to_owned()
-            })?;
-        let transition_event_digest =
-            arkret_sdk::signed_event_digest_claim(event).map_err(|error| error.to_string())?;
-        let payload_value =
-            serde_json::to_value(&event.payload).map_err(|error| error.to_string())?;
-        let mls_transition_digest = match event.kind.as_str() {
-            arkret_wire::event_kind_str::MLS_GENESIS => {
-                let payload =
-                    serde_json::from_value::<arkret_sdk::MlsGenesisPayload>(payload_value)
-                        .map_err(|error| format!("invalid accepted MLS Genesis: {error}"))?;
-                if epoch != 0
-                    || payload.mls_group_id.as_str() != group_id
-                    || payload.effective_scope != *effective_scope
-                {
-                    return Err(
-                        "accepted MLS Genesis does not match the durable local state".to_owned(),
-                    );
-                }
-                payload
-                    .transition_digest()
-                    .map_err(|error| error.to_string())?
-            }
-            arkret_wire::event_kind_str::MLS_COMMIT => {
-                let payload = serde_json::from_value::<arkret_sdk::MlsCommitPayload>(payload_value)
-                    .map_err(|error| format!("invalid accepted MLS Commit: {error}"))?;
-                if payload.next_epoch() != epoch
-                    || payload.mls_group_id() != group_id
-                    || payload.governance_binding().effective_scope() != effective_scope
-                {
-                    return Err(
-                        "accepted MLS Commit does not match the durable local state".to_owned()
-                    );
-                }
-                payload.commit_digest().clone()
-            }
-            _ => {
-                return Err(
-                    "durable MLS group-state reference names a non-transition Event".to_owned(),
-                );
-            }
-        };
+        let head = self
+            .accepted_mls_epoch_head(effective_scope, group_id, epoch)?
+            .ok_or_else(|| "Station-accepted MLS transition metadata is unavailable".to_owned())?;
+        if head.transition_ref != transition_ref {
+            return Err(
+                "durable MLS snapshot differs from the Station-accepted transition".to_owned(),
+            );
+        }
+        let transition_event_digest = head.transition_event_digest;
+        let mls_transition_digest = head.mls_transition_digest;
         let snapshot_digest = arkret_sdk::canonical::canonical_sha256(&snapshot)
             .map_err(|error| error.to_string())?;
         Ok(AcceptedMlsTransitionEvidence {
@@ -1149,29 +1057,11 @@ impl LocalStateStore {
                         })
                     })
             });
-        let record = match record {
-            Some(record) => record,
-            None => {
-                let event_ids =
-                    checkpoint_mls_group_state_event_ids(&state, effective_scope, group_id, epoch);
-                let [event_id] = event_ids.as_slice() else {
-                    return Err(if event_ids.is_empty() {
-                        format!(
-                            "accepted MLS group-state Event is unavailable for scope {key} at epoch {epoch}"
-                        )
-                    } else {
-                        format!(
-                            "accepted MLS group-state Event is ambiguous for scope {key} at epoch {epoch}"
-                        )
-                    });
-                };
-                MlsGroupStateRefRecord {
-                    group_id: group_id.to_owned(),
-                    epoch,
-                    event_id: event_id.clone(),
-                }
-            }
-        };
+        let record = record.ok_or_else(|| {
+            format!(
+                "accepted MLS group-state Event is unavailable for scope {key} at epoch {epoch}"
+            )
+        })?;
         if record.group_id != group_id || record.epoch != epoch {
             return Err(format!(
                 "accepted MLS group-state Event does not match group {group_id} epoch {epoch}"
@@ -1180,48 +1070,39 @@ impl LocalStateStore {
         Ok(record.event_id)
     }
 
-    /// Attach the exact accepted transition Event from the verified governance
-    /// checkpoint to a local snapshot that does not yet carry its transition.
-    pub fn reconcile_mls_group_state_ref_from_checkpoint(
-        &mut self,
-        realm_id: &str,
-        circle_id: Option<&str>,
-    ) -> Result<bool, String> {
-        self.ensure_cached_loaded();
-        let key = mls_effective_scope_checkpoint_key(realm_id, circle_id)?;
-        let Some(snapshot) = self.cached.mls_local_checkpoints.get(&key).cloned() else {
-            return Ok(false);
-        };
-        let scope = mls_realm_or_circle_scope(realm_id, circle_id)?;
-        let transition_ids = checkpoint_mls_group_state_event_ids(
-            &self.cached,
-            &scope,
-            &snapshot.group_id,
-            snapshot.epoch,
-        );
-        let [event_id] = transition_ids.as_slice() else {
-            if transition_ids.len() > 1 {
-                return Err("verified checkpoint has ambiguous MLS transition Events".to_owned());
+    /// Read metadata retained with an applied MLS transition, without governance history.
+    pub(crate) fn accepted_mls_epoch_head(
+        &self,
+        effective_scope: &arkret_sdk::ScopeRef,
+        group_id: &str,
+        epoch: u64,
+    ) -> Result<Option<arkret_sdk::MlsEpochHead>, String> {
+        let local = self.load();
+        let mut selected = None;
+        for artifact in local.accepted_mls_artifacts.snapshot.artifacts.values() {
+            let head = &artifact.transition_head;
+            if &head.effective_scope != effective_scope
+                || head.mls_group_id.as_str() != group_id
+                || head.next_epoch != epoch
+            {
+                continue;
             }
-            return Ok(false);
-        };
-        if let Some(current) = self.cached.mls_group_state_refs.get(&key)
-            && current.group_id == snapshot.group_id
-            && current.epoch == snapshot.epoch
-            && &current.event_id != event_id
-        {
-            return Err(
-                "local MLS transition reference differs from the verified checkpoint".to_owned(),
-            );
+            head.validate().map_err(|error| error.to_string())?;
+            if head.transition_ref != artifact.winning_transition_ref
+                || artifact.snapshot.group_state_event_id.as_ref() != Some(&head.transition_ref)
+                || artifact.snapshot.group_id != group_id
+                || artifact.snapshot.epoch != epoch
+            {
+                return Err(
+                    "accepted MLS metadata differs from its durable crypto snapshot".to_owned(),
+                );
+            }
+            if selected.as_ref().is_some_and(|current| current != head) {
+                return Err("durable MLS artifacts disagree on the exact transition".to_owned());
+            }
+            selected = Some(head.clone());
         }
-        self.record_mls_group_state_ref_for_effective_scope(
-            realm_id.to_owned(),
-            circle_id,
-            &snapshot.group_id,
-            snapshot.epoch,
-            event_id.clone(),
-        )?;
-        Ok(true)
+        Ok(selected)
     }
 
     /// Advance the canonical group-state reference after the matching genesis
@@ -1659,6 +1540,18 @@ mod tests {
         let mut store = LocalStateStore::with_path(&path);
         store.save_mls_checkpoint(realm, staged.clone()).unwrap();
         let artifact = garth::DurableAcceptedMlsArtifact {
+            transition_head: arkret_sdk::MlsEpochHead {
+                transition_ref: id.clone(),
+                transition_event_digest: id.event_digest(),
+                mls_transition_digest: commit.commit_digest.clone(),
+                effective_scope: arkret_sdk::ScopeRef::Realm {
+                    realm_id: arkret_sdk::RealmId::new(realm).unwrap(),
+                },
+                mls_group_id: arkret_sdk::Base64UrlString::new(group).unwrap(),
+                previous_epoch: 0,
+                next_epoch: 1,
+                content_scheme: arkret_sdk::ContentScheme::MlsExporterAeadV1,
+            },
             event,
             event_digest: arkret_sdk::Hash::new(format!("sha256:{}", "a5".repeat(32))).unwrap(),
             winning_transition_ref: id.clone(),
@@ -1712,88 +1605,6 @@ mod tests {
                 .compare_and_swap_accepted_mls_artifacts(1, &state)
                 .unwrap()
                 .is_none()
-        );
-        let _ = std::fs::remove_file(path);
-    }
-
-    #[test]
-    fn verified_commit_restores_missing_nonzero_epoch_reference() {
-        let path = std::env::temp_dir().join(format!(
-            "inkson-commit-anchor-{}.json",
-            chrono::Utc::now().timestamp_nanos_opt().unwrap()
-        ));
-        let realm = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
-        let id = arkret_sdk::EventId::new("ak:event:AXBcp13trH3bPXvj0eHppCpGqJZWL9yqE3cf2Tl43vyk")
-            .unwrap();
-        let group = "AQID";
-        let binding = arkret_sdk::MlsGovernanceBindingPayload::realm(
-            arkret_sdk::RealmId::new(realm).unwrap(),
-            group,
-            0,
-            1,
-            arkret_sdk::Hash::new(format!("sha256:{}", "a5".repeat(32))).unwrap(),
-            arkret_sdk::ContentScheme::MlsExporterAeadV1,
-            Some(arkret_sdk::DurabilityPolicy::None),
-            arkret_sdk::ProfileId::MLS_GOVERNANCE_BINDING_FULL_V1,
-            arkret_sdk::CORE_REDUCER_PROFILE,
-        )
-        .unwrap();
-        let commit = arkret_sdk::MlsCommitEnvelope {
-            group_id: group.into(),
-            epoch: 1,
-            commit: arkret_sdk::base64url_encode(b"commit"),
-            commit_digest: arkret_sdk::Hash::new(arkret_sdk::canonical::sha256_digest(b"commit"))
-                .unwrap(),
-            ratchet_tree: None,
-        };
-        let payload =
-            arkret_sdk::MlsCommitPayload::new(0, id.to_string(), Vec::new(), &commit, binding)
-                .unwrap();
-        let event = serde_json::from_value(json!({
-            "event_id": id, "kind": "ak.mls.commit", "realm_id": realm,
-            "scope_ref": {"kind":"realm", "realm_id":realm},
-            "actor_id": {"kind":"account", "account_id": {"principal_id":"ak:did_core:web:alice.example", "station_id":"ak:did_core:web:station.example"}},
-            "actor_seq": 1, "created_at":"2026-05-19T00:00:00.000Z",
-            "hlc":"01970e589d21-0001-a13f9c2e", "prev_refs":[], "payload":payload, "proofs":[]
-        })).unwrap();
-        let mut store = LocalStateStore::with_path(&path);
-        let snapshot = crate::mls::persistence::encrypt_state(
-            realm,
-            group,
-            1,
-            b"snapshot",
-            "test-secret",
-            &[7; 16],
-        );
-        store.save_mls_checkpoint(realm, snapshot).unwrap();
-        assert!(
-            !store
-                .reconcile_mls_group_state_ref_from_checkpoint(realm, None)
-                .unwrap()
-        );
-        // Post-verification fixture: projection rows remain insufficient.
-        store.cached.mls_governance_checkpoints.insert(
-            realm.into(),
-            arkret_sdk::MlsGovernanceVerificationCheckpoint {
-                realm_id: arkret_sdk::RealmId::new(realm).unwrap(),
-                basis: arkret_sdk::SealBasis { leaves: Vec::new() },
-                live_digest_suite: arkret_sdk::DigestSuite::Sha256,
-                accepted_seals: Vec::new(),
-                accepted_events: vec![event],
-                governance_dependencies: Vec::new(),
-            },
-        );
-        assert!(
-            store
-                .reconcile_mls_group_state_ref_from_checkpoint(realm, None)
-                .unwrap()
-        );
-        assert_eq!(
-            store
-                .mls_checkpoint_for(realm)
-                .unwrap()
-                .group_state_event_id,
-            Some(id)
         );
         let _ = std::fs::remove_file(path);
     }
@@ -2030,11 +1841,6 @@ mod tests {
                 .mls_group_state_ref_for_effective_scope(realm_id, None, group_id, 0)
                 .is_err()
         );
-        assert!(
-            !store
-                .reconcile_mls_group_state_ref_from_checkpoint(realm_id, None)
-                .unwrap()
-        );
         let restored = LocalStateStore::with_path(&path);
         assert_eq!(
             restored
@@ -2108,11 +1914,6 @@ mod tests {
             }),
         );
 
-        assert!(
-            !store
-                .reconcile_mls_group_state_ref_from_checkpoint(realm_id, None)
-                .unwrap()
-        );
         assert_eq!(
             store
                 .mls_group_state_ref_for_effective_scope(realm_id, None, group_id, 0)
@@ -2195,11 +1996,6 @@ mod tests {
             }),
         );
 
-        assert!(
-            !store
-                .reconcile_mls_group_state_ref_from_checkpoint(realm_id, None)
-                .unwrap()
-        );
         assert_eq!(
             store
                 .mls_group_state_ref_for_effective_scope(realm_id, None, group_id, 0)
@@ -2259,11 +2055,6 @@ mod tests {
             store
                 .mls_group_state_ref_for_effective_scope(realm_id, None, group_id, 0)
                 .is_err()
-        );
-        assert!(
-            !store
-                .reconcile_mls_group_state_ref_from_checkpoint(realm_id, None)
-                .unwrap()
         );
         let _ = std::fs::remove_file(path);
     }

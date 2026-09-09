@@ -1147,12 +1147,10 @@ fn mls_recovery_setup_missing_stays_false_when_account_backup_exists() {
     );
     let secure = crate::secure_key_store::MemorySecureKeyStore::new();
     let payload = serde_json::json!({
-        "active_series": [{
-            "schema": SchemaId::KEY_BACKUP_ACTIVE_SERIES_V1,
-            "actor_id": "ak:did_core:web:alice.example",
-            "backup_kind": "secret_storage",
+        "active_series": {"secret_storage": {
+            "state": "active", "series_pointer_version": 1,
             "active_series_id": "ak:backup_series:01964137-1000-7000-8000-0000000000a1",
-        }],
+        }},
         "backups": [{
             "backup_id": "ak:backup:passphrase",
             "backup_kind": "secret_storage",

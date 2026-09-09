@@ -630,7 +630,7 @@ pub(super) fn ChatEffects(
                         "chat initial sync phase started"
                     );
                     if let Err(error) =
-                        crate::mls::creator_bootstrap::ensure_realm_governance_checkpoint(
+                        crate::mls::creator_bootstrap::refresh_realm_governance_frontier(
                             &api,
                             crate::app::runtime_adapter::state_store_handle(state_store),
                             &selected_realm_for_load,

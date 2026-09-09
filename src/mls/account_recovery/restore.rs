@@ -131,7 +131,7 @@ pub struct RestoreReport {
 pub(super) fn verify_active_backup_series(list_payload: &Value, backup_kind: &str) -> Result<()> {
     let class = arkret_sdk::BackupKind::try_from(backup_kind).map_err(|error| anyhow!(error))?;
     let Some(active_series) =
-        garth::mls::backup_selection::selectable_series_id_for_backup_class(list_payload, class)
+        garth::mls::backup_selection::active_series_id_for_backup_class(list_payload, class)
     else {
         return Err(anyhow!(
             "{backup_kind} active-series pointer is unavailable"
@@ -153,49 +153,27 @@ pub(super) fn verify_active_backup_series(list_payload: &Value, backup_kind: &st
     verify_series_chain(tail, &bodies).map_err(|error| anyhow!("{error}"))
 }
 
-pub(super) fn observe_active_series_versions(
+pub(super) fn validate_backup_account(
     list_payload: &Value,
-    state_store: &mut crate::state::LocalStateStore,
     authority: &arkret_sdk::AccountId,
     actor_id: &str,
 ) -> Result<()> {
     if crate::mls_api_helpers::principal_core_id(actor_id)? != authority.principal_id {
         return Err(anyhow!("backup restore principal binding mismatch"));
     }
+    let current: arkret_sdk::BackupActiveSeriesState = serde_json::from_value(
+        list_payload.get("active_series").cloned()
+            .ok_or_else(|| anyhow!("current backup pointers are unavailable"))?
+    )?;
+    current.validate()?;
+    if current.account_id != *authority {
+        return Err(anyhow!("active-series account binding mismatch"));
+    }
     let expected_actor = arkret_sdk::ActorId::account(authority.clone());
-    // Validate both pointers and envelopes before advancing any rollback floor.
-    // A shared principal at another Station is a distinct backup owner.
     for body in garth::mls::backup_selection::iter_backup_bodies(list_payload) {
         if backup_actor(body)? != expected_actor {
             return Err(anyhow!("backup envelope actor binding mismatch"));
         }
-    }
-    let mut versions = Vec::new();
-    for record in list_payload
-        .get("active_series")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-    {
-        if backup_actor(record)? != expected_actor {
-            return Err(anyhow!("active-series actor binding mismatch"));
-        }
-        let backup_kind = record
-            .get("backup_kind")
-            .and_then(Value::as_str)
-            .ok_or_else(|| anyhow!("active-series record omitted backup_kind"))?;
-        let version = record
-            .get("series_pointer_version")
-            .and_then(Value::as_u64)
-            .ok_or_else(|| anyhow!("active-series record omitted series_pointer_version"))?;
-        versions.push((backup_kind, version));
-    }
-    for (backup_kind, version) in versions {
-        state_store.observe_key_backup_active_series_version(
-            &expected_actor,
-            backup_kind,
-            version,
-        )?;
     }
     Ok(())
 }
@@ -221,45 +199,47 @@ pub async fn fetch_mls_account_secret_backup(
     Ok(select_preferred_mls_account_secret_backup(&payload))
 }
 
-/// Fetch the full key-backup list once for MLS account-secret import +
-/// history restore.
-///
-/// Callers fetch here first and then pass the returned payload into
-/// [`restore_mls_history_with_passphrase_from_payload`], which keeps the
-/// network read out of every local state borrow.
+/// Fetch metadata only for the two currently active series. Each page is
+/// bounded by the wire contract; the aggregate has a separate client budget.
+/// An interrupted or changing listing is never returned as a complete restore.
 pub async fn fetch_mls_restore_payload(
     api: &crate::transport::TransportClient,
     actor_id: &str,
 ) -> Result<Value> {
-    let backups = api
-        .list_key_backups()
-        .await
-        .map_err(|err| anyhow!("list key backups: {err}"))?;
-    let needs_active_series = backups
-        .backups
-        .iter()
-        .fold(
-            std::collections::BTreeMap::<
-                &'static str,
-                std::collections::BTreeSet<arkret_sdk::BackupSeriesId>,
-            >::new(),
-            |mut kinds, backup| {
-                kinds
-                    .entry(backup.backup_kind.as_str())
-                    .or_default()
-                    .insert(backup.series_id.clone());
-                kinds
-            },
-        )
-        .values()
-        .any(|series| series.len() > 1);
-    let mut payload = serde_json::to_value(&backups)?;
-    payload["active_series"] = if needs_active_series {
-        Value::Array(fetch_authoritative_active_series(api, actor_id).await?)
-    } else {
-        Value::Array(Vec::new())
-    };
-    Ok(payload)
+    use arkret_sdk::{BackupKind, KeyBackupsListQuery};
+    let discovery = api.list_key_backups_page(&KeyBackupsListQuery {
+        series_id: None, backup_kind: None, cursor: None, limit: Some(1),
+    }).await?;
+    let current = discovery.active_series;
+    if current.account_id.principal_id != crate::mls_api_helpers::principal_core_id(actor_id)? {
+        return Err(anyhow!("backup discovery account binding mismatch"));
+    }
+    let mut backups = Vec::new();
+    let mut bytes = 0usize;
+    for kind in [BackupKind::SecretStorage, BackupKind::MlsHistory] {
+        let Some(series_id) = current.pointer(kind).series_id() else { continue; };
+        let mut query = KeyBackupsListQuery {
+            series_id: Some(series_id.clone()), backup_kind: Some(kind), cursor: None, limit: Some(200),
+        };
+        let mut seen = std::collections::BTreeSet::new();
+        loop {
+            let page = api.list_key_backups_page(&query).await?;
+            if page.active_series != current {
+                return Err(anyhow!("backup state changed during recovery discovery; retry"));
+            }
+            bytes = bytes.saturating_add(serde_json::to_vec(&page)?.len());
+            if bytes > 8 * 1024 * 1024 || backups.len() + page.backups.len() > 4096 {
+                return Err(anyhow!("active backup series exceeds this device's recovery metadata budget"));
+            }
+            backups.extend(page.backups);
+            let Some(cursor) = page.next_cursor else { break; };
+            if !seen.insert(cursor.to_string()) {
+                return Err(anyhow!("backup listing repeated its cursor"));
+            }
+            query.cursor = Some(cursor);
+        }
+    }
+    Ok(json!({"backups": backups, "active_series": current}))
 }
 
 /// Fresh-device discovery can race the projection of backups uploaded moments
@@ -307,55 +287,6 @@ pub async fn fetch_mls_restore_payload_after_encrypted_projection(
         payload = fetch_mls_restore_payload(api, actor_id).await?;
     }
     Ok(payload)
-}
-
-async fn fetch_authoritative_active_series(
-    _api: &crate::transport::TransportClient,
-    _actor_id: &str,
-) -> Result<Vec<Value>> {
-    Err(anyhow!(
-        "remote first-device active-series recovery is unsupported in v1 because historical completeness is not a protocol guarantee"
-    ))
-}
-/// The DID URL shapes that may authorize an `ak.key_backup.active_series`
-/// record for one `(actor_id, device_id, device_signing_key)` triple.
-///
-/// `did-usage-and-verification.md` §2.2: a verification method is a **DID URL**
-/// and MUST carry a `#fragment`; a bare DID is never one. Exactly three shapes
-/// are accepted:
-///
-/// - `<principal_did>#<device_id>` — the principal-bound device reference;
-/// - `<device_signing_key>#<multikey>` — the self-describing `did:key` form;
-/// - `<device_signing_key>#device` — the same key with the conventional fragment.
-#[cfg(test)]
-fn active_series_verification_method_matches(
-    verification_method: &str,
-    principal_id: &arkret_sdk::DidCoreId,
-    device_id: &str,
-    device_signing_key: &str,
-    multikey: &str,
-) -> bool {
-    active_series_principal_device(verification_method, principal_id)
-        .is_some_and(|device| device.as_str() == device_id)
-        || verification_method == format!("{device_signing_key}#{multikey}")
-        || verification_method == format!("{device_signing_key}#device")
-}
-
-#[cfg(test)]
-fn active_series_principal_device(
-    verification_method: &str,
-    principal_id: &arkret_sdk::DidCoreId,
-) -> Option<arkret_sdk::DeviceId> {
-    let method = arkret_sdk::DidUrl::new(verification_method).ok()?;
-    let did = arkret_sdk::verification_method_did(method.as_str()).ok()?;
-    if arkret_sdk::project_did_to_core_id(&did).ok().as_ref() != Some(principal_id) {
-        return None;
-    }
-    let (controller, fragment) = method.as_str().split_once('#')?;
-    if controller != did.as_str() {
-        return None;
-    }
-    arkret_sdk::DeviceId::new(fragment).ok()
 }
 
 pub async fn fetch_mls_restore_payload_with_unlock_proof(
@@ -412,7 +343,7 @@ async fn hydrate_mls_restore_payload_with_unlock_proof(
             .and_then(Value::as_str)
             .unwrap_or_default();
         if let Ok(class) = arkret_sdk::BackupKind::try_from(backup_kind) {
-            let active_series = garth::mls::backup_selection::selectable_series_id_for_backup_class(
+            let active_series = garth::mls::backup_selection::active_series_id_for_backup_class(
                 &payload, class,
             );
             if entry.get("series_id").and_then(Value::as_str) != active_series {
@@ -463,7 +394,7 @@ async fn hydrate_mls_restore_payload_with_unlock_proof(
     }
     let full_payload = json!({
         "backups": full_backups,
-        "active_series": payload.get("active_series").cloned().unwrap_or_else(|| json!([])),
+        "active_series": payload.get("active_series").cloned().unwrap_or(Value::Null),
         "next_cursor": payload.get("next_cursor").cloned().unwrap_or(Value::Null),
         "has_more": false,
         "state": payload.get("state").cloned().unwrap_or_else(|| json!("active")),
@@ -498,7 +429,7 @@ pub async fn fetch_mls_history_restore_payload_with_unlock_proof(
             backups.push(entry);
             continue;
         }
-        let active_series = garth::mls::backup_selection::selectable_series_id_for_backup_class(
+        let active_series = garth::mls::backup_selection::active_series_id_for_backup_class(
             list_payload,
             crate::key_backup::BackupKind::MlsHistory,
         );
@@ -546,8 +477,7 @@ pub async fn restore_mls_history_with_passphrase_from_payload(
     passphrase: &[u8],
 ) -> Result<RestoreReport> {
     let mut report = RestoreReport::default();
-    state_store
-        .write(|store| observe_active_series_versions(list_payload, store, authority, actor_id))?;
+    validate_backup_account(list_payload, authority, actor_id)?;
 
     // Step 1: refresh the local account secret from the server backup when it
     // exists. This deliberately runs even if a local secret is present: a
@@ -624,8 +554,7 @@ pub async fn restore_mls_history_with_recovery_key_from_payload(
 ) -> Result<RestoreReport> {
     let _ = device_id;
     let mut report = RestoreReport::default();
-    state_store
-        .write(|store| observe_active_series_versions(list_payload, store, authority, actor_id))?;
+    validate_backup_account(list_payload, authority, actor_id)?;
     verify_active_backup_series(
         list_payload,
         crate::key_backup::BackupKind::SecretStorage.as_str(),
@@ -678,8 +607,7 @@ pub async fn restore_mls_history_with_local_secret_from_payload(
     actor_id: &str,
 ) -> RestoreReport {
     let mut report = RestoreReport::default();
-    if let Err(error) = state_store
-        .write(|store| observe_active_series_versions(list_payload, store, authority, actor_id))
+    if let Err(error) = validate_backup_account(list_payload, authority, actor_id)
     {
         report.failed = 1;
         report.first_error = Some(error.to_string());
@@ -941,96 +869,3 @@ pub fn mls_backup_prompt_required(
     )
 }
 
-#[cfg(test)]
-mod verification_method_shape_tests {
-    use super::{active_series_principal_device, active_series_verification_method_matches};
-
-    const ACTOR: &str = "did:webvh:z6mkfixture:alice.example";
-    const DEVICE: &str = "ak:device:01904100-0000-7000-8000-000000000001";
-    const DID_KEY: &str = "did:key:z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK";
-    const MULTIKEY: &str = "z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK";
-
-    fn principal() -> arkret_sdk::DidCoreId {
-        arkret_sdk::project_did_to_core_id(&arkret_sdk::Did::new(ACTOR).unwrap()).unwrap()
-    }
-
-    #[test]
-    fn resolves_full_did_url_against_stable_principal_without_inventing_a_did() {
-        assert_eq!(
-            active_series_principal_device(&format!("{ACTOR}#{DEVICE}"), &principal())
-                .unwrap()
-                .as_str(),
-            DEVICE
-        );
-        for method in [
-            format!("{}#{DEVICE}", principal()),
-            format!("did:webvh:zOther:alice.example#{DEVICE}"),
-            format!("{ACTOR}?versionId=old#{DEVICE}"),
-        ] {
-            assert!(active_series_principal_device(&method, &principal()).is_none());
-        }
-    }
-
-    #[test]
-    fn accepts_the_three_fragment_bearing_shapes() {
-        for candidate in [
-            format!("{ACTOR}#{DEVICE}"),
-            format!("{DID_KEY}#{MULTIKEY}"),
-            format!("{DID_KEY}#device"),
-        ] {
-            assert!(
-                active_series_verification_method_matches(
-                    &candidate,
-                    &principal(),
-                    DEVICE,
-                    DID_KEY,
-                    MULTIKEY
-                ),
-                "{candidate} must be accepted"
-            );
-        }
-    }
-
-    /// Negative coverage for the removed bare-DID arm
-    /// (`did-usage-and-verification.md` §2.2: a verification method always
-    /// carries a `#fragment`).
-    #[test]
-    fn rejects_the_bare_device_signing_key() {
-        assert!(!active_series_verification_method_matches(
-            DID_KEY,
-            &principal(),
-            DEVICE,
-            DID_KEY,
-            MULTIKEY
-        ));
-    }
-
-    #[test]
-    fn rejects_the_bare_actor_did_and_empty_fragments() {
-        for candidate in [
-            ACTOR.to_owned(),
-            format!("{ACTOR}#"),
-            format!("{DID_KEY}#"),
-            format!("{ACTOR}#{MULTIKEY}"),
-        ] {
-            assert!(
-                !active_series_verification_method_matches(
-                    &candidate,
-                    &principal(),
-                    DEVICE,
-                    DID_KEY,
-                    MULTIKEY
-                ),
-                "{candidate} must be rejected"
-            );
-        }
-    }
-
-    /// The `DidUrl` type is the first line of defence: a bare DID cannot even
-    /// be constructed as a verification method any more.
-    #[test]
-    fn did_url_itself_rejects_a_bare_did() {
-        assert!(arkret_sdk::DidUrl::new(DID_KEY.to_owned()).is_err());
-        assert!(arkret_sdk::DidUrl::new(format!("{DID_KEY}#device")).is_ok());
-    }
-}

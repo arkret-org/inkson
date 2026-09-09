@@ -843,7 +843,7 @@ impl AgentAdminController {
                     &controller_evidence_for_checkpoint,
                 )
                 .await?;
-                crate::mls::creator_bootstrap::ensure_realm_governance_checkpoint(
+                crate::mls::creator_bootstrap::refresh_realm_governance_frontier(
                     &api,
                     crate::app::runtime_adapter::state_store_handle(state_store),
                     controller_realm_for_checkpoint.as_str(),

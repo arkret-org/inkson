@@ -22,7 +22,7 @@ fn seed_genesis_governance_proof(
     state: &mut crate::state::LocalStateStore,
     realm_id: &str,
 ) -> arkret_sdk::MlsGovernanceBindingPayload {
-    crate::mls::governance_proof::seed_test_governance_proof(
+    crate::mls::governance_proof::seed_test_governance_result(
         state,
         realm_id,
         None,
@@ -37,7 +37,7 @@ fn seed_next_governance_proof(
     realm_id: &str,
 ) -> arkret_sdk::MlsGovernanceBindingPayload {
     let snapshot = state.mls_checkpoint_for(realm_id).unwrap();
-    crate::mls::governance_proof::seed_test_governance_proof(
+    crate::mls::governance_proof::seed_test_governance_result(
         state,
         realm_id,
         None,

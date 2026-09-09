@@ -548,17 +548,27 @@ pub struct RealmStateSnapshotSyncStatus {
     pub degraded_reason: Option<String>,
 }
 
-/// A near-current MLS governance frontier proof that was fully verified before
-/// it entered local state. The original typed response is retained so a
-/// Welcome receiver can re-run validation without trusting a derived digest.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct CachedMlsGovernanceProof {
-    pub request: arkret_sdk::MlsGovernanceProofRequestBody,
-    pub governance_binding: arkret_sdk::MlsGovernanceBindingPayload,
-    pub proof_base_basis: arkret_sdk::SealBasis,
-    pub proof_target_basis: arkret_sdk::SealBasis,
-    pub bundle: arkret_sdk::MlsGovernanceProofBundle,
-    pub verified_at: DateTime<Utc>,
+/// Session-local response to one exact MLS authoring intent.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct CachedMlsGovernanceResult {
+    pub request: arkret_sdk::MlsGovernanceFrontierRequest,
+    pub outcome: arkret_sdk::MlsGovernanceFrontierOutcome,
+    pub session_epoch: u64,
+    pub received_at: DateTime<Utc>,
+}
+
+/// Session-local Station result and exact MLS crypto inputs. Never a governance checkpoint.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct CachedMlsAcceptedArtifact {
+    pub request: arkret_sdk::MlsAcceptedArtifactRequest,
+    pub outcome: arkret_sdk::MlsAcceptedArtifactOutcome,
+    pub event: arkret_sdk::Event,
+    pub transition: arkret_sdk::Event,
+    pub proposals: BTreeMap<arkret_sdk::EventId, arkret_sdk::Event>,
+    pub authority: arkret_sdk::AccountId,
+    pub session_epoch: u64,
+    pub observed_frontier: Vec<String>,
+    pub received_at: DateTime<Utc>,
 }
 
 /// Closed result of the client-local accepted-device normalization performed
@@ -854,11 +864,6 @@ pub(crate) struct LocallyAuthenticatedIdentityLink {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ClientLocalState {
     pub sync_cursor: Option<String>,
-    /// Highest verified `ak.key_backup.active_series` pointer observed per
-    /// `(actor_id, backup_kind)`. This is rollback protection, not a cache:
-    /// a complete server response below this floor must fail closed.
-    #[serde(default)]
-    pub key_backup_active_series_highest_seen: BTreeMap<String, u64>,
     /// Per-realm `ak.self.events.stream.subscribe.v1` resume cursors, keyed by
     /// realm id. Kept PHYSICALLY SEPARATE from the account-aggregate
     /// `sync_cursor`: the realm events stream and the account stream are
@@ -1092,8 +1097,13 @@ pub struct ClientLocalState {
     /// frontier outcomes. Keys are canonical query digests; values expire
     /// quickly and are invalidated when sync observes a different accepted
     /// Seal head.
-    #[serde(default)]
-    pub mls_governance_proofs: BTreeMap<String, CachedMlsGovernanceProof>,
+    #[serde(skip)]
+    pub mls_governance_results: BTreeMap<String, CachedMlsGovernanceResult>,
+    #[serde(skip)]
+    pub realm_governance_frontiers:
+        BTreeMap<String, (u64, DateTime<Utc>, arkret_sdk::RealmSealFrontierView)>,
+    #[serde(skip)]
+    pub mls_accepted_artifacts: BTreeMap<String, CachedMlsAcceptedArtifact>,
     /// Complete locally verified replay checkpoint used as the next proof
     /// base. T1 installs the event-derived Realm genesis checkpoint.
     /// Successful full verification atomically advances it to the exact target
@@ -1445,7 +1455,6 @@ impl Default for ClientLocalState {
     fn default() -> Self {
         Self {
             sync_cursor: None,
-            key_backup_active_series_highest_seen: BTreeMap::new(),
             realm_events_cursors: BTreeMap::new(),
             client_core_pending_deliveries: VecDeque::new(),
             client_core_next_delivery_id: 0,
@@ -1497,7 +1506,9 @@ impl Default for ClientLocalState {
             mls_historical_checkpoints: BTreeMap::new(),
             agent_signer_evidence: BTreeMap::new(),
             mls_coverage_stale: BTreeMap::new(),
-            mls_governance_proofs: BTreeMap::new(),
+            mls_governance_results: BTreeMap::new(),
+            realm_governance_frontiers: BTreeMap::new(),
+            mls_accepted_artifacts: BTreeMap::new(),
             mls_governance_checkpoints: BTreeMap::new(),
             mls_private_plaintext: BTreeMap::new(),
             mls_decrypted_plaintext: BTreeMap::new(),

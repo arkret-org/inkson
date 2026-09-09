@@ -67,16 +67,6 @@ pub struct WelcomeApplyOutcome {
     pub(crate) consumable_claims: Vec<WelcomeConsumeCandidate>,
 }
 
-#[cfg(test)]
-impl WelcomeApplyOutcome {
-    fn record_failure(&mut self, reason: String) {
-        self.failed += 1;
-        if self.first_error.is_none() {
-            self.first_error = Some(reason);
-        }
-    }
-}
-
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct WelcomeConsumeCandidate {
     pub(crate) key_package_id: String,
@@ -222,52 +212,42 @@ pub(crate) fn encrypted_payload_from_verified_event_context(
             reason,
         );
     };
-    let verified_genesis = if !matches!(effective_scope, arkret_sdk::ScopeRef::Sidecar { .. }) {
-        state_store
-            .trusted_mls_governance_checkpoint(effective_scope.realm_id_opt()?.as_str())
-            .map(|checkpoint| {
-                crate::mls::governance_proof::group_genesis_binding(
-                    &checkpoint,
-                    effective_scope,
-                    &arkret_sdk::Base64UrlString::new(group_id.clone()).ok()?,
-                )
-                .map_err(|error| warn_pending(&error))
-                .ok()
-                .flatten()
-            })
+    let scheme = if matches!(effective_scope, arkret_sdk::ScopeRef::Sidecar { .. }) {
+        arkret_sdk::EncryptedPayloadScheme::MlsRfc9420
     } else {
-        None
-    };
-    let scheme = if let Some(binding) = verified_genesis {
-        // A since-join display projection may omit or replace its historical
-        // Genesis row. The verified control checkpoint remains authoritative.
-        let binding = binding.or_else(|| {
-            warn_pending(
-                "verified checkpoint has no exact MLS Genesis for the encrypted Event scope/group",
-            );
-            None
-        })?;
-        match binding.content_scheme {
+        let head = state_store
+            .accepted_mls_epoch_head(
+                effective_scope,
+                &group_id,
+                envelope.encryption_context.epoch(),
+            )
+            .map_err(|error| warn_pending(&error))
+            .ok()?;
+        let content_scheme = if let Some(head) = head {
+            head.content_scheme
+        } else {
+            // Older externally recovered epochs need not have a locally applied
+            // artifact. The Account Station's immutable group configuration
+            // supplies the scheme; the exact transition reference and AEAD still bind it.
+            let scheme = match effective_scope {
+                arkret_sdk::ScopeRef::Circle {
+                    realm_id,
+                    circle_id,
+                } => state_store.circle_content_scheme(realm_id.as_str(), circle_id.as_str()),
+                _ => state_store.realm_content_scheme(effective_scope.realm_id_opt()?.as_str()),
+            }?;
+            match scheme.as_str() {
+                "mls_rfc9420" => arkret_sdk::ContentScheme::MlsRfc9420,
+                "mls_exporter_aead_v1" => arkret_sdk::ContentScheme::MlsExporterAeadV1,
+                _ => return None,
+            }
+        };
+        match content_scheme {
             arkret_sdk::ContentScheme::MlsRfc9420 => arkret_sdk::EncryptedPayloadScheme::MlsRfc9420,
             arkret_sdk::ContentScheme::MlsExporterAeadV1 => {
                 arkret_sdk::EncryptedPayloadScheme::MlsExporterAeadV1
             }
         }
-    } else {
-        let scheme = match effective_scope {
-            arkret_sdk::ScopeRef::Circle {
-                realm_id,
-                circle_id,
-            } => state_store.circle_content_scheme(realm_id.as_str(), circle_id.as_str()),
-            arkret_sdk::ScopeRef::Sidecar { .. } => Some("mls_rfc9420".to_owned()),
-            _ => state_store.realm_content_scheme(effective_scope.realm_id_opt()?.as_str()),
-        }?;
-        let scheme = match scheme.trim() {
-            "mls_rfc9420" => arkret_sdk::EncryptedPayloadScheme::MlsRfc9420,
-            "mls_exporter_aead_v1" => arkret_sdk::EncryptedPayloadScheme::MlsExporterAeadV1,
-            _ => return None,
-        };
-        scheme
     };
     let accepted_ref = state_store
         .mls_group_state_ref_for_scope(
@@ -1435,6 +1415,7 @@ pub(super) fn durable_welcome_payload_reject_reason(value: &serde_json::Value) -
         })
 }
 
+#[cfg(test)]
 pub(super) fn durable_welcome_wire_payload(value: &serde_json::Value) -> serde_json::Value {
     let mut wire_payload = value.clone();
     if let Some(object) = wire_payload.as_object_mut() {
@@ -1757,23 +1738,10 @@ pub(super) fn verify_welcome_claim_envelope_signer(
     Ok(())
 }
 
-/// Welcome admission gate (2): before persisting the snapshot, independently verify
-/// the Welcome's embedded `governance_binding` (`encryption-and-audit.md`:438:
-/// clients MUST independently verify the referenced Seal view and state_root
-/// before accepting an MLS epoch).
-///
-/// The MLS group's embedded governance-binding extension must exactly match the
-/// durable payload forwarded by the server. The Welcome-declared group, epochs,
-/// binding/reducer profiles, Security Frontier digest, and active leaf set build
-/// the expected context passed to
-/// `ArkretMlsGroup::verify_current_governance_binding`. Any field mismatch or
-/// missing MLS binding extension returns `Err` and rejects the Welcome.
-///
-/// A missing binding, missing full-profile roots, or absence of a locally
-/// verifiable accepted-Seal proof bundle is a hard `state_mismatch`. The caller
-/// records the Welcome as failed/decryption-pending and MUST NOT persist the
-/// joined snapshot. Server admission and claim signatures are defense in depth,
-/// not substitutes for the independent proof required by §2.5.1.
+/// Match the cryptographically decoded MLS GroupContext to the exact accepted
+/// binding returned by the authenticated Account Station. Governance history
+/// and roots are evaluated by the server; tree, transcript and credential
+/// checks remain local before any durable snapshot publication.
 pub(super) fn verify_welcome_governance_binding(
     state_store: &crate::state::LocalStateStore,
     realm_id: &str,
@@ -1801,348 +1769,30 @@ pub(super) fn verify_welcome_governance_binding(
                 .to_owned(),
         );
     }
-    let verified = crate::mls::governance_proof::cached_verified_binding_for_transition(
-        state_store,
-        binding.effective_scope(),
-        binding.mls_group_id(),
-        binding.previous_epoch(),
-        binding.next_epoch(),
-    )?;
-    if verified != binding {
-        return Err(
-            "durable Welcome governance binding differs from the locally verified Seal proof"
-                .to_owned(),
-        );
+    let local = state_store.load();
+    if !local
+        .mls_accepted_artifacts
+        .values()
+        .filter_map(|entry| state_store.cached_mls_accepted_artifact(&entry.event.event_id))
+        .any(|entry| entry.outcome.governance_binding == binding)
+    {
+        return Err("Welcome has no session-current Station acceptance result".to_owned());
     }
     Ok(())
 }
 
-pub(crate) struct WelcomeSecurityFrontierPreview {
-    pub binding: arkret_sdk::MlsGovernanceBindingPayload,
-    pub leaves: Vec<arkret_sdk::MlsSecurityFrontierLeaf>,
-}
-
-/// Join each durable Welcome in an isolated in-memory provider so the proof
-/// verifier can use the transcript-authenticated post-Commit leaf set before
-/// any snapshot is persisted.
-pub(crate) fn preview_welcome_security_frontiers(
-    checkpoint: &arkret_sdk::MlsGovernanceVerificationCheckpoint,
-    secure_store: &dyn SecureKeyStore,
-    authority: &AccountId,
-    device_id: &DeviceId,
-    messages_value: &serde_json::Value,
-) -> Result<Vec<WelcomeSecurityFrontierPreview>, String> {
-    let principal_id = authority.principal_id.clone();
-    let device_id_typed = device_id.clone();
-    let mut previews = Vec::new();
-    for entry in collect_welcome_message_entries(messages_value) {
-        let payload = durable_welcome_wire_payload(&entry.content);
-        let binding_value = payload
-            .get("governance_binding")
-            .ok_or_else(|| "durable MLS Welcome omits governance_binding".to_owned())?;
-        let binding: arkret_sdk::MlsGovernanceBindingPayload =
-            serde_json::from_value(binding_value.clone())
-                .map_err(|error| format!("decode Welcome governance_binding: {error}"))?;
-        let welcome = decode_welcome_envelope(&payload)?;
-        let key_package_id = entry
-            .key_package_id
-            .as_deref()
-            .ok_or_else(|| "Welcome carries no key_package_id".to_owned())?;
-        let serialized_state = load_mls_key_package_identity_state(
-            secure_store,
-            authority,
-            device_id,
-            key_package_id,
-        )
-        .map_err(|error| format!("load Welcome KeyPackage state: {error}"))?
-        .ok_or_else(|| {
-            format!(
-                "no local KeyPackage identity state for welcome key_package_id={key_package_id}"
-            )
-        })?;
-        let identity = arkret_sdk::ArkretMlsIdentity::restore_from_private_state(
-            arkret_sdk::MlsEndpointIdentity::human_device(
-                principal_id.clone(),
-                device_id_typed.clone(),
-            ),
-            &serialized_state,
-        )
-        .map_err(|error| format!("restore Welcome KeyPackage identity: {error}"))?;
-        let group = arkret_sdk::ArkretMlsGroup::join_from_welcome(identity, &welcome)
-            .map_err(|error| format!("preview Welcome group: {error}"))?;
-        let embedded = group
-            .current_governance_binding()
-            .map_err(|error| format!("read preview governance binding: {error}"))?;
-        if embedded.as_ref() != Some(&binding) {
-            return Err(
-                "MLS GroupContext governance_binding differs from durable Welcome payload"
-                    .to_owned(),
-            );
-        }
-        let leaves = crate::mls::governance_proof::reconstruct_transition_security_frontier(
-            checkpoint, &group, &binding,
-        )?;
-        previews.push(WelcomeSecurityFrontierPreview { binding, leaves });
-    }
-    Ok(previews)
-}
-
-#[cfg(test)]
-pub(crate) fn apply_welcome_messages_with_device_snapshot(
-    state_store: &mut crate::state::LocalStateStore,
-    secure_store: &dyn SecureKeyStore,
-    realm_id: &str,
-    authority: &AccountId,
-    actor_id: &str,
-    device_id: &DeviceId,
-    messages_value: &serde_json::Value,
-) -> Result<WelcomeApplyOutcome, MlsRuntimeError> {
-    let welcome_entries = collect_welcome_message_entries(messages_value);
-    // A totally-empty welcome set is a success with nothing to do.
-    if welcome_entries.is_empty() {
-        return Ok(WelcomeApplyOutcome::default());
-    }
-    // The snapshot secret / identity are prerequisites for ALL welcomes: if they
-    // are unavailable no welcome could possibly apply, so surface them as a hard
-    // error (the readiness status machinery keys off these).
-    let secret = load_device_checkpoint_secret(secure_store, authority, device_id)
-        .map_err(MlsRuntimeError::DeviceSecret)?;
-    let principal_id = authority.principal_id.clone();
-    let device_id_typed = device_id.clone();
-    // Per-welcome failures no longer abort the loop or get swallowed: each is
-    // counted and the first reason retained so callers can report partial
-    // success without failing the whole boot.
-    let mut outcome = WelcomeApplyOutcome::default();
-    for welcome_entry in welcome_entries {
-        let welcome_value = durable_welcome_wire_payload(&welcome_entry.content);
-        if let Some(reason) = durable_welcome_payload_reject_reason(&welcome_value) {
-            outcome.record_failure(format!("welcome claim envelope: {reason}"));
-            continue;
-        }
-        // Welcome admission gate (1): before accepting the Welcome, independently
-        // verify the claim_envelope sender signature with a device_directory key
-        // and fail closed. This runs before join because signature verification
-        // does not depend on MLS-layer decryption.
-        let typed_welcome =
-            match serde_json::from_value::<arkret_sdk::MlsWelcomePayload>(welcome_value.clone()) {
-                Ok(welcome) => welcome,
-                Err(error) => {
-                    outcome.record_failure(format!("welcome claim envelope: {error}"));
-                    continue;
-                }
-            };
-        if let Err(reason) = verify_welcome_claim_envelope_signer(&typed_welcome) {
-            outcome.record_failure(format!("welcome claim envelope authz: {reason}"));
-            continue;
-        }
-        // Welcome admission gate (2) runs after join because it needs the MLS group
-        // object. It independently verifies this governance_binding against the
-        // MLS GroupContext; keep the raw JSON for that check.
-        let welcome_value_for_governance = welcome_value.clone();
-        let welcome = match decode_welcome_envelope(&welcome_value) {
-            Ok(welcome) => welcome,
-            Err(err) => {
-                outcome.record_failure(err);
-                continue;
-            }
-        };
-        let identity = match welcome_entry.key_package_id.as_deref() {
-            Some(key_package_id) => match load_mls_key_package_identity_state(
-                secure_store,
-                authority,
-                device_id,
-                key_package_id,
-            ) {
-                Ok(Some(serialized_state)) => {
-                    match arkret_sdk::ArkretMlsIdentity::restore_from_private_state(
-                        arkret_sdk::MlsEndpointIdentity::human_device(
-                            principal_id.clone(),
-                            device_id_typed.clone(),
-                        ),
-                        &serialized_state,
-                    ) {
-                        Ok(identity) => identity,
-                        Err(err) => {
-                            outcome.record_failure(format!(
-                                "restore KeyPackage identity state: {err}"
-                            ));
-                            continue;
-                        }
-                    }
-                }
-                Ok(None) => {
-                    // The Welcome names a KeyPackage we have no stored private
-                    // identity state for. A freshly generated identity can NEVER
-                    // hold that KeyPackage's init key, so `join_from_welcome`
-                    // would fail with `NoMatchingKeyPackage`. Fail closed with a
-                    // diagnosable message instead of silently retrying with an
-                    // identity that cannot work. (mls-welcome-debug)
-                    tracing::warn!(
-                        target: "mls_admission",
-                        realm = %yoface::utils::text::short_protocol_id(realm_id),
-                        actor = %yoface::utils::text::short_protocol_id(actor_id),
-                        device = %yoface::utils::text::short_protocol_id(device_id.as_str()),
-                        key_package_id = %yoface::utils::text::short_protocol_id(key_package_id),
-                        "welcome apply: no local KeyPackage identity state for the Welcome's key_package_id — the published KeyPackage's private init key is missing from this device's secure store (cannot decrypt Welcome)"
-                    );
-                    outcome.record_failure(format!(
-                        "no local KeyPackage identity state for welcome key_package_id={key_package_id}"
-                    ));
-                    continue;
-                }
-                Err(err) => {
-                    outcome.record_failure(format!("load KeyPackage identity state: {err}"));
-                    continue;
-                }
-            },
-            None => {
-                tracing::warn!(
-                    target: "mls_admission",
-                    realm = %yoface::utils::text::short_protocol_id(realm_id),
-                    "welcome apply: Welcome carries no key_package_id — cannot select the KeyPackage private state to decrypt it"
-                );
-                outcome.record_failure("welcome carries no key_package_id".to_owned());
-                continue;
-            }
-        };
-        let mut group = match arkret_sdk::ArkretMlsGroup::join_from_welcome(identity, &welcome) {
-            Ok(group) => group,
-            Err(err) => {
-                outcome.record_failure(format!("join welcome: {err}"));
-                continue;
-            }
-        };
-        // Welcome admission gate (2): independently verify that the MLS group's
-        // embedded governance_binding matches the durable payload forwarded by
-        // the server (`encryption-and-audit.md`:438). Missing binding or
-        // profile, epoch, Security Frontier, or leaf-set mismatch rejects the
-        // Welcome before snapshot persistence.
-        if let Err(reason) = verify_welcome_governance_binding(
-            state_store,
-            realm_id,
-            &group,
-            &welcome_value_for_governance,
-        ) {
-            outcome.record_failure(format!("welcome governance_binding authz: {reason}"));
-            continue;
-        }
-        let Some(welcome_binding) = welcome_value_for_governance
-            .get("governance_binding")
-            .cloned()
-            .and_then(|value| {
-                serde_json::from_value::<arkret_sdk::MlsGovernanceBindingPayload>(value).ok()
-            })
-        else {
-            outcome.record_failure(
-                "Welcome governance binding disappeared before persistence".to_owned(),
-            );
-            continue;
-        };
-        let authority_hints =
-            match crate::mls::governance_proof::leaf_authority_hints_from_welcome(&typed_welcome) {
-                Ok(authority_hints) => authority_hints,
-                Err(reason) => {
-                    outcome.record_failure(format!("derive Welcome leaf authorities: {reason}"));
-                    continue;
-                }
-            };
-        if let Err(reason) =
-            crate::mls::governance_proof::install_cached_transition_leaf_bindings_with_hints(
-                state_store,
-                &mut group,
-                &welcome_binding,
-                &authority_hints,
-            )
-        {
-            outcome.record_failure(format!("install Welcome T3 leaf bindings: {reason}"));
-            continue;
-        }
-        let post_state = match group.export_state_record() {
-            Ok(post_state) => post_state,
-            Err(err) => {
-                outcome.record_failure(format!("export state: {err}"));
-                continue;
-            }
-        };
-        let serialized_state = match serde_json::to_vec(&post_state) {
-            Ok(serialized_state) => serialized_state,
-            Err(err) => {
-                outcome.record_failure(format!("serialize state: {err}"));
-                continue;
-            }
-        };
-        // Epoch guard against rolling the realm snapshot backwards.
-        // A replayed / re-delivered Welcome (device_messages GET is read-only
-        // until the client consumes an explicit ack token) must not
-        // overwrite a snapshot that has already advanced past the join epoch.
-        // Doing so would discard the sender ratchet position (risking AEAD
-        // generation/nonce reuse on the next send) and desync `expected_prev_epoch`
-        // from the server. Skip when we already hold an equal-or-higher epoch for
-        // the same group.
-        let effective_scope = welcome_binding.effective_scope().clone();
-        if let Some(existing) =
-            state_store.mls_checkpoint_for_scope_and_group(&effective_scope, &post_state.group_id)
-            && existing.group_id == post_state.group_id
-            && existing.epoch >= post_state.epoch
-        {
-            outcome.skipped_stale += 1;
-            if let Some(candidate) = welcome_consume_candidate(&welcome_entry, realm_id) {
-                outcome.consumable_claims.push(candidate);
-            }
-            continue;
-        }
-        let mut salt = [0u8; 16];
-        if let Err(err) = getrandom::fill(&mut salt) {
-            outcome.record_failure(format!("salt: {err}"));
-            continue;
-        }
-        let snapshot = crate::mls::persistence::encrypt_state(
-            realm_id,
-            &post_state.group_id,
-            post_state.epoch,
-            &serialized_state,
-            &secret,
-            &salt,
-        );
-        if let Some(commit_ref) = welcome_value
-            .get("commit_ref")
-            .and_then(serde_json::Value::as_str)
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-        {
-            let commit_ref = match arkret_sdk::EventId::new(commit_ref.to_owned()) {
-                Ok(commit_ref) => commit_ref,
-                Err(error) => {
-                    outcome.record_failure(format!(
-                        "welcome commit_ref is not a valid Event id: {error}"
-                    ));
-                    continue;
-                }
-            };
-            if let Err(error) = state_store.record_mls_group_state_ref_for_scope(
-                &effective_scope,
-                &post_state.group_id,
-                post_state.epoch,
-                commit_ref,
-            ) {
-                outcome.record_failure(format!("persist Welcome group-state reference: {error}"));
-                continue;
-            }
-        }
-        if let Err(error) = state_store.save_mls_checkpoint_for_scope(&effective_scope, snapshot) {
-            outcome.record_failure(format!("persist Welcome MLS snapshot: {error}"));
-            continue;
-        }
-        // Retain the claimed KeyPackage private state until redelivery has
-        // quiesced. The server-side package is single-use, but the durable
-        // to-device queue may replay the same Welcome before its ACK lands; the
-        // equal-or-higher snapshot guard above makes that replay idempotent.
-        outcome.applied += 1;
-        if let Some(candidate) = welcome_consume_candidate(&welcome_entry, realm_id) {
-            outcome.consumable_claims.push(candidate);
-        }
-    }
-    Ok(outcome)
+pub(crate) fn known_welcome_event_refs(
+    messages: &serde_json::Value,
+) -> Result<Vec<arkret_sdk::EventId>, String> {
+    collect_welcome_message_entries(messages)
+        .into_iter()
+        .map(|entry| {
+            let reference = entry
+                .welcome_event_id
+                .ok_or_else(|| "durable Welcome has no exact source Event reference".to_owned())?;
+            arkret_sdk::EventId::new(reference).map_err(|error| error.to_string())
+        })
+        .collect()
 }
 
 #[allow(clippy::type_complexity)]

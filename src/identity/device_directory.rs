@@ -572,6 +572,7 @@ pub fn invalidate_actor(actor: &str) -> usize {
         return 0;
     }
     let mut guard = CACHE.write().unwrap_or_else(|poison| poison.into_inner());
+    guard.epoch = guard.epoch.wrapping_add(1);
     let account = account_from_selector(actor);
     let principal = crate::mls_api_helpers::principal_core_id(actor).ok();
     let mut invalidated = 0;

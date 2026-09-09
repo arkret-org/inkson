@@ -182,7 +182,7 @@ fn sync_merge_keeps_the_verified_governance_proof_a_bare_set_would_evict() {
 
     let merge_path = temp_state_path("seal-merge-proof");
     let mut merged = LocalStateStore::with_path(merge_path.clone());
-    crate::mls::governance_proof::seed_test_governance_proof(
+    crate::mls::governance_proof::seed_test_governance_result(
         &mut merged,
         realm,
         None,
@@ -190,7 +190,7 @@ fn sync_merge_keeps_the_verified_governance_proof_a_bare_set_would_evict() {
         0,
         1,
     );
-    let request = crate::mls::governance_proof::proof_request(
+    let request = crate::mls::governance_proof::frontier_request(
         &merged,
         realm,
         None,
@@ -210,7 +210,7 @@ fn sync_merge_keeps_the_verified_governance_proof_a_bare_set_would_evict() {
     merged.merge_realm_seal_view_from_sync_body(realm, &body);
     assert!(
         merged
-            .cached_mls_governance_proof_entry(&request, chrono::Utc::now())
+            .cached_mls_governance_result_entry(&request, chrono::Utc::now())
             .expect("cache read")
             .is_some(),
         "a sync body carrying no Seal view must not evict a verified proof",
@@ -221,7 +221,7 @@ fn sync_merge_keeps_the_verified_governance_proof_a_bare_set_would_evict() {
     // later encrypted write with no verified binding.
     let evict_path = temp_state_path("seal-evict-proof");
     let mut evicted = LocalStateStore::with_path(evict_path.clone());
-    crate::mls::governance_proof::seed_test_governance_proof(
+    crate::mls::governance_proof::seed_test_governance_result(
         &mut evicted,
         realm,
         None,
@@ -232,7 +232,7 @@ fn sync_merge_keeps_the_verified_governance_proof_a_bare_set_would_evict() {
     evicted.set_realm_seal_view(realm, LocalSealView::from_sync_body(&body));
     assert!(
         evicted
-            .cached_mls_governance_proof_entry(&request, chrono::Utc::now())
+            .cached_mls_governance_result_entry(&request, chrono::Utc::now())
             .expect("cache read")
             .is_none()
     );

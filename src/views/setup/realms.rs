@@ -1059,7 +1059,7 @@ pub(super) fn RealmsSection(
                                                             state = "pending",
                                                             "Realm setup phase started"
                                                         );
-                                                        if let Err(err) = crate::mls::creator_bootstrap::ensure_realm_governance_checkpoint(
+                                                        if let Err(err) = crate::mls::creator_bootstrap::refresh_realm_governance_frontier(
                                                             &api,
                                                             crate::app::runtime_adapter::state_store_handle(state_store),
                                                             &realm_id,

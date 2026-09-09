@@ -72,6 +72,7 @@ pub fn RecoveryPanel(token: Signal<String>, device_id: Signal<String>) -> Elemen
     let mut restore_loading = use_signal(|| false);
     let mut restore_loaded_once = use_signal(|| false);
     let mut backup_rows = use_signal(Vec::<BackupSummaryRow>::new);
+    let mut backup_next_cursor = use_signal(|| None::<arkret_sdk::Cursor>);
 
     // Server-side Recovery-Key backup marker (written by the upload paths via
     // `mark_mls_recovery_backup_configured`). Drives the section sync badge.
@@ -518,17 +519,21 @@ pub fn RecoveryPanel(token: Signal<String>, device_id: Signal<String>) -> Elemen
                                 restore_loading.set(true);
                                 let base = base.clone();
                                 let api_token = token();
+                                let cursor = backup_next_cursor();
                                 let status_inventory_empty = status_inventory_empty.clone();
                                 let status_inventory_loaded_tpl =
                                     status_inventory_loaded_tpl.clone();
                                 let status_fetch_failed_tpl = status_fetch_failed_tpl.clone();
                                 spawn(async move {
                                     match with_authed_api(&base, api_token, |api| async move {
-                                        api.list_key_backups().await
+                                        api.list_key_backups_page(&arkret_sdk::KeyBackupsListQuery {
+                                            series_id: None, backup_kind: None, cursor, limit: Some(50),
+                                        }).await
                                     })
                                     .await
                                     {
                                         Ok(payload) => {
+                                            backup_next_cursor.set(payload.next_cursor.clone());
                                             let payload =
                                                 serde_json::to_value(&payload).unwrap_or_default();
                                             let rows = parse_backup_list(&payload);
@@ -561,6 +566,8 @@ pub fn RecoveryPanel(token: Signal<String>, device_id: Signal<String>) -> Elemen
                         },
                         if restore_loading() {
                             {tr("recovery.panel.loading")}
+                        } else if backup_next_cursor().is_some() {
+                            {tr("recovery.panel.next_page")}
                         } else {
                             {tr("recovery.panel.refresh")}
                         }
@@ -572,11 +579,15 @@ pub fn RecoveryPanel(token: Signal<String>, device_id: Signal<String>) -> Elemen
                         disabled: backup_rows().is_empty(),
                         onclick: move |_| {
                             backup_rows.set(Vec::new());
+                            backup_next_cursor.set(None);
                             restore_loaded_once.set(false);
                             restore_status.set(tr("recovery.panel.cleared"));
                         },
                         {tr("recovery.panel.clear")}
                     }
+                }
+                if backup_next_cursor().is_some() {
+                    p { class: "muted", {tr("recovery.panel.partial_page")} }
                 }
                 if !restore_status().is_empty() {
                     div { class: "muted", "data-testid": "restore-status", "{restore_status}" }

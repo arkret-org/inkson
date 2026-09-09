@@ -22,10 +22,6 @@ pub(super) async fn retain_current_history_secret_durable(
         account.principal_id().as_str() == actor_id && account.device_id.as_str() == device_id,
         "MLS history retention identity does not match the active account"
     );
-    state_store
-        .write()
-        .reconcile_mls_group_state_ref_from_checkpoint(realm_id, None)
-        .map_err(anyhow::Error::msg)?;
     let derived = {
         let store = state_store.read();
         crate::mls::runtime::derive_and_retain_realm_history_secret(
@@ -1053,7 +1049,7 @@ pub(super) async fn ensure_mls_genesis_frontier_for_invite(
         device_id,
     )
     .map_err(anyhow::Error::msg)?;
-    let genesis_request = crate::mls::governance_proof::proof_request(
+    let genesis_request = crate::mls::governance_proof::frontier_request(
         &state_store.read(),
         realm_id,
         None,
@@ -1063,7 +1059,7 @@ pub(super) async fn ensure_mls_genesis_frontier_for_invite(
         leaves.clone(),
     )
     .map_err(anyhow::Error::msg)?;
-    crate::mls::governance_proof::fetch_verify_and_cache_proof(
+    crate::mls::governance_proof::fetch_and_cache_frontier(
         api,
         crate::app::runtime_adapter::state_store_handle(state_store),
         &genesis_request,
@@ -1185,7 +1181,7 @@ pub(super) async fn ensure_mls_governance_proof_for_next_commit(
         let snapshot = store.mls_checkpoint_for(realm_id).ok_or_else(|| {
             anyhow::anyhow!("local MLS snapshot is unavailable for governance proof request")
         })?;
-        crate::mls::governance_proof::proof_request(
+        crate::mls::governance_proof::frontier_request(
             &store,
             realm_id,
             None,
@@ -1196,7 +1192,7 @@ pub(super) async fn ensure_mls_governance_proof_for_next_commit(
         )
         .map_err(anyhow::Error::msg)?
     };
-    crate::mls::governance_proof::fetch_verify_and_cache_proof(
+    crate::mls::governance_proof::fetch_and_cache_frontier(
         api,
         crate::app::runtime_adapter::state_store_handle(state_store),
         &request,

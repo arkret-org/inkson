@@ -136,29 +136,14 @@ async fn ensure_initial_active_series(
 ) -> Result<()> {
     let wire_kind = super::rotation_transaction::wire_backup_kind(backup_kind);
     let http = api.sdk_http_client()?;
-    // The account this series belongs to is already closed in `authority`.
-    // Deriving it from the principal plus the ambient authoring Station broke
-    // first enrollment outright (that slot is only installed once `describe`
-    // succeeds) and would silently name a different account whenever the
-    // ambient Station differs -- account-lifecycle.md §156/§158.
-    let account_actor = arkret_sdk::ActorId::account(authority.clone());
-    let history = crate::event_signer::PrincipalControlHistory::load(
-        &http,
-        &account_actor,
-        control_realm,
-        "key-backup active-series initial pointer discovery",
-    )
-    .await?;
-    let active = history
-        .events()
-        .iter()
-        .rev()
-        .find(|event| {
-            event.kind.as_str() == "ak.key_backup.active_series"
-                && event.payload.get("backup_kind").and_then(Value::as_str) == Some(wire_kind)
-        })
-        .and_then(|event| event.payload.get("active_series_id"))
-        .and_then(Value::as_str);
+    let current = api.list_key_backups_page(&arkret_sdk::KeyBackupsListQuery {
+        series_id: None, backup_kind: None, cursor: None, limit: Some(1),
+    }).await?.active_series;
+    if current.account_id != *authority || current.control_realm_id != *control_realm {
+        return Err(anyhow!("backup pointer response belongs to another account or PCR"));
+    }
+    let kind = arkret_sdk::BackupKind::try_from(wire_kind).map_err(anyhow::Error::msg)?;
+    let active = current.pointer(kind).series_id().map(|id| id.as_str());
     if let Some(active) = active {
         if active == series_id {
             return Ok(());
@@ -234,7 +219,7 @@ async fn fetch_active_series_tail(
 ) -> Result<Option<Value>> {
     let wire_kind = super::rotation_transaction::wire_backup_kind(backup_kind);
     let class = arkret_sdk::BackupKind::try_from(wire_kind).map_err(|error| anyhow!(error))?;
-    let series_id = match garth::mls::backup_selection::selectable_series_id_for_backup_class(
+    let series_id = match garth::mls::backup_selection::active_series_id_for_backup_class(
         list_payload,
         class,
     ) {

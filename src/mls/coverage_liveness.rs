@@ -173,7 +173,7 @@ pub(crate) async fn ensure_mls_governance_coverage(
     })?;
     let request = state_store
         .read(|store| {
-            crate::mls::governance_proof::proof_request(
+            crate::mls::governance_proof::frontier_request(
                 store,
                 realm_id,
                 circle_id,
@@ -184,7 +184,7 @@ pub(crate) async fn ensure_mls_governance_coverage(
             )
         })
         .map_err(|error| format!("preparing the MLS governance proof request failed: {error}"))?;
-    crate::mls::governance_proof::fetch_verify_and_cache_proof(
+    crate::mls::governance_proof::fetch_and_cache_frontier(
         api,
         state_store.clone(),
         &request,

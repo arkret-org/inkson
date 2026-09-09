@@ -2558,7 +2558,7 @@ mod tests {
         ));
         let mut store = crate::state::LocalStateStore::with_path(path);
         let realm_id = "ak:realm:AUqzNZlfuL-7z087TbZhKOdYyKUNPAa2o_neyoFRh3o2";
-        crate::mls::governance_proof::seed_test_governance_proof(
+        crate::mls::governance_proof::seed_test_governance_result(
             &mut store,
             realm_id,
             None,

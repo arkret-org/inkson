@@ -128,7 +128,6 @@ struct OutboundAttemptResults {
 struct EventOutboundSubmitter<'a> {
     owner: &'a EventSubmitter,
     results: &'a OutboundAttemptResults,
-    state_store: Option<crate::runtime::input::StateStoreHandle>,
     accepted_mls_state_store: Option<crate::runtime::input::StateStoreHandle>,
 }
 
@@ -166,61 +165,12 @@ impl EventOutboundSubmitter<'_> {
             self.owner.http.clone(),
             crate::transport::RequestContext::new(""),
         );
-        crate::mls::governance_proof::ensure_governance_checkpoint(
-            &api,
-            state_store.clone(),
-            realm_id,
-        )
-        .await?;
-
         let payload = serde_json::from_value::<arkret_sdk::MlsCommitPayload>(
-            serde_json::to_value(&commit.event().payload)
-                .map_err(|error| format!("encode accepted MLS Commit payload: {error}"))?,
+            serde_json::to_value(&commit.event().payload).map_err(|error| error.to_string())?,
         )
-        .map_err(|error| format!("decode accepted MLS Commit payload: {error}"))?;
+        .map_err(|error| error.to_string())?;
         let authority = self.owner.authority().map_err(|error| error.to_string())?;
-        let snapshot_secret = crate::mls::runtime::load_device_checkpoint_secret(
-            crate::secure_key_store::default_secure_key_store("inkson").as_ref(),
-            authority,
-            device_id,
-        )
-        .map_err(|error| format!("load MLS snapshot secret after admission: {error}"))?;
-        let staged =
-            crate::mls::persistence::MlsLocalCheckpointEnvelope::from(staged_snapshot.clone());
-        let staged_group = crate::mls::persistence::restore_envelope(
-            &staged,
-            &snapshot_secret,
-            payload.next_epoch(),
-        )
-        .map_err(|error| format!("restore staged MLS transition for proof input: {error}"))?;
-        if staged_group.group_id() != payload.mls_group_id()
-            || staged_group.epoch() != payload.next_epoch()
-        {
-            return Err(
-                "staged MLS transition differs from the accepted Commit group or epoch".to_owned(),
-            );
-        }
-        let leaves = staged_group
-            .security_frontier_leaves()
-            .map_err(|error| format!("derive accepted MLS transition frontier: {error}"))?;
-        let request = state_store.read(|store| {
-            crate::mls::governance_proof::proof_request_for_scope(
-                store,
-                payload.governance_binding().effective_scope().clone(),
-                payload.mls_group_id(),
-                payload.base_epoch(),
-                payload.next_epoch(),
-                leaves.clone(),
-            )
-        })?;
-        crate::mls::governance_proof::fetch_verify_and_cache_expected_proof(
-            &api,
-            state_store.clone(),
-            &request,
-            &leaves,
-            payload.governance_binding(),
-        )
-        .await?;
+        crate::mls::accepted_artifact::fetch(&api, state_store.clone(), commit.event()).await?;
         crate::mls::runtime::converge_accepted_local_commit(
             state_store,
             authority,
@@ -1356,7 +1306,6 @@ impl EventSubmitter {
         let submitter = EventOutboundSubmitter {
             owner: self,
             results: &results,
-            state_store: None,
             accepted_mls_state_store: None,
         };
         loop {
@@ -1494,7 +1443,6 @@ impl EventSubmitter {
         let submitter = EventOutboundSubmitter {
             owner: self,
             results: &results,
-            state_store: None,
             accepted_mls_state_store: None,
         };
         loop {
@@ -1643,7 +1591,6 @@ impl EventSubmitter {
         let submitter = EventOutboundSubmitter {
             owner: self,
             results: &results,
-            state_store: None,
             accepted_mls_state_store: None,
         };
         let mut completed = 0usize;
@@ -1683,11 +1630,8 @@ impl EventSubmitter {
 
     /// Resume durable MLS Commit/Welcome admission delivery from sync paths
     /// that already drive accepted-artifact convergence after cursor advance.
-    pub(crate) async fn drain_mls_outbound(
-        &self,
-        state_store: crate::runtime::input::StateStoreHandle,
-    ) -> anyhow::Result<usize> {
-        self.drain_mls_outbound_inner(state_store, None).await
+    pub(crate) async fn drain_mls_outbound(&self) -> anyhow::Result<usize> {
+        self.drain_mls_outbound_inner(None).await
     }
 
     /// Resume durable MLS admission delivery and explicitly converge accepted
@@ -1697,13 +1641,12 @@ impl EventSubmitter {
         &self,
         state_store: crate::runtime::input::StateStoreHandle,
     ) -> anyhow::Result<usize> {
-        self.drain_mls_outbound_inner(state_store.clone(), Some(state_store))
+        self.drain_mls_outbound_inner(Some(state_store))
             .await
     }
 
     async fn drain_mls_outbound_inner(
         &self,
-        state_store: crate::runtime::input::StateStoreHandle,
         accepted_mls_state_store: Option<crate::runtime::input::StateStoreHandle>,
     ) -> anyhow::Result<usize> {
         let _single_writer = outbound_submit_lock().lock().await;
@@ -1716,7 +1659,6 @@ impl EventSubmitter {
         let submitter = EventOutboundSubmitter {
             owner: self,
             results: &results,
-            state_store: Some(state_store),
             accepted_mls_state_store,
         };
         let hook = InksonPostAcceptHook;
@@ -2221,47 +2163,29 @@ impl EventSubmitter {
                     intent.kind().as_str()
                 )
             })?;
-            let checkpoint = state_store
-                .read(|store| store.trusted_mls_governance_checkpoint(realm_id.as_str()))
+            state_store
+                .read(|store| store.station_realm_digest_suite(realm_id.as_str()))
                 .ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "Realm {} has no durable verified governance checkpoint",
-                        realm_id
-                    )
-                })?;
-            checkpoint.validate_checkpoint().map_err(|error| {
-                anyhow::anyhow!("invalid trusted governance checkpoint: {error}")
-            })?;
-            if checkpoint.realm_id != *realm_id {
-                anyhow::bail!("trusted governance checkpoint belongs to another Realm");
-            }
-            checkpoint.live_digest_suite
+                    anyhow::anyhow!("Realm {realm_id} has no current Station digest suite")
+                })?
         };
         Ok(digest_suite)
     }
 
-    pub(crate) async fn ensure_realm_governance_checkpoint(
+    pub(crate) async fn refresh_realm_governance_frontier(
         &self,
         realm_id: &str,
     ) -> anyhow::Result<arkret_sdk::DigestSuite> {
         let state_store = self.state_store.clone().ok_or_else(|| {
             anyhow::anyhow!("Realm authoring requires a local governance checkpoint store")
         })?;
-        crate::mls::governance_proof::ensure_governance_checkpoint_with_http(
+        crate::mls::governance_proof::refresh_realm_frontier_with_http(
             &self.http,
-            state_store.clone(),
+            state_store,
             realm_id,
         )
         .await
-        .map_err(anyhow::Error::msg)?;
-        state_store
-            .read(|store| store.trusted_mls_governance_checkpoint(realm_id))
-            .map(|checkpoint| checkpoint.live_digest_suite)
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "Realm {realm_id} governance checkpoint was not persisted after verification"
-                )
-            })
+        .map_err(anyhow::Error::msg)
     }
 
     async fn post_persisted_signed_sdk_event(
@@ -2285,6 +2209,7 @@ impl EventSubmitter {
             &self.http,
             signed,
             signed.digest_suite(),
+            signed.mls_frontier_leaves(),
         )
         .await?;
         let response: arkret_sdk::EventsSubmitOutcome = self
@@ -2418,7 +2343,7 @@ impl EventSubmitter {
                         intent.kind().as_str()
                     )
                 })?;
-            crate::mls::governance_proof::ensure_governance_checkpoint_with_http(
+            crate::mls::governance_proof::refresh_realm_frontier_with_http(
                 &self.http,
                 checkpoint_store,
                 realm_id.as_str(),
@@ -2737,7 +2662,6 @@ impl EventSubmitter {
         let submitter = EventOutboundSubmitter {
             owner: self,
             results: &results,
-            state_store: state_store.clone(),
             accepted_mls_state_store,
         };
         let hook = InksonPostAcceptHook;
@@ -2944,6 +2868,19 @@ impl EventSubmitter {
         event: &mut arkret_sdk::AuthoredEvent,
         proof_context: crate::event_signer::EventProofContext,
     ) -> anyhow::Result<()> {
+        if matches!(
+            event.kind,
+            arkret_sdk::EventKind::MlsGenesis | arkret_sdk::EventKind::MlsCommit
+        ) && event.mls_frontier_leaves().is_none()
+        {
+            let state = self.state_store.as_ref().ok_or_else(|| {
+                anyhow::anyhow!("MLS authoring requires its captured state store")
+            })?;
+            let leaves = state
+                .read(|store| store.mls_frontier_input_for_authored_event(event.event()))
+                .map_err(anyhow::Error::msg)?;
+            event.bind_mls_frontier_leaves(leaves)?;
+        }
         let minimal_metadata = intent.realm_id_opt().is_some_and(|realm_id| {
             self.state_store.as_ref().is_some_and(|store| {
                 store.read(|state| state.realm_projection_is_minimal_metadata(realm_id.as_str()))
@@ -3261,26 +3198,11 @@ impl EventSubmitter {
         }
     }
 
-    /// The Realm's create-locked authority facts, resolved from the head of
-    /// the ascending accepted log and cached for the process lifetime.
+    /// Read the immutable founding Event through the Account Station's exact resolver.
     async fn realm_create_authority(
         &self,
         realm_id: &str,
     ) -> anyhow::Result<Option<RealmCreateAuthority>> {
-        // Realm founding intent is immutable. A locally verified governance
-        // checkpoint supplies it even when this device has not authored yet
-        // and the network is unavailable; an unverified UI projection cannot.
-        if let Some(checkpoint) = self
-            .state_store
-            .as_ref()
-            .and_then(|store| store.read(|state| state.trusted_mls_governance_checkpoint(realm_id)))
-        {
-            if let Some(authority) =
-                realm_create_authority_from_events(&checkpoint.accepted_events, realm_id)
-            {
-                return Ok(Some(authority));
-            }
-        }
         if let Some(cached) = realm_create_authority_cache()
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
@@ -3288,32 +3210,38 @@ impl EventSubmitter {
         {
             return Ok(Some(cached.clone()));
         }
+        let realm = arkret_sdk::RealmId::new(realm_id.to_owned())?;
+        let create_id = arkret_sdk::EventId::new(format!(
+            "ak:event:{}",
+            realm.as_str().trim_start_matches("ak:realm:")
+        ))?;
         let outcome = self
             .http
-            .events_read_outcome(
-                realm_id,
-                None,
-                None,
-                Some("ascending"),
-                Some(REALM_CREATE_AUTHORITY_QUERY_LIMIT),
-            )
-            .await
-            .map_err(anyhow::Error::from)?;
-        let complete_events = crate::models::require_complete_event_rows(
-            &outcome.events,
-            "Realm create authority resolution",
-        )?;
-        let resolved = realm_create_authority_from_events(&complete_events, realm_id);
+            .events_resolve(&arkret_sdk::EventsResolveRequestBody {
+                event_ids: vec![create_id.clone()],
+                event_digests: Vec::new(),
+                include_payload: Some(true),
+                history_traversal_access: None,
+                max_response_bytes: Some(8 * 1024 * 1024),
+            })
+            .await?;
+        anyhow::ensure!(
+            outcome
+                .events
+                .iter()
+                .all(|event| event.event_id == create_id
+                    && event.realm_id == realm
+                    && event.kind == arkret_sdk::EventKind::RealmCreate),
+            "Station returned a different Realm founding Event"
+        );
+        let resolved = realm_create_authority_from_events(&outcome.events, realm_id);
         if let Some(authority) = &resolved {
             realm_create_authority_cache()
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner)
                 .insert(realm_id.to_owned(), authority.clone());
         }
-        // Absence is not cached: the Realm may simply not be queryable yet
-        // (sealed moments ago), and a compacted log may start past genesis
-        // (`realm_state_snapshot_bootstrap`) — the claim is skipped rather than guessed
-        // until snapshot state is wired as a second source.
+        // A temporarily unavailable or unreadable founding Event is not cached.
         Ok(resolved)
     }
 
@@ -3404,6 +3332,7 @@ impl EventSubmitter {
                     &self.http,
                     event,
                     event.digest_suite(),
+                    event.mls_frontier_leaves(),
                 )
                 .await?
             };
@@ -3538,6 +3467,7 @@ impl EventSubmitter {
                     &self.http,
                     event,
                     event.digest_suite(),
+                    event.mls_frontier_leaves(),
                 )
                 .await?,
             );

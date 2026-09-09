@@ -412,13 +412,10 @@ async fn drive_security_rotation(
         .ok_or_else(|| anyhow!("server returned a non-rotation transaction plan"))?
         .clone();
     if transaction.next_required_step()? == Some(SecurityTransactionStep::EraseOldMaterial) {
-        let digest_suite = state_store
-            .read(|store| store.trusted_mls_governance_checkpoint(control_realm.as_str()))
-            .ok_or_else(|| anyhow!("security rotation has no verified PCR governance checkpoint"))?
-            .live_digest_suite;
         let erase_frontier = submitter
             .seals_frontier_realm_view(control_realm.as_str())
             .await?;
+        let digest_suite = erase_frontier.live_digest_suite;
         let erase_basis_leaf = erase_frontier.sole_leaf()?.clone();
         let erase_lease = crate::authorization_lease::acquire_for_intent(
             &http,
@@ -671,12 +668,8 @@ fn active_pointer_version(list_payload: &Value, kind: BackupRotationKind) -> Res
     let wire_kind = wire_backup_kind(kind);
     list_payload
         .get("active_series")
-        .and_then(Value::as_array)
-        .and_then(|records| {
-            records
-                .iter()
-                .find(|record| record.get("backup_kind").and_then(Value::as_str) == Some(wire_kind))
-        })
+        .and_then(|state| state.get(wire_kind))
+        .filter(|pointer| pointer.get("state").and_then(Value::as_str) == Some("active"))
         .and_then(|record| record.get("series_pointer_version"))
         .and_then(Value::as_u64)
         .ok_or_else(|| anyhow!("active {wire_kind} pointer version is unavailable"))

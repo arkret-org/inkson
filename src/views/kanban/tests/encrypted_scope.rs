@@ -199,7 +199,7 @@ async fn encrypted_scope_allows_encrypted_strand_update_patch_value() {
         TEST_REALM_ID,
         creator_realm_projection(TEST_REALM_ID, &actor_id, "mls_rfc9420"),
     );
-    crate::mls::governance_proof::seed_test_governance_proof(
+    crate::mls::governance_proof::seed_test_governance_result(
         &mut state,
         TEST_REALM_ID,
         None,
@@ -557,7 +557,7 @@ async fn encrypted_private_patch_uses_checkpoint_proven_creator_snapshot() {
         realm,
         creator_realm_projection(realm, &actor_id, "mls_rfc9420"),
     );
-    crate::mls::governance_proof::seed_test_governance_proof(
+    crate::mls::governance_proof::seed_test_governance_result(
         &mut state,
         realm,
         None,
@@ -613,7 +613,7 @@ async fn encrypted_private_patch_rejects_epoch_zero_without_accepted_genesis_ref
         realm,
         creator_realm_projection(realm, &actor_id, "mls_rfc9420"),
     );
-    crate::mls::governance_proof::seed_test_governance_proof(
+    crate::mls::governance_proof::seed_test_governance_result(
         &mut state,
         realm,
         None,
@@ -694,7 +694,7 @@ async fn encrypted_private_patch_with_ready_checkpoint_replaces_plaintext() {
             }]
         }),
     );
-    crate::mls::governance_proof::seed_test_governance_proof(
+    crate::mls::governance_proof::seed_test_governance_result(
         &mut state,
         realm,
         None,
@@ -702,7 +702,7 @@ async fn encrypted_private_patch_with_ready_checkpoint_replaces_plaintext() {
         0,
         0,
     );
-    let proof_request = crate::mls::governance_proof::proof_request(
+    let proof_request = crate::mls::governance_proof::frontier_request(
         &state,
         realm,
         None,
@@ -713,7 +713,7 @@ async fn encrypted_private_patch_with_ready_checkpoint_replaces_plaintext() {
     )
     .unwrap();
     let governance_binding =
-        crate::mls::governance_proof::cached_verified_binding(&state, &proof_request).unwrap();
+        crate::mls::governance_proof::cached_frontier_binding(&state, &proof_request).unwrap();
     let mut group = identity
         .create_group_with_governance_binding(realm.as_bytes(), &governance_binding)
         .unwrap();

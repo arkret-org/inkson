@@ -178,7 +178,11 @@ pub async fn acquire_for_events(
         anyhow::bail!("authorization lease issuance requires at least one Event");
     }
     let request = arkret_wire::AuthorizationLeaseIssueRequestBody {
-        events: events.to_vec(),
+        submissions: events
+            .iter()
+            .cloned()
+            .map(arkret_wire::EventInitialSubmission::online)
+            .collect(),
         intents: Vec::new(),
     };
     let idempotency_key = crate::operation::uuid_v7();
@@ -232,7 +236,7 @@ pub async fn acquire_for_intent(
     digest_suite: arkret_sdk::DigestSuite,
 ) -> anyhow::Result<AuthorizationLease> {
     let request = arkret_wire::AuthorizationLeaseIssueRequestBody {
-        events: Vec::new(),
+        submissions: Vec::new(),
         intents: vec![intent.clone()],
     };
     let idempotency_key = crate::operation::uuid_v7();
@@ -320,8 +324,10 @@ pub async fn standard_initial_submission(
     http: &arkret_sdk::http_client::Client,
     event: &arkret_sdk::Event,
     digest_suite: arkret_sdk::DigestSuite,
+    mls_frontier_leaves: Option<&[arkret_sdk::MlsSecurityFrontierLeaf]>,
 ) -> anyhow::Result<arkret_wire::EventInitialSubmission> {
     let mut submission = arkret_wire::EventInitialSubmission::online(event.clone());
+    submission.mls_frontier_leaves = mls_frontier_leaves.map(<[_]>::to_vec);
     let managed_genesis = is_agent_pcr_genesis(event);
     if event.kind.is_control_plane() {
         let authority_ack = match resolve_proposal_authority_route(http, event).await? {

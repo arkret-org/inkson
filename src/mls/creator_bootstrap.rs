@@ -1,23 +1,6 @@
-//! Creator-side MLS bootstrap for an encrypted Realm, made replayable.
-//!
-//! A Realm creator never receives a Welcome — the epoch-0 group is created
-//! locally, its `ak.mls.genesis` is submitted by the creator, and a durable
-//! replay checkpoint is pinned only after the accepted Seal closure passes the full
-//! `encryption-and-audit.md` §2.5.1.1 verification order. Until this module
-//! existed, that whole sequence lived inline in the Realm-create wizard's
-//! `spawn`, so a component unmount (the user clicking straight into the new
-//! Realm), a transient network failure or a closed tab left the Realm with no
-//! pinned checkpoint, no local snapshot and no genesis — and nothing ever retried.
-//! Every later encrypted write then failed forever with
-//! `MLS governance proof requires a locally verified replay checkpoint`.
-//!
-//! Spec position: `encryption-and-audit.md` §2.5.4 T1 defines when a Seal cut may
-//! become the local checkpoint — the candidate must include the genesis Seal of the
-//! `ak.realm.create` Event that `realm_id` retypes to, signed by the notary that
-//! create payload names. This module does not decide any of that; it calls
-//! [`ensure_governance_checkpoint`](crate::mls::governance_proof::ensure_governance_checkpoint),
-//! which runs the SDK admission test. Nothing here requires the sequence to
-//! complete in one attempt, and replaying it is safe.
+//! Resumable creator-side MLS bootstrap using Account Station acceptance.
+//! The creator persists actual MLS epoch-0 state and publishes its Genesis.
+//! Readiness follows the exact Station-accepted artifact and atomic crypto commit.
 
 use crate::runtime::input::StateStoreHandle;
 use crate::state::LocalStateStore;
@@ -74,44 +57,17 @@ fn creator_genesis_resume_action(
 /// every Realm, not only encrypted ones: subsequent writes derive authority
 /// and the digest suite from verified governance state covered by that
 /// checkpoint.
-pub(crate) async fn ensure_realm_governance_checkpoint<
+pub(crate) async fn refresh_realm_governance_frontier<
     S: crate::mls::governance_proof::GovernanceProofStateStore,
 >(
     api: &crate::transport::TransportClient,
     state_store: S,
     realm_id: &str,
 ) -> Result<(), String> {
-    if state_store
-        .with_read(|store| store.trusted_mls_governance_checkpoint(realm_id))
-        .is_some()
-    {
-        return Ok(());
-    }
-    // Checkpoint acquisition also runs from the framework-independent Realm
-    // events engine. Construct this read-only frontier client from the
-    // authenticated HTTP client instead of consulting Dioxus SessionContext;
-    // the durable state dependency is carried explicitly by `state_store`.
-    let submitter = crate::event_submit::EventSubmitter::new(
-        api.sdk_http_client()
-            .map_err(|error| format!("Realm governance proof frontier client: {error}"))?,
-    );
-    let seal_view = wait_for_realm_seal_view(&submitter, realm_id)
-        .await
-        .map_err(|error| format!("refreshing the accepted Seal view failed: {error}"))?;
-    state_store.with_write(|store| {
-        let mut view = store.seal_view_for_realm(realm_id);
-        view.frontier = seal_view
-            .seal_basis
-            .leaves
-            .iter()
-            .map(ToString::to_string)
-            .collect();
-        view.state_root = None;
-        store.set_realm_seal_view(realm_id.to_owned(), view);
-    });
-    crate::mls::governance_proof::ensure_governance_checkpoint(api, state_store, realm_id)
-        .await
-        .map_err(|error| format!("establishing the Realm governance checkpoint failed: {error}"))
+    let http = api.sdk_http_client().map_err(|error| error.to_string())?;
+    crate::mls::governance_proof::refresh_realm_frontier_with_http(&http, state_store, realm_id)
+        .await?;
+    Ok(())
 }
 
 /// Whether this client is the creator of an encrypted `realm_id` whose MLS
@@ -209,7 +165,7 @@ pub(crate) async fn ensure_creator_realm_mls_genesis(
 
     // encryption-and-audit.md 2.5.4 T1. The creator's trust in the checkpoint
     // comes from the create Event it authored, recognised through realm_id.
-    ensure_realm_governance_checkpoint(api, state_store.clone(), realm_id).await?;
+    refresh_realm_governance_frontier(api, state_store.clone(), realm_id).await?;
     let submitter = api
         .event_submitter()
         .map_err(|error| format!("MLS genesis Event submitter: {error}"))?;
@@ -251,7 +207,7 @@ pub(crate) async fn ensure_creator_realm_mls_genesis(
         CreatorGenesisResumeAction::Author => {
             let request = state_store
                 .read(|store| {
-                    crate::mls::governance_proof::proof_request(
+                    crate::mls::governance_proof::frontier_request(
                         store,
                         realm_id,
                         None,
@@ -264,7 +220,7 @@ pub(crate) async fn ensure_creator_realm_mls_genesis(
                 .map_err(|error| {
                     format!("preparing the MLS governance proof request failed: {error}")
                 })?;
-            crate::mls::governance_proof::fetch_verify_and_cache_proof(
+            crate::mls::governance_proof::fetch_and_cache_frontier(
                 api,
                 state_store.clone(),
                 &request,
@@ -429,51 +385,7 @@ pub(crate) async fn ensure_creator_realm_mls_genesis(
     let accepted_event_id = accepted_event_id.ok_or_else(|| {
         "MLS genesis is marked emitted but its accepted Event is unavailable".to_owned()
     })?;
-    let checkpoint_has_genesis = state_store
-        .read(|store| store.trusted_mls_governance_checkpoint(realm_id))
-        .is_some_and(|checkpoint| {
-            checkpoint
-                .accepted_events
-                .iter()
-                .any(|event| event.event_id == accepted_event_id)
-        });
-    if !checkpoint_has_genesis {
-        let checkpoint =
-            wait_for_verified_transition_checkpoint(api, state_store, realm_id, &accepted_event_id)
-                .await?;
-        let basis = checkpoint.basis.clone();
-        state_store.write(|store| {
-            store.advance_verified_mls_governance_checkpoint(realm_id, checkpoint)
-        })?;
-        state_store.write(|store| {
-            store.set_realm_seal_view(
-                realm_id.to_owned(),
-                crate::state::LocalSealView {
-                    frontier: basis.leaves.iter().map(ToString::to_string).collect(),
-                    state_root: None,
-                    ..Default::default()
-                },
-            );
-        });
-        let request = state_store.read(|store| {
-            crate::mls::governance_proof::proof_request(
-                store,
-                realm_id,
-                None,
-                garth::mls::welcome_admission::mls_group_id_for_realm(realm_id)?,
-                0,
-                0,
-                leaves.clone(),
-            )
-        })?;
-        crate::mls::governance_proof::fetch_verify_and_cache_proof(
-            api,
-            state_store.clone(),
-            &request,
-            &leaves,
-        )
-        .await?;
-    }
+    wait_for_accepted_transition(api, state_store, &accepted_event_id).await?;
     crate::mls::runtime::converge_accepted_mls_artifacts(state_store, authority, device_id).await?;
     let ready = state_store
         .read(|store| store.accepted_mls_artifact_snapshot())
@@ -520,49 +432,7 @@ pub(crate) async fn ensure_local_mls_transition_ready(
         .group_state_event_id
         .as_ref()
         .ok_or_else(|| "local MLS snapshot has no accepted transition reference".to_owned())?;
-    let realm_id = effective_scope
-        .realm_id_opt()
-        .ok_or_else(|| "MLS transition has no Realm".to_owned())?;
-    let checkpoint =
-        wait_for_verified_transition_checkpoint(api, state_store, realm_id.as_str(), transition)
-            .await?;
-    let basis = checkpoint.basis.clone();
-    state_store.write(|store| {
-        store.advance_verified_mls_governance_checkpoint(realm_id.as_str(), checkpoint)
-    })?;
-    state_store.write(|store| {
-        let mut view = store.seal_view_for_realm(realm_id.as_str());
-        view.frontier = basis.leaves.iter().map(ToString::to_string).collect();
-        view.state_root = None;
-        store.set_realm_seal_view(realm_id.to_string(), view);
-    });
-    if snapshot.epoch == 0 {
-        let leaves = state_store.read(|store| {
-            crate::mls::governance_proof::current_security_frontier_leaves_for_scope(
-                store,
-                effective_scope,
-                authority,
-                device_id,
-            )
-        })?;
-        let request = state_store.read(|store| {
-            crate::mls::governance_proof::proof_request_for_scope(
-                store,
-                effective_scope.clone(),
-                snapshot.group_id.clone(),
-                0,
-                0,
-                leaves.clone(),
-            )
-        })?;
-        crate::mls::governance_proof::fetch_verify_and_cache_proof(
-            api,
-            state_store.clone(),
-            &request,
-            &leaves,
-        )
-        .await?;
-    }
+    wait_for_accepted_transition(api, state_store, transition).await?;
     crate::mls::runtime::converge_accepted_mls_artifacts(state_store, authority, device_id).await?;
     if !state_store.read(|store| {
         store
@@ -584,37 +454,28 @@ pub(crate) async fn ensure_local_mls_transition_ready(
         .map(|_| ())
 }
 
-async fn wait_for_verified_transition_checkpoint(
+async fn wait_for_accepted_transition(
     api: &crate::transport::TransportClient,
     state_store: &StateStoreHandle,
-    realm_id: &str,
     transition_event_id: &arkret_sdk::EventId,
-) -> Result<arkret_sdk::MlsGovernanceVerificationCheckpoint, String> {
-    const ATTEMPTS: usize = 20;
-    const DELAY: std::time::Duration = std::time::Duration::from_millis(250);
-    let http = api.sdk_http_client().map_err(|error| error.to_string())?;
-    for attempt in 0..ATTEMPTS {
-        // Unrelated Control Moves may advance the frontier before the transition.
-        // Only a verified cut covering this exact Event closes bootstrap.
-        let checkpoint =
-            crate::mls::governance_proof::verify_governance_checkpoint_candidate_with_http(
-                &http,
-                state_store,
-                realm_id,
-            )
-            .await?;
-        if checkpoint
-            .accepted_events
-            .iter()
-            .any(|event| &event.event_id == transition_event_id)
+) -> Result<(), String> {
+    let mut last_error = "MLS transition is not sealed".to_owned();
+    for attempt in 0..20 {
+        match crate::mls::accepted_artifact::fetch_ref(
+            api,
+            state_store.clone(),
+            transition_event_id,
+        )
+        .await
         {
-            return Ok(checkpoint);
+            Ok(_) => return Ok(()),
+            Err(error) => last_error = error,
         }
-        if attempt + 1 < ATTEMPTS {
-            crate::runtime_helpers::sleep_for(DELAY).await;
+        if attempt < 19 {
+            crate::runtime_helpers::sleep_for(std::time::Duration::from_millis(250)).await;
         }
     }
-    Err("accepted MLS transition has no covering verified Realm Seal".to_owned())
+    Err(last_error)
 }
 
 /// Poll `ak.self.seals.read.frontier.v1` until the Realm has an accepted Seal.
@@ -778,13 +639,11 @@ mod tests {
             .mark_mls_genesis_emitted_for_effective_scope_with_event(REALM, None, &accepted_genesis)
             .unwrap();
 
-        // Reproduce the interrupted first-user transaction: a checkpoint is
-        // pinned, the local snapshot carries the accepted Genesis id, and the
-        // emitted flag is set, but the checkpoint still predates Genesis.
-        crate::mls::governance_proof::seed_test_governance_proof(
+        // An authoring result and emitted marker do not replace durable MLS application.
+        crate::mls::governance_proof::seed_test_governance_result(
             &mut store, REALM, None, group_id, 0, 0,
         );
-        assert!(store.trusted_mls_governance_checkpoint(REALM).is_some());
+        assert!(!store.load().mls_governance_results.is_empty());
         assert_eq!(
             store
                 .mls_checkpoint_for(REALM)

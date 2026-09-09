@@ -4,6 +4,7 @@
 //! MIMI protocol calls live in `crate::transport::mls`, which uses the shared SDK
 //! request/response types directly.
 
+pub(crate) mod accepted_artifact;
 pub mod account_recovery;
 pub(crate) mod admission;
 /// `epoch_update_required` repair: advance the MLS epoch so the Security Frontier

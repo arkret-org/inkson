@@ -6,30 +6,11 @@ const MAX_EVENT_BATCH: usize = 128;
 const MAX_DEPENDENCY_BATCH: usize = 8;
 type DependencySortKey = (String, Vec<u8>);
 
-pub(crate) struct ResolvedMlsGovernanceProof {
-    pub(crate) bundle: arkret_sdk::MlsGovernanceProofBundle,
-    pub(crate) seals: Vec<arkret_sdk::Seal>,
-    pub(crate) delta_events: Vec<arkret_sdk::Event>,
-    pub(crate) provenance_events: Vec<arkret_sdk::Event>,
-    pub(crate) dependencies: Vec<arkret_sdk::GovernanceDependency>,
-}
-
 pub(crate) struct ResolvedMlsGovernanceCut {
     pub(crate) target_basis: arkret_sdk::SealBasis,
     pub(crate) seals: Vec<arkret_sdk::Seal>,
     pub(crate) events: Vec<arkret_sdk::Event>,
     pub(crate) dependencies: Vec<arkret_sdk::GovernanceDependency>,
-}
-
-pub(crate) async fn resolve_mls_governance_checkpoint(
-    api: &crate::transport::TransportClient,
-    realm_id: &arkret_sdk::RealmId,
-    target_basis: &arkret_sdk::SealBasis,
-) -> Result<ResolvedMlsGovernanceCut, String> {
-    let http = api
-        .sdk_http_client()
-        .map_err(|error| format!("build MLS governance checkpoint client: {error}"))?;
-    resolve_mls_governance_checkpoint_with_http(&http, realm_id, target_basis).await
 }
 
 pub(crate) async fn resolve_mls_governance_checkpoint_with_http(
@@ -82,106 +63,6 @@ pub(crate) async fn resolve_mls_governance_checkpoint_with_http(
         target_basis: target_basis.clone(),
         seals: seal_values,
         events,
-        dependencies,
-    })
-}
-
-pub(crate) async fn resolve_mls_governance_proof(
-    api: &crate::transport::TransportClient,
-    request: &arkret_sdk::MlsGovernanceProofRequestBody,
-    base_checkpoint: &arkret_sdk::MlsGovernanceVerificationCheckpoint,
-) -> Result<ResolvedMlsGovernanceProof, String> {
-    let http = api
-        .sdk_http_client()
-        .map_err(|error| format!("build MLS governance proof client: {error}"))?;
-    let bundle = fetch_proof_with_retry(&http, request).await?;
-
-    let mut seals_by_id = base_checkpoint
-        .accepted_seals
-        .iter()
-        .cloned()
-        .map(|seal| (seal.id.clone(), seal))
-        .collect::<BTreeMap<_, _>>();
-    let requested_seals = bundle
-        .proof_material
-        .seal_descriptors
-        .iter()
-        .map(|descriptor| descriptor.seal_ref.clone())
-        .collect::<Vec<_>>();
-    let missing_seals = requested_seals
-        .iter()
-        .filter(|seal_ref| !seals_by_id.contains_key(*seal_ref))
-        .cloned()
-        .collect::<Vec<_>>();
-    let realm_id = request
-        .effective_scope
-        .realm_id_opt()
-        .cloned()
-        .ok_or_else(|| "MLS governance proof scope has no Realm".to_owned())?;
-    for seal in fetch_seals_for_realm(&http, &realm_id, missing_seals).await? {
-        if seals_by_id.insert(seal.id.clone(), seal).is_some() {
-            return Err("Seal resolver returned a duplicate checkpoint Seal".to_owned());
-        }
-    }
-    let seals = requested_seals
-        .iter()
-        .map(|seal_ref| {
-            seals_by_id
-                .get(seal_ref)
-                .cloned()
-                .ok_or_else(|| format!("MLS governance proof omitted resolved Seal {seal_ref}"))
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-
-    let base = request
-        .proof_base_basis
-        .leaves
-        .iter()
-        .collect::<BTreeSet<_>>();
-    let delta_digests = seals
-        .iter()
-        .filter(|seal| !base.contains(&seal.id))
-        .flat_map(|seal| seal.delta.iter().cloned())
-        .collect::<BTreeSet<_>>();
-    let provenance_digests = bundle
-        .proof_material
-        .event_ids
-        .iter()
-        .map(arkret_sdk::EventId::event_digest)
-        .collect::<BTreeSet<_>>();
-    let checkpoint_events = base_checkpoint
-        .accepted_events
-        .iter()
-        .map(|event| event_with_digest_claim(event).map(|digest| (digest, event.clone())))
-        .collect::<Result<BTreeMap<_, _>, _>>()?;
-    let delta_events =
-        fetch_event_set(&http, &delta_digests, &checkpoint_events, "Seal delta").await?;
-    let provenance_events = fetch_event_set(
-        &http,
-        &provenance_digests,
-        &checkpoint_events,
-        "frontier provenance",
-    )
-    .await?;
-
-    let replay_events = delta_events
-        .iter()
-        .chain(provenance_events.iter())
-        .cloned()
-        .collect::<Vec<_>>();
-    let selectors = arkret_sdk::governance_runtime_dependency_selector_coordinates_for_acquisition(
-        &seals,
-        &replay_events,
-    )
-    .map_err(|error| format!("discover MLS governance dependencies: {error}"))?;
-    let dependencies = fetch_dependency_closure(&http, request, selectors).await?;
-
-    let dependencies = dependencies.into_values().collect::<Vec<_>>();
-    Ok(ResolvedMlsGovernanceProof {
-        bundle,
-        seals,
-        delta_events,
-        provenance_events,
         dependencies,
     })
 }
@@ -359,36 +240,6 @@ fn select_history_source_evidence(
         selected.extend(matches);
     }
     canonical_dependency_selectors(selected)
-}
-
-async fn fetch_proof_with_retry(
-    http: &arkret_sdk::Client,
-    request: &arkret_sdk::MlsGovernanceProofRequestBody,
-) -> Result<arkret_sdk::MlsGovernanceProofBundle, String> {
-    const MAX_ATTEMPTS: u32 = 8;
-    for attempt in 0..MAX_ATTEMPTS {
-        match http.mls_governance_proof(request).await {
-            Ok(bundle) => return Ok(bundle),
-            Err(error) if attempt + 1 < MAX_ATTEMPTS && projection_pending(&error) => {
-                let delay_ms = (100_u64 << attempt).min(1_000);
-                crate::runtime_helpers::sleep_for(std::time::Duration::from_millis(delay_ms)).await;
-            }
-            Err(error) => return Err(format!("fetch MLS governance proof: {error}")),
-        }
-    }
-    unreachable!("bounded MLS governance proof retry always returns")
-}
-
-fn projection_pending(error: &http_client::Error) -> bool {
-    match error {
-        http_client::Error::Api { status: 409, error } => {
-            error.code() == "state_mismatch" && error.detail.to_ascii_lowercase().contains("bottom")
-        }
-        http_client::Error::Api { status: 503, error } => {
-            error.code() == arkret_sdk::error_codes::ErrorCode::FRONTIER_UNAVAILABLE
-        }
-        _ => false,
-    }
 }
 
 fn limit_exceeded(error: &http_client::Error) -> bool {
@@ -579,18 +430,6 @@ fn event_with_digest_claim(event: &arkret_sdk::Event) -> Result<arkret_sdk::Hash
         return Err("accepted Event id does not bind its canonical content".to_owned());
     }
     Ok(digest)
-}
-
-async fn fetch_dependency_closure(
-    http: &arkret_sdk::Client,
-    request: &arkret_sdk::MlsGovernanceProofRequestBody,
-    selectors: Vec<arkret_sdk::GovernanceDependencySelector>,
-) -> Result<BTreeMap<DependencySortKey, arkret_sdk::GovernanceDependency>, String> {
-    let realm_id = request
-        .effective_scope
-        .realm_id_opt()
-        .ok_or_else(|| "MLS governance proof scope has no Realm".to_owned())?;
-    fetch_dependency_closure_for_realm(http, realm_id, selectors).await
 }
 
 async fn fetch_dependency_closure_for_realm(

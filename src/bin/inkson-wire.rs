@@ -21,15 +21,6 @@ struct PrincipalLocatorInput {
 }
 
 #[derive(Debug, Deserialize)]
-struct MlsGovernanceProofInput {
-    request: arkret_sdk::MlsGovernanceProofRequestBody,
-    target_checkpoint: arkret_sdk::MlsGovernanceVerificationCheckpoint,
-    content_scheme: arkret_wire::ContentScheme,
-    durability_policy: Option<arkret_wire::DurabilityPolicy>,
-    local_mls_leaves: Vec<arkret_sdk::MlsSecurityFrontierLeaf>,
-}
-
-#[derive(Debug, Deserialize)]
 struct ControlProposalAckInput {
     request: arkret_wire::ControlProposalAckIssueRequest,
     device_id: String,
@@ -72,18 +63,13 @@ struct MockServiceAuthority {
     verification_method: arkret_sdk::DidUrl,
 }
 
-// `materialize_mls_governance_frontier` verifies the candidate checkpoint
-// asynchronously, so the fixture binary needs a runtime even though every other
-// command is synchronous.
-#[tokio::main(flavor = "current_thread")]
-async fn main() -> Result<()> {
+fn main() -> Result<()> {
     let command = std::env::args().nth(1).context("missing command")?;
     let input = read_stdin_json()?;
 
     let output = match command.as_str() {
         "canonical-json" => canonical_json(input)?,
         "sha256-canonical-json" => sha256_canonical_json(input)?,
-        "mls-governance-proof" => mls_governance_proof(input).await?,
         "control-proposal-ack" => control_proposal_ack(input)?,
         "ingress-receipts" => ingress_receipts(input)?,
         "realm-actor-frontier" => realm_actor_frontier(input)?,
@@ -296,6 +282,7 @@ fn realm_genesis_seal(input: Value) -> Result<Value> {
             producer_signing_key_did: producer_signing_key,
             producer_signer_resolution_evidence_ref: None,
             signer_resolution_evidence_ref: signer_evidence_ref.clone(),
+            applet_installation_digest: None,
             accepted_at,
             jws: String::new(),
         };
@@ -443,7 +430,8 @@ fn mock_service_authority() -> Result<MockServiceAuthority> {
     )?;
     let did = arkret_sdk::Did::new(prepared.did.clone())?;
     let service_id = arkret_wire::project_did_to_core_id(&did)?;
-    let verification_method = arkret_sdk::DidUrl::new(prepared.did_key_id.clone())?;
+    let verification_method =
+        arkret_sdk::DidUrl::new(prepared.did_key_id.clone()).map_err(anyhow::Error::msg)?;
     let mut resolver = DidWebvhResolver::new();
     resolver.insert_from_https_response(
         &did,
@@ -613,32 +601,6 @@ fn sha256_canonical_json(input: Value) -> Result<Value> {
     let digest = arkret_sdk::canonical::canonical_sha256(&input.value)
         .map_err(|err| anyhow::anyhow!("canonical JSON digest: {err}"))?;
     Ok(json!({ "digest": digest }))
-}
-
-async fn mls_governance_proof(input: Value) -> Result<Value> {
-    let input: MlsGovernanceProofInput =
-        serde_json::from_value(input).context("parse MLS governance proof input")?;
-    let group_genesis_binding = arkret_sdk::MlsGroupGenesisBinding {
-        content_scheme: input.content_scheme,
-        durability_policy: input.durability_policy,
-    };
-    let bundle = arkret_sdk::materialize_mls_governance_frontier(
-        &input.request,
-        &input.target_checkpoint,
-        &group_genesis_binding,
-        &input.local_mls_leaves,
-        |_event, _digest_suite, _evidence, _dependencies| {
-            Box::pin(async {
-                Err(arkret_sdk::WireError::Protocol(
-                    "the inkson-wire fixture does not provide Agent historical authority"
-                        .to_owned(),
-                ))
-            })
-        },
-    )
-    .await
-    .map_err(|error| anyhow::anyhow!("materialize MLS governance frontier: {error}"))?;
-    serde_json::to_value(bundle).context("serialize MLS governance proof bundle")
 }
 
 fn control_proposal_ack(input: Value) -> Result<Value> {

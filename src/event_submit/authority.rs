@@ -15,10 +15,6 @@ pub(super) fn realm_create_authority_cache()
     CACHE.get_or_init(|| Mutex::new(BTreeMap::new()))
 }
 
-/// The first ascending Realm page contains genesis; the margin covers only
-/// interleaved bootstrap follow-ups, so the lookup never paginates.
-pub(super) const REALM_CREATE_AUTHORITY_QUERY_LIMIT: u32 = 16;
-
 pub(super) fn realm_create_authority_from_events(
     events: &[arkret_sdk::Event],
     realm_id: &str,

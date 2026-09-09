@@ -856,6 +856,8 @@ pub fn english_translations() -> TranslationDict {
     dict.set("recovery.panel.fetching", "Fetching backup times…");
     dict.set("recovery.panel.fetch_failed", "Backup times: {error}");
     dict.set("recovery.panel.loading", "Loading…");
+    dict.set("recovery.panel.next_page", "Next page");
+    dict.set("recovery.panel.partial_page", "Only this backup page is shown; more pages are available. Clear the list to restart from the first page.");
     dict.set("recovery.panel.refresh", "Refresh backup times");
     dict.set(
         "recovery.panel.clear_title",

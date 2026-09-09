@@ -18,9 +18,9 @@ use std::hash::{Hash, Hasher};
 use arkret_wire::event_kind_str;
 use dioxus::prelude::Signal;
 use garth::mls::welcome_admission::{
-    device_authorization_from_record, device_revoked, merge_accepted_welcomes_for_local_endpoint,
-    mls_welcome_batch_is_exclusively_for_realm, recovery_public_key_secret_storage_backup_present,
-    recovery_setup_prompt_required, retain_mls_welcomes_for_realm,
+    device_authorization_from_record, device_revoked, mls_welcome_batch_is_exclusively_for_realm,
+    recovery_public_key_secret_storage_backup_present, recovery_setup_prompt_required,
+    retain_mls_welcomes_for_realm,
 };
 use serde_json::Value;
 
@@ -943,7 +943,7 @@ pub(crate) async fn bootstrap_mls_welcome_for_realm(
     let api = crate::transport::auth::authed_api_ready(&base_url, session_credential.clone())
         .await
         .map_err(|error| format!("MLS governance proof client: {error}"))?;
-    let mut has_welcome = messages_value
+    let has_welcome = messages_value
         .get("messages")
         .and_then(Value::as_array)
         .is_some_and(|messages| {
@@ -951,37 +951,6 @@ pub(crate) async fn bootstrap_mls_welcome_for_realm(
                 message.get("kind").and_then(Value::as_str) == Some(event_kind_str::MLS_WELCOME)
             })
         });
-    if !has_welcome {
-        // The accepted Welcome Event is the durable carrier; the device-message
-        // queue is only a notification/acceleration path. If that queue was
-        // missed, recover the exact still-live Event from canonical history and
-        // feed it through the same claim, GroupContext and Seal-proof checks.
-        // Expired, wrong-Realm and wrong-endpoint Events never enter the chain.
-        let accepted_events = api
-            .event_submitter()
-            .map_err(|error| format!("MLS Welcome canonical history client: {error}"))?
-            .backfill(&realm_id)
-            .await
-            .map_err(|error| format!("MLS Welcome canonical history read: {error}"))?
-            .complete_events("MLS Welcome durable Event recovery")
-            .map_err(|error| error.to_string())?;
-        let recovered = merge_accepted_welcomes_for_local_endpoint(
-            &mut messages_value,
-            &accepted_events,
-            &realm_id,
-            &actor_id,
-            device_id.as_str(),
-            crate::clock::now_utc(),
-        )?;
-        if recovered > 0 {
-            tracing::warn!(
-                realm = %realm_id,
-                recovered,
-                "recovered MLS Welcome from durable accepted Realm history"
-            );
-            has_welcome = true;
-        }
-    }
     if has_welcome {
         let seal_view = api
             .event_submitter()
@@ -1008,78 +977,10 @@ pub(crate) async fn bootstrap_mls_welcome_for_realm(
         });
     }
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-    let transition_checkpoint = if has_welcome {
-        crate::mls::governance_proof::ensure_governance_checkpoint(
-            &api,
-            state_store.clone(),
-            &realm_id,
-        )
-        .await?;
-        let verified = crate::mls::governance_proof::verify_governance_checkpoint_candidate(
-            &api,
-            state_store,
-            &realm_id,
-        )
-        .await?;
-        // A recipient can have a pinned checkpoint from before a replacement
-        // Welcome's base Commit. Previewing against the new closure while
-        // constructing its proof from the old pin cannot resolve that Commit.
-        // Advance only the fully verified closure, retaining every previously
-        // trusted Seal and Event; a projection or a Welcome is not an anchor.
-        state_store.write(|store| {
-            store.advance_verified_mls_governance_checkpoint(&realm_id, verified.clone())?;
-            store.set_realm_seal_view(
-                realm_id.clone(),
-                crate::state::LocalSealView {
-                    frontier: verified
-                        .basis
-                        .leaves
-                        .iter()
-                        .map(ToString::to_string)
-                        .collect(),
-                    state_root: None,
-                    ..Default::default()
-                },
-            );
-            Ok::<_, String>(())
-        })?;
-        Some(verified)
-    } else {
-        None
-    };
-    let previews = match transition_checkpoint.as_ref() {
-        Some(checkpoint) => crate::mls::runtime::preview_welcome_security_frontiers(
-            checkpoint,
-            secure_store.as_ref(),
-            &authority,
-            &device_id,
-            &messages_value,
-        )?,
-        None => Vec::new(),
-    };
-    for preview in previews {
-        // encryption-and-audit.md 2.5.4 T1 — the invitee's first-time path. The
-        // Welcome deliberately carries no anchor: a carried one would be a second,
-        // weaker trust source. Knowing realm_id is enough, and the Welcome gives
-        // that much.
-        let request = state_store.read(|store| {
-            crate::mls::governance_proof::proof_request_for_scope(
-                store,
-                preview.binding.effective_scope().clone(),
-                preview.binding.mls_group_id(),
-                preview.binding.previous_epoch(),
-                preview.binding.next_epoch(),
-                preview.leaves.clone(),
-            )
-        })?;
-        crate::mls::governance_proof::fetch_verify_and_cache_expected_proof(
-            &api,
-            state_store.clone(),
-            &request,
-            &preview.leaves,
-            &preview.binding,
-        )
-        .await?;
+    if has_welcome {
+        for reference in crate::mls::runtime::known_welcome_event_refs(&messages_value)? {
+            crate::mls::accepted_artifact::fetch_ref(&api, state_store.clone(), &reference).await?;
+        }
     }
     if has_welcome {
         // Enrollment or recovery must already have installed the account MLS

@@ -121,7 +121,7 @@ impl RealmAdminController {
                 api_token,
                 |sub| async move {
                     let digest_suite = sub
-                        .ensure_realm_governance_checkpoint(&submit_home_realm_id)
+                        .refresh_realm_governance_frontier(&submit_home_realm_id)
                         .await?;
                     let profile_result = match kind {
                         RealmTreeNodeKind::Realm => {
@@ -235,7 +235,7 @@ impl RealmAdminController {
                 &base_url,
                 api_token,
                 |sub| async move {
-                    let digest_suite = sub.ensure_realm_governance_checkpoint(&realm_id).await?;
+                    let digest_suite = sub.refresh_realm_governance_frontier(&realm_id).await?;
                     crate::transport::realm_write::set_realm_policy_events(
                         &sub,
                         &realm_id,

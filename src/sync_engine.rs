@@ -460,7 +460,7 @@ impl
             );
         }
         if let Err(error) = submitter
-            .drain_mls_outbound(self.ctx.state_store.clone())
+            .drain_mls_outbound()
             .await
         {
             tracing::debug!(?error, "account post-commit deferred MLS outbound drain");
@@ -821,7 +821,7 @@ async fn run_circle_scope_rotate_pass(
                 }
             };
             let proof_request = ctx.state_store.read(|store| {
-                crate::mls::governance_proof::proof_request(
+                crate::mls::governance_proof::frontier_request(
                     store,
                     &realm_id,
                     None,
@@ -854,7 +854,7 @@ async fn run_circle_scope_rotate_pass(
                 &base,
                 token.clone(),
                 move |api| async move {
-                    crate::mls::governance_proof::fetch_verify_and_cache_proof(
+                    crate::mls::governance_proof::fetch_and_cache_frontier(
                         &api,
                         state_store.clone(),
                         &proof_request,
@@ -1560,15 +1560,6 @@ pub fn apply_response(response: &AccountSyncStep, is_full_sync: bool, ctx: &Sync
                     root.insert(LOCAL_REALM_PROFILE_PAYLOAD.to_owned(), local_profile);
                 }
                 store.save_realm_tree_projection(id.to_owned(), projection.clone());
-                if let Err(error) =
-                    store.reconcile_mls_group_state_ref_from_checkpoint(id, None)
-                {
-                    tracing::error!(
-                        realm_id = %id,
-                        %error,
-                        "sync engine: accepted MLS genesis projection conflicts with local group state",
-                    );
-                }
                 if is_full_sync || response.has_window_start_realm_metadata(id) {
                     store.save_realm_collaboration_role(
                         id.to_owned(),

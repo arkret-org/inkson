@@ -128,15 +128,21 @@ fn recovery_hpke_backup() -> Value {
     ))
 }
 
-fn active_series_record(backup_kind: &str, active_series_id: &str) -> Value {
-    serde_json::json!({
-        "schema": SchemaId::KEY_BACKUP_ACTIVE_SERIES_V1,
-        "actor_id": arkret_sdk::ActorId::account(authority()),
-        "backup_kind": backup_kind,
-        "active_series_id": active_series_id,
-        "series_pointer_version": 1,
-        "previous_series_ids": [],
-    })
+fn active_series_pointer(backup_kind: &str, active_series_id: &str) -> (String, Value) {
+    (backup_kind.to_owned(), serde_json::json!({
+        "state": "active", "active_series_id": active_series_id, "series_pointer_version": 1,
+    }))
+}
+
+fn current_series(pointers: Vec<(String, Value)>) -> Value {
+    let mut state = serde_json::json!({
+        "account_id": authority(),
+        "control_realm_id": "ak:realm:AY789mrKRCQEVlbVgiTgLdjVO5oCMJiUCrF-D-JlRNxI",
+        "seal_basis": {"leaves": [format!("ak:seal:sha256:{}", "b".repeat(64))]},
+        "secret_storage": {"state":"absent"}, "mls_history": {"state":"absent"},
+    });
+    for (kind, pointer) in pointers { state[&kind] = pointer; }
+    state
 }
 
 fn backup_series_id(body: &Value) -> &str {
@@ -145,7 +151,7 @@ fn backup_series_id(body: &Value) -> &str {
         .expect("backup must carry a series_id")
 }
 
-fn payload_with_inferred_active_series(backups: Vec<Value>) -> Value {
+fn payload_with_current_series(backups: Vec<Value>) -> Value {
     let active_series = ["secret_storage", "mls_history"]
         .into_iter()
         .filter_map(|backup_kind| {
@@ -155,82 +161,27 @@ fn payload_with_inferred_active_series(backups: Vec<Value>) -> Value {
                     body.get("backup_kind").and_then(Value::as_str) == Some(backup_kind)
                         && body.get("series_id").and_then(Value::as_str).is_some()
                 })
-                .map(|body| active_series_record(backup_kind, backup_series_id(body)))
+                .map(|body| active_series_pointer(backup_kind, backup_series_id(body)))
         })
         .collect::<Vec<_>>();
     serde_json::json!({
-        "active_series": active_series,
+        "active_series": current_series(active_series),
         "backups": backups,
     })
 }
 
-use arkret_wire::SchemaId;
-
 #[test]
-fn active_series_restore_preserves_station_scoped_rollback_floors() {
-    let mut state = crate::state::isolated_store_for_tests("backup-actor-floors");
-    let alpha = authority();
-    let beta = arkret_sdk::AccountId::new(
-        alpha.principal_id.clone(),
-        arkret_sdk::DidCoreId::new("ak:did_core:web:beta.example").unwrap(),
-    );
-    let payload = |account: &arkret_sdk::AccountId, version| {
-        serde_json::json!({
-            "active_series": [{
-                "actor_id": arkret_sdk::ActorId::account(account.clone()),
-                "backup_kind": "secret_storage",
-                "series_pointer_version": version,
-            }],
-            "backups": [],
-        })
-    };
-    super::restore::observe_active_series_versions(&payload(&alpha, 5), &mut state, &alpha, ACTOR)
-        .unwrap();
-    super::restore::observe_active_series_versions(&payload(&beta, 1), &mut state, &beta, ACTOR)
-        .unwrap();
-    assert_eq!(state.load().key_backup_active_series_highest_seen.len(), 2);
-    let error = super::restore::observe_active_series_versions(
-        &payload(&alpha, 4),
-        &mut state,
-        &alpha,
-        ACTOR,
-    )
-    .unwrap_err();
-    assert!(error.to_string().contains("backup_frontier_stale"));
-}
-
-#[test]
-fn active_series_restore_rejects_foreign_station_and_scalar_actors() {
-    let mut state = crate::state::isolated_store_for_tests("backup-actor-binding");
+fn backup_restore_rejects_foreign_account_and_missing_current_state() {
     let account = authority();
-    let foreign = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
-        account.principal_id.clone(),
-        arkret_sdk::DidCoreId::new("ak:did_core:web:other.example").unwrap(),
-    ));
-    for actor in [serde_json::json!(foreign), serde_json::json!(ACTOR)] {
-        let mut payload = serde_json::json!({
-            "active_series": [active_series_record("secret_storage", ACTIVE_SECRET_STORAGE_SERIES)],
-            "backups": [],
-        });
-        payload["active_series"][0]["actor_id"] = actor.clone();
-        assert!(
-            super::restore::observe_active_series_versions(&payload, &mut state, &account, ACTOR,)
-                .is_err()
-        );
-        payload["active_series"][0]["actor_id"] =
-            serde_json::json!(arkret_sdk::ActorId::account(account.clone()));
-        payload["backups"] = serde_json::json!([{ "actor_id": actor }]);
-        assert!(
-            super::restore::observe_active_series_versions(&payload, &mut state, &account, ACTOR,)
-                .is_err()
-        );
-        assert!(
-            state
-                .load()
-                .key_backup_active_series_highest_seen
-                .is_empty()
-        );
-    }
+    let mut payload = serde_json::json!({"active_series": current_series(vec![]), "backups": []});
+    super::restore::validate_backup_account(&payload, &account, ACTOR).unwrap();
+    payload["active_series"]["account_id"]["station_id"] = "ak:did_core:web:other.example".into();
+    assert!(super::restore::validate_backup_account(&payload, &account, ACTOR).is_err());
+    payload["active_series"] = Value::Null;
+    assert!(super::restore::validate_backup_account(&payload, &account, ACTOR).is_err());
+    payload["active_series"] = current_series(vec![]);
+    payload["backups"] = serde_json::json!([{"actor_id": ACTOR}]);
+    assert!(super::restore::validate_backup_account(&payload, &account, ACTOR).is_err());
 }
 
 #[test]
@@ -361,7 +312,7 @@ fn select_account_secret_finds_it_in_a_list_payload() {
     let account_secret_body = wrap();
     // A `list_key_backups`-shaped payload mixing a history backup, an
     // unrelated recovery vault, and the account-secret backup.
-    let payload = payload_with_inferred_active_series(vec![
+    let payload = payload_with_current_series(vec![
         serde_json::json!({ "backup_id": "ak:backup:a", "backup_kind": "mls_history" }),
         serde_json::json!({
             "backup_id": "ak:backup:b",
@@ -400,7 +351,7 @@ fn preferred_account_secret_requires_recovery_public_key() {
     .unwrap();
     let hpke = key_backup_wire(&hpke);
     let payload = serde_json::json!({
-        "active_series": [active_series_record("secret_storage", backup_series_id(&hpke))],
+        "active_series": current_series(vec![active_series_pointer("secret_storage", backup_series_id(&hpke))]),
         "backups": [passphrase_wrapped.clone(), hpke.clone()]
     });
 
@@ -411,7 +362,7 @@ fn preferred_account_secret_requires_recovery_public_key() {
         serde_json::json!("recovery_public_key")
     );
 
-    let passphrase_only = payload_with_inferred_active_series(vec![passphrase_wrapped.clone()]);
+    let passphrase_only = payload_with_current_series(vec![passphrase_wrapped.clone()]);
     assert!(select_preferred_mls_account_secret_backup(&passphrase_only).is_none());
 }
 
@@ -426,9 +377,9 @@ fn select_account_secret_prefers_highest_series_seq() {
     newer["series_seq"] = serde_json::json!(2);
     newer["series_id"] = serde_json::json!(ACTIVE_SECRET_STORAGE_SERIES);
     let payload = serde_json::json!({
-        "active_series": [
-            active_series_record("secret_storage", ACTIVE_SECRET_STORAGE_SERIES)
-        ],
+        "active_series": current_series(vec![
+            active_series_pointer("secret_storage", ACTIVE_SECRET_STORAGE_SERIES)
+        ]),
         "backups": [newer.clone(), older]
     });
 
@@ -689,7 +640,7 @@ fn backup_prompt_not_required_when_server_backup_present() {
     // backup: fresh-device recovery material exists, so nothing to upload.
     let store = MemorySecureKeyStore::new();
     crate::mls::runtime::store_account_mls_secret(&store, &authority(), ACCOUNT_SECRET).unwrap();
-    let payload = payload_with_inferred_active_series(vec![recovery_hpke_backup()]);
+    let payload = payload_with_current_series(vec![recovery_hpke_backup()]);
     assert!(!mls_backup_prompt_required(&payload, &store, &authority()));
 }
 
@@ -711,7 +662,7 @@ fn select_account_secret_prefers_tail_seq_over_newer_timestamp() {
     stale["created_at"] = serde_json::json!("2026-12-31T23:59:59.000Z");
 
     let payload = serde_json::json!({
-        "active_series": [active_series_record("secret_storage", series)],
+        "active_series": current_series(vec![active_series_pointer("secret_storage", series)]),
         "backups": [stale, tail.clone()]
     });
     let found = select_mls_account_secret_backup(&payload).expect("account secret present");
@@ -722,7 +673,7 @@ fn select_account_secret_prefers_tail_seq_over_newer_timestamp() {
 }
 
 #[test]
-fn select_account_secret_honors_active_series_record() {
+fn select_account_secret_honors_active_series_pointer() {
     let mut active = wrap();
     active["backup_id"] = serde_json::json!("ak:backup:01964137-0000-7000-8000-0000000000a1");
     active["series_id"] = serde_json::json!(ACTIVE_SECRET_STORAGE_SERIES);
@@ -738,9 +689,9 @@ fn select_account_secret_honors_active_series_record() {
     stale["contents"][0]["secret_version"] = serde_json::json!(99);
 
     let payload = serde_json::json!({
-        "active_series": [
-            active_series_record("secret_storage", ACTIVE_SECRET_STORAGE_SERIES)
-        ],
+        "active_series": current_series(vec![
+            active_series_pointer("secret_storage", ACTIVE_SECRET_STORAGE_SERIES)
+        ]),
         "backups": [stale, active.clone()]
     });
 
@@ -755,9 +706,9 @@ fn select_account_secret_fails_closed_when_active_series_is_missing() {
     backup["series_seq"] = serde_json::json!(42);
     backup["contents"][0]["secret_version"] = serde_json::json!(42);
     let payload = serde_json::json!({
-        "active_series": [
-            active_series_record("secret_storage", ACTIVE_SECRET_STORAGE_SERIES)
-        ],
+        "active_series": current_series(vec![
+            active_series_pointer("secret_storage", ACTIVE_SECRET_STORAGE_SERIES)
+        ]),
         "backups": [backup]
     });
 
@@ -768,7 +719,7 @@ fn select_account_secret_fails_closed_when_active_series_is_missing() {
 fn select_account_secret_infers_the_only_series_without_an_active_record() {
     let backup = wrap();
     let payload = serde_json::json!({
-        "active_series": [],
+        "active_series": current_series(vec![]),
         "backups": [backup.clone()]
     });
 
@@ -784,7 +735,7 @@ fn select_account_secret_rejects_multiple_series_without_an_active_record() {
     second["backup_id"] = serde_json::json!("ak:backup:01964137-0000-7000-8000-0000000000a3");
     second["series_id"] = serde_json::json!(STALE_SECRET_STORAGE_SERIES);
     let payload = serde_json::json!({
-        "active_series": [],
+        "active_series": current_series(vec![]),
         "backups": [first, second]
     });
 
@@ -836,9 +787,9 @@ fn verify_account_secret_rejects_multiple_series_without_a_pointer_projection() 
 #[test]
 fn select_history_backups_filters_by_class() {
     let payload = serde_json::json!({
-        "active_series": [
-            active_series_record("mls_history", ACTIVE_MLS_HISTORY_SERIES)
-        ],
+        "active_series": current_series(vec![
+            active_series_pointer("mls_history", ACTIVE_MLS_HISTORY_SERIES)
+        ]),
         "backups": [
             { "backup_id": "ak:backup:a", "backup_kind": "mls_history", "series_id": ACTIVE_MLS_HISTORY_SERIES },
             { "backup_id": "ak:backup:b", "backup_kind": "secret_storage" },
@@ -952,7 +903,7 @@ fn select_sidecar_finds_and_prefers_highest_series_seq() {
     let mut newer = base_body.clone();
     newer["backup_id"] = serde_json::json!("ak:backup:01964137-0000-7000-8000-0000000000a2");
     newer["series_seq"] = serde_json::json!(2);
-    let payload = payload_with_inferred_active_series(vec![
+    let payload = payload_with_current_series(vec![
         serde_json::json!({ "backup_id": "ak:backup:h", "backup_kind": "mls_history" }),
         older,
         newer.clone(),
@@ -965,7 +916,7 @@ fn select_sidecar_finds_and_prefers_highest_series_seq() {
 }
 
 #[test]
-fn select_sidecar_honors_active_series_record() {
+fn select_sidecar_honors_active_series_pointer() {
     let (_json, base_body) = wrap_sidecar();
     let mut active = base_body.clone();
     active["backup_id"] = serde_json::json!("ak:backup:01964137-0000-7000-8000-0000000000c1");
@@ -980,9 +931,9 @@ fn select_sidecar_honors_active_series_record() {
     stale["created_at"] = serde_json::json!("2026-12-31T23:59:59.000Z");
 
     let payload = serde_json::json!({
-        "active_series": [
-            active_series_record("secret_storage", ACTIVE_SECRET_STORAGE_SERIES)
-        ],
+        "active_series": current_series(vec![
+            active_series_pointer("secret_storage", ACTIVE_SECRET_STORAGE_SERIES)
+        ]),
         "backups": [stale, active.clone()]
     });
 

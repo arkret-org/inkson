@@ -30,6 +30,7 @@ pub async fn report(
         submitter.http(),
         &signed,
         signed.digest_suite(),
+        None,
     )
     .await?;
     let body = arkret_sdk::ModerationReportRequestBody { report_event };

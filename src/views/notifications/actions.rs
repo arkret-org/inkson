@@ -503,7 +503,7 @@ fn accept_invite_notification(
             // and durably pinned the accepted governance closure. Establish
             // that checkpoint before exposing the final Joined status.
             let checkpoint_error =
-                crate::mls::creator_bootstrap::ensure_realm_governance_checkpoint(
+                crate::mls::creator_bootstrap::refresh_realm_governance_frontier(
                     &api,
                     crate::app::runtime_adapter::state_store_handle(state_store),
                     &accepted_realm_for_api,

@@ -234,6 +234,7 @@ pub async fn update_profile(
         submitter.http(),
         &signed,
         signed.digest_suite(),
+        None,
     )
     .await?;
     let mut successor_seal = Some(
@@ -1704,7 +1705,7 @@ pub async fn submit_read_cursor_advance(
     // A notification may be read before this device ever opens its Realm.
     // Resolve and verify the digest-suite authority before signing the cursor.
     submitter
-        .ensure_realm_governance_checkpoint(&marker.body.realm_id)
+        .refresh_realm_governance_frontier(&marker.body.realm_id)
         .await?;
     let payload = arkret_sdk::ReadCursor {
         schema: marker.body.schema.clone(),

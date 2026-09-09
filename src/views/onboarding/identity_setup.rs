@@ -800,7 +800,7 @@ pub(super) async fn finish_principal_setup(
     }
     crate::recovery_strand::submit_principal_bootstrap_seal(&api, &bootstrap_seal_for_submit)
         .await?;
-    crate::recovery_strand::ensure_principal_bootstrap_governance_checkpoint(
+    crate::recovery_strand::refresh_principal_bootstrap_frontier(
         &api,
         &governance_state_store,
         &bootstrap_seal_for_submit,
