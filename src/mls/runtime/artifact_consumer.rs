@@ -280,14 +280,45 @@ impl HostArtifactApplicator {
         )
         .await
         .map_err(protocol)?;
+        // A zero-transition proof still resolves its target Seals and sparse
+        // provenance. The checkpoint owns these authenticated objects, but it
+        // is not a substitute for the verifier's exact descriptor inputs.
+        let resolved_seals = bundle
+            .proof_material
+            .seal_descriptors
+            .iter()
+            .map(|descriptor| {
+                checkpoint
+                    .accepted_seals
+                    .iter()
+                    .find(|seal| seal.id == descriptor.seal_ref)
+                    .cloned()
+                    .ok_or_else(|| protocol("local frontier Seal is absent from its checkpoint"))
+            })
+            .collect::<garth::Result<Vec<_>>>()?;
+        let provenance_events = bundle
+            .proof_material
+            .event_ids
+            .iter()
+            .map(|event_id| {
+                checkpoint
+                    .accepted_events
+                    .iter()
+                    .find(|event| &event.event_id == event_id)
+                    .cloned()
+                    .ok_or_else(|| {
+                        protocol("local frontier provenance is absent from its checkpoint")
+                    })
+            })
+            .collect::<garth::Result<Vec<_>>>()?;
         let verifier = self.state.clone();
         let verified = arkret_sdk::verify_mls_governance_frontier(
             &request,
             &bundle,
             &checkpoint,
+            &resolved_seals,
             &[],
-            &[],
-            &[],
+            &provenance_events,
             &[],
             &genesis,
             &leaves,

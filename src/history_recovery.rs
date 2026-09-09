@@ -471,15 +471,23 @@ async fn readable_history_floor(
     actor: &arkret_sdk::ActorId,
     incarnation: &arkret_sdk::AuthorizationIncarnation,
 ) -> anyhow::Result<u64> {
-    let join = arkret_sdk::history_join_epoch_from_verified_checkpoint(
-        checkpoint,
-        scope,
-        actor,
-        incarnation,
-    )
-    .await?
-    .ok_or_else(|| anyhow::anyhow!("history membership is ready; MLS lineage is pending"))?;
-    let policy = arkret_sdk::history_access_from_verified_checkpoint(checkpoint, scope).await?;
+    let (membership, join_epoch) =
+        arkret_sdk::verified_member_history_from_checkpoint(checkpoint, scope, actor).await?;
+    if membership.incarnation() != incarnation {
+        anyhow::bail!("history request authorization incarnation differs from its verified cut");
+    }
+    readable_history_floor_for_member(checkpoint, &membership, join_epoch).await
+}
+
+async fn readable_history_floor_for_member(
+    checkpoint: &arkret_sdk::MlsGovernanceVerificationCheckpoint,
+    membership: &arkret_state::history_authorization::VerifiedMembership,
+    join_epoch: Option<u64>,
+) -> anyhow::Result<u64> {
+    let join = join_epoch
+        .ok_or_else(|| anyhow::anyhow!("history membership is ready; MLS lineage is pending"))?;
+    let policy =
+        arkret_sdk::history_access_from_verified_checkpoint(checkpoint, membership.scope()).await?;
     Ok(match policy {
         arkret_sdk::HistoryAccess::SinceJoin => join,
         arkret_sdk::HistoryAccess::AllHistoryForCurrentMembers => 0,
@@ -891,61 +899,55 @@ pub async fn converge_member_history_recovery(
                 continue;
             }
         };
-        let circle_id = match &scope {
-            arkret_sdk::HistoryEffectiveScope::Realm { .. } => None,
-            arkret_sdk::HistoryEffectiveScope::Circle { circle_id, .. } => Some(circle_id),
-        };
-        let incarnation =
-            match arkret_sdk::current_authorization_incarnation_from_verified_checkpoint(
-                &checkpoint,
-                &arkret_sdk::ActorId::account(authority.clone()),
-                circle_id,
-            )
-            .await
-            {
-                Ok(incarnation) => incarnation,
-                Err(error) => {
-                    outcome.pending_errors += 1;
-                    tracing::warn!(%error, "private history requester membership remains pending");
-                    continue;
-                }
-            };
-        let floor = match readable_history_floor(
+        let (membership, join_epoch) = match arkret_sdk::verified_member_history_from_checkpoint(
             &checkpoint,
             &scope,
             &arkret_sdk::ActorId::account(authority.clone()),
-            &incarnation,
         )
         .await
         {
-            Ok(floor) => floor,
+            Ok(membership) => membership,
             Err(error) => {
                 outcome.pending_errors += 1;
-                tracing::warn!(%error, "private history scope floor remains pending");
+                tracing::warn!(%error, "private history requester membership remains pending");
                 continue;
             }
         };
+        let incarnation = membership.incarnation().clone();
+        let floor =
+            match readable_history_floor_for_member(&checkpoint, &membership, join_epoch).await {
+                Ok(floor) => floor,
+                Err(error) => {
+                    outcome.pending_errors += 1;
+                    tracing::warn!(%error, "private history scope floor remains pending");
+                    continue;
+                }
+            };
         let requested_ranges = ranges_at_or_after(requested_ranges, floor);
         if requested_ranges.is_empty() {
             continue;
         }
-        let existing = runtime(state_store)
-            .durable_requests()
-            .map_err(|error| anyhow::anyhow!(error.to_string()))?
-            .into_iter()
-            .find(|durable| {
-                durable.request.effective_scope == scope
-                    && durable.request.requester_actor_id
-                        == arkret_sdk::ActorId::account(authority.clone())
-                    && durable.request.requester_authorization_incarnation == incarnation
-                    && durable
-                        .request
-                        .requested_ranges
-                        .iter()
-                        .all(|range| range.from_epoch >= floor)
-                    && ranges_cover(&durable.request.requested_ranges, &requested_ranges)
-                    && durable.request.expires_at > now + chrono::Duration::minutes(1)
-            });
+        let durable_requests = match runtime(state_store).durable_requests() {
+            Ok(requests) => requests,
+            Err(error) => {
+                outcome.pending_errors += 1;
+                tracing::warn!(%error, "private history requester intents remain pending");
+                continue;
+            }
+        };
+        let existing = durable_requests.into_iter().find(|durable| {
+            durable.request.effective_scope == scope
+                && durable.request.requester_actor_id
+                    == arkret_sdk::ActorId::account(authority.clone())
+                && durable.request.requester_authorization_incarnation == incarnation
+                && durable
+                    .request
+                    .requested_ranges
+                    .iter()
+                    .all(|range| range.from_epoch >= floor)
+                && ranges_cover(&durable.request.requested_ranges, &requested_ranges)
+                && durable.request.expires_at > now + chrono::Duration::minutes(1)
+        });
         let (request_id, requested_ranges, expires_at) = match existing {
             Some(durable) if durable.accepted.is_some() => continue,
             Some(durable) => (
@@ -1035,12 +1037,18 @@ pub async fn converge_member_history_recovery(
                     continue;
                 }
                 let outbox = crate::state::history_source_outbox(state_store);
-                let attempts = outbox
-                    .attempts_for_request_source(
-                        &request_record.request.request_id,
-                        device_id.as_str(),
-                    )
-                    .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+                let attempts = match outbox.attempts_for_request_source(
+                    &request_record.request.request_id,
+                    device_id.as_str(),
+                ) {
+                    Ok(attempts) => attempts,
+                    Err(error) => {
+                        outcome.pending_errors += 1;
+                        tracing::warn!(request_id = %request_record.request.request_id, %error,
+                            "private history source attempt lookup remains pending");
+                        continue;
+                    }
+                };
                 let uncovered_secrets = secrets
                     .iter()
                     .filter(|secret| !live_attempt_covers_epoch(&attempts, secret.epoch))

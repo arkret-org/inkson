@@ -619,7 +619,7 @@ mod tests {
                     agent_actor_id,
                     realm_id,
                     &authority.state.signing_key_binding.verification_method,
-                    authority.lease.issued_at,
+                    entry.evidence.admission_evidence().valid_from(),
                 )
                 .len(),
             1
@@ -647,7 +647,7 @@ mod tests {
                     agent_actor_id,
                     realm_id,
                     &authority.state.signing_key_binding.verification_method,
-                    authority.lease.issued_at,
+                    entry.evidence.admission_evidence().valid_from(),
                 )
                 .is_empty()
         );
