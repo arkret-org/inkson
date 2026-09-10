@@ -737,10 +737,24 @@ pub(super) async fn finish_principal_setup(
     let account = &completed.account;
     let actor = account.principal_id().as_str();
     let device = account.device_id.as_str();
+    let continuation = recovery_material_continuation(registration.stage)?;
+    // Registration and current-principal already confirmed this Account. Its
+    // storage must own frontier and recovery writes before setup completes;
+    // runtime session publication remains in commit_completed_account.
+    let barrier = {
+        let mut store = state_store.write();
+        activate_accepted_account_setup_storage(
+            &mut store,
+            account,
+            registration.stage,
+            recovery_key,
+        )?;
+        store.set_session_grant(Some(completed.persisted_grant.clone()));
+        store.begin_durable_flush()?
+    };
+    barrier.wait().await?;
 
-    if recovery_material_continuation(registration.stage)?
-        == RecoveryMaterialContinuation::FinalizeDurableEvidence
-    {
+    if continuation == RecoveryMaterialContinuation::FinalizeDurableEvidence {
         let evidence = state_store
             .read()
             .recovery_material_evidence()

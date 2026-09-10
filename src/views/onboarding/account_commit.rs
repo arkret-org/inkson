@@ -293,6 +293,16 @@ pub(super) fn activate_account_and_save_recovery_metadata(
     Ok(())
 }
 
+pub(super) fn activate_accepted_account_setup_storage(
+    store: &mut crate::state::LocalStateStore,
+    account: &crate::config::ActiveAccountContext,
+    stage: crate::state::PendingPrincipalRegistrationStage,
+    recovery_key: &str,
+) -> anyhow::Result<()> {
+    recovery_material_continuation(stage)?;
+    activate_account_and_save_recovery_metadata(store, account, recovery_key)
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn commit_completed_account(
     completed: &CompletedIdentityCreation,

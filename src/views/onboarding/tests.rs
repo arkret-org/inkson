@@ -318,6 +318,34 @@ fn recovery_metadata_is_written_after_the_account_namespace_switch() {
 }
 
 #[test]
+fn accepted_setup_storage_precedes_recovery_completion_and_rejects_drafts() {
+    use crate::state::PendingPrincipalRegistrationStage as Stage;
+    let key = crate::recovery_crypto::generate_recovery_key().unwrap();
+    let account = test_active_account();
+    let mut store = crate::state::isolated_store_for_tests("accepted-setup-boundary");
+    store.begin_pending_login(&account.device_id, None);
+    assert!(
+        activate_accepted_account_setup_storage(
+            &mut store,
+            &account,
+            Stage::GenesisDraftPrepared,
+            &key,
+        )
+        .is_err()
+    );
+    assert!(store.active_authority().is_none());
+    activate_accepted_account_setup_storage(&mut store, &account, Stage::Accepted, &key).unwrap();
+    assert_eq!(store.active_authority(), Some(account.authority.clone()));
+    assert!(store.recovery_material_evidence().is_none());
+    assert_eq!(
+        recovery_material_continuation(Stage::Accepted).unwrap(),
+        RecoveryMaterialContinuation::SubmitAndPersist
+    );
+    activate_accepted_account_setup_storage(&mut store, &account, Stage::Accepted, &key).unwrap();
+    assert_eq!(store.active_authority(), Some(account.authority));
+}
+
+#[test]
 fn current_deployment_exposes_only_its_connected_human_anchor_method() {
     assert_eq!(CURRENT_DEPLOYMENT_HUMAN_ANCHOR_METHOD, "did:webvh");
 }
