@@ -48,9 +48,43 @@ pub async fn account_me(http: &arkret_sdk::http_client::Client) -> anyhow::Resul
     Ok(current_account_from_viewer(viewer))
 }
 
-/// Fetch and verify the complete current principal resolution before it enters
-/// the active-account model. The route is transport only; both identity
-/// coordinates come from the already verified authority pair.
+/// Read the authenticated Station result without downloading method history.
+pub(crate) async fn current_principal_for_authority(
+    http: &arkret_sdk::http_client::Client,
+    authority: &arkret_sdk::AccountId,
+) -> anyhow::Result<arkret_sdk::CurrentPrincipalOutcome> {
+    let generation = crate::identity::device_directory::cache_epoch();
+    let active_scope = crate::secure_key_store::active_device_seed_scope();
+    let request = arkret_sdk::CurrentPrincipalRequestBody {
+        request_id: arkret_sdk::RequestId::new_v7_at(crate::clock::now_unix_ms()),
+        account_id: authority.clone(),
+    };
+    let result = http.current_principal(&request).await?;
+    anyhow::ensure!(
+        generation == crate::identity::device_directory::cache_epoch(),
+        "current principal response belongs to an old identity session"
+    );
+    let current_scope = crate::secure_key_store::active_device_seed_scope();
+    anyhow::ensure!(
+        active_scope.as_ref().map(|s| (&s.authority, &s.device_id))
+            == current_scope.as_ref().map(|s| (&s.authority, &s.device_id)),
+        "current principal device scope changed during the request"
+    );
+    result.validate_for_request(&request)?;
+    if let Some(known) = crate::config::LocalConfigStore::default().known_account_context(authority)
+    {
+        anyhow::ensure!(
+            known.principal_control_realm_id == result.principal_control_realm_id,
+            "current principal changes the Account's pinned PCR"
+        );
+        anyhow::ensure!(
+            known.resolution.updated_at <= result.resolution_projection.updated_at,
+            "current principal projection regressed"
+        );
+    }
+    Ok(result)
+}
+
 pub async fn resolve_active_account_context(
     http: &arkret_sdk::http_client::Client,
     profile_id: String,
@@ -58,24 +92,16 @@ pub async fn resolve_active_account_context(
     device_id: arkret_sdk::DeviceId,
     server_url: url::Url,
 ) -> anyhow::Result<crate::config::ActiveAccountContext> {
-    let public_resolution = http
-        .open_principal_resolution(&authority.principal_id, &authority.station_id)
-        .await?;
     anyhow::ensure!(
-        public_resolution.authority() == authority,
-        "public principal resolution returned another account authority"
+        http.base_url().origin() == server_url.origin(),
+        "current principal transport does not match the authenticated Station route"
     );
-    let station_resolution = http.open_service_resolution(&authority.station_id).await?;
-    let (accepted_projection, _) =
-        arkret_identity::verify_embedded_public_principal_resolution_history(
-            &public_resolution,
-            &station_resolution,
-            chrono::Utc::now(),
-        )?;
+    let result = current_principal_for_authority(http, &authority).await?;
     crate::config::ActiveAccountContext::new(
         profile_id,
         authority,
-        accepted_projection,
+        result.principal_control_realm_id,
+        result.resolution_projection,
         device_id,
         server_url,
     )
@@ -558,12 +584,17 @@ pub async fn direct_conversation_resolve(
     peer_controller: Option<&str>,
     enable_owned_agent_reply: bool,
 ) -> anyhow::Result<arkret_sdk::direct_conversation_ops::DirectConversationResolveOutcome> {
+    let authority = state_store
+        .read(|store| store.active_authority())
+        .ok_or_else(|| anyhow::anyhow!("Direct Conversation requires active account"))?;
+    let epoch = crate::identity::device_directory::cache_epoch();
     let http = api.http();
     let peer_descriptor = direct_conversation_peer_descriptor(peer, peer_controller)?;
     let peer_actor = peer_descriptor.contact_actor_id();
     let body = arkret_sdk::direct_conversation_ops::DirectConversationResolveRequestBody {
         peer: peer_descriptor,
     };
+    let query_sequence = crate::mls::direct_binding::begin_query(&authority, &body.peer)?;
     let outcome = http
         .direct_conversation_resolve(&body)
         .await
@@ -581,8 +612,18 @@ pub async fn direct_conversation_resolve(
             .await,
         );
     }
-    if direct_conversation_coordinates(&outcome).is_some() {
-        remember_direct_conversation_peer(state_store, peer, &outcome);
+    if let Err(error) = crate::mls::direct_binding::install_resolved_message_context(
+        http,
+        state_store,
+        &authority,
+        epoch,
+        query_sequence,
+        body.peer.clone(),
+        &outcome,
+    )
+    .await
+    {
+        tracing::debug!(%error,"Direct Conversation authoring remains pending");
     }
     Ok(outcome)
 }
@@ -671,10 +712,6 @@ fn direct_conversation_peer_descriptor(
             })?,
         },
     })
-}
-
-fn direct_conversation_peer_cache_key(realm_id: &str, strand_id: &str) -> String {
-    format!("direct_conversation.peer.{realm_id}.{strand_id}")
 }
 
 pub(crate) fn direct_conversation_coordinates(
@@ -770,31 +807,14 @@ pub(crate) fn direct_conversation_entry_with_local_blockers(
     }
 }
 
-fn remember_direct_conversation_peer(
-    state_store: &crate::runtime::input::StateStoreHandle,
-    peer: &str,
-    outcome: &arkret_sdk::direct_conversation_ops::DirectConversationResolveOutcome,
-) {
-    let Some(coordinates) = direct_conversation_coordinates(outcome) else {
-        return;
-    };
-    state_store.write(|store| {
-        store.save_plain_local_data(
-            direct_conversation_peer_cache_key(
-                coordinates.realm_id.as_str(),
-                coordinates.main_strand_id.as_str(),
-            ),
-            peer,
-        );
-    });
-}
-
 pub(crate) fn cached_direct_conversation_peer(
     state_store: &crate::state::LocalStateStore,
     realm_id: &str,
-    strand_id: &str,
+    _strand_id: &str,
 ) -> Option<String> {
-    state_store.load_plain_local_data(&direct_conversation_peer_cache_key(realm_id, strand_id))
+    state_store
+        .direct_conversation_peer(realm_id)
+        .map(|peer| peer.contact_actor_id().to_string())
 }
 
 /// Opening a canonical Direct Conversation and changing an Agent's participation

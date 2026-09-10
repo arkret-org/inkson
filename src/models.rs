@@ -1,6 +1,5 @@
 use std::collections::BTreeMap;
 
-use arkret_sdk::EventPayloadExt as _;
 use arkret_sdk::contact_operations::ContactScope;
 pub use arkret_sdk::{
     ClaimedProfileEntry, ContactAgentProjection, ContactList, ContactListRow,
@@ -222,15 +221,6 @@ pub struct AccountSyncStep {
 }
 
 impl AccountSyncStep {
-    pub fn from_batch(batch: arkret_sdk::AccountSubscribeBatch) -> arkret_sdk::Result<Self> {
-        let cursor = batch.cursor.clone();
-        let mut processor = garth::SyncResponseProcessor::new();
-        let updates = processor
-            .process(batch)
-            .map_err(|error| arkret_sdk::Error::Protocol(error.to_string()))?;
-        Self::from_updates(cursor, updates)
-    }
-
     pub fn from_updates(
         cursor: String,
         updates: arkret_sdk::SyncUpdates,
@@ -247,14 +237,6 @@ impl AccountSyncStep {
                 serde_json::to_value(&update.entry)
                     .and_then(|mut value| {
                         project_member_roster_from_sdk_entry(&mut value, &update.entry)?;
-                        project_default_strand_from_sdk_events(
-                            &mut value,
-                            update
-                                .entry
-                                .state
-                                .iter()
-                                .flat_map(|state| state.events.iter()),
-                        );
                         Ok((update.realm_id.as_str().to_owned(), value))
                     })
                     .map_err(|error| arkret_sdk::Error::Protocol(error.to_string()))
@@ -316,32 +298,6 @@ fn project_member_roster_from_sdk_entry(
         object.remove("member_roster_entries_next_cursor");
     }
     Ok(())
-}
-
-pub(crate) fn project_default_strand_from_sdk_events<'a>(
-    projection: &mut Value,
-    events: impl IntoIterator<Item = &'a arkret_sdk::Event>,
-) -> bool {
-    let latest = events.into_iter().filter_map(|event| {
-        if event.kind != arkret_sdk::EventKind::RealmSetDefaultStrand {
-            return None;
-        }
-        event
-            .typed_payload::<arkret_wire::event_spec::RealmSetDefaultStrand>()
-            .ok()
-            .map(|payload| payload.strand_id.to_string())
-    });
-    let Some(strand_id) = latest.last() else {
-        return false;
-    };
-    let Some(object) = projection.as_object_mut() else {
-        return false;
-    };
-    if object.get("default_strand_id").and_then(Value::as_str) == Some(strand_id.as_str()) {
-        return false;
-    }
-    object.insert("default_strand_id".to_owned(), Value::String(strand_id));
-    true
 }
 
 // `resolve-realm` decodes into the canonical SDK wire types so the client stays
@@ -575,7 +531,6 @@ mod tests {
                 account_data: Vec::new(),
                 station_cas_account_data: Vec::new(),
                 notifications: Vec::new(),
-                agent_signer_evidence: Vec::new(),
                 partial: false,
             },
         )

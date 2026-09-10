@@ -34,6 +34,7 @@ fn test_active_account(did: &str, device_id: &str) -> crate::config::ActiveAccou
     crate::config::ActiveAccountContext::new(
         "ak:profile:test".to_owned(),
         authority,
+        arkret_sdk::RealmId::new("ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19").unwrap(),
         arkret_sdk::PrincipalResolutionProjection {
             did,
             method_history_head: "head-test".to_owned(),

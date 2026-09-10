@@ -9,6 +9,7 @@ fn test_active_account() -> crate::config::ActiveAccountContext {
             arkret_sdk::DidCoreId::new("ak:did_core:webvh:z6mkfixture:server.example".to_owned())
                 .unwrap(),
         ),
+        arkret_sdk::RealmId::new("ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19").unwrap(),
         arkret_sdk::PrincipalResolutionProjection {
             did,
             method_history_head: "head-test".to_owned(),

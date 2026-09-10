@@ -73,16 +73,6 @@ struct LocalModerationMetadata {
     created_at: String,
 }
 
-pub(crate) fn moderation_operations_from_events(
-    _realm_id: &str,
-    events: &[arkret_sdk::Event],
-) -> Vec<RawOperationRecord> {
-    events
-        .iter()
-        .filter_map(moderation_operation_from_event)
-        .collect()
-}
-
 fn moderation_operation_from_event(event: &arkret_sdk::Event) -> Option<RawOperationRecord> {
     let local_event = LocalModerationEvent::from_sdk_event(event)?;
     let event_id = event.event_id.as_str().to_owned();
@@ -155,7 +145,10 @@ mod tests {
             json!({}),
         )
         .unwrap();
-        let records = moderation_operations_from_events(realm_id, &[decision, message]);
+        let records = moderation_operations_from_client_events(&[
+            garth::ClientEvent::Event(decision),
+            garth::ClientEvent::Event(message),
+        ]);
 
         assert_eq!(records.len(), 1);
         assert_eq!(records[0].realm_id.as_deref(), Some(realm_id));

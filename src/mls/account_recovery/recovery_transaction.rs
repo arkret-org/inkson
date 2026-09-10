@@ -63,6 +63,8 @@ pub(crate) async fn prepare_pcr_policy_recovery(
         || verified_session.recovery_session_id != session.recovery_session_id
         || verified_session.account_id != session.account_id
         || verified_session.requesting_device_id != session.requesting_device_id
+        || verified_session.requesting_device_public_key_did
+            != session.requesting_device_public_key_did
         || verified_session.proof_summary != proof_outcome.proof_summary
     {
         anyhow::bail!("recovery session is not the verified PCR-policy snapshot");

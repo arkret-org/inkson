@@ -500,6 +500,8 @@ mod account_signer_boot_tests {
         crate::config::ActiveAccountContext::new(
             "ak:profile:boot-test".to_owned(),
             authority,
+            arkret_sdk::RealmId::new("ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19")
+                .unwrap(),
             arkret_sdk::PrincipalResolutionProjection {
                 did,
                 method_history_head: "boot-test-head".to_owned(),

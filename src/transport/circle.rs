@@ -1,14 +1,10 @@
 //! Typed Circle transport.
 //!
-//! The circle scope-list read and the scope-rotate event submission used to
-//! live as inherent methods on [`crate::transport::TransportClient`]. `list_circles` is a
-//! pure passthrough over the shared SDK `http-client::Client`;
-//! `submit_circle_scope_rotate_events` signs each rotate event through the
-//! [`crate::event_submit::EventSubmitter`] proof/CBS path and posts the batch
-//! through `submitter.http()`.
+//! Circle discovery and member/lifecycle commands share the typed SDK transport.
+//! Exact-leaf scope rotation is authored by the reconciliation worker so its
+//! frozen snapshot and session fences surround authoring and submission.
 
 use crate::event_submit::EventSubmitter;
-use crate::operation::uuid_v7;
 
 pub async fn list_circles(
     http: &arkret_sdk::http_client::Client,
@@ -120,36 +116,4 @@ pub async fn restore_circle(
     )?
     .build_sdk_event("inkson")?;
     submitter.submit_sdk_event(&event).await
-}
-
-pub async fn submit_circle_scope_rotate_unit(
-    submitter: &EventSubmitter,
-    circle_id: &str,
-    steps: Vec<crate::event_submit::EventUnitStep>,
-    idempotency_key: Option<String>,
-) -> anyhow::Result<(
-    arkret_sdk::CircleScopeRotateOutcome,
-    Vec<arkret_sdk::AuthoredEvent>,
-)> {
-    let circle_id = circle_id.trim();
-    if circle_id.is_empty() {
-        anyhow::bail!("circle_id is required for scope rotate");
-    }
-    let signed_events = submitter.author_event_unit(steps).await?;
-    let idem = idempotency_key.unwrap_or_else(uuid_v7);
-    let body = arkret_sdk::CircleScopeRotateRequestBody {
-        events: signed_events
-            .iter()
-            .map(|event| event.event().clone())
-            .collect(),
-        idempotency_key: Some(idem.clone()),
-    };
-    // The authored Events travel back with the outcome: the caller needs the
-    // Commit's FINAL id to record the group-state reference, and that id only
-    // exists once the unit has been authored here.
-    let outcome = submitter
-        .http()
-        .circle_scope_rotate(circle_id, &idem, &body)
-        .await?;
-    Ok((outcome, signed_events))
 }

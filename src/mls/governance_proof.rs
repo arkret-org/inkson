@@ -51,7 +51,7 @@ pub(crate) fn frontier_request(
     previous_epoch: u64,
     next_epoch: u64,
     local_mls_leaves: Vec<arkret_sdk::MlsSecurityFrontierLeaf>,
-) -> Result<arkret_sdk::MlsGovernanceFrontierRequest, String> {
+) -> Result<arkret_sdk::MlsGovernanceFrontierRequestBody, String> {
     let realm_id = arkret_sdk::RealmId::new(realm_id.to_owned())
         .map_err(|error| format!("invalid MLS governance proof Realm id: {error}"))?;
     let effective_scope = match circle_id
@@ -84,7 +84,7 @@ pub(crate) fn frontier_request_for_scope(
     previous_epoch: u64,
     next_epoch: u64,
     local_mls_leaves: Vec<arkret_sdk::MlsSecurityFrontierLeaf>,
-) -> Result<arkret_sdk::MlsGovernanceFrontierRequest, String> {
+) -> Result<arkret_sdk::MlsGovernanceFrontierRequestBody, String> {
     let realm_id = effective_scope
         .realm_id_opt()
         .cloned()
@@ -138,7 +138,7 @@ pub(crate) fn frontier_request_for_scope(
     } else {
         None
     };
-    let request = arkret_sdk::MlsGovernanceFrontierRequest {
+    let request = arkret_sdk::MlsGovernanceFrontierRequestBody {
         effective_scope,
         mls_group_id,
         local_mls_leaves,
@@ -239,7 +239,7 @@ fn direct_conversation_genesis_proposal(
 pub(crate) async fn fetch_and_cache_frontier<S: GovernanceProofStateStore>(
     api: &crate::transport::TransportClient,
     state_store: S,
-    request: &arkret_sdk::MlsGovernanceFrontierRequest,
+    request: &arkret_sdk::MlsGovernanceFrontierRequestBody,
     leaves: &[arkret_sdk::MlsSecurityFrontierLeaf],
 ) -> Result<arkret_sdk::MlsGovernanceBindingPayload, String> {
     if request.local_mls_leaves != leaves {
@@ -279,33 +279,6 @@ pub(crate) async fn fetch_and_cache_frontier<S: GovernanceProofStateStore>(
     Ok(binding)
 }
 
-pub(crate) fn verify_agent_history_key<'a, S: GovernanceProofStateStore>(
-    state_store: &S,
-    event: &'a arkret_sdk::Event,
-    _digest_suite: arkret_sdk::DigestSuite,
-    evidence: &'a arkret_sdk::AuthenticatedSignerResolutionEvidence,
-    dependencies: &'a [arkret_sdk::GovernanceDependency],
-) -> arkret_sdk::VerifyAgentHistoryKeyFuture<'a> {
-    let _ = state_store;
-    let trust_root = std::sync::Arc::new(evidence.clone());
-    let trust_dependencies = std::sync::Arc::new(dependencies.to_vec());
-    Box::pin(async move {
-        arkret_sdk::verify_agent_historical_event_key(
-            event,
-            evidence,
-            dependencies,
-            move |request| {
-                let root = trust_root.clone();
-                let dependencies = trust_dependencies.clone();
-                Box::pin(async move {
-                    arkret_sdk::verify_agent_portable_trust(request, &root, &dependencies)
-                })
-            },
-        )
-        .await
-    })
-}
-
 pub(crate) async fn refresh_realm_frontier_with_http<S: GovernanceProofStateStore>(
     http: &arkret_sdk::http_client::Client,
     state_store: S,
@@ -336,50 +309,9 @@ pub(crate) async fn refresh_realm_frontier_with_http<S: GovernanceProofStateStor
     Ok(suite)
 }
 
-pub(crate) async fn verify_governance_checkpoint_candidate_with_http<
-    S: GovernanceProofStateStore,
->(
-    http: &arkret_sdk::http_client::Client,
-    state_store: &S,
-    realm_id: &str,
-) -> Result<arkret_sdk::MlsGovernanceVerificationCheckpoint, String> {
-    let realm = arkret_sdk::RealmId::new(realm_id.to_owned()).map_err(|error| {
-        format!("invalid Realm id for governance checkpoint bootstrap: {error}")
-    })?;
-    // Discovery supplies a candidate basis, never a trusted checkpoint. Resolve
-    // and verify every Seal, Event and dependency before pinning it below.
-    let target_basis = http
-        .seals_frontier(realm.clone())
-        .await
-        .map_err(|error| format!("discover complete governance Seal frontier: {error}"))?
-        .frontier
-        .seal_basis;
-    let resolved = crate::mls::governance_acquisition::resolve_mls_governance_checkpoint_with_http(
-        http,
-        &realm,
-        &target_basis,
-    )
-    .await?;
-    let verifier_store = state_store.clone();
-    let checkpoint = arkret_sdk::verify_mls_governance_closure(
-        &realm,
-        &resolved.target_basis,
-        &resolved.seals,
-        &resolved.events,
-        &resolved.dependencies,
-        move |event, digest_suite, evidence, dependencies| {
-            verify_agent_history_key(&verifier_store, event, digest_suite, evidence, dependencies)
-        },
-    )
-    .await
-    .map_err(|error| format!("verify initial MLS governance checkpoint: {error}"))?
-    .checkpoint;
-    Ok(checkpoint)
-}
-
 pub(crate) fn cached_frontier_binding(
     store: &crate::state::LocalStateStore,
-    request: &arkret_sdk::MlsGovernanceFrontierRequest,
+    request: &arkret_sdk::MlsGovernanceFrontierRequestBody,
 ) -> Result<arkret_sdk::MlsGovernanceBindingPayload, String> {
     store
         .cached_mls_governance_result_entry(request, chrono::Utc::now())?
@@ -403,11 +335,11 @@ pub(crate) fn cached_verified_binding_for_transition(
     )
 }
 
-/// Materialize the exact accepted MLS epoch CAS head from the pinned,
-/// locally verified governance checkpoint. A producer must bind a Commit's
+/// Read the exact accepted MLS epoch CAS head from the own-Station result.
+/// A producer must bind a Commit's
 /// `head_eq` predicate to this whole registered value; the scalar epoch is
 /// only one member of that value and is not a Cell head.
-pub(crate) async fn cached_verified_mls_epoch_head(
+pub(crate) async fn station_mls_epoch_head(
     state_store: &crate::state::LocalStateStore,
     effective_scope: &arkret_sdk::ScopeRef,
     mls_group_id: &str,
@@ -839,7 +771,7 @@ pub(crate) fn seed_test_governance_result(
     } else {
         None
     };
-    let request = arkret_sdk::MlsGovernanceFrontierRequest {
+    let request = arkret_sdk::MlsGovernanceFrontierRequestBody {
         effective_scope,
         mls_group_id,
         local_mls_leaves: seed_test_security_frontier_leaves(),
@@ -910,7 +842,7 @@ pub(crate) fn seed_test_security_frontier_leaves() -> Vec<arkret_sdk::MlsSecurit
 
 #[cfg(test)]
 fn binding_from_station_fixture(
-    request: &arkret_sdk::MlsGovernanceFrontierRequest,
+    request: &arkret_sdk::MlsGovernanceFrontierRequestBody,
     security_frontier_digest: arkret_sdk::Hash,
     group_genesis_binding: &arkret_sdk::MlsGroupGenesisBinding,
     sidecar_binding: Option<&arkret_sdk::SidecarMlsBinding>,
@@ -1052,23 +984,23 @@ pub(crate) fn preview_security_frontier_with_added_keypackages(
         .map_err(|error| format!("stage exact MLS Add frontier: {error}"))
 }
 
-pub(crate) fn security_frontier_without_actors(
+pub(crate) fn security_frontier_without_leaves(
     mut leaves: Vec<arkret_sdk::MlsSecurityFrontierLeaf>,
-    removed: &[arkret_sdk::ActorId],
+    removed: &[u32],
 ) -> Vec<arkret_sdk::MlsSecurityFrontierLeaf> {
     let removed = removed.iter().collect::<BTreeSet<_>>();
-    leaves.retain(|leaf| !removed.contains(&leaf.actor_id));
+    leaves.retain(|leaf| !removed.contains(&leaf.leaf_index));
     leaves
 }
 
 #[cfg(test)]
-mod actor_frontier_tests {
+mod removal_frontier_tests {
     use super::*;
 
     #[test]
-    fn removing_one_station_actor_preserves_other_account_with_same_principal() {
+    fn removing_one_leaf_preserves_another_leaf_for_the_same_actor() {
         let principal = arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example").unwrap();
-        let actors = ["alpha.example", "beta.example"].map(|station| {
+        let actors = ["alpha.example", "alpha.example"].map(|station| {
             arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
                 principal.clone(),
                 arkret_sdk::DidCoreId::new(format!("ak:did_core:web:{station}")).unwrap(),
@@ -1083,9 +1015,10 @@ mod actor_frontier_tests {
                 credential_ref: arkret_sdk::NonEmptyString::new(format!("device-{index}")).unwrap(),
             })
             .collect();
-        let retained = security_frontier_without_actors(leaves, &[actors[0].clone()]);
+        let retained = security_frontier_without_leaves(leaves, &[0]);
         assert_eq!(retained.len(), 1);
         assert_eq!(retained[0].actor_id, actors[1]);
+        assert_eq!(retained[0].leaf_index, 1);
     }
 }
 

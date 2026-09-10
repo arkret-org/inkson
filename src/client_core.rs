@@ -7,9 +7,7 @@ use std::sync::{Arc, Mutex};
 
 use garth::{RealmEventsFrameSource, RealmEventsTransport};
 
-use crate::sync_parse::{AccountSubscribeReconnectAfter, AccountSubscribeSnapshotResult};
-
-/// Account transport adapter for the durable account-subscribe batch.
+/// Account transport adapter for the per-frame durable account stream.
 ///
 /// v1 removed the plaintext presence bucket from account sync, so there is no
 /// longer a set of sender devices to pre-resolve here: presence arrives as an
@@ -29,18 +27,19 @@ impl InksonAccountTransport {
     }
 }
 
-impl garth::AsyncSyncTransport for InksonAccountTransport {
-    fn sync_async<'a>(
-        &'a self,
+impl garth::AccountFrameTransport for InksonAccountTransport {
+    type Source = arkret_sdk::http_client::AccountSubscribeFrameStream;
+
+    fn open_account_frames(
+        &self,
         request: arkret_sdk::SyncRequestBody,
         options: arkret_sdk::http_client::ClientRequestOptions,
-    ) -> garth::BoxSyncFuture<'a, arkret_sdk::AccountSubscribeBatch> {
+    ) -> garth::BoxSyncFuture<'_, Self::Source> {
         Box::pin(async move {
-            let batch = self
-                .http
-                .account_subscribe_batch_with_options(&request, &options)
-                .await?;
-            Ok(batch)
+            self.http
+                .account_subscribe_frames_with_options(&request, &options)
+                .await
+                .map_err(garth::Error::from)
         })
     }
 }
@@ -545,97 +544,6 @@ impl garth::EventsScanTransport for InksonRealmEventsTransport {
         request: garth::EventsScanRequest,
     ) -> garth::subscribe::scan::BoxScanFuture<'a, arkret_sdk::EventsQueryOutcome> {
         garth::EventsScanTransport::scan_events(&self.http, request)
-    }
-}
-
-pub async fn account_subscribe_snapshot(
-    http: &arkret_sdk::http_client::Client,
-    after: Option<&str>,
-) -> anyhow::Result<crate::models::AccountSyncStep> {
-    match account_subscribe_snapshot_outcome(http, after).await? {
-        AccountSubscribeSnapshotResult::Batch(batch) => {
-            Ok(crate::models::AccountSyncStep::from_batch(batch)?)
-        }
-        AccountSubscribeSnapshotResult::ReconnectAfter {
-            reconnect_after_ms,
-            reconnect_cursor,
-            reason,
-            reset_cursor,
-        } => Err(AccountSubscribeReconnectAfter {
-            reconnect_after_ms,
-            reconnect_cursor,
-            reason,
-            reset_cursor,
-        }
-        .into()),
-    }
-}
-
-/// One validated account-subscribe snapshot through the SDK's request-aware
-/// pipeline (SPI-INK-002). `account_subscribe_batch` runs the full §1.1
-/// StreamTraceValidator over every frame — inkson no longer parses NDJSON
-/// shapes itself, so there is no trace-bypassing side path. Stream interrupts
-/// (`dropped` / `resync_required` / `unauthorized`) fold back into the typed
-/// [`AccountSubscribeSnapshotResult::ReconnectAfter`] the engine consumes.
-pub async fn account_subscribe_snapshot_outcome(
-    http: &arkret_sdk::http_client::Client,
-    after: Option<&str>,
-) -> anyhow::Result<AccountSubscribeSnapshotResult> {
-    let after = after
-        .map(crate::wire_helpers::validate_cursor)
-        .transpose()?
-        .map(|cursor| cursor.into_string());
-
-    let _subscribe_gate = crate::sync_parse::ACCOUNT_SUBSCRIBE_NETWORK_GATE
-        .lock()
-        .await;
-    let request = arkret_sdk::SyncRequestBody {
-        after,
-        catchup: Some(true),
-        filter: None,
-    };
-    match http.account_subscribe_batch(&request).await {
-        Ok(batch) => Ok(AccountSubscribeSnapshotResult::Batch(batch)),
-        Err(arkret_sdk::http_client::Error::AccountStreamInterrupt(interrupt)) => {
-            Ok(reconnect_result_from_interrupt(interrupt))
-        }
-        Err(error) => Err(arkret_sdk::Error::from(error).into()),
-    }
-}
-
-fn reconnect_result_from_interrupt(
-    interrupt: arkret_sdk::AccountStreamInterrupt,
-) -> AccountSubscribeSnapshotResult {
-    let clamp = |raw: Option<u64>| {
-        raw.unwrap_or(arkret_sdk::DEFAULT_ACCOUNT_SUBSCRIBE_RECONNECT_AFTER_MS)
-            .min(arkret_sdk::MAX_ACCOUNT_SUBSCRIBE_RECONNECT_AFTER_MS)
-    };
-    match interrupt {
-        arkret_sdk::AccountStreamInterrupt::Dropped {
-            cursor,
-            reconnect_after_ms,
-        } => AccountSubscribeSnapshotResult::ReconnectAfter {
-            reconnect_after_ms: clamp(reconnect_after_ms),
-            reconnect_cursor: Some(cursor),
-            reason: None,
-            reset_cursor: false,
-        },
-        arkret_sdk::AccountStreamInterrupt::ResyncRequired { reconnect_after_ms } => {
-            AccountSubscribeSnapshotResult::ReconnectAfter {
-                reconnect_after_ms: clamp(reconnect_after_ms),
-                reconnect_cursor: None,
-                reason: None,
-                reset_cursor: true,
-            }
-        }
-        arkret_sdk::AccountStreamInterrupt::Unauthorized => {
-            AccountSubscribeSnapshotResult::ReconnectAfter {
-                reconnect_after_ms: clamp(None),
-                reconnect_cursor: None,
-                reason: None,
-                reset_cursor: false,
-            }
-        }
     }
 }
 

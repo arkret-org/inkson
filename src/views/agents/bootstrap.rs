@@ -130,7 +130,7 @@ pub(crate) async fn ensure_agent_pcr_seal_current(
     };
     for _ in 0..64 {
         let pending = http
-            .pcr_pending_control(&arkret_sdk::PcrPendingControlRequest {
+            .pcr_pending_control(&arkret_sdk::PcrPendingControlRequestBody {
                 realm_id: realm.clone(),
                 predecessor_refs: view.seal_basis.leaves.clone(),
                 limit: 1,

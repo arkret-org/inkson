@@ -134,20 +134,11 @@ pub fn MlsUnlockPrompt(
                         .await?;
                     let active_policy =
                         crate::recovery_strand::fetch_active_recovery_policy(&api).await?;
-                    let account_snapshot = crate::client_core::account_subscribe_snapshot(
-                        &api.sdk_http_client()?,
-                        None,
-                    )
-                    .await?;
-                    Ok::<_, anyhow::Error>((
-                        payload,
-                        active_policy,
-                        account_snapshot.updates.account_data,
-                    ))
+                    Ok::<_, anyhow::Error>((payload, active_policy))
                 }))
                 .await;
             let result = match payload_result {
-                Ok((payload, active_policy, account_data)) => {
+                Ok((payload, active_policy)) => {
                     let history_count =
                         crate::mls::account_recovery::select_mls_history_backups(&payload).len();
                     try_set_signal(restore_payload_cache, Some(payload.clone()));
@@ -209,6 +200,7 @@ pub fn MlsUnlockPrompt(
                         };
                         if restore_result.is_ok() {
                             store_handle.write(|store| {
+                                let account_data = store.current_account_data_events();
                                 crate::sync_engine::apply_account_data_entries(
                                     store,
                                     &account_data,

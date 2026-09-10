@@ -78,17 +78,6 @@ type LocalBoxFuture<'a> = std::pin::Pin<Box<dyn std::future::Future<Output = ()>
 /// product projection. It exists so the engine stays free of UI types: the
 /// call and message-stream hubs are Dioxus signals living in the app tree.
 pub trait SignalProductSink {
-    /// Resolve the sending device's directory key into the process-wide cache
-    /// the synchronous Signal receiver reads, before the envelope is admitted.
-    ///
-    /// Without it the first Signal from any peer whose key is not yet cached
-    /// fails admission closed — including the `invite` that starts a call.
-    /// It grants nothing: admission is still decided by the receiver.
-    fn prefetch_sender_key<'a>(
-        &'a self,
-        envelope: &'a arkret_wire::SignalEnvelope,
-    ) -> LocalBoxFuture<'a>;
-
     /// One decrypted `ak.call.signal` body with the envelope it was
     /// authenticated from. Async because call routing resolves the sender's
     /// directory key and the moderation action before it may ring a user.
@@ -130,13 +119,6 @@ pub trait SignalProductSink {
 pub struct NoopSignalProductSink;
 
 impl SignalProductSink for NoopSignalProductSink {
-    fn prefetch_sender_key<'a>(
-        &'a self,
-        _envelope: &'a arkret_wire::SignalEnvelope,
-    ) -> LocalBoxFuture<'a> {
-        Box::pin(async {})
-    }
-
     fn call_signal<'a>(
         &'a self,
         _envelope: &'a arkret_wire::SignalEnvelope,
@@ -181,14 +163,6 @@ impl SignalProductRouter {
 }
 
 impl SignalProductSink for SignalProductRouter {
-    fn prefetch_sender_key<'a>(
-        &'a self,
-        envelope: &'a arkret_wire::SignalEnvelope,
-    ) -> LocalBoxFuture<'a> {
-        let sink = Rc::clone(&self.sink.borrow());
-        Box::pin(async move { sink.prefetch_sender_key(envelope).await })
-    }
-
     fn call_signal<'a>(
         &'a self,
         envelope: &'a arkret_wire::SignalEnvelope,

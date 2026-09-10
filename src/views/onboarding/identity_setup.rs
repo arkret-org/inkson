@@ -240,6 +240,13 @@ pub(super) async fn create_and_bind_identity(
             &principal_did,
             arkret_sdk::DeviceId::new(device.to_owned())?,
             state_store,
+            Some((
+                grant_jwt.clone(),
+                crate::identity::account_auth::grant_dpop::device_handle_from_seed(
+                    &completion.dpop_device_key.seed_b64,
+                    &completion.dpop_device_key.jkt,
+                )?,
+            )),
         )
         .await?;
         let persisted_grant = crate::state::PersistedSessionGrant {
@@ -324,6 +331,7 @@ pub(super) async fn create_and_bind_identity(
             &checkpoint.did,
             arkret_sdk::DeviceId::new(checkpoint.device_id.clone())?,
             state_store,
+            None,
         )
         .await?;
         let inventory =

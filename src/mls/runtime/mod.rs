@@ -36,8 +36,8 @@ pub use commit::*;
 // §2.9 / §5.6 committer policy: host-neutral, owned by garth.
 pub use garth::mls::self_preservation::{
     SELF_PRESERVATION_JITTER_SLOTS, SELF_PRESERVATION_MAX_EPOCH_AGE_DAYS,
-    SELF_PRESERVATION_MAX_EPOCH_APP_MESSAGES, canonical_mls_remove_membership_frontier,
-    idle_self_update_jitter_passed, should_force_epoch_advance,
+    SELF_PRESERVATION_MAX_EPOCH_APP_MESSAGES, idle_self_update_jitter_passed,
+    should_force_epoch_advance,
 };
 // Typed MLS readiness status / error surface: host-neutral, owned by garth.
 pub use garth::mls::status::{MlsRuntimeError, MlsRuntimeStatus};

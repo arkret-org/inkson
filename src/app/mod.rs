@@ -19,7 +19,7 @@ use crate::models::{
 // `crate::sync_engine` so the existing `crate::app::…` call sites keep
 // resolving without a sync_engine edit.
 pub(crate) use crate::realm_tree::{
-    descendant_node_ids, full_sync_projection_keep_set, realm_tree_node_is_direct_conversation,
+    descendant_node_ids, realm_tree_node_is_direct_conversation,
     realm_tree_nodes_from_sync_realms_with_roles,
 };
 use crate::routes::Route;
@@ -646,7 +646,6 @@ fn AppBootstrap() -> Element {
                     base_url,
                     token,
                     principal_id,
-                    state_store,
                 ),
             ));
         });
@@ -1629,6 +1628,14 @@ fn AppBootstrap() -> Element {
                     }
 
                     div { class: "sidebar-nav-group realm-tab-group", "data-testid": "realm-tree-list",
+                        if has_session && state_store.read().sync_realm_list_after().is_some() {
+                            button {
+                                class: "sidebar-toolbar-action",
+                                "data-testid": "realm-list-load-more",
+                                onclick: move |_| state_store.write().request_next_sync_realm_list_page(),
+                                {crate::i18n::tr("directory.load_more_realms")}
+                            }
+                        }
                         if !sidebar_is_collapsed {
                             div { class: "sidebar-scope-toggle realm-tabs", "data-testid": "realm-sidebar-mode-toggle", role: "tablist", "aria-label": crate::i18n::tr("app.nav.scope_toggle"),
                                 Button {

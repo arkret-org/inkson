@@ -200,6 +200,7 @@ impl crate::transport::TransportClient {
         &self,
         body: &arkret_models_crypto::RecoverySessionCreateRequestBody,
     ) -> anyhow::Result<arkret_sdk::RecoverySessionState> {
+        body.validate()?;
         self.sdk_http_client()?
             .post("/_arkret/root/identity/recovery-sessions", body)
             .await

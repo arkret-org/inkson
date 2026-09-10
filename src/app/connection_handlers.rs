@@ -61,7 +61,6 @@ impl ConnectionRuntimeSignals {
             account_primary_handle: self.account_primary_handle,
             personal_handles: self.personal_handles,
             personal_handles_status: self.personal_handles_status,
-            theme: self.theme,
             sync_generation: self.sync_generation,
             needs_device_authorization: self.needs_device_authorization,
             device_authorization_check_complete: self.device_authorization_check_complete,

@@ -1,19 +1,14 @@
-//! Authenticated refresh of reusable current signer authority.
+//! Fresh signing authority from the authenticated Account Station.
 
 use arkret_models_collaboration::{
-    CurrentSignerEvidenceQueryOutcome, CurrentSignerEvidenceQueryRequestBody,
-    CurrentSignerEvidenceSelector,
+    CurrentSignerEvidenceSelector, SelfCurrentSignerEvidenceQueryRequestBody,
+    SelfCurrentSignerEvidenceResult,
 };
 pub(crate) async fn query_for_signal(
     http: &arkret_sdk::http_client::Client,
     envelope: &arkret_wire::SignalEnvelope,
     recipient_account_id: arkret_sdk::AccountId,
-    known_agent_state_digests: Vec<arkret_sdk::Hash>,
-    known_signer_evidence_refs: Vec<arkret_sdk::SignerEvidenceRef>,
-) -> Option<(
-    CurrentSignerEvidenceQueryRequestBody,
-    CurrentSignerEvidenceQueryOutcome,
-)> {
+) -> Option<arkret_sdk::StationSigningKey> {
     envelope
         .validate_structural()
         .map_err(|error| tracing::warn!(%error, "current Signal evidence envelope is invalid"))
@@ -28,16 +23,14 @@ pub(crate) async fn query_for_signal(
             verification_method: envelope.proof.verification_method.clone(),
         },
     };
-    let request = CurrentSignerEvidenceQueryRequestBody {
+    let request = SelfCurrentSignerEvidenceQueryRequestBody {
         request_id: arkret_sdk::RequestId::new_v7_at(crate::clock::now_unix_ms()),
         realm_id: envelope.realm_id.clone(),
         recipient_account_id,
-        queries: vec![selector],
-        known_agent_state_digests,
-        known_signer_evidence_refs,
+        queries: vec![selector.clone()],
     };
     request
-        .validate_for_envelope(envelope)
+        .validate()
         .map_err(|error| tracing::warn!(%error, "current Signal evidence request is invalid"))
         .ok()?;
     let outcome = http
@@ -47,5 +40,22 @@ pub(crate) async fn query_for_signal(
             tracing::warn!(%error, "current Signal signer evidence query failed");
         })
         .ok()?;
-    Some((request, outcome))
+    outcome.validate_for_request(&request).ok()?;
+    let mut results = outcome.results.into_iter();
+    let SelfCurrentSignerEvidenceResult::Resolved {
+        selector: resolved_selector,
+        key,
+        ..
+    } = results.next()?
+    else {
+        return None;
+    };
+    if results.next().is_some()
+        || resolved_selector != selector
+        || key.actor != envelope.sender_actor_id
+        || key.verification_method != envelope.proof.verification_method
+    {
+        return None;
+    }
+    Some(key)
 }

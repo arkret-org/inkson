@@ -789,7 +789,9 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
                 crate::views::recovery::local_recovery_key_fingerprint(&state_for_bootstrap_key)
                     .unwrap_or_default();
             let local_pending_welcome_hint = crate::mls::runtime::local_mls_welcome_hint_for_realm(
-                &state_for_bootstrap_key.to_device_inbox(),
+                &state_for_bootstrap_key.welcome_inbox_for_scope(&arkret_sdk::ScopeRef::Realm {
+                    realm_id: realm_id.clone(),
+                }),
                 &bootstrap_realm_id,
             );
             let coverage_repair_hint =
@@ -805,7 +807,8 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
             .map(|secret| secret.is_some())
             .unwrap_or(false);
             let bootstrap_key = format!(
-                "{bootstrap_key}|sec={has_local_account_secret}|snap={has_local_mls_checkpoint}|enc={has_encrypted_realm_projection}|epoch={local_mls_epoch_floor}|rk={recovery_key_fingerprint}|welcome={local_pending_welcome_hint}|coverage={coverage_repair_hint}"
+                "{bootstrap_key}|sec={has_local_account_secret}|snap={has_local_mls_checkpoint}|enc={has_encrypted_realm_projection}|epoch={local_mls_epoch_floor}|rk={recovery_key_fingerprint}|welcome={local_pending_welcome_hint}|coverage={coverage_repair_hint}|keys={}",
+                crate::app::local_mls_key_material_hint(&authority, &device).unwrap_or_default()
             );
             if seen_bootstrap_key().as_deref() == Some(bootstrap_key.as_str()) {
                 return;

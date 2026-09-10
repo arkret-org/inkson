@@ -601,29 +601,6 @@ impl LocalStateStore {
         let _ = self.flush();
     }
 
-    /// The account-data sync frame carries the complete projection, so any
-    /// staged scheduled-send key absent from `seen_keys` was tombstoned or
-    /// deleted elsewhere and must be dropped locally.
-    pub fn retain_scheduled_send_account_data_keys(
-        &mut self,
-        seen_keys: &std::collections::BTreeSet<String>,
-    ) {
-        self.ensure_cached_loaded();
-        let stale: Vec<String> = self
-            .cached
-            .scheduled_send_account_data
-            .keys()
-            .filter(|key| !seen_keys.contains(*key))
-            .cloned()
-            .collect();
-        if stale.is_empty() {
-            return;
-        }
-        for key in stale {
-            self.remove_scheduled_send_account_data_entry(&key);
-        }
-    }
-
     pub fn set_scheduled_send_target_realm(
         &mut self,
         scheduled_send_id: impl Into<String>,

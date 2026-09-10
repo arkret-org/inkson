@@ -3,13 +3,10 @@
 //! panel buttons trigger; all pure projection logic lives in
 //! [`super::model`].
 
-use std::collections::BTreeMap;
-
 use dioxus::prelude::*;
 
 use super::model::{
-    JoinedRealmIds, UiNotification, UiNotificationAction, apply_notification_snapshot_to_store,
-    apply_sync_projection_to_store, hydrate_notifications_with_privacy_gate,
+    UiNotification, UiNotificationAction, hydrate_notifications_with_privacy_gate,
     notification_id_for_dedupe, read_cursor_targets,
 };
 use crate::notification_rules::{dnd_settings_from_account_data, push_rules_from_account_data};
@@ -29,7 +26,7 @@ pub(crate) fn refresh_notifications(
         let session_credential = session_credential();
         match with_authed_api(&base_url, session_credential, |api| async move {
             let http = api.sdk_http_client()?;
-            let response = crate::client_core::account_subscribe_snapshot(&http, None).await?;
+            let response = state_store.write().current_account_projection_step();
             // `invite-addressing.md` §7 - the notify branch's durable carrier is
             // the holder-private `ak.account.invite_delivery` cell, and the
             // account-subscribe stream may race with this refresh. The live
@@ -62,8 +59,6 @@ pub(crate) fn refresh_notifications(
                 let account_dnd =
                     dnd_settings_from_account_data(&authority, &response.updates.account_data);
                 let account_actor = arkret_sdk::ActorId::account(authority.clone());
-                let joined_realms =
-                    JoinedRealmIds::from_realm_entries(&response.realm_entries, &account_actor);
                 let inbox_states =
                     crate::account_data::notification_inbox_states_from_account_data_events(
                         &authority,
@@ -74,8 +69,7 @@ pub(crate) fn refresh_notifications(
                     if let Some(content) = &delivery_cell {
                         store.save_invite_delivery_cell(content);
                     }
-                    let raw_notifications =
-                        apply_notification_snapshot_to_store(&mut store, &response, &joined_realms);
+                    let raw_notifications = store.notification_projection();
                     apply_notification_inbox_states(&mut store, &inbox_states);
                     let local_state = store.load();
                     let effective_dnd = local_state
@@ -526,35 +520,17 @@ fn accept_invite_notification(
             // belongs to read endpoints); the accepted invite folds in via the
             // snapshot or a following delta.
             let _ = &submit.cursor;
-            let read_api = api.clone();
-            let sync = match read_api.sdk_http_client() {
-                Ok(http) => crate::client_core::account_subscribe_snapshot(&http, None).await,
-                Err(error) => Err(error),
-            };
+            let sync = Ok::<_, anyhow::Error>(state_store.write().current_account_projection_step());
             Ok::<_, anyhow::Error>((sync, accepted_title, delivery_cell, checkpoint_error))
         })
         .await
         {
-            Ok((Ok(sync), accepted_title, delivery_cell, checkpoint_error)) => {
+            Ok((Ok(sync), _accepted_title, delivery_cell, checkpoint_error)) => {
                 let push_rules =
                     push_rules_from_account_data(&authority, &sync.updates.account_data);
                 let account_dnd =
                     dnd_settings_from_account_data(&authority, &sync.updates.account_data);
                 let account_actor = arkret_sdk::ActorId::account(authority.clone());
-                let hidden_realms =
-                    JoinedRealmIds::from_realm_entries(&sync.realm_entries, &account_actor)
-                        .joined_now(accepted_realm.clone());
-                let mut realm_title_hints = BTreeMap::new();
-                // The Realm title comes from the directory resolve the accept
-                // flow itself performed — the Invite object and the
-                // notification carry no label (`governance-objects.md` §5.3).
-                if let Some(title) = accepted_title
-                    .as_deref()
-                    .map(str::trim)
-                    .filter(|s| !s.is_empty())
-                {
-                    realm_title_hints.insert(accepted_realm.clone(), title.to_owned());
-                }
 
                 let hydrated = {
                     let mut store = state_store.write();
@@ -563,9 +539,9 @@ fn accept_invite_notification(
                         // sibling devices' accepts find the credential locally.
                         store.save_invite_delivery_cell(content);
                     }
-                    apply_sync_projection_to_store(&mut store, &sync, &realm_title_hints);
+
                     let raw_notifications =
-                        apply_notification_snapshot_to_store(&mut store, &sync, &hidden_realms);
+                        store.notification_projection();
                     if raw_notifications.iter().all(|notification| {
                         notification_id_for_dedupe(notification).as_deref()
                             != Some(&notification_id)

@@ -62,6 +62,8 @@ pub use host_bridge::{
 };
 pub use identity_store::{GlobalLocalStore, PendingLocalStore, UserLocalStore};
 #[cfg(target_arch = "wasm32")]
+pub(crate) use indexed_db::current_index_backend::Backend as CurrentIndexBackend;
+#[cfg(target_arch = "wasm32")]
 pub use indexed_db::{IndexedDbSecureKeyStore, initialize_wasm_secure_key_store_async};
 #[cfg(any(target_os = "linux", target_os = "macos", target_os = "windows"))]
 pub use keyring::KeyringSecureKeyStore;

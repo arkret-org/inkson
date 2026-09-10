@@ -3,8 +3,8 @@
 use arkret_sdk::{AccountId, DeviceId};
 
 use super::{
-    MlsRuntimeError, canonical_mls_remove_membership_frontier, idle_self_update_jitter_passed,
-    load_device_checkpoint_secret, should_force_epoch_advance,
+    MlsRuntimeError, idle_self_update_jitter_passed, load_device_checkpoint_secret,
+    should_force_epoch_advance,
 };
 use crate::secure_key_store::SecureKeyStore;
 
@@ -118,16 +118,15 @@ pub fn force_epoch_rotation_commit_for_effective_scope(
     Ok((commit_envelope, new_envelope, previous_governance_binding))
 }
 
-pub(crate) fn build_mls_remove_members_commit_for_effective_scope_with_sidecar_binding(
+pub(crate) fn build_mls_remove_leaves_commit_for_effective_scope(
     state_store: &crate::state::LocalStateStore,
     secure_store: &dyn SecureKeyStore,
     realm_id: &str,
     circle_id: Option<&str>,
     authority: &AccountId,
     device_id: &DeviceId,
-    target_actor_ids: &[arkret_sdk::ActorId],
-    revocation_membership_frontier: &[arkret_sdk::EventId],
-    sidecar_binding: Option<arkret_sdk::SidecarMlsBinding>,
+    frozen: &crate::circle_mls::MembershipRemovalSnapshot,
+    outcome: &arkret_sdk::MlsMembershipRemovalOutcome,
 ) -> Result<
     (
         arkret_sdk::MlsRemoveMemberResult,
@@ -136,32 +135,24 @@ pub(crate) fn build_mls_remove_members_commit_for_effective_scope_with_sidecar_b
     ),
     MlsRuntimeError,
 > {
-    canonical_mls_remove_membership_frontier(revocation_membership_frontier)?;
-    if target_actor_ids.is_empty() {
+    frozen
+        .ensure_current(state_store)
+        .map_err(MlsRuntimeError::Commit)?;
+    outcome
+        .validate_for_request(&frozen.request, authority)
+        .map_err(|error| MlsRuntimeError::Commit(error.to_string()))?;
+    let effective_scope = frozen.request.effective_scope.clone();
+    if effective_scope.realm_id_opt().map(|id| id.as_str()) != Some(realm_id)
+        || match &effective_scope {
+            arkret_sdk::ScopeRef::Realm { .. } => circle_id.is_some(),
+            arkret_sdk::ScopeRef::Circle { circle_id: id, .. } => circle_id != Some(id.as_str()),
+            _ => true,
+        }
+    {
         return Err(MlsRuntimeError::Commit(
-            "MLS Remove commit requires at least one target actor".to_owned(),
+            "MLS removal scope changed".to_owned(),
         ));
     }
-    let circle = circle_id
-        .map(str::trim)
-        .filter(|circle_id| !circle_id.is_empty());
-    let realm = arkret_sdk::RealmId::new(realm_id.to_owned())
-        .map_err(|error| MlsRuntimeError::Commit(format!("invalid Realm id: {error}")))?;
-    let effective_scope = match sidecar_binding.as_ref() {
-        Some(binding) => arkret_sdk::ScopeRef::Sidecar {
-            realm_id: realm.clone(),
-            sidecar_id: binding.sidecar_id.clone(),
-        },
-        None => match circle {
-            Some(circle_id) => arkret_sdk::ScopeRef::Circle {
-                realm_id: realm.clone(),
-                circle_id: arkret_sdk::CircleId::new(circle_id.to_owned()).map_err(|error| {
-                    MlsRuntimeError::Commit(format!("invalid Circle id: {error}"))
-                })?,
-            },
-            None => arkret_sdk::ScopeRef::Realm { realm_id: realm },
-        },
-    };
     let snapshot = state_store
         .mls_checkpoint_for_scope(&effective_scope)
         .ok_or(MlsRuntimeError::MissingWelcome)?;
@@ -181,15 +172,22 @@ pub(crate) fn build_mls_remove_members_commit_for_effective_scope_with_sidecar_b
         group.epoch().saturating_add(1),
     )
     .map_err(MlsRuntimeError::Commit)?;
-    if let Some(binding) = sidecar_binding.as_ref()
-        && governance_binding.sidecar_binding() != Some(binding)
+    if group.group_id().as_str() != frozen.request.mls_group_id.as_str()
+        || group.epoch() != frozen.request.epoch
+        || group
+            .security_frontier_leaves()
+            .map_err(|e| MlsRuntimeError::Commit(e.to_string()))?
+            != frozen.request.local_mls_leaves
     {
         return Err(MlsRuntimeError::Commit(
-            "verified Sidecar MLS binding differs from the accepted Sidecar view".to_owned(),
+            "MLS removal local leaves changed".to_owned(),
         ));
     }
     let remove = group
-        .remove_members_by_actor_with_governance_binding(target_actor_ids, &governance_binding)
+        .remove_members_by_leaf_indices_with_governance_binding(
+            &outcome.remove_leaf_indices,
+            &governance_binding,
+        )
         .map_err(|err| MlsRuntimeError::Commit(err.to_string()))?;
     let post_state = group
         .export_state_record()

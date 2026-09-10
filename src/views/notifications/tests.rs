@@ -1,12 +1,10 @@
 use serde_json::json;
 
 use super::model::{
-    JoinedRealmIds, UiNotificationAction, actor_is_joined_member,
-    apply_notification_snapshot_to_store, hydrate_notifications, hydrate_notifications_for_actor,
-    notification_eval_context, notification_overrides_realm_mute, raw_notifications_from_sources,
-    read_cursor_targets, realm_is_muted,
+    JoinedRealmIds, UiNotificationAction, actor_is_joined_member, hydrate_notifications,
+    hydrate_notifications_for_actor, notification_eval_context, notification_overrides_realm_mute,
+    raw_notifications_from_sources, read_cursor_targets, realm_is_muted,
 };
-use crate::models::AccountSyncStep;
 use crate::notification_rules::WatchLevel;
 use crate::state::projection::notifications::{test_event_notification, test_invite};
 use crate::state::{
@@ -63,32 +61,8 @@ fn realm_state_snapshot_refresh_preserves_an_existing_live_invite_projection() {
     );
     store.save_notification_projection(live_projection);
 
-    let response = AccountSyncStep {
-        cursor: "ak:cursor:notification-snapshot".to_owned(),
-        realm_entries: Default::default(),
-        realm_projections: Default::default(),
-        updates: arkret_sdk::SyncUpdates {
-            realm_updates: Vec::new(),
-            malformed_realm_ids: Vec::new(),
-            to_device: Vec::new(),
-            to_device_ack_token: None,
-            to_device_limited: false,
-            to_device_next_cursor: None,
-            to_device_lost: false,
-            device_lists: arkret_sdk::AccountSubscribeDeviceListChanges {
-                changed_ids: Vec::new(),
-                left_ids: Vec::new(),
-            },
-            account_data: Vec::new(),
-            station_cas_account_data: Vec::new(),
-            notifications: Vec::new(),
-            agent_signer_evidence: Vec::new(),
-            partial: false,
-        },
-    };
-
-    let folded =
-        apply_notification_snapshot_to_store(&mut store, &response, &JoinedRealmIds::default());
+    let _current = store.current_account_projection_step();
+    let folded = store.notification_projection();
     assert!(folded.iter().any(|notification| {
         notification
             .invite()
@@ -123,6 +97,49 @@ fn account_data_event(payload: serde_json::Value) -> arkret_sdk::Event {
         payload,
     )
     .unwrap()
+}
+
+#[test]
+fn notification_baseline_segments_preserve_previous_segment_and_upsert_by_id() {
+    let realm = "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-";
+    let first = event(
+        1,
+        arkret_sdk::NotificationKind::Mention,
+        realm,
+        None,
+        json!({}),
+    );
+    let second = event(
+        2,
+        arkret_sdk::NotificationKind::Mention,
+        realm,
+        None,
+        json!({}),
+    );
+    let mut current = vec![first.clone()];
+    let StoredNotification::Event { notification } = second.clone() else {
+        unreachable!()
+    };
+    let wire = account_data_event(serde_json::to_value(notification).unwrap());
+    for _ in 0..2 {
+        crate::state::projection::notifications::apply_notification_projection(
+            &mut current,
+            &[],
+            std::slice::from_ref(&wire),
+            &JoinedRealmIds::default(),
+        );
+    }
+    assert_eq!(current.len(), 2);
+    assert!(
+        current
+            .iter()
+            .any(|item| item.notification_id() == first.notification_id())
+    );
+    assert!(
+        current
+            .iter()
+            .any(|item| item.notification_id() == second.notification_id())
+    );
 }
 
 #[test]

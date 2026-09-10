@@ -72,17 +72,10 @@ pub(super) fn assert_registered_payload_valid(event: &impl TestEventPayloadView)
         });
 }
 
-/// Realm-tree projection for an encrypted Realm whose creator is `actor_id`.
-///
-/// The creator fact is carried only by the projected `ak.realm.create` Event —
-/// the sole registered writer of `ak.component.realm.authority_root.v1`. Post-P1
-/// projections no longer mirror it into an `owner` / `created_by` field, and
-/// `garth::realm_authority_root_controller_from_events` reads nothing
-/// else, so a fixture that mirrors it would test a fallback the client does not
-/// have.
+/// Realm projection carrying the Station's installed authority-root result.
 #[cfg(not(target_arch = "wasm32"))]
 pub(super) fn creator_realm_projection(
-    _realm_id: &str,
+    realm_id: &str,
     actor_id: &arkret_sdk::DidCoreId,
     encryption_profile: &str,
 ) -> serde_json::Value {
@@ -95,17 +88,20 @@ pub(super) fn creator_realm_projection(
             "title": "Encrypted Realm",
             "encryption_profile": encryption_profile,
         },
-        "state": {
-            "events": [{
-                "kind": "ak.realm.create",
-                "actor_id": actor_id,
-                "payload": {
-                    "object": {
-                        "encryption_profile": encryption_profile,
-                    }
-                }
-            }]
-        }
+        "current": {"entries": [{
+            "selector": {
+                "scope_ref": {"kind":"realm", "realm_id":realm_id},
+                "cell_id":"ak:cell:ak.component.realm.authority_root.v1:null"
+            },
+            "target":{"kind":"realm"},
+            "revision":1,
+            "result":{"status":"value", "value":{
+                "controller_actor_id":crate::mls_api_helpers::local_account_actor_id(actor_id.as_str()).unwrap(),
+                "controller_epoch":0,
+                "authority_generation":0
+            }}
+        }]}
+
     })
 }
 

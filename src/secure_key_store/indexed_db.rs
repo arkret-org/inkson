@@ -10,6 +10,8 @@ use arkret_sdk::KeyBytes;
 use garth::SecureKeyStoreBackendInfo;
 
 use super::{SecureKeyStore, SecureKeyStoreError, WASM_INDEXEDDB_SECURE_KEY_STORE};
+#[path = "current_index_backend.rs"]
+pub(crate) mod current_index_backend;
 
 /// wasm32 IndexedDB-backed secret store that upgrades the wrapping-key
 /// tier from the `localStorage` byte seed to a SubtleCrypto-derived
@@ -804,6 +806,22 @@ impl IndexedDbSecureKeyStore {
         db: &web_sys::IdbDatabase,
         store: &str,
     ) -> Result<Vec<(String, Vec<u8>)>, SecureKeyStoreError> {
+        use wasm_bindgen::JsValue;
+        let prefix = "inkson.current.v1/";
+        let before = web_sys::IdbKeyRange::upper_bound_with_open(&JsValue::from_str(prefix), true)
+            .map_err(|e| SecureKeyStoreError::Backend(format!("secret cache range: {e:?}")))?;
+        let after = web_sys::IdbKeyRange::lower_bound(&JsValue::from_str(&format!("{prefix}~")))
+            .map_err(|e| SecureKeyStoreError::Backend(format!("secret cache range: {e:?}")))?;
+        let mut entries = Self::idb_entries_in_range(db, store, before.as_ref()).await?;
+        entries.extend(Self::idb_entries_in_range(db, store, after.as_ref()).await?);
+        Ok(entries)
+    }
+
+    async fn idb_entries_in_range(
+        db: &web_sys::IdbDatabase,
+        store: &str,
+        range: &wasm_bindgen::JsValue,
+    ) -> Result<Vec<(String, Vec<u8>)>, SecureKeyStoreError> {
         use js_sys::{Object, Reflect, Uint8Array};
         use wasm_bindgen::{JsCast, JsValue};
         let tx = db
@@ -815,10 +833,10 @@ impl IndexedDbSecureKeyStore {
         // getAll + getAllKeys is the simplest cross-browser way to
         // enumerate without cursor-callback gymnastics.
         let values_req = obj_store
-            .get_all()
+            .get_all_with_key(range)
             .map_err(|err| SecureKeyStoreError::Backend(format!("getAll: {err:?}")))?;
         let keys_req = obj_store
-            .get_all_keys()
+            .get_all_keys_with_key(range)
             .map_err(|err| SecureKeyStoreError::Backend(format!("getAllKeys: {err:?}")))?;
         // Both requests begin as soon as they are created. Install both event
         // handlers before yielding to the browser; otherwise getAllKeys can

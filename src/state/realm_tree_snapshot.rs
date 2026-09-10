@@ -1,6 +1,37 @@
 use super::*;
 
 impl LocalStateStore {
+    pub(crate) fn realm_tree_projection(&self, realm_id: &str) -> Option<Value> {
+        self.cached.realm_tree_projections.get(realm_id).cloned()
+    }
+
+    pub(crate) fn install_current_product_view(
+        &mut self,
+        realm_id: &str,
+        entries: Vec<arkret_sdk::CurrentResultEntry>,
+        ready: bool,
+    ) -> anyhow::Result<()> {
+        self.ensure_cached_loaded();
+        // Keep only the active Realm's bounded current view in the account
+        // blob. Full rows and baseline seen markers belong to CurrentIndex.
+        for (id, projection) in &mut self.cached.realm_tree_projections {
+            if id != realm_id {
+                if let Some(object) = projection.as_object_mut() {
+                    object.remove("current");
+                    object.remove("__current_required_ready");
+                }
+            }
+        }
+        let projection = self
+            .cached
+            .realm_tree_projections
+            .entry(realm_id.to_owned())
+            .or_insert_with(|| serde_json::json!({}));
+        crate::current_projection::install_bounded_view(projection, realm_id, entries)?;
+        projection["__current_required_ready"] = Value::Bool(ready);
+        self.flush()
+    }
+
     /// Return every canonical Realm id currently represented by the local
     /// collaboration projection. Callers use this to execute Realm-scoped
     /// protocol reads without inventing a cross-Realm wildcard.
@@ -46,23 +77,6 @@ impl LocalStateStore {
     ) {
         self.ensure_cached_loaded();
         let projection_id = projection_id.into();
-        // `_inkson_realm_profile_payload` is a local, event-replayed overlay.
-        // Account-sync snapshots do not carry it and may arrive after a
-        // freshly accepted profile Event. Preserve it unless the incoming
-        // projection explicitly supplies a newer settled value. Realm removal
-        // still goes through `forget_realm_tree_projection`, so this cannot
-        // retain data for a Realm that left the account window.
-        if let Some(local_profile) = self
-            .cached
-            .realm_tree_projections
-            .get(&projection_id)
-            .and_then(|current| current.get("_inkson_realm_profile_payload"))
-            .cloned()
-            && let Some(incoming) = projection.as_object_mut()
-            && !incoming.contains_key("_inkson_realm_profile_payload")
-        {
-            incoming.insert("_inkson_realm_profile_payload".to_owned(), local_profile);
-        }
         // The create workflow stores these create-locked selectors locally so
         // a pre-Genesis MLS proposal can be resumed after navigation/reload.
         // Account snapshots do not carry them until an accepted MLS Genesis is
@@ -117,19 +131,7 @@ impl LocalStateStore {
         &self,
         realm_id: &str,
     ) -> Option<arkret_sdk::CollaborationRealmRole> {
-        self.load().realm_collaboration_roles.get(realm_id).copied()
-    }
-
-    pub fn direct_conversation_binding_exists(&self, realm_id: &str) -> bool {
-        self.load()
-            .realm_tree_projections
-            .get(realm_id)
-            .is_some_and(|projection| {
-                crate::realm_tree::projected_state_event_values(projection).any(|event| {
-                    event.get("kind").and_then(serde_json::Value::as_str)
-                        == Some(arkret_sdk::EventKind::DirectConversationBound.as_str())
-                })
-            })
+        self.cached.realm_collaboration_roles.get(realm_id).copied()
     }
 
     pub fn realm_state_snapshot_sync_status(

@@ -210,10 +210,10 @@ fn inkson_accepts_server_contract_payloads() {
         }
     }))
     .unwrap();
-    let sync = inkson::models::AccountSyncStep::from_batch(arkret_sdk::AccountSubscribeBatch {
-        cursor: "ak:cursor:contract-sync".to_owned(),
-        frames: vec![frame],
-    })
+    let sync = inkson::models::AccountSyncStep::from_updates(
+        "ak:cursor:contract-sync".to_owned(),
+        garth::SyncResponseProcessor::process_frame(frame).unwrap(),
+    )
     .unwrap();
     assert!(
         sync.realm_projections
@@ -711,10 +711,10 @@ fn inkson_accepts_v1_sync_buckets_and_subscribe_ndjson_contract() {
         "notifications": {"items": []}
     }))
     .unwrap();
-    let sync = inkson::models::AccountSyncStep::from_batch(arkret_sdk::AccountSubscribeBatch {
-        cursor: "ak:cursor:v1-bucket".to_owned(),
-        frames: vec![frame],
-    })
+    let sync = inkson::models::AccountSyncStep::from_updates(
+        "ak:cursor:v1-bucket".to_owned(),
+        garth::SyncResponseProcessor::process_frame(frame).unwrap(),
+    )
     .unwrap();
     assert_eq!(sync.cursor, "ak:cursor:v1-bucket");
     assert!(

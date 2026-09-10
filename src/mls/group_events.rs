@@ -397,7 +397,7 @@ pub(crate) async fn mls_commit_basis_from_store(
         }
         None => governance_binding,
     };
-    let previous_epoch_head = crate::mls::governance_proof::cached_verified_mls_epoch_head(
+    let previous_epoch_head = crate::mls::governance_proof::station_mls_epoch_head(
         state_store,
         &effective_scope,
         commit_envelope.group_id.as_str(),

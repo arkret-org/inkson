@@ -7,23 +7,6 @@ pub(crate) fn default_discussion_strand_id(realm_body: &Value) -> Option<String>
         .map(|id| id.to_string())
 }
 
-pub(crate) fn default_discussion_channel(realm_body: Option<&Value>) -> Option<ChannelEntity> {
-    let realm_body = realm_body?;
-    let strand_id = default_discussion_strand_id(realm_body)?;
-    Some(ChannelEntity {
-        strand_id,
-        name: "Discussion".to_owned(),
-        kind: "discussion".to_owned(),
-        category: "default strand".to_owned(),
-        topic: Some("Default Strand discussion track".to_owned()),
-        unread: 0,
-        is_default: true,
-        is_private_sidecar: false,
-        security_encrypted: Some(garth::realm_projection_is_encrypted(realm_body)),
-        scope_circle: None,
-    })
-}
-
 pub(crate) fn discussion_channel_for_strand(strand_id: &str) -> Option<ChannelEntity> {
     let trimmed_strand_id = strand_id.trim();
     if trimmed_strand_id.is_empty() {
@@ -45,30 +28,20 @@ pub(crate) fn discussion_channel_for_strand(strand_id: &str) -> Option<ChannelEn
     })
 }
 
-pub(crate) fn channel_from_strand_event(realm_id: &str, value: &Value) -> Option<ChannelEntity> {
-    let event: arkret_sdk::Event = serde_json::from_value(value.clone()).ok()?;
-    if event.kind != arkret_sdk::EventKind::StrandCreate || event.realm_id.as_str() != realm_id {
-        return None;
-    }
-    let payload: arkret_sdk::StrandCreatePayload =
-        serde_json::from_value(serde_json::to_value(&event.payload).ok()?).ok()?;
-    channel_from_strand_creation(realm_id, &event.event_id, payload)
-}
-
-fn channel_from_strand_creation(
+pub(crate) fn channel_from_current_strand(
     realm_id: &str,
-    event_id: &arkret_sdk::EventId,
-    payload: arkret_sdk::StrandCreatePayload,
+    entry: &arkret_sdk::CurrentResultEntry,
 ) -> Option<ChannelEntity> {
-    let strand = payload.object;
-    if strand.id.is_some()
-        || strand.realm_id.as_str() != realm_id
-        || !strand.tracks.contains_key("discussion")
-    {
+    entry
+        .selector()
+        .validate_for_realm(&arkret_sdk::RealmId::new(realm_id.to_owned()).ok()?)
+        .ok()?;
+    let strand = crate::current_projection::unique_strand_head(entry)?;
+    if strand.realm_id.as_str() != realm_id || !strand.tracks.contains_key("discussion") {
         return None;
     }
     strand.validate_content_surfaces().ok()?;
-    let strand_id = arkret_sdk::StrandId::from_event_id(event_id).to_string();
+    let strand_id = strand.id.as_ref()?.to_string();
     let metadata = strand.metadata.as_ref();
     let name = metadata
         .and_then(|metadata| metadata.title.as_ref())
@@ -107,53 +80,18 @@ fn channel_from_strand_creation(
     })
 }
 
-pub(crate) fn channels_from_events(realm_id: &str, events: &[Value]) -> Vec<ChannelEntity> {
-    events
-        .iter()
-        .filter_map(|event| channel_from_strand_event(realm_id, event))
-        .collect()
-}
-
-pub(crate) fn channels_from_sync_realms(
-    realms: &std::collections::BTreeMap<String, Value>,
-    selected_realm_id: &str,
-) -> Vec<ChannelEntity> {
-    let Some(body) = realms.get(selected_realm_id) else {
-        return Vec::new();
-    };
-    let mut channels = Vec::new();
-    channels.extend(default_discussion_channel(Some(body)));
-    if let Some(events) = body
-        .get("timeline")
-        .and_then(|projection| projection.get("events"))
-        .and_then(Value::as_array)
-    {
-        channels.extend(channels_from_events(selected_realm_id, events));
-    }
-    channels
-}
-
 pub(crate) fn channels_from_local_state(
     state: &ClientLocalState,
     selected_realm_id: &str,
 ) -> Vec<ChannelEntity> {
     state
-        .raw_operations
-        .iter()
-        .filter(|record| record.realm_id.as_deref() == Some(selected_realm_id))
-        .filter_map(|record| {
-            // The current ingest projection stores a typed payload in `body`,
-            // not an Event envelope. Only its canonical Event identity is used.
-            let local = &record.payload;
-            if local.get("kind")?.as_str()? != arkret_wire::event_kind_str::STRAND_CREATE
-                || local.get("operation_id")?.as_str()? != record.operation_id
-            {
-                return None;
-            }
-            let event_id = arkret_sdk::EventId::new(record.operation_id.clone()).ok()?;
-            let payload = serde_json::from_value(local.get("body")?.clone()).ok()?;
-            channel_from_strand_creation(record.realm_id.as_deref()?, &event_id, payload)
-        })
+        .realm_tree_projections
+        .get(selected_realm_id)
+        .and_then(|projection| projection.get("current"))
+        .and_then(|value| serde_json::from_value::<arkret_sdk::CurrentEntries>(value.clone()).ok())
+        .into_iter()
+        .flat_map(|current| current.entries.into_iter())
+        .filter_map(|entry| channel_from_current_strand(selected_realm_id, &entry))
         .collect()
 }
 

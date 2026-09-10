@@ -1,10 +1,9 @@
 //! Fail-closed cache for PCR-authorized device signing keys.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 use std::sync::{LazyLock, RwLock};
 
 use arkret_sdk::signatures::PublicKeyMaterial;
-use arkret_wire::event_kind_str;
 
 use super::verification_method_controller;
 use crate::transport::TransportClient;
@@ -30,7 +29,6 @@ impl VerifiedProjectionVersion {
 struct CacheEntry {
     key: Option<PublicKeyMaterial>,
     authorize_event_id: Option<arkret_sdk::EventId>,
-    authority: Option<arkret_sdk::AccountId>,
     verified_projection: Option<VerifiedProjectionVersion>,
     expires_at_ms: u64,
     last_accessed_ms: u64,
@@ -116,44 +114,12 @@ pub fn cached_device_authorize_event_id(actor: &str, device: &str) -> Option<ark
         .and_then(|entry| entry.authorize_event_id.clone())
 }
 
-/// Return the exact public authority tuple required to admit a Signal sender.
-///
-/// A plain cached key is insufficient: the Signal proof also has to be bound
-/// to the origin Station whose signed device projection established
-/// that key. Entries created without a verified projection attestation are
-/// therefore deliberately invisible through this accessor.
-pub fn cached_signal_sender_evidence(
-    actor: &str,
-    device: &str,
-) -> Option<(
-    PublicKeyMaterial,
-    arkret_sdk::AccountId,
-    arkret_sdk::EventId,
-)> {
-    let now = crate::clock::now_unix_ms();
-    let mut guard = CACHE.write().unwrap_or_else(|poison| poison.into_inner());
-    let cache_key = cache_key(actor, device)?;
-    match guard.get_mut(&cache_key) {
-        Some(entry) if entry.expires_at_ms > now => {
-            entry.last_accessed_ms = now;
-            Some((
-                entry.key.clone()?,
-                entry.authority.clone()?,
-                entry.authorize_event_id.clone()?,
-            ))
-        }
-        Some(_) => None,
-        None => None,
-    }
-}
-
 fn store_entry_at_epoch(
     expected_epoch: u64,
     actor: &str,
     device: &str,
     key: Option<PublicKeyMaterial>,
     authorize_event_id: Option<arkret_sdk::EventId>,
-    authority: Option<arkret_sdk::AccountId>,
     attestation_expires_at_ms: Option<u64>,
     verified_projection: Option<VerifiedProjectionVersion>,
 ) -> bool {
@@ -198,7 +164,6 @@ fn store_entry_at_epoch(
             {
                 entry.key = None;
                 entry.authorize_event_id = None;
-                entry.authority = None;
                 entry.expires_at_ms = now;
             }
         }
@@ -214,7 +179,6 @@ fn store_entry_at_epoch(
             if incoming.projection_digest != retained.projection_digest {
                 previous.key = None;
                 previous.authorize_event_id = None;
-                previous.authority = None;
                 previous.expires_at_ms = now.saturating_add(NEGATIVE_TTL_MS);
                 return false;
             }
@@ -233,7 +197,6 @@ fn store_entry_at_epoch(
         CacheEntry {
             key,
             authorize_event_id,
-            authority,
             verified_projection,
             expires_at_ms,
             last_accessed_ms: now,
@@ -322,9 +285,6 @@ pub(crate) fn cache_accepted_device_evidence_from_outcome(
     let resolved = accepted_device_evidence(outcome, account_id, device);
     let key = resolved.as_ref().map(|(key, ..)| key.clone());
     let authorize_event_id = resolved.as_ref().map(|(_, event_id, ..)| event_id.clone());
-    let authority = resolved
-        .as_ref()
-        .map(|(_, _, authority, ..)| authority.clone());
     let attestation_expires_at_ms = resolved
         .as_ref()
         .map(|(_, _, _, expires_at_ms, _)| *expires_at_ms);
@@ -335,7 +295,6 @@ pub(crate) fn cache_accepted_device_evidence_from_outcome(
         device,
         key.clone(),
         authorize_event_id,
-        authority,
         attestation_expires_at_ms,
         version,
     );
@@ -368,69 +327,6 @@ pub async fn resolve_device_signing_key_with_http(
         &account_id,
         device,
     ))
-}
-
-pub(crate) async fn resolve_current_signal_device_evidence(
-    sdk_http: &arkret_sdk::http_client::Client,
-    envelope: &arkret_wire::SignalEnvelope,
-    recipient_account_id: arkret_sdk::AccountId,
-) -> Option<PublicKeyMaterial> {
-    let expected_epoch = cache_epoch();
-    let account_id = envelope.sender_actor_id.as_account_id()?.clone();
-    let device_id = envelope.sender_device_id.as_ref()?.clone();
-    let (_, outcome) = crate::identity::current_signer_evidence::query_for_signal(
-        sdk_http,
-        envelope,
-        recipient_account_id,
-        Vec::new(),
-        Vec::new(),
-    )
-    .await?;
-    for item in outcome.response.evidences {
-        let arkret_models_collaboration::CurrentSignerEvidenceItem::AccountDevice {
-            account_id: item_account_id,
-            device_id: item_device_id,
-            device_projection_attestation,
-            signer_evidence_ref,
-        } = item
-        else {
-            continue;
-        };
-        if item_account_id != account_id || item_device_id != device_id {
-            continue;
-        }
-        let generation_ref = device_projection_attestation
-            .attestation
-            .authorized_generation_ref;
-        let record = arkret_models_crypto::QueryDeviceRecord {
-            signer_evidence_ref,
-            algorithms: BTreeMap::new(),
-            trust_algorithms: Vec::new(),
-            device_projection_attestation,
-        };
-        let outcome = arkret_models_crypto::KeysQueryOutcome {
-            device_keys: vec![arkret_models_crypto::QueryAccountDeviceEntry {
-                account_id: account_id.clone(),
-                device_keys: BTreeMap::from([(device_id.clone(), record)]),
-            }],
-            failures: Vec::new(),
-            device_generations: vec![arkret_models_crypto::AccountDeviceGenerationEntry {
-                account_id: account_id.clone(),
-                generation_state: arkret_models_crypto::keys::DeviceGenerationState {
-                    current_device_generation_ref: generation_ref,
-                    device_generation_status:
-                        arkret_models_crypto::keys::DeviceGenerationStatus::Active,
-                },
-            }],
-        };
-        return cache_accepted_device_evidence_from_outcome(
-            expected_epoch,
-            &outcome,
-            &account_id,
-            device_id.as_str(),
-        );
-    }
-    None
 }
 
 fn verification_method_controller_matches_signer(
@@ -556,16 +452,6 @@ pub fn verify_persistent_envelope_proofs(
         .any(|proof| verify_proof_value(&preimage, proof, actor_principal, public_key))
 }
 
-pub fn is_device_frontier_event_kind(kind: &str) -> bool {
-    matches!(
-        kind,
-        event_kind_str::DEVICE_AUTHORIZE
-            | event_kind_str::DEVICE_REVOKE
-            | event_kind_str::DEVICE_REANCHOR
-            | event_kind_str::DEVICE_LIST_UPDATE
-    )
-}
-
 pub fn invalidate_actor(actor: &str) -> usize {
     let actor = actor.trim();
     if actor.is_empty() {
@@ -586,7 +472,6 @@ pub fn invalidate_actor(actor: &str) -> usize {
         {
             entry.key = None;
             entry.authorize_event_id = None;
-            entry.authority = None;
             entry.expires_at_ms = crate::clock::now_unix_ms();
             invalidated += 1;
         }
@@ -600,7 +485,6 @@ fn store_entry(
     device: &str,
     key: Option<PublicKeyMaterial>,
     authorize_event_id: Option<arkret_sdk::EventId>,
-    authority: Option<arkret_sdk::AccountId>,
     expires_at: Option<u64>,
     version: Option<VerifiedProjectionVersion>,
 ) -> bool {
@@ -610,7 +494,6 @@ fn store_entry(
         device,
         key,
         authorize_event_id,
-        authority,
         expires_at,
         version,
     )
@@ -636,7 +519,6 @@ pub(crate) fn seed_positive_for_test(actor: &str, device: &str, key: PublicKeyMa
         None,
         None,
         None,
-        None,
     );
 }
 
@@ -654,32 +536,6 @@ pub(crate) fn seed_device_authorization_for_test(
         Some(authorize_event_id),
         None,
         None,
-        None,
-    );
-}
-
-#[cfg(test)]
-pub(crate) fn seed_signal_sender_for_test(
-    actor: &str,
-    device: &str,
-    key: PublicKeyMaterial,
-    authority: arkret_sdk::AccountId,
-) {
-    assert_eq!(
-        crate::mls_api_helpers::principal_core_id(actor).unwrap(),
-        authority.principal_id
-    );
-    store_entry(
-        &authority.to_string(),
-        device,
-        Some(key),
-        Some(arkret_sdk::EventId::from_digest(
-            arkret_sdk::canonical::DigestSuite::Sha256,
-            [0x42; 32],
-        )),
-        Some(authority),
-        None,
-        None,
     );
 }
 
@@ -688,7 +544,6 @@ pub(crate) fn seed_negative_for_test(actor: &str, device: &str) {
     store_entry(
         &test_account_selector(actor),
         device,
-        None,
         None,
         None,
         None,
@@ -795,7 +650,6 @@ mod verification_method_controller_tests {
                 Some(key.clone()),
                 None,
                 None,
-                None,
                 Some(super::VerifiedProjectionVersion {
                     generation_ref,
                     attested_at: at + chrono::Duration::seconds(offset),
@@ -821,7 +675,6 @@ mod verification_method_controller_tests {
             &account,
             "expired",
             Some(key),
-            None,
             None,
             Some(crate::clock::now_unix_ms().saturating_sub(1)),
             None

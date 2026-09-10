@@ -505,6 +505,30 @@ impl LocalStateStore {
         if overflow > 0 {
             self.cached.to_device_inbox.drain(0..overflow);
         }
+        if inserted > 0 || pruned_expired || overflow > 0 {
+            // Rebuild only during bounded inbox maintenance, never per Realm read.
+            let mut index: BTreeMap<String, Vec<usize>> = BTreeMap::new();
+            for (position, message) in self.cached.to_device_inbox.iter().enumerate() {
+                if message.get("kind").and_then(Value::as_str) != Some(event_kind_str::MLS_WELCOME)
+                {
+                    continue;
+                }
+                let Some(scope) = message
+                    .get("content")
+                    .and_then(|content| content.get("governance_binding"))
+                    .and_then(|binding| binding.get("effective_scope"))
+                    .and_then(|scope| {
+                        serde_json::from_value::<arkret_sdk::ScopeRef>(scope.clone()).ok()
+                    })
+                else {
+                    continue;
+                };
+                if let Ok(key) = serde_json::to_string(&scope) {
+                    index.entry(key).or_default().push(position);
+                }
+            }
+            self.cached.mls_welcome_inbox_index = index;
+        }
         if inserted > 0
             || pruned_expired
             || pruned_receipts
@@ -522,6 +546,24 @@ impl LocalStateStore {
 
     pub fn to_device_inbox(&self) -> Vec<Value> {
         self.load().to_device_inbox
+    }
+
+    pub(crate) fn welcome_inbox_for_scope(&self, scope: &arkret_sdk::ScopeRef) -> Vec<Value> {
+        let Ok(key) = serde_json::to_string(scope) else {
+            return Vec::new();
+        };
+        let now = Utc::now();
+        self.cached
+            .mls_welcome_inbox_index
+            .get(&key)
+            .into_iter()
+            .flatten()
+            .rev()
+            .take(4)
+            .filter_map(|position| self.cached.to_device_inbox.get(*position))
+            .filter(|message| !to_device_message_expired(message, now))
+            .cloned()
+            .collect()
     }
 
     pub fn append_raw_operation(

@@ -91,6 +91,7 @@ impl JoinedRealmIds {
     /// The accepted join transition is itself membership evidence, so an invite
     /// for that Realm must disappear immediately rather than waiting for the
     /// next roster snapshot to catch up.
+    #[cfg(test)]
     pub(crate) fn joined_now(mut self, realm_id: String) -> Self {
         self.0.insert(realm_id);
         self
@@ -164,27 +165,25 @@ pub(crate) fn upsert_invite_delivery_notification(
 
 /// Fold all notification sources into one current projection.
 ///
-/// A full account snapshot replaces Event notifications and resets the open
-/// Agent approval branch before applying the supplied deltas. Incremental
-/// frames only replace Event notifications when the frame actually carries a
-/// typed notification account-data payload.
+/// Frames upsert individual identities. Completed baseline cleanup belongs
+/// to the durable demand-sync reducer, never to a partial frame.
 pub(crate) fn apply_notification_projection(
     current: &mut Vec<StoredNotification>,
     deltas: &[NotificationDelta],
     account_data: &[arkret_sdk::Event],
-    is_full_sync: bool,
     joined_realms: &JoinedRealmIds,
 ) {
     let event_notifications = account_data
         .iter()
         .filter_map(account_event_notification)
         .collect::<Vec<_>>();
-    if is_full_sync || !event_notifications.is_empty() {
-        current.retain(|item| !matches!(item, StoredNotification::Event { .. }));
-        current.extend(event_notifications);
-    }
-    if is_full_sync {
-        current.retain(|item| !matches!(item, StoredNotification::AgentRuntimeApproval { .. }));
+    for notification in event_notifications {
+        let id = notification.notification_id();
+        if let Some(existing) = current.iter_mut().find(|item| item.notification_id() == id) {
+            *existing = notification;
+        } else {
+            current.push(notification);
+        }
     }
     for delta in deltas {
         let id = delta.id.as_str();
@@ -233,7 +232,6 @@ pub(crate) fn raw_notifications_from_sources(
         &mut projection,
         notification_response.unwrap_or_default(),
         account_data,
-        true,
         &JoinedRealmIds::default(),
     );
     projection

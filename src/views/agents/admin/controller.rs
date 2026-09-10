@@ -213,11 +213,6 @@ impl AgentAdminController {
     /// Pause or resume an Agent. The lifecycle Event rides its own request
     /// body, so it is authored against the accepted actor frontier here
     /// rather than queued.
-    ///
-    /// `state_store` reaches the spawned future through the controller: the
-    /// account-level accepted-binding handle is captured during render
-    /// (DID-P2-B), because hooks must not run inside the future and the
-    /// acceptance must be filed under the account the caller meant.
     pub(super) fn set_agent_enabled(
         self,
         base: String,
@@ -231,7 +226,6 @@ impl AgentAdminController {
             mut agents,
             mut last_op_status,
             owned_agents_rev,
-            state_store,
             ..
         } = self;
         spawn(async move {
@@ -356,13 +350,6 @@ impl AgentAdminController {
                         .await
                         .map_err(anyhow::Error::from)?
                 };
-                {
-                    let mut cache_store = state_store;
-                    cache_store
-                        .write()
-                        .invalidate_agent_current_contexts(&agent_actor_id)
-                        .map_err(anyhow::Error::msg)?;
-                }
                 let post_seal_warning = bootstrap::ensure_agent_pcr_seal_current(
                     &submitter,
                     submitter.http(),
@@ -421,7 +408,6 @@ impl AgentAdminController {
             mut deactivate_dialog_open,
             mut deactivate_confirm,
             owned_agents_rev,
-            state_store,
             ..
         } = self;
         spawn(async move {
@@ -507,13 +493,6 @@ impl AgentAdminController {
                     .agent_deactivate(&id, &body)
                     .await
                     .map_err(anyhow::Error::from)?;
-                {
-                    let mut cache_store = state_store;
-                    cache_store
-                        .write()
-                        .invalidate_agent_current_contexts(&agent_actor_id)
-                        .map_err(anyhow::Error::msg)?;
-                }
                 Ok(outcome)
             })
             .await;

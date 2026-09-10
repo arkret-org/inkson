@@ -30,8 +30,10 @@ use crate::views::helpers::{
     short_protocol_id,
 };
 
+mod circle_welcome;
 mod composer;
 mod controller;
+mod direct_authority;
 mod effects;
 mod model;
 mod poll_submission;
@@ -1671,18 +1673,11 @@ pub fn ChatPanel(
         crate::app::SessionContext::get()
             .active_account()
             .and_then(|account| {
-                state_store
-                    .read()
-                    .trusted_mls_governance_checkpoint(&selected_realm_id)
-                    .and_then(|checkpoint| {
-                        crate::mls::direct_binding::message_authority(
-                            &checkpoint,
-                            &arkret_sdk::ActorId::account(account.authority),
-                            state_store
-                                .read()
-                                .direct_conversation_binding_exists(&selected_realm_id),
-                        )
-                    })
+                crate::mls::direct_binding::message_authority(
+                    &state_store.read(),
+                    &selected_realm_id,
+                    &arkret_sdk::ActorId::account(account.authority),
+                )
             });
     let provisional_founder = matches!(
         direct_message_authority,

@@ -321,16 +321,37 @@ pub(crate) fn local_mls_key_package_publish_hint(
     if base_scope.is_empty() {
         return "not-ready".to_owned();
     }
+    local_mls_key_material_hint(authority, device_id)
+        .unwrap_or_else(|error| format!("error:{error}"))
+}
+
+pub(crate) fn local_mls_key_material_hint(
+    authority: &arkret_sdk::AccountId,
+    device_id: &arkret_sdk::DeviceId,
+) -> Result<String, String> {
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-    match crate::mls::runtime::load_mls_key_package_inventory(
+    let inventory = crate::mls::runtime::load_mls_key_package_inventory(
         secure_store.as_ref(),
         authority,
         device_id,
-    ) {
-        Ok(inventory) if inventory.entries.is_empty() => "none".to_owned(),
-        Ok(inventory) => format!("ready:{}", inventory.entries.len()),
-        Err(error) => format!("error:{error}"),
+    )
+    .map_err(|error| error.to_string())?;
+    let mut available = Vec::new();
+    for entry in inventory.entries.values() {
+        if crate::mls::runtime::load_mls_key_package_identity_state(
+            secure_store.as_ref(),
+            authority,
+            device_id,
+            &entry.keypackage_id,
+        )
+        .map_err(|error| error.to_string())?
+        .is_some()
+        {
+            available.push(entry.keypackage_id.as_str());
+        }
     }
+    available.sort_unstable();
+    arkret_sdk::canonical::canonical_sha256(&available).map_err(|error| error.to_string())
 }
 
 pub(crate) async fn ensure_local_mls_key_package_inventory(
@@ -906,6 +927,37 @@ pub(crate) async fn bootstrap_mls_welcome_for_realm(
     state_store: &crate::runtime::input::StateStoreHandle,
     needs_mls_backup: Option<Signal<bool>>,
 ) -> Result<MlsWelcomeBootstrapOutcome, String> {
+    let scope = arkret_sdk::ScopeRef::Realm {
+        realm_id: arkret_sdk::RealmId::new(realm_id).map_err(|error| error.to_string())?,
+    };
+    bootstrap_mls_welcome_for_scope(
+        base_url,
+        session_credential,
+        actor_id,
+        authority,
+        device_id,
+        scope,
+        state_store,
+        needs_mls_backup,
+    )
+    .await
+}
+
+pub(crate) async fn bootstrap_mls_welcome_for_scope(
+    base_url: String,
+    session_credential: String,
+    actor_id: String,
+    authority: arkret_sdk::AccountId,
+    device_id: arkret_sdk::DeviceId,
+    scope: arkret_sdk::ScopeRef,
+    state_store: &crate::runtime::input::StateStoreHandle,
+    needs_mls_backup: Option<Signal<bool>>,
+) -> Result<MlsWelcomeBootstrapOutcome, String> {
+    let realm_id = scope
+        .realm_id_opt()
+        .ok_or_else(|| "Welcome requires a Realm scope".to_owned())?
+        .to_string();
+    let circle_id = scope.circle_id().map(|id| id.as_str());
     if session_credential.trim().is_empty() || realm_id.trim().is_empty() {
         return Ok(MlsWelcomeBootstrapOutcome::default());
     }
@@ -927,12 +979,37 @@ pub(crate) async fn bootstrap_mls_welcome_for_realm(
     // and showed empty/locked encrypted Realms.
     let mut messages_value =
         serde_json::to_value(&messages).map_err(|error| format!("device messages: {error}"))?;
-    let can_ack_welcome_batch =
-        mls_welcome_batch_is_exclusively_for_realm(&messages_value, &realm_id);
+    let mut can_ack_welcome_batch = circle_id.is_none()
+        && mls_welcome_batch_is_exclusively_for_realm(&messages_value, &realm_id);
     retain_mls_welcomes_for_realm(&mut messages_value, &realm_id)?;
-    let local_inbox = state_store.read(|store| store.to_device_inbox());
+    let local_inbox = state_store.read(|store| store.welcome_inbox_for_scope(&scope));
     let replayed_local_welcomes =
         merge_durable_local_mls_welcomes_for_realm(&mut messages_value, &local_inbox, &realm_id)?;
+    if let Some(messages) = messages_value
+        .get_mut("messages")
+        .and_then(Value::as_array_mut)
+    {
+        can_ack_welcome_batch &= messages.iter().all(|message| {
+            message
+                .get("content")
+                .and_then(|content| {
+                    serde_json::from_value::<arkret_sdk::MlsWelcomePayload>(content.clone()).ok()
+                })
+                .is_some_and(|payload| payload.governance_binding.effective_scope() == &scope)
+        });
+        messages.retain(|message| {
+            message
+                .get("content")
+                .and_then(|content| {
+                    serde_json::from_value::<arkret_sdk::MlsWelcomePayload>(content.clone()).ok()
+                })
+                .is_some_and(|payload| payload.governance_binding.effective_scope() == &scope)
+        });
+        if messages.len() > 4 {
+            messages.truncate(4);
+            can_ack_welcome_batch = false;
+        }
+    }
     if replayed_local_welcomes > 0 {
         tracing::debug!(
             realm = %realm_id,
@@ -968,8 +1045,7 @@ pub(crate) async fn bootstrap_mls_welcome_for_realm(
                         .iter()
                         .map(ToString::to_string)
                         .collect(),
-                    // The frontier view carries no service-derived root hint; the
-                    // local post-state root is filled by verified Seal replay.
+                    // The Station frontier response does not carry a state root.
                     state_root: None,
                     ..Default::default()
                 },
@@ -994,24 +1070,34 @@ pub(crate) async fn bootstrap_mls_welcome_for_realm(
         .await
         .map_err(|error| format!("durably persisting the account MLS secret failed: {error}"))?;
     }
-    let snapshot_before = state_store.read(|store| store.mls_checkpoint_for(&realm_id).is_some());
-    let converged =
+    let snapshot_before = state_store.read(|store| {
+        store
+            .mls_checkpoint_for_effective_scope(&realm_id, circle_id)
+            .is_some()
+    });
+    let mut converged =
         crate::mls::runtime::converge_accepted_mls_artifacts(state_store, &authority, &device_id)
             .await?;
-    let snapshot_after = state_store.read(|store| store.mls_checkpoint_for(&realm_id).is_some());
-    let accepted_welcome_event_ids = state_store
-        .read(|store| store.accepted_mls_artifact_snapshot())
-        .snapshot
-        .artifacts
-        .values()
-        .filter(|artifact| artifact.event.kind == arkret_sdk::EventKind::MlsWelcome)
-        .map(|artifact| artifact.event.event_id.to_string())
-        .collect();
-    let consumable_claims = crate::mls::runtime::accepted_welcome_consume_candidates(
-        &messages_value,
-        &realm_id,
-        &accepted_welcome_event_ids,
-    );
+    if !state_store.read(|store| {
+        store
+            .mls_checkpoint_for_effective_scope(&realm_id, circle_id)
+            .is_some()
+    }) {
+        converged +=
+            discover_mls_welcome_for_scope(&api, state_store, &authority, &device_id, &scope)
+                .await?;
+    }
+    let snapshot_after = state_store.read(|store| {
+        store
+            .mls_checkpoint_for_effective_scope(&realm_id, circle_id)
+            .is_some()
+    });
+    let consumable_claims = state_store.read(|store| {
+        crate::mls::runtime::accepted_welcome_consume_candidates(
+            &store.accepted_mls_artifact_snapshot().snapshot,
+            &scope,
+        )
+    });
     let welcome_outcome = crate::mls::runtime::WelcomeApplyOutcome {
         applied: usize::from(!snapshot_before && snapshot_after && converged > 0),
         failed: 0,
@@ -1118,7 +1204,9 @@ pub(crate) async fn bootstrap_mls_welcome_for_realm(
         .await;
     }
 
-    let Some(_snapshot) = state_store.read(|store| store.mls_checkpoint_for(&realm_id)) else {
+    let Some(_snapshot) =
+        state_store.read(|store| store.mls_checkpoint_for_effective_scope(&realm_id, circle_id))
+    else {
         return Err("MLS Welcome batch had no durable local MLS snapshot".to_owned());
     };
     if applied > 0 || welcome_outcome.skipped_stale > 0 {
@@ -1214,6 +1302,152 @@ pub(crate) async fn bootstrap_mls_welcome_for_realm(
     }
 
     Ok(MlsWelcomeBootstrapOutcome { applied })
+}
+
+/// Discover exact recipient refs without creating device-message deliveries or ACKs.
+async fn discover_mls_welcome_for_scope(
+    api: &crate::transport::TransportClient,
+    state: &crate::runtime::input::StateStoreHandle,
+    authority: &arkret_sdk::AccountId,
+    device: &arkret_sdk::DeviceId,
+    scope: &arkret_sdk::ScopeRef,
+) -> Result<usize, String> {
+    tokio::select! {
+        result = discover_mls_welcome_page(api, state, authority, device, scope) => result,
+        _ = crate::runtime_helpers::sleep_for(std::time::Duration::from_secs(12)) => {
+            Err("MLS Welcome discovery is pending; its per-activation time budget elapsed".to_owned())
+        }
+    }
+}
+
+async fn discover_mls_welcome_page(
+    api: &crate::transport::TransportClient,
+    state: &crate::runtime::input::StateStoreHandle,
+    authority: &arkret_sdk::AccountId,
+    device: &arkret_sdk::DeviceId,
+    scope: &arkret_sdk::ScopeRef,
+) -> Result<usize, String> {
+    let session_epoch = crate::identity::device_directory::cache_epoch();
+    let interest = state.read(|store| store.sync_demand_filter());
+    let ensure_current = || {
+        if crate::identity::device_directory::cache_epoch() != session_epoch
+            || !state.read(|store| {
+                store.active_authority().as_ref() == Some(authority)
+                    && store.sync_demand_filter() == interest
+                    && store.persist_error().is_none()
+            })
+        {
+            return Err("MLS Welcome discovery session or selected interest changed".to_owned());
+        }
+        Ok(())
+    };
+    let realm = scope
+        .realm_id_opt()
+        .ok_or_else(|| "MLS discovery requires a Realm".to_owned())?;
+    let circle = scope.circle_id().map(|id| id.as_str());
+    let http = api.sdk_http_client().map_err(|error| error.to_string())?;
+    let mut request = arkret_sdk::MlsWelcomeRefsRequestBody {
+        effective_scope: scope.clone(),
+        mls_group_id: arkret_sdk::Base64UrlString::new(
+            scope
+                .canonical_mls_group_id()
+                .map_err(|error| error.to_string())?,
+        )
+        .map_err(|error| error.to_string())?,
+        limit: Some(4),
+        cursor: None,
+    };
+    let key = serde_json::to_string(&(authority, device, scope, &request.mls_group_id))
+        .map_err(|error| error.to_string())?;
+    let mut progress = state.read(|store| store.welcome_discovery_progress(&key));
+    let frontier = state.read(|store| store.seal_view_for_realm(realm.as_str()).frontier);
+    let key_material_hint = local_mls_key_material_hint(authority, device)?;
+    progress.observe_inputs(frontier, key_material_hint);
+    if progress.exhausted {
+        return Ok(0);
+    }
+    request.cursor = progress.cursor.clone();
+    let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
+    let mut applied = 0;
+    // One page and at most four exact artifacts per user-demand activation.
+    // Progress survives interruption, so another activation resumes this scope.
+    if progress.pending.is_empty() {
+        ensure_current()?;
+        let page = match http.mls_welcome_refs(&request).await {
+            Ok(page) => page,
+            Err(error) => {
+                ensure_current()?;
+                if matches!(&error, arkret_sdk::http_client::Error::Api { error, .. }
+                    if error.code() == "cursor_invalid")
+                {
+                    persist_welcome_discovery_progress(state, &key, None).await?;
+                }
+                return Err(error.to_string());
+            }
+        };
+        ensure_current()?;
+        progress.pending = page.welcome_refs;
+        progress.next_cursor = page.next_cursor;
+        if progress.pending.is_empty() {
+            progress.exhausted = true;
+        }
+        persist_welcome_discovery_progress(state, &key, Some(progress.clone())).await?;
+    }
+    for _ in 0..4 {
+        let Some(reference) = progress.pending.first().cloned() else {
+            break;
+        };
+        ensure_current()?;
+        crate::mls::runtime::ensure_existing_account_mls_secret_durable(
+            secure_store.as_ref(),
+            authority,
+        )
+        .await
+        .map_err(|error| error.to_string())?;
+        ensure_current()?;
+        let artifact =
+            crate::mls::accepted_artifact::fetch_ref(api, state.clone(), &reference).await?;
+        ensure_current()?;
+        if artifact.event.kind != arkret_sdk::EventKind::MlsWelcome
+            || artifact.request.effective_scope != *scope
+            || artifact.request.mls_group_id != request.mls_group_id
+        {
+            return Err(
+                "Welcome discovery returned an artifact outside its exact scope/group".to_owned(),
+            );
+        }
+        applied +=
+            crate::mls::runtime::converge_accepted_mls_artifacts(state, authority, device).await?;
+        ensure_current()?;
+        progress.pending.remove(0);
+        if progress.pending.is_empty() {
+            progress.cursor = progress.next_cursor.take();
+            progress.exhausted = progress.cursor.is_none();
+        }
+        persist_welcome_discovery_progress(state, &key, Some(progress.clone())).await?;
+        if state.read(|store| {
+            store
+                .mls_checkpoint_for_effective_scope(realm.as_str(), circle)
+                .is_some()
+        }) {
+            return Ok(applied);
+        }
+    }
+    Ok(applied)
+}
+
+async fn persist_welcome_discovery_progress(
+    state: &crate::runtime::input::StateStoreHandle,
+    key: &str,
+    progress: Option<crate::state::MlsWelcomeDiscoveryProgress>,
+) -> Result<(), String> {
+    let barrier = state
+        .write(|store| {
+            store.save_welcome_discovery_progress(key.to_owned(), progress)?;
+            store.begin_durable_flush()
+        })
+        .map_err(|error| error.to_string())?;
+    barrier.wait().await.map_err(|error| error.to_string())
 }
 
 fn terminal_welcome_apply_error(

@@ -78,7 +78,7 @@ pub(crate) async fn prepare_and_sign_pcr_successor(
         device_id,
         realm_id.as_str(),
     )?;
-    let request = arkret_sdk::SealPrepareRequest {
+    let request = arkret_sdk::SealPrepareRequestBody {
         realm_id: realm_id.clone(),
         predecessor_refs,
         event_digests,
@@ -555,7 +555,7 @@ impl InksonEventSigner {
     pub(crate) fn sign_prepared_pcr_seal(
         &self,
         actor_id: &arkret_sdk::ActorId,
-        request: &arkret_sdk::SealPrepareRequest,
+        request: &arkret_sdk::SealPrepareRequestBody,
         prepared: &arkret_sdk::SealPrepareOutcome,
     ) -> Result<arkret_sdk::Seal, EventSignerError> {
         let device_id = self.device_id.as_deref().ok_or_else(|| {

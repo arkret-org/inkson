@@ -4,28 +4,12 @@
 //! aligned with `/_arkret/self/account/subscribe` instead of refreshing only on
 //! app boot, the Refresh button, or a server switch.
 //!
-//! Design contract (matches the intended approach laid out in the design
-//! discussion):
-//!
-//! * **Cursor lives in `LocalStateStore.sync_cursor`** — the engine reads it on every iteration and
-//!   writes back the new `cursor` after each successful response. Reload of the tab resumes from
-//!   the persisted cursor without losing position.
-//! * **First iteration is initial account sync** when no cursor is stored. Subsequent iterations
-//!   resume with `after=<cursor>&catchup=true`.
-//! * **Server-authoritative reconcile**: on a full sync the response is the truth for top-level
-//!   Realm membership. Nested container Spaces may not appear as top-level realm projections
-//!   entries, so locally projected Spaces are retained while their home Realm remains in the
-//!   full-sync response. On incremental, soland's `left_realms` field is the prune signal.
-//! * **Lifecycle via generation counter**: callers (login / logout / server-switch) bump the
-//!   engine's `generation` Signal; the loop notices on the next iteration and exits cleanly. A
-//!   fresh engine spawn picks up the next generation.
-//! * **Backoff**: transient network errors double the sleep via [`garth::RetrySchedule`] (capped at
-//!   `BACKOFF_CEILING`); a successful response resets it. Auth-expired errors stop the engine and
-//!   let the refresh poller
-//!   + login strand take over. Cursor-invalid errors clear the cursor and immediately retry as a
-//!     full sync.
-//!
-//! When an iteration hits `is_auth_expired_error`, the engine calls the
+//! Each validated frame commits its payload, baseline progress, demand filter,
+//! and cursor atomically before product work or transport checkpointing.
+//! Realm summaries arrive in explicit pages; detail is requested only for the
+//! selected Realm. Partial pages never imply removal of unseen Realms.
+//! Session and request coordinates fence late responses across navigation.
+//! //! When an iteration hits `is_auth_expired_error`, the engine calls the
 //! app-wide single-flight refresher and either continues with the refreshed
 //! token, backs off on retryable restore failures, or exits after terminal
 //! invalidation. This keeps refresh policy in one place without turning
@@ -41,16 +25,14 @@ use std::cell::RefCell;
 use std::collections::BTreeSet;
 use std::time::Duration;
 
+use anyhow::Context as _;
 use arkret_sdk::EventPayloadExt as _;
 use arkret_wire::{AccountDataKey, event_kind_str};
 use garth::sync_client::{
-    accepted_human_event_signing_device, account_updates_are_empty, advance_realm_profile_chain,
+    accepted_human_event_signing_device, account_updates_are_empty,
     collect_member_identity_proof_devices_from_value, collect_persistent_proof_sender_devices,
-    collect_proof_sender_devices_from_value, discussion_state_event_is_ingestable,
-    for_each_projection_identity_event, membership_removal_frontier, projection_event_kind,
-    realm_membership_removal_basis, realm_profile_event_entry, realm_update_has_durable_projection,
-    response_revokes_local_device, sync_realm_state_events, sync_realm_timeline_events,
-    to_device_backfill_cursor, to_device_batch_safe_for_ingest_ack,
+    collect_proof_sender_devices_from_value, realm_update_has_durable_projection,
+    sync_realm_timeline_events, to_device_backfill_cursor, to_device_batch_safe_for_ingest_ack,
 };
 use garth::{
     AccountCommitOutcome, AccountPostCommitHook, AccountPostCommitOutcome, AccountStepCommitter,
@@ -65,7 +47,7 @@ use serde::Serialize;
 use serde_json::Value;
 
 use crate::api_error::{is_auth_expired_error, is_terminal_session_grant_error};
-use crate::models::{AccountSyncStep, RealmTreeNodeKind};
+use crate::models::AccountSyncStep;
 use crate::runtime::projection::{ClientProjectionEvent, ProjectionSink, SyncStatusEvent};
 use crate::state::{LocalStateStore, RawOperationRecord};
 use crate::transport::TransportClient;
@@ -237,11 +219,6 @@ fn push_account_realm_update_events(
     batch: &mut Vec<ClientEvent>,
     update: &arkret_sdk::RealmUpdate,
 ) {
-    if let Some(state) = &update.entry.state {
-        for payload in &state.events {
-            push_account_event_payload(decoder, batch, payload);
-        }
-    }
     if let Some(timeline) = &update.entry.timeline {
         for payload in &timeline.events {
             push_account_event_payload(decoder, batch, payload);
@@ -285,6 +262,46 @@ struct AccountTransportProvider {
 impl TransportProvider for AccountTransportProvider {
     type Transport =
         crate::transport::websocket_rail::StreamRail<crate::client_core::InksonAccountTransport>;
+
+    fn account_request(&self, after: Option<String>) -> garth::Result<arkret_sdk::SyncRequestBody> {
+        let filter = Some(selected_account_filter(&self.ctx));
+        let previous = self
+            .ctx
+            .state_store
+            .read(|store| store.sync_demand_filter());
+        let replace_filter = (after.is_some() && previous != filter).then_some(true);
+        Ok(arkret_sdk::SyncRequestBody {
+            after,
+            catchup: Some(true),
+            filter,
+            realm_list: self
+                .ctx
+                .state_store
+                .read(|store| store.sync_requested_realm_list_after())
+                .map(|after| arkret_sdk::RealmListRequest {
+                    after: Some(after),
+                    limit: Some(20),
+                }),
+            replace_filter,
+        })
+    }
+
+    fn account_request_is_current(&self, request: &arkret_sdk::SyncRequestBody) -> bool {
+        self.is_active()
+            && request.filter == Some(selected_account_filter(&self.ctx))
+            && request
+                .realm_list
+                .as_ref()
+                .and_then(|page| page.after.clone())
+                == self
+                    .ctx
+                    .state_store
+                    .read(|store| store.sync_requested_realm_list_after())
+    }
+
+    fn account_session_generation(&self) -> u64 {
+        self.ctx.session.generation()
+    }
 
     /// §6.1 — the account channel keeps canonical cursor semantics on either
     /// transport, so the resume point survives a switch and the choice is made
@@ -339,56 +356,427 @@ impl TransportProvider for AccountTransportProvider {
 
 struct InksonAccountCommitter {
     ctx: SyncEngineContext,
+    current_index: tokio::sync::Mutex<Option<crate::state::CurrentIndex>>,
 }
 
-impl AccountStepCommitter for InksonAccountCommitter {
-    async fn commit(&self, step: &AccountStreamStep) -> garth::Result<AccountCommitOutcome> {
-        let cursor = step.cursor.clone().ok_or_else(|| {
-            garth::Error::Protocol("account stream update has no validated cursor".to_owned())
-        })?;
-        if !step.initial && account_updates_are_empty(&step.updates) {
-            // A bounded long-poll timeout carries only
-            // frontier+catchup_complete. Persist the resume cursor, but do
-            // not publish a fake business update that remounts resources
-            // and fans out viewer/backups/invites requests.
-            self.ctx.state_store.write(|store| {
-                if store.active_account_matches(&self.ctx.principal_id) {
-                    store.save_sync_cursor(cursor);
-                } else {
-                    tracing::warn!(
-                        response_principal = %self.ctx.principal_id,
-                        active_principal = ?store.active_principal_id(),
-                        "discarded idle account cursor after the active principal changed"
-                    );
-                }
-            });
-            if let Some(error) = self.ctx.state_store.read(LocalStateStore::persist_error) {
-                return Err(garth::Error::Protocol(format!(
-                    "persist idle account stream cursor: {error}"
-                )));
+impl InksonAccountCommitter {
+    async fn current_index(&self) -> garth::Result<crate::state::CurrentIndex> {
+        let mut cached = self.current_index.lock().await;
+        let (generation, location) = self
+            .ctx
+            .state_store
+            .read(|store| (store.current_generation(), store.current_index_location()));
+        let index = match cached.as_ref() {
+            Some(index) => index.clone(),
+            None => {
+                crate::state::CurrentIndex::open(&self.ctx.account.authority, generation, location)
+                    .await
+                    .map_err(|error| garth::Error::Protocol(error.to_string()))?
             }
-            return Ok(AccountCommitOutcome::Committed);
+        };
+        if index.is_poisoned() {
+            self.confirm_current_pointer_durable(&index, generation)
+                .await?;
         }
-        let response = AccountSyncStep::from_updates(cursor, step.updates.clone())
+        if self
+            .ctx
+            .state_store
+            .read(LocalStateStore::current_reset_required)
+        {
+            let reset_frame = serde_json::from_value(serde_json::json!({"kind":"resync_required"}))
+                .map_err(|error| garth::Error::Protocol(error.to_string()))?;
+            let mut stage = index
+                .stage_frame(generation, &reset_frame)
+                .await
+                .map_err(|error| garth::Error::Protocol(error.to_string()))?;
+            stage.arm_account_commit();
+            self.ctx.state_store.write(|store| -> garth::Result<()> {
+                if store.active_authority() != Some(self.ctx.account.authority.clone()) {
+                    return Err(garth::Error::Protocol(
+                        "account changed during current reset".into(),
+                    ));
+                }
+                store.batch(|store| {
+                    store.reset_account_demand_progress();
+                    store.set_current_generation(stage.generation());
+                    store.set_current_reset_required(false);
+                    store.clear_sync_cursor();
+                });
+                Ok(())
+            })?;
+            if let Err(error) =
+                await_account_state_durable(&self.ctx, "failed frame current reset").await
+            {
+                self.rollback_current_pointer(&index, generation).await?;
+                return Err(garth::Error::Protocol(error.to_string()));
+            }
+            stage.finish();
+        }
+        *cached = Some(index.clone());
+        Ok(index)
+    }
+
+    async fn confirm_current_pointer_durable(
+        &self,
+        index: &crate::state::CurrentIndex,
+        generation: u64,
+    ) -> garth::Result<()> {
+        let barrier = self
+            .ctx
+            .state_store
+            .read(|store| -> anyhow::Result<_> {
+                anyhow::ensure!(
+                    store.active_authority() == Some(self.ctx.account.authority.clone())
+                        && store.current_generation() == generation,
+                    "account changed before confirming current pointer"
+                );
+                store.begin_durable_flush()
+            })
             .map_err(|error| garth::Error::Protocol(error.to_string()))?;
-        apply_response(&response, step.initial, &self.ctx);
-        if let Some(error) = self.ctx.state_store.read(LocalStateStore::persist_error) {
-            return Err(garth::Error::Protocol(format!(
-                "persist account stream step: {error}"
-            )));
+        barrier
+            .wait()
+            .await
+            .map_err(|error| garth::Error::Protocol(error.to_string()))?;
+        index
+            .confirm_durable_pointer(generation)
+            .map_err(|error| garth::Error::Protocol(error.to_string()))
+    }
+
+    async fn rollback_current_pointer(
+        &self,
+        index: &crate::state::CurrentIndex,
+        generation: u64,
+    ) -> garth::Result<()> {
+        index.poison();
+        let restored = self.ctx.state_store.write(|store| {
+            if store.active_authority() != Some(self.ctx.account.authority.clone()) {
+                return false;
+            }
+            store.batch(|store| store.abort_account_demand_frame(generation));
+            true
+        });
+        if !restored {
+            return Err(garth::Error::Protocol(
+                "account changed during current rollback".into(),
+            ));
         }
-        // client-sync.md §10.1: account stream cursor advancement is
-        // independent of to-device ACK. The raw envelopes are now durable
-        // in the local inbox, so the account checkpoint may advance even
-        // when queue pagination or kind-specific handling follows.
-        Ok(AccountCommitOutcome::Committed)
+        self.confirm_current_pointer_durable(index, generation)
+            .await
     }
 }
 
+impl AccountStepCommitter for InksonAccountCommitter {
+    async fn reset_account_context(&self, session_generation: u64) -> garth::Result<bool> {
+        if session_generation != self.ctx.session.generation()
+            || self.ctx.effect.is_cancelled()
+            || !self
+                .ctx
+                .state_store
+                .read(|store| store.active_authority() == Some(self.ctx.account.authority.clone()))
+        {
+            return Ok(false);
+        }
+        let index = self.current_index().await?;
+        let previous_generation = self
+            .ctx
+            .state_store
+            .read(LocalStateStore::current_generation);
+        let reset_frame = serde_json::from_value(serde_json::json!({"kind":"resync_required"}))
+            .map_err(|error| garth::Error::Protocol(error.to_string()))?;
+        let mut stage = index
+            .stage_frame(previous_generation, &reset_frame)
+            .await
+            .map_err(|error| garth::Error::Protocol(error.to_string()))?;
+        if session_generation != self.ctx.session.generation()
+            || self.ctx.effect.is_cancelled()
+            || !self
+                .ctx
+                .state_store
+                .read(|store| store.active_authority() == Some(self.ctx.account.authority.clone()))
+        {
+            return Ok(false);
+        }
+        stage.arm_account_commit();
+        self.ctx
+            .state_store
+            .write(|store| {
+                store.batch(|store| {
+                    store.reset_account_demand_progress();
+                    store.clear_sync_cursor();
+                    store.set_current_generation(stage.generation());
+                    store.set_current_reset_required(false);
+                    let result = store.save_sync_demand_filter(None);
+                    if result.is_err() {
+                        store.abort_account_demand_frame(previous_generation);
+                    }
+                    result
+                })
+            })
+            .map_err(|error| garth::Error::Protocol(error.to_string()))?;
+        if let Err(error) =
+            await_account_state_durable(&self.ctx, "account cursor and baseline reset").await
+        {
+            self.rollback_current_pointer(&index, previous_generation)
+                .await?;
+            return Err(garth::Error::Protocol(error.to_string()));
+        }
+        stage.finish();
+        Ok(true)
+    }
+
+    async fn commit(&self, step: &AccountStreamStep) -> garth::Result<AccountCommitOutcome> {
+        if step.frame.kind == arkret_sdk::AccountSubscribeFrameKind::ResyncRequired {
+            return if self.reset_account_context(step.session_generation).await? {
+                Ok(AccountCommitOutcome::Committed {
+                    updates: step.updates.clone(),
+                })
+            } else {
+                Ok(AccountCommitOutcome::Replay)
+            };
+        }
+        let selected = selected_account_filter(&self.ctx);
+        if step.request.filter != Some(selected)
+            || step.session_generation != self.ctx.session.generation()
+            || self.ctx.effect.is_cancelled()
+            || !self
+                .ctx
+                .state_store
+                .read(|store| store.active_authority() == Some(self.ctx.account.authority.clone()))
+        {
+            return Ok(AccountCommitOutcome::Replay);
+        }
+        let current_index = self.current_index().await?;
+        let previous_generation = self
+            .ctx
+            .state_store
+            .read(LocalStateStore::current_generation);
+        let mut current_stage = current_index
+            .stage_frame(previous_generation, &step.frame)
+            .await
+            .map_err(|error| garth::Error::Protocol(error.to_string()))?;
+        if step.request.filter != Some(selected_account_filter(&self.ctx))
+            || step.session_generation != self.ctx.session.generation()
+            || self.ctx.effect.is_cancelled()
+            || !self
+                .ctx
+                .state_store
+                .read(|store| store.active_authority() == Some(self.ctx.account.authority.clone()))
+        {
+            return Ok(AccountCommitOutcome::Replay);
+        }
+        current_stage.arm_account_commit();
+        let (theme, changed, committed_updates) = self
+            .ctx
+            .state_store
+            .write(|store| {
+                store.batch(|store| {
+                    let result = (|| -> anyhow::Result<_> {
+                        let frame =
+                            store.prepare_account_demand_frame(current_stage.filtered_frame())?;
+                        let updates = garth::SyncResponseProcessor::process_frame(frame.clone())?;
+                        let response = AccountSyncStep::from_updates(
+                            step.cursor.clone().unwrap_or_default(),
+                            updates,
+                        )?;
+                        let effects = apply_account_frame_payload(store, &response, &self.ctx);
+                        if changed_device_accounts(&response.updates.device_lists)
+                            .contains(&self.ctx.account.authority)
+                        {
+                            store.set_local_device_refresh_pending(true);
+                        }
+                        store.finish_account_demand_frame(&frame)?;
+                        let cursor = step
+                            .cursor
+                            .as_ref()
+                            .ok_or_else(|| anyhow::anyhow!("account frame lacks cursor"))?;
+                        store.save_sync_cursor(cursor.clone());
+                        store.set_current_generation(current_stage.generation());
+                        store.save_sync_demand_filter(step.request.filter.clone())?;
+                        Ok((effects.0, effects.1, response.updates))
+                    })();
+                    if result.is_err() {
+                        store.abort_account_demand_frame(previous_generation);
+                    }
+                    result
+                })
+            })
+            .map_err(|error| garth::Error::Protocol(error.to_string()))?;
+        if let Err(error) = await_account_state_durable(&self.ctx, "account frame and cursor").await
+        {
+            self.rollback_current_pointer(&current_index, previous_generation)
+                .await?;
+            return Err(garth::Error::Protocol(error.to_string()));
+        }
+        current_stage.finish();
+        if step.session_generation != self.ctx.session.generation()
+            || self.ctx.effect.is_cancelled()
+            || !self
+                .ctx
+                .state_store
+                .read(|store| store.active_authority() == Some(self.ctx.account.authority.clone()))
+        {
+            return Ok(AccountCommitOutcome::Committed {
+                updates: committed_updates,
+            });
+        }
+        if let Err(error) = refresh_current_product_view(&current_index, &self.ctx).await {
+            // The authoritative cursor/current transaction is already durable.
+            // Product cache failure must not turn it into an uncommitted frame.
+            tracing::warn!(%error, "current product view remains pending");
+        }
+        if step.session_generation != self.ctx.session.generation()
+            || self.ctx.effect.is_cancelled()
+            || !self
+                .ctx
+                .state_store
+                .read(|store| store.active_authority() == Some(self.ctx.account.authority.clone()))
+        {
+            return Ok(AccountCommitOutcome::Committed {
+                updates: committed_updates,
+            });
+        }
+        if changed || step.frame.realm_list.is_some() || step.frame.realm_list_changes.is_some() {
+            self.ctx
+                .realm_live_epoch
+                .update(|epoch| *epoch = epoch.wrapping_add(1));
+        }
+        if let Some(value) = theme {
+            self.ctx
+                .projection_sink
+                .projection(ClientProjectionEvent::Theme { value });
+        }
+        self.ctx
+            .projection_sink
+            .sync_status(SyncStatusEvent::Online);
+        if let Ok(response) = AccountSyncStep::from_updates(
+            step.cursor.clone().unwrap_or_default(),
+            committed_updates.clone(),
+        ) {
+            refresh_projection_events_from_sync_response(&response, &self.ctx);
+            for account in changed_device_accounts(&response.updates.device_lists) {
+                crate::identity::device_directory::invalidate_actor(&account.to_string());
+            }
+        }
+        if let Some(cursor) = &step.cursor {
+            self.ctx
+                .projection_sink
+                .projection(ClientProjectionEvent::CursorCheckpoint {
+                    scope: "account".into(),
+                    cursor: cursor.clone(),
+                });
+        }
+        Ok(AccountCommitOutcome::Committed {
+            updates: committed_updates,
+        })
+    }
+}
+
+fn selected_account_filter(ctx: &SyncEngineContext) -> arkret_sdk::SyncFilter {
+    let realms = arkret_sdk::RealmId::new(ctx.selected_realm_id.get().trim().to_owned())
+        .ok()
+        .into_iter()
+        .collect();
+    arkret_sdk::SyncFilter {
+        realm_ids: Some(realms),
+        timeline_limit: Some(20),
+        lazy_load_members: Some(true),
+        ..Default::default()
+    }
+}
+
+async fn refresh_current_product_view(
+    index: &crate::state::CurrentIndex,
+    ctx: &SyncEngineContext,
+) -> anyhow::Result<()> {
+    let realm_id = ctx.selected_realm_id.get();
+    let Ok(realm) = arkret_sdk::RealmId::new(realm_id.clone()) else {
+        return Ok(());
+    };
+    let session_generation = ctx.session.generation();
+    let mut entries = std::collections::BTreeMap::new();
+    let mut remaining_bytes = 8 * 1024 * 1024usize - 4096;
+    let selector = |cell: &str| -> anyhow::Result<arkret_sdk::CurrentSelector> {
+        Ok(arkret_sdk::CurrentSelector {
+            scope_ref: arkret_sdk::ScopeRef::Realm {
+                realm_id: realm.clone(),
+            },
+            cell_id: arkret_sdk::CellRef::new(cell.to_owned())?,
+        })
+    };
+    for cell in crate::current_projection::REQUIRED_REALM_CELLS
+        .into_iter()
+        .chain([
+            "ak:cell:ak.component.realm.profile.v1:null",
+            "ak:cell:ak.component.realm.authority_root.v1:null",
+            "ak:cell:ak.component.realm.digest_suite.v1:null",
+            "ak:cell:ak.component.realm.reducer_profile.v1:null",
+        ])
+    {
+        if let Some(entry) = index.read_selector_ready(&selector(cell)?).await? {
+            let bytes = arkret_sdk::canonical::canonical_json_bytes(&entry)?.len();
+            if bytes > remaining_bytes {
+                break;
+            }
+            remaining_bytes -= bytes;
+            entries.insert(entry.selector().canonical_key()?, entry);
+        }
+    }
+    let default_strand = entries.values().find_map(|entry| {
+        if entry.selector().cell_id.as_str() != crate::current_projection::REQUIRED_REALM_CELLS[3] {
+            return None;
+        }
+        let arkret_sdk::CurrentResult::Value { value } = entry.result() else {
+            return None;
+        };
+        arkret_sdk::StrandId::new(value.as_json().as_str()?.to_owned()).ok()
+    });
+    let requested = selected_account_filter(ctx)
+        .strand_ids
+        .unwrap_or_else(|| default_strand.into_iter().collect());
+    'strands: for strand_id in requested {
+        let budget = (512usize.saturating_sub(entries.len())).min(100);
+        if budget == 0 {
+            break;
+        }
+        let page = index
+            .read_target_page(
+                &realm_id,
+                &arkret_sdk::CurrentTarget::Strand { strand_id },
+                None,
+                budget,
+            )
+            .await?;
+        for entry in page.entries {
+            let bytes = arkret_sdk::canonical::canonical_json_bytes(&entry)?.len();
+            if bytes > remaining_bytes {
+                break 'strands;
+            }
+            remaining_bytes -= bytes;
+            entries.insert(entry.selector().canonical_key()?, entry);
+        }
+    }
+    if ctx.effect.is_cancelled()
+        || ctx.session.generation() != session_generation
+        || ctx.selected_realm_id.get() != realm_id
+        || !ctx
+            .state_store
+            .read(|store| store.active_authority() == Some(ctx.account.authority.clone()))
+    {
+        return Ok(());
+    }
+    let entries = entries.into_values().collect::<Vec<_>>();
+    let ready = crate::current_projection::required_realm_values_ready(&entries, &realm_id);
+    ctx.state_store
+        .write(|store| store.install_current_product_view(&realm_id, entries, ready))?;
+    ctx.realm_live_epoch
+        .update(|epoch| *epoch = epoch.wrapping_add(1));
+    Ok(())
+}
 struct InksonAccountPostCommit {
     ctx: SyncEngineContext,
     generation: crate::runtime::input::ValueReader<u64>,
     start_generation: u64,
+    removal_schedule: std::sync::Mutex<RemovalSchedule>,
 }
 
 fn scope_rotate_realm_ids(
@@ -448,8 +836,60 @@ impl
         step: &AccountStreamStep,
     ) -> garth::Result<AccountPostCommitOutcome> {
         let http = transport.http().http();
-        if !self.active() {
+        if !self.active()
+            || step.session_generation != self.ctx.session.generation()
+            || step.request.filter != Some(selected_account_filter(&self.ctx))
+        {
             return Ok(AccountPostCommitOutcome::Continue);
+        }
+        if self
+            .ctx
+            .state_store
+            .read(LocalStateStore::local_device_refresh_pending)
+            || changed_device_accounts(&step.updates.device_lists)
+                .contains(&self.ctx.account.authority)
+        {
+            let viewer = match http.account_viewer().await {
+                Ok(viewer) => viewer,
+                Err(error) => return Ok(self.classify_error(error.into())),
+            };
+            if !self.active()
+                || step.session_generation != self.ctx.session.generation()
+                || !self.ctx.state_store.read(|store| {
+                    store.active_authority() == Some(self.ctx.account.authority.clone())
+                })
+            {
+                return Ok(AccountPostCommitOutcome::Continue);
+            }
+            if viewer.principal_id != self.ctx.principal_id {
+                return Ok(
+                    self.classify_error(anyhow::anyhow!("account viewer principal mismatch"))
+                );
+            }
+            for device in &viewer.devices {
+                if let Err(error) = device.validate() {
+                    return Ok(self.classify_error(error.into()));
+                }
+            }
+            if device_summary_revokes_local_device(
+                &viewer,
+                &self.ctx.principal_id,
+                &self.ctx.device_id,
+            ) {
+                self.ctx
+                    .state_store
+                    .write(LocalStateStore::clear_device_scoped);
+                rotate_live_device_id_after_revocation(&self.ctx.live_device_id);
+                self.ctx
+                    .session
+                    .invalidate("this device was revoked by its Station");
+                return Ok(AccountPostCommitOutcome::Unauthorized {
+                    reason: Some("this device was revoked by its Station".into()),
+                });
+            }
+            self.ctx
+                .state_store
+                .write(|store| store.set_local_device_refresh_pending(false));
         }
         let submitter = crate::event_submit::EventSubmitter::new(http.clone())
             .with_state_store(self.ctx.state_store.clone());
@@ -466,7 +906,7 @@ impl
         // A bounded account-sync poll is also the retry clock for durable
         // outbound work. Its empty business delta must not suppress a due
         // RetryAt item; projection work below still remains delta-driven.
-        if !step.initial && account_updates_are_empty(&step.updates) {
+        if account_updates_are_empty(&step.updates) {
             return Ok(AccountPostCommitOutcome::Continue);
         }
         let cursor = step.cursor.clone().ok_or_else(|| {
@@ -498,7 +938,7 @@ impl
         )
         .await;
         if agent_evidence_changed || device_keys_changed {
-            refresh_projection_events_from_sync_response(&response, step.initial, &self.ctx);
+            refresh_projection_events_from_sync_response(&response, &self.ctx);
         }
         prefetch_member_identity_proof_keys(&api, &response, self.ctx.state_store.clone()).await;
         if let Err(error) = process_to_device_delivery(&api, &response, &self.ctx).await {
@@ -514,12 +954,13 @@ impl
             .ctx
             .state_store
             .read(|store| scope_rotate_realm_ids(&response, store));
-        if !realm_ids.is_empty() {
+        if !realm_ids.is_empty() || self.removal_schedule.lock().unwrap().has_pending() {
             run_circle_scope_rotate_pass(
                 self.start_generation,
                 self.generation.clone(),
                 &self.ctx,
                 &realm_ids,
+                &self.removal_schedule,
             )
             .await;
             // This remains an opportunistic durability pass, driven by new
@@ -552,31 +993,56 @@ pub async fn run_sync_engine(
         generation: generation.clone(),
         start_generation,
     };
-    let committer = InksonAccountCommitter { ctx: ctx.clone() };
+    let committer = InksonAccountCommitter {
+        ctx: ctx.clone(),
+        current_index: tokio::sync::Mutex::new(None),
+    };
     let hook = InksonAccountPostCommit {
+        removal_schedule: std::sync::Mutex::new(RemovalSchedule::default()),
         ctx: ctx.clone(),
         generation,
         start_generation,
     };
-    let result = ctx
-        .client_runtime
-        .client()
-        .run_account_steps(
-            actor_id,
-            device_id,
-            &provider,
-            AccountStepHandlers::new(&committer, &hook),
-            &SyncLoopControl::new(),
-            RunOptions {
-                // Successful bounded polls reconnect immediately. The server
-                // owns the 30-second idle wait window.
-                beat: Duration::ZERO,
-                min_backoff: BACKOFF_FLOOR,
-                max_backoff: BACKOFF_CEILING,
-                jitter_ratio: 0.2,
-            },
-        )
-        .await;
+    let control = SyncLoopControl::new();
+    let client = ctx.client_runtime.client();
+    let runner = client.run_account_steps(
+        actor_id,
+        device_id,
+        &provider,
+        AccountStepHandlers::new(&committer, &hook),
+        &control,
+        RunOptions {
+            // Successful bounded polls reconnect immediately. The server
+            // owns the 30-second idle wait window.
+            beat: Duration::ZERO,
+            min_backoff: BACKOFF_FLOOR,
+            max_backoff: BACKOFF_CEILING,
+            jitter_ratio: 0.2,
+        },
+    );
+    let maintenance = async {
+        let mut delay = Duration::from_secs(1);
+        loop {
+            crate::runtime_helpers::sleep_for(delay).await;
+            if !provider.is_active() {
+                break;
+            }
+            let index = committer.current_index.lock().await.clone();
+            let Some(index) = index else { continue };
+            delay = match index.maintain().await {
+                Ok(true) => Duration::from_millis(250),
+                Ok(false) => Duration::from_secs(1),
+                Err(error) => {
+                    tracing::debug!(%error, "current index maintenance deferred");
+                    Duration::from_secs(5)
+                }
+            };
+        }
+    };
+    let result = tokio::select! {
+        result = runner => result,
+        _ = maintenance => Ok(garth::RunStopReason::LifecycleEnded),
+    };
     match result {
         Ok(garth::RunStopReason::Unauthorized { reason }) => {
             ctx.projection_sink
@@ -599,559 +1065,380 @@ pub async fn run_sync_engine(
     }
 }
 
-/// Outstanding MLS Remove obligations of one Circle scope, derived exclusively
-/// from canonical local state: the registered active Circle roster from
-/// `circle_view.members`, the accepted leave/ban frontier in the account-sync
-/// Realm projection, and the local RFC 9420 group roster. No unregistered wire
-/// field participates.
-pub(crate) fn circle_mls_removal_candidates(
-    state_store: &LocalStateStore,
-    secure_store: &dyn crate::secure_key_store::SecureKeyStore,
-    realm_id: &str,
-    circle_id: &str,
-    active_members: &BTreeSet<arkret_sdk::ActorId>,
-    authority: &arkret_sdk::AccountId,
-    device_id: &arkret_sdk::DeviceId,
-) -> Option<Vec<(arkret_sdk::ActorId, Vec<arkret_sdk::EventId>)>> {
-    let state = state_store.load();
-    let projection = state.realm_tree_projections.get(realm_id)?;
-    let membership_frontier = membership_removal_frontier(projection, Some(circle_id));
-    if membership_frontier.is_empty() {
-        return None;
+const REMOVAL_SCOPES_PER_PASS: usize = 4;
+
+/// Session-local scheduling coordinates, never reusable authorization.
+#[derive(Default)]
+struct RemovalSchedule {
+    pending: BTreeSet<arkret_sdk::RealmId>,
+    last_realm: Option<arkret_sdk::RealmId>,
+    scopes: std::collections::BTreeMap<arkret_sdk::RealmId, RemovalScopeRound>,
+}
+#[derive(Default)]
+struct RemovalScopeRound {
+    next: usize,
+    empty: std::collections::BTreeMap<String, String>,
+}
+impl RemovalSchedule {
+    fn has_pending(&self) -> bool {
+        !self.pending.is_empty()
     }
-    let mut mls_members = crate::mls::runtime::mls_group_member_actor_ids_for_effective_scope(
-        state_store,
-        secure_store,
-        realm_id,
-        Some(circle_id),
-        authority,
-        device_id,
-    )?;
-    mls_members.sort();
-    mls_members.dedup();
-    Some(
-        mls_members
-            .into_iter()
-            .filter(|member| !active_members.contains(member))
-            .map(|member| (member, membership_frontier.clone()))
-            .collect(),
-    )
+    fn next_realm(&mut self, ids: &[String]) -> Option<arkret_sdk::RealmId> {
+        self.pending.extend(
+            ids.iter()
+                .filter_map(|id| arkret_sdk::RealmId::new(id.clone()).ok()),
+        );
+        let next = self
+            .pending
+            .iter()
+            .find(|id| self.last_realm.as_ref().is_none_or(|last| *id > last))
+            .or_else(|| self.pending.first())
+            .cloned()?;
+        self.last_realm = Some(next.clone());
+        Some(next)
+    }
 }
 
-fn realm_default_mls_removal_candidates(
-    state_store: &LocalStateStore,
-    secure_store: &dyn crate::secure_key_store::SecureKeyStore,
-    realm_id: &str,
-    authority: &arkret_sdk::AccountId,
-    device_id: &arkret_sdk::DeviceId,
-) -> Option<Vec<(arkret_sdk::ActorId, Vec<arkret_sdk::EventId>)>> {
-    let state = state_store.load();
-    let projection = state.realm_tree_projections.get(realm_id)?;
-    let (active_members, membership_frontier) = realm_membership_removal_basis(projection)?;
-    let mut mls_members = crate::mls::runtime::mls_group_member_actor_ids_for_effective_scope(
-        state_store,
-        secure_store,
-        realm_id,
-        None,
-        authority,
-        device_id,
-    )?;
-    mls_members.sort();
-    mls_members.dedup();
-    Some(
-        mls_members
-            .into_iter()
-            .filter(|member| !active_members.contains(member))
-            .map(|member| (member, membership_frontier.clone()))
-            .collect(),
-    )
+fn removal_scope_stamp(store: &LocalStateStore, scope: &arkret_sdk::ScopeRef) -> Option<String> {
+    let checkpoint = store.mls_checkpoint_for_scope(scope)?;
+    let base = store
+        .mls_group_state_ref_for_scope(scope, &checkpoint.group_id, checkpoint.epoch)
+        .ok()?;
+    let mut basis = store
+        .seal_view_for_realm(scope.realm_id_opt()?.as_str())
+        .frontier;
+    basis.sort();
+    basis.dedup();
+    arkret_sdk::canonical::canonical_sha256(&(checkpoint, base, basis)).ok()
 }
 
-/// Background Realm-default + Circle MLS scope-rotate worker.
-///
-/// Scans the Realm ids that changed in the just-applied sync response. Realm
-/// removals are derived from the canonical account-sync membership projection;
-/// Circle obligations come from the registered typed Circle list response. It
-/// builds real OpenMLS Remove commits and persists each post-commit snapshot
-/// only after the canonical Events are accepted.
-/// One commit is submitted per pass so competing clients and multi-Realm
-/// accounts do not burst writes after a sync wakeup.
+#[cfg(test)]
+mod removal_schedule_tests {
+    use super::*;
+
+    #[test]
+    fn pending_realm_round_robin_does_not_starve_later_realms() {
+        let first = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19".to_owned();
+        let second = "ak:realm:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1".to_owned();
+        let mut schedule = RemovalSchedule::default();
+        let a = schedule.next_realm(&[first, second]).unwrap();
+        let b = schedule.next_realm(&[]).unwrap();
+        assert_ne!(a, b);
+        assert_eq!(schedule.next_realm(&[]), Some(a.clone()));
+        schedule.pending.remove(&a);
+        assert_eq!(schedule.next_realm(&[]), Some(b));
+    }
+}
+
+/// Fence every asynchronous reconciliation boundary, including local installation.
+fn removal_session_current(
+    start_generation: u64,
+    generation: &crate::runtime::input::ValueReader<u64>,
+    ctx: &SyncEngineContext,
+) -> bool {
+    generation.get() == start_generation
+        && ctx
+            .state_store
+            .read(|store| store.active_authority())
+            .as_ref()
+            == Some(&ctx.account.authority)
+        && crate::secure_key_store::active_device_seed_scope().is_some_and(|scope| {
+            scope.authority == ctx.account.authority && scope.device_id == ctx.account.device_id
+        })
+}
+
+/// Reconcile occupied RFC MLS leaves with the authenticated Station. Local
+/// membership projections are never negative authority for an MLS Remove.
 async fn run_circle_scope_rotate_pass(
     start_generation: u64,
     generation: crate::runtime::input::ValueReader<u64>,
     ctx: &SyncEngineContext,
     realm_ids: &[String],
+    schedule: &std::sync::Mutex<RemovalSchedule>,
 ) {
-    if generation.get() != start_generation {
+    if !removal_session_current(start_generation, &generation, ctx) {
         return;
     }
     let base = ctx.account.server_url.as_str().to_owned();
     let token = ctx.token.get();
-    let actor_id = ctx.account.principal_id().to_string();
-    let authority = ctx.account.authority.clone();
-    let device_id = ctx.account.device_id.clone();
-    if base.trim().is_empty()
-        || token.trim().is_empty()
-        || actor_id.is_empty()
-        || device_id.as_str().is_empty()
+    let authority = &ctx.account.authority;
+    let device = &ctx.account.device_id;
+    let actor = ctx.account.principal_id().to_string();
+    let Some(realm) = schedule.lock().unwrap().next_realm(realm_ids) else {
+        return;
+    };
     {
-        return;
-    }
-    let realm_ids: BTreeSet<String> = realm_ids
-        .iter()
-        .map(|realm_id| realm_id.trim())
-        .filter(|realm_id| realm_id.starts_with("ak:realm:"))
-        .map(str::to_owned)
-        .collect();
-    if realm_ids.is_empty() {
-        return;
-    }
-    let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-    for realm_id in realm_ids {
-        if generation.get() != start_generation {
+        if !removal_session_current(start_generation, &generation, ctx) {
             return;
         }
-        let circles = match crate::transport::auth::with_authed_sdk_client(&base, token.clone(), {
-            let realm_id = realm_id.clone();
-            move |http| async move { crate::transport::circle::list_circles(&http, &realm_id).await }
-        })
-        .await
-        {
-            Ok(circles) => circles,
-            Err(err) => {
-                if err.is_auth_expired() {
-                    return;
+        let mut scopes = vec![arkret_sdk::ScopeRef::Realm {
+            realm_id: realm.clone(),
+        }];
+        // This read discovers scopes only; member_ids never decide removals.
+        let circles =
+            crate::transport::auth::with_authed_sdk_client(&base, token.clone(), |http| {
+                let realm = realm.clone();
+                async move { crate::transport::circle::list_circles(&http, realm.as_str()).await }
+            })
+            .await;
+        let mut all_reconciled = circles.is_ok();
+
+        if let Ok(circles) = circles {
+            for circle in circles.circle_views {
+                if circle.state == arkret_sdk::CircleState::Active
+                    && circle.encryption_profile == arkret_sdk::EncryptionProfile::MlsRfc9420
+                {
+                    scopes.push(arkret_sdk::ScopeRef::Circle {
+                        realm_id: realm.clone(),
+                        circle_id: circle.circle_id,
+                    });
                 }
-                tracing::debug!(
-                    %realm_id,
-                    error = %err.display_diagnostic(),
-                    "sync_engine: Circle scope-rotate scan skipped",
-                );
-                continue;
+            }
+        }
+        let relevant_scopes = scopes
+            .into_iter()
+            .filter(|scope| {
+                ctx.state_store
+                    .read(|store| store.mls_checkpoint_for_scope(scope).is_some())
+            })
+            .collect::<Vec<_>>();
+        let selected_scopes = {
+            let mut scheduling = schedule.lock().unwrap();
+            let round = scheduling.scopes.entry(realm.clone()).or_default();
+            let count = relevant_scopes.len();
+            if count == 0 {
+                Vec::new()
+            } else {
+                let start = round.next % count;
+                let selected = (0..count.min(REMOVAL_SCOPES_PER_PASS))
+                    .map(|offset| relevant_scopes[(start + offset) % count].clone())
+                    .collect::<Vec<_>>();
+                round.next = (start + selected.len()) % count;
+                selected
             }
         };
-
-        // Circle.md §10.2/§10.3: a Realm membership removal rotates the
-        // Realm-default MLS group in addition to every MLS-backed Circle.
-        // Derive the Realm obligation exclusively from canonical sync state:
-        // a complete active-member roster, accepted ak.member.state
-        // leave/ban frontier Events, and the local RFC 9420 group roster.
-        // No private server flag or unregistered HTTP field participates.
-        let realm_removals = ctx.state_store.read(|store| {
-            realm_default_mls_removal_candidates(
-                store,
-                secure_store.as_ref(),
-                &realm_id,
-                &authority,
-                &device_id,
-            )
-        });
-        if let Some(removals) = realm_removals
-            .as_ref()
-            .filter(|removals| !removals.is_empty())
-        {
-            let target_actor_ids: Vec<arkret_sdk::ActorId> = removals
-                .iter()
-                .map(|(principal_id, _)| principal_id.clone())
-                .collect();
-            let mut revocation_membership_frontier: Vec<arkret_sdk::EventId> = removals
-                .iter()
-                .flat_map(|(_, frontier)| frontier.iter().cloned())
-                .collect();
-            revocation_membership_frontier.sort();
-            revocation_membership_frontier.dedup();
-            if !ctx
+        for scope in selected_scopes {
+            if !removal_session_current(start_generation, &generation, ctx) {
+                return;
+            }
+            if ctx
                 .state_store
-                .read(|store| store.realm_has_pending_mls_binding(&realm_id))
+                .read(|store| store.mls_checkpoint_for_scope(&scope).is_none())
             {
-                let tracking_id = format!(
-                    "mls-binding:{}:{}",
-                    realm_id,
-                    revocation_membership_frontier
-                        .first()
-                        .map(arkret_sdk::EventId::as_str)
-                        .unwrap_or("membership-frontier")
-                );
+                continue;
+            }
+            let frozen = match ctx.state_store.read(|store| {
+                crate::circle_mls::MembershipRemovalSnapshot::capture(
+                    store,
+                    scope.clone(),
+                    authority,
+                    device,
+                )
+            }) {
+                Ok(value) => value,
+                Err(error) => {
+                    all_reconciled = false;
+                    tracing::debug!(%realm, %error, "MLS removal snapshot is not ready");
+                    continue;
+                }
+            };
+            let submitted = crate::transport::auth::with_authed_api(&base, token.clone(), |api| {
+                let frozen = &frozen;
+                let scope = &scope;
+                let generation = &generation;
+                let actor = &actor;
+                async move {
+                    let fence = || -> anyhow::Result<()> {
+                        anyhow::ensure!(
+                            removal_session_current(start_generation, generation, ctx),
+                            "MLS removal account session changed"
+                        );
+                        ctx.state_store
+                            .read(|store| frozen.ensure_current(store))
+                            .map_err(anyhow::Error::msg)
+                    };
+                    fence()?;
+                    let outcome = api
+                        .sdk_http_client()?
+                        .mls_membership_removal(&frozen.request, authority)
+                        .await?;
+                    fence()?;
+                    outcome.validate_for_request(&frozen.request, authority)?;
+                    if outcome.remove_leaf_indices.is_empty() {
+                        return Ok(None);
+                    }
+                    let leaves = crate::mls::governance_proof::security_frontier_without_leaves(
+                        frozen.request.local_mls_leaves.clone(),
+                        &outcome.remove_leaf_indices,
+                    );
+                    let proof_request = arkret_sdk::MlsGovernanceFrontierRequestBody {
+                        effective_scope: scope.clone(),
+                        mls_group_id: frozen.request.mls_group_id.clone(),
+                        local_mls_leaves: leaves.clone(),
+                        seal_basis: frozen.request.seal_basis.clone(),
+                        base_group_state_ref: Some(frozen.request.base_group_state_ref.clone()),
+                        proposed_group_genesis_binding: None,
+                        previous_epoch: frozen.request.epoch,
+                        next_epoch: frozen
+                            .request
+                            .epoch
+                            .checked_add(1)
+                            .context("MLS epoch overflow")?,
+                    };
+                    crate::mls::governance_proof::fetch_and_cache_frontier(
+                        &api,
+                        ctx.state_store.clone(),
+                        &proof_request,
+                        &leaves,
+                    )
+                    .await
+                    .map_err(anyhow::Error::msg)?;
+                    fence()?;
+                    let local = ctx.state_store.read(Clone::clone);
+                    let secure = crate::secure_key_store::default_secure_key_store("inkson");
+                    let draft = crate::circle_mls::build_remove_scope_rotate_draft(
+                        &local,
+                        secure.as_ref(),
+                        authority,
+                        actor,
+                        device,
+                        frozen,
+                        &outcome,
+                    )
+                    .await
+                    .map_err(anyhow::Error::msg)?;
+                    fence()?;
+                    let submitter = api.event_submitter()?;
+                    let authored = submitter.author_event_unit(draft.steps).await?;
+                    fence()?;
+                    let commit_id = authored
+                        .iter()
+                        .find(|e| e.kind.as_str() == event_kind_str::MLS_COMMIT)
+                        .map(|e| e.event_id().clone())
+                        .context("MLS Remove unit has no Commit")?;
+                    if let arkret_sdk::ScopeRef::Circle { circle_id, .. } = scope {
+                        let idempotency = crate::operation::uuid_v7();
+                        let body = arkret_sdk::CircleScopeRotateRequestBody {
+                            events: authored.iter().map(|e| e.event().clone()).collect(),
+                            idempotency_key: Some(idempotency.clone()),
+                        };
+                        submitter
+                            .http()
+                            .circle_scope_rotate(circle_id.as_str(), &idempotency, &body)
+                            .await?;
+                    } else {
+                        submitter
+                            .submit_signed_sdk_events_batch(&authored, None)
+                            .await?;
+                    }
+                    fence()?;
+                    Ok(Some((draft.post_commit_checkpoint, commit_id)))
+                }
+            })
+            .await;
+            match submitted {
+                Ok(None) => {
+                    let stamp = ctx.state_store.read(|store| {
+                        frozen.ensure_current(store).ok()?;
+                        removal_scope_stamp(store, &scope)
+                    });
+                    if let Some(stamp) = stamp {
+                        schedule
+                            .lock()
+                            .unwrap()
+                            .scopes
+                            .entry(realm.clone())
+                            .or_default()
+                            .empty
+                            .insert(frozen.request.mls_group_id.to_string(), stamp);
+                    } else {
+                        all_reconciled = false;
+                    }
+                }
+                Ok(Some((checkpoint, commit))) => {
+                    if !removal_session_current(start_generation, &generation, ctx) {
+                        return;
+                    }
+                    let installed = ctx.state_store.write(|store| {
+                        // Compare-and-install under the same host state write guard.
+                        frozen.ensure_current(store)?;
+                        let circle = match &scope {
+                            arkret_sdk::ScopeRef::Circle { circle_id, .. } => {
+                                Some(circle_id.as_str())
+                            }
+                            _ => None,
+                        };
+                        store.record_mls_group_state_ref_for_effective_scope(
+                            realm.to_string(),
+                            circle,
+                            checkpoint.group_id.as_str(),
+                            checkpoint.epoch,
+                            commit,
+                        )?;
+                        store.save_mls_checkpoint_for_scope(&scope, checkpoint)?;
+                        Ok::<_, String>(())
+                    });
+                    if let Err(error) = installed {
+                        tracing::warn!(%realm, %error, "accepted MLS Remove awaits current-state reconciliation");
+                    }
+                    // Preserve the existing one-Commit-per-pass write bound.
+                    return;
+                }
+                Err(error) => {
+                    all_reconciled = false;
+                    if !removal_session_current(start_generation, &generation, ctx) {
+                        return;
+                    }
+                    ctx.state_store.write(|store| {
+                        store.record_move_submission(
+                            format!("mls-removal:{}:{}", realm, frozen.request.mls_group_id),
+                            realm.to_string(),
+                            "mls_member_remove",
+                            crate::state::MoveSubmissionState::PendingMlsBinding,
+                            Some(
+                                "MLS membership reconciliation is unavailable; retry required"
+                                    .to_owned(),
+                            ),
+                            None,
+                        );
+                    });
+                    tracing::debug!(%realm, error = %error.display_diagnostic(), "MLS removal remains pending");
+                }
+            }
+        }
+        if removal_session_current(start_generation, &generation, ctx) {
+            let mut scheduling = schedule.lock().unwrap();
+            let round = scheduling.scopes.entry(realm.clone()).or_default();
+            let complete = all_reconciled
+                && ctx.state_store.write(|store| {
+                    let exact = relevant_scopes.iter().all(|scope| {
+                        let Ok(group) = scope.canonical_mls_group_id() else {
+                            return false;
+                        };
+                        removal_scope_stamp(store, scope)
+                            .is_some_and(|stamp| round.empty.get(&group) == Some(&stamp))
+                    });
+                    if exact {
+                        store.resolve_member_remove_mls_bindings(realm.as_str());
+                    }
+                    exact
+                });
+            if complete {
+                scheduling.pending.remove(&realm);
+                scheduling.scopes.remove(&realm);
+            } else {
+                // A partial round or failed discovery must wake the next bounded poll.
                 ctx.state_store.write(|store| {
                     store.record_move_submission(
-                        tracking_id,
-                        realm_id.clone(),
+                        format!("mls-removal-round:{realm}"),
+                        realm.to_string(),
                         "mls_member_remove",
                         crate::state::MoveSubmissionState::PendingMlsBinding,
-                        Some(
-                            "epoch_update_required: membership frontier changed; MLS Remove commit required"
-                                .to_owned(),
-                        ),
+                        Some("MLS scope reconciliation is pending".to_owned()),
                         None,
                     );
                 });
             }
-            let Some(snapshot) = ctx
-                .state_store
-                .read(|store| store.mls_checkpoint_for(&realm_id))
-            else {
-                tracing::debug!(
-                    %realm_id,
-                    ?target_actor_ids,
-                    "sync_engine: Realm MLS remove skipped without local snapshot",
-                );
-                continue;
-            };
-            let proof_leaves = ctx.state_store.read(|store| {
-                crate::mls::governance_proof::current_security_frontier_leaves(
-                    store, &realm_id, None, &authority, &device_id,
-                )
-            });
-            let proof_leaves = match proof_leaves {
-                Ok(leaves) => crate::mls::governance_proof::security_frontier_without_actors(
-                    leaves,
-                    &target_actor_ids,
-                ),
-                Err(error) => {
-                    tracing::debug!(
-                        %realm_id,
-                        ?target_actor_ids,
-                        %error,
-                        "sync_engine: Realm MLS remove security frontier deferred",
-                    );
-                    continue;
-                }
-            };
-            let proof_request = ctx.state_store.read(|store| {
-                crate::mls::governance_proof::frontier_request(
-                    store,
-                    &realm_id,
-                    None,
-                    snapshot.group_id.clone(),
-                    snapshot.epoch,
-                    snapshot.epoch.saturating_add(1),
-                    proof_leaves.clone(),
-                )
-            });
-            let proof_request = match proof_request {
-                Ok(request) => request,
-                Err(error) => {
-                    tracing::debug!(
-                        %realm_id,
-                        ?target_actor_ids,
-                        %error,
-                        "sync_engine: Realm MLS remove proof request deferred",
-                    );
-                    continue;
-                }
-            };
-            let realm_for_submit = realm_id.clone();
-            let actor_for_submit = actor_id.clone();
-            let authority_for_submit = authority.clone();
-            let device_for_submit = device_id.clone();
-            let targets_for_submit = target_actor_ids.clone();
-            let frontier_for_submit = revocation_membership_frontier.clone();
-            let state_store = ctx.state_store.clone();
-            let submitted = crate::transport::auth::with_authed_api(
-                &base,
-                token.clone(),
-                move |api| async move {
-                    crate::mls::governance_proof::fetch_and_cache_frontier(
-                        &api,
-                        state_store.clone(),
-                        &proof_request,
-                        &proof_leaves,
-                    )
-                    .await
-                    .map_err(anyhow::Error::msg)?;
-                    let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-                    let local_state = state_store.read(Clone::clone);
-                    let draft = crate::circle_mls::build_realm_remove_members_scope_rotate_draft(
-                        &local_state,
-                        secure_store.as_ref(),
-                        &realm_for_submit,
-                        &authority_for_submit,
-                        &actor_for_submit,
-                        &device_for_submit,
-                        &targets_for_submit,
-                        &frontier_for_submit,
-                    )
-                    .await
-                    .map_err(anyhow::Error::msg)?;
-                    let post_commit_checkpoint = draft.post_commit_checkpoint;
-                    let removed_actors = draft.removed_actors;
-                    // The commit's id exists only once the unit is authored, so
-                    // the group-state reference is read from the authored result
-                    // rather than from a draft that has none.
-                    let submitter = api.event_submitter()?;
-                    let authored = submitter.author_event_unit(draft.steps).await?;
-                    let commit_event_id = authored
-                        .iter()
-                        .find(|event| event.kind.as_str() == event_kind_str::MLS_COMMIT)
-                        .map(|event| event.event_id().clone())
-                        .ok_or_else(|| {
-                            anyhow::anyhow!("Realm scope rotate has no MLS commit Event")
-                        })?;
-                    submitter
-                        .submit_signed_sdk_events_batch(&authored, None)
-                        .await?;
-                    Ok::<_, anyhow::Error>((
-                        post_commit_checkpoint,
-                        removed_actors,
-                        commit_event_id,
-                    ))
-                },
-            )
-            .await;
-            match submitted {
-                Ok((post_commit_checkpoint, removed_actors, commit_event_id)) => {
-                    if generation.get() != start_generation {
-                        return;
-                    }
-                    let persisted = ctx.state_store.write(|store| {
-                        store.record_mls_group_state_ref_for_effective_scope(
-                            realm_id.clone(),
-                            None,
-                            post_commit_checkpoint.group_id.as_str(),
-                            post_commit_checkpoint.epoch,
-                            commit_event_id,
-                        )?;
-                        store.save_mls_checkpoint(realm_id.clone(), post_commit_checkpoint)?;
-                        Ok::<_, String>(())
-                    });
-                    if let Err(error) = persisted {
-                        tracing::error!(
-                            %realm_id,
-                            %error,
-                            "sync_engine: accepted Realm MLS commit group-state reference conflicted",
-                        );
-                        return;
-                    }
-                    tracing::info!(
-                        %realm_id,
-                        ?target_actor_ids,
-                        ?removed_actors,
-                        "sync_engine: Realm-default MLS remove commit accepted",
-                    );
-                    // One canonical MLS group rotation per pass. Every Realm
-                    // removal obligation is included in this single Commit;
-                    // the accepted Event wakes sync for Circle obligations.
-                    return;
-                }
-                Err(error) => {
-                    if error.is_auth_expired() {
-                        return;
-                    }
-                    tracing::debug!(
-                        %realm_id,
-                        ?target_actor_ids,
-                        error = %error.display_diagnostic(),
-                        "sync_engine: Realm-default MLS remove commit deferred",
-                    );
-                    continue;
-                }
-            }
-        }
-
-        let circle_removals: std::collections::BTreeMap<
-            String,
-            Vec<(arkret_sdk::ActorId, Vec<arkret_sdk::EventId>)>,
-        > = circles
-            .circle_views
-            .iter()
-            .filter(|circle| {
-                circle.state == arkret_sdk::CircleState::Active
-                    && circle.encryption_profile == arkret_sdk::EncryptionProfile::MlsRfc9420
-            })
-            .filter_map(|circle| {
-                let circle_id = circle.circle_id.to_string();
-                let active_members: BTreeSet<arkret_sdk::ActorId> =
-                    circle.member_ids.iter().cloned().collect();
-                let removals = ctx.state_store.read(|store| {
-                    circle_mls_removal_candidates(
-                        store,
-                        secure_store.as_ref(),
-                        &realm_id,
-                        &circle_id,
-                        &active_members,
-                        &authority,
-                        &device_id,
-                    )
-                })?;
-                (!removals.is_empty()).then_some((circle_id, removals))
-            })
-            .collect();
-        let has_pending_circle_removals = !circle_removals.is_empty();
-        if has_pending_circle_removals
-            && !ctx
-                .state_store
-                .read(|store| store.realm_has_pending_mls_binding(&realm_id))
-        {
-            let tracking_suffix = circle_removals
-                .iter()
-                .next()
-                .map(|(circle_id, removals)| format!("{circle_id}:{}", removals[0].0))
-                .unwrap_or_else(|| "circle-membership-frontier".to_owned());
-            ctx.state_store.write(|store| {
-                store.record_move_submission(
-                    format!("mls-binding:{realm_id}:{tracking_suffix}"),
-                    realm_id.clone(),
-                    "mls_member_remove",
-                    crate::state::MoveSubmissionState::PendingMlsBinding,
-                    Some(
-                        "epoch_update_required: membership frontier changed; MLS Remove commit required"
-                            .to_owned(),
-                    ),
-                    None,
-                );
-            });
-        }
-        if realm_removals.as_ref().is_some_and(Vec::is_empty) && !has_pending_circle_removals {
-            ctx.state_store.write(|store| {
-                store.resolve_member_remove_mls_bindings(&realm_id);
-            });
-        }
-        for (circle_id, removals) in circle_removals {
-            if generation.get() != start_generation {
-                return;
-            }
-            if !circles.circle_views.iter().any(|circle| {
-                circle.circle_id.as_str() == circle_id.as_str()
-                    && circle
-                        .member_ids
-                        .iter()
-                        .any(|member| member.signing_principal_id() == &authority.principal_id)
-            }) {
-                tracing::debug!(
-                    %realm_id,
-                    %circle_id,
-                    "sync_engine: Circle scope-rotate skipped for non-member actor",
-                );
-                continue;
-            }
-            if ctx.state_store.read(|store| {
-                store
-                    .mls_checkpoint_for_effective_scope(&realm_id, Some(&circle_id))
-                    .is_none()
-            }) {
-                tracing::debug!(
-                    %realm_id,
-                    %circle_id,
-                    "sync_engine: Circle scope-rotate skipped without local MLS snapshot",
-                );
-                continue;
-            }
-            let target_actor_ids: Vec<arkret_sdk::ActorId> = removals
-                .iter()
-                .map(|(principal_id, _)| principal_id.clone())
-                .collect();
-            let mut revocation_membership_frontier: Vec<arkret_sdk::EventId> = removals
-                .iter()
-                .flat_map(|(_, frontier)| frontier.iter().cloned())
-                .collect();
-            revocation_membership_frontier.sort();
-            revocation_membership_frontier.dedup();
-            let local_state = ctx.state_store.read(Clone::clone);
-            let draft = crate::circle_mls::build_circle_remove_members_scope_rotate_draft(
-                &local_state,
-                secure_store.as_ref(),
-                &realm_id,
-                &circle_id,
-                &authority,
-                &actor_id,
-                &device_id,
-                &target_actor_ids,
-                &revocation_membership_frontier,
-            )
-            .await;
-            let draft = match draft {
-                Ok(draft) => draft,
-                Err(err) => {
-                    tracing::debug!(
-                        %realm_id,
-                        %circle_id,
-                        ?target_actor_ids,
-                        error = %err,
-                        "sync_engine: Circle scope-rotate draft build skipped",
-                    );
-                    continue;
-                }
-            };
-            let steps = draft.steps;
-            let post_commit_checkpoint = draft.post_commit_checkpoint;
-            let removed_leaves = draft.removed_leaves;
-            let removed_actors = draft.removed_actors;
-            // The commit's id comes back with the authored unit: it does not
-            // exist until the proposals it references have been authored.
-            let (outcome, commit_event_id) =
-                match crate::transport::auth::with_event_submitter(&base, token.clone(), {
-                    let circle_id = circle_id.clone();
-                    move |sub| async move {
-                        let (outcome, authored) =
-                            crate::transport::circle::submit_circle_scope_rotate_unit(
-                                &sub, &circle_id, steps, None,
-                            )
-                            .await?;
-                        let commit_event_id = authored
-                            .iter()
-                            .find(|event| event.kind.as_str() == event_kind_str::MLS_COMMIT)
-                            .map(|event| event.event_id().clone())
-                            .ok_or_else(|| {
-                                anyhow::anyhow!("Circle scope-rotate has no MLS commit Event")
-                            })?;
-                        Ok((outcome, commit_event_id))
-                    }
-                })
-                .await
-                {
-                    Ok(pair) => pair,
-                    Err(err) => {
-                        if err.is_auth_expired() {
-                            return;
-                        }
-                        tracing::debug!(
-                            %realm_id,
-                            %circle_id,
-                            ?target_actor_ids,
-                            error = %err.display_diagnostic(),
-                            "sync_engine: Circle scope-rotate submit failed",
-                        );
-                        continue;
-                    }
-                };
-            if generation.get() != start_generation {
-                return;
-            }
-            let persisted = ctx.state_store.write(|store| {
-                store.record_mls_group_state_ref_for_effective_scope(
-                    realm_id.clone(),
-                    Some(&circle_id),
-                    post_commit_checkpoint.group_id.as_str(),
-                    post_commit_checkpoint.epoch,
-                    commit_event_id,
-                )?;
-                store.save_mls_checkpoint_for_effective_scope(
-                    realm_id.clone(),
-                    Some(&circle_id),
-                    post_commit_checkpoint,
-                )?;
-                Ok::<_, String>(())
-            });
-            if let Err(error) = persisted {
-                tracing::error!(
-                    %realm_id,
-                    %circle_id,
-                    %error,
-                    "sync_engine: accepted Circle MLS commit group-state reference conflicted",
-                );
-                return;
-            }
-            tracing::info!(
-                %realm_id,
-                %circle_id,
-                ?target_actor_ids,
-                ?removed_leaves,
-                ?removed_actors,
-                mls_group_id = ?outcome.mls_group_id,
-                note = ?outcome.note,
-                "sync_engine: Circle scope-rotate commit accepted",
-            );
-            return;
         }
     }
 }
@@ -1408,7 +1695,6 @@ async fn prefetch_persistent_event_sender_key_pairs<
 
 fn refresh_projection_events_from_sync_response(
     response: &AccountSyncStep,
-    is_full_sync: bool,
     ctx: &SyncEngineContext,
 ) {
     let state_store = ctx.state_store.clone();
@@ -1419,9 +1705,6 @@ fn refresh_projection_events_from_sync_response(
             Some((&ctx.account.authority, &ctx.account.device_id)),
         )
     });
-    if is_full_sync {
-        ctx.projection_sink.projection(ClientProjectionEvent::Reset);
-    }
     for event in synced_projection_events {
         ctx.projection_sink
             .projection(ClientProjectionEvent::Account(event));
@@ -1432,254 +1715,6 @@ fn rotate_live_device_id_after_revocation(
     live_device_id: &crate::runtime::input::ValueCell<String>,
 ) {
     live_device_id.set(crate::config::new_device_id());
-}
-
-/// Apply an account subscribe response: persist projections (server-authoritatively
-/// reconciled when full-sync), hydrate Seal views + account-data, and
-/// publish derived UI signals (realm tree nodes / event projections / device queue /
-/// status / cursor).
-///
-/// Exposed at module scope so tests can drive it without spinning up
-/// the loop. `connect()` in `app.rs` shares the same code path — once
-/// the engine fully owns sync, `connect()` is just a "force one
-/// iteration now" entry that calls this.
-pub fn apply_response(response: &AccountSyncStep, is_full_sync: bool, ctx: &SyncEngineContext) {
-    // Clone runtime adapter handles before applying this response.
-    let state_store = ctx.state_store.clone();
-    let principal_id = ctx.principal_id.clone();
-    let mut synced_theme = None;
-    let mut realm_projection_changed = false;
-
-    // Reject an old account engine before it performs *any* side effect. This
-    // check previously lived inside the later projection write, after device
-    // revocation handling; a late response for the signed-out account could
-    // therefore clear the newly signed-in account first.
-    if !state_store.read(|store| store.active_account_matches(&principal_id)) {
-        tracing::warn!(
-            response_principal = %principal_id,
-            active_principal = ?state_store.read(|store| store.active_principal_id()),
-            "discarded account sync response after the active principal changed"
-        );
-        return;
-    }
-
-    // The core-keyed device-signing-key cache is separate from exact authority
-    // resolution, and its 5-minute positive TTL is not sufficient on its own:
-    // `signal.md` §1 forbids reusing an older positive entry once a device-list
-    // or generation frontier change has been observed. Dropping the actor's
-    // entries here only forces a re-query; the synchronous receive path fails
-    // closed on the resulting miss.
-    for body in response.realm_projections.values() {
-        for actor in collect_device_frontier_actors(body) {
-            let dropped = crate::identity::device_directory::invalidate_actor(&actor);
-            if dropped > 0 {
-                tracing::debug!(
-                    %actor,
-                    dropped,
-                    "dropped cached device signing keys after a device frontier change"
-                );
-            }
-        }
-    }
-
-    if response_revokes_local_device(&response.realm_projections, &principal_id, &ctx.device_id) {
-        state_store.write(|store| store.clear_device_scoped());
-        rotate_live_device_id_after_revocation(&ctx.live_device_id);
-        ctx.session
-            .invalidate("this device was revoked by an accepted control event");
-        return;
-    }
-
-    state_store.write(|store| {
-        // Perf (P0): a single sync response can touch the cursor, dozens of
-        // realm-tree projections, seal views, member identity events and account
-        // data — each setter used to flush the *entire* `ClientLocalState` to
-        // disk/localStorage. Wrap the whole apply in one batch so it persists
-        // exactly once.
-        let cursor_can_advance = to_device_batch_allows_cursor_advance(
-            &response.updates.to_device,
-            response.updates.to_device_limited,
-        );
-        store.batch(|store| {
-            if is_full_sync {
-                // Server-authoritative for top-level Realm membership:
-                // drop projections the server didn't include, except an
-                // acknowledged optimistic Realm awaiting its first account
-                // projection and local Space containers whose home Realm is
-                // still present.
-                let server_set: BTreeSet<String> =
-                    response.realm_projections.keys().cloned().collect();
-                let keep_set = crate::app::full_sync_projection_keep_set(
-                    &server_set,
-                    &store.load().realm_tree_projections,
-                );
-                let pruned = store.retain_realm_tree_projections(|id| keep_set.contains(id));
-                if !pruned.is_empty() {
-                    tracing::info!(
-                        pruned_count = pruned.len(),
-                        "sync engine: full-sync pruned stale realm-tree projections",
-                    );
-                }
-            }
-            // Explicit `left_realms` deltas — meaningful primarily on
-            // incremental sync, but cheap to apply on full sync too.
-            for update in &response.updates.realm_updates {
-                let id = update.realm_id.as_str();
-                let Some(body) = response.realm_projections.get(id) else {
-                    continue;
-                };
-                if !is_full_sync && !realm_update_has_durable_projection(update) {
-                    continue;
-                }
-                // The live epoch represents the durable Realm projection as a
-                // whole, not only events understood by one product surface.
-                // Summary/member/state-only deltas must invalidate durable
-                // consumers just as timeline events do.
-                realm_projection_changed = true;
-                let existing = store.load().realm_tree_projections.get(id).cloned();
-                let frame = if is_full_sync {
-                    RealmProjectionFrame::Full(body)
-                } else {
-                    RealmProjectionFrame::Incremental(body)
-                };
-                let mut projection = reconcile_realm_projection(existing.as_ref(), frame);
-                // This exact accepted profile payload is a local projection
-                // checkpoint, not a server wire field. A window-start frame
-                // can legitimately lag an accepted, not-yet-sealed Control
-                // Event, so retain the checkpoint until the Event fold below
-                // advances or confirms it.
-                if let Some(local_profile) = existing
-                    .as_ref()
-                    .and_then(|value| value.get(LOCAL_REALM_PROFILE_PAYLOAD))
-                    .cloned()
-                    && let Some(root) = projection.as_object_mut()
-                {
-                    root.insert(LOCAL_REALM_PROFILE_PAYLOAD.to_owned(), local_profile);
-                }
-                store.save_realm_tree_projection(id.to_owned(), projection.clone());
-                if is_full_sync || response.has_window_start_realm_metadata(id) {
-                    store.save_realm_collaboration_role(
-                        id.to_owned(),
-                        response.collaboration_role(id),
-                    );
-                }
-                store.merge_realm_seal_view_from_sync_body(id, &projection);
-                store.ingest_move_event_states(id, &projection);
-                let state_events = update
-                    .entry
-                    .state
-                    .as_ref()
-                    .map(|state| state.events.as_slice())
-                    .unwrap_or_default();
-                let _ = ingest_kanban_projection_events(store, id, state_events)
-                    + ingest_discussion_state_events_from_projection(store, id, &projection)
-                    + ingest_message_events_from_projection(store, id, &projection)
-                    + ingest_moderation_projection_events(store, id, state_events)
-                    + ingest_realm_profile_projection_events(store, id, state_events);
-                ingest_membership_projection_events(store, id, state_events);
-                // Fold the discussion timeline into `raw_operations` too so the
-                // card-detail Discussion tab renders local-first instead of
-                // refetching + redecrypting the realm on every open.
-                // MID-2 — harvest inlined `ak.member.identity.update`
-                // event envelopes off the `members[]` roster entries. The
-                // SDK's effective-set filter is applied lazily when a UI
-                // surface needs to resolve a display identity.
-                ingest_member_identity_events_from_projection(store, id, &projection);
-            }
-            synced_theme = apply_account_data(store, response, &ctx.account.authority);
-            store.apply_station_cas_account_data(&response.updates.station_cas_account_data);
-            // Fold holder-private delivery cells before Realm membership
-            // adjudicates the inbox. If a frame carries both an older full
-            // invite-delivery cell and membership=`join`, the joined roster
-            // is authoritative for the final notification projection and
-            // must not let the stale delivery re-add the invite afterward.
-            store.ingest_to_device_messages(&response.updates.to_device);
-            apply_notification_projection(
-                store,
-                response,
-                &arkret_sdk::ActorId::account(ctx.account.authority.clone()),
-                is_full_sync,
-            );
-            if cursor_can_advance {
-                store.save_sync_cursor(response.cursor.clone());
-            }
-        }); // store.batch — single coalesced flush happens here
-    });
-    if realm_projection_changed {
-        ctx.realm_live_epoch
-            .update(|epoch| *epoch = epoch.wrapping_add(1));
-    }
-    if let Some(value) = synced_theme {
-        ctx.projection_sink
-            .projection(ClientProjectionEvent::Theme { value });
-    }
-
-    // Receive side of `ak.call.signal`: route inbound call-signal envelopes
-    // from each realm body into the hub (dedup → incoming ring / per-call
-    // Realm tree nodes are derived in the app projection adapter from the
-    // canonical local-state projection; the engine only computes a snapshot
-    // for status and selected-Realm bookkeeping.
-    let reconciled = state_store.read(|store| {
-        let state = store.load();
-        crate::app::realm_tree_nodes_from_sync_realms_with_roles(
-            &state.realm_tree_projections,
-            &state.realm_collaboration_roles,
-        )
-    });
-    ctx.projection_sink.sync_status(SyncStatusEvent::Online);
-    let first_realm = reconciled
-        .iter()
-        .find(|node| node.kind == RealmTreeNodeKind::Realm)
-        .map(|node| node.id.clone());
-    {
-        let current = ctx.selected_realm_id.get();
-        let trimmed = current.trim();
-        let needs_reset = trimmed.is_empty() || !reconciled.iter().any(|node| node.id == trimmed);
-        if needs_reset {
-            ctx.projection_sink
-                .projection(ClientProjectionEvent::SelectedRealm {
-                    realm_id: first_realm.unwrap_or_default(),
-                });
-        }
-    }
-
-    // Merge encrypted bodies on read (author sidecar → remote decrypt-on-read).
-    // The `store` write guard above is out of scope; take a fresh read guard.
-    let synced_projection_events = state_store.read(|store| {
-        crate::state::projection::projection_events_from_sync_realms(
-            &response.realm_projections,
-            Some(store),
-            Some((&ctx.account.authority, &ctx.account.device_id)),
-        )
-    });
-    if is_full_sync {
-        ctx.projection_sink.projection(ClientProjectionEvent::Reset);
-    }
-    for event in synced_projection_events {
-        ctx.projection_sink
-            .projection(ClientProjectionEvent::Account(event));
-    }
-
-    ctx.projection_sink
-        .projection(ClientProjectionEvent::DeviceQueue {
-            pending: state_store.read(|store| store.load().to_device_inbox.len()),
-        });
-    if to_device_batch_allows_cursor_advance(
-        &response.updates.to_device,
-        response.updates.to_device_limited,
-    ) {
-        ctx.projection_sink
-            .projection(ClientProjectionEvent::CursorCheckpoint {
-                scope: "account".to_owned(),
-                cursor: response.cursor.clone(),
-            });
-    } else {
-        tracing::debug!(
-            cursor = %response.cursor,
-            to_device_count = response.updates.to_device.len(),
-            "sync engine: deferred cursor advancement until to-device key material is durable"
-        );
-    }
 }
 
 /// Freeze the current account state and wait until IndexedDB confirms the
@@ -1762,16 +1797,6 @@ async fn process_to_device_delivery(
     Ok(())
 }
 
-fn to_device_batch_allows_cursor_advance(
-    _messages: &[arkret_sdk::DeviceMessageEnvelope],
-    _limited: bool,
-) -> bool {
-    // Cursor position and to-device deletion are deliberately independent.
-    // This predicate is retained at projection call sites to document that
-    // all durably-ingested batches, including limited pages, may checkpoint.
-    true
-}
-
 /// Fold the realm's discussion timeline into the shared `raw_operations` log so
 /// the Discussion tab projects local-first — no per-open realm backfill /
 /// redecrypt — mirroring [`ingest_kanban_projection_events`].
@@ -1784,23 +1809,6 @@ fn ingest_message_events_from_projection(
     body: &Value,
 ) -> usize {
     ingest_message_projection_events(store, realm_id, &sync_realm_timeline_events(body))
-}
-
-pub(crate) fn ingest_moderation_projection_events(
-    store: &mut LocalStateStore,
-    realm_id: &str,
-    events: &[arkret_sdk::Event],
-) -> usize {
-    let records = crate::state::projection::moderation_ops::moderation_operations_from_events(
-        realm_id, events,
-    );
-    let mut changed = 0;
-    for record in records {
-        if store.upsert_raw_operation(record.operation_id, record.realm_id, record.payload) {
-            changed += 1;
-        }
-    }
-    changed
 }
 
 pub(crate) fn ingest_moderation_events(
@@ -1816,18 +1824,6 @@ pub(crate) fn ingest_moderation_events(
         }
     }
     changed
-}
-
-fn ingest_discussion_state_events_from_projection(
-    store: &mut LocalStateStore,
-    realm_id: &str,
-    body: &Value,
-) -> usize {
-    let events = sync_realm_state_events(body)
-        .into_iter()
-        .filter(discussion_state_event_is_ingestable)
-        .collect::<Vec<_>>();
-    ingest_message_projection_events(store, realm_id, &events)
 }
 
 /// Fold a batch of discussion message events into `raw_operations`. Shared by
@@ -2079,140 +2075,11 @@ pub(crate) fn ingest_membership_events(
     changed
 }
 
-pub(crate) fn ingest_default_strand_events(
-    store: &mut LocalStateStore,
-    realm_id: &str,
-    events: &[garth::ClientEvent],
-) -> usize {
-    let sdk_events = events.iter().filter_map(|event| match event {
-        garth::ClientEvent::Message(message) => Some(&message.event),
-        garth::ClientEvent::Event(event) => Some(event),
-        _ => None,
-    });
-    let Some(mut projection) = store.load().realm_tree_projections.get(realm_id).cloned() else {
-        return 0;
-    };
-    if !crate::models::project_default_strand_from_sdk_events(&mut projection, sdk_events) {
-        return 0;
-    }
-    store.save_realm_tree_projection(realm_id.to_owned(), projection);
-    1
-}
-
-const LOCAL_REALM_PROFILE_PAYLOAD: &str = "_inkson_realm_profile_payload";
-
-fn apply_realm_profile_events<'a>(
-    store: &mut LocalStateStore,
-    realm_id: &str,
-    events: impl Iterator<Item = &'a arkret_sdk::Event>,
-) -> usize {
-    let mut entries = events
-        .filter_map(realm_profile_event_entry)
-        .collect::<Vec<_>>();
-    entries.sort_by(|left, right| left.0.cmp(&right.0));
-    entries.dedup_by(|left, right| left.0 == right.0);
-    if entries.is_empty() {
-        return 0;
-    }
-    let Some(mut projection) = store.load().realm_tree_projections.get(realm_id).cloned() else {
-        return 0;
-    };
-    let stored = projection
-        .get(LOCAL_REALM_PROFILE_PAYLOAD)
-        .cloned()
-        .unwrap_or(Value::Null);
-    let settled_from_genesis = advance_realm_profile_chain(Value::Null, &entries)
-        .filter(|(_, consumed)| *consumed == entries.len());
-    let settled = settled_from_genesis.or_else(|| {
-        advance_realm_profile_chain(stored.clone(), &entries).filter(|(_, consumed)| *consumed > 0)
-    });
-    let Some((payload, _)) = settled else {
-        return 0;
-    };
-    if payload == stored {
-        return 0;
-    }
-    let Ok(profile) = serde_json::from_value::<arkret_sdk::RealmProfile>(payload.clone()) else {
-        return 0;
-    };
-    let Some(root) = projection.as_object_mut() else {
-        return 0;
-    };
-    root.insert(LOCAL_REALM_PROFILE_PAYLOAD.to_owned(), payload);
-    let state = root
-        .entry("state_at_window_start")
-        .or_insert_with(|| serde_json::json!({}));
-    let Some(state) = state.as_object_mut() else {
-        return 0;
-    };
-    let metadata = state
-        .entry("realm_metadata")
-        .or_insert_with(|| serde_json::json!({}));
-    let Some(metadata) = metadata.as_object_mut() else {
-        return 0;
-    };
-    metadata.insert("title".to_owned(), Value::String(profile.title));
-    if let Some(summary) = profile.summary {
-        metadata.insert("summary".to_owned(), Value::String(summary));
-    } else {
-        metadata.remove("summary");
-    }
-    store.save_realm_tree_projection(realm_id.to_owned(), projection);
-    1
-}
-
-pub(crate) fn ingest_realm_profile_projection_events(
-    store: &mut LocalStateStore,
-    realm_id: &str,
-    events: &[arkret_sdk::Event],
-) -> usize {
-    apply_realm_profile_events(store, realm_id, events.iter())
-}
-
-pub(crate) fn ingest_realm_profile_events(
-    store: &mut LocalStateStore,
-    realm_id: &str,
-    events: &[garth::ClientEvent],
-) -> usize {
-    apply_realm_profile_events(
-        store,
-        realm_id,
-        events.iter().filter_map(|event| match event {
-            garth::ClientEvent::Message(message) => Some(&message.event),
-            garth::ClientEvent::Event(event) => Some(event),
-            _ => None,
-        }),
-    )
-}
-
 fn ingest_member_identity_events_from_projection(
     store: &mut LocalStateStore,
     realm_id: &str,
     body: &Value,
 ) {
-    // Build a quick lookup over the canonical `state.events[]` array on the
-    // projection so that referenced identity_event_ids can be resolved
-    // without a separate query.
-    let state_log_events = sync_realm_state_events(body);
-    let state_events: BTreeSet<String> = state_log_events
-        .iter()
-        .filter_map(|event| {
-            event
-                .get("event_id")
-                .and_then(Value::as_str)
-                .map(str::to_owned)
-        })
-        .collect();
-    let state_event_by_id: std::collections::BTreeMap<String, Value> = state_log_events
-        .iter()
-        .filter_map(|event| {
-            event
-                .get("event_id")
-                .and_then(Value::as_str)
-                .map(|id| (id.to_owned(), event.clone()))
-        })
-        .collect();
-
     for source in [body.get("member_roster_entries")].into_iter().flatten() {
         let Some(items) = source.as_array() else {
             continue;
@@ -2230,70 +2097,48 @@ fn ingest_member_identity_events_from_projection(
             if let Some(events) = map.get("identity_events").and_then(Value::as_array) {
                 store.ingest_member_identity_events(realm_id, &actor_id, events);
             }
-            // Otherwise hydrate envelopes from `state.events[]` keyed
-            // by id. Missing references are dropped silently — the
-            // server will resend them on the next subscribe frame, or
-            // a `ak.self.events.read.scan.v1` backfill will catch up.
-            if let Some(refs) = map.get("identity_event_ids").and_then(Value::as_array) {
-                let mut resolved: Vec<Value> = Vec::new();
-                for r in refs {
-                    if let Some(id) = r.as_str()
-                        && state_events.contains(id)
-                        && let Some(envelope) = state_event_by_id.get(id)
-                    {
-                        resolved.push(envelope.clone());
-                    }
-                }
-                if !resolved.is_empty() {
-                    store.ingest_member_identity_events(realm_id, &actor_id, &resolved);
-                }
-            }
         }
     }
 }
 
-/// Read the stable actor id from the event, falling back to the roster entry.
-fn projection_event_actor_id(event: &Value, fallback: Option<&Value>) -> Option<String> {
-    let from = |value: &Value| {
-        value
-            .get("actor_id")
-            .and_then(crate::state::projection::message_ops::actor_principal_from_value)
-    };
-    from(event).or_else(|| fallback.and_then(from))
+/// Device authority invalidation preserves each account's Station binding.
+fn changed_device_accounts(
+    changes: &arkret_sdk::AccountSubscribeDeviceListChanges,
+) -> BTreeSet<arkret_sdk::AccountId> {
+    changes
+        .changed_ids
+        .iter()
+        .chain(&changes.left_ids)
+        .filter_map(|actor| actor.as_account_id().cloned())
+        .collect()
 }
 
-/// Principals whose device-list / generation frontier moved in this projection.
-///
-/// The subject of a device event is the principal named by the payload, not
-/// necessarily the authoring actor, so `principal_id` wins when present.
-fn collect_device_frontier_actors(body: &Value) -> BTreeSet<String> {
-    let mut actors = BTreeSet::new();
-    for_each_projection_identity_event(body, |event, fallback| {
-        if !crate::identity::device_directory::is_device_frontier_event_kind(projection_event_kind(
-            event,
-        )) {
-            return;
-        }
-        let subject = event
-            .pointer("/payload/principal_id")
-            .and_then(Value::as_str)
-            .map(str::to_owned)
-            .or_else(|| projection_event_actor_id(event, fallback));
-        if let Some(subject) = subject.filter(|value| !value.trim().is_empty()) {
-            actors.insert(subject);
-        }
-    });
-    actors
+fn device_summary_revokes_local_device(
+    viewer: &arkret_sdk::AccountView,
+    principal: &arkret_sdk::DidCoreId,
+    device_id: &str,
+) -> bool {
+    if &viewer.principal_id != principal {
+        return false;
+    }
+    let mut matches = viewer
+        .devices
+        .iter()
+        .filter(|device| device.device_id.as_str() == device_id);
+    let Some(device) = matches.next() else {
+        return false;
+    };
+    matches.next().is_none()
+        && device.validate().is_ok()
+        && device.status == arkret_sdk::DeviceSummaryStatus::Revoked
 }
 
 fn apply_notification_projection(
     store: &mut LocalStateStore,
     response: &AccountSyncStep,
     account_actor: &arkret_sdk::ActorId,
-    is_full_sync: bool,
 ) {
     let should_save_notification_projection = !response.updates.notifications.is_empty()
-        || is_full_sync
         || !response.updates.account_data.is_empty()
         // Realm membership is itself a notification transition: a live
         // `join` delta must retire the pending invite even when this frame
@@ -2308,7 +2153,6 @@ fn apply_notification_projection(
         &mut notification_projection,
         &response.updates.notifications,
         &response.updates.account_data,
-        is_full_sync,
         &joined_realms,
     );
     if should_save_notification_projection {
@@ -2610,7 +2454,6 @@ mod tests {
                 account_data: Vec::new(),
                 station_cas_account_data: Vec::new(),
                 notifications: Vec::new(),
-                agent_signer_evidence: Vec::new(),
                 partial: false,
             },
         }
@@ -2660,7 +2503,7 @@ mod tests {
                 "content": {"kind": "ak.content.text", "body": "hello"}
             }),
         );
-        let state_event = sdk_event(
+        let space_event = sdk_event(
             "ak.space.create",
             json!({
                 "object": {
@@ -2676,10 +2519,9 @@ mod tests {
         let realm_id = sdk_realm_id();
         let projection = json!({
             "timeline": {
-                "events": [serde_json::to_value(message_event).unwrap()],
+                "events": [serde_json::to_value(message_event).unwrap(), serde_json::to_value(space_event).unwrap()],
                 "limited": false
             },
-            "state": {"events": [serde_json::to_value(state_event).unwrap()]},
             "summary": {}
         });
         let entry: arkret_sdk::RealmSyncEntry =
@@ -2874,90 +2716,6 @@ mod tests {
     }
 
     #[test]
-    fn default_strand_event_updates_realm_projection_idempotently() {
-        let realm_id = sdk_realm_id().to_string();
-        let strand_id = "ak:strand:AT75JCcnHexLP4y-Juac4pnRIpfUaiaat4XhL9W7g610";
-        let event = sdk_event(
-            arkret_sdk::EventKind::RealmSetDefaultStrand.as_str(),
-            json!({
-                "realm_id": realm_id,
-                "strand_id": strand_id,
-            }),
-        );
-        let batch = vec![garth::ClientEvent::Event(event)];
-        let mut store = temp_store("default-strand-event");
-        store.save_realm_tree_projection(
-            sdk_realm_id().to_string(),
-            json!({"state": {"events": []}}),
-        );
-
-        assert_eq!(
-            ingest_default_strand_events(&mut store, sdk_realm_id().as_str(), &batch),
-            1
-        );
-        assert_eq!(
-            store.load().realm_tree_projections[sdk_realm_id().as_str()]["default_strand_id"],
-            strand_id
-        );
-        assert_eq!(
-            ingest_default_strand_events(&mut store, sdk_realm_id().as_str(), &batch),
-            0
-        );
-    }
-
-    fn to_device_message(kind: &str) -> arkret_sdk::DeviceMessageEnvelope {
-        let content = if kind == "ak.key.verification.request" {
-            json!({
-                "transaction_id": "txn-1",
-                "from_device_id": "ak:device:0196419b-0000-7000-8000-000000000001",
-                "methods": ["ak.key.verification.sas_v1"],
-                "timestamp": "2026-07-15T00:00:00.000Z",
-                "expires_at": "2026-07-15T00:10:00.000Z"
-            })
-        } else {
-            json!({"request_id": "request-1"})
-        };
-        serde_json::from_value(json!({
-            "device_message_id": "ak:device_message:0196419b-0000-7000-8000-000000000003",
-            "kind": kind,
-            "sender_account_id": {
-                "principal_id": "ak:did_core:webvh:z6mkfixture:alice.example",
-                "station_id": "ak:did_core:webvh:z6mkfixture:station.example"
-            },
-            "sender_device_id": "ak:device:0196419b-0000-7000-8000-000000000001",
-            "recipient_account_id": {
-                "principal_id": "ak:did_core:webvh:z6mkfixture:bob.example",
-                "station_id": "ak:did_core:webvh:z6mkfixture:station.example"
-            },
-            "recipient_device_id": "ak:device:0196419b-0000-7000-8000-000000000002",
-            "sent_at": "2026-07-15T00:00:00.000Z",
-            "expires_at": "2026-07-16T00:00:00.000Z",
-            "content": content
-        }))
-        .unwrap()
-    }
-
-    #[test]
-    fn durable_to_device_batches_do_not_block_account_cursor() {
-        assert!(to_device_batch_allows_cursor_advance(
-            &[to_device_message("ak.key.verification.request")],
-            false,
-        ));
-        assert!(to_device_batch_allows_cursor_advance(
-            &[to_device_message("ak.key.verification.request")],
-            true,
-        ));
-        assert!(to_device_batch_allows_cursor_advance(
-            &[to_device_message("ak.mls.welcome")],
-            false,
-        ));
-        assert!(to_device_batch_allows_cursor_advance(
-            &[to_device_message("ak.future.secret.material")],
-            false,
-        ));
-    }
-
-    #[test]
     fn sync_state_events_ingest_kanban_strand_updates_as_synced_raw_operations() {
         let temp = std::env::temp_dir().join(format!(
             "inkson-sync-state-events-{}.json",
@@ -2992,110 +2750,6 @@ mod tests {
         assert_eq!(
             state.raw_operations[0].payload["body"]["patch"]["synthesis"]["value"],
             "bob synthesis"
-        );
-    }
-
-    #[test]
-    fn sync_state_events_ingest_discussion_pin_controls_as_raw_operations() {
-        let realm_id = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
-        let strand_id = "ak:strand:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1";
-        let mut store = temp_store("discussion-pin-state-events");
-        let body = json!({
-            "state": { "events": [{
-                    "event_id": "ak:event:AZaaHAEvC1DejakImwHCcJHb0F1pgE-Jd-3_9BGirbuW",
-                    "event_kind": "ak.pin.add",
-                    "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:mei.example","station_id":"ak:did_core:web:principal.example"}},
-                    "created_at": "2026-06-24T10:00:00.000Z",
-                    "realm_id": realm_id,
-                    "payload": {
-                        "pin_scope": {"kind": "strand", "id": strand_id},
-                        "target_ref": "ak:message:AfqXI4jyBJWA5HRhSr3SdFP5Qb_2V210Q00mFqUjA7_z",
-                        "rank": "r001"
-                    }
-                }] }
-        });
-
-        let changed = ingest_discussion_state_events_from_projection(&mut store, realm_id, &body);
-
-        assert_eq!(changed, 1);
-        let state = store.load();
-        assert_eq!(state.raw_operations.len(), 1);
-        assert_eq!(
-            state.raw_operations[0].operation_id,
-            "ak:event:AZaaHAEvC1DejakImwHCcJHb0F1pgE-Jd-3_9BGirbuW"
-        );
-        assert_eq!(state.raw_operations[0].payload["event_kind"], "ak.pin.add");
-        assert_eq!(
-            state.raw_operations[0].payload["payload"]["pin_scope"]["id"],
-            strand_id
-        );
-    }
-
-    #[test]
-    fn sync_state_events_ingest_message_lifecycle_rows_for_discussion_raw_operations() {
-        let realm_id = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
-        let strand_id = "ak:strand:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1";
-        let mut store = temp_store("discussion-message-state-events");
-        let body = json!({
-            "state": { "events": [
-                    {
-                        "event_id": "ak:event:AQSS_m6w3ODdIeq8Yzac2ghmcQVOGLXWA5PXFcSnVcgN",
-                        "event_kind": "ak.message.revise",
-                        "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:bob.example","station_id":"ak:did_core:web:principal.example"}},
-                        "created_at": "2026-06-24T10:00:00.000Z",
-                        "realm_id": realm_id,
-                        "payload": {
-                            "event_id": "ak:event:AQSS_m6w3ODdIeq8Yzac2ghmcQVOGLXWA5PXFcSnVcgN",
-                            "target_ref": "ak:message:AfqXI4jyBJWA5HRhSr3SdFP5Qb_2V210Q00mFqUjA7_z",
-                            "strand_id": strand_id,
-                            "content": {
-                                "kind": "ak.content.text",
-                                "body": "edited state projection"
-                            }
-                        }
-                    },
-                    {
-                        "event_id": "ak:event:Adpb76fsaup_4Y_cV39of-L1_k6Nv1kSoCzXa9TM4szu",
-                        "event_kind": "ak.message.redact",
-                        "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:bob.example","station_id":"ak:did_core:web:principal.example"}},
-                        "created_at": "2026-06-24T10:01:00.000Z",
-                        "realm_id": realm_id,
-                        "payload": {
-                            "event_id": "ak:event:Adpb76fsaup_4Y_cV39of-L1_k6Nv1kSoCzXa9TM4szu",
-                            "message_id": "ak:message:AfqXI4jyBJWA5HRhSr3SdFP5Qb_2V210Q00mFqUjA7_z",
-                            "reason": "user requested tombstone"
-                        }
-                    },
-                    {
-                        "event_id": "ak:event:AR9d8WoyQJCOjt6n46diPUzg9zsrG9OZ9TAgE1rz6tJa",
-                        "event_kind": "ak.reaction.add",
-                        "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:carol.example","station_id":"ak:did_core:web:principal.example"}},
-                        "created_at": "2026-06-24T10:02:00.000Z",
-                        "realm_id": realm_id,
-                        "payload": {
-                            "target_ref": "ak:message:AfqXI4jyBJWA5HRhSr3SdFP5Qb_2V210Q00mFqUjA7_z",
-                            "key": "👍"
-                        }
-                    }
-                ] }
-        });
-
-        let changed = ingest_discussion_state_events_from_projection(&mut store, realm_id, &body);
-
-        assert_eq!(changed, 3);
-        let state = store.load();
-        assert_eq!(state.raw_operations.len(), 3);
-        assert_eq!(
-            state.raw_operations[0].payload["event_kind"],
-            "ak.message.revise"
-        );
-        assert_eq!(
-            state.raw_operations[1].payload["event_kind"],
-            "ak.message.redact"
-        );
-        assert_eq!(
-            state.raw_operations[2].payload["event_kind"],
-            "ak.reaction.add"
         );
     }
 
@@ -3144,7 +2798,7 @@ mod tests {
         // roster. `knock` is therefore the roster's real "present but not
         // joined" row, and it is what must leave a pending invite standing.
         let account_actor = crate::test_support::account_actor(actor_id);
-        apply_notification_projection(&mut store, &response("knock"), &account_actor, false);
+        apply_notification_projection(&mut store, &response("knock"), &account_actor);
         assert!(
             store
                 .notification_projection()
@@ -3153,7 +2807,7 @@ mod tests {
             "a non-join roster membership must preserve the pending invite"
         );
 
-        apply_notification_projection(&mut store, &response("join"), &account_actor, false);
+        apply_notification_projection(&mut store, &response("join"), &account_actor);
         assert!(
             store
                 .notification_projection()
@@ -3164,79 +2818,132 @@ mod tests {
     }
 
     #[test]
-    fn full_sync_response_prunes_cached_projection() {
-        // Bench against the store directly — we don't need the dioxus
-        // signals to verify the reconcile semantics. The signal-side
-        // wiring is exercised by the lib's integration tests; the unit
-        // contract here is "after a full sync, server-reported ids
-        // remain, plus nested Space containers under still-joined
-        // Realms".
-        let mut store = temp_store("prune");
-        store.save_realm_tree_projection(
-            "ak:realm:ASN5uMi28AEbWgFm2GmchqhztuhBSoOzWPAht4VgFoXk",
-            json!({"summary": {"title": "A"}}),
-        );
-        store.save_realm_tree_projection(
-            "ak:space:child",
-            json!({
-                "__kind": "space",
-                "realm_id": "ak:realm:ASN5uMi28AEbWgFm2GmchqhztuhBSoOzWPAht4VgFoXk",
-                "summary": {"title": "Child"}
-            }),
-        );
-        store.save_realm_tree_projection("ak:space:b", json!({"summary": {"title": "B"}}));
-
-        let mut response = empty_response("sx:42");
-        response.realm_projections.insert(
-            "ak:realm:ASN5uMi28AEbWgFm2GmchqhztuhBSoOzWPAht4VgFoXk".to_owned(),
-            json!({"summary": {"title": "A"}}),
-        );
-
-        // Mirror the engine's full-sync prune step.
-        let server_set: BTreeSet<String> = response.realm_projections.keys().cloned().collect();
-        let keep_set = crate::app::full_sync_projection_keep_set(
-            &server_set,
-            &store.load().realm_tree_projections,
-        );
-        let pruned = store.retain_realm_tree_projections(|id| keep_set.contains(id));
-        assert_eq!(pruned, vec!["ak:space:b".to_owned()]);
-
-        let state = store.load();
-        assert!(
-            state
-                .realm_tree_projections
-                .contains_key("ak:realm:ASN5uMi28AEbWgFm2GmchqhztuhBSoOzWPAht4VgFoXk")
-        );
-        assert!(state.realm_tree_projections.contains_key("ak:space:child"));
-        assert!(!state.realm_tree_projections.contains_key("ak:space:b"));
-    }
-
-    /// `signal.md` §1: the device-signing-key cache must not outlive an
-    /// observed frontier change, so the subject is taken from the payload's
-    /// `principal_id` — the authoring actor may be another device of the same
-    /// principal, or the server-side reducer.
-    #[test]
-    fn device_frontier_actors_prefer_the_payload_principal() {
-        let body = json!({
-            "state": { "events": [
-                {
-                    "event_id": "e1",
-                    "kind": "ak.device.revoke",
-                    "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:author.example","station_id":"ak:did_core:web:principal.example"}},
-                    "payload": { "principal_id": "ak:did_core:web:subject.example" }
-                },
-                { "event_id": "e2", "kind": "ak.device.list_update", "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:bob.example","station_id":"ak:did_core:web:principal.example"}} },
-                { "event_id": "e3", "kind": "ak.message.create", "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:carol.example","station_id":"ak:did_core:web:principal.example"}} }
-            ] }
-        });
-
-        let actors = collect_device_frontier_actors(&body);
+    fn device_changes_preserve_complete_station_scoped_accounts() {
+        let first = crate::test_support::account_actor("ak:did_core:web:subject.example");
+        let mut second = first.as_account_id().unwrap().clone();
+        second.station_id = arkret_sdk::DidCoreId::new("ak:did_core:web:other.example").unwrap();
+        let changes = arkret_sdk::AccountSubscribeDeviceListChanges {
+            changed_ids: vec![first.clone()],
+            left_ids: vec![first.clone(), arkret_sdk::ActorId::account(second.clone())],
+        };
         assert_eq!(
-            actors.into_iter().collect::<Vec<_>>(),
-            vec![
-                "ak:did_core:web:bob.example".to_owned(),
-                "ak:did_core:web:subject.example".to_owned(),
-            ]
+            changed_device_accounts(&changes),
+            BTreeSet::from([first.as_account_id().unwrap().clone(), second])
         );
     }
+
+    #[test]
+    fn local_device_wipe_requires_an_explicit_current_revoked_summary() {
+        let principal = sdk_actor_id();
+        let device = "ak:device:0196419b-0000-7000-8000-000000000001";
+        let proposal = sdk_event("ak.device.revoke", json!({}));
+        let signer = arkret_test_kit::proof::StructuralOnlyPayloadSigner::new(
+            arkret_sdk::Did::new("did:web:station.example").unwrap(),
+            arkret_sdk::DidUrl::new("did:web:station.example#key-1").unwrap(),
+        );
+        let accepted_at = chrono::Utc::now();
+        let ack = arkret_sdk::ControlProposalAuthorityAck::issue_with_signer(
+            sdk_realm_id(),
+            proposal.event_id.event_digest(),
+            arkret_sdk::Hash::new(format!("sha256:{}", "1".repeat(64))).unwrap(),
+            accepted_at,
+            arkret_sdk::ControlProposalDecisionPolicy::default(),
+            &signer,
+        )
+        .unwrap();
+        let ack =
+            arkret_sdk::ControlProposalAck::from_authority_acks_protocol_bounds(vec![ack]).unwrap();
+        let mut viewer: arkret_sdk::AccountView = serde_json::from_value(json!({
+            "principal_id":principal,"state":"active","devices":[{
+                "device_id":device,"status":"revoked","verification_state":"verified",
+                "revocation_states":[{
+                    "schema":"ak.schema.device_revocation_state.v1",
+                    "account_id":{"principal_id":principal,"station_id":"ak:did_core:web:station.example"},
+                    "device_id":device,"target_device_authorize_event_id":proposal.event_id,
+                    "target_device_generation_ref":1,"proposal_event_id":proposal.event_id,
+                    "accepted_at":arkret_sdk::canonical::format_timestamp_canonical(accepted_at),
+                    "acceptance_seq":1,"control_proposal_ack":ack,"status":"revoked",
+                    "covering_seal_id":format!("ak:seal:sha256:{}", "2".repeat(64)),
+                    "sealed_at":arkret_sdk::canonical::format_timestamp_canonical(accepted_at)
+                }]
+            }]
+        })).unwrap();
+        assert!(device_summary_revokes_local_device(
+            &viewer, &principal, device
+        ));
+        assert!(!device_summary_revokes_local_device(
+            &viewer,
+            &principal,
+            "other-device"
+        ));
+        let other = arkret_sdk::DidCoreId::new("ak:did_core:web:other.example").unwrap();
+        assert!(!device_summary_revokes_local_device(
+            &viewer, &other, device
+        ));
+        viewer.devices[0].status = arkret_sdk::DeviceSummaryStatus::RevocationPending;
+        assert!(!device_summary_revokes_local_device(
+            &viewer, &principal, device
+        ));
+        viewer.devices.clear();
+        assert!(!device_summary_revokes_local_device(
+            &viewer, &principal, device
+        ));
+    }
+}
+
+fn apply_account_frame_payload(
+    store: &mut LocalStateStore,
+    response: &AccountSyncStep,
+    ctx: &SyncEngineContext,
+) -> (Option<String>, bool) {
+    let mut realm_projection_changed = false;
+    // Apply explicit Realm deltas; baseline completion is reconciled separately
+    // by the demand-sync reducer.
+    for update in &response.updates.realm_updates {
+        let id = update.realm_id.as_str();
+        let Some(body) = response.realm_projections.get(id) else {
+            continue;
+        };
+        if !realm_update_has_durable_projection(update) {
+            continue;
+        }
+        // The live epoch represents the durable Realm projection as a
+        // whole, not only events understood by one product surface.
+        // Summary/member/state-only deltas must invalidate durable
+        // consumers just as timeline events do.
+        realm_projection_changed = true;
+        let existing = store.realm_tree_projection(id);
+        let frame = RealmProjectionFrame::Incremental(body);
+        let projection = reconcile_realm_projection(existing.as_ref(), frame);
+        store.save_realm_tree_projection(id.to_owned(), projection.clone());
+        if response.has_window_start_realm_metadata(id) {
+            store.save_realm_collaboration_role(id.to_owned(), response.collaboration_role(id));
+        }
+        store.merge_realm_seal_view_from_sync_body(id, &projection);
+        store.ingest_move_event_states(id, &projection);
+        let _ = ingest_message_events_from_projection(store, id, &projection);
+        // Fold the discussion timeline into `raw_operations` too so the
+        // card-detail Discussion tab renders local-first instead of
+        // refetching + redecrypting the realm on every open.
+        // MID-2 — harvest inlined `ak.member.identity.update`
+        // event envelopes off the `members[]` roster entries. The
+        // SDK's effective-set filter is applied lazily when a UI
+        // surface needs to resolve a display identity.
+        ingest_member_identity_events_from_projection(store, id, &projection);
+    }
+    let synced_theme = apply_account_data(store, response, &ctx.account.authority);
+    store.apply_station_cas_account_data(&response.updates.station_cas_account_data);
+    // Fold holder-private delivery cells before Realm membership
+    // adjudicates the inbox. If a frame carries both an older full
+    // invite-delivery cell and membership=`join`, the joined roster
+    // is authoritative for the final notification projection and
+    // must not let the stale delivery re-add the invite afterward.
+    store.ingest_to_device_messages(&response.updates.to_device);
+    apply_notification_projection(
+        store,
+        response,
+        &arkret_sdk::ActorId::account(ctx.account.authority.clone()),
+    );
+
+    (synced_theme, realm_projection_changed)
 }

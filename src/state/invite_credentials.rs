@@ -86,10 +86,6 @@ impl LocalStateStore {
         self.ensure_cached_loaded();
         let mut delivery_changed = false;
         for delta in deltas {
-            if delta.complete {
-                self.cached.station_cas_account_data.clear();
-                delivery_changed = true;
-            }
             for entry in &delta.upserts {
                 delivery_changed |=
                     entry.account_data_key == arkret_wire::AccountDataKey::ACCOUNT_INVITE_DELIVERY;
@@ -118,7 +114,7 @@ impl LocalStateStore {
         }
     }
 
-    fn replace_invite_delivery_cell(&mut self, content: Option<&Value>) {
+    pub(super) fn replace_invite_delivery_cell(&mut self, content: Option<&Value>) {
         let delivery = content.and_then(validated_invite_delivery);
         let retained_ids = delivery
             .as_ref()
@@ -341,7 +337,6 @@ mod tests {
             .unwrap()
             .with_timezone(&Utc);
         store.apply_station_cas_account_data(&[arkret_sdk::StationCasAccountDataContainer {
-            complete: true,
             upserts: vec![arkret_sdk::AccountDataRow {
                 account_data_key: arkret_wire::AccountDataKey::ACCOUNT_INVITE_DELIVERY.to_owned(),
                 revision: 3,
@@ -364,7 +359,6 @@ mod tests {
         );
 
         store.apply_station_cas_account_data(&[arkret_sdk::StationCasAccountDataContainer {
-            complete: false,
             upserts: Vec::new(),
             removals: vec![arkret_sdk::StationCasAccountDataRemoval {
                 account_data_key: arkret_wire::AccountDataKey::ACCOUNT_INVITE_DELIVERY.to_owned(),

@@ -246,6 +246,11 @@ impl MultiProfileConfig {
             .iter_mut()
             .find(|candidate| candidate.account.authority == profile.account.authority)
         {
+            anyhow::ensure!(
+                existing.account.principal_control_realm_id
+                    == profile.account.principal_control_realm_id,
+                "current principal result changes the Account's pinned PCR"
+            );
             existing
                 .account
                 .update_resolution(profile.account.resolution)?;
@@ -704,6 +709,18 @@ impl LocalConfigStore {
         }
     }
 
+    /// Read a durable identity pin without loading credentials for other profiles.
+    pub(crate) fn known_account_context(
+        &self,
+        authority: &arkret_sdk::AccountId,
+    ) -> Option<ActiveAccountContext> {
+        self.read_persisted_profiles()?
+            .profiles
+            .into_iter()
+            .find(|profile| &profile.account.authority == authority)
+            .map(|profile| profile.account)
+    }
+
     /// P3B.4 — load the multi-profile config.
     pub fn load_profiles(&self) -> MultiProfileConfig {
         if let Some(profiles) = self.read_persisted_profiles()
@@ -857,6 +874,8 @@ mod tests {
                 arkret_sdk::DidCoreId::new(principal.to_owned()).unwrap(),
                 arkret_sdk::DidCoreId::new(service.to_owned()).unwrap(),
             ),
+            arkret_sdk::RealmId::new("ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19")
+                .unwrap(),
             arkret_sdk::PrincipalResolutionProjection {
                 did: arkret_sdk::Did::new(did.to_owned()).unwrap(),
                 method_history_head: "head-1".to_owned(),
@@ -890,6 +909,33 @@ mod tests {
             config.stations,
             vec![Url::parse("https://local.host").unwrap()]
         );
+    }
+
+    #[test]
+    fn current_principal_cannot_rebind_a_persisted_account_pcr() {
+        let mut profiles = MultiProfileConfig::default();
+        let original = alice("ak:did_core:webvh:zServerA", "https://principal-a.example/");
+        profiles
+            .upsert_and_activate(AccountProfile::new(original.clone(), "old".to_owned()))
+            .unwrap();
+        let mut changed = original.clone();
+        changed.principal_control_realm_id =
+            arkret_sdk::RealmId::new("ak:realm:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1")
+                .unwrap();
+        assert!(
+            profiles
+                .upsert_and_activate(AccountProfile::new(changed, "new".to_owned()))
+                .is_err()
+        );
+        assert_eq!(
+            profiles
+                .active()
+                .unwrap()
+                .account
+                .principal_control_realm_id,
+            original.principal_control_realm_id
+        );
+        assert_eq!(profiles.active().unwrap().session_credential, "old");
     }
 
     #[test]

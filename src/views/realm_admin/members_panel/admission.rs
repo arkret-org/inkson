@@ -772,7 +772,14 @@ pub(crate) async fn reconcile_mls_admissions_for_realm(
         let local_state = state_store.read().clone();
         if local_state.realm_collaboration_role(&realm_id)
             == Some(arkret_sdk::CollaborationRealmRole::DirectConversation)
-            && !local_state.direct_conversation_binding_exists(&realm_id)
+            && matches!(
+                crate::mls::direct_binding::message_authority(
+                    &local_state,
+                    &realm_id,
+                    &arkret_sdk::ActorId::account(account.authority.clone())
+                ),
+                Some(crate::mls::direct_binding::MessageAuthority::ProvisionalFounder(_))
+            )
             && accepted_events.iter().any(|event| {
                 event.kind == arkret_sdk::EventKind::RealmCreate
                     && event.actor_id.to_string() == self_actor
@@ -1182,7 +1189,7 @@ pub(super) async fn refresh_mls_governance_target_basis(
         let result: anyhow::Result<_> = async {
             let view = submitter.seals_frontier_realm_view(realm_id).await?;
             for actor in &actors {
-                let request = arkret_sdk::MembershipAuthorityRequest {
+                let request = arkret_sdk::MembershipAuthorityRequestBody {
                     effective_scope: arkret_sdk::HistoryEffectiveScope::Realm {
                         realm_id: view.realm_id.clone(),
                     },

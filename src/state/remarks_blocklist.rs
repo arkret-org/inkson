@@ -56,6 +56,32 @@ impl LocalStateStore {
     /// Only accepted human Contacts contribute a canonical principal.
     pub fn replace_accepted_human_contacts(&mut self, contacts: &[crate::models::ContactListRow]) {
         self.ensure_cached_loaded();
+        let mut changed = false;
+        for contact in contacts {
+            if let Some(summary) = &contact.direct_conversation {
+                let peer = contact.peer.clone();
+                changed |= self
+                    .cached
+                    .direct_conversation_peers
+                    .insert(summary.realm_id.to_string(), peer.clone())
+                    .as_ref()
+                    != Some(&peer);
+            }
+            for agent in &contact.contact_agent_projections {
+                if let Some(summary) = &agent.direct_conversation {
+                    let peer = arkret_sdk::contact_operations::ContactPeer::Agent {
+                        actor_id: agent.actor_id.clone(),
+                        controller_account_id: agent.controller_account_id.clone(),
+                    };
+                    changed |= self
+                        .cached
+                        .direct_conversation_peers
+                        .insert(summary.realm_id.to_string(), peer.clone())
+                        .as_ref()
+                        != Some(&peer);
+                }
+            }
+        }
         self.cached.accepted_human_contact_principals = contacts
             .iter()
             .filter(|contact| contact.state == arkret_sdk::ContactState::Accepted)
@@ -66,6 +92,9 @@ impl LocalStateStore {
                 arkret_sdk::contact_operations::ContactPeer::Agent { .. } => None,
             })
             .collect();
+        if changed {
+            let _ = self.flush();
+        }
     }
 
     pub fn is_accepted_human_contact(&self, principal_id: &str) -> bool {

@@ -144,91 +144,6 @@ fn load_history_request_hpke_private_key(
         .transpose()
 }
 
-struct ReceiptTraversal<'a> {
-    api: &'a crate::transport::TransportClient,
-    state_store: &'a StateStoreHandle,
-}
-
-impl garth::ReceiptBoundHistoryTraversal for ReceiptTraversal<'_> {
-    async fn acquire_and_verify(
-        &self,
-        retention: &arkret_sdk::HistoryGovernanceTraversalRetention,
-        access: &arkret_sdk::SelfHistoryTraversalAccess,
-    ) -> garth::Result<garth::VerifiedHistoryTraversal> {
-        let (realm_id, base_basis) = match &retention.traversal_intent {
-            arkret_sdk::HistoryGovernanceTraversalIntent::MemberHistoryDelivery {
-                effective_scope,
-                trusted_history_base_basis,
-                ..
-            }
-            | arkret_sdk::HistoryGovernanceTraversalIntent::OrganizationRecoveryArchive {
-                effective_scope,
-                trusted_history_base_basis,
-                ..
-            } => {
-                let realm_id = match effective_scope {
-                    arkret_sdk::HistoryEffectiveScope::Realm { realm_id }
-                    | arkret_sdk::HistoryEffectiveScope::Circle { realm_id, .. } => {
-                        realm_id.clone()
-                    }
-                };
-                (realm_id, trusted_history_base_basis)
-            }
-        };
-        let existing = self
-            .state_store
-            .read(|store| store.trusted_mls_governance_checkpoint(realm_id.as_str()))
-            .ok_or_else(|| {
-                garth::Error::Protocol(
-                    "history traversal has no complete locally verified checkpoint".to_owned(),
-                )
-            })?;
-        let base_verifier_store = self.state_store.clone();
-        let base = arkret_sdk::derive_verified_mls_governance_checkpoint_at_basis(
-            &existing,
-            base_basis,
-            move |event, digest_suite, evidence, dependencies| {
-                crate::mls::governance_proof::verify_agent_history_key(
-                    &base_verifier_store,
-                    event,
-                    digest_suite,
-                    evidence,
-                    dependencies,
-                )
-            },
-        )
-        .await
-        .map_err(|error| garth::Error::Protocol(error.to_string()))?;
-        let cut = crate::mls::governance_acquisition::resolve_history_governance_cut(
-            self.api,
-            retention,
-            Some(access),
-        )
-        .await
-        .map_err(garth::Error::Protocol)?;
-        let cut_verifier_store = self.state_store.clone();
-        let checkpoint = arkret_sdk::verify_mls_governance_cut(
-            &base,
-            &cut.target_basis,
-            &cut.seals,
-            &cut.events,
-            &cut.dependencies,
-            move |event, digest_suite, evidence, dependencies| {
-                crate::mls::governance_proof::verify_agent_history_key(
-                    &cut_verifier_store,
-                    event,
-                    digest_suite,
-                    evidence,
-                    dependencies,
-                )
-            },
-        )
-        .await
-        .map_err(|error| garth::Error::Protocol(error.to_string()))?;
-        Ok(garth::VerifiedHistoryTraversal { checkpoint })
-    }
-}
-
 fn runtime(
     state_store: &StateStoreHandle,
 ) -> garth::HistoryRuntime<crate::state::InksonHistoryRuntimeStore> {
@@ -276,7 +191,7 @@ async fn current_history_authority(
         .seals_frontier(scope.realm_id().clone())
         .await?
         .frontier;
-    let query = arkret_sdk::HistoryAuthorityRequest {
+    let query = arkret_sdk::HistoryAuthorityRequestBody {
         effective_scope: scope.clone(),
         actor_id: actor.clone(),
         seal_basis: view.seal_basis,
@@ -515,14 +430,14 @@ fn build_signed_member_response(
     content: arkret_sdk::HistoryKeyResponseContent,
     signer: &crate::event_signer::InksonEventSigner,
     now: chrono::DateTime<chrono::Utc>,
-) -> anyhow::Result<arkret_sdk::HistoryKeyResponseSendRequest> {
+) -> anyhow::Result<arkret_sdk::HistoryKeyResponseSendRequestBody> {
     let request_digest = request_record.request.request_digest()?;
     let request_receipt_digest = request_record.request_receipt.request_receipt_digest()?;
     Ok(
-        arkret_sdk::HistoryKeyResponseSendRequest::build_signed_proof(
+        arkret_sdk::HistoryKeyResponseSendRequestBody::build_signed_proof(
             verification_method.clone(),
             now,
-            |source_proof| arkret_sdk::HistoryKeyResponseSendRequest {
+            |source_proof| arkret_sdk::HistoryKeyResponseSendRequestBody {
                 response_id: response_id.clone(),
                 effective_scope: request_record.request.effective_scope.clone(),
                 source_actor_id: source_actor_id.clone(),
@@ -1090,6 +1005,39 @@ pub async fn converge_member_history_recovery(
     Ok(outcome)
 }
 
+fn ensure_history_receiver_station(
+    state_store: &StateStoreHandle,
+    api: &crate::transport::TransportClient,
+    request_id: &arkret_sdk::HistoryRequestId,
+) -> anyhow::Result<()> {
+    let authority = state_store
+        .read(|store| store.active_authority())
+        .ok_or_else(|| anyhow::anyhow!("history receiver has no active account"))?;
+    let durable = runtime(state_store).durable_request(request_id)?;
+    let accepted = durable
+        .accepted
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("history request is not accepted"))?;
+    anyhow::ensure!(
+        durable.request.requester_actor_id == arkret_sdk::ActorId::account(authority.clone())
+            && accepted.request_receipt.release_id == authority.station_id,
+        "history response capability belongs to another account or Station"
+    );
+    let profiles = crate::config::LocalConfigStore::default().load_profiles();
+    let profile = profiles
+        .active()
+        .ok_or_else(|| anyhow::anyhow!("history receiver has no active Station route"))?;
+    anyhow::ensure!(
+        profile.account.authority == authority
+            && crate::config::same_server_url(
+                profile.account.server_url.as_str(),
+                api.base_url().as_str()
+            ),
+        "history response endpoint differs from the account's configured Station"
+    );
+    Ok(())
+}
+
 pub async fn acquire_response_page(
     state_store: &StateStoreHandle,
     api: &crate::transport::TransportClient,
@@ -1097,6 +1045,7 @@ pub async fn acquire_response_page(
     request_id: &arkret_sdk::HistoryRequestId,
     limit: Option<u8>,
 ) -> anyhow::Result<arkret_sdk::HistoryKeyResponseListOutcome> {
+    ensure_history_receiver_station(state_store, api, request_id)?;
     let http = http_client(api)?;
     runtime(state_store)
         .acquire_response_page(&http, secure_store, request_id, limit)
@@ -1104,11 +1053,8 @@ pub async fn acquire_response_page(
         .map_err(|error| anyhow::anyhow!(error.to_string()))
 }
 
-/// Verify and install one durable response_stream page into the external candidate
-/// ledger. Public DID/service keys are verified entirely by the SDK from the
-/// retained dependency closure. The external callback is restricted to the
-/// Agent and minimal-metadata MLS branches with explicit typed state
-/// anchors.
+/// Install a page from the account's Station, checking only cryptographic payloads
+/// and the receiver's actual MLS state.
 pub async fn verify_and_install_response_page<VerifyExternalSourceKey>(
     state_store: &StateStoreHandle,
     api: &crate::transport::TransportClient,
@@ -1120,15 +1066,17 @@ pub async fn verify_and_install_response_page<VerifyExternalSourceKey>(
 ) -> anyhow::Result<HistoryResponsePageInstallOutcome>
 where
     VerifyExternalSourceKey: for<'a> Fn(
-            arkret_sdk::HistorySourceProofExternalVerificationRequest<'a>,
+            &'a arkret_sdk::HistoryKeyResponseSendRequestBody,
+            &'a arkret_sdk::MinimalMetadataMlsLeafSignerEvidence,
         ) -> arkret_sdk::HistorySourceProofVerificationFuture<'a>
         + Clone,
 {
+    let session_epoch = crate::identity::device_directory::cache_epoch();
     let page = acquire_response_page(state_store, api, secure_store, request_id, limit).await?;
     if page.entries.is_empty() {
         return Ok(HistoryResponsePageInstallOutcome::default());
     }
-    let traversal = acquire_and_verify_traversal(state_store, api, request_id).await?;
+    page.validate()?;
     let runtime = runtime(state_store);
     let durable = runtime
         .durable_request(request_id)
@@ -1141,62 +1089,23 @@ where
     let private_key = load_history_request_hpke_private_key(secure_store, request_id)?
         .ok_or_else(|| anyhow::anyhow!("history recipient HPKE private key is unavailable"))?;
     let private_key_b64u = URL_SAFE_NO_PAD.encode(private_key);
-    let request_receipt_digest = accepted.request_receipt.request_receipt_digest()?;
-    let realm_id = match &accepted.request.effective_scope {
-        arkret_sdk::HistoryEffectiveScope::Realm { realm_id }
-        | arkret_sdk::HistoryEffectiveScope::Circle { realm_id, .. } => realm_id.clone(),
-    };
-    let source_evidence_digests = page
-        .entries
-        .iter()
-        .filter_map(|entry| match entry {
-            arkret_sdk::HistoryResponsePageEntry::Record { record } => Some(
-                record
-                    .source_record
-                    .source_signer_evidence_ref
-                    .content_digest(),
-            ),
-            arkret_sdk::HistoryResponsePageEntry::Lost { .. } => None,
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    let release_service_evidence_digests = page
-        .entries
-        .iter()
-        .map(|entry| match entry {
-            arkret_sdk::HistoryResponsePageEntry::Record { record } => {
-                record.release_service_signer_evidence_ref.content_digest()
-            }
-            arkret_sdk::HistoryResponsePageEntry::Lost { lost_record } => lost_record
-                .release_service_signer_evidence_ref
-                .content_digest(),
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    let signer_dependencies =
-        crate::mls::governance_acquisition::resolve_history_response_signer_dependencies(
-            api,
-            &realm_id,
-            &request_receipt_digest,
-            source_evidence_digests,
-            release_service_evidence_digests,
-        )
-        .await
-        .map_err(anyhow::Error::msg)?;
     let mut outcome = HistoryResponsePageInstallOutcome::default();
 
     for entry in &page.entries {
+        anyhow::ensure!(
+            crate::identity::device_directory::cache_epoch() == session_epoch,
+            "history receiver session changed"
+        );
+        ensure_history_receiver_station(state_store, api, request_id)?;
         let arkret_sdk::HistoryResponsePageEntry::Record { record } = entry else {
             let arkret_sdk::HistoryResponsePageEntry::Lost { lost_record } = entry else {
                 unreachable!("history response stream page entry is a closed union")
             };
-            let lost_dependencies = arkret_sdk::history_response_lost_signer_dependency_closure(
-                lost_record,
-                &signer_dependencies,
-            )?;
-            arkret_sdk::verify_history_response_lost_record(
-                &accepted,
-                lost_record,
-                &lost_dependencies,
-            )?;
+            lost_record.validate()?;
+            anyhow::ensure!(
+                lost_record.lost_at <= accepted.request.expires_at,
+                "history lost record exceeds request lifetime"
+            );
             runtime
                 .record_response_disposition(
                     request_id,
@@ -1211,53 +1120,13 @@ where
                 .map_err(|error| anyhow::anyhow!(error.to_string()))?;
             continue;
         };
-        let record_dependencies = (|| -> anyhow::Result<Vec<_>> {
-            let partition = arkret_sdk::history_response_record_signer_dependency_closure(
-                record,
-                &signer_dependencies,
-            )?;
-            let mut record_dependencies = std::collections::BTreeMap::new();
-            for dependency in partition
-                .source_signer_dependencies
-                .into_iter()
-                .chain(partition.release_service_signer_dependencies)
-            {
-                let key = arkret_sdk::canonical::canonical_json_bytes(dependency.selector())?;
-                if let Some(previous) = record_dependencies.insert(key, dependency.clone())
-                    && previous != dependency
-                {
-                    return Err(anyhow::anyhow!(
-                        "response stream signer dependency selector resolved to conflicting values"
-                    ));
-                }
-            }
-            Ok(record_dependencies.into_values().collect())
-        })();
-        let record_dependencies = match record_dependencies {
-            Ok(dependencies) => dependencies,
-            Err(error) => {
-                tracing::warn!(
-                    sequence = record.sequence,
-                    %error,
-                    "history response stream signer dependency closure was cryptographically rejected"
-                );
-                runtime
-                    .record_response_disposition(
-                        request_id,
-                        arkret_sdk::HistoryResponseAckEntry::Record {
-                            sequence: record.sequence,
-                            response_id: record.source_record.response_id.clone(),
-                            record_digest: record.record_digest.clone(),
-                            status:
-                                arkret_sdk::HistoryResponseRecordStatus::CryptographicallyRejected,
-                        },
-                    )
-                    .await
-                    .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-                outcome.cryptographically_rejected += 1;
-                continue;
-            }
-        };
+        let signer_result = page
+            .source_signer_results
+            .iter()
+            .find(|result| {
+                result.evidence_ref() == &record.source_record.source_signer_evidence_ref
+            })
+            .ok_or_else(|| anyhow::anyhow!("history page omits source signer result"))?;
         let manifest = match &record.source_record.content {
             arkret_sdk::HistoryKeyResponseContent::Chunk(chunk) => runtime
                 .verified_manifest(request_id, &chunk.manifest_digest)
@@ -1278,9 +1147,8 @@ where
         let verified = match arkret_sdk::verify_history_response_record(
             &accepted,
             record,
-            &traversal.checkpoint,
+            signer_result,
             manifest.as_ref(),
-            &record_dependencies,
             now,
             verify_external_source_key.clone(),
         )
@@ -1343,21 +1211,25 @@ where
                             "history chunk plaintext range differs from its signed descriptor"
                         ));
                     }
-                    let suites = arkret_sdk::winning_history_epoch_suites_from_verified_checkpoint(
-                        &traversal.checkpoint,
-                        &accepted.request.effective_scope,
-                        &accepted.request.effective_scope.canonical_mls_group_id()?,
-                        std::slice::from_ref(&chunk.covered_epoch_range),
-                    )
-                    .await?;
+                    let cipher_suite = page
+                        .cipher_suite
+                        .as_ref()
+                        .ok_or_else(|| anyhow::anyhow!("history page omits pinned MLS suite"))?;
+                    let kdf_nh =
+                        usize::from(arkret_sdk::registered_mls_ciphersuite_kdf_nh(cipher_suite)?);
+                    let count = chunk
+                        .covered_epoch_range
+                        .to_epoch
+                        .checked_sub(chunk.covered_epoch_range.from_epoch)
+                        .and_then(|value| value.checked_add(1))
+                        .and_then(|value| usize::try_from(value).ok())
+                        .ok_or_else(|| anyhow::anyhow!("history epoch range overflow"))?;
+                    let expected_len = count
+                        .checked_mul(kdf_nh)
+                        .ok_or_else(|| anyhow::anyhow!("history secret range length overflow"))?;
                     let secret_bytes = arkret_sdk::base64url_decode(
                         plaintext.secret_range.secrets_b64u.as_bytes(),
                     )?;
-                    let expected_len = suites.iter().try_fold(0_usize, |total, suite| {
-                        total
-                            .checked_add(usize::from(suite.kdf_nh))
-                            .ok_or_else(|| anyhow::anyhow!("history secret range length overflow"))
-                    })?;
                     if secret_bytes.len() != expected_len {
                         return Err(anyhow::anyhow!(
                             "history secret range byte length does not equal winning MLS KDF.Nh sum"
@@ -1365,9 +1237,11 @@ where
                     }
                     let source_record_digest = record.source_record.source_record_digest()?;
                     let mut offset = 0_usize;
-                    let mut candidates = Vec::with_capacity(suites.len());
-                    for suite in suites {
-                        let next = offset + usize::from(suite.kdf_nh);
+                    let mut candidates = Vec::with_capacity(count);
+                    for epoch in
+                        chunk.covered_epoch_range.from_epoch..=chunk.covered_epoch_range.to_epoch
+                    {
+                        let next = offset + kdf_nh;
                         let secret = secret_bytes[offset..next].to_vec();
                         let material_key = arkret_sdk::HistoryCandidateMaterialKey {
                             effective_scope: accepted.request.effective_scope.clone(),
@@ -1375,7 +1249,7 @@ where
                                 .request
                                 .effective_scope
                                 .canonical_mls_group_id()?,
-                            epoch: suite.epoch,
+                            epoch,
                             candidate_digest: arkret_sdk::Hash::new(
                                 arkret_sdk::canonical::sha256_digest(&secret),
                             )?,
@@ -1392,7 +1266,7 @@ where
                                 },
                                 first_observed_at: now,
                             };
-                        candidates.push((material_key, secret, attribution, suite.cipher_suite));
+                        candidates.push((material_key, secret, attribution, cipher_suite.clone()));
                         offset = next;
                     }
                     Ok::<_, anyhow::Error>(candidates)
@@ -1487,6 +1361,10 @@ where
             .map_err(|error| anyhow::anyhow!(error.to_string()))?;
         outcome.installed += 1;
     }
+    anyhow::ensure!(
+        crate::identity::device_directory::cache_epoch() == session_epoch,
+        "history receiver session changed before ACK"
+    );
     acknowledge_ready_page(state_store, api, secure_store, request_id).await?;
     Ok(outcome)
 }
@@ -1496,122 +1374,85 @@ async fn verify_history_external_source_key(
     secure_store: std::sync::Arc<dyn SecureKeyStore + Send + Sync>,
     authority: arkret_sdk::AccountId,
     device_id: arkret_sdk::DeviceId,
-    request: arkret_sdk::HistorySourceProofExternalVerificationRequest<'_>,
+    source_record: &arkret_sdk::HistoryKeyResponseSendRequestBody,
+    signer_evidence: &arkret_sdk::MinimalMetadataMlsLeafSignerEvidence,
+    accepted_transition: &arkret_sdk::MlsEpochHead,
 ) -> Result<arkret_sdk::signatures::proof::PublicKeyMaterial, arkret_sdk::WireError> {
-    match request {
-        arkret_sdk::HistorySourceProofExternalVerificationRequest::Agent {
-            source_record,
-            signer_evidence,
-            dependencies,
-        } => {
-            let trust_root = std::sync::Arc::new(signer_evidence.clone());
-            let trust_dependencies = std::sync::Arc::new(dependencies.to_vec());
-            arkret_sdk::verify_agent_history_source_key(
-                source_record,
-                signer_evidence,
-                dependencies,
-                move |request| {
-                    let root = trust_root.clone();
-                    let dependencies = trust_dependencies.clone();
-                    Box::pin(async move {
-                        arkret_sdk::verify_agent_portable_trust(request, &root, &dependencies)
-                    })
-                },
+    let realm_id = match &signer_evidence.effective_scope {
+        arkret_sdk::HistoryEffectiveScope::Realm { realm_id }
+        | arkret_sdk::HistoryEffectiveScope::Circle { realm_id, .. } => realm_id,
+    };
+    let local = state_store
+        .read(|store| {
+            store.locally_authenticated_identity_link(
+                realm_id,
+                &signer_evidence.mls_group_id,
+                signer_evidence.epoch,
+                signer_evidence.leaf_index,
             )
-            .await
-        }
-        arkret_sdk::HistorySourceProofExternalVerificationRequest::MinimalMetadata {
-            source_record,
-            signer_evidence,
-            verified_checkpoint,
-        } => {
-            let realm_id = match &signer_evidence.effective_scope {
-                arkret_sdk::HistoryEffectiveScope::Realm { realm_id }
-                | arkret_sdk::HistoryEffectiveScope::Circle { realm_id, .. } => realm_id,
-            };
-            let local = state_store
-                .read(|store| {
-                    store.locally_authenticated_identity_link(
-                        realm_id,
-                        &signer_evidence.mls_group_id,
-                        signer_evidence.epoch,
-                        signer_evidence.leaf_index,
-                    )
-                })
-                .ok_or_else(|| {
-                    arkret_sdk::WireError::Protocol(
-                        "minimal-metadata history source has no locally received IdentityLink"
-                            .to_owned(),
-                    )
-                })?;
-            let identity_link_bytes = arkret_sdk::base64url_decode(
-                local.identity_link_canonical_bytes_b64u.as_str().as_bytes(),
-            )?;
-            let leaf_node_bytes = arkret_sdk::base64url_decode(
-                local.leaf_node_canonical_bytes_b64u.as_str().as_bytes(),
-            )?;
-            if local.identity_link_digest
-                != arkret_sdk::Hash::new(arkret_sdk::canonical::sha256_digest(
-                    &identity_link_bytes,
-                ))?
-                || local.leaf_node_digest
-                    != arkret_sdk::Hash::new(arkret_sdk::canonical::sha256_digest(
-                        &leaf_node_bytes,
-                    ))?
-                || local.leaf_node_digest != signer_evidence.leaf_node_digest
-                || local.winning_group_state_ref
-                    != signer_evidence.winning_group_state_transition_ref
-            {
-                return Err(arkret_sdk::WireError::Protocol(
-                    "minimal-metadata local IdentityLink cache is corrupt or mismatched".to_owned(),
-                ));
-            }
-            let effective_scope = match &signer_evidence.effective_scope {
-                arkret_sdk::HistoryEffectiveScope::Realm { realm_id } => {
-                    arkret_sdk::ScopeRef::Realm {
-                        realm_id: realm_id.clone(),
-                    }
-                }
-                arkret_sdk::HistoryEffectiveScope::Circle {
-                    realm_id,
-                    circle_id,
-                } => arkret_sdk::ScopeRef::Circle {
-                    realm_id: realm_id.clone(),
-                    circle_id: circle_id.clone(),
-                },
-            };
-            let winning_group_state = state_store
-                .read(|store| {
-                    crate::mls::runtime::minimal_metadata_author_view_for_scope(
-                        store,
-                        secure_store.as_ref(),
-                        &authority,
-                        &device_id,
-                        &effective_scope,
-                        &signer_evidence.mls_group_id,
-                        signer_evidence.epoch,
-                        signer_evidence.winning_group_state_transition_ref.as_str(),
-                    )
-                })
-                .ok_or_else(|| {
-                    arkret_sdk::WireError::Protocol(
-                        "minimal-metadata history source has no local winning MLS state".to_owned(),
-                    )
-                })?;
-            arkret_sdk::verify_minimal_metadata_history_source_local_state(
-                source_record,
-                signer_evidence,
-                verified_checkpoint,
-                &local.identity_link,
-                &identity_link_bytes,
-                &winning_group_state,
+        })
+        .ok_or_else(|| {
+            arkret_sdk::WireError::Protocol(
+                "minimal-metadata history source has no locally received IdentityLink".to_owned(),
             )
-        }
+        })?;
+    let identity_link_bytes =
+        arkret_sdk::base64url_decode(local.identity_link_canonical_bytes_b64u.as_str().as_bytes())?;
+    let leaf_node_bytes =
+        arkret_sdk::base64url_decode(local.leaf_node_canonical_bytes_b64u.as_str().as_bytes())?;
+    if local.identity_link_digest
+        != arkret_sdk::Hash::new(arkret_sdk::canonical::sha256_digest(&identity_link_bytes))?
+        || local.leaf_node_digest
+            != arkret_sdk::Hash::new(arkret_sdk::canonical::sha256_digest(&leaf_node_bytes))?
+        || local.leaf_node_digest != signer_evidence.leaf_node_digest
+        || local.winning_group_state_ref != signer_evidence.winning_group_state_transition_ref
+    {
+        return Err(arkret_sdk::WireError::Protocol(
+            "minimal-metadata local IdentityLink cache is corrupt or mismatched".to_owned(),
+        ));
     }
+    let effective_scope = match &signer_evidence.effective_scope {
+        arkret_sdk::HistoryEffectiveScope::Realm { realm_id } => arkret_sdk::ScopeRef::Realm {
+            realm_id: realm_id.clone(),
+        },
+        arkret_sdk::HistoryEffectiveScope::Circle {
+            realm_id,
+            circle_id,
+        } => arkret_sdk::ScopeRef::Circle {
+            realm_id: realm_id.clone(),
+            circle_id: circle_id.clone(),
+        },
+    };
+    let winning_group_state = state_store
+        .read(|store| {
+            crate::mls::runtime::minimal_metadata_author_view_for_scope(
+                store,
+                secure_store.as_ref(),
+                &authority,
+                &device_id,
+                &effective_scope,
+                &signer_evidence.mls_group_id,
+                signer_evidence.epoch,
+                signer_evidence.winning_group_state_transition_ref.as_str(),
+            )
+        })
+        .ok_or_else(|| {
+            arkret_sdk::WireError::Protocol(
+                "minimal-metadata history source has no local winning MLS state".to_owned(),
+            )
+        })?;
+    arkret_sdk::verify_minimal_metadata_history_source_local_state(
+        source_record,
+        signer_evidence,
+        accepted_transition,
+        &local.identity_link,
+        &identity_link_bytes,
+        &winning_group_state,
+    )
 }
 
 /// Production response stream installer with the only supported external trust
-/// boundary wired to Inkson's durable Agent and MLS state.
+/// boundary wired to Inkson's durable MLS state.
 #[allow(clippy::too_many_arguments)]
 pub async fn verify_and_install_response_page_from_local_state(
     state_store: &StateStoreHandle,
@@ -1623,6 +1464,87 @@ pub async fn verify_and_install_response_page_from_local_state(
     limit: Option<u8>,
     now: chrono::DateTime<chrono::Utc>,
 ) -> anyhow::Result<HistoryResponsePageInstallOutcome> {
+    let session_epoch = crate::identity::device_directory::cache_epoch();
+    let durable = runtime(state_store).durable_request(request_id)?;
+    anyhow::ensure!(
+        state_store.read(|store| store.active_authority()).as_ref() == Some(authority),
+        "history receiver account changed"
+    );
+    anyhow::ensure!(
+        durable.request.requester_actor_id == arkret_sdk::ActorId::account(authority.clone()),
+        "history receiver differs from durable request account"
+    );
+    let accepted = durable
+        .accepted
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("history request is not accepted"))?;
+    anyhow::ensure!(
+        accepted.request_receipt.release_id == authority.station_id,
+        "history response release is not the account Station"
+    );
+    let page =
+        acquire_response_page(state_store, api, secure_store.as_ref(), request_id, limit).await?;
+    page.validate()?;
+    let http = http_client(api)?;
+    let mut transitions = std::collections::BTreeMap::new();
+    for result in &page.source_signer_results {
+        let arkret_sdk::HistorySourceSignerResult::ReceiverMls {
+            signer_evidence, ..
+        } = result
+        else {
+            continue;
+        };
+        let query = arkret_sdk::MlsAcceptedArtifactRequestBody {
+            effective_scope: signer_evidence.effective_scope.clone().into(),
+            mls_group_id: arkret_sdk::Base64UrlString::new(signer_evidence.mls_group_id.clone())
+                .map_err(anyhow::Error::msg)?,
+            artifact_ref: signer_evidence.winning_group_state_transition_ref.clone(),
+        };
+        let realm_id = match &signer_evidence.effective_scope {
+            arkret_sdk::HistoryEffectiveScope::Realm { realm_id }
+            | arkret_sdk::HistoryEffectiveScope::Circle { realm_id, .. } => realm_id,
+        };
+        anyhow::ensure!(
+            state_store
+                .read(|store| store.locally_authenticated_identity_link(
+                    realm_id,
+                    &signer_evidence.mls_group_id,
+                    signer_evidence.epoch,
+                    signer_evidence.leaf_index,
+                ))
+                .is_some(),
+            "minimal-metadata history is waiting for its local IdentityLink"
+        );
+        anyhow::ensure!(
+            state_store
+                .read(
+                    |store| crate::mls::runtime::minimal_metadata_author_view_for_scope(
+                        store,
+                        secure_store.as_ref(),
+                        authority,
+                        device_id,
+                        &query.effective_scope,
+                        &signer_evidence.mls_group_id,
+                        signer_evidence.epoch,
+                        signer_evidence.winning_group_state_transition_ref.as_str(),
+                    )
+                )
+                .is_some(),
+            "minimal-metadata history is waiting for its local MLS state"
+        );
+        let outcome = http.mls_accepted_artifact(&query).await?;
+        outcome.validate_for_request(&query)?;
+        transitions.insert(
+            result.evidence_ref().as_ref().to_owned(),
+            outcome.transition_head,
+        );
+    }
+    anyhow::ensure!(
+        crate::identity::device_directory::cache_epoch() == session_epoch
+            && state_store.read(|store| store.active_authority()).as_ref() == Some(authority),
+        "account session changed during history acquisition"
+    );
+    let transitions = std::sync::Arc::new(transitions);
     let verifier_store = secure_store.clone();
     let verifier_authority = authority.clone();
     let verifier_device_id = device_id.clone();
@@ -1634,14 +1556,31 @@ pub async fn verify_and_install_response_page_from_local_state(
         request_id,
         limit,
         now,
-        move |request| {
-            Box::pin(verify_history_external_source_key(
-                verifier_state_store.clone(),
-                verifier_store.clone(),
-                verifier_authority.clone(),
-                verifier_device_id.clone(),
-                request,
-            ))
+        move |source_record, signer_evidence| {
+            let transitions = transitions.clone();
+            let state = verifier_state_store.clone();
+            let secure = verifier_store.clone();
+            let authority = verifier_authority.clone();
+            let device = verifier_device_id.clone();
+            Box::pin(async move {
+                let head = transitions
+                    .get(source_record.source_signer_evidence_ref.as_ref())
+                    .ok_or_else(|| {
+                        arkret_sdk::WireError::Protocol(
+                            "history MLS transition is unavailable".to_owned(),
+                        )
+                    })?;
+                verify_history_external_source_key(
+                    state,
+                    secure,
+                    authority,
+                    device,
+                    source_record,
+                    signer_evidence,
+                    head,
+                )
+                .await
+            })
         },
     )
     .await
@@ -1664,20 +1603,10 @@ pub async fn acknowledge_ready_page(
     secure_store: &dyn SecureKeyStore,
     request_id: &arkret_sdk::HistoryRequestId,
 ) -> anyhow::Result<arkret_sdk::HistoryKeyResponseAckOutcome> {
+    ensure_history_receiver_station(state_store, api, request_id)?;
     let http = http_client(api)?;
     runtime(state_store)
         .acknowledge_ready_page(&http, secure_store, request_id)
-        .await
-        .map_err(|error| anyhow::anyhow!(error.to_string()))
-}
-
-pub async fn acquire_and_verify_traversal(
-    state_store: &StateStoreHandle,
-    api: &crate::transport::TransportClient,
-    request_id: &arkret_sdk::HistoryRequestId,
-) -> anyhow::Result<garth::VerifiedHistoryTraversal> {
-    runtime(state_store)
-        .acquire_receipt_bound_traversal(&ReceiptTraversal { api, state_store }, request_id)
         .await
         .map_err(|error| anyhow::anyhow!(error.to_string()))
 }

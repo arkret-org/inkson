@@ -26,7 +26,8 @@ pub(super) async fn recover_bound_principal_device(
         principal_did,
         replacement_device_id,
     )?;
-    let api = issue_recovery_session_transport(handoff, state_store).await?;
+    let (api, recovery_grant_id, recovery_grant_jkt) =
+        issue_recovery_session_transport(handoff, state_store).await?;
     let store_handle = crate::app::runtime_adapter::state_store_handle(state_store);
     if let Some(mut completed) = crate::mls::account_recovery::resume_pending_pcr_policy_recovery(
         &api,
@@ -44,24 +45,52 @@ pub(super) async fn recover_bound_principal_device(
     let policy = crate::recovery_strand::fetch_active_recovery_policy(&api)
         .await?
         .ok_or_else(|| anyhow::anyhow!("the identity has no active Recovery Key policy"))?;
-    let session = api
-        .create_recovery_session(&arkret_models_crypto::RecoverySessionCreateRequestBody {
-            request_id: arkret_sdk::RequestId::new(handoff.request_id.clone())?,
-            account_id: arkret_sdk::AccountId::new(
-                handoff
-                    .bound_principal_id
-                    .clone()
-                    .context("bound recovery handoff has no principal id")?,
-                handoff.audience_id.clone(),
-            ),
-            requesting_device_id: arkret_sdk::DeviceId::new(replacement_device_id.to_owned())?,
-            trust_domain: arkret_sdk::TrustDomainId::new(handoff.trust_domain.clone())?,
-            expected_recovery_policy_ref: Some(arkret_models_crypto::RecoveryPolicyRef {
-                policy_id: policy.policy_id.clone(),
-                policy_version: policy.version,
-            }),
-        })
-        .await?;
+    let signer =
+        crate::event_signer::active_signer().context("replacement device signer is unavailable")?;
+    anyhow::ensure!(
+        signer.device_id() == Some(replacement_device_id),
+        "replacement device signer changed"
+    );
+    let requesting_key = arkret_sdk::DidKey::new(format!(
+        "did:key:{}",
+        signer
+            .public_key_multibase()
+            .context("replacement device public key is unavailable")?
+    ))
+    .map_err(anyhow::Error::msg)?;
+    let possession = arkret_models_crypto::RecoveryDevicePossessionTranscript {
+        schema: "ak.identity.recovery_device_possession.v1".to_owned(),
+        session_grant_id: recovery_grant_id,
+        session_grant_cnf_jkt: recovery_grant_jkt,
+        requesting_device_public_key_did: requesting_key.clone(),
+        request_id: arkret_sdk::RequestId::new(handoff.request_id.clone())?,
+        account_id: arkret_sdk::AccountId::new(
+            handoff
+                .bound_principal_id
+                .clone()
+                .context("bound recovery handoff has no principal id")?,
+            handoff.audience_id.clone(),
+        ),
+        requesting_device_id: arkret_sdk::DeviceId::new(replacement_device_id.to_owned())?,
+        trust_domain: arkret_sdk::TrustDomainId::new(handoff.trust_domain.clone())?,
+        expected_recovery_policy_ref: Some(arkret_models_crypto::RecoveryPolicyRef {
+            policy_id: policy.policy_id.clone(),
+            policy_version: policy.version,
+        }),
+    };
+    let signature = signer.sign_raw(&possession.signing_bytes()?)?;
+    let create = possession.into_request(
+        arkret_sdk::Base64UrlString::new(arkret_sdk::canonical::base64url_encode(signature))
+            .map_err(anyhow::Error::msg)?,
+    )?;
+    let session = api.create_recovery_session(&create).await?;
+    anyhow::ensure!(
+        session.requesting_device_public_key_did == requesting_key
+            && session.request_id == create.request_id
+            && session.account_id == create.account_id
+            && session.requesting_device_id == create.requesting_device_id,
+        "recovery session changed its create identity or replacement device public key"
+    );
     let proof = crate::recovery_strand::build_recovery_unlock_proof_from_words(
         &session,
         &policy,
@@ -91,7 +120,11 @@ pub(super) async fn recover_bound_principal_device(
 pub(super) async fn issue_recovery_session_transport(
     handoff: &crate::state::PendingAccountHandoff,
     mut state_store: SyncSignal<crate::state::LocalStateStore>,
-) -> anyhow::Result<crate::transport::TransportClient> {
+) -> anyhow::Result<(
+    crate::transport::TransportClient,
+    arkret_wire::SessionGrantId,
+    String,
+)> {
     let holder = {
         let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
         let pending_store = crate::secure_key_store::PendingLocalStore::new(
@@ -149,8 +182,11 @@ pub(super) async fn issue_recovery_session_transport(
     {
         anyhow::bail!("recovery SessionGrant outcome changed its frozen authority binding");
     }
-    crate::transport::TransportClient::unauthenticated(&handoff.station_url)?
-        .with_session_grant_dpop(outcome.session_grant, holder)
+    let grant_id = outcome.session_grant_id;
+    let jkt = holder.jkt().to_owned();
+    let api = crate::transport::TransportClient::unauthenticated(&handoff.station_url)?
+        .with_session_grant_dpop(outcome.session_grant, holder)?;
+    Ok((api, grant_id, jkt))
 }
 
 pub(super) async fn activate_recovery_replacement_signer(
@@ -296,6 +332,7 @@ pub(super) async fn issue_recovery_completion_grant(
         &principal_did,
         persisted.device_id.clone(),
         state_store,
+        Some((persisted.grant_jwt.clone(), holder.clone())),
     )
     .await?;
     {
@@ -636,7 +673,8 @@ pub(super) enum AcceptedSessionReissueError {
 
 pub(super) fn load_bound_handoff_holder_key(
     handoff: &crate::state::PendingAccountHandoff,
-    account: &crate::config::ActiveAccountContext,
+    authority: &arkret_sdk::AccountId,
+    device_id: &arkret_sdk::DeviceId,
     mut state_store: SyncSignal<crate::state::LocalStateStore>,
     secure_store: &dyn crate::secure_key_store::SecureKeyStore,
 ) -> Result<crate::identity::account_auth::grant_dpop::DpopHandle, AcceptedSessionReissueError> {
@@ -661,15 +699,14 @@ pub(super) fn load_bound_handoff_holder_key(
     let holder = match pending {
         Some(holder) => holder,
         None => {
-            let user_store = crate::secure_key_store::UserLocalStore::new(
-                account.authority.clone(),
-                account.device_id.clone(),
-            )
-            .map_err(|error| {
-                AcceptedSessionReissueError::Contradiction(
-                    anyhow::anyhow!(error).context("open the accepted account secure scope"),
-                )
-            })?;
+            let user_store =
+                crate::secure_key_store::UserLocalStore::new(authority.clone(), device_id.clone())
+                    .map_err(|error| {
+                        AcceptedSessionReissueError::Contradiction(
+                            anyhow::anyhow!(error)
+                                .context("open the accepted account secure scope"),
+                        )
+                    })?;
             let stored_device = user_store
                 .load_device_id(secure_store)
                 .map_err(|error| {
@@ -682,7 +719,7 @@ pub(super) fn load_bound_handoff_holder_key(
                         "accepted account device id is unavailable"
                     ))
                 })?;
-            if stored_device != account.device_id {
+            if stored_device != *device_id {
                 return Err(AcceptedSessionReissueError::Contradiction(anyhow::anyhow!(
                     "accepted account secure scope belongs to another device"
                 )));
@@ -718,8 +755,13 @@ pub(super) async fn reissue_accepted_onboarding_session(
     mut state_store: SyncSignal<crate::state::LocalStateStore>,
 ) -> Result<CompletedIdentityCreation, AcceptedSessionReissueError> {
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-    let holder =
-        load_bound_handoff_holder_key(handoff, account, state_store, secure_store.as_ref())?;
+    let holder = load_bound_handoff_holder_key(
+        handoff,
+        &account.authority,
+        &account.device_id,
+        state_store,
+        secure_store.as_ref(),
+    )?;
     let handoff_grant = crate::identity::account_auth::load_account_handoff_grant(handoff)
         .map_err(|error| {
             AcceptedSessionReissueError::Retryable(

@@ -503,16 +503,16 @@ async fn authoring_exporter_aead_content_requires_accepted_transition_evidence()
     )
     .into_value();
     state.save_realm_tree_projection(realm, optimistic);
-    // Reproduce the account catch-up race: the next full frame can predate
-    // the newly accepted Realm. Reconcile must retain its optimistic body
-    // until the authoritative Realm projection arrives.
-    let keep = crate::realm_tree::full_sync_projection_keep_set(
-        &std::collections::BTreeSet::from([
-            "ak:realm:APCEv_eZJS-G3Rl9hDcbEIFNJxcYpqP2nkoGb6FOPmVc".to_owned(),
-        ]),
-        &state.load().realm_tree_projections,
-    );
-    state.retain_realm_tree_projections(|id| keep.contains(id));
+    // A partial summary page is not a complete membership set and must not
+    // erase a just-created Realm while its summary is still being projected.
+    let page: arkret_sdk::AccountSubscribeFrame = serde_json::from_value(serde_json::json!({
+        "kind": "delta", "cursor": "ak:cursor:YQ",
+        "realm_list": {"snapshot_cursor": "ak:cursor:cw", "snapshot_revision": 1,
+            "items": [], "next_cursor": "ak:cursor:bn", "complete": false}
+    }))
+    .unwrap();
+    state.prepare_account_demand_frame(&page).unwrap();
+    state.finish_account_demand_frame(&page).unwrap();
     assert!(realm_content_scheme_is_exporter_aead(&state, realm));
     // No secret is retained before any content is authored.
     assert!(state.history_secret_for(&scope, &group_id, 0).is_none());

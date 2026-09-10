@@ -72,7 +72,15 @@ pub(crate) use history_runtime::{InksonHistoryRuntimeStore, history_runtime};
 pub(crate) use history_source_outbox::{InksonHistorySourceBlobStore, history_source_outbox};
 
 mod agent_evidence;
+mod direct_conversation;
 mod mls_governance;
+pub(crate) use direct_conversation::DirectMessageContext;
+mod mls_welcome_discovery;
+pub use mls_welcome_discovery::MlsWelcomeDiscoveryProgress;
+mod current_index;
+pub(crate) use current_index::CurrentIndex;
+#[cfg(target_arch = "wasm32")]
+pub(crate) use current_index::CurrentIndexLocation;
 
 mod e2ee_secure_cache;
 pub(crate) use e2ee_secure_cache::{
@@ -98,6 +106,7 @@ pub(crate) use storage_util::*;
 // (an inherent impl may span files) and opens with `use super::*;` so it
 // sees this module's items (private parent items are visible to child
 // modules, so no visibility widening is needed).
+mod demand_sync;
 mod identity_session;
 pub(crate) mod invite_credentials;
 mod member_identity;

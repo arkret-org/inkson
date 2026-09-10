@@ -15,6 +15,7 @@ use crate::config::validate_server_url_parsed;
 pub struct ActiveAccountContext {
     pub profile_id: String,
     pub authority: AccountId,
+    pub principal_control_realm_id: arkret_sdk::RealmId,
     pub resolution: PrincipalResolutionProjection,
     pub device_id: DeviceId,
     pub server_url: Url,
@@ -25,6 +26,7 @@ pub struct ActiveAccountContext {
 struct PersistedActiveAccountContext {
     profile_id: String,
     authority: AccountId,
+    principal_control_realm_id: arkret_sdk::RealmId,
     resolution: PrincipalResolutionProjection,
     device_id: DeviceId,
     server_url: Url,
@@ -37,6 +39,7 @@ impl TryFrom<PersistedActiveAccountContext> for ActiveAccountContext {
         Self::new(
             value.profile_id,
             value.authority,
+            value.principal_control_realm_id,
             value.resolution,
             value.device_id,
             value.server_url,
@@ -57,8 +60,8 @@ impl<'de> Deserialize<'de> for ActiveAccountContext {
 }
 
 impl ActiveAccountContext {
-    /// Construct from a projection that the caller has already accepted after
-    /// attestation, method-history and freshness verification.
+    /// Construct from the authenticated Station current-principal result.
+    /// The client checks exact coordinates; it does not replay method history.
     ///
     /// This constructor is crate-private so raw network responses and DID
     /// DIDs cannot create authenticated application state outside the identity
@@ -66,6 +69,7 @@ impl ActiveAccountContext {
     pub(crate) fn new(
         profile_id: String,
         authority: AccountId,
+        principal_control_realm_id: arkret_sdk::RealmId,
         resolution: PrincipalResolutionProjection,
         device_id: DeviceId,
         server_url: Url,
@@ -97,6 +101,7 @@ impl ActiveAccountContext {
         Ok(Self {
             profile_id,
             authority,
+            principal_control_realm_id,
             resolution,
             device_id,
             server_url,
@@ -195,6 +200,8 @@ mod tests {
         ActiveAccountContext::new(
             "ak:profile:019b0000-0000-7000-8000-000000000001".to_owned(),
             AccountId::new(core("ak:did_core:webvh:zAlice"), core(service)),
+            arkret_sdk::RealmId::new("ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19")
+                .unwrap(),
             projection("did:webvh:zAlice:old.example:users:alice", 1),
             DeviceId::new("ak:device:019b0000-0000-7000-8000-000000000001").unwrap(),
             Url::parse(route).unwrap(),
@@ -243,6 +250,8 @@ mod tests {
                 core("ak:did_core:webvh:zBob"),
                 core("ak:did_core:webvh:zServerA"),
             ),
+            arkret_sdk::RealmId::new("ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19")
+                .unwrap(),
             projection("did:webvh:zBob:old.example:users:bob", 1),
             DeviceId::new("ak:device:019b0000-0000-7000-8000-000000000002").unwrap(),
             Url::parse("https://principal-a.example/").unwrap(),

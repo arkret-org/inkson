@@ -153,6 +153,8 @@ impl AccountFixture {
         crate::identity::active_account::ActiveAccountContext::new(
             self.profile_id,
             authority,
+            arkret_sdk::RealmId::new("ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19")
+                .unwrap(),
             arkret_sdk::PrincipalResolutionProjection {
                 did: did(self.principal.as_str()),
                 method_history_head: self.method_history_head,

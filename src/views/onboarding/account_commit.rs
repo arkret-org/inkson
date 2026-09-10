@@ -84,11 +84,42 @@ pub(super) fn profile_id_for_authority(
         .unwrap_or_else(|| format!("ak:profile:{}", crate::operation::uuid_v7()))
 }
 
+fn check_handoff_current_principal(
+    store: &crate::state::LocalStateStore,
+    expected: &crate::state::PendingAccountHandoff,
+    account: &crate::config::ActiveAccountContext,
+) -> anyhow::Result<()> {
+    let current = store
+        .pending_account_handoff()
+        .context("onboarding handoff was cancelled")?;
+    anyhow::ensure!(
+        current.request_id == expected.request_id
+            && current.holder_jkt == expected.holder_jkt
+            && current.audience_id == expected.audience_id
+            && current.device_id == expected.device_id,
+        "current principal response belongs to a superseded onboarding handoff"
+    );
+    if let Some(evidence) = store
+        .recovery_material_evidence()
+        .filter(|e| e.account_id == account.authority)
+    {
+        anyhow::ensure!(
+            evidence.principal_control_realm_id == account.principal_control_realm_id,
+            "current principal changes the accepted onboarding PCR"
+        );
+    }
+    Ok(())
+}
+
 pub(super) async fn resolve_handoff_active_account(
     handoff: &crate::state::PendingAccountHandoff,
     did: &arkret_sdk::Did,
     device_id: arkret_sdk::DeviceId,
-    state_store: SyncSignal<crate::state::LocalStateStore>,
+    mut state_store: SyncSignal<crate::state::LocalStateStore>,
+    issued_session: Option<(
+        String,
+        crate::identity::account_auth::grant_dpop::DpopHandle,
+    )>,
 ) -> anyhow::Result<crate::config::ActiveAccountContext> {
     let authority = arkret_sdk::AccountId::new(
         arkret_sdk::project_did_to_core_id(did)?,
@@ -96,12 +127,108 @@ pub(super) async fn resolve_handoff_active_account(
     );
     let profile_id = profile_id_for_authority(&state_store.read(), &authority);
     let server_url = url::Url::parse(&crate::config::normalize_server_url(&handoff.station_url))?;
+    let secure = crate::secure_key_store::default_secure_key_store("inkson");
+    let (credential, holder) = if let Some(session) = issued_session {
+        session
+    } else {
+        // Credential restoration needs only the handoff's exact key-store
+        // coordinates, never a provisional principal projection.
+        let holder = load_bound_handoff_holder_key(
+            handoff,
+            &authority,
+            &device_id,
+            state_store,
+            secure.as_ref(),
+        )
+        .map_err(|error| anyhow::anyhow!("restore onboarding holder: {error:?}"))?;
+        let user =
+            crate::secure_key_store::UserLocalStore::new(authority.clone(), device_id.clone())?;
+        let stored =
+            crate::state::load_session_grant_from_user_secure_store(&user, secure.as_ref())?;
+        let usable = stored.filter(|grant| {
+            grant.account_id == authority
+                && grant.device_id == device_id
+                && grant.audience_id == authority.station_id
+                && crate::identity::session_refresh::grant_matches_station(
+                    grant,
+                    &handoff.station_url,
+                )
+                && !crate::identity::session_refresh::grant_is_dead(grant)
+        });
+        if let Some(grant) = usable {
+            (grant.grant_jwt, holder)
+        } else {
+            let handoff_grant = crate::identity::account_auth::load_account_handoff_grant(handoff)?
+                .context("bound onboarding requires its handoff credential to reissue a session")?;
+            let account_base =
+                crate::identity::session_refresh::sdk_base_url_from_gate_account_base_url(
+                    &handoff.gate_account_base_url,
+                )?;
+            let mut correlation =
+                crate::identity::account_auth::transition::LoginCorrelation::for_handoff(handoff)
+                    .with_principal_id(authority.principal_id.clone())
+                    .with_device_id(device_id.as_str());
+            let issued = crate::views::login::issue_bound_handoff_session(
+                &handoff.station_url,
+                &account_base,
+                handoff,
+                &handoff_grant,
+                authority.principal_id.clone(),
+                did.clone(),
+                device_id.clone(),
+                &holder,
+                &mut correlation,
+            )
+            .await
+            .map_err(|error| anyhow::anyhow!("reissue bound onboarding session: {error:?}"))?;
+            // The returning-session flow already obtained the fresh self result.
+            anyhow::ensure!(
+                issued.account.authority == authority && issued.account.device_id == device_id,
+                "reissued onboarding session changed its Account or device"
+            );
+            check_handoff_current_principal(&state_store.read(), handoff, &issued.account)?;
+            let prepared = crate::views::login::prepare_completed_login_dpop_key(
+                secure.as_ref(),
+                &issued.account,
+                device_id.as_str(),
+                &issued.dpop_device_key,
+            )
+            .await
+            .map_err(anyhow::Error::msg)?;
+            crate::state::store_session_grant_in_user_secure_store_durable(
+                &user,
+                secure.as_ref(),
+                &issued.session_grant,
+            )
+            .await?;
+            {
+                let mut store = state_store.write();
+                check_handoff_current_principal(&store, handoff, &issued.account)?;
+                crate::views::login::commit_completed_login_dpop_key(
+                    &mut store,
+                    secure.as_ref(),
+                    &issued.account,
+                    &issued.dpop_device_key,
+                    prepared,
+                )
+                .map_err(anyhow::Error::msg)?;
+            }
+            return Ok(issued.account);
+        }
+    };
+    anyhow::ensure!(
+        holder.jkt() == handoff.holder_jkt,
+        "onboarding holder changed"
+    );
     let http = crate::transport::TransportClient::unauthenticated(server_url.as_str())?
+        .with_session_grant_dpop(credential, holder)?
         .sdk_http_client()?;
-    crate::transport::account::resolve_active_account_context(
+    let account = crate::transport::account::resolve_active_account_context(
         &http, profile_id, authority, device_id, server_url,
     )
-    .await
+    .await?;
+    check_handoff_current_principal(&state_store.read(), handoff, &account)?;
+    Ok(account)
 }
 
 pub(super) fn persist_completed_account_config(

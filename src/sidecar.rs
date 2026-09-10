@@ -1243,9 +1243,15 @@ pub(crate) async fn sync_sidecar_exchange_background(
     let mut outcome = SidecarBackgroundSyncOutcome::default();
     for (realm_id, realm_views) in views_by_realm {
         outcome.sidecar_views += realm_views.len();
-        api.event_submitter()?
-            .refresh_realm_governance_frontier(&realm_id)
-            .await?;
+        if state_store
+            .read()
+            .station_realm_digest_suite(&realm_id)
+            .is_none()
+        {
+            api.event_submitter()?
+                .refresh_realm_governance_frontier(&realm_id)
+                .await?;
+        }
         let backfill = api.event_submitter()?.backfill(&realm_id).await?;
         let accepted_events = backfill.complete_events("Sidecar context recovery")?;
         let locators =
@@ -1428,8 +1434,7 @@ fn refold_sidecar_exchanges_with_decrypt_report(
         if scope_hints.is_empty() {
             return SidecarRefoldOutcome::default();
         }
-        let Some(digest_suite) = store_ref.station_realm_digest_suite(realm_id)
-        else {
+        let Some(digest_suite) = store_ref.station_realm_digest_suite(realm_id) else {
             return SidecarRefoldOutcome {
                 backfill_required: true,
                 ..SidecarRefoldOutcome::default()

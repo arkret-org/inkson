@@ -41,6 +41,7 @@ pub fn FileTransferPanel(
                 authority.clone(),
                 principal_id.clone(),
                 device_id.clone(),
+                state_store,
                 items,
                 status,
                 refreshing,
@@ -205,6 +206,7 @@ pub fn FileTransferPanel(
                                     authority.clone(),
                                     principal_id.clone(),
                                     device_id.clone(),
+                                    state_store,
                                     items,
                                     status,
                                     refreshing,
@@ -332,11 +334,12 @@ fn FileTransferRow(
 }
 
 fn refresh_items(
-    base_url: String,
+    _base_url: String,
     api_token: String,
     authority: arkret_sdk::AccountId,
     actor_id: String,
     _device_id: String,
+    mut state_store: SyncSignal<crate::state::LocalStateStore>,
     mut items: Signal<Vec<FileTransferItem>>,
     mut status: Signal<String>,
     mut refreshing: Signal<bool>,
@@ -349,19 +352,6 @@ fn refresh_items(
     refreshing.set(true);
     status.set("Refreshing".to_owned());
     spawn(async move {
-        let api =
-            match crate::transport::auth::with_authed_api(&base_url, api_token, |api| async move {
-                Ok(api)
-            })
-            .await
-            {
-                Ok(api) => api,
-                Err(error) => {
-                    status.set(error.display());
-                    refreshing.set(false);
-                    return;
-                }
-            };
         let crypto = match load_file_transfer_crypto_context(&authority) {
             Ok(Some(crypto)) => crypto,
             Ok(None) => {
@@ -376,10 +366,8 @@ fn refresh_items(
                 return;
             }
         };
-        let sync_result = match api.sdk_http_client() {
-            Ok(http) => crate::client_core::account_subscribe_snapshot(&http, None).await,
-            Err(error) => Err(error),
-        };
+        let sync_result =
+            Ok::<_, anyhow::Error>(state_store.write().current_account_projection_step());
         match sync_result {
             Ok(sync) => {
                 let account_data = sync
@@ -392,9 +380,13 @@ fn refresh_items(
                 let count = next.len();
                 items.set(next);
                 status.set(if count == 0 {
-                    "Ready".to_owned()
+                    if state_store.write().account_data_baseline_complete() {
+                        "Ready".to_owned()
+                    } else {
+                        "Syncing".to_owned()
+                    }
                 } else {
-                    format!("Synced {count}")
+                    format!("Loaded {count}")
                 });
             }
             Err(error) => status.set(format!(

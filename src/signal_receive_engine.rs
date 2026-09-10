@@ -67,11 +67,9 @@ pub struct SignalReceiveEngineContext {
 /// Fail-closed [`garth::SignalSenderKeyResolver`] over accepted device and
 /// current Agent authority evidence.
 ///
-/// [`garth::SignalReceiver::accept`] resolves the sending device's key before
-/// it will touch the AEAD, so the lookup has to be synchronous; only the local
-/// device-directory cache can answer that. A cache miss fails the Signal closed
-/// rather than admitting it, and the async prefetch that fills the cache is
-/// owned by the account sync path.
+/// Device and Agent authority are queried asynchronously for every
+/// verification from the current Station and are never retained as
+/// a reusable current authorization. Both paths precede producer-proof and AEAD checks.
 ///
 /// Device authorization is resolved against the **current** accepted directory,
 /// not against `envelope.seal_ref`, which is what `signal.md` §1 requires: the
@@ -79,51 +77,67 @@ pub struct SignalReceiveEngineContext {
 /// one. Device authorization is principal-control state that a target-Realm
 /// Seal does not locate, and `keys_query_request_body` deliberately has no
 /// as-of basis. The source Station performs its own admission; destination
-/// relay authenticates that Station, not this device. This independent client
-/// check therefore remains mandatory even for a successfully relayed Signal.
+/// relay authenticates that Station. The client uses its own Station's current
+/// authority result and still verifies the actual Signal producer signature.
 #[derive(Default)]
 pub struct DirectorySenderKeyResolver {
     state_store: Option<crate::runtime::input::StateStoreHandle>,
+    account: Option<crate::config::ActiveAccountContext>,
 }
 
 impl garth::SignalSenderKeyResolver for DirectorySenderKeyResolver {
-    fn resolve_sender_key(
-        &self,
-        envelope: &arkret_wire::SignalEnvelope,
-    ) -> Option<garth::VerifiedSignalSenderKey> {
-        match envelope.sender_device_id.as_ref() {
-            Some(device_id) => {
-                let (public_key, authority, device_authorize_event_id) =
-                    crate::identity::device_directory::cached_signal_sender_evidence(
-                        &envelope.sender_actor_id.to_string(),
-                        device_id.as_str(),
-                    )?;
-                garth::VerifiedSignalSenderKey::from_directory_evidence(
+    fn resolve_sender_key<'a>(
+        &'a self,
+        envelope: &'a arkret_wire::SignalEnvelope,
+    ) -> garth::BoxSignalSenderKeyFuture<'a> {
+        Box::pin(async move {
+            let account = self.account.as_ref()?;
+            let store = self.state_store.as_ref()?;
+            let recipient = store.read(|store| store.active_authority())?;
+            if recipient != account.authority {
+                return None;
+            }
+            let generation = crate::identity::device_directory::cache_epoch();
+            let http = crate::identity::session_refresh::provide_authenticated_sdk_client(
+                account.server_url.as_str(),
+            )
+            .await
+            .ok()?;
+            let key = crate::identity::current_signer_evidence::query_for_signal(
+                &http,
+                envelope,
+                recipient.clone(),
+            )
+            .await?;
+            if generation != crate::identity::device_directory::cache_epoch()
+                || store.read(|store| store.active_authority()).as_ref() != Some(&recipient)
+                || envelope.expires_at <= crate::clock::now_utc()
+            {
+                return None;
+            }
+            let public_key = arkret_sdk::signatures::PublicKeyMaterial::Ed25519Raw {
+                bytes: arkret_sdk::base64url_decode(key.public_key_b64u.as_str().as_bytes())
+                    .ok()?,
+            };
+            match envelope.sender_device_id.as_ref() {
+                Some(device_id) => garth::VerifiedSignalSenderKey::from_directory_evidence(
                     public_key,
-                    envelope.sender_actor_id.clone(),
+                    key.actor.clone(),
                     device_id.clone(),
-                    envelope.proof.verification_method.clone(),
-                    authority,
-                    device_authorize_event_id,
+                    key.verification_method,
+                    key.actor.as_account_id()?.clone(),
+                    key.authorization_ref,
                 )
-                .ok()
-            }
-            None => {
-                let (public_key, agent_key_authorize_event_id) =
-                    self.state_store.as_ref()?.read(|store| {
-                        crate::identity::agent_signer_evidence::cached_current_signal_sender_evidence(
-                            store, envelope,
-                        )
-                    })?;
-                garth::VerifiedSignalSenderKey::from_agent_evidence(
+                .ok(),
+                None => garth::VerifiedSignalSenderKey::from_agent_evidence(
                     public_key,
-                    envelope.sender_actor_id.clone(),
-                    envelope.proof.verification_method.clone(),
-                    agent_key_authorize_event_id,
+                    key.actor,
+                    key.verification_method,
+                    key.authorization_ref,
                 )
-                .ok()
+                .ok(),
             }
-        }
+        })
     }
 }
 
@@ -234,15 +248,6 @@ struct InksonSignalSink {
 }
 
 impl SignalSink for InksonSignalSink {
-    fn prepare_admission<'a>(
-        &'a self,
-        envelope: &'a arkret_wire::SignalEnvelope,
-    ) -> impl std::future::Future<Output = ()> {
-        // The device-directory lookup inside admission is synchronous and
-        // cache-only, so a first contact would otherwise always fail closed.
-        self.products.prefetch_sender_key(envelope)
-    }
-
     async fn deliver<'a>(
         &'a self,
         envelope: &'a arkret_wire::SignalEnvelope,
@@ -486,6 +491,7 @@ pub async fn run_signal_receive_engine(
     };
     let resolver = DirectorySenderKeyResolver {
         state_store: Some(ctx.state_store.clone()),
+        account: Some(ctx.account.clone()),
     };
     let decryptor = MlsSignalDecryptor::new(
         ctx.state_store.clone(),
@@ -692,49 +698,21 @@ mod tests {
         }
     }
 
-    #[test]
-    fn signal_sender_resolution_requires_the_exact_verified_account() {
+    #[tokio::test]
+    async fn cached_device_key_cannot_authorize_signal_without_a_current_query() {
         use garth::SignalSenderKeyResolver as _;
-
         let envelope = sender_resolution_envelope();
         let actor = envelope.sender_actor_id.signing_principal_id().as_str();
         let device = envelope.sender_device_id.as_ref().unwrap().as_str();
-        let public_key = crate::identity::device_directory::public_key_from_directory_value(
+        let key = crate::identity::device_directory::public_key_from_directory_value(
             "did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuVkhY7g94pVQyG98x",
         )
         .unwrap();
-        crate::identity::device_directory::invalidate_actor(actor);
-        crate::identity::device_directory::seed_positive_for_test(
-            actor,
-            device,
-            public_key.clone(),
-        );
+        crate::identity::device_directory::seed_positive_for_test(actor, device, key);
         assert!(
             DirectorySenderKeyResolver::default()
                 .resolve_sender_key(&envelope)
-                .is_none(),
-            "a bare cached key must not replace its Station authority evidence"
-        );
-
-        crate::identity::device_directory::seed_signal_sender_for_test(
-            actor,
-            device,
-            public_key,
-            envelope.sender_actor_id.as_account_id().unwrap().clone(),
-        );
-        assert!(
-            DirectorySenderKeyResolver::default()
-                .resolve_sender_key(&envelope)
-                .is_some(),
-            "the exact verified account enables Signal admission"
-        );
-        let mut foreign = envelope.clone();
-        let mut account = foreign.sender_actor_id.as_account_id().unwrap().clone();
-        account.station_id = arkret_sdk::DidCoreId::new("ak:did_core:web:another.example").unwrap();
-        foreign.sender_actor_id = arkret_sdk::ActorId::account(account);
-        assert!(
-            DirectorySenderKeyResolver::default()
-                .resolve_sender_key(&foreign)
+                .await
                 .is_none()
         );
         crate::identity::device_directory::invalidate_actor(actor);

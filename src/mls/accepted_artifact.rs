@@ -20,7 +20,7 @@ pub(crate) async fn fetch<S: GovernanceProofStateStore>(
             .ok_or_else(|| "MLS artifact lacks its binding".to_owned())?,
     )
     .map_err(|error| error.to_string())?;
-    let request = arkret_sdk::MlsAcceptedArtifactRequest {
+    let request = arkret_sdk::MlsAcceptedArtifactRequestBody {
         effective_scope: binding.effective_scope().clone(),
         mls_group_id: arkret_sdk::Base64UrlString::new(binding.mls_group_id().to_owned())
             .map_err(|error| error.to_string())?,

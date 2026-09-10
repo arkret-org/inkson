@@ -737,12 +737,8 @@ pub(super) fn dispatch_calendar_rsvp(
     let build_base = base_url.clone();
     let build_realm_id = realm_id.clone();
     let build_actor_id = actor_id.clone();
-    let Some(digest_suite) = state_store
-        .read()
-        .station_realm_digest_suite(&realm_id)
-    else {
-        board_status
-            .set("cannot build RSVP: waiting for the Realm Station frontier".to_owned());
+    let Some(digest_suite) = state_store.read().station_realm_digest_suite(&realm_id) else {
+        board_status.set("cannot build RSVP: waiting for the Realm Station frontier".to_owned());
         return;
     };
     spawn(async move {

@@ -800,6 +800,7 @@ fn rehydrated_session_credential_only_matches_active_config() {
             arkret_sdk::DidCoreId::new("ak:did_core:web:other-principal.example".to_owned())
                 .unwrap(),
         ),
+        arkret_sdk::RealmId::new("ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19").unwrap(),
         account.resolution.clone(),
         account.device_id.clone(),
         account.server_url.clone(),

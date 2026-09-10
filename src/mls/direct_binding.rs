@@ -6,52 +6,193 @@ pub(crate) enum MessageAuthority {
     ProvisionalFounder(arkret_sdk::EventId),
 }
 
-/// Select evidence from a verified Seal closure, never a service's display
-/// representative. Equivalent OR-Set endorsements are interchangeable evidence;
-/// distinct semantic bindings are a conflict, not candidates to rank.
+/// Read the last exact own-Station result for display/encryption. Every new
+/// Message submit refreshes this context before freezing its authoring intent.
 pub(crate) fn message_authority(
-    checkpoint: &arkret_sdk::MlsGovernanceVerificationCheckpoint,
+    store: &crate::state::LocalStateStore,
+    realm: &str,
     actor: &arkret_sdk::ActorId,
-    binding_observed: bool,
 ) -> Option<MessageAuthority> {
-    let events = &checkpoint.accepted_events;
-    let create = events.iter().find(|event| {
-        event.realm_id == checkpoint.realm_id && event.kind == arkret_sdk::EventKind::RealmCreate
+    store
+        .direct_message_context(realm, actor)
+        .map(|context| context.authority)
+}
+
+static QUERY_SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+static QUERIES: std::sync::OnceLock<std::sync::Mutex<std::collections::BTreeMap<String, u64>>> =
+    std::sync::OnceLock::new();
+fn query_key(
+    account: &arkret_sdk::AccountId,
+    peer: &arkret_sdk::contact_operations::ContactPeer,
+) -> anyhow::Result<String> {
+    Ok(serde_json::to_string(&(account, peer))?)
+}
+pub(crate) fn begin_query(
+    account: &arkret_sdk::AccountId,
+    peer: &arkret_sdk::contact_operations::ContactPeer,
+) -> anyhow::Result<u64> {
+    let sequence = QUERY_SEQUENCE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let mut queries = QUERIES
+        .get_or_init(Default::default)
+        .lock()
+        .map_err(|_| anyhow::anyhow!("Direct Conversation query lock poisoned"))?;
+    queries.insert(query_key(account, peer)?, sequence);
+    while queries.len() > 64 {
+        let key = queries
+            .iter()
+            .min_by_key(|(_, value)| *value)
+            .unwrap()
+            .0
+            .clone();
+        queries.remove(&key);
+    }
+    Ok(sequence)
+}
+pub(crate) fn query_is_current(
+    account: &arkret_sdk::AccountId,
+    peer: &arkret_sdk::contact_operations::ContactPeer,
+    sequence: u64,
+) -> bool {
+    query_key(account, peer).ok().is_some_and(|key| {
+        QUERIES
+            .get_or_init(Default::default)
+            .lock()
+            .is_ok_and(|queries| queries.get(&key) == Some(&sequence))
+    })
+}
+
+pub(crate) async fn install_resolved_message_context(
+    http: &arkret_sdk::http_client::Client,
+    store: &crate::runtime::input::StateStoreHandle,
+    account: &arkret_sdk::AccountId,
+    epoch: u64,
+    query_sequence: u64,
+    peer: arkret_sdk::contact_operations::ContactPeer,
+    outcome: &arkret_sdk::direct_conversation_ops::DirectConversationResolveOutcome,
+) -> anyhow::Result<()> {
+    use arkret_sdk::direct_conversation_ops::DirectConversationResolveOutcome;
+    outcome.validate_shape()?;
+    let Some(coordinates) = outcome.coordinates() else {
+        return Ok(());
+    };
+    let realm = coordinates.realm_id.clone();
+    anyhow::ensure!(
+        query_is_current(account, &peer, query_sequence),
+        "Direct Conversation query was superseded"
+    );
+    store.write(|state| -> anyhow::Result<()> {
+        anyhow::ensure!(
+            state.active_authority().as_ref() == Some(account)
+                && epoch == crate::identity::device_directory::cache_epoch(),
+            "Direct Conversation account changed"
+        );
+        state.set_direct_message_context(realm.to_string(), None);
+        state.save_direct_conversation_peer(realm.to_string(), peer.clone())
     })?;
-    if create.payload.get("object")?.get("purpose")?.as_str()? != "direct_conversation" {
-        return None;
-    }
-    let mut endorsement = None;
-    let mut digest = None;
-    for event in events.iter().filter(|event| {
-        event.realm_id == checkpoint.realm_id
-            && event.kind == arkret_sdk::EventKind::DirectConversationBound
-    }) {
-        let payload: arkret_sdk::DirectConversationBoundPayload =
-            serde_json::from_value(serde_json::to_value(&event.payload).ok()?).ok()?;
-        if payload.realm_id != checkpoint.realm_id
-            || !payload.unordered_participant_ids.contains(actor)
-        {
-            return None;
+    let (authority, group_state_ref) = match outcome {
+        DirectConversationResolveOutcome::Found {
+            coordinates,
+            group_state_ref,
+            send_blockers,
+        } if send_blockers.is_empty() => {
+            let reference = coordinates.binding_event_ref.clone().ok_or_else(|| {
+                anyhow::anyhow!("Found Direct Conversation omits binding reference")
+            })?;
+            let decision = http
+                .read_control_proposal_decision(
+                    &arkret_sdk::ControlProposalDecisionReadRequestBody {
+                        realm_id: realm.clone(),
+                        proposal_digest: reference.event_digest(),
+                    },
+                )
+                .await?;
+            anyhow::ensure!(
+                decision.proposal_event_kind
+                    == arkret_sdk::EventKind::DirectConversationBound.as_str()
+                    && decision.proposal_state == arkret_sdk::ControlProposalState::Sealed
+                    && decision.accepted_seal_id.is_some(),
+                "Direct Conversation endorsement is not sealed"
+            );
+            (
+                MessageAuthority::Participant(reference),
+                group_state_ref.clone(),
+            )
         }
-        let next = payload.binding_digest().ok()?;
-        if digest.as_ref().is_some_and(|prior| prior != &next) {
-            return None;
+        DirectConversationResolveOutcome::Provisional {
+            group_state_ref: Some(group_state_ref),
+            ..
+        } => {
+            let reference = arkret_sdk::EventId::new(format!(
+                "ak:event:{}",
+                realm.as_str().trim_start_matches("ak:realm:")
+            ))?;
+            let resolved = http
+                .events_resolve(&arkret_sdk::EventsResolveRequestBody {
+                    event_ids: vec![reference.clone()],
+                    event_digests: vec![],
+                    include_payload: Some(true),
+                    history_traversal_access: None,
+                    max_response_bytes: Some(8 * 1024 * 1024),
+                })
+                .await?;
+            anyhow::ensure!(
+                resolved.missing.is_empty()
+                    && resolved.unauthorized.is_empty()
+                    && resolved.events.len() == 1,
+                "Direct Conversation founding Event unavailable"
+            );
+            let create = &resolved.events[0];
+            anyhow::ensure!(
+                create.event_id == reference
+                    && create.realm_id == realm
+                    && create.kind == arkret_sdk::EventKind::RealmCreate
+                    && create
+                        .payload
+                        .get("object")
+                        .and_then(|object| object.get("purpose"))
+                        .and_then(serde_json::Value::as_str)
+                        == Some("direct_conversation"),
+                "Direct Conversation founding result differs"
+            );
+            if create.actor_id.as_account_id() != Some(account) {
+                return Ok(());
+            }
+            (
+                MessageAuthority::ProvisionalFounder(reference),
+                group_state_ref.clone(),
+            )
         }
-        digest = Some(next);
-        endorsement.get_or_insert_with(|| event.event_id.clone());
-    }
-    if let Some(reference) = endorsement {
-        return Some(MessageAuthority::Participant(reference));
-    }
-    // An observed binding can only close bootstrap; it cannot grant authority
-    // until an endorsement is covered by the verified checkpoint above.
-    (!binding_observed
-        && create.actor_id == *actor
-        && events.iter().any(|event| {
-            event.realm_id == checkpoint.realm_id && event.kind == arkret_sdk::EventKind::MlsGenesis
-        }))
-    .then(|| MessageAuthority::ProvisionalFounder(create.event_id.clone()))
+        _ => return Ok(()),
+    };
+    let frontier = http.seals_frontier(realm.clone()).await?.frontier;
+    anyhow::ensure!(
+        frontier.realm_id == realm,
+        "Direct Conversation frontier differs"
+    );
+    let seal_ref = frontier.sole_leaf()?.clone();
+    store.write(|state| -> anyhow::Result<()> {
+        anyhow::ensure!(
+            state.active_authority().as_ref() == Some(account)
+                && epoch == crate::identity::device_directory::cache_epoch()
+                && query_is_current(account, &peer, query_sequence),
+            "Direct Conversation result arrived after session or query changed"
+        );
+        state
+            .cache_realm_governance_frontier(frontier)
+            .map_err(anyhow::Error::msg)?;
+        state.set_direct_message_context(
+            realm.to_string(),
+            Some(crate::state::DirectMessageContext {
+                account: account.clone(),
+                session_epoch: epoch,
+                query_sequence,
+                authority,
+                group_state_ref,
+                seal_ref,
+            }),
+        );
+        Ok(())
+    })
 }
 
 pub(crate) fn accepted_pair_commit<'a>(

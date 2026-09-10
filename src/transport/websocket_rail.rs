@@ -19,6 +19,7 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
+use garth::BoxSyncFuture;
 use garth::subscribe::realm::{BoxRealmStreamFuture, RealmEventsFrameSource, RealmEventsTransport};
 use garth::subscribe::signal::{
     BoxSignalStreamFuture, SignalStreamFrameSource, SignalStreamTransport,
@@ -27,7 +28,6 @@ use garth::websocket::socket::{BoxSocketFuture, WebSocketPacer};
 use garth::websocket::{
     SharedConnection, WebSocketEventsChannel, WebSocketSignalChannel, WebSocketTransport,
 };
-use garth::{AsyncSyncTransport, BoxSyncFuture};
 
 use super::websocket::WebSocketTransportSelector;
 
@@ -200,28 +200,45 @@ impl<H> StreamRail<H> {
     }
 }
 
-impl<H> AsyncSyncTransport for StreamRail<H>
-where
-    H: AsyncSyncTransport,
-{
-    fn sync_async<'a>(
-        &'a self,
-        request: arkret_sdk::SyncRequestBody,
-        options: arkret_sdk::http_client::ClientRequestOptions,
-    ) -> BoxSyncFuture<'a, arkret_sdk::AccountSubscribeBatch> {
-        let Some(transport) = self.websocket.as_ref() else {
-            return self.http.sync_async(request, options);
-        };
-        Box::pin(async move {
-            // The channel carries the resume cursor in its `open`, so the
-            // per-batch request body is the same one `SyncLoop` would have sent
-            // over HTTP and is consumed there.
-            let channel = transport.open_account(request.after.as_deref())?;
-            channel.sync_async(request, options).await
-        })
+pub enum AccountSource<S> {
+    Http(S),
+    WebSocket(garth::websocket::WebSocketAccountChannel<InksonPacer>),
+}
+
+impl<S: garth::AccountFrameSource> garth::AccountFrameSource for AccountSource<S> {
+    fn next_frame(&mut self) -> BoxSyncFuture<'_, Option<arkret_sdk::AccountSubscribeFrame>> {
+        match self {
+            Self::Http(source) => source.next_frame(),
+            Self::WebSocket(source) => source.next_frame(),
+        }
+    }
+    fn committed(&mut self, cursor: &str) -> garth::Result<()> {
+        match self {
+            Self::Http(source) => source.committed(cursor),
+            Self::WebSocket(source) => source.committed(cursor),
+        }
     }
 }
 
+impl<H: garth::AccountFrameTransport> garth::AccountFrameTransport for StreamRail<H> {
+    type Source = AccountSource<H::Source>;
+    fn open_account_frames(
+        &self,
+        request: arkret_sdk::SyncRequestBody,
+        options: arkret_sdk::http_client::ClientRequestOptions,
+    ) -> BoxSyncFuture<'_, Self::Source> {
+        Box::pin(async move {
+            if let Some(transport) = self.websocket.as_ref() {
+                Ok(AccountSource::WebSocket(transport.open_account(request)?))
+            } else {
+                self.http
+                    .open_account_frames(request, options)
+                    .await
+                    .map(AccountSource::Http)
+            }
+        })
+    }
+}
 /// One events source, whichever transport produced it.
 pub enum RealmEventsSource<S> {
     Http(S),

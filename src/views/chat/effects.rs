@@ -25,6 +25,24 @@ pub(super) fn ChatEffects(
 ) -> Element {
     let base_url = crate::app::SessionContext::base_url_string();
     let mut state_store = crate::app::SessionContext::get().state_store;
+    super::direct_authority::use_direct_authority(
+        base_url.clone(),
+        selected_realm_id.clone(),
+        authority.clone(),
+        token,
+        frontier_state,
+        state_store,
+    );
+    super::circle_welcome::use_circle_welcome(
+        base_url.clone(),
+        selected_realm_id.clone(),
+        selected_scope_circle.clone(),
+        authority.clone(),
+        device_id.clone(),
+        token,
+        sync_cursor,
+        state_store,
+    );
     use_member_handle_cache(
         controller,
         base_url.clone(),
@@ -608,14 +626,9 @@ pub(super) fn ChatEffects(
                     principal_id_for_decrypt.as_str(),
                     &device_id_for_decrypt,
                 ));
-                // The bootstrap snapshot must NOT carry a `wait_for` frontier. On
-                // wasm the subscribe response is read as a single buffered body
-                // (account.rs cannot frame-read NDJSON in the browser), so a
-                // `wait_for` header makes the server hold the stream open until the
-                // cursor advances — on a quiet realm that never returns and the
-                // discussion feed is stuck on "Loading…". The ongoing delta sync
-                // The standard account step omits `wait_for` for the same reason;
-                // read-your-writes only applies after a local write (outbox flush).
+                // These explicit Realm reads have no pending local write to
+                // observe. The main account stream owns progressive baselines
+                // and their durable cursor independently of this view.
                 let Ok(api) = authed_api_with_sync(&base, api_token, None) else {
                     event_sink.emit(ChatProjectionEvent::InitialSync {
                         requested: true,
@@ -626,7 +639,7 @@ pub(super) fn ChatEffects(
                 if !selected_realm_for_load.trim().is_empty() {
                     tracing::debug!(
                         realm_id = %selected_realm_for_load,
-                        phase = "governance_checkpoint",
+                        phase = "realm_current_result",
                         "chat initial sync phase started"
                     );
                     if let Err(error) =
@@ -637,21 +650,20 @@ pub(super) fn ChatEffects(
                         )
                         .await
                     {
-                        // A removed member can still enter this shell, but cannot
-                        // reacquire Realm governance state. Other members must pin
-                        // the verified checkpoint before the UI reports authoring
-                        // readiness, so a later offline operation is fully
-                        // authorable from synchronized state.
+                        // A removed member may still enter this shell. Failure to
+                        // obtain the Station's current result leaves authoring
+                        // readiness unresolved; finishing this view load does not
+                        // make the selected Realm's detail complete.
                         tracing::warn!(
                             realm_id = %selected_realm_for_load,
-                            phase = "governance_checkpoint",
+                            phase = "realm_current_result",
                             %error,
-                            "chat initial sync could not pin Realm governance checkpoint"
+                            "chat initial sync could not refresh the Realm current result"
                         );
                     } else {
                         tracing::debug!(
                             realm_id = %selected_realm_for_load,
-                            phase = "governance_checkpoint",
+                            phase = "realm_current_result",
                             "chat initial sync phase completed"
                         );
                     }
@@ -672,59 +684,13 @@ pub(super) fn ChatEffects(
                 {
                     event_sink.emit(ChatProjectionEvent::AccountDisplayName(display_name));
                 }
-                if let Ok(http) = api.sdk_http_client()
-                    && let Ok(sync) =
-                        crate::client_core::account_subscribe_snapshot(&http, None).await
-                {
-                    tracing::debug!(
-                        realm_id = %selected_realm_for_load,
-                        phase = "account_snapshot",
-                        projected_realms = sync.realm_projections.len(),
-                        "chat initial sync phase completed"
-                    );
-                    {
-                        let mut store = state_store.write();
-                        store.save_sync_cursor(sync.cursor.clone());
-                        for (realm_id, projection) in &sync.realm_projections {
-                            store.save_realm_tree_projection(realm_id.clone(), projection.clone());
-                        }
-                    }
-                    let sender_keys_refreshed =
-                        crate::sync_engine::prefetch_persistent_event_sender_keys(
-                            &api,
-                            &sync,
-                            crate::app::runtime_adapter::state_store_handle(state_store),
-                            |realm_id| {
-                                state_store
-                                    .read()
-                                    .realm_projection_is_minimal_metadata(realm_id)
-                            },
-                        )
-                        .await;
-                    tracing::debug!(
-                        realm_id = %selected_realm_for_load,
-                        phase = "sender_key_prefetch",
-                        sender_keys_refreshed,
-                        "chat initial sync phase completed"
-                    );
-                    loaded_messages.extend(chat_messages_from_sync_realms_with_sidecar(
-                        &sync.realm_projections,
-                        Some(&state_store.read()),
-                        decrypt_identity,
-                    ));
-                    event_sink.emit(ChatProjectionEvent::MergeChannels(
-                        channels_from_sync_realms(
-                            &sync.realm_projections,
-                            &selected_realm_for_load,
-                        ),
-                    ));
-                    sync_cursor.set(sync.cursor);
-                }
+                // The main account stream owns account cursors and selected-Realm detail.
+                // Existing local messages and the explicit Realm read below populate this view.
 
                 if !selected_realm_for_load.trim().is_empty()
                     && let Ok(sub) = api.event_submitter()
                 {
-                    // Backfill supplements the account snapshot and ongoing
+                    // Backfill supplements the local projection and ongoing
                     // delta sync. It must not hold the discussion readiness
                     // gate forever when a quiet or partially projected Realm
                     // leaves the request open.
@@ -743,7 +709,7 @@ pub(super) fn ChatEffects(
                                     realm_id = %selected_realm_for_load,
                                     phase = "realm_backfill",
                                     %error,
-                                    "chat initial backfill failed; continuing from snapshot and delta sync"
+                                    "chat initial backfill failed; continuing from local projection and account stream"
                                 );
                                 None
                             }
@@ -753,7 +719,7 @@ pub(super) fn ChatEffects(
                                 realm_id = %selected_realm_for_load,
                                 phase = "realm_backfill",
                                 timeout_seconds = CHAT_INITIAL_BACKFILL_TIMEOUT.as_secs(),
-                                "chat initial backfill timed out; continuing from snapshot and delta sync"
+                                "chat initial backfill timed out; continuing from local projection and account stream"
                             );
                             None
                         }
@@ -806,9 +772,6 @@ pub(super) fn ChatEffects(
                             )
                             .await;
                             }
-                            event_sink.emit(ChatProjectionEvent::MergeChannels(
-                                channels_from_events(&selected_realm_for_load, &backfill_events),
-                            ));
                             loaded_messages.extend(chat_messages_from_events_with_sidecar(
                                 &selected_realm_for_load,
                                 &backfill_events,

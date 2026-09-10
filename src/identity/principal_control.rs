@@ -32,18 +32,7 @@ pub(crate) async fn resolve_accepted_for_authority(
     http: &arkret_sdk::http_client::Client,
     authority: &arkret_sdk::AccountId,
 ) -> anyhow::Result<arkret_sdk::RealmId> {
-    let request = arkret_sdk::PrincipalResolutionAuditRequest::new(authority.clone());
-    let evidence = http.principal_resolution_audit(&request).await?;
-    anyhow::ensure!(
-        evidence.account_id == *authority,
-        "principal resolution audit changed the selected account authority"
-    );
-
-    anyhow::ensure!(
-        evidence.principal_genesis_event.realm_id == evidence.principal_control_realm_id
-            && evidence.current_resolution_event.realm_id == evidence.principal_control_realm_id
-            && evidence.accepted_seal.realm_id == evidence.principal_control_realm_id,
-        "principal resolution audit does not close over one PCR lineage"
-    );
-    Ok(evidence.principal_control_realm_id)
+    let result =
+        crate::transport::account::current_principal_for_authority(http, authority).await?;
+    Ok(result.principal_control_realm_id)
 }

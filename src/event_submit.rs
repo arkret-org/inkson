@@ -1181,6 +1181,18 @@ fn outbound_submit_lock() -> &'static tokio::sync::Mutex<()> {
 }
 
 impl EventSubmitter {
+    fn ensure_realm_detail_current(&self, realm_id: &str) -> anyhow::Result<()> {
+        if self
+            .state_store
+            .as_ref()
+            .is_some_and(|store| store.read(|store| store.realm_detail_invalidated(realm_id)))
+        {
+            return Err(anyhow::Error::new(arkret_sdk::Error::Http(
+                "Realm current state is refreshing after an account invalidation".to_owned(),
+            )));
+        }
+        Ok(())
+    }
     pub fn new(http: arkret_sdk::http_client::Client) -> Self {
         Self {
             http,
@@ -2194,11 +2206,14 @@ impl EventSubmitter {
         canonical_body_bytes: &[u8],
     ) -> anyhow::Result<SubmitEventResult> {
         validate_signed_sdk_event_for_submit(signed.event(), signed.digest_suite())?;
+        self.ensure_realm_detail_current(signed.realm_id.as_str())?;
         if arkret_sdk::canonical::canonical_json_bytes(signed)? != canonical_body_bytes {
             anyhow::bail!("persisted signed Event bytes do not match the queued Event");
         }
-        // What is persisted is the signed Event, which is what the receiver
-        // dedupes on. The publication wrapper is rebuilt on every attempt: the
+        // These canonical bytes bind the holder-local AuthoredEvent record,
+        // including its digest suite and frozen MLS leaf input. They are not
+        // the HTTP request body. The receiver dedupes on the signed Event.
+        // The publication wrapper is rebuilt on every attempt: the
         // lease is not part of the Event and it can expire while the write is
         // queued, and an Event first published after its lease expired is
         // permanently rejected (`offline-publication.md` §2). Replaying a
@@ -2287,7 +2302,9 @@ impl EventSubmitter {
         // authority-root claim must be decided BEFORE the intent freezes. The
         // authoring-time stamp then finds the claim already present and leaves
         // it alone, which keeps every attempt's envelope equal to its intent.
-        let intent = self.stamp_realm_authority_root_claim(intent.clone()).await;
+        let intent = self
+            .stamp_realm_authority_root_claim(intent.clone(), state_store.as_ref())
+            .await;
         // The issuer attestation is part of the capability artifact itself,
         // hence part of the immutable semantic intent.
         validate_capability_grant_payload(&intent)?;
@@ -2816,6 +2833,9 @@ impl EventSubmitter {
         authoring: SemanticAuthoring,
         digest_suite: arkret_sdk::DigestSuite,
     ) -> anyhow::Result<AuthoredAttempt> {
+        if let Some(realm_id) = intent.realm_id_opt() {
+            self.ensure_realm_detail_current(realm_id.as_str())?;
+        }
         self.verify_origin_station(intent).await?;
         let mut intent = intent.clone();
         // The authority-root claim is a producer-signed envelope member and a
@@ -2825,7 +2845,7 @@ impl EventSubmitter {
         // authored envelope diverge from its intent, and the queue's semantic
         // guard would (correctly) cancel the item.
         if authoring == SemanticAuthoring::Fresh {
-            intent = self.stamp_realm_authority_root_claim(intent).await;
+            intent = self.stamp_realm_authority_root_claim(intent, None).await;
         }
         validate_capability_grant_payload(&intent)?;
         intent = self.stamp_cbs_basis_for_intent(intent).await?;
@@ -3030,49 +3050,52 @@ impl EventSubmitter {
             return Ok(());
         }
         let store = state_store.or(self.state_store.as_ref()).ok_or_else(|| {
-            anyhow::anyhow!("Direct Conversation requires a verified checkpoint store")
+            anyhow::anyhow!("Direct Conversation requires an account state store")
         })?;
-        for attempt in 0..20 {
-            let observed = self
-                .http
-                .contacts_list()
-                .await?
-                .contacts
-                .into_iter()
-                .filter_map(|row| row.direct_conversation)
-                .any(|binding| binding.realm_id == *realm)
-                || store.read(|state| state.direct_conversation_binding_exists(realm.as_str()));
-            let checkpoint =
-                crate::mls::governance_proof::verify_governance_checkpoint_candidate_with_http(
-                    &self.http,
-                    store,
-                    realm.as_str(),
+        let authority = self
+            .authority
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Direct Conversation requires an account"))?;
+        let epoch = crate::identity::device_directory::cache_epoch();
+        let peer = store
+            .read(|state| state.direct_conversation_peer(realm.as_str()))
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "Open the Direct Conversation to refresh its exact peer coordinates"
                 )
-                .await
-                .map_err(anyhow::Error::msg)?;
-            store
-                .write(|state| {
-                    state.advance_verified_mls_governance_checkpoint(
-                        realm.as_str(),
-                        checkpoint.clone(),
-                    )
-                })
-                .map_err(anyhow::Error::msg)?;
-            if checkpoint.basis.leaves.len() == 1
-                && crate::mls::direct_binding::message_authority(
-                    &checkpoint,
-                    intent.actor_id(),
-                    observed,
-                )
-                .is_some()
-            {
-                return Ok(());
-            }
-            if attempt < 19 {
-                crate::runtime_helpers::sleep_for(Duration::from_millis(250)).await;
-            }
-        }
-        anyhow::bail!("Waiting for the verified Direct Conversation binding Seal before sending")
+            })?;
+        let query_sequence = crate::mls::direct_binding::begin_query(authority, &peer)?;
+        let outcome = self
+            .http
+            .direct_conversation_resolve(
+                &arkret_sdk::direct_conversation_ops::DirectConversationResolveRequestBody {
+                    peer: peer.clone(),
+                },
+            )
+            .await?;
+        anyhow::ensure!(
+            outcome
+                .coordinates()
+                .is_some_and(|coordinates| coordinates.realm_id == *realm),
+            "Direct Conversation resolver returned another Realm"
+        );
+        crate::mls::direct_binding::install_resolved_message_context(
+            &self.http,
+            store,
+            authority,
+            epoch,
+            query_sequence,
+            peer,
+            &outcome,
+        )
+        .await?;
+        anyhow::ensure!(
+            store.read(|state| state
+                .direct_message_context(realm.as_str(), intent.actor_id())
+                .is_some()),
+            "Direct Conversation authoring is not ready"
+        );
+        Ok(())
     }
 
     /// Stamp the registered authority-root claim on an Event the Realm's root
@@ -3082,7 +3105,12 @@ impl EventSubmitter {
     /// so a member's ordinary grant path is never blocked by a transient
     /// lookup error, and a wrongly-claimed root can only fail closed at
     /// admission (`realm_authority_controller_mismatch`), never widen.
-    async fn stamp_realm_authority_root_claim(&self, intent: EventIntent) -> EventIntent {
+    async fn stamp_realm_authority_root_claim(
+        &self,
+        intent: EventIntent,
+        state_store: Option<&crate::runtime::input::StateStoreHandle>,
+    ) -> EventIntent {
+        let state_store = state_store.or(self.state_store.as_ref());
         if intent.authorization_ref().is_some()
             || intent.executed_by().is_some()
             || intent.applet_id().is_some()
@@ -3138,22 +3166,14 @@ impl EventSubmitter {
             if intent.kind() != &arkret_sdk::EventKind::MessageCreate {
                 return intent;
             }
-            if let Some(checkpoint) = self.state_store.as_ref().and_then(|store| {
-                store.read(|state| state.trusted_mls_governance_checkpoint(realm_id.as_str()))
-            }) && checkpoint.basis.leaves.len() == 1
-                && let Some(authority) = crate::mls::direct_binding::message_authority(
-                    &checkpoint,
-                    intent.actor_id(),
-                    self.state_store.as_ref().is_some_and(|store| {
-                        store.read(|state| {
-                            state.direct_conversation_binding_exists(realm_id.as_str())
-                        })
-                    }),
-                )
-                && let Ok(auth_context) = data_event_auth_context(&intent)
+            if let Some(context) = state_store.and_then(|store| {
+                store.read(|state| {
+                    state.direct_message_context(realm_id.as_str(), intent.actor_id())
+                })
+            }) && let Ok(auth_context) = data_event_auth_context(&intent)
             {
                 use crate::mls::direct_binding::MessageAuthority;
-                let (source, role, reference) = match authority {
+                let (source, role, reference) = match context.authority {
                     MessageAuthority::Participant(reference) => (
                         arkret_wire::AuthoritySourceId::DIRECT_CONVERSATION_PARTICIPANT_V1,
                         "direct_conversation_binding", reference),
@@ -3167,7 +3187,7 @@ impl EventSubmitter {
                             .expect("registered Direct Conversation authority source"),
                     )
                     .with_ref(arkret_sdk::EventRef::new(reference.to_string(), role))
-                    .with_seal_ref(checkpoint.basis.leaves[0].clone())
+                    .with_seal_ref(context.seal_ref)
                     .with_auth_context(auth_context);
             }
             return intent;
@@ -3307,6 +3327,7 @@ impl EventSubmitter {
         // shapes (distinguished by JSON shape), so it is sent
         // unconditionally — no capability negotiation exists in the spec.
         for sdk_event in sdk_events {
+            self.ensure_realm_detail_current(sdk_event.realm_id.as_str())?;
             validate_signed_sdk_event_for_submit(sdk_event.event(), sdk_event.digest_suite())?;
         }
         // `idempotency_key` is not a body field in v1: it travels only in the

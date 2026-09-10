@@ -935,6 +935,8 @@ mod tests {
         let account = crate::config::ActiveAccountContext::new(
             "ak:profile:test".to_owned(),
             authority.clone(),
+            arkret_sdk::RealmId::new("ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19")
+                .unwrap(),
             arkret_sdk::PrincipalResolutionProjection {
                 did,
                 method_history_head: "head-test".to_owned(),

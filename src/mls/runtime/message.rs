@@ -631,6 +631,30 @@ pub fn minimal_metadata_author_view_for_scope(
     epoch: u64,
     group_state_ref: &str,
 ) -> Option<arkret_sdk::mls::AuthorGroupStateView> {
+    let group = restore_author_group_for_scope(
+        state_store,
+        secure_store,
+        authority,
+        device_id,
+        effective_scope,
+        group_id,
+        epoch,
+        group_state_ref,
+    )?;
+    Some(group.author_group_state_view(group_state_ref))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn restore_author_group_for_scope(
+    state_store: &crate::state::LocalStateStore,
+    secure_store: &dyn SecureKeyStore,
+    authority: &AccountId,
+    device_id: &DeviceId,
+    effective_scope: &arkret_sdk::ScopeRef,
+    group_id: &str,
+    epoch: u64,
+    group_state_ref: &str,
+) -> Option<arkret_sdk::mls::ArkretMlsGroup> {
     let realm_id = effective_scope.realm_id_opt()?.as_str();
     let circle_id = match effective_scope {
         arkret_sdk::ScopeRef::Circle { circle_id, .. } => Some(circle_id.as_str()),
@@ -655,7 +679,7 @@ pub fn minimal_metadata_author_view_for_scope(
     if group.group_id() != group_id || group.epoch() != epoch {
         return None;
     }
-    Some(group.author_group_state_view(group_state_ref))
+    Some(group)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -669,16 +693,22 @@ pub fn ordinary_agent_mls_author_view(
     epoch: u64,
     group_state_ref: &str,
 ) -> Option<arkret_sdk::mls::AgentMlsSignerView> {
-    let group_state = minimal_metadata_author_view(
+    let scope = arkret_sdk::ScopeRef::Realm {
+        realm_id: arkret_sdk::RealmId::new(realm_id.to_owned()).ok()?,
+    };
+    let group = restore_author_group_for_scope(
         state_store,
         secure_store,
-        realm_id,
         authority,
         device_id,
+        &scope,
         group_id,
         epoch,
         group_state_ref,
     )?;
+    let group_state = group.author_group_state_view(group_state_ref);
+    let leaves = group.security_frontier_leaves().ok()?;
+    let historical_keys = state_store.historical_agent_signer_keys_for_realm(realm_id);
     let mut leaf_authorization_refs = Vec::new();
     for leaf in &group_state.active_leaves {
         let arkret_sdk::mls::AuthorLeafCredential::Basic { identity } = &leaf.credential else {
@@ -693,30 +723,24 @@ pub fn ordinary_agent_mls_author_view(
         let Ok(signer_core) = arkret_sdk::project_did_to_core_id(&signer_id) else {
             continue;
         };
-        let signer_actor = signer_core;
-        for entry in state_store.cached_agent_signer_evidence_for_agent(&signer_actor) {
-            let binding = match &entry.evidence {
-                arkret_sdk::AgentSignerEvidence::CurrentAdmission {
-                    admission_evidence, ..
-                }
-                | arkret_sdk::AgentSignerEvidence::HistoricalEvent {
-                    admission_evidence, ..
-                } => {
-                    &admission_evidence
-                        .agent_authority_state_evidence
-                        .state
-                        .signing_key_binding
-                }
-            };
-            let Ok(key) = arkret_sdk::base64url_decode(binding.public_key.key.as_str().as_bytes())
+        let Some(identity) = leaves.iter().find(|binding| {
+            binding.leaf_index == leaf.leaf_index
+                && binding.actor_id.signing_principal_id() == &signer_core
+        }) else {
+            continue;
+        };
+        for entry in historical_keys
+            .iter()
+            .filter(|entry| entry.key.actor == identity.actor_id)
+        {
+            let Ok(key) =
+                arkret_sdk::base64url_decode(entry.key.public_key_b64u.as_str().as_bytes())
             else {
                 continue;
             };
             if key == leaf.signature_key {
-                leaf_authorization_refs.push((
-                    leaf.leaf_index,
-                    binding.agent_key_authorize_event_id.clone(),
-                ));
+                leaf_authorization_refs
+                    .push((leaf.leaf_index, entry.key.authorization_ref.clone()));
             }
         }
     }
@@ -1313,14 +1337,35 @@ pub(crate) async fn sign_welcome_consume_request(
 }
 
 pub(crate) fn accepted_welcome_consume_candidates(
-    messages_value: &serde_json::Value,
-    realm_id: &str,
-    accepted_welcome_event_ids: &std::collections::BTreeSet<String>,
+    artifacts: &garth::AcceptedMlsArtifactState,
+    scope: &arkret_sdk::ScopeRef,
 ) -> Vec<WelcomeConsumeCandidate> {
-    collect_welcome_message_entries(messages_value)
-        .iter()
-        .filter_map(|entry| welcome_consume_candidate(entry, realm_id))
-        .filter(|candidate| accepted_welcome_event_ids.contains(&candidate.welcome_event_id))
+    let Some(realm_id) = scope.realm_id_opt() else {
+        return Vec::new();
+    };
+    artifacts
+        .artifacts
+        .values()
+        .filter(|artifact| {
+            artifact.event.kind == arkret_sdk::EventKind::MlsWelcome
+                && artifact.event.realm_id == *realm_id
+        })
+        .filter_map(|artifact| {
+            let content = serde_json::to_value(&artifact.event.payload).ok()?;
+            let payload: arkret_sdk::MlsWelcomePayload =
+                serde_json::from_value(content.clone()).ok()?;
+            if payload.governance_binding.effective_scope() != scope {
+                return None;
+            }
+            welcome_consume_candidate(
+                &WelcomeMessageEntry {
+                    content,
+                    key_package_id: Some(payload.keypackage_ref.to_string()),
+                    welcome_event_id: Some(artifact.event.event_id.to_string()),
+                },
+                realm_id.as_str(),
+            )
+        })
         .collect()
 }
 
@@ -2071,6 +2116,21 @@ pub(crate) fn encrypt_message_with_device_snapshot(
     let snapshot = state_store
         .mls_checkpoint_for_scope(&effective_scope)
         .ok_or(MlsRuntimeError::MissingWelcome)?;
+    if circle.is_none()
+        && sidecar_binding.is_none()
+        && state_store.realm_collaboration_role(realm_id)
+            == Some(arkret_sdk::CollaborationRealmRole::DirectConversation)
+    {
+        let context = state_store
+            .direct_message_context(realm_id, &arkret_sdk::ActorId::account(authority.clone()))
+            .ok_or(MlsRuntimeError::EncryptionTransitionPending)?;
+        let local_ref = state_store
+            .mls_group_state_ref_for_scope(&effective_scope, &snapshot.group_id, snapshot.epoch)
+            .map_err(|_| MlsRuntimeError::EncryptionTransitionPending)?;
+        if local_ref != context.group_state_ref {
+            return Err(MlsRuntimeError::EncryptionTransitionPending);
+        }
+    }
     let is_minimal_metadata = state_store.realm_projection_is_minimal_metadata(realm_id);
     let secret = load_device_checkpoint_secret(secure_store, authority, device_id)
         .map_err(MlsRuntimeError::DeviceSecret)?;
@@ -2095,18 +2155,14 @@ pub(crate) fn encrypt_message_with_device_snapshot(
     let provisional_founder = event_kind == event_kind_str::MESSAGE_CREATE
         && circle.is_none()
         && sidecar_binding.is_none()
-        && state_store
-            .trusted_mls_governance_checkpoint(realm_id)
-            .is_some_and(|checkpoint| {
-                matches!(
-                    crate::mls::direct_binding::message_authority(
-                        &checkpoint,
-                        &arkret_sdk::ActorId::account(authority.clone()),
-                        state_store.direct_conversation_binding_exists(realm_id),
-                    ),
-                    Some(crate::mls::direct_binding::MessageAuthority::ProvisionalFounder(_))
-                )
-            });
+        && matches!(
+            crate::mls::direct_binding::message_authority(
+                state_store,
+                realm_id,
+                &arkret_sdk::ActorId::account(authority.clone())
+            ),
+            Some(crate::mls::direct_binding::MessageAuthority::ProvisionalFounder(_))
+        );
     if sidecar_binding.is_none() && !provisional_founder {
         ensure_realm_membership_is_covered_for_send(state_store, realm_id, circle, &group)?;
     }

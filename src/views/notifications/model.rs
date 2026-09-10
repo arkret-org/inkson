@@ -12,7 +12,6 @@ use arkret_sdk::push_rule_core::{
 };
 use serde_json::Value;
 
-use crate::models::AccountSyncStep;
 use crate::notification_rules::{
     DndSettings, NotificationEvalContext, PushRulesConfig, WatchLevel, evaluate_notification,
 };
@@ -28,7 +27,7 @@ pub(crate) use crate::state::projection::notifications::{
     JoinedRealmIds, default_notification_title, invite_notification_target_for_dedupe,
     notification_id_for_dedupe, notification_kind_wire,
 };
-use crate::state::{ClientLocalState, LocalStateStore, StoredNotification};
+use crate::state::{ClientLocalState, StoredNotification};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum UiNotificationGroup {
@@ -118,46 +117,6 @@ pub(crate) fn notification_value_read_by_cursor(
         value.strand_id(),
         source_event_id,
     )
-}
-
-pub(crate) fn apply_sync_projection_to_store(
-    store: &mut LocalStateStore,
-    response: &AccountSyncStep,
-    realm_title_hints: &BTreeMap<String, String>,
-) {
-    store.save_sync_cursor(response.cursor.clone());
-    for (id, body) in &response.realm_projections {
-        let projection = crate::realm_tree::projection_with_title_hint(
-            id,
-            body,
-            realm_title_hints.get(id).map(String::as_str),
-        );
-        store.save_realm_tree_projection(id.clone(), projection);
-        store.save_realm_collaboration_role(id.clone(), response.collaboration_role(id));
-        store.merge_realm_seal_view_from_sync_body(id, body);
-        store.ingest_move_event_states(id, body);
-    }
-}
-
-/// Fold an account snapshot into the same durable notification projection the
-/// live sync engine uses. In particular, to-device invite delivery is ingested
-/// before typed Realm membership performs the final stale-invite pruning.
-pub(crate) fn apply_notification_snapshot_to_store(
-    store: &mut LocalStateStore,
-    response: &AccountSyncStep,
-    joined_realms: &JoinedRealmIds,
-) -> Vec<StoredNotification> {
-    store.ingest_to_device_messages(&response.updates.to_device);
-    let mut notifications = store.notification_projection();
-    crate::state::projection::notifications::apply_notification_projection(
-        &mut notifications,
-        &response.updates.notifications,
-        &response.updates.account_data,
-        true,
-        joined_realms,
-    );
-    store.save_notification_projection(notifications.clone());
-    notifications
 }
 
 #[cfg(test)]

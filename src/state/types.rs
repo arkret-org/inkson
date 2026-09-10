@@ -551,7 +551,7 @@ pub struct RealmStateSnapshotSyncStatus {
 /// Session-local response to one exact MLS authoring intent.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct CachedMlsGovernanceResult {
-    pub request: arkret_sdk::MlsGovernanceFrontierRequest,
+    pub request: arkret_sdk::MlsGovernanceFrontierRequestBody,
     pub outcome: arkret_sdk::MlsGovernanceFrontierOutcome,
     pub session_epoch: u64,
     pub received_at: DateTime<Utc>,
@@ -560,7 +560,7 @@ pub struct CachedMlsGovernanceResult {
 /// Session-local Station result and exact MLS crypto inputs. Never a governance checkpoint.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct CachedMlsAcceptedArtifact {
-    pub request: arkret_sdk::MlsAcceptedArtifactRequest,
+    pub request: arkret_sdk::MlsAcceptedArtifactRequestBody,
     pub outcome: arkret_sdk::MlsAcceptedArtifactOutcome,
     pub event: arkret_sdk::Event,
     pub transition: arkret_sdk::Event,
@@ -797,38 +797,17 @@ pub struct MlsCoverageStale {
     pub reason: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(
-    tag = "verification_mode",
-    rename_all = "snake_case",
-    deny_unknown_fields
-)]
-pub enum CachedAgentSignerEvidenceContext {
-    CurrentRelation {
-        agent_actor_id: arkret_sdk::ActorId,
-        realm_id: arkret_sdk::RealmId,
-        recipient_account_id: arkret_sdk::AccountId,
-    },
-    HistoricalEvent {
-        realm_id: arkret_sdk::RealmId,
-        event_id: arkret_sdk::EventId,
-        producer_accepted_at: chrono::DateTime<chrono::Utc>,
-        producer_signer_resolution_evidence_ref: arkret_sdk::SignerEvidenceRef,
-        receiver_id: arkret_sdk::DidCoreId,
-    },
-}
-
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct CachedAgentSignerEvidence {
-    pub evidence: arkret_sdk::AgentSignerEvidence,
-    pub invalidated: bool,
-    pub signer_evidence_root: arkret_sdk::AuthenticatedSignerResolutionEvidence,
-    pub signer_evidence_dependencies: Vec<arkret_sdk::AuthenticatedSignerResolutionEvidence>,
-    #[serde(skip)]
-    pub verified_current_key: Option<arkret_sdk::VerifiedAgentCurrentContext>,
-    #[serde(skip)]
-    pub verified_historical_key: Option<[u8; 32]>,
-    pub verification_context: CachedAgentSignerEvidenceContext,
+#[serde(deny_unknown_fields)]
+pub struct CachedHistoricalAgentSignerKey {
+    pub recipient_account_id: arkret_sdk::AccountId,
+    pub realm_id: arkret_sdk::RealmId,
+    pub event_id: arkret_sdk::EventId,
+    pub receiver_id: arkret_sdk::DidCoreId,
+    pub accepted_at: chrono::DateTime<chrono::Utc>,
+    pub producer_signer_evidence_ref: arkret_sdk::SignerEvidenceRef,
+    pub signer_evidence_ref: arkret_sdk::SignerEvidenceRef,
+    pub key: arkret_sdk::StationSigningKey,
     pub cached_at_unix_ms: u64,
 }
 
@@ -864,6 +843,8 @@ pub(crate) struct LocallyAuthenticatedIdentityLink {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ClientLocalState {
     pub sync_cursor: Option<String>,
+    #[serde(default)]
+    pub(crate) demand_sync: super::demand_sync::DemandSyncState,
     /// Per-realm `ak.self.events.stream.subscribe.v1` resume cursors, keyed by
     /// realm id. Kept PHYSICALLY SEPARATE from the account-aggregate
     /// `sync_cursor`: the realm events stream and the account stream are
@@ -928,6 +909,8 @@ pub struct ClientLocalState {
     /// plus transaction/request ids where present.
     #[serde(default)]
     pub to_device_inbox: Vec<Value>,
+    #[serde(default)]
+    pub mls_welcome_inbox_index: BTreeMap<String, Vec<usize>>,
     /// Durable canonical-envelope digest keyed by
     /// the exact closed sender branch plus `message_id`.
     /// The receipt is written in the same state snapshot as the inbox entry,
@@ -1077,10 +1060,10 @@ pub struct ClientLocalState {
     #[serde(default, rename = "mls_historical_snapshots")]
     pub mls_historical_checkpoints:
         BTreeMap<String, crate::mls::persistence::MlsLocalCheckpointEnvelope>,
-    /// Bounded, cryptographically verified portable Agent signer evidence.
-    /// Keys bind agent, method, authorization Event, state root and frontier.
+    /// Bounded Station signing results for exact historical Event admissions.
+    /// Current authority is queried per verification and is never persisted here.
     #[serde(default)]
-    pub agent_signer_evidence: BTreeMap<String, CachedAgentSignerEvidence>,
+    pub historical_agent_signer_keys: BTreeMap<String, CachedHistoricalAgentSignerKey>,
     /// `encryption-and-audit.md` §2.4.1 `epoch_update_required` — effective
     /// scopes whose last E2EE application DataEvent was refused with
     /// `mls_governance_binding_stale`, keyed by
@@ -1099,19 +1082,23 @@ pub struct ClientLocalState {
     /// Seal head.
     #[serde(skip)]
     pub mls_governance_results: BTreeMap<String, CachedMlsGovernanceResult>,
+    #[serde(default)]
+    pub direct_conversation_peers: BTreeMap<String, arkret_sdk::contact_operations::ContactPeer>,
+    #[serde(skip)]
+    pub(crate) direct_message_contexts: BTreeMap<String, super::DirectMessageContext>,
     #[serde(skip)]
     pub realm_governance_frontiers:
         BTreeMap<String, (u64, DateTime<Utc>, arkret_sdk::RealmSealFrontierView)>,
     #[serde(skip)]
     pub mls_accepted_artifacts: BTreeMap<String, CachedMlsAcceptedArtifact>,
-    /// Complete locally verified replay checkpoint used as the next proof
-    /// base. T1 installs the event-derived Realm genesis checkpoint.
-    /// Successful full verification atomically advances it to the exact target
-    /// checkpoint (T3); a bare Seal basis or service response never changes
-    /// this pin.
     #[serde(default)]
-    pub mls_governance_checkpoints:
-        BTreeMap<String, arkret_sdk::MlsGovernanceVerificationCheckpoint>,
+    pub mls_welcome_discovery: BTreeMap<String, super::MlsWelcomeDiscoveryProgress>,
+    #[serde(default)]
+    pub current_generation: u64,
+    #[serde(default)]
+    pub current_reset_required: bool,
+    #[serde(default)]
+    pub local_device_refresh_pending: bool,
     /// X5.1 — local-only plaintext sidecar for the author's own encrypted
     /// private strand fields. Keyed `realm_id -> strand_id -> field_path ->
     /// plaintext` where `field_path` is the dotted private patch path
@@ -1455,6 +1442,7 @@ impl Default for ClientLocalState {
     fn default() -> Self {
         Self {
             sync_cursor: None,
+            demand_sync: Default::default(),
             realm_events_cursors: BTreeMap::new(),
             client_core_pending_deliveries: VecDeque::new(),
             client_core_next_delivery_id: 0,
@@ -1473,6 +1461,7 @@ impl Default for ClientLocalState {
             presence_visibility: PresenceVisibility::Public,
             presence_preference: PresencePreference::default(),
             to_device_inbox: Vec::new(),
+            mls_welcome_inbox_index: BTreeMap::new(),
             to_device_receipts: BTreeMap::new(),
             notification_client_state: BTreeMap::new(),
             invite_credentials: BTreeMap::new(),
@@ -1504,12 +1493,17 @@ impl Default for ClientLocalState {
             mls_group_state_refs: BTreeMap::new(),
             mls_historical_group_state_refs: BTreeMap::new(),
             mls_historical_checkpoints: BTreeMap::new(),
-            agent_signer_evidence: BTreeMap::new(),
+            historical_agent_signer_keys: BTreeMap::new(),
             mls_coverage_stale: BTreeMap::new(),
             mls_governance_results: BTreeMap::new(),
+            direct_conversation_peers: BTreeMap::new(),
+            direct_message_contexts: BTreeMap::new(),
             realm_governance_frontiers: BTreeMap::new(),
             mls_accepted_artifacts: BTreeMap::new(),
-            mls_governance_checkpoints: BTreeMap::new(),
+            mls_welcome_discovery: BTreeMap::new(),
+            current_generation: 0,
+            current_reset_required: false,
+            local_device_refresh_pending: false,
             mls_private_plaintext: BTreeMap::new(),
             mls_decrypted_plaintext: BTreeMap::new(),
             authenticated_identity_links: BTreeMap::new(),

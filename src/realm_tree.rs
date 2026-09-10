@@ -497,41 +497,6 @@ pub(crate) fn projection_title(id: &str, body: &Value) -> String {
         .unwrap_or_else(|| id.to_owned())
 }
 
-pub(crate) fn projection_with_title_hint(
-    id: &str,
-    body: &Value,
-    title_hint: Option<&str>,
-) -> Value {
-    let Some(title) = title_hint.map(str::trim).filter(|title| !title.is_empty()) else {
-        return body.clone();
-    };
-    if explicit_realm_title(body).is_some() {
-        return body.clone();
-    }
-
-    let mut next = body.clone();
-    if !next.is_object() {
-        next = serde_json::json!({});
-    }
-    let Some(object) = next.as_object_mut() else {
-        return serde_json::json!({});
-    };
-    let summary = object
-        .entry("summary".to_owned())
-        .or_insert_with(|| serde_json::json!({}));
-    if !summary.is_object() {
-        *summary = serde_json::json!({});
-    }
-    let Some(summary_object) = summary.as_object_mut() else {
-        return next;
-    };
-    summary_object.insert("title".to_owned(), Value::String(title.to_owned()));
-    object
-        .entry("__title_hint_source".to_owned())
-        .or_insert_with(|| Value::String(format!("invite:{id}")));
-    next
-}
-
 pub(crate) fn string_array_field(value: &Value, keys: &[&str]) -> Vec<String> {
     keys.iter()
         .filter_map(|key| value.get(*key))
@@ -975,51 +940,6 @@ pub(crate) fn projection_home_realm_id(body: &Value) -> Option<String> {
         .map(ToOwned::to_owned)
 }
 
-pub(crate) fn server_set_contains_realm_id(server_set: &BTreeSet<String>, realm_id: &str) -> bool {
-    server_set.contains(realm_id)
-}
-
-pub fn full_sync_projection_keep_set(
-    server_set: &BTreeSet<String>,
-    cached: &BTreeMap<String, Value>,
-) -> BTreeSet<String> {
-    let mut keep = server_set.clone();
-    for (id, body) in cached {
-        if should_retain_projection_after_full_sync(id, body, server_set) {
-            keep.insert(id.clone());
-        }
-    }
-    keep
-}
-
-pub fn should_retain_projection_after_full_sync(
-    id: &str,
-    body: &Value,
-    server_set: &BTreeSet<String>,
-) -> bool {
-    if server_set.contains(id) {
-        return true;
-    }
-    // Realm creation writes this local-only discriminant only after the
-    // server accepts the create transaction. A catch-up full sync can race
-    // the server's account projection and omit that newly accepted Realm for
-    // a few frames. Preserve the optimistic body until an authoritative body
-    // replaces it (and therefore removes `__kind`); otherwise the first local
-    // encrypted write loses its effective policy fields and silently falls
-    // back to the default content scheme.
-    if id.starts_with("ak:realm:") && body.get("__kind").and_then(Value::as_str) == Some("realm") {
-        return true;
-    }
-    if !id.starts_with("ak:space:")
-        || projection_tree_node_kind(id, body) != RealmTreeNodeKind::Space
-    {
-        return false;
-    }
-    projection_home_realm_id(body)
-        .as_deref()
-        .is_some_and(|realm_id| server_set_contains_realm_id(server_set, realm_id))
-}
-
 pub(crate) fn projection_looks_like_strand(body: &Value) -> bool {
     // Real Space projections embed their primary strand under
     // `summary.strand` (with `strand_id` etc. inside it) — so peeking into
@@ -1204,34 +1124,6 @@ mod tests {
         });
 
         assert_eq!(realm_projection_group_genesis_binding(&projection), None);
-    }
-
-    #[test]
-    fn projection_title_hint_fills_missing_summary_title() {
-        let id = "ak:realm:AcsFZ3o2tOdN3EFpNceeLV-aI3jZkB9S34_4YIwJ5DLy";
-        let body = json!({
-            "summary": {
-                "strand": {"title": "General strand"}
-            }
-        });
-
-        let patched = projection_with_title_hint(id, &body, Some("Invited Realm"));
-        let nodes = realm_tree_nodes_from_sync_realms(&BTreeMap::from([(id.to_owned(), patched)]));
-
-        assert_eq!(nodes[0].title, "Invited Realm");
-    }
-
-    #[test]
-    fn projection_title_hint_does_not_override_server_title() {
-        let id = "ak:realm:ARELvWOpF6BRrks3DlbQy-9XIE6aAQQumDQp7fA4ApeM";
-        let body = json!({
-            "summary": {"title": "Server Realm"}
-        });
-
-        let patched = projection_with_title_hint(id, &body, Some("Invite Label"));
-        let nodes = realm_tree_nodes_from_sync_realms(&BTreeMap::from([(id.to_owned(), patched)]));
-
-        assert_eq!(nodes[0].title, "Server Realm");
     }
 
     #[test]
@@ -1901,66 +1793,6 @@ mod tests {
         );
         assert_eq!(previews[0].title, "Test");
         assert_eq!(previews[0].kind, RealmTreeNodeKind::Realm);
-    }
-
-    #[test]
-    fn full_sync_keep_set_preserves_local_space_under_joined_realm() {
-        let mut server_set = BTreeSet::new();
-        server_set.insert("ak:realm:AF1tN8pT6JU9QaRZjiH8Ax0gutpLcVCArGxc-0fzdavY".to_owned());
-
-        let mut cached = BTreeMap::new();
-        cached.insert(
-            "ak:realm:AF1tN8pT6JU9QaRZjiH8Ax0gutpLcVCArGxc-0fzdavY".to_owned(),
-            json!({"summary": {"title": "Root"}}),
-        );
-        cached.insert(
-            "ak:space:child".to_owned(),
-            json!({
-                "__kind": "space",
-                "realm_id": "ak:realm:AF1tN8pT6JU9QaRZjiH8Ax0gutpLcVCArGxc-0fzdavY",
-                "summary": {"title": "Child"}
-            }),
-        );
-        cached.insert(
-            "ak:space:stale".to_owned(),
-            json!({
-                "__kind": "space",
-                "realm_id": "ak:realm:ARqzW2I_OXIxwHkOIvi8k8VhtCj9leT2DmU_Ul-1pvdM",
-                "summary": {"title": "Stale"}
-            }),
-        );
-
-        let keep = full_sync_projection_keep_set(&server_set, &cached);
-
-        assert!(keep.contains("ak:realm:AF1tN8pT6JU9QaRZjiH8Ax0gutpLcVCArGxc-0fzdavY"));
-        assert!(keep.contains("ak:space:child"));
-        assert!(!keep.contains("ak:space:stale"));
-    }
-
-    #[test]
-    fn full_sync_keep_set_preserves_acknowledged_optimistic_realm() {
-        let server_set =
-            BTreeSet::from(["ak:realm:APCEv_eZJS-G3Rl9hDcbEIFNJxcYpqP2nkoGb6FOPmVc".to_owned()]);
-        let cached = BTreeMap::from([
-            (
-                "ak:realm:ADcY1l6arU8aWTG833dzn0XOnraiPVcEnyYyorj3d24Q".to_owned(),
-                json!({
-                    "__kind": "realm",
-                    "content_scheme": "mls_exporter_aead_v1",
-                    "history_access": "all_history_for_current_members"
-                }),
-            ),
-            (
-                "ak:realm:AJIK0c_n94vFOvyinK1wQTDDmt5QyZdwqgEiYhO3X-RI".to_owned(),
-                json!({"summary": {"title": "Stale authoritative projection"}}),
-            ),
-        ]);
-
-        let keep = full_sync_projection_keep_set(&server_set, &cached);
-
-        assert!(keep.contains("ak:realm:APCEv_eZJS-G3Rl9hDcbEIFNJxcYpqP2nkoGb6FOPmVc"));
-        assert!(keep.contains("ak:realm:ADcY1l6arU8aWTG833dzn0XOnraiPVcEnyYyorj3d24Q"));
-        assert!(!keep.contains("ak:realm:AJIK0c_n94vFOvyinK1wQTDDmt5QyZdwqgEiYhO3X-RI"));
     }
 
     #[test]

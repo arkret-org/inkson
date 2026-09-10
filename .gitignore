@@ -13,3 +13,4 @@ _*.md
 .claude/
 .codex*
 .agent*
+.*.log
