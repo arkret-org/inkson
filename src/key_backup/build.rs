@@ -1,6 +1,6 @@
 use arkret_models_crypto::{
-    HistorySecretRangeIndex, HistorySecretRangesItemKind, KeyBackup, KeyBackupContentItem,
-    KeyBackupKeybag, SecretStorageContentIndex, SecretStorageItem,
+    HistorySecretRangeIndex, HistorySecretRangesItemKind, KeyBackup, KeyBackupContentIndex,
+    KeyBackupKeybag, SecretStorageContentIndex, SecretStorageSecret,
 };
 use arkret_wire::HPKE_SUITE_X25519_CHACHA20POLY1305_V1;
 use base64::Engine as _;
@@ -13,12 +13,12 @@ use crate::recovery_crypto::VaultKek;
 fn plaintext_item(
     item: &SecretStorageContentIndex,
     secret: &[u8],
-) -> anyhow::Result<SecretStorageItem> {
+) -> anyhow::Result<SecretStorageSecret> {
     let secret_id = item
         .secret_id
         .clone()
         .ok_or_else(|| anyhow::anyhow!("key backup content item requires secret_id"))?;
-    Ok(SecretStorageItem {
+    Ok(SecretStorageSecret {
         item_kind: item.item_kind,
         secret_id,
         secret_b64u: B64.encode(secret),
@@ -27,8 +27,8 @@ fn plaintext_item(
     })
 }
 
-fn public_content_item(item: &SecretStorageItem) -> anyhow::Result<KeyBackupContentItem> {
-    Ok(KeyBackupContentItem::SecretStorage(
+fn public_content_item(item: &SecretStorageSecret) -> anyhow::Result<KeyBackupContentIndex> {
+    Ok(KeyBackupContentIndex::SecretStorage(
         SecretStorageContentIndex {
             item_kind: item.item_kind,
             realm_id: None,
@@ -201,7 +201,7 @@ pub fn build_recovery_public_key_backup_body_for_items_in_series(
     recovery_key_ref: &str,
     class: BackupKind,
     subdomain: &str,
-    plaintext_items: Vec<SecretStorageItem>,
+    plaintext_items: Vec<SecretStorageSecret>,
     recovery_policy_ref: Option<(&str, u64)>,
     series_id: Option<&str>,
     previous_series_tail: Option<&Value>,
@@ -258,7 +258,7 @@ pub fn build_recovery_public_key_history_backup_body_in_series(
     if items.is_empty() {
         anyhow::bail!("portable history backup requires at least one history range");
     }
-    let public_items = vec![KeyBackupContentItem::HistorySecretRanges(
+    let public_items = vec![KeyBackupContentIndex::HistorySecretRanges(
         HistorySecretRangeIndex {
             item_kind: HistorySecretRangesItemKind::Value,
             effective_scope: effective_scope.clone(),
@@ -293,7 +293,7 @@ fn build_recovery_public_key_backup_body_for_keybag_in_series(
     class: BackupKind,
     subdomain: &str,
     keybag: KeyBackupKeybag,
-    items: Vec<KeyBackupContentItem>,
+    items: Vec<KeyBackupContentIndex>,
     recovery_policy_ref: Option<(&str, u64)>,
     series_id: Option<&str>,
     previous_series_tail: Option<&Value>,

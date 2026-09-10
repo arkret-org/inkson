@@ -16,7 +16,7 @@ pub struct HostedSidecarState {
     pub source_strand_id: String,
     pub sidecar_id: arkret_sdk::SidecarId,
     pub access_readiness: arkret_sdk::AgentSidecarAccessReadiness,
-    pub pending_access_reconciliations: Vec<arkret_sdk::PendingSidecarAccessReconciliationItem>,
+    pub pending_access_reconciliations: Vec<arkret_sdk::PendingSidecarAccessReconciliation>,
     pub mls_context: arkret_sdk::AgentSidecarMlsContext,
     /// True only after this device has restored a snapshot keyed by the
     /// native `(realm_id, sidecar_id, mls_group_id)` scope. A server `ready`
@@ -2156,9 +2156,7 @@ mod tests {
         [7; 32]
     }
 
-    fn session(
-        pending: Vec<arkret_sdk::PendingSidecarAccessReconciliationItem>,
-    ) -> HostedSidecarState {
+    fn session(pending: Vec<arkret_sdk::PendingSidecarAccessReconciliation>) -> HostedSidecarState {
         HostedSidecarState {
             trace_id: "019f0000-0000-7000-8000-000000000001".to_owned(),
             controller_account_id: controller_account(),
@@ -2238,7 +2236,7 @@ mod tests {
 
     #[test]
     fn pending_reconciliation_is_not_ready() {
-        let session = session(vec![arkret_sdk::PendingSidecarAccessReconciliationItem {
+        let session = session(vec![arkret_sdk::PendingSidecarAccessReconciliation {
             agent_id: crate::mls_api_helpers::principal_core_id("did:web:agents.example:assistant")
                 .unwrap(),
             provisioning_phase: arkret_sdk::PendingSidecarAccessReconciliationStage::MlsWelcome,

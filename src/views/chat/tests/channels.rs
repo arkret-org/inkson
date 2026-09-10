@@ -40,7 +40,7 @@ fn channel_reads_complete_current_metadata() {
 fn concurrent_heads_are_not_collapsed_to_an_arbitrary_channel() {
     let current = current_strand(CHANNEL_REALM, "Conflicting", true);
     assert!(channel_from_current_strand(CHANNEL_REALM, &current).is_none());
-    let arkret_sdk::CurrentResult::Heads { heads } = current.result() else {
+    let arkret_sdk::CurrentOutcome::Heads { heads } = current.result() else {
         panic!("heads")
     };
     assert_eq!(heads.len(), 2);

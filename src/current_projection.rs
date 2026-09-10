@@ -1,6 +1,6 @@
 //! Product reads over a bounded view of durably installed Station results.
 
-use arkret_sdk::{CurrentEntries, CurrentResult, CurrentResultEntry, CurrentTarget};
+use arkret_sdk::{CurrentEntries, CurrentOutcome, CurrentResultEntry, CurrentTarget};
 use serde_json::Value;
 
 pub(crate) const REQUIRED_REALM_CELLS: [&str; 4] = [
@@ -25,7 +25,7 @@ fn realm_entry<'a>(
 pub(crate) fn required_realm_values_ready(entries: &[CurrentResultEntry], realm_id: &str) -> bool {
     REQUIRED_REALM_CELLS.iter().all(|cell| {
         realm_entry(entries, realm_id, cell)
-            .is_some_and(|entry| matches!(entry.result(), CurrentResult::Value { .. }))
+            .is_some_and(|entry| matches!(entry.result(), CurrentOutcome::Value { .. }))
     })
 }
 
@@ -52,7 +52,7 @@ pub(crate) fn install_bounded_view(
     let default_strand =
         realm_entry(&entries, realm_id, REQUIRED_REALM_CELLS[3]).and_then(|entry| {
             match entry.result() {
-                CurrentResult::Value { value } => value.as_json().as_str().map(ToOwned::to_owned),
+                CurrentOutcome::Value { value } => value.as_json().as_str().map(ToOwned::to_owned),
                 _ => None,
             }
         });
@@ -62,7 +62,7 @@ pub(crate) fn install_bounded_view(
         "ak:cell:ak.component.realm.profile.v1:null",
     )
     .and_then(|entry| match entry.result() {
-        CurrentResult::Value { value } => {
+        CurrentOutcome::Value { value } => {
             serde_json::from_value::<arkret_sdk::RealmProfile>(value.as_json().clone()).ok()
         }
         _ => None,
@@ -103,7 +103,7 @@ pub(crate) fn unique_strand_head(entry: &CurrentResultEntry) -> Option<arkret_sd
     if !matches!(entry.target(), CurrentTarget::Strand { .. }) {
         return None;
     }
-    let CurrentResult::Heads { heads } = entry.result() else {
+    let CurrentOutcome::Heads { heads } = entry.result() else {
         return None;
     };
     let [head] = heads.as_slice() else {

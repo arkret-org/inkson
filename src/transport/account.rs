@@ -1457,9 +1457,9 @@ fn account_data_snapshot_from_details(
     type_key: &str,
     details: &std::collections::BTreeMap<String, Value>,
 ) -> anyhow::Result<AccountDataSnapshot> {
-    let details = serde_json::from_value::<arkret_sdk::AccountDataCasConflictDetails>(
-        Value::Object(details.clone().into_iter().collect()),
-    )
+    let details = serde_json::from_value::<arkret_sdk::AccountDataCasConflict>(Value::Object(
+        details.clone().into_iter().collect(),
+    ))
     .map_err(|error| anyhow::anyhow!("invalid account_data CAS details: {error}"))?;
     if details.account_data_key != type_key {
         anyhow::bail!(

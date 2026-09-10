@@ -1,6 +1,6 @@
 use arkret_sdk::{
-    AccountBaselineChannel as Channel, AccountSubscribeFrame, Event, RealmListItem,
-    RealmListMembership, SyncFilter,
+    AccountBaselineChannel as Channel, AccountSubscribeFrame, Event, RealmListMembership, RealmRow,
+    SyncFilter,
 };
 use arkret_wire::Cursor;
 
@@ -15,7 +15,7 @@ pub(crate) struct DemandSyncState {
     list_revision: u64,
     list_complete: bool,
     list_seen: BTreeSet<String>,
-    summaries: BTreeMap<String, RealmListItem>,
+    summaries: BTreeMap<String, RealmRow>,
     summary_removals: BTreeMap<String, u64>,
     global_snapshot: Option<Cursor>,
     channels: BTreeMap<Channel, BaselineChannelState>,
@@ -632,7 +632,7 @@ impl LocalStateStore {
         Ok(())
     }
 
-    fn apply_demand_summary(&mut self, row: &RealmListItem) -> anyhow::Result<()> {
+    fn apply_demand_summary(&mut self, row: &RealmRow) -> anyhow::Result<()> {
         let id = row.realm_id.to_string();
         let state = &mut self.cached.demand_sync;
         if state

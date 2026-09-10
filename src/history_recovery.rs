@@ -1488,7 +1488,7 @@ pub async fn verify_and_install_response_page_from_local_state(
     let http = http_client(api)?;
     let mut transitions = std::collections::BTreeMap::new();
     for result in &page.source_signer_results {
-        let arkret_sdk::HistorySourceSignerResult::ReceiverMls {
+        let arkret_sdk::HistorySourceSignerOutcome::ReceiverMls {
             signer_evidence, ..
         } = result
         else {

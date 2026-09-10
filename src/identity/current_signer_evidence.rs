@@ -2,7 +2,8 @@
 
 use arkret_sdk::{
     AccountDeviceSenderKind, AgentSenderKind, CurrentAccountDeviceSelector, CurrentAdmissionMode,
-    CurrentAgentSelector, SignerKeyQueryResult, SignerKeyQuerySelector, SignerKeysQueryRequestBody,
+    CurrentAgentSelector, SignerKeyQueryOutcome, SignerKeyQuerySelector,
+    SignerKeysQueryRequestBody,
 };
 pub(crate) async fn query_for_signal(
     http: &arkret_sdk::http_client::Client,
@@ -49,7 +50,7 @@ pub(crate) async fn query_for_signal(
         .ok()?;
     outcome.validate_for_request(&request).ok()?;
     let mut results = outcome.results.into_iter();
-    let SignerKeyQueryResult::Current(result) = results.next()? else {
+    let SignerKeyQueryOutcome::Current(result) = results.next()? else {
         return None;
     };
     if results.next().is_some()

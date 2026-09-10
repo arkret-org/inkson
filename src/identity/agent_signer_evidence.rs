@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use arkret_sdk::signatures::PublicKeyMaterial;
 use arkret_sdk::{
     AgentSenderKind, Did, DidCoreId, DidUrl, HistoricalAgentSelector, HistoricalEventMode, RealmId,
-    SignerKeyQueryResult, SignerKeyQuerySelector, SignerKeysQueryRequestBody,
+    SignerKeyQueryOutcome, SignerKeyQuerySelector, SignerKeysQueryRequestBody,
 };
 use serde_json::Value;
 
@@ -149,10 +149,10 @@ pub(crate) async fn prefetch_from_realm_projections(
             continue;
         }
         for result in outcome.results {
-            let SignerKeyQueryResult::HistoricalAgent(result) = result else {
+            let SignerKeyQueryOutcome::HistoricalAgent(result) = result else {
                 continue;
             };
-            let arkret_sdk::HistoricalAgentSignerKeyResult {
+            let arkret_sdk::HistoricalAgentSignerKeyOutcome {
                 selector,
                 key,
                 accepted_at,
