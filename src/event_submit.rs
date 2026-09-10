@@ -2266,9 +2266,9 @@ impl EventSubmitter {
             .await
     }
 
-    /// Submit a pre-join Event using the profile bound into the resolved join
-    /// candidate. The invitee cannot read membership-gated Realm history.
-    pub(crate) async fn submit_sdk_event_via_join_candidate(
+    /// Submit a pre-join Event using the facts verified by the account's own
+    /// Station. The invitee cannot read membership-gated Realm history.
+    pub(crate) async fn submit_prepared_join_event(
         &self,
         operation: &LocalOperation,
         encryption_profile: &arkret_sdk::EncryptionProfile,

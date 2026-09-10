@@ -910,10 +910,12 @@ mod durable_inbox_tests {
             realm_id,
         };
         let event = garth::ClientEvent::Notification(NotificationDelta {
-            id: arkret_sdk::NotificationId::new(
-                "ak:notification:01964137-0000-7000-8000-000000000012",
-            )
-            .unwrap(),
+            id: arkret_sdk::NotificationIdentity::AgentApproval(
+                arkret_sdk::NotificationId::new(
+                    "ak:notification:01964137-0000-7000-8000-000000000012",
+                )
+                .unwrap(),
+            ),
             action: NotificationDeltaAction::Remove,
             data: None,
         });

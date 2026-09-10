@@ -40,7 +40,7 @@ impl crate::transport::TransportClient {
             .sdk_http_client()?
             .self_realm_join_prepare(&request)
             .await?;
-        if prepared.expires_at <= chrono::Utc::now() {
+        if prepared.expires_at <= crate::clock::now_utc() {
             anyhow::bail!("Realm join preparation expired before authoring")
         }
         let event = crate::operation::ak_ops::prepared_invite_accept(
@@ -52,7 +52,7 @@ impl crate::transport::TransportClient {
         .build_sdk_event("inkson")?;
         let submit = self
             .event_submitter()?
-            .submit_sdk_event_via_join_candidate(
+            .submit_prepared_join_event(
                 &event,
                 &prepared.governance_facts.encryption_profile,
                 prepared.governance_facts.digest_algorithm,

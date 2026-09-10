@@ -492,40 +492,21 @@ fn accept_invite_notification(
                     Some(invitee_account_id),
                 )
                 .await?;
-            // The accepted Event is the authoritative join boundary, but the
-            // client is not ready to author Realm events until it has verified
-            // and durably pinned the accepted governance closure. Establish
-            // that checkpoint before exposing the final Joined status.
-            let checkpoint_error =
-                crate::mls::creator_bootstrap::refresh_realm_governance_frontier(
-                    &api,
-                    crate::app::runtime_adapter::state_store_handle(state_store),
-                    &accepted_realm_for_api,
-                )
-                .await
-                .err();
-            accepted_status.set(if let Some(error) = checkpoint_error.as_deref() {
-                format!(
-                    "Joined Realm {}. Governance verification pending: {error}",
-                    short_protocol_id(&accepted_realm_for_api)
-                )
-            } else {
-                format!(
-                    "Joined Realm {}.",
-                    short_protocol_id(&accepted_realm_for_api)
-                )
-            });
+            accepted_status.set(format!(
+                "Joined Realm {}.",
+                short_protocol_id(&accepted_realm_for_api)
+            ));
             // The SDK's account-subscribe surface no longer accepts a
             // per-request wait-for option (client-sync.md: X-Arkret-Wait-For
             // belongs to read endpoints); the accepted invite folds in via the
             // snapshot or a following delta.
             let _ = &submit.cursor;
             let sync = Ok::<_, anyhow::Error>(state_store.write().current_account_projection_step());
-            Ok::<_, anyhow::Error>((sync, accepted_title, delivery_cell, checkpoint_error))
+            Ok::<_, anyhow::Error>((sync, accepted_title, delivery_cell))
         })
         .await
         {
-            Ok((Ok(sync), _accepted_title, delivery_cell, checkpoint_error)) => {
+            Ok((Ok(sync), _accepted_title, delivery_cell)) => {
                 let push_rules =
                     push_rules_from_account_data(&authority, &sync.updates.account_data);
                 let account_dnd =
@@ -566,14 +547,10 @@ fn accept_invite_notification(
                     )
                 };
                 notifications.set(hydrated);
-                status_msg.set(if let Some(error) = checkpoint_error.as_deref() {
-                    format!(
-                        "Joined Realm {}. Governance verification pending: {error}",
-                        short_protocol_id(&accepted_realm)
-                    )
-                } else {
-                    format!("Joined Realm {}.", short_protocol_id(&accepted_realm))
-                });
+                status_msg.set(format!(
+                    "Joined Realm {}.",
+                    short_protocol_id(&accepted_realm)
+                ));
             }
             Ok((Err(sync_err), ..)) => {
                 hide_accepted_invite_notification(

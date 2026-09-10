@@ -175,8 +175,15 @@ pub(crate) fn apply_notification_projection(
                 NotificationDeltaAction::Upsert,
                 Some(NotificationData::AgentRuntimeApproval(data)),
             ) => {
+                let NotificationIdentity::AgentApproval(notification_id) = &delta.id else {
+                    tracing::error!(
+                        notification_id = id,
+                        "Agent approval notification has a projection identity"
+                    );
+                    continue;
+                };
                 let replacement = StoredNotification::AgentRuntimeApproval {
-                    id: delta.id.clone(),
+                    id: notification_id.clone(),
                     data: data.clone(),
                 };
                 if let Some(existing) = current
@@ -312,7 +319,8 @@ pub(crate) fn test_event_notification(
                     .expect("account"),
                 &arkret_sdk::RealmId::new(realm_id.to_owned()).expect("Realm"),
                 &arkret_sdk::EventId::new(source_event_id.clone()).expect("Event"),
-                &kind,
+                arkret_sdk::OrdinaryNotificationKind::try_from(&kind)
+                    .expect("ordinary notification kind"),
             )
             .expect("valid test notification id")
             .into(),

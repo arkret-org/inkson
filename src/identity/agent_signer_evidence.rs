@@ -4,8 +4,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use arkret_sdk::signatures::PublicKeyMaterial;
 use arkret_sdk::{
-    AgentSignerEvidenceQueryRequestBody, AgentSignerEvidenceQueryResult,
-    AgentSignerEvidenceQuerySelector, Did, DidCoreId, DidUrl, RealmId,
+    AgentSenderKind, Did, DidCoreId, DidUrl, HistoricalAgentSelector, HistoricalEventMode, RealmId,
+    SignerKeyQueryResult, SignerKeyQuerySelector, SignerKeysQueryRequestBody,
 };
 use serde_json::Value;
 
@@ -43,13 +43,14 @@ pub(crate) struct OrdinaryAgentMlsBinding<'a> {
     pub group_state_ref: &'a str,
 }
 
-fn query_selector(selector: &EventAgentSelector) -> AgentSignerEvidenceQuerySelector {
-    AgentSignerEvidenceQuerySelector::HistoricalEvent {
+fn query_selector(selector: &EventAgentSelector) -> SignerKeyQuerySelector {
+    SignerKeyQuerySelector::HistoricalAgent(HistoricalAgentSelector {
+        verification_mode: HistoricalEventMode::HistoricalEvent,
+        sender_kind: AgentSenderKind::Agent,
         actor: selector.agent_actor_id.clone(),
         verification_method: selector.verification_method.clone(),
         event_id: selector.event_id.clone(),
-        receiver_id: selector.receiver_id.clone(),
-    }
+    })
 }
 
 fn historical_key(
@@ -135,31 +136,32 @@ pub(crate) async fn prefetch_from_realm_projections(
     }
     let mut changed = false;
     for (realm_id, pending) in by_realm {
-        let request = AgentSignerEvidenceQueryRequestBody {
+        let request = SignerKeysQueryRequestBody {
             request_id: arkret_sdk::RequestId::new_v7_at(crate::clock::now_unix_ms()),
             realm_id,
             recipient_account_id: recipient.clone(),
             queries: pending.iter().map(query_selector).collect(),
         };
-        let Ok(outcome) = http.agent_signer_evidence_query(&request).await else {
+        let Ok(outcome) = http.signer_keys_query(&request).await else {
             continue;
         };
         if outcome.validate_for_request(&request).is_err() {
             continue;
         }
         for result in outcome.results {
-            let AgentSignerEvidenceQueryResult::HistoricalResolved {
+            let SignerKeyQueryResult::HistoricalAgent(result) = result else {
+                continue;
+            };
+            let arkret_sdk::HistoricalAgentSignerKeyResult {
                 selector,
                 key,
                 accepted_at,
                 signer_evidence_ref,
                 ..
-            } = result
-            else {
-                continue;
-            };
-            let Some(selected) = pending.iter().find(|item| query_selector(item) == selector)
-            else {
+            } = result;
+            let Some(selected) = pending.iter().find(|item| {
+                query_selector(item) == SignerKeyQuerySelector::HistoricalAgent(selector.clone())
+            }) else {
                 continue;
             };
             let entry = CachedHistoricalAgentSignerKey {

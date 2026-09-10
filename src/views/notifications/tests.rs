@@ -799,8 +799,12 @@ fn notification_sources_use_typed_subscribe_deltas_only() {
         )
         .unwrap(),
         arkret_sdk::NotificationDelta::try_new(
-            arkret_sdk::NotificationId::new("ak:notification:01964137-0000-7000-8000-000000000004")
+            arkret_sdk::NotificationIdentity::AgentApproval(
+                arkret_sdk::NotificationId::new(
+                    "ak:notification:01964137-0000-7000-8000-000000000004",
+                )
                 .unwrap(),
+            ),
             arkret_sdk::NotificationDeltaAction::Upsert,
             Some(arkret_sdk::NotificationData::AgentRuntimeApproval(
                 arkret_sdk::AgentRuntimeApprovalNotificationData {
@@ -833,4 +837,42 @@ fn notification_sources_use_typed_subscribe_deltas_only() {
             .iter()
             .any(|item| matches!(item, crate::state::StoredNotification::Event { .. }))
     );
+}
+
+#[test]
+fn ordinary_notification_with_another_recipient_id_is_discarded() {
+    let realm_id = arkret_sdk::RealmId::new(
+        "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-".to_owned(),
+    )
+    .unwrap();
+    let source_event_id = arkret_sdk::EventId::new(
+        "ak:event:AQM8rE4gp8l4axkSbbb9_dkqwWE8ZPYHwFsC24o2mrIL".to_owned(),
+    )
+    .unwrap();
+    let content = arkret_sdk::OrdinaryProjectionContent {
+        realm_id: realm_id.clone(),
+        source_event_id: source_event_id.clone(),
+        source_ref: None,
+        strand_id: None,
+        track_name: None,
+        notification_kind: arkret_sdk::OrdinaryNotificationKind::Message,
+        priority: arkret_sdk::NotificationPriority::Normal,
+        preview: None,
+        created_at: "2026-09-10T00:00:00Z".parse().unwrap(),
+        updated_at: None,
+    };
+    let other = arkret_sdk::AccountId::new(
+        crate::mls_api_helpers::principal_core_id("did:web:bob.example").unwrap(),
+        arkret_sdk::DidCoreId::new("ak:did_core:web:localhost".to_owned()).unwrap(),
+    );
+    let delta = arkret_sdk::NotificationDelta::try_new(
+        content.derive_id(&other).unwrap().into(),
+        arkret_sdk::NotificationDeltaAction::Upsert,
+        Some(arkret_sdk::NotificationData::OrdinaryProjection(Box::new(
+            content,
+        ))),
+    )
+    .unwrap();
+
+    assert!(raw_notifications_from_sources(Some(&[delta]), &[]).is_empty());
 }

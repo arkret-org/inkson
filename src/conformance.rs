@@ -58,7 +58,7 @@ impl StationFeature {
                 SelfEventsReadDescribeV1,
                 SelfEventsCommandSubmitV1,
                 OpenServiceReadResolutionV1,
-                SelfCurrentSignerEvidenceReadResolveV1,
+                SelfSignerKeysReadResolveV1,
                 SelfSealsCommandPrepareV1,
                 SelfSealsCommandSubmitV1,
             ],
@@ -171,7 +171,7 @@ mod tests {
         ]);
         assert_eq!(
             StationFeature::CreateRealm.missing_requirements(Some(&description)),
-            vec!["ak.self.current_signer_evidence.read.resolve.v1 (http_json)"]
+            vec!["ak.self.signer_keys.read.resolve.v1 (http_json)"]
         );
         assert!(StationFeature::Discussion.ready(Some(&description)));
         assert!(StationFeature::VerifyDevice.ready(Some(&description)));
