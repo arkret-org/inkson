@@ -216,16 +216,11 @@ fn test_pairing_view(status: AgentLifecycleState, runtime_state: AgentRuntimeSta
                 AgentRuntimeState::PendingRuntimeKey | AgentRuntimeState::Replacing
             )
             .then(|| arkret_sdk::OpaqueLocalId::new("pairing-request-1").unwrap()),
-            pairing_mode: match runtime_state {
-                AgentRuntimeState::PendingRuntimeKey => Some(AgentPairingMode::Bootstrap),
-                AgentRuntimeState::Replacing => Some(AgentPairingMode::Replacement),
-                AgentRuntimeState::Ready | AgentRuntimeState::PairingExpired => None,
-            },
             pairing_code: matches!(
                 runtime_state,
                 AgentRuntimeState::PendingRuntimeKey | AgentRuntimeState::Replacing
             )
-            .then(|| "pairing-code".to_owned()),
+            .then(|| "qL7m2nR4sT8vW0xY3zA5bQ".to_owned()),
             pairing_expires_at: matches!(
                 runtime_state,
                 AgentRuntimeState::PendingRuntimeKey | AgentRuntimeState::Replacing
@@ -233,6 +228,7 @@ fn test_pairing_view(status: AgentLifecycleState, runtime_state: AgentRuntimeSta
             .then(|| crate::clock::now_utc() + chrono::Duration::hours(1)),
             approval_request_id: None,
             pending_runtime_key_request: None,
+            runtime_verifier_material: None,
             approval_requested_at: None,
             authorized_event_ref: None,
             active_authorizations,
@@ -240,15 +236,13 @@ fn test_pairing_view(status: AgentLifecycleState, runtime_state: AgentRuntimeSta
     }
 }
 
-fn test_renew_outcome(mode: AgentPairingMode) -> AgentRenewPairingOutcome {
-    let row = match mode {
-        AgentPairingMode::Bootstrap => test_pairing_view(
+fn test_renew_outcome(replacement: bool) -> AgentRenewPairingOutcome {
+    let row = match replacement {
+        false => test_pairing_view(
             AgentLifecycleState::Active,
             AgentRuntimeState::PairingExpired,
         ),
-        AgentPairingMode::Replacement => {
-            test_pairing_view(AgentLifecycleState::Paused, AgentRuntimeState::Ready)
-        }
+        true => test_pairing_view(AgentLifecycleState::Paused, AgentRuntimeState::Ready),
     };
     let agent_did = row.agent.agent_id;
     let key_state = row.key_state.unwrap();
@@ -263,9 +257,8 @@ fn test_renew_outcome(mode: AgentPairingMode) -> AgentRenewPairingOutcome {
         principal_control_realm_id: key_state.principal_control_realm_id,
         controller_authorization_ref: key_state.controller_authorization_ref,
         requested_scope_digest,
-        pairing_mode: mode,
         pairing_request_id: arkret_sdk::OpaqueLocalId::new("pairing-request-2").unwrap(),
-        pairing_code: Some("fresh-code".to_owned()),
+        pairing_code: "fresh-code".to_owned(),
         expires_at: chrono::DateTime::parse_from_rfc3339("2099-07-18T01:00:00.000Z")
             .unwrap()
             .with_timezone(&chrono::Utc),
@@ -278,7 +271,7 @@ fn bootstrap_renewal_reopens_expired_agent_and_exposes_fresh_material() {
         AgentLifecycleState::Active,
         AgentRuntimeState::PairingExpired,
     )];
-    let outcome = test_renew_outcome(AgentPairingMode::Bootstrap);
+    let outcome = test_renew_outcome(false);
     let now = chrono::DateTime::parse_from_rfc3339("2026-07-18T00:00:00.000Z")
         .unwrap()
         .with_timezone(&chrono::Utc);
@@ -302,7 +295,7 @@ fn replacement_renewal_preserves_lifecycle_and_projects_replacing() {
         AgentLifecycleState::Paused,
         AgentRuntimeState::Ready,
     )];
-    let outcome = test_renew_outcome(AgentPairingMode::Replacement);
+    let outcome = test_renew_outcome(true);
     let now = chrono::DateTime::parse_from_rfc3339("2026-07-18T00:00:00.000Z")
         .unwrap()
         .with_timezone(&chrono::Utc);
@@ -327,7 +320,7 @@ fn authoritative_pairing_reconcile_repairs_and_upserts_a_stale_local_row() {
         AgentLifecycleState::Active,
         AgentRuntimeState::PairingExpired,
     );
-    let outcome = test_renew_outcome(AgentPairingMode::Bootstrap);
+    let outcome = test_renew_outcome(false);
     let mut stale = authoritative.clone();
     stale.key_state = None;
     let mut rows = vec![stale];
@@ -474,7 +467,7 @@ fn panel_view_reads_the_pairing_handle_from_the_key_state_not_the_readiness_summ
     let view = build_agent_admin_view(&rows, &agent_id(&rows[0]), "all", &now_before_expiry());
 
     assert_eq!(view.selected_runtime_state, "pending_runtime_key");
-    assert_eq!(view.selected_pairing_code, "pairing-code");
+    assert_eq!(view.selected_pairing_code, "qL7m2nR4sT8vW0xY3zA5bQ");
     assert!(view.selected_has_pairing_handle);
     // The handle is live, so nothing here may report it expired.
     assert!(!view.selected_pairing_is_expired);

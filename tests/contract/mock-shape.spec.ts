@@ -33,13 +33,13 @@ type Probe = { query: string; body: Record<string, unknown> };
 
 const PROBES: Probe[] = [
   {
-    query: "?realms=ak:realm:AXLdBpLtU052snUYmC7z6ugXuYM9JDBd4PUF5AwhZ39K&subject=ak:did_core:web:bob.example",
+    query: "?realms=ak:realm:AfZipd5actne33fQKtrLCK5Q658LZby1JgRICH16UNjo&subject=ak:did_core:web:bob.example",
     body: {
       actor_id: "ak:did_core:web:bob.example",
       handle: "bob:local.host",
       limit: 1,
-      realm_id: "ak:realm:AXLdBpLtU052snUYmC7z6ugXuYM9JDBd4PUF5AwhZ39K",
-      events: [{ realm_id: "ak:realm:AXLdBpLtU052snUYmC7z6ugXuYM9JDBd4PUF5AwhZ39K" }],
+      realm_id: "ak:realm:AfZipd5actne33fQKtrLCK5Q658LZby1JgRICH16UNjo",
+      events: [{ realm_id: "ak:realm:AfZipd5actne33fQKtrLCK5Q658LZby1JgRICH16UNjo" }],
     },
   },
   {
@@ -76,18 +76,7 @@ const INSTALLS: Record<string, unknown>[] = [
 // list exists so the gate stays enforceable rather than permanently red; it is
 // not a place to park work that belongs here. Anything added needs a reason
 // that names where the fix has to happen.
-const UPSTREAM_DRIFT: Record<string, string> = {
-  "ak.open.service.read.resolution.v1":
-    "The SDK and the spec disagree about `authenticated_service_resolution." +
-    "normalized_did_document`. `identity-resolution.schema.json` wants the " +
-    "Arkret v1 projection (`did`, `contexts`, the relationship arrays); the " +
-    "SDK's `require_same_document` compares the retained document " +
-    "byte-for-byte against the method-native resolution, which for `did:key` " +
-    "is the W3C document. Both cannot hold, and the mock serves whatever " +
-    "`inkson-wire service-resolution` produces — so the fix is an adjudication " +
-    "between arkret-spec and the SDK, not a mock edit. See arkret-work " +
-    "`2026-09-06-0700`.",
-};
+const UPSTREAM_DRIFT: Record<string, string> = {};
 
 test("every mock response the inventory names still matches its schema", async () => {
   const violations: string[] = [];

@@ -3400,7 +3400,7 @@ fn prompt_copy_strings(dict: &mut TranslationDict) {
         "Compare this code before approving",
     );
     dict.set("agent_runtime.runtime_key", "Runtime key");
-    dict.set("agent_runtime.proof_expires", "Proof expires {time}");
+    dict.set("agent_runtime.pairing_expires", "Pairing expires {time}");
     dict.set(
         "agent_runtime.rejecting",
         "Rejecting request and rotating the pairing code…",

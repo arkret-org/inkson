@@ -806,7 +806,6 @@ pub struct CachedHistoricalAgentSignerKey {
     pub receiver_id: arkret_sdk::DidCoreId,
     pub accepted_at: chrono::DateTime<chrono::Utc>,
     pub producer_signer_evidence_ref: arkret_sdk::SignerEvidenceRef,
-    pub signer_evidence_ref: arkret_sdk::SignerEvidenceRef,
     pub key: arkret_sdk::StationSigningKey,
     pub cached_at_unix_ms: u64,
 }

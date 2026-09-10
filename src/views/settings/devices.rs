@@ -124,19 +124,13 @@ fn build_device_pairing_handoff_token(
 fn build_device_pairing_deep_link(
     base_url: &str,
     token: &str,
-    challenge_proof: &arkret_sdk::DevicePairingChallengeProof,
-    target_attestation: &arkret_sdk::DevicePairingTargetAttestation,
+    target_proof: &arkret_sdk::DevicePairingTargetProof,
 ) -> String {
     let base = base_url.trim_end_matches('/');
-    let proof = arkret_sdk::canonical::canonical_json_bytes(challenge_proof)
+    let proof = arkret_sdk::canonical::canonical_json_bytes(target_proof)
         .map(arkret_sdk::base64url_encode)
-        .expect("a typed device-pairing proof always canonicalizes");
-    let attestation = arkret_sdk::canonical::canonical_json_bytes(target_attestation)
-        .map(arkret_sdk::base64url_encode)
-        .expect("a typed target attestation always canonicalizes");
-    format!(
-        "{base}/_arkret/open/device-pairing/resolve#token={token}&proof={proof}&attestation={attestation}"
-    )
+        .expect("a typed target proof always canonicalizes");
+    format!("{base}/_arkret/open/device-pairing/resolve#token={token}&proof={proof}")
 }
 
 /// Parse a scanned/pasted pairing deep-link (or a bare token) into the compact
@@ -159,18 +153,10 @@ fn extract_device_pairing_token(input: &str) -> Option<String> {
     None
 }
 
-fn extract_device_pairing_proof(input: &str) -> Option<arkret_sdk::DevicePairingChallengeProof> {
-    let trimmed = input.trim();
-    let (_, encoded) = trimmed.split_once("&proof=")?;
-    let encoded = encoded.split(['&', ' ']).next()?.trim();
-    let bytes = arkret_sdk::base64url_decode(encoded).ok()?;
-    serde_json::from_slice(&bytes).ok()
-}
-
-fn extract_device_pairing_target_attestation(
+fn extract_device_pairing_target_proof(
     input: &str,
-) -> Option<arkret_sdk::DevicePairingTargetAttestation> {
-    let (_, encoded) = input.trim().split_once("&attestation=")?;
+) -> Option<arkret_sdk::DevicePairingTargetProof> {
+    let (_, encoded) = input.trim().split_once("&proof=")?;
     let encoded = encoded.split(['&', ' ']).next()?.trim();
     let bytes = arkret_sdk::base64url_decode(encoded).ok()?;
     serde_json::from_slice(&bytes).ok()
@@ -950,7 +936,7 @@ fn render_pair_strand(
                                 }
                             };
                             let challenge_public_key = stage_body.new_device_pubkey.clone();
-                            let challenge_client_nonce = stage_body.client_nonce.clone();
+                            let challenge_stage_body = stage_body.clone();
                             let stage_outcome = crate::transport::auth::with_endpoint_clients(
                                 &base,
                                 api_token.clone(),
@@ -976,10 +962,10 @@ fn render_pair_strand(
                             let server_code = stage_outcome.pairing_code.to_string();
                             let challenge =
                                 arkret_sdk::signatures::device_pairing::ServerDevicePairingChallenge::from_stage(
-                                    challenge_client_nonce,
+                                    &challenge_stage_body,
                                     &stage_outcome,
                                 );
-                            let (challenge_bytes, transcript_digest) =
+                            let (_, transcript_digest) =
                                 match arkret_sdk::signatures::device_pairing::server_device_pairing_transcript(
                                     &challenge_public_key,
                                     &challenge,
@@ -993,50 +979,19 @@ fn render_pair_strand(
                                         return;
                                     }
                                 };
-                            let signature = match signer.sign_raw(&challenge_bytes) {
-                                Ok(signature) => signature,
-                                Err(err) => {
-                                    pair_status.set(format!(
-                                        "Signing pairing challenge failed: {err}"
-                                    ));
+                            let requesting_device = match arkret_sdk::DeviceId::new(requesting_device_id.clone()) {
+                                Ok(device) => device,
+                                Err(error) => {
+                                    pair_status.set(format!("Invalid target device: {error}"));
                                     pair_action_busy.set(false);
                                     return;
                                 }
                             };
-                            let (requesting_device, challenge_proof) = match (
-                                arkret_sdk::DeviceId::new(requesting_device_id.clone()),
-                                arkret_sdk::NonEmptyString::new(signer.algorithm().to_owned()),
-                                arkret_sdk::Base64UrlString::new(
-                                    arkret_sdk::base64url_encode(signature),
-                                ),
-                            ) {
-                                (Ok(kid), Ok(signature_algorithm), Ok(signature)) => {
-                                    let proof = arkret_sdk::DevicePairingChallengeProof {
-                                        transcript: arkret_sdk::DevicePairingChallengeTranscriptKind::ServerMediated,
-                                        // Device-local selector, not a DID URL —
-                                        // the field was renamed away from
-                                        // `verification_method` precisely to stop
-                                        // the two being confused.
-                                        kid: kid.clone(),
-                                        signature_algorithm,
-                                        transcript_digest,
-                                        signature,
-                                    };
-                                    (kid, proof)
-                                }
-                                _ => {
-                                    pair_status.set(
-                                        "Building the canonical pairing proof failed.".to_owned(),
-                                    );
-                                    pair_action_busy.set(false);
-                                    return;
-                                }
-                            };
-                            let target_attestation = match crate::identity::device_pairing::sign_target_attestation(
+                            let target_proof = match crate::identity::device_pairing::sign_target_proof(
                                 &signer,
                                 &authority,
                                 &requesting_device,
-                                challenge_proof.transcript_digest.clone(),
+                                transcript_digest.clone(),
                             ).await {
                                 Ok(attestation) => attestation,
                                 Err(err) => {
@@ -1054,8 +1009,7 @@ fn render_pair_strand(
                             let deep_link = build_device_pairing_deep_link(
                                 &base,
                                 &handoff,
-                                &challenge_proof,
-                                &target_attestation,
+                                &target_proof,
                             );
                             pair_payload.set(deep_link);
                             pair_request_id.set(request_id.clone());
@@ -1151,7 +1105,7 @@ fn render_pair_strand(
                                     Ok(outcome) => {
                                         if outcome.state == arkret_sdk::DevicePairingState::Authorized {
                                             let verification = async {
-                                                let attestation = extract_device_pairing_target_attestation(&handoff_link)
+                                                let attestation = extract_device_pairing_target_proof(&handoff_link)
                                                     .ok_or_else(|| anyhow::anyhow!("saved pairing handoff omitted target attestation"))?;
                                                 let principal = arkret_sdk::Did::new(principal)?;
                                                 let http = crate::transport::TransportClient::unauthenticated(&base)?
@@ -1242,17 +1196,8 @@ fn render_pair_strand(
                             );
                             return;
                         };
-                        let Some(challenge_proof) =
-                            extract_device_pairing_proof(&accept_input())
-                        else {
-                            accept_status.set(
-                                "The pairing link is missing its signed challenge proof."
-                                    .to_owned(),
-                            );
-                            return;
-                        };
-                        let Some(target_attestation) =
-                            extract_device_pairing_target_attestation(&accept_input())
+                        let Some(target_proof) =
+                            extract_device_pairing_target_proof(&accept_input())
                         else {
                             accept_status.set(
                                 "The pairing link is missing its target-device attestation."
@@ -1280,10 +1225,10 @@ fn render_pair_strand(
                             {
                                 Ok(bootstrap) => {
                                     let server_challenge = arkret_sdk::signatures::device_pairing::ServerDevicePairingChallenge::from_bootstrap(&bootstrap);
-                                    if let Err(error) = arkret_sdk::signatures::device_pairing::verify_server_device_pairing_challenge(
+                                    if let Err(error) = arkret_sdk::signatures::device_pairing::verify_server_device_pairing_target_proof(
                                         &bootstrap.new_device_pubkey,
                                         &server_challenge,
-                                        &challenge_proof,
+                                        &target_proof,
                                         chrono::Utc::now(),
                                     ) {
                                         accept_resolved.set(String::new());
@@ -1295,8 +1240,7 @@ fn render_pair_strand(
                                     }
                                     let request_payload = crate::identity::device_pairing::ResolvedPairingApproval {
                                         bootstrap,
-                                        challenge_proof,
-                                        target_attestation,
+                                        target_proof,
                                     };
                                     match serde_json::to_string(&request_payload) {
                                         Ok(payload) => accept_resolved.set(payload),
@@ -1433,18 +1377,7 @@ mod tests {
 
     use super::*;
 
-    fn challenge_proof() -> arkret_sdk::DevicePairingChallengeProof {
-        serde_json::from_value(json!({
-            "transcript": "ak.device-pairing.challenge.v1",
-            "kid": "ak:device:01964137-0000-7000-8000-0000000000c1",
-            "signature_algorithm": "Ed25519",
-            "transcript_digest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-            "signature": "Y2hhbGxlbmdlLXNpZ25hdHVyZQ"
-        }))
-        .unwrap()
-    }
-
-    fn target_attestation() -> arkret_sdk::DevicePairingTargetAttestation {
+    fn target_proof() -> arkret_sdk::DevicePairingTargetProof {
         serde_json::from_value(json!({
             "device_id": "ak:device:01964137-0000-7000-8000-0000000000c1",
             "device_public_key_did": "did:key:z6MkogKw38hXxUkpMWitoBubBGHZzeGrQJ4oHF36iegUbmpA",
@@ -1514,17 +1447,14 @@ mod tests {
 
     #[test]
     fn extract_device_pairing_token_handles_link_and_bare() {
-        let proof = challenge_proof();
-        let attestation = target_attestation();
-        let link =
-            build_device_pairing_deep_link("https://host.example", "abc123", &proof, &attestation);
+        let attestation = target_proof();
+        let link = build_device_pairing_deep_link("https://host.example", "abc123", &attestation);
         assert_eq!(
             extract_device_pairing_token(&link),
             Some("abc123".to_owned())
         );
-        assert_eq!(extract_device_pairing_proof(&link), Some(proof));
         assert_eq!(
-            extract_device_pairing_target_attestation(&link),
+            extract_device_pairing_target_proof(&link),
             Some(attestation)
         );
         assert_eq!(

@@ -1602,3 +1602,69 @@ fn mls_genesis_event_lookup_filters_kind_and_realm() {
         None
     );
 }
+
+#[test]
+fn prepared_join_signing_scope_rejects_cross_station_and_device_switch() {
+    let account = arkret_sdk::AccountId::new(
+        arkret_sdk::DidCoreId::new("ak:did_core:web:alice.example").unwrap(),
+        arkret_sdk::DidCoreId::new("ak:did_core:web:station.example").unwrap(),
+    );
+    let scope = crate::secure_key_store::ActiveDeviceSeedScope {
+        authority: account.clone(),
+        device_id: arkret_sdk::DeviceId::new("ak:device:01904100-0000-7000-8000-000000000001")
+            .unwrap(),
+    };
+    validate_prepared_join_signing_scope(
+        &account,
+        &account,
+        &scope,
+        Some(&scope),
+        Some(scope.device_id.as_str()),
+    )
+    .unwrap();
+    let mut foreign = account.clone();
+    foreign.station_id = arkret_sdk::DidCoreId::new("ak:did_core:web:other.example").unwrap();
+    assert!(
+        validate_prepared_join_signing_scope(
+            &foreign,
+            &account,
+            &scope,
+            Some(&scope),
+            Some(scope.device_id.as_str())
+        )
+        .is_err()
+    );
+    let mut switched = scope.clone();
+    switched.device_id =
+        arkret_sdk::DeviceId::new("ak:device:01904100-0000-7000-8000-000000000002").unwrap();
+    assert!(
+        validate_prepared_join_signing_scope(
+            &account,
+            &account,
+            &scope,
+            Some(&switched),
+            Some(switched.device_id.as_str())
+        )
+        .is_err()
+    );
+    assert!(
+        validate_prepared_join_signing_scope(
+            &account,
+            &account,
+            &scope,
+            None,
+            Some(scope.device_id.as_str())
+        )
+        .is_err()
+    );
+    assert!(
+        validate_prepared_join_signing_scope(
+            &account,
+            &account,
+            &scope,
+            Some(&scope),
+            Some(switched.device_id.as_str())
+        )
+        .is_err()
+    );
+}

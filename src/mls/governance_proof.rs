@@ -871,7 +871,6 @@ pub(crate) fn seed_test_governance_result(
             });
     let result = arkret_sdk::MlsGovernanceFrontierOutcome {
         query_digest: request.query_digest().unwrap(),
-        seal_basis: basis,
         live_digest_suite: arkret_sdk::DigestSuite::Sha256,
         governance_binding: binding.clone(),
         epoch_head,

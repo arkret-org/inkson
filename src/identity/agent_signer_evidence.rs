@@ -156,7 +156,6 @@ pub(crate) async fn prefetch_from_realm_projections(
                 selector,
                 key,
                 accepted_at,
-                signer_evidence_ref,
                 ..
             } = result;
             let Some(selected) = pending.iter().find(|item| {
@@ -173,7 +172,6 @@ pub(crate) async fn prefetch_from_realm_projections(
                 producer_signer_evidence_ref: selected
                     .producer_signer_resolution_evidence_ref
                     .clone(),
-                signer_evidence_ref,
                 key,
                 cached_at_unix_ms: crate::clock::now_unix_ms(),
             };
@@ -491,11 +489,6 @@ mod historical_result_tests {
             receiver_id: selector.receiver_id.clone(),
             accepted_at: selector.producer_accepted_at,
             producer_signer_evidence_ref: selector.producer_signer_resolution_evidence_ref.clone(),
-            signer_evidence_ref: arkret_sdk::SignerEvidenceRef::new(format!(
-                "ak:signer_evidence:sha256:{}",
-                "b".repeat(64)
-            ))
-            .unwrap(),
             key: arkret_sdk::StationSigningKey {
                 actor: selector.agent_actor_id.clone(),
                 verification_method: selector.verification_method.clone(),
@@ -511,12 +504,8 @@ mod historical_result_tests {
     }
 
     #[test]
-    fn historical_result_keeps_distinct_frozen_and_original_admission_refs() {
+    fn historical_result_keeps_original_admission_without_source_provenance() {
         let (selector, entry, key) = fixture();
-        assert_ne!(
-            entry.signer_evidence_ref,
-            entry.producer_signer_evidence_ref
-        );
         assert_eq!(
             historical_key(&entry, &selector, &entry.recipient_account_id),
             Some(key)
@@ -549,7 +538,11 @@ mod historical_result_tests {
         foreign.receiver_id = recipient.station_id;
         assert!(historical_key(&foreign, &selector, &entry.recipient_account_id).is_none());
         foreign = entry.clone();
-        foreign.producer_signer_evidence_ref = entry.signer_evidence_ref.clone();
+        foreign.producer_signer_evidence_ref = arkret_sdk::SignerEvidenceRef::new(format!(
+            "ak:signer_evidence:sha256:{}",
+            "b".repeat(64)
+        ))
+        .unwrap();
         assert!(historical_key(&foreign, &selector, &entry.recipient_account_id).is_none());
     }
 

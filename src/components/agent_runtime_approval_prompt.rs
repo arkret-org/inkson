@@ -10,7 +10,7 @@ use crate::ui::dialog::Dialog;
 use crate::views::agents::{
     bootstrap_provisioned_agent, build_agent_key_authorization_for_pairing,
     build_requested_scope_disclosure_for_pairing, into_agent_key_pair_request,
-    parse_runtime_key_approval_request, runtime_key_pairing_error_message, seal_agent_pcr_current,
+    parse_runtime_key_approval_request, runtime_key_pairing_error_message,
     summarize_runtime_key_approval_request,
 };
 use crate::views::helpers::short_protocol_id;
@@ -27,7 +27,7 @@ struct PendingAgentRuntimeApproval {
     agent_slug: String,
     pairing_code: String,
     approval_requested_at: String,
-    proof_expires_at: String,
+    pairing_expires_at: String,
     verification_method: DidUrl,
     public_key_fingerprint: Hash,
     key_state: KeyState,
@@ -184,9 +184,31 @@ pub fn AgentRuntimeApprovalPrompt(
     } else {
         request.display_name.clone()
     };
-    let agent_id_label = short_protocol_id(request.agent_id.as_str());
-    let verification_label = short_protocol_id(request.verification_method.as_str());
-    let fingerprint_label = short_protocol_id(request.public_key_fingerprint.as_str());
+    let agent_id_label = request.agent_id.to_string();
+    let verification_label = request.verification_method.to_string();
+    let fingerprint_label = request.public_key_fingerprint.to_string();
+    let station_label = request
+        .key_state
+        .controller_account_id
+        .station_id
+        .to_string();
+    let scope_label =
+        serde_json::to_string_pretty(&request.key_state.requested_scope).unwrap_or_default();
+    let supersedes_label = request
+        .key_state
+        .active_authorizations
+        .iter()
+        .map(|authorization| {
+            format!(
+                "{} / {}",
+                authorization.key_id, authorization.authorized_event_ref
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(
+            "
+",
+        );
     let status_value = status();
     let busy = approving();
 
@@ -253,11 +275,21 @@ pub fn AgentRuntimeApprovalPrompt(
                         span { class: "muted", {crate::i18n::tr("agent_runtime.runtime_key")} }
                         strong { class: "mono", "{fingerprint_label}" }
                         span { class: "muted mono", "{verification_label}" }
-                        if !request.proof_expires_at.trim().is_empty() {
+                        if !request.pairing_expires_at.trim().is_empty() {
                             span { class: "muted",
-                                {crate::i18n::tr_args("agent_runtime.proof_expires", &[("time", request.proof_expires_at.clone())])}
+                                {crate::i18n::tr_args("agent_runtime.pairing_expires", &[("time", request.pairing_expires_at.clone())])}
                             }
                         }
+                    }
+                    div { class: "device-pair-approval-device",
+                        span { "Station" }
+                        span { class: "mono", "{station_label}" }
+                        span { "Requested scope" }
+                        pre { "{scope_label}" }
+                        span { "Authorization expiry: until revoked" }
+                        span { "Replaced authorizations" }
+                        if supersedes_label.is_empty() { span { "None" } }
+                        else { pre { "{supersedes_label}" } }
                     }
                     if !status_value.is_empty() {
                         div { class: "muted", "data-testid": "agent-runtime-approval-status", "{status_value}" }
@@ -412,38 +444,25 @@ pub fn AgentRuntimeApprovalPrompt(
                                             body,
                                             requested_scope_disclosure,
                                             authorize_submission,
-                                            authorization.signing_key_binding,
                                         );
                                         let mut outcome =
                                             submitter.agent_key_pair(&pair_request).await?;
                                         if !outcome.is_active() {
-                                            seal_agent_pcr_current(
-                                                &api,
-                                                state_store,
-                                                &account,
-                                                &key_state.agent_id,
-                                                &key_state.principal_control_realm_id,
-                                            )
-                                            .await?;
-                                            // The Station commits the Seal and refreshes the
-                                            // Agent projection on separate durable paths.  The
-                                            // first idempotent read after Seal acceptance can
-                                            // therefore still report `awaiting_accepted_frontier`
-                                            // even though the accepted Event and successor Seal
-                                            // are already present.  Re-read the exact request for
-                                            // a short bounded window; never rebuild or re-sign it.
+                                            // Approval is submitted once. Activation is a Station
+                                            // transition; subsequent calls only observe its view.
                                             for attempt in 0..20 {
-                                                outcome = submitter
-                                                    .agent_key_pair(&pair_request)
-                                                    .await?;
-                                                if outcome.is_active() {
+                                                let view = submitter.http().agent_get(agent_did.as_str()).await?;
+                                                if view.key_state.as_ref().is_some_and(|state| state.active_authorizations.iter().any(
+                                                    |authorization| authorization.authorized_event_ref == outcome.authorize_event_ref
+                                                )) {
+                                                    outcome.activation_state = arkret_sdk::AgentKeyPairActivationState::Active;
                                                     break;
                                                 }
+                                                if matches!(view.agent.lifecycle, arkret_sdk::AgentLifecycleState::Deactivated) {
+                                                    anyhow::bail!("agent authorization was cancelled");
+                                                }
                                                 if attempt + 1 < 20 {
-                                                    crate::runtime_helpers::sleep_for(
-                                                        Duration::from_millis(250),
-                                                    )
-                                                    .await;
+                                                    crate::runtime_helpers::sleep_for(Duration::from_millis(250)).await;
                                                 }
                                             }
                                         }
@@ -611,13 +630,9 @@ fn pending_runtime_approval_from_view(
     let request_value = key_state.pending_runtime_key_request.clone()?;
     let request_json = serde_json::to_string(&request_value).ok()?;
     let summary = summarize_runtime_key_approval_request(&request_json).ok()?;
-    if timestamp_has_expired(&summary.proof_expires_at)
-        || key_state.pairing_expires_at.is_some_and(|expires_at| {
-            timestamp_has_expired(&arkret_sdk::canonical::format_timestamp_canonical(
-                expires_at,
-            ))
-        })
-    {
+    let pairing_expires_at =
+        arkret_sdk::canonical::format_timestamp_canonical(key_state.pairing_expires_at?);
+    if timestamp_has_expired(&pairing_expires_at) {
         return None;
     }
     let agent_id = view.agent.agent_id.clone();
@@ -625,10 +640,10 @@ fn pending_runtime_approval_from_view(
         return None;
     }
     let pairing_code = key_state.pairing_code.clone()?;
-    let request_key = key_state
-        .approval_request_id
-        .clone()
-        .unwrap_or_else(|| summary.pairing_request_id.clone());
+    let request_key = key_state.approval_request_id.clone()?;
+    if request_key != summary.approval_request_id {
+        return None;
+    }
     Some(PendingAgentRuntimeApproval {
         notification_id: None,
         request_key,
@@ -640,7 +655,7 @@ fn pending_runtime_approval_from_view(
             .approval_requested_at
             .map(arkret_sdk::canonical::format_timestamp_canonical)
             .unwrap_or_default(),
-        proof_expires_at: summary.proof_expires_at,
+        pairing_expires_at,
         verification_method: summary.verification_method,
         public_key_fingerprint: summary.public_key_fingerprint,
         key_state: key_state.clone(),
@@ -655,7 +670,7 @@ fn pending_runtime_approval_from_view(
 }
 
 fn approval_has_expired(request: &PendingAgentRuntimeApproval) -> bool {
-    timestamp_has_expired(&request.proof_expires_at)
+    timestamp_has_expired(&request.pairing_expires_at)
 }
 
 fn timestamp_has_expired(value: &str) -> bool {

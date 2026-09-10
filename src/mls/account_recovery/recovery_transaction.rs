@@ -102,15 +102,6 @@ pub(crate) async fn prepare_pcr_policy_recovery(
             "",
             current_root_generation,
         )?;
-    if previous_entry
-        .get("versionId")
-        .and_then(serde_json::Value::as_str)
-        != Some(previous_did_version)
-        || verified_session.registry_head
-            != Hash::new(arkret_sdk::canonical::canonical_sha256(previous_entry)?)?
-    {
-        anyhow::bail!("DID history head changed after the recovery snapshot");
-    }
     let active_update_keys = previous_entry
         .pointer("/parameters/updateKeys")
         .and_then(serde_json::Value::as_array)
@@ -403,18 +394,11 @@ pub(crate) async fn execute_pcr_policy_recovery(
             .await?;
     let session = &prepared.verified_session;
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
-    let recovery_material =
-        arkret_sdk::identity_root::derive_identity_recovery_key_material_from_bip39(
-            recovery_words,
-            "",
-            0,
-        )?;
     let restore_payload = super::fetch_mls_restore_payload_with_recovery_session_unlock_proof(
         api,
         session.account_id.principal_id.as_str(),
         session.requesting_device_id.as_str(),
         session,
-        &recovery_material,
     )
     .await?;
     // The restore report is intentionally not bound: the returned summary was
@@ -574,7 +558,6 @@ pub(crate) async fn resume_pending_pcr_policy_recovery(
         session.account_id.principal_id.as_str(),
         session.requesting_device_id.as_str(),
         &session,
-        &recovery_material,
     )
     .await?;
     super::restore_mls_history_with_recovery_key_from_payload(

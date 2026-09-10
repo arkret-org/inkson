@@ -2840,7 +2840,7 @@ fn prompt_copy_strings(dict: &mut TranslationDict) {
     dict.set("agent_runtime.requested", "请求时间 {time}");
     dict.set("agent_runtime.compare_code", "批准前请比对此代码");
     dict.set("agent_runtime.runtime_key", "运行时密钥");
-    dict.set("agent_runtime.proof_expires", "凭证过期时间 {time}");
+    dict.set("agent_runtime.pairing_expires", "配对过期时间 {time}");
     dict.set("agent_runtime.rejecting", "正在拒绝请求并更换配对代码…");
     dict.set("agent_runtime.rejected", "已拒绝请求并更换配对代码。");
     dict.set(

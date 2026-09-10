@@ -2,7 +2,6 @@ pub(crate) mod account_auth;
 pub(crate) mod active_account;
 pub(crate) mod agent_signer_evidence;
 pub(crate) mod authoring_generation;
-pub(crate) mod current_signer_evidence;
 pub(crate) mod device_directory;
 pub(crate) mod device_name;
 pub(crate) mod device_pairing;

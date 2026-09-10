@@ -84,10 +84,8 @@ fn active_recovery_backup_recipient(
     let multikey = arkret_crypto::identity_root::x25519_public_multikey(raw);
     let now = crate::clock::now_utc();
     let matches = body
-        .recovery_key_agreements
-        .as_deref()
-        .unwrap_or_default()
-        .iter()
+        .active_hpke_recipients(now)
+        .into_iter()
         .filter(|entry| {
             entry.public_key_multibase.as_str() == multikey
                 && entry.not_before <= now
@@ -104,11 +102,9 @@ fn active_recovery_backup_recipient(
         ));
     };
     if !body
-        .recovery_keys
-        .as_deref()
-        .unwrap_or_default()
-        .iter()
-        .any(|entry| entry.key_agreement_ref == agreement.key_agreement_ref)
+        .signing_keys()
+        .into_iter()
+        .any(|entry| entry.backup_hpke.key_agreement_ref == agreement.key_agreement_ref)
     {
         return Err(anyhow!(
             "active backup-HPKE agreement is not paired with a recovery proof key"

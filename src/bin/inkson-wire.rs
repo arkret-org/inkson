@@ -333,10 +333,14 @@ fn realm_genesis_seal(input: Value) -> Result<Value> {
         let binding = registry
             .resolve(&input.realm_id, &cell)
             .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-        // A `cas_register` cell contributes its head set, not its value, to the
-        // §6.2.1 state_root. The heads come from the same ops the join sees.
-        if binding.lattice.kind() == arkret_state::LatticeKind::CasRegister {
-            let heads = arkret_state::cas_heads_for_batches(std::slice::from_ref(&ops));
+        // Both causal registers (`cas_register` and `fsm`) contribute active
+        // heads to the §6.2.1 state_root, derived from the same registered ops
+        // as the value join. FSM heads carry the transition's target value.
+        if arkret_state::is_causal_register(binding.lattice.kind()) {
+            let heads = arkret_state::causal_heads_for_batches(
+                binding.lattice.kind(),
+                std::slice::from_ref(&ops),
+            );
             if !heads.is_empty() {
                 post_cas_heads.insert(cell.clone(), heads);
             }

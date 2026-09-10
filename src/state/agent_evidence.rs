@@ -64,7 +64,6 @@ impl LocalStateStore {
             entry.receiver_id,
             entry.accepted_at,
             entry.producer_signer_evidence_ref,
-            entry.signer_evidence_ref,
             entry.key.actor,
             entry.key.verification_method,
         ]);

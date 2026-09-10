@@ -59,6 +59,23 @@ pub struct EventSubmitter {
 /// anchor unit, but its delegated controller is the founding proposal
 /// authority, so it must pass through `standard_initial_submission` to attach
 /// that controller's Control Proposal Ack.
+fn validate_prepared_join_signing_scope(
+    prepared_account: &arkret_sdk::AccountId,
+    captured_account: &arkret_sdk::AccountId,
+    before: &crate::secure_key_store::ActiveDeviceSeedScope,
+    after: Option<&crate::secure_key_store::ActiveDeviceSeedScope>,
+    signer_device_id: Option<&str>,
+) -> anyhow::Result<()> {
+    if prepared_account != captured_account
+        || &before.authority != captured_account
+        || after != Some(before)
+        || signer_device_id != Some(before.device_id.as_str())
+    {
+        anyhow::bail!("prepared join account or signing device changed before signing");
+    }
+    Ok(())
+}
+
 fn uses_bare_online_anchor_submission(anchor_unit: bool, event: &arkret_sdk::Event) -> bool {
     anchor_unit && !crate::authorization_lease::is_agent_pcr_genesis(event)
 }
@@ -779,8 +796,15 @@ impl OutboundSubmitter for EventOutboundSubmitter<'_> {
                                 reason: "CAS frontier scope does not match queued Event".to_owned(),
                             });
                         }
-                        if queued.scheduled_dispatch.is_some() {
-                            let reason = "frozen scheduled dispatch hit an explicit actor frontier conflict; the signed Event is retained and must not be rebuilt from the editable plan".to_owned();
+                        let prepared_join = event.kind == arkret_sdk::EventKind::InviteAccept
+                            || (event.kind == arkret_sdk::EventKind::MemberState
+                                && event
+                                    .payload
+                                    .get("membership")
+                                    .and_then(serde_json::Value::as_str)
+                                    .is_some_and(|state| matches!(state, "join" | "knock")));
+                        if queued.scheduled_dispatch.is_some() || prepared_join {
+                            let reason = "frozen Event hit an actor frontier conflict; prepare a new authorized attempt without rewriting the signed Event".to_owned();
                             self.results
                                 .rejected
                                 .lock()
@@ -2262,26 +2286,86 @@ impl EventSubmitter {
         &self,
         operation: &LocalOperation,
     ) -> anyhow::Result<SubmitEventResult> {
-        self.submit_sdk_event_queued(operation, None, None, None, None)
-            .await
+        self.submit_sdk_event_queued(operation, None, None).await
     }
 
     /// Submit a pre-join Event using the facts verified by the account's own
     /// Station. The invitee cannot read membership-gated Realm history.
     pub(crate) async fn submit_prepared_join_event(
         &self,
-        operation: &LocalOperation,
-        encryption_profile: &arkret_sdk::EncryptionProfile,
-        digest_suite: arkret_sdk::DigestSuite,
+        prepared: &arkret_sdk::RealmJoinPrepareOutcome,
     ) -> anyhow::Result<SubmitEventResult> {
-        self.submit_sdk_event_queued(
-            operation,
-            None,
-            None,
-            Some(encryption_profile),
-            Some(digest_suite),
+        let _single_writer = outbound_submit_lock().lock().await;
+        prepared.validate_structural()?;
+        if prepared.expires_at <= crate::clock::now_utc() {
+            anyhow::bail!("prepared join expired before signing");
+        }
+        let captured_account = self.authority()?.clone();
+        let captured_scope = crate::secure_key_store::active_device_seed_scope()
+            .ok_or_else(|| anyhow::anyhow!("prepared join requires an installed device scope"))?;
+        if prepared.account_id != captured_account || captured_scope.authority != captured_account {
+            anyhow::bail!("prepared join does not belong to the captured complete AccountId");
+        }
+        let envelope = prepared.unsigned_event.to_event()?;
+        let intent = EventIntent::from_authored(&envelope);
+        self.ensure_recovery_material_ready(
+            &intent,
+            Some(&prepared.governance_facts.encryption_profile),
         )
-        .await
+        .await?;
+        let generation = crate::identity::authoring_generation::AuthoringGeneration {
+            authority_model:
+                crate::identity::authoring_generation::AuthoringAuthorityModel::AcceptedDevice,
+            authority_principal_id: prepared.account_id.principal_id.clone(),
+            generation_ref: prepared.authoring_device_generation_ref.to_string(),
+        };
+        if let Some(known) =
+            crate::identity::authoring_generation::cached_event_authoring_generation(
+                &EventAuthorityFacts::from_intent(&intent),
+            )?
+        {
+            if known.authority_principal_id != generation.authority_principal_id
+                || known
+                    .generation_ref
+                    .parse::<u64>()
+                    .ok()
+                    .is_some_and(|known| known > prepared.authoring_device_generation_ref)
+            {
+                anyhow::bail!("prepared join contradicts a locally known device generation");
+            }
+        }
+        let suite = prepared.governance_facts.digest_algorithm;
+        let mut event =
+            arkret_sdk::AuthoredEvent::from_verified_with_digest_suite(envelope, suite)?;
+        let current_scope = crate::secure_key_store::active_device_seed_scope();
+        let signer = crate::event_signer::active_signer()
+            .ok_or_else(|| anyhow::anyhow!("prepared join signing device is unavailable"))?;
+        validate_prepared_join_signing_scope(
+            &prepared.account_id,
+            &captured_account,
+            &captured_scope,
+            current_scope.as_ref(),
+            signer.device_id(),
+        )?;
+        if prepared.expires_at <= crate::clock::now_utc() {
+            anyhow::bail!("prepared join expired while checking signing prerequisites");
+        }
+        signer
+            .sign_sdk_event_with_context(&mut event, self.event_proof_context(suite))
+            .map_err(|e| anyhow::anyhow!("sign prepared join Event: {e}"))?;
+        let canonical_body_bytes = arkret_sdk::canonical::canonical_json_bytes(&event)?;
+        let key = prepared.request_id.to_string();
+        let queued = QueuedSdkEvent::authored(
+            QueuedEventIntent::with_pinned_cbs_basis(intent, suite),
+            event,
+            key.clone(),
+            key,
+            canonical_body_bytes,
+            None,
+            generation,
+            None,
+        )?;
+        self.enqueue_and_drive_sdk_event(queued, None).await
     }
 
     async fn submit_sdk_event_queued(
@@ -2289,13 +2373,10 @@ impl EventSubmitter {
         operation: &LocalOperation,
         post_accept: Option<PostAcceptAction>,
         state_store: Option<crate::runtime::input::StateStoreHandle>,
-        join_encryption_profile: Option<&arkret_sdk::EncryptionProfile>,
-        explicit_prejoin_digest_suite: Option<arkret_sdk::DigestSuite>,
     ) -> anyhow::Result<SubmitEventResult> {
         let _single_writer = outbound_submit_lock().lock().await;
         let intent = operation.intent();
-        self.ensure_recovery_material_ready(intent, join_encryption_profile)
-            .await?;
+        self.ensure_recovery_material_ready(intent, None).await?;
         self.refresh_direct_message_authority(intent, state_store.as_ref())
             .await?;
         // `authorization_ref` is a bound member of the semantic intent, so the
@@ -2341,9 +2422,7 @@ impl EventSubmitter {
                 }
                 Err(error) => return Err(error),
             };
-        if intent.kind() != &arkret_sdk::EventKind::RealmCreate
-            && explicit_prejoin_digest_suite.is_none()
-        {
+        if intent.kind() != &arkret_sdk::EventKind::RealmCreate {
             let realm_id = intent.realm_id_opt().ok_or_else(|| {
                 anyhow::anyhow!(
                     "{} needs a verified Realm checkpoint but carries no Realm scope",
@@ -2367,16 +2446,9 @@ impl EventSubmitter {
             .await
             .map_err(anyhow::Error::msg)?;
         }
-        let digest_suite = self.trusted_digest_suite_for_intent(
-            &intent,
-            explicit_prejoin_digest_suite,
-            state_store.as_ref(),
-        )?;
-        let queued_intent = if explicit_prejoin_digest_suite.is_some() {
-            QueuedEventIntent::with_pinned_cbs_basis(intent, digest_suite)
-        } else {
-            QueuedEventIntent::new(intent, digest_suite)
-        };
+        let digest_suite =
+            self.trusted_digest_suite_for_intent(&intent, None, state_store.as_ref())?;
+        let queued_intent = QueuedEventIntent::new(intent, digest_suite);
         self.enqueue_and_drive_sdk_event(
             QueuedSdkEvent::unauthored(
                 queued_intent,
@@ -3270,17 +3342,9 @@ impl EventSubmitter {
         // Realm does not exist yet, so a remote frontier lookup cannot
         // distinguish genesis from an invisible Realm and MUST NOT be used.
         //
-        // The pre-join `ak.invite.accept` case is the same shape for a
-        // different reason: a pre-join principal cannot query the
-        // membership-gated actor frontier, and v1 defines the first chain
-        // position as seq=0 with no predecessors. The receiver still rejects an
-        // incorrect claim if an accepted pre-join chain already exists.
         let Some(realm_id) = intent.realm_id_opt() else {
             return Ok((0, Vec::new()));
         };
-        if intent.kind() == &arkret_sdk::EventKind::InviteAccept && intent.seal_basis().is_some() {
-            return Ok((0, Vec::new()));
-        }
         let actor_id = intent.actor_id().signing_principal_id().as_str().to_owned();
         match self
             .events_frontier_actor(&actor_id, realm_id.as_str())

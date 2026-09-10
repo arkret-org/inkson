@@ -105,6 +105,19 @@ pub fn cached_device_signing_key(actor: &str, device: &str) -> CacheLookup {
     }
 }
 
+/// A retained authenticated negative projection remains a local revocation fence
+/// after its ordinary lookup TTL; Signal delivery cannot resurrect it.
+pub(crate) fn known_device_revoked(actor: &str, device: &str) -> bool {
+    let Some(key) = cache_key(actor, device) else {
+        return true;
+    };
+    CACHE
+        .read()
+        .unwrap_or_else(|poison| poison.into_inner())
+        .get(&key)
+        .is_some_and(|entry| entry.key.is_none() && entry.verified_projection.is_some())
+}
+
 pub fn cached_device_authorize_event_id(actor: &str, device: &str) -> Option<arkret_sdk::EventId> {
     let now = crate::clock::now_unix_ms();
     let guard = CACHE.read().unwrap_or_else(|poison| poison.into_inner());

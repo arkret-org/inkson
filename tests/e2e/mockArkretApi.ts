@@ -16,7 +16,7 @@ import {
 // bytes moves it. The guard below refuses to run on a stale value rather
 // than serving a Realm the client cannot address.
 export const DEMO_REALM =
-  "ak:realm:AXLdBpLtU052snUYmC7z6ugXuYM9JDBd4PUF5AwhZ39K";
+  "ak:realm:AfZipd5actne33fQKtrLCK5Q658LZby1JgRICH16UNjo";
 export const PRINCIPAL_CONTROL_REALM =
   "ak:realm:Ac9iLS6pVSDjqFeDeJjvUhbtREpxQ8IWem2mi64wrqDq";
 const STRAND_POSITION_CELL_FAMILY = "ak.component.strand.position.v1";
@@ -732,7 +732,7 @@ export async function mockArkretApi(
           version: 1,
           acceptance_basis_ref: `ak:seal:sha256:${"a".repeat(64)}`,
           trust_domain: "ak:trust_domain:soland.local",
-          allowed_proof_kinds: ["did_root"],
+          methods: [{ kind: "did_root" }],
           supersedes_id: null,
           expires_at: null,
           issued_at: "2026-07-29T00:00:00.000Z",
@@ -790,12 +790,10 @@ export async function mockArkretApi(
         (Array.isArray(ks.active_authorizations) &&
           ks.active_authorizations.length > 0)),
     );
-    const pairingMode = String(ks?.pairing_mode ?? "");
     const pairingExpiresAt = String(ks?.pairing_expires_at ?? "");
     const pairingOpen =
       Boolean(ks?.pairing_request_id) &&
-      pairingExpiresAt > "2026-08-03T00:00:00.000Z" &&
-      (pairingMode === "replacement" || !keyed);
+      pairingExpiresAt > "2026-08-03T00:00:00.000Z";
     if (keyed) {
       return {
         lifecycle,
@@ -2205,7 +2203,6 @@ export async function mockArkretApi(
             lease_fence: identityCreation.lease_fence,
             operation_status: "accepted",
             operation_digest: identityCreation.control_proof.operation_digest,
-            head_event_digest: identityCreation.control_proof.operation_digest,
           },
           pcr_genesis_receipt: {
             schema: "ak.schema.event_batch_receipt.v1",
@@ -2457,7 +2454,6 @@ export async function mockArkretApi(
                   ),
                   limited: false,
                 },
-                state: { events: [] },
                 unread_notifications: {
                   notification_count: 0,
                   highlight_count: 0,
@@ -2478,7 +2474,6 @@ export async function mockArkretApi(
                   },
                   summary: { joined_member_count: 1 },
                   timeline: { events: [], limited: false },
-                  state: { events: [] },
                   unread_notifications: {
                     notification_count: 0,
                     highlight_count: 0,
@@ -2522,7 +2517,6 @@ export async function mockArkretApi(
                     limited: false,
                   },
                   timeline: { events: demoProjectionEvents, limited: false },
-                  state: { events: [] },
                   unread_notifications: {
                     notification_count: 0,
                     highlight_count: 0,
@@ -2539,7 +2533,6 @@ export async function mockArkretApi(
                   },
                   summary: { joined_member_count: 1 },
                   timeline: { events: [], limited: false },
-                  state: { events: [] },
                   unread_notifications: {
                     notification_count: 0,
                     highlight_count: 0,
@@ -2556,7 +2549,6 @@ export async function mockArkretApi(
                   },
                   summary: { joined_member_count: 1 },
                   timeline: { events: [], limited: false },
-                  state: { events: [] },
                   unread_notifications: {
                     notification_count: 0,
                     highlight_count: 0,
@@ -2578,7 +2570,6 @@ export async function mockArkretApi(
                   },
                   summary: { joined_member_count: 1 },
                   timeline: { events: [], limited: false },
-                  state: { events: [] },
                   unread_notifications: {
                     notification_count: 0,
                     highlight_count: 0,
@@ -3547,7 +3538,6 @@ export async function mockArkretApi(
         controller_account_id: accountId,
         principal_control_realm_id: principalControlRealmId,
         controller_authorization_ref: controllerAuthorizationRef,
-        pairing_mode: "bootstrap",
         pairing_request_id: `pair-${personalAgentCounter}`,
         pairing_code: "pairing-secret-246810-e2e",
         pairing_expires_at: personalAgentPairingExpiresAt,
@@ -3752,11 +3742,8 @@ export async function mockArkretApi(
       // Both active and paused agents may replace without a forced pause; the
       // branch is bootstrap for a never-keyed agent, replacement otherwise
       // (key-management.md §3.6.1).
-      const renewKeyed = renewAxes.runtime_state === "ready";
-      const pairingMode = renewKeyed ? "replacement" : "bootstrap";
       const keyState = {
         ...(personalAgentKeyStates.get(agentId) ?? {}),
-        pairing_mode: pairingMode,
         pairing_request_id: `pair-renew-${personalAgentCounter}`,
         pairing_code: "pairing-secret-135791-e2e",
         pairing_expires_at: renewedExpiresAt,
@@ -3776,7 +3763,6 @@ export async function mockArkretApi(
           kind: "ak.agent.requested_scope_commitment.v1",
           requested_scope: keyState.requested_scope,
         }),
-        pairing_mode: pairingMode,
         pairing_request_id: keyState.pairing_request_id,
         pairing_code: keyState.pairing_code,
         expires_at: keyState.pairing_expires_at,
@@ -3825,7 +3811,10 @@ export async function mockArkretApi(
         string,
         unknown
       >;
-      const agentId = String(body.agent_id ?? "");
+      const submission = body.authorize_event as { event?: Record<string, unknown> };
+      const event = submission?.event ?? {};
+      const payload = (event.payload ?? {}) as Record<string, unknown>;
+      const agentId = String(payload.agent_id ?? "");
       const agent = personalAgents.get(agentId);
       if (!agent) {
         return json(
@@ -3837,8 +3826,7 @@ export async function mockArkretApi(
           404,
         );
       }
-      const authorizedEventRef =
-        "ak:event:Ad-rGYKVGY9i32DG2R9ZwMezGzT5g2rmdYjrifmGO6Fe";
+      const authorizedEventRef = String(event.event_id ?? "");
       agent.lifecycle = "active";
       agent.updated_at = "2026-07-06T00:05:00.000Z";
       const previousKeyState = personalAgentKeyStates.get(agentId) ?? {};
@@ -3847,26 +3835,19 @@ export async function mockArkretApi(
         authorized_event_ref: authorizedEventRef,
         active_authorizations: [
           {
-            key_id:
-              String(body.verification_method ?? "")
-                .split("#")
-                .pop() ?? "runtime-key-1",
-            verification_method: body.verification_method,
+            key_id: payload.key_id,
+            verification_method: payload.verification_method,
             authorized_event_ref: authorizedEventRef,
           },
         ],
       };
       delete nextKeyState.pairing_request_id;
-      delete nextKeyState.pairing_mode;
       delete nextKeyState.pairing_code;
       delete nextKeyState.pairing_expires_at;
       personalAgentKeyStates.set(agentId, nextKeyState);
       return json(route, {
-        ok: true,
-        agent_id: agentId,
         activation_state: "active",
         authorize_event_ref: authorizedEventRef,
-        signing_key_binding: body.signing_key_binding,
       });
     }
 
@@ -4209,9 +4190,10 @@ export async function mockArkretApi(
           version: policy.version ?? 1,
           acceptance_basis_ref: acceptanceBasisRef,
           trust_domain: policy.trust_domain ?? "ak:trust_domain:soland.local",
-          allowed_proof_kinds: Array.isArray(policy.allowed_proof_kinds)
-            ? policy.allowed_proof_kinds
+          methods: Array.isArray(policy.methods)
+            ? policy.methods
             : [],
+          policy,
           supersedes_id: policy.supersedes_id ?? null,
           expires_at: policy.expires_at ?? null,
           issued_at: policy.issued_at ?? acceptedAt,
@@ -4271,7 +4253,27 @@ export async function mockArkretApi(
       const backups = Array.from(keyBackups.values()).filter((backup) =>
         backupClass ? backup.backup_kind === backupClass : true,
       );
-      return json(route, { backups, has_more: false });
+      return json(route, {
+        backups,
+        active_series: {
+          account_id: accountId,
+          control_realm_id: PRINCIPAL_CONTROL_REALM,
+          seal_basis: {
+            leaves: [`ak:seal:sha256:${"1".repeat(64)}`],
+          },
+          // This fixture's accepted pointer is independent of object uploads,
+          // deletions and the list filter; only preseeded recovery activates it.
+          secret_storage: options.preseedRecoveryMaterial === true
+            ? {
+                state: "active",
+                active_series_id: "ak:backup_series:019a6aa0-0000-7000-8000-000000000003",
+                series_pointer_version: 1,
+              }
+            : { state: "absent" },
+          mls_history: { state: "absent" },
+        },
+        has_more: false,
+      });
     }
 
     if (
@@ -4406,7 +4408,10 @@ function principalServiceDescribe() {
         },
       ],
     },
-    limits: { x_storage: "memory" },
+    limits: {
+      x_storage: "memory",
+      mls_governance_proof: { max_exact_response_bytes: 1048576 },
+    },
     rate_limit_policy: {
       policy_version: "1",
       entries: [

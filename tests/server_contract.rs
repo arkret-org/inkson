@@ -271,7 +271,6 @@ fn inkson_accepts_server_contract_payloads() {
             "source_refs": ["ak:event:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-"],
             "policy_revision": "contract-rev"
         },
-        "stripped_state_entries": [],
         "join_rule": "public",
         "join_candidates": [{
             "realm_id": "ak:realm:AZQnaSleDidYaYIvfwYy3au5gnd_DSinxyUHEl7ewtxk",

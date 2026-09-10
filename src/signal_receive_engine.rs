@@ -12,10 +12,10 @@
 //! [`garth::SignalStreamDriver`]. This module supplies only the two seams that
 //! need host state:
 //!
-//! * [`DirectorySenderKeyResolver`] answers "which active signing key did `sender_actor_id`
-//!   authorize for `sender_device_id`" from the accepted device directory. It is an authorization
-//!   lookup — a revoked or absent device is a negative verdict, never a fallback to the
-//!   `verification_method` fragment (`signal.md` §1).
+//! * [`DirectorySenderKeyResolver`] consumes the exact sender/key/authorization instance in the
+//!   authenticated frame's `delivery_authority`, bound to the active local Account. Local known
+//!   revocation overrides that result; a cached public key alone is never current authorization
+//!   (`signal.md` §1).
 //! * [`MlsSignalDecryptor`] restores the scope's persisted MLS group through the same
 //!   [`crate::signal::restore_signal_mls_session`] helper the send path uses, then opens the AEAD
 //!   through the SDK, which enforces `aead_profile` equality with the group's negotiated
@@ -67,18 +67,14 @@ pub struct SignalReceiveEngineContext {
 /// Fail-closed [`garth::SignalSenderKeyResolver`] over accepted device and
 /// current Agent authority evidence.
 ///
-/// Device and Agent authority are queried asynchronously for every
-/// verification from the current Station and are never retained as
-/// a reusable current authorization. Both paths precede producer-proof and AEAD checks.
+/// Device and Agent authority arrive bound to the exact authenticated stream frame.
+/// No per-Signal self RPC or reusable current authorization cache is involved;
+/// local revocation and full account checks precede producer-proof and AEAD checks.
 ///
-/// Device authorization is resolved against the **current** accepted directory,
-/// not against `envelope.seal_ref`, which is what `signal.md` §1 requires: the
-/// two are separate state domains, and `seal_ref` selects only the Realm/scope
-/// one. Device authorization is principal-control state that a target-Realm
-/// Seal does not locate, and `keys_query_request_body` deliberately has no
-/// as-of basis. The source Station performs its own admission; destination
-/// relay authenticates that Station. The client uses its own Station's current
-/// authority result and still verifies the actual Signal producer signature.
+/// The recipient Station applies the current device/Agent gate before delivery.
+/// `envelope.seal_ref` selects Realm/scope state and does not replace that current
+/// PCR check. The client binds the returned authority to this envelope and its
+/// authenticated Account, then still verifies the producer signature and E2E data.
 #[derive(Default)]
 pub struct DirectorySenderKeyResolver {
     state_store: Option<crate::runtime::input::StateStoreHandle>,
@@ -89,6 +85,7 @@ impl garth::SignalSenderKeyResolver for DirectorySenderKeyResolver {
     fn resolve_sender_key<'a>(
         &'a self,
         envelope: &'a arkret_wire::SignalEnvelope,
+        delivery_authority: &'a arkret_wire::SignalDeliveryAuthority,
     ) -> garth::BoxSignalSenderKeyFuture<'a> {
         Box::pin(async move {
             let account = self.account.as_ref()?;
@@ -97,23 +94,20 @@ impl garth::SignalSenderKeyResolver for DirectorySenderKeyResolver {
             if recipient != account.authority {
                 return None;
             }
-            let generation = crate::identity::device_directory::cache_epoch();
-            let http = crate::identity::session_refresh::provide_authenticated_sdk_client(
-                account.server_url.as_str(),
-            )
-            .await
-            .ok()?;
-            let key = crate::identity::current_signer_evidence::query_for_signal(
-                &http,
-                envelope,
-                recipient.clone(),
-            )
-            .await?;
-            if generation != crate::identity::device_directory::cache_epoch()
-                || store.read(|store| store.active_authority()).as_ref() != Some(&recipient)
+            delivery_authority.validate_for_envelope(envelope).ok()?;
+            if delivery_authority.recipient_account_id != recipient
                 || envelope.expires_at <= crate::clock::now_utc()
             {
                 return None;
+            }
+            let key = delivery_authority.key.clone();
+            if let Some(device_id) = &envelope.sender_device_id {
+                if crate::identity::device_directory::known_device_revoked(
+                    &envelope.sender_actor_id.to_string(),
+                    device_id.as_str(),
+                ) {
+                    return None;
+                }
             }
             let public_key = arkret_sdk::signatures::PublicKeyMaterial::Ed25519Raw {
                 bytes: arkret_sdk::base64url_decode(key.public_key_b64u.as_str().as_bytes())
@@ -646,12 +640,13 @@ mod tests {
     }
 
     fn sender_resolution_envelope() -> arkret_wire::SignalEnvelope {
+        let now = crate::clock::now_utc();
         let actor_id =
             crate::mls_api_helpers::local_account_actor_id("ak:did_core:web:alice.example")
                 .unwrap();
         let sender_device_id =
             arkret_sdk::DeviceId::new("ak:device:01904100-0000-7000-8000-000000000002").unwrap();
-        arkret_wire::SignalEnvelope {
+        let mut envelope = arkret_wire::SignalEnvelope {
             realm_id: arkret_sdk::RealmId::new(
                 "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
             )
@@ -667,8 +662,8 @@ mod tests {
             seal_ref: arkret_sdk::SealId::new(format!("ak:seal:sha256:{}", "a".repeat(64)))
                 .unwrap(),
             signal_class: arkret_wire::SignalClass::Session,
-            sent_at: at(0),
-            expires_at: at(30),
+            sent_at: now,
+            expires_at: now + chrono::Duration::seconds(30),
             encrypted_payload: arkret_wire::SignalEncryptedPayload {
                 scheme: arkret_wire::signal::SIGNAL_AEAD_SCHEME.to_owned(),
                 key_ref: arkret_wire::SignalKeyRef {
@@ -695,23 +690,58 @@ mod tests {
                 audience: None,
                 jws: String::new(),
             },
+        };
+        envelope.encrypted_payload.aad_digest = envelope.expected_aad_digest().unwrap();
+        envelope.proof.envelope_digest = envelope.envelope_digest().unwrap();
+        envelope.proof.jws = arkret_sdk::signatures::sign_ed25519_detached_jws(
+            &ed25519_dalek::SigningKey::from_bytes(&[19; 32]),
+            &envelope.proof_binding_bytes().unwrap(),
+        )
+        .unwrap();
+        envelope.validate_wire_shape().unwrap();
+        arkret_sdk::signatures::verify_ed25519_signal_proof(&envelope, &sender_resolution_key())
+            .unwrap();
+        envelope
+    }
+
+    fn sender_resolution_key() -> arkret_sdk::signatures::PublicKeyMaterial {
+        arkret_sdk::signatures::PublicKeyMaterial::Ed25519Raw {
+            bytes: ed25519_dalek::SigningKey::from_bytes(&[19; 32])
+                .verifying_key()
+                .to_bytes()
+                .to_vec(),
         }
     }
 
     #[tokio::test]
-    async fn cached_device_key_cannot_authorize_signal_without_a_current_query() {
+    async fn cached_device_key_cannot_authorize_signal_without_an_authenticated_delivery() {
         use garth::SignalSenderKeyResolver as _;
         let envelope = sender_resolution_envelope();
         let actor = envelope.sender_actor_id.signing_principal_id().as_str();
         let device = envelope.sender_device_id.as_ref().unwrap().as_str();
-        let key = crate::identity::device_directory::public_key_from_directory_value(
-            "did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuVkhY7g94pVQyG98x",
-        )
-        .unwrap();
+        let key = sender_resolution_key();
         crate::identity::device_directory::seed_positive_for_test(actor, device, key);
+        let delivery_authority = arkret_wire::SignalDeliveryAuthority {
+            recipient_account_id: envelope.sender_actor_id.as_account_id().unwrap().clone(),
+            key: arkret_wire::StationSigningKey {
+                actor: envelope.sender_actor_id.clone(),
+                verification_method: envelope.proof.verification_method.clone(),
+                public_key_b64u: arkret_wire::Base64UrlString::new(arkret_sdk::base64url_encode(
+                    ed25519_dalek::SigningKey::from_bytes(&[19; 32])
+                        .verifying_key()
+                        .to_bytes(),
+                ))
+                .unwrap(),
+                authorization_ref: arkret_wire::EventId::from_digest(
+                    arkret_sdk::DigestSuite::Sha256,
+                    [0x42; 32],
+                ),
+            },
+        };
+        delivery_authority.validate_for_envelope(&envelope).unwrap();
         assert!(
             DirectorySenderKeyResolver::default()
-                .resolve_sender_key(&envelope)
+                .resolve_sender_key(&envelope, &delivery_authority)
                 .await
                 .is_none()
         );

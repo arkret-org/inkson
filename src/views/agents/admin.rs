@@ -8,9 +8,9 @@
 use std::time::Duration;
 
 use arkret_models_collaboration::agent_operations::{
-    AgentDeactivateRequestBody, AgentLifecycleState, AgentPairingMode, AgentPauseRequestBody,
-    AgentProvisionOutcome, AgentProvisionRequestBody, AgentRenewPairingOutcome,
-    AgentResumeRequestBody, AgentRuntimeState, AgentView, KeyState,
+    AgentDeactivateRequestBody, AgentLifecycleState, AgentPauseRequestBody, AgentProvisionOutcome,
+    AgentProvisionRequestBody, AgentRenewPairingOutcome, AgentResumeRequestBody, AgentRuntimeState,
+    AgentView, KeyState,
 };
 use arkret_models_collaboration::events_payloads::agent::AgentKeyScope;
 use dioxus::prelude::*;

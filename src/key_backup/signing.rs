@@ -5,19 +5,13 @@ use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
 #[cfg(test)]
 use ed25519_dalek::{Signature, Verifier, VerifyingKey};
-use ed25519_dalek::{Signer, SigningKey};
 use serde_json::Value;
-#[cfg(test)]
-use serde_json::json;
 
 use super::required_str_anyhow;
 
-const UNLOCKED_KEY_BACKUP_CACHE_MAX_ENTRIES: usize = 64;
 const KEY_BACKUP_UNLOCK_BACKOFF_MAX_ENTRIES: usize = 32;
 
 thread_local! {
-    static UNLOCKED_KEY_BACKUP_CACHE: RefCell<Vec<(String, Value)>> =
-        const { RefCell::new(Vec::new()) };
     static KEY_BACKUP_UNLOCK_BACKOFFS: RefCell<crate::keyed_cooldown::KeyedCooldown> = const {
         RefCell::new(crate::keyed_cooldown::KeyedCooldown::new(
             KEY_BACKUP_UNLOCK_BACKOFF_MAX_ENTRIES,
@@ -80,131 +74,101 @@ pub fn verify_key_backup_auth_data(
         .map_err(|_| "untrusted_backup_signature: signature does not verify".to_owned())
 }
 
-// Invariant assertions: each `expect` message names the check that
-// establishes it a few lines earlier. Rewriting them as `?` would add
-// error paths no caller can reach.
-#[allow(clippy::expect_used)]
 pub fn build_key_backup_unlock_proof(
     backup: &arkret_sdk::KeyBackupSummary,
     principal_id: &str,
     requesting_device_id: &str,
     recovery_session: Option<&arkret_sdk::RecoverySessionState>,
-    recovery_key: Option<(&[u8; 32], &str)>,
-    signer: Option<&std::sync::Arc<crate::event_signer::InksonEventSigner>>,
+    challenge: Option<&arkret_sdk::KeysBackupsUnlockChallenge>,
+    audience: &str,
+    signer: &std::sync::Arc<crate::event_signer::InksonEventSigner>,
 ) -> anyhow::Result<arkret_sdk::KeyBackupUnlockProof> {
-    let active_signer = if recovery_key.is_none() {
-        Some(signer.ok_or_else(|| {
-            anyhow::anyhow!("device signer is required for key backup unlock proof")
-        })?)
-    } else {
-        None
-    };
-    let issued_at = chrono::Utc::now();
-    let (recovery_session_id, proof_kind, proof_digest) = if let Some(session) = recovery_session {
-        let summary = session
-            .proof_summary
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("verified recovery session missing proof_summary"))?;
-        let kind = match summary.kind {
-            arkret_sdk::RecoveryProofKind::DidRoot => arkret_sdk::ProofKind::DidRoot,
-            arkret_sdk::RecoveryProofKind::RecoveryUnlock => arkret_sdk::ProofKind::RecoveryUnlock,
-            arkret_sdk::RecoveryProofKind::DeviceQuorum => arkret_sdk::ProofKind::DeviceQuorum,
-            arkret_sdk::RecoveryProofKind::TrustedRecoveryService => {
-                arkret_sdk::ProofKind::TrustedRecoveryService
-            }
-            arkret_sdk::RecoveryProofKind::ThresholdRecovery => {
-                arkret_sdk::ProofKind::ThresholdRecovery
-            }
-        };
-        (
-            session.recovery_session_id.clone(),
-            kind,
-            summary.proof_digest.clone(),
-        )
-    } else {
-        // Ordinary already-authorized-device restores use the only proof kind
-        // that does not require a durable recovery session.
-        let session_id = arkret_sdk::RecoverySessionId::new(format!(
-            "ak:recovery_session:{}",
-            crate::operation::uuid_v7()
-        ))?;
-        #[derive(serde::Serialize)]
-        struct LocalUnlockProofDigest<'a> {
-            #[serde(rename = "type")]
-            record_type: &'static str,
-            principal_id: &'a str,
-            requesting_device_id: &'a str,
-            backup_id: &'a arkret_sdk::BackupId,
-            backup_kind: arkret_sdk::BackupKind,
-            series_id: &'a arkret_sdk::BackupSeriesId,
-            ciphertext_digest: &'a str,
-            issued_at: String,
-        }
-
-        let local_digest = crate::canonical::canonical_sha256(&LocalUnlockProofDigest {
-            record_type: "org.arkret.inkson.key_backup.local_unlock_proof.v1",
-            principal_id,
-            requesting_device_id,
-            backup_id: &backup.backup_id,
-            backup_kind: backup.backup_kind,
-            series_id: &backup.series_id,
-            ciphertext_digest: backup.ciphertext_digest.as_str(),
-            issued_at: arkret_sdk::canonical::format_timestamp_canonical(issued_at),
-        })?;
-        (
-            session_id,
-            arkret_sdk::ProofKind::CurrentDevice,
-            arkret_sdk::Hash::new(local_digest)?,
-        )
-    };
-    let verification_method = recovery_key
-        .map(|(_, method)| method.to_owned())
-        .unwrap_or_else(|| {
-            active_signer
-                .as_ref()
-                .expect("checked above")
-                .verification_method()
-                .to_owned()
-        });
-    let auth = arkret_sdk::UnsignedKeyBackupUnlockProofAuthData::new(
-        arkret_sdk::DidUrl::new(verification_method).map_err(anyhow::Error::msg)?,
-        arkret_sdk::KeyBackupSignatureAlgorithm::Ed25519,
-    )?;
-    let account_id = backup
+    let account = backup
         .actor_id
         .as_account_id()
-        .ok_or_else(|| anyhow::anyhow!("key backup owner is not an account actor"))?
+        .ok_or_else(|| anyhow::anyhow!("backup owner is not an account"))?
         .clone();
     anyhow::ensure!(
-        account_id.principal_id == crate::mls_api_helpers::principal_core_id(principal_id)?,
-        "key backup owner does not match the requested account"
+        account.principal_id == crate::mls_api_helpers::principal_core_id(principal_id)?,
+        "backup account mismatch"
     );
+    let device_id = arkret_sdk::DeviceId::new(requesting_device_id.to_owned())?;
+    anyhow::ensure!(
+        signer.device_id() == Some(requesting_device_id),
+        "unlock signer device mismatch"
+    );
+    let issued_at = crate::clock::now_utc();
+    let (authority, challenge_bytes, expires_at, method) = if let Some(session) = recovery_session {
+        anyhow::ensure!(
+            session.state == arkret_sdk::SessionState::Verified
+                && session.expires_at > issued_at
+                && session.account_id == account
+                && session.requesting_device_id == device_id,
+            "recovery unlock session is not current"
+        );
+        let multibase = signer
+            .public_key_multibase()
+            .ok_or_else(|| anyhow::anyhow!("replacement device identity key missing"))?;
+        let did = format!("did:key:{multibase}");
+        anyhow::ensure!(
+            session.requesting_device_public_key_did.as_str() == did,
+            "unlock signer differs from frozen replacement identity"
+        );
+        (
+            arkret_sdk::KeyBackupUnlockAuthority::RecoverySession {
+                recovery_session_id: session.recovery_session_id.clone(),
+            },
+            arkret_sdk::Base64UrlString::new(session.challenge.to_string())
+                .map_err(anyhow::Error::msg)?,
+            session.expires_at,
+            format!("{did}#{multibase}"),
+        )
+    } else {
+        let challenge = challenge
+            .ok_or_else(|| anyhow::anyhow!("server-issued unlock challenge is required"))?;
+        anyhow::ensure!(
+            challenge.account_id == account
+                && challenge.requesting_device_id == device_id
+                && challenge.backup_id == backup.backup_id
+                && challenge.series_id == backup.series_id
+                && challenge.ciphertext_digest.as_str() == backup.ciphertext_digest
+                && challenge.audience.as_str() == audience
+                && challenge.service_id == account.station_id
+                && challenge.operation == "ak.self.keys.backups.command.unlock.v1"
+                && challenge.issued_at <= issued_at
+                && challenge.expires_at > issued_at,
+            "server unlock challenge binding mismatch"
+        );
+        (
+            arkret_sdk::KeyBackupUnlockAuthority::CurrentDevice {
+                challenge_id: challenge.challenge_id.clone(),
+                nonce: challenge.nonce.clone(),
+            },
+            challenge.challenge.clone(),
+            challenge.expires_at,
+            signer.verification_method().to_owned(),
+        )
+    };
+    let auth = arkret_sdk::UnsignedKeyBackupUnlockProofAuthData::new(
+        arkret_sdk::DidUrl::new(method).map_err(anyhow::Error::msg)?,
+        arkret_sdk::KeyBackupSignatureAlgorithm::Ed25519,
+    )?;
     let unsigned = arkret_sdk::UnsignedKeyBackupUnlockProof::new(
-        recovery_session_id,
-        account_id,
-        arkret_sdk::DeviceId::new(requesting_device_id.to_owned())?,
+        authority,
+        account.clone(),
+        device_id,
         backup.backup_id.clone(),
         backup.backup_kind,
         backup.series_id.clone(),
         arkret_sdk::Hash::new(backup.ciphertext_digest.clone())?,
-        proof_kind,
-        proof_digest,
-        None,
+        challenge_bytes,
+        account.station_id,
+        arkret_sdk::NonEmptyString::new(audience.to_owned()).map_err(anyhow::Error::msg)?,
         issued_at,
+        expires_at,
         auth,
     )?;
-    let payload = unsigned.signing_payload_bytes()?;
-    let signature = if let Some((seed, _)) = recovery_key {
-        SigningKey::from_bytes(seed)
-            .sign(&payload)
-            .to_bytes()
-            .to_vec()
-    } else {
-        active_signer
-            .expect("checked above")
-            .sign_raw(&payload)
-            .map_err(|err| anyhow::anyhow!("key backup unlock proof sign: {err:?}"))?
-    };
+    let signature = signer.sign_raw(&unsigned.signing_payload_bytes()?)?;
     unsigned
         .attach_signature(
             arkret_sdk::Base64UrlString::new(B64.encode(signature)).map_err(anyhow::Error::msg)?,
@@ -225,7 +189,6 @@ pub async fn fetch_key_backup_with_device_unlock_proof(
         principal_id,
         requesting_device_id,
         None,
-        None,
         signer,
     )
     .await
@@ -237,38 +200,23 @@ pub async fn fetch_key_backup_with_recovery_session_unlock_proof(
     principal_id: &str,
     requesting_device_id: &str,
     recovery_session: &arkret_sdk::RecoverySessionState,
-    recovery_key_material: &arkret_sdk::identity_root::IdentityRecoveryKeyMaterial,
 ) -> anyhow::Result<Value> {
     recovery_session.validate()?;
     if recovery_session.account_id.principal_id.as_str() != principal_id
         || recovery_session.requesting_device_id.as_str() != requesting_device_id
-        || !matches!(
-            recovery_session.state,
-            arkret_sdk::SessionState::Verified | arkret_sdk::SessionState::Completed
-        )
+        || !matches!(recovery_session.state, arkret_sdk::SessionState::Verified)
     {
         anyhow::bail!("key backup unlock recovery session binding mismatch");
     }
+    let signer = crate::event_signer::active_signer()
+        .ok_or_else(|| anyhow::anyhow!("replacement device identity signer is required"))?;
     fetch_key_backup_with_unlock_proof(
         api,
         backup_metadata,
         principal_id,
         requesting_device_id,
         Some(recovery_session),
-        Some((
-            &recovery_key_material.recovery_proof_seed,
-            recovery_session
-                .proof_summary
-                .as_ref()
-                .and_then(|summary| summary.verification_method.as_ref())
-                .ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "verified recovery session omitted recovery verification method"
-                    )
-                })?
-                .as_str(),
-        )),
-        None,
+        Some(&signer),
     )
     .await
 }
@@ -279,39 +227,76 @@ async fn fetch_key_backup_with_unlock_proof(
     principal_id: &str,
     requesting_device_id: &str,
     recovery_session: Option<&arkret_sdk::RecoverySessionState>,
-    recovery_key: Option<(&[u8; 32], &str)>,
     signer: Option<&std::sync::Arc<crate::event_signer::InksonEventSigner>>,
 ) -> anyhow::Result<Value> {
     let backoff_scope = key_backup_unlock_backoff_scope(api, principal_id)?;
     if let Some(retry_after_ms) = key_backup_unlock_backoff_remaining_ms(&backoff_scope) {
         return Err(KeyBackupUnlockBackoff { retry_after_ms }.into());
     }
-    let cache_key = unlocked_key_backup_cache_key(
+    let request_key = unlock_request_storage_key(
         api,
         backup_metadata,
         principal_id,
         requesting_device_id,
         recovery_session.map(|session| session.recovery_session_id.as_str()),
     )?;
-    if let Some(cached) = unlocked_key_backup_cache_get(&cache_key) {
-        return Ok(cached);
-    }
     let summary = serde_json::from_value::<arkret_sdk::KeyBackupSummary>(backup_metadata.clone())?;
     let backup_id = summary.backup_id.to_string();
-    let proof = build_key_backup_unlock_proof(
-        &summary,
-        principal_id,
-        requesting_device_id,
-        recovery_session,
-        recovery_key,
-        signer,
-    )?;
+    let audience = api
+        .endpoint("_arkret/self/keys/backups")?
+        .origin()
+        .ascii_serialization();
+    let request_lock = unlock_request_lock(&request_key);
+    let _guard = request_lock.lock().await;
+    let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
+    let proof = if let Some(proof) = load_unlock_request(secure_store.as_ref(), &request_key)? {
+        proof
+    } else {
+        let issued = if recovery_session.is_none() {
+            let request = arkret_sdk::KeysBackupsIssueUnlockChallengeRequestBody {
+                request_id: arkret_sdk::Base64UrlString::new(
+                    B64.encode(crate::operation::uuid_v7().as_bytes()),
+                )
+                .map_err(anyhow::Error::msg)?,
+            };
+            Some(
+                api.sdk_http_client()?
+                    .issue_key_backup_unlock_challenge(&summary.backup_id, &request)
+                    .await?,
+            )
+        } else {
+            None
+        };
+        let proof = build_key_backup_unlock_proof(
+            &summary,
+            principal_id,
+            requesting_device_id,
+            recovery_session,
+            issued.as_ref(),
+            &audience,
+            signer.ok_or_else(|| anyhow::anyhow!("unlock identity signer missing"))?,
+        )?;
+        // Persist the exact signed request before the first send so process restart
+        // and a lost response cannot re-sign an already-consumed recovery allowance.
+        store_unlock_request(secure_store.as_ref(), &request_key, &proof).await?;
+        proof
+    };
     let backup = match api
         .get_key_backup_with_unlock_proof(&backup_id, &proof)
         .await
     {
         Ok(backup) => backup,
         Err(error) => {
+            // A terminal rejection of an expired ordinary challenge permits a new
+            // issuance on the next user retry. Transport uncertainty retains the
+            // exact request, as does every recovery-session allowance.
+            if recovery_session.is_none()
+                && proof.expires_at <= crate::clock::now_utc()
+                && crate::api_error::api_error_status_and_envelope(&error)
+                    .is_some_and(|(status, _)| status == reqwest::StatusCode::CONFLICT)
+            {
+                secure_store.delete_secret(&request_key)?;
+            }
             if let Some(retry_after_ms) = crate::api_error::rate_limited_retry_after(&error) {
                 note_key_backup_unlock_backoff(&backoff_scope, retry_after_ms);
             }
@@ -321,7 +306,6 @@ async fn fetch_key_backup_with_unlock_proof(
     // Callers fold the full backup envelope through lenient `Value` accessors;
     // serialize the typed `KeyBackup` back to its wire JSON.
     let backup = serde_json::to_value(&backup)?;
-    unlocked_key_backup_cache_put(cache_key, &backup);
     Ok(backup)
 }
 
@@ -347,7 +331,7 @@ fn note_key_backup_unlock_backoff(scope: &str, retry_after_ms: u64) {
     KEY_BACKUP_UNLOCK_BACKOFFS.with(|backoffs| backoffs.borrow_mut().note_until(scope, until_ms));
 }
 
-fn unlocked_key_backup_cache_key(
+fn unlock_request_storage_key(
     api: &crate::transport::TransportClient,
     backup_metadata: &Value,
     principal_id: &str,
@@ -359,50 +343,72 @@ fn unlocked_key_backup_cache_key(
     let backup_kind = required_str_anyhow(backup_metadata, "backup_kind")?;
     let series_id = required_str_anyhow(backup_metadata, "series_id")?;
     let ciphertext_digest = required_str_anyhow(backup_metadata, "ciphertext_digest")?;
-    Ok(format!(
-        "{}|principal={}|device={}|recovery_session={}|backup={backup_id}|class={backup_kind}|series={series_id}|digest={ciphertext_digest}",
+    let holder_scope = if recovery_session_id.is_some() {
+        String::new()
+    } else {
+        arkret_sdk::canonical::sha256_digest(api.context().credential.as_bytes())
+    };
+    let scope = format!(
+        "{}|principal={}|device={}|recovery_session={}|holder={holder_scope}|backup={backup_id}|class={backup_kind}|series={series_id}|digest={ciphertext_digest}",
         endpoint.as_str(),
         principal_id.trim(),
         requesting_device_id.trim(),
         recovery_session_id.unwrap_or("none")
-    ))
+    );
+    let summary: arkret_sdk::KeyBackupSummary = serde_json::from_value(backup_metadata.clone())?;
+    let account = summary
+        .actor_id
+        .as_account_id()
+        .ok_or_else(|| anyhow::anyhow!("backup owner is not an account"))?;
+    let user_store = crate::secure_key_store::UserLocalStore::new(
+        account.clone(),
+        arkret_sdk::DeviceId::new(requesting_device_id.to_owned())?,
+    )?;
+    Ok(user_store.secret_key(&format!(
+        "key_backup.unlock_request.v1.{}",
+        arkret_sdk::canonical::sha256_digest(scope.as_bytes())
+    )))
 }
 
-fn unlocked_key_backup_cache_get(cache_key: &str) -> Option<Value> {
-    UNLOCKED_KEY_BACKUP_CACHE.with(|cache| {
-        let mut entries = cache.borrow_mut();
-        let index = entries
-            .iter()
-            .position(|(entry_key, _)| entry_key == cache_key)?;
-        let (entry_key, value) = entries.remove(index);
-        let result = value.clone();
-        entries.push((entry_key, value));
-        Some(result)
-    })
-}
-
-fn unlocked_key_backup_cache_put(cache_key: String, backup: &Value) {
-    if backup.get("ciphertext").and_then(Value::as_str).is_none() {
-        return;
+fn unlock_request_lock(key: &str) -> std::sync::Arc<tokio::sync::Mutex<()>> {
+    use std::sync::{Arc, Mutex, OnceLock, Weak};
+    type Locks = std::collections::BTreeMap<String, Weak<tokio::sync::Mutex<()>>>;
+    static LOCKS: OnceLock<Mutex<Locks>> = OnceLock::new();
+    let mut locks = LOCKS
+        .get_or_init(|| Mutex::new(Locks::new()))
+        .lock()
+        .expect("unlock lock registry");
+    locks.retain(|_, value| value.strong_count() > 0);
+    if let Some(lock) = locks.get(key).and_then(Weak::upgrade) {
+        return lock;
     }
-    UNLOCKED_KEY_BACKUP_CACHE.with(|cache| {
-        let mut entries = cache.borrow_mut();
-        if let Some(index) = entries
-            .iter()
-            .position(|(entry_key, _)| entry_key == cache_key.as_str())
-        {
-            entries.remove(index);
-        }
-        entries.push((cache_key, backup.clone()));
-        while entries.len() > UNLOCKED_KEY_BACKUP_CACHE_MAX_ENTRIES {
-            entries.remove(0);
-        }
-    });
+    let lock = Arc::new(tokio::sync::Mutex::new(()));
+    locks.insert(key.to_owned(), Arc::downgrade(&lock));
+    lock
+}
+
+fn load_unlock_request(
+    store: &dyn crate::secure_key_store::SecureKeyStore,
+    key: &str,
+) -> anyhow::Result<Option<arkret_sdk::KeyBackupUnlockProof>> {
+    store
+        .get_secret(key)?
+        .map(|value| serde_json::from_str(&value).map_err(anyhow::Error::from))
+        .transpose()
+}
+async fn store_unlock_request(
+    store: &dyn crate::secure_key_store::SecureKeyStore,
+    key: &str,
+    proof: &arkret_sdk::KeyBackupUnlockProof,
+) -> anyhow::Result<()> {
+    store
+        .store_secret_durable(key, &serde_json::to_string(proof)?)
+        .await?;
+    Ok(())
 }
 
 #[cfg(test)]
 fn clear_key_backup_unlock_memory() {
-    UNLOCKED_KEY_BACKUP_CACHE.with(|cache| cache.borrow_mut().clear());
     KEY_BACKUP_UNLOCK_BACKOFFS.with(|backoffs| backoffs.borrow_mut().clear());
 }
 
@@ -411,11 +417,14 @@ mod tests {
     use std::sync::Arc;
 
     use super::*;
-    use crate::event_signer::build_ed25519_signer;
 
-    #[test]
-    fn unlock_proof_auth_data_matches_sdk_schema() {
-        let signer = Arc::new(build_ed25519_signer([11u8; 32], "did:web:alice.example"));
+    #[tokio::test]
+    async fn unlock_proof_auth_data_matches_sdk_schema_and_survives_retry() {
+        let signer = Arc::new(crate::event_signer::build_ed25519_device_signer(
+            [11u8; 32],
+            "did:web:alice.example",
+            "ak:device:0196419b-0000-7000-8000-000000000003",
+        ));
         let backup = arkret_sdk::KeyBackupSummary {
             backup_id: arkret_sdk::BackupId::new("ak:backup:0196419b-0000-7000-8000-000000000001")
                 .unwrap(),
@@ -442,62 +451,72 @@ mod tests {
             contents: Vec::new(),
         };
 
+        let account = backup.actor_id.as_account_id().unwrap().clone();
+        let now = crate::clock::now_utc();
+        let challenge = arkret_sdk::KeysBackupsUnlockChallenge {
+            challenge_id: arkret_sdk::Base64UrlString::new("A".repeat(22)).unwrap(),
+            challenge: arkret_sdk::Base64UrlString::new("A".repeat(43)).unwrap(),
+            nonce: arkret_sdk::Base64UrlString::new(B64.encode([1u8; 16])).unwrap(),
+            operation: "ak.self.keys.backups.command.unlock.v1".to_owned(),
+            account_id: account.clone(),
+            requesting_device_id: arkret_sdk::DeviceId::new(
+                "ak:device:0196419b-0000-7000-8000-000000000003",
+            )
+            .unwrap(),
+            backup_id: backup.backup_id.clone(),
+            series_id: backup.series_id.clone(),
+            ciphertext_digest: arkret_sdk::Hash::new(backup.ciphertext_digest.clone()).unwrap(),
+            audience: arkret_sdk::NonEmptyString::new("https://station.example").unwrap(),
+            service_id: account.station_id,
+            request_id: arkret_sdk::Base64UrlString::new(B64.encode([2u8; 16])).unwrap(),
+            issued_at: now,
+            expires_at: now + chrono::Duration::seconds(300),
+        };
         let proof = build_key_backup_unlock_proof(
             &backup,
             "did:web:alice.example",
             "ak:device:0196419b-0000-7000-8000-000000000003",
             None,
-            None,
-            Some(&signer),
+            Some(&challenge),
+            "https://station.example",
+            &signer,
         )
-        .expect("unlock proof builds");
+        .unwrap();
         proof.validate().expect("unlock proof validates");
+        let signature =
+            Signature::from_slice(&B64.decode(proof.auth_data.signature.as_str()).unwrap())
+                .unwrap();
+        ed25519_dalek::SigningKey::from_bytes(&[11u8; 32])
+            .verifying_key()
+            .verify_strict(&proof.signing_payload_bytes().unwrap(), &signature)
+            .unwrap();
 
+        let store = crate::secure_key_store::MemorySecureKeyStore::default();
+        store_unlock_request(&store, "scoped-unlock-request", &proof)
+            .await
+            .unwrap();
+        let replay = load_unlock_request(&store, "scoped-unlock-request")
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            serde_json::to_vec(&proof).unwrap(),
+            serde_json::to_vec(&replay).unwrap()
+        );
+        assert!(
+            load_unlock_request(&store, "other-account-request")
+                .unwrap()
+                .is_none()
+        );
         let proof_value = serde_json::to_value(&proof).unwrap();
         assert!(proof_value["auth_data"].get("device_id").is_none());
-        // The device-signed path (no recovery session) MUST declare
-        // `current_device` is the only proof_kind exempt from a durable
-        // recovery-session record. Declaring a recovery-ceremony kind makes the
-        // server fail closed with `recovery_evidence_unbound`.
+        assert_eq!(proof_value["kind"], "current_device");
+        assert!(proof_value.get("recovery_session_id").is_none());
+        assert!(proof_value.get("proof_digest").is_none());
+        let decoded: arkret_sdk::KeyBackupUnlockProof =
+            serde_json::from_value(proof_value).unwrap();
         assert_eq!(
-            proof.proof_kind,
-            arkret_models_crypto::ProofKind::CurrentDevice
-        );
-    }
-
-    #[test]
-    fn unlocked_key_backup_cache_reuses_digest_and_evicts_oldest() {
-        clear_key_backup_unlock_memory();
-        let key = "server|principal=alice|device=dev|backup=one|digest=sha256:a";
-        let backup = json!({
-            "backup_id": "ak:backup:one",
-            "ciphertext": "ciphertext-a"
-        });
-
-        unlocked_key_backup_cache_put(key.to_owned(), &backup);
-        assert_eq!(
-            unlocked_key_backup_cache_get(key).and_then(|value| {
-                value
-                    .get("ciphertext")
-                    .and_then(Value::as_str)
-                    .map(str::to_owned)
-            }),
-            Some("ciphertext-a".to_owned())
-        );
-
-        for index in 0..(UNLOCKED_KEY_BACKUP_CACHE_MAX_ENTRIES + 1) {
-            unlocked_key_backup_cache_put(
-                format!("server|principal=alice|device=dev|backup={index}|digest=sha256:{index}"),
-                &json!({
-                    "backup_id": format!("ak:backup:{index}"),
-                    "ciphertext": format!("ciphertext-{index}")
-                }),
-            );
-        }
-
-        assert!(
-            unlocked_key_backup_cache_get(key).is_none(),
-            "oldest full-backup cache entry must be evicted"
+            decoded.signing_payload_bytes().unwrap(),
+            proof.signing_payload_bytes().unwrap()
         );
     }
 

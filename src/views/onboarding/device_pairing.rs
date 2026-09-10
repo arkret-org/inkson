@@ -10,7 +10,7 @@ pub(super) struct DeviceSetupPairingRequest {
     pub(super) pairing_code: arkret_sdk::DevicePairingCode,
     pub(super) device_id: arkret_sdk::DeviceId,
     pub(super) deep_link: String,
-    pub(super) target_attestation: arkret_sdk::DevicePairingTargetAttestation,
+    pub(super) target_proof: arkret_sdk::DevicePairingTargetProof,
 }
 
 pub(super) fn device_pairing_handoff_token(
@@ -28,17 +28,12 @@ pub(super) fn device_pairing_handoff_token(
 pub(super) fn device_pairing_deep_link(
     base_url: &str,
     token: &str,
-    challenge_proof: &arkret_sdk::DevicePairingChallengeProof,
-    target_attestation: &arkret_sdk::DevicePairingTargetAttestation,
+    target_proof: &arkret_sdk::DevicePairingTargetProof,
 ) -> anyhow::Result<String> {
-    let proof = arkret_sdk::base64url_encode(arkret_sdk::canonical::canonical_json_bytes(
-        challenge_proof,
-    )?);
-    let attestation = arkret_sdk::base64url_encode(arkret_sdk::canonical::canonical_json_bytes(
-        target_attestation,
-    )?);
+    let proof =
+        arkret_sdk::base64url_encode(arkret_sdk::canonical::canonical_json_bytes(target_proof)?);
     Ok(format!(
-        "{}/_arkret/open/device-pairing/resolve#token={token}&proof={proof}&attestation={attestation}",
+        "{}/_arkret/open/device-pairing/resolve#token={token}&proof={proof}",
         base_url.trim_end_matches('/'),
     ))
 }
@@ -114,26 +109,15 @@ pub(super) async fn stage_device_setup_pairing(
     let stage = http.device_pairing_stage(&stage_body).await?;
     let challenge =
         arkret_sdk::signatures::device_pairing::ServerDevicePairingChallenge::from_stage(
-            client_nonce,
+            &stage_body,
             &stage,
         );
-    let (challenge_bytes, transcript_digest) =
+    let (_, transcript_digest) =
         arkret_sdk::signatures::device_pairing::server_device_pairing_transcript(
             &stage_body.new_device_pubkey,
             &challenge,
         )?;
-    let challenge_proof = arkret_sdk::DevicePairingChallengeProof {
-        transcript: arkret_sdk::DevicePairingChallengeTranscriptKind::ServerMediated,
-        kid: target_device.clone(),
-        signature_algorithm: arkret_sdk::NonEmptyString::new(signer.algorithm().to_owned())
-            .map_err(anyhow::Error::msg)?,
-        transcript_digest: transcript_digest.clone(),
-        signature: arkret_sdk::Base64UrlString::new(arkret_sdk::base64url_encode(
-            signer.sign_raw(&challenge_bytes)?,
-        ))
-        .map_err(anyhow::Error::msg)?,
-    };
-    let target_attestation = crate::identity::device_pairing::sign_target_attestation(
+    let target_proof = crate::identity::device_pairing::sign_target_proof(
         &signer,
         &authority,
         &target_device,
@@ -142,12 +126,7 @@ pub(super) async fn stage_device_setup_pairing(
     .await?;
     let token =
         device_pairing_handoff_token(&stage.device_pairing_request_id, &stage.pairing_code)?;
-    let deep_link = device_pairing_deep_link(
-        &handoff.station_url,
-        &token,
-        &challenge_proof,
-        &target_attestation,
-    )?;
+    let deep_link = device_pairing_deep_link(&handoff.station_url, &token, &target_proof)?;
     let principal_did = handoff
         .bound_principal_did
         .clone()
@@ -162,7 +141,7 @@ pub(super) async fn stage_device_setup_pairing(
             request_id: stage.device_pairing_request_id.clone(),
             pairing_code: stage.pairing_code.clone(),
             device_id: target_device.clone(),
-            target_attestation: target_attestation.clone(),
+            target_proof: target_proof.clone(),
         },
     )
     .await?;
@@ -171,7 +150,7 @@ pub(super) async fn stage_device_setup_pairing(
         pairing_code: stage.pairing_code,
         device_id: target_device,
         deep_link,
-        target_attestation,
+        target_proof,
     })
 }
 
@@ -190,15 +169,14 @@ pub(super) async fn check_device_setup_pairing(
     if outcome.state != arkret_sdk::DevicePairingState::Authorized {
         return Ok(outcome.state);
     }
-    arkret_sdk::signatures::device_pairing::verify_device_pairing_target_attestation(
-        &request.target_attestation,
+    arkret_sdk::signatures::device_pairing::verify_device_pairing_target_proof(
+        &request.target_proof,
     )?;
     let status_device = outcome
         .device_id
         .as_ref()
         .ok_or_else(|| anyhow::anyhow!("authorized pairing status omitted device_id"))?;
-    if status_device != &request.device_id || status_device != &request.target_attestation.device_id
-    {
+    if status_device != &request.device_id || status_device != &request.target_proof.device_id {
         anyhow::bail!("authorized pairing status names another target device");
     }
     if outcome.authorized_event_ref.is_none() {

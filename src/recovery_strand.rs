@@ -12,11 +12,10 @@
 use arkret_models_crypto::{
     RecoveryHpkeSuite, RecoveryKeyAgreementAlgorithm, RecoveryKeyAgreementEntry,
     RecoveryKeyAgreementUse, RecoveryKeyEntry, RecoveryKeySignatureAlgorithm, RecoveryPolicy,
-    RecoveryPolicyActiveOutcome, RecoveryPolicySummary, RecoveryProofKind,
-    RecoveryPublicationAuthorizationRule, UnsignedRecoveryPolicy, UnsignedRecoveryPolicyBody,
+    RecoveryPolicyActiveOutcome, RecoveryPolicySummary, UnsignedRecoveryPolicy,
+    UnsignedRecoveryPolicyBody,
 };
 use arkret_sdk::{DidUrl, NonEmptyString, PolicyId, TrustDomainId};
-use arkret_wire::{AuthoritySetIssuer, AuthoritySetIssuerRole, event_kind_str};
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64;
 use serde_json::Value;
@@ -315,70 +314,42 @@ fn build_signed_genesis_recovery_policy_with_raw_signer(
         .map_err(|error| anyhow::anyhow!(error))?;
     let backup_hpke_ref = DidUrl::new(format!("{principal_did}#backup-hpke-0"))
         .map_err(|error| anyhow::anyhow!(error))?;
-    let did_root_signing_ref =
-        DidUrl::new(verification_method.to_owned()).map_err(|error| anyhow::anyhow!(error))?;
     let policy_body = UnsignedRecoveryPolicyBody {
         policy_id: PolicyId::new(format!("ak:policy:{}", crate::operation::uuid_v7()))?,
         account_id: account_id.clone(),
         version: 1,
         supersedes_id: None,
         trust_domain: TrustDomainId::new(trust_domain.to_owned())?,
-        allowed_proof_kinds: vec![
-            RecoveryProofKind::DidRoot,
-            RecoveryProofKind::RecoveryUnlock,
-        ],
-        publication_authorization_rules: vec![
-            RecoveryPublicationAuthorizationRule {
-                rule_id: "did_root".to_owned(),
-                proof_kind: RecoveryProofKind::DidRoot,
-                issuer_role: AuthoritySetIssuerRole::IdentityRecovery,
-                allowed_actions: vec![event_kind_str::DEVICE_REANCHOR.to_owned()],
-                issuers: vec![AuthoritySetIssuer {
-                    verification_method: did_root_signing_ref,
+        methods: vec![
+            arkret_sdk::RecoveryMethod::DidRoot {},
+            arkret_sdk::RecoveryMethod::RecoveryUnlock {
+                keys: vec![RecoveryKeyEntry {
+                    verification_method: recovery_proof_ref,
+                    public_key_multibase: NonEmptyString::new(
+                        key_material.recovery_proof_public_key_multikey.clone(),
+                    )
+                    .map_err(anyhow::Error::msg)?,
+                    signature_algorithm: RecoveryKeySignatureAlgorithm::Ed25519,
+                    not_before: issued_at,
+                    expires_at: key_expires_at,
+                    revoked_at: None,
+                    backup_hpke: RecoveryKeyAgreementEntry {
+                        key_agreement_ref: backup_hpke_ref,
+                        key_agreement_algorithm: RecoveryKeyAgreementAlgorithm::X25519,
+                        public_key_multibase: NonEmptyString::new(
+                            key_material.backup_hpke_public_key_multikey.clone(),
+                        )
+                        .map_err(anyhow::Error::msg)?,
+                        hpke_suites: vec![RecoveryHpkeSuite::X25519ChaCha20Poly1305],
+                        usage: RecoveryKeyAgreementUse::BackupHpke,
+                        not_before: issued_at,
+                        expires_at: key_expires_at,
+                        revoked_at: None,
+                    },
                 }],
-                threshold: 1,
-            },
-            RecoveryPublicationAuthorizationRule {
-                rule_id: "recovery_unlock".to_owned(),
-                proof_kind: RecoveryProofKind::RecoveryUnlock,
-                issuer_role: AuthoritySetIssuerRole::IdentityRecovery,
-                allowed_actions: vec![event_kind_str::DEVICE_REANCHOR.to_owned()],
-                issuers: vec![AuthoritySetIssuer {
-                    verification_method: recovery_proof_ref.clone(),
-                }],
-                threshold: 1,
             },
         ],
-        threshold: None,
-        device_quorum: None,
-        trusted_recovery_services: None,
-        recovery_keys: Some(vec![RecoveryKeyEntry {
-            verification_method: recovery_proof_ref,
-            public_key_multibase: NonEmptyString::new(
-                key_material.recovery_proof_public_key_multikey.clone(),
-            )
-            .map_err(|error| anyhow::anyhow!(error))?,
-            key_agreement_ref: backup_hpke_ref.clone(),
-            signature_algorithm: RecoveryKeySignatureAlgorithm::Ed25519,
-            not_before: issued_at,
-            expires_at: key_expires_at,
-            revoked_at: None,
-        }]),
-        recovery_key_agreements: Some(vec![RecoveryKeyAgreementEntry {
-            key_agreement_ref: backup_hpke_ref,
-            key_agreement_algorithm: RecoveryKeyAgreementAlgorithm::X25519,
-            public_key_multibase: NonEmptyString::new(
-                key_material.backup_hpke_public_key_multikey.clone(),
-            )
-            .map_err(|error| anyhow::anyhow!(error))?,
-            hpke_suites: vec![RecoveryHpkeSuite::X25519ChaCha20Poly1305],
-            usage: RecoveryKeyAgreementUse::BackupHpke,
-            not_before: issued_at,
-            expires_at: key_expires_at,
-            revoked_at: None,
-        }]),
         approval_requirement: None,
-        audit: None,
         issued_at,
         not_before: None,
         expires_at: None,
@@ -623,10 +594,8 @@ fn validate_active_policy_key_material(
     }
 
     let agreement_ref = policy
-        .recovery_key_agreements
-        .as_deref()
-        .unwrap_or_default()
-        .iter()
+        .active_hpke_recipients(chrono::Utc::now())
+        .into_iter()
         .find(|entry| {
             entry.public_key_multibase.as_str() == key_material.backup_hpke_public_key_multikey
         })
@@ -636,16 +605,11 @@ fn validate_active_policy_key_material(
             "supplied Recovery Key does not match the active policy backup recipient; use the staged recovery-key handoff workflow"
         );
     };
-    let proof_key = policy
-        .recovery_keys
-        .as_deref()
-        .unwrap_or_default()
-        .iter()
-        .find(|entry| {
-            &entry.key_agreement_ref == agreement_ref
-                && entry.public_key_multibase.as_str()
-                    == key_material.recovery_proof_public_key_multikey
-        });
+    let proof_key = policy.signing_keys().into_iter().find(|entry| {
+        &entry.backup_hpke.key_agreement_ref == agreement_ref
+            && entry.public_key_multibase.as_str()
+                == key_material.recovery_proof_public_key_multikey
+    });
     let Some(proof_key) = proof_key else {
         anyhow::bail!(
             "supplied Recovery Key does not match the active policy recovery proof key; use the staged recovery-key handoff workflow"

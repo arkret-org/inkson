@@ -720,7 +720,6 @@ fn check_registration_result_binding(
         .context("identity-creation request lost its frozen registration")?;
     if validated.principal_id != receipt.principal_id
         || validated.operation_digest != receipt.operation_digest
-        || validated.log_head_digest != receipt.head_event_digest
         || validated.did_version_id != registration.control_proof.did_version_id
         || validated.log_head_digest != registration.control_proof.log_head_digest
         || validated.control_key_digest != registration.control_proof.control_key_digest

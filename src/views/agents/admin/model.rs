@@ -164,11 +164,7 @@ pub(super) fn apply_renewed_pairing(
     if outcome.pairing_request_id.trim().is_empty() {
         return Err("renewed pairing response omitted the pairing request id");
     }
-    if outcome
-        .pairing_code
-        .as_deref()
-        .is_none_or(|code| code.trim().is_empty())
-    {
+    if outcome.pairing_code.trim().is_empty() {
         return Err("renewed pairing response omitted the new pairing code");
     }
     if outcome.expires_at <= now {
@@ -196,26 +192,8 @@ pub(super) fn apply_renewed_pairing(
     {
         return Err("renewed pairing response does not match the loaded Agent binding");
     }
-    // Re-opening pairing never changes the lifecycle intent; only the derived
-    // runtime_state moves (key-management.md §3.6.1). Bootstrap re-open applies
-    // to a never-keyed agent, runtime replacement to one already holding an
-    // active key — the pairing_mode must agree with the loaded key state.
-    let has_active_authorization = !key_state.active_authorizations.is_empty();
-    match outcome.pairing_mode {
-        AgentPairingMode::Bootstrap if !has_active_authorization => {
-            AgentRuntimeState::PendingRuntimeKey
-        }
-        AgentPairingMode::Replacement if has_active_authorization => AgentRuntimeState::Replacing,
-        AgentPairingMode::Bootstrap => {
-            return Err("bootstrap pairing response conflicts with the loaded Agent key state");
-        }
-        AgentPairingMode::Replacement => {
-            return Err("replacement pairing response conflicts with the loaded Agent key state");
-        }
-    };
     key_state.pairing_request_id = Some(outcome.pairing_request_id.clone());
-    key_state.pairing_mode = Some(outcome.pairing_mode);
-    key_state.pairing_code = outcome.pairing_code.clone();
+    key_state.pairing_code = Some(outcome.pairing_code.clone());
     key_state.pairing_expires_at = Some(outcome.expires_at);
     Ok(())
 }

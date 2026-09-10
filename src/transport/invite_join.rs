@@ -31,6 +31,10 @@ impl crate::transport::TransportClient {
             request_id: arkret_sdk::RequestId::new_v7_at(crate::clock::now_unix_ms() as u64),
             account_id,
             realm_id: arkret_sdk::RealmId::new(realm_id.to_owned())?,
+            created_at: arkret_sdk::canonical::normalize_timestamp_canonical(
+                crate::clock::now_utc(),
+            ),
+            hlc: None,
             intent: arkret_sdk::RealmJoinIntent::InviteAccept {
                 invite_id: arkret_sdk::InviteId::new(invite_id.to_owned())?,
                 invite_token: invite_token.to_owned(),
@@ -43,20 +47,18 @@ impl crate::transport::TransportClient {
         if prepared.expires_at <= crate::clock::now_utc() {
             anyhow::bail!("Realm join preparation expired before authoring")
         }
-        let event = crate::operation::ak_ops::prepared_invite_accept(
-            realm_id,
-            actor_id,
-            prepared.authoring_core,
-        )?
-        .seal_basis(prepared.governance_facts.seal_basis)
-        .build_sdk_event("inkson")?;
+        if prepared
+            .unsigned_event
+            .actor_id
+            .signing_principal_id()
+            .as_str()
+            != actor_id
+        {
+            anyhow::bail!("prepared join actor differs from current signer");
+        }
         let submit = self
             .event_submitter()?
-            .submit_prepared_join_event(
-                &event,
-                &prepared.governance_facts.encryption_profile,
-                prepared.governance_facts.digest_algorithm,
-            )
+            .submit_prepared_join_event(&prepared)
             .await?;
         Ok((submit, None))
     }

@@ -1170,7 +1170,7 @@ pub(crate) async fn issue_bound_handoff_session(
             &pairing.principal_did,
             &pairing.account_id,
             &status,
-            &pairing.target_attestation,
+            &pairing.target_proof,
         )
         .await
         .map_err(|error| {

@@ -11,8 +11,7 @@ const PENDING_DEVICE_PAIRING_VERIFICATION_KEY: &str = "pending-device-pairing-ve
 #[serde(deny_unknown_fields)]
 pub(crate) struct ResolvedPairingApproval {
     pub bootstrap: arkret_sdk::DevicePairingBootstrap,
-    pub challenge_proof: arkret_sdk::DevicePairingChallengeProof,
-    pub target_attestation: arkret_sdk::DevicePairingTargetAttestation,
+    pub target_proof: arkret_sdk::DevicePairingTargetProof,
 }
 
 /// Target-owned material retained across the OIDC navigation that follows a
@@ -27,7 +26,7 @@ pub(crate) struct PendingDevicePairingVerification {
     pub request_id: arkret_sdk::DevicePairingRequestId,
     pub pairing_code: arkret_sdk::DevicePairingCode,
     pub device_id: arkret_sdk::DeviceId,
-    pub target_attestation: arkret_sdk::DevicePairingTargetAttestation,
+    pub target_proof: arkret_sdk::DevicePairingTargetProof,
 }
 
 impl PendingDevicePairingVerification {
@@ -48,12 +47,12 @@ impl PendingDevicePairingVerification {
         if &self.principal_did != principal_did
             || self.account_id != expected_account
             || self.device_id.as_str() != handoff.device_id
-            || self.target_attestation.device_id != self.device_id
+            || self.target_proof.device_id != self.device_id
         {
             anyhow::bail!("pending device pairing does not match the bound account handoff");
         }
-        arkret_sdk::signatures::device_pairing::verify_device_pairing_target_attestation(
-            &self.target_attestation,
+        arkret_sdk::signatures::device_pairing::verify_device_pairing_target_proof(
+            &self.target_proof,
         )?;
         Ok(())
     }
@@ -93,12 +92,12 @@ pub(crate) fn clear_pending_device_pairing_verification(
     Ok(())
 }
 
-pub async fn sign_target_attestation(
+pub async fn sign_target_proof(
     signer: &crate::event_signer::InksonEventSigner,
     authority: &arkret_sdk::AccountId,
     device_id: &arkret_sdk::DeviceId,
     transcript_digest: arkret_sdk::Hash,
-) -> anyhow::Result<arkret_sdk::DevicePairingTargetAttestation> {
+) -> anyhow::Result<arkret_sdk::DevicePairingTargetProof> {
     let signer_device = signer
         .device_id()
         .ok_or_else(|| anyhow::anyhow!("device pairing signer is not bound to a device"))?;
@@ -115,7 +114,7 @@ pub async fn sign_target_attestation(
         device_id,
     )
     .await?;
-    let unsigned = arkret_sdk::UnsignedDevicePairingTargetAttestation::new(
+    let unsigned = arkret_sdk::UnsignedDevicePairingTargetProof::new(
         device_id.clone(),
         arkret_sdk::DidKey::new(format!("did:key:{public_key_multibase}"))
             .map_err(anyhow::Error::msg)?,
@@ -139,7 +138,7 @@ pub async fn sign_target_attestation(
     .map_err(anyhow::Error::msg)?;
     let attestation =
         unsigned.attach_signature(arkret_sdk::SignatureMaterial::NonEmptyString(signature));
-    arkret_sdk::signatures::device_pairing::verify_device_pairing_target_attestation(&attestation)?;
+    arkret_sdk::signatures::device_pairing::verify_device_pairing_target_proof(&attestation)?;
     Ok(attestation)
 }
 
@@ -150,14 +149,8 @@ pub async fn author_pairing_request_body(
     api: &crate::transport::TransportClient,
     payload: &ResolvedPairingApproval,
 ) -> anyhow::Result<arkret_sdk::AccountDevicePairRequestBody> {
-    let attestation = payload.target_attestation.clone();
-    arkret_sdk::signatures::device_pairing::verify_device_pairing_target_attestation(&attestation)?;
-    let challenge_proof = payload.challenge_proof.clone();
-    if challenge_proof.transcript_digest != attestation.pairing_challenge_transcript_digest {
-        anyhow::bail!(
-            "pairing challenge proof and target attestation describe different transcripts"
-        );
-    }
+    let attestation = payload.target_proof.clone();
+    arkret_sdk::signatures::device_pairing::verify_device_pairing_target_proof(&attestation)?;
     let new_device_pubkey = payload.bootstrap.new_device_pubkey.clone();
     if new_device_pubkey.kid.as_str() != attestation.device_id.as_str() {
         anyhow::bail!("pairing public key and target attestation name different devices");
@@ -166,10 +159,10 @@ pub async fn author_pairing_request_body(
         arkret_sdk::signatures::device_pairing::ServerDevicePairingChallenge::from_bootstrap(
             &payload.bootstrap,
         );
-    arkret_sdk::signatures::device_pairing::verify_server_device_pairing_challenge(
+    arkret_sdk::signatures::device_pairing::verify_server_device_pairing_target_proof(
         &new_device_pubkey,
         &server_challenge,
-        &challenge_proof,
+        &attestation,
         chrono::Utc::now(),
     )?;
 
@@ -208,6 +201,9 @@ pub async fn author_pairing_request_body(
         arkret_sdk::DeviceAuthorizationBindingKind::AcceptedDevice,
         None,
     )?
+    .with_pairing_challenge_transcript_digest(
+        attestation.pairing_challenge_transcript_digest.clone(),
+    )
     .attach_signature(device_signature)?;
     let http = api.sdk_http_client()?;
     let realm_id =
@@ -238,7 +234,6 @@ pub async fn author_pairing_request_body(
     let request = arkret_sdk::AccountDevicePairRequestBody {
         pairing_code: payload.bootstrap.pairing_code.clone(),
         new_device_pubkey,
-        challenge_proof,
         authorize_event,
         display_name: payload.bootstrap.display_name.clone(),
         device_metadata: payload.bootstrap.device_metadata.clone(),
@@ -256,7 +251,34 @@ pub async fn approve_device_pairing(
     api: &crate::transport::TransportClient,
     payload: &ResolvedPairingApproval,
 ) -> anyhow::Result<arkret_sdk::AccountDevicePairOutcome> {
-    let body = author_pairing_request_body(api, payload).await?;
+    let scope = crate::secure_key_store::active_device_seed_scope()
+        .ok_or_else(|| anyhow::anyhow!("no active account can approve pairing"))?;
+    let store = crate::secure_key_store::default_secure_key_store("inkson");
+    let local = crate::secure_key_store::UserLocalStore::new(scope.authority, scope.device_id)?;
+    let retry_key = format!(
+        "device-pairing-commit.{}",
+        payload.bootstrap.device_pairing_request_id
+    );
+    let body: arkret_sdk::AccountDevicePairRequestBody =
+        if let Some(saved) = local.load_secret(store.as_ref(), &retry_key)? {
+            let body: arkret_sdk::AccountDevicePairRequestBody = serde_json::from_str(&saved)?;
+            let retained: arkret_sdk::DeviceAuthorizePayload =
+                serde_json::from_value(serde_json::to_value(&body.authorize_event.event.payload)?)?;
+            if retained.device_signature != payload.target_proof.device_signature
+                || retained.pairing_challenge_transcript_digest.as_ref()
+                    != Some(&payload.target_proof.pairing_challenge_transcript_digest)
+                || body.device_pairing_request_id != payload.bootstrap.device_pairing_request_id
+            {
+                anyhow::bail!("pending pairing retry describes another target proof");
+            }
+            body
+        } else {
+            let body = author_pairing_request_body(api, payload).await?;
+            local
+                .save_secret_durable(store.as_ref(), &retry_key, &serde_json::to_string(&body)?)
+                .await?;
+            body
+        };
     let authorize_event = body.authorize_event.event.clone();
     let http = api.sdk_http_client()?;
     let outcome = http.account_device_pair(&body).await?;
@@ -283,7 +305,7 @@ pub async fn verify_authorized_pairing_event(
     http: &arkret_sdk::http_client::Client,
     principal: &arkret_sdk::Did,
     outcome: &arkret_sdk::DevicePairingStatusOutcome,
-    attestation: &arkret_sdk::DevicePairingTargetAttestation,
+    attestation: &arkret_sdk::DevicePairingTargetProof,
 ) -> anyhow::Result<arkret_sdk::Event> {
     let principal_actor = arkret_sdk::project_did_to_core_id(principal)?;
     let authority = crate::secure_key_store::active_device_seed_scope()
@@ -299,9 +321,9 @@ pub async fn verify_authorized_pairing_event_for_authority(
     principal: &arkret_sdk::Did,
     authority: &arkret_sdk::AccountId,
     outcome: &arkret_sdk::DevicePairingStatusOutcome,
-    attestation: &arkret_sdk::DevicePairingTargetAttestation,
+    attestation: &arkret_sdk::DevicePairingTargetProof,
 ) -> anyhow::Result<arkret_sdk::Event> {
-    arkret_sdk::signatures::device_pairing::verify_device_pairing_target_attestation(attestation)?;
+    arkret_sdk::signatures::device_pairing::verify_device_pairing_target_proof(attestation)?;
     let device_id = outcome
         .device_id
         .as_ref()
@@ -332,7 +354,7 @@ pub async fn verify_authorized_pairing_event_for_authority(
         anyhow::bail!("pairing authority does not match the target principal");
     }
     if event.kind != arkret_sdk::EventKind::DeviceAuthorize
-        || event.actor_id.signing_principal_id() != &principal_actor
+        || event.actor_id != arkret_sdk::ActorId::account(authority.clone())
     {
         anyhow::bail!(
             "authorized pairing status does not reference this principal's authorize Event"
@@ -353,6 +375,7 @@ pub async fn verify_authorized_pairing_event_for_authority(
         || payload.authorization_binding_kind
             != arkret_sdk::DeviceAuthorizationBindingKind::AcceptedDevice
         || payload.device_signature != attestation.device_signature
+        || payload.pairing_challenge_transcript_digest.as_ref() != Some(&attestation.pairing_challenge_transcript_digest)
         || !event
             .proofs
             .iter()
@@ -363,10 +386,8 @@ pub async fn verify_authorized_pairing_event_for_authority(
                     .as_str()
                     .strip_prefix(principal.as_str())
                     .is_some_and(|suffix| suffix.starts_with('#'))
-                    && !proof
-                        .verification_method
-                        .as_str()
-                        .ends_with(attestation.device_id.as_str())
+                    && matches!(&payload.authorized_by, arkret_sdk::DeviceOrPrincipalRef::DeviceId(device)
+                        if proof.verification_method.as_str().split_once('#').map(|(_, fragment)| fragment) == Some(device.as_str()))
             })
     {
         anyhow::bail!("authorized pairing Event does not match the target attestation");

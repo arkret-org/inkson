@@ -313,8 +313,7 @@ pub async fn fetch_mls_restore_payload_with_unlock_proof(
     device_id: &str,
 ) -> Result<Value> {
     let payload = fetch_mls_restore_payload(api, actor_id).await?;
-    hydrate_mls_restore_payload_with_unlock_proof(api, payload, actor_id, device_id, None, None)
-        .await
+    hydrate_mls_restore_payload_with_unlock_proof(api, payload, actor_id, device_id, None).await
 }
 
 pub async fn fetch_mls_restore_payload_with_recovery_session_unlock_proof(
@@ -322,7 +321,6 @@ pub async fn fetch_mls_restore_payload_with_recovery_session_unlock_proof(
     actor_id: &str,
     device_id: &str,
     recovery_session: &arkret_sdk::RecoverySessionState,
-    recovery_key_material: &arkret_sdk::identity_root::IdentityRecoveryKeyMaterial,
 ) -> Result<Value> {
     let payload = fetch_mls_restore_payload_after_projection(api, actor_id).await?;
     hydrate_mls_restore_payload_with_unlock_proof(
@@ -331,7 +329,6 @@ pub async fn fetch_mls_restore_payload_with_recovery_session_unlock_proof(
         actor_id,
         device_id,
         Some(recovery_session),
-        Some(recovery_key_material),
     )
     .await
 }
@@ -342,7 +339,6 @@ async fn hydrate_mls_restore_payload_with_unlock_proof(
     actor_id: &str,
     device_id: &str,
     recovery_session: Option<&arkret_sdk::RecoverySessionState>,
-    recovery_key_material: Option<&arkret_sdk::identity_root::IdentityRecoveryKeyMaterial>,
 ) -> Result<Value> {
     let mut full_backups = Vec::new();
     for entry in payload
@@ -383,14 +379,7 @@ async fn hydrate_mls_restore_payload_with_unlock_proof(
         let full = match recovery_session {
             Some(session) => {
                 crate::key_backup::fetch_key_backup_with_recovery_session_unlock_proof(
-                    api,
-                    &entry,
-                    actor_id,
-                    device_id,
-                    session,
-                    recovery_key_material.ok_or_else(|| {
-                        anyhow!("recovery-session backup unlock omitted recovery key material")
-                    })?,
+                    api, &entry, actor_id, device_id, session,
                 )
                 .await
             }
