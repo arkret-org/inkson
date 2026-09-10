@@ -1742,7 +1742,10 @@ pub fn english_translations() -> TranslationDict {
         "A space groups boards, lists, and sections inside a Realm.",
     );
 
-    // Profile gate (friendly version of ProfileGateNotice).
+    // Feature availability notice.
+    dict.set("feature_gate.loading", "Checking server capabilities");
+    dict.set("feature_gate.loading_body", "Waiting for the server capability description.");
+    dict.set("feature_gate.missing", "Missing operations or transport bindings:");
     dict.set("profile_gate.title", "Feature not available on this server");
     dict.set(
         "profile_gate.body",

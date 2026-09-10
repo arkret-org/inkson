@@ -1,76 +1,196 @@
-//! Runtime conformance gates backed by the server's advertised operation surface.
-
-use arkret_wire::generated::profile_requirements::ProfileOperationDirection;
+//! Feature-local runtime checks. Client conformance profiles are build claims,
+//! not a list of operations every connected Station must provide.
 
 use crate::models::ServiceDescribe;
+use arkret_wire::{BindingKind, ServiceKind, ServiceOperationId, operation_bundle_descriptor};
 
-/// Report whether the server exposes the operations consumed by a client profile.
-///
-/// Client profiles are local implementation claims and MUST NOT be copied into
-/// a server's `supported_profiles`. Runtime compatibility is therefore derived
-/// from the profile's recursive `consume` requirements and the exact operation
-/// bundles advertised by the server. Discovery absence and unknown profiles
-/// both fail closed.
-pub fn profile_ready(server: Option<&ServiceDescribe>, profile_id: &str) -> bool {
-    let Some(server) = server else {
-        return false;
-    };
-    let Ok(requirements) = arkret_policy::collect_profile_semantic_requirements(&[profile_id])
-    else {
-        return false;
-    };
-    requirements
-        .operation_requirements
-        .iter()
-        .all(|requirement| {
-            requirement.direction != ProfileOperationDirection::Consume
-                || server
-                    .supports_operation_binding(requirement.operation_id, requirement.binding_kind)
-        })
+/// Baseline operations for a view or background task. Optional actions (media,
+/// encrypted authoring, recovery, etc.) keep their own operation/feature checks.
+/// These are local product requirements, not new wire profiles or features.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StationFeature {
+    Discussion,
+    Board,
+    CreateRealm,
+    CreateSpace,
+    Circles,
+    VerifyDevice,
+    PublishKeyPackage,
+    MlsAdmission,
+    WelcomeBootstrap,
+}
+
+impl StationFeature {
+    pub fn label_key(self) -> &'static str {
+        match self {
+            Self::Discussion => "route.chat",
+            Self::Board => "route.board",
+            Self::CreateRealm => "route.setup_realms",
+            Self::CreateSpace => "route.setup_new_space",
+            Self::Circles => "route.circles",
+            Self::VerifyDevice => "route.verify_device",
+            Self::PublishKeyPackage | Self::MlsAdmission | Self::WelcomeBootstrap => {
+                "route.devices"
+            }
+        }
+    }
+
+    /// HTTP/JSON operations actually consumed by the baseline workflow. Do not
+    /// expand a client profile here or add unrelated optional-action operations.
+    pub fn operations(self) -> &'static [ServiceOperationId] {
+        use ServiceOperationId::*;
+        match self {
+            Self::Discussion => &[
+                SelfEventsReadScanV1,
+                SelfEventsReadResolveV1,
+                SelfEventsStreamSubscribeV1,
+            ],
+            Self::Board => &[
+                SelfEventsReadScanV1,
+                SelfEventsReadResolveV1,
+                SelfEventsStreamSubscribeV1,
+                SelfSpaceReadListV1,
+                SelfStrandReadListV1,
+            ],
+            Self::CreateRealm => &[
+                ServerReadDescribeV1,
+                SelfEventsReadDescribeV1,
+                SelfEventsCommandSubmitV1,
+                OpenServiceReadResolutionV1,
+                SelfCurrentSignerEvidenceReadResolveV1,
+                SelfSealsCommandPrepareV1,
+                SelfSealsCommandSubmitV1,
+            ],
+            Self::CreateSpace => &[
+                SelfEventsReadDescribeV1,
+                SelfEventsCommandSubmitV1,
+                SelfSealsCommandPrepareV1,
+            ],
+            Self::Circles => &[SelfCircleReadListV1],
+            Self::VerifyDevice => &[
+                SelfDeviceMessagesReadListV1,
+                SelfDeviceMessagesCommandSendV1,
+                SelfDeviceMessagesCommandAckV1,
+            ],
+            Self::PublishKeyPackage => &[
+                SelfKeysKeypackagesUploadCreateV1,
+                SelfKeysKeypackagesCommandRevokeV1,
+            ],
+            Self::MlsAdmission => &[
+                SelfKeysKeypackagesCommandClaimV1,
+                SelfKeysKeypackagesCommandConsumeV1,
+                SelfSealsReadMembershipAuthorityV1,
+                SelfSealsReadMlsGovernanceProofV1,
+                SelfEventsCommandSubmitV1,
+            ],
+            Self::WelcomeBootstrap => &[
+                SelfDeviceMessagesReadListV1,
+                SelfDeviceMessagesCommandAckV1,
+                SelfKeysKeypackagesCommandConsumeV1,
+                SelfSealsReadMlsWelcomeRefsV1,
+                SelfSealsReadMlsAcceptedArtifactV1,
+                SelfSealsReadMlsGovernanceProofV1,
+            ],
+        }
+    }
+
+    pub fn ready(self, server: Option<&ServiceDescribe>) -> bool {
+        self.missing_requirements(server).is_empty()
+    }
+
+    /// Report exact missing operations and discovery prerequisites for diagnostics.
+    pub fn missing_requirements(self, server: Option<&ServiceDescribe>) -> Vec<String> {
+        let Some(server) = server else {
+            return vec!["ServiceDescribe".to_owned()];
+        };
+        if server.service_kind != ServiceKind::Station {
+            return vec!["service_kind=station".to_owned()];
+        }
+        if server.protocol_version.as_str() != arkret_sdk::PROTOCOL_VERSION {
+            return vec!["protocol_version=1.0".to_owned()];
+        }
+        // The normal discovery decoder validates the description. Also fail
+        // closed here for unknown/wrong-role bundles supplied by local callers.
+        if server.supported_operation_bundles.iter().any(|id| {
+            operation_bundle_descriptor(id)
+                .is_none_or(|bundle| bundle.service_kind != server.service_kind)
+        }) {
+            return vec!["supported_operation_bundles".to_owned()];
+        }
+        self.operations()
+            .iter()
+            .filter(|operation| {
+                server
+                    .select_transport_binding(**operation, &[BindingKind::HttpJson])
+                    .is_none()
+            })
+            .map(|operation| format!("{} (http_json)", operation.as_str()))
+            .collect()
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use arkret_wire::{Did, ProfileId, ServiceKind, TrustDomainId};
-
     use super::*;
+    use arkret_models_discovery::TransportBinding;
+    use arkret_wire::{Did, ProfileId, TrustDomainId};
 
-    fn station_description(bundles: Vec<String>) -> ServiceDescribe {
+    fn station(bundles: &[&str]) -> ServiceDescribe {
         ServiceDescribe::development(
             Did::new("did:web:soland.example".to_owned()).unwrap(),
             TrustDomainId::new("ak:trust_domain:example.net").unwrap(),
             ServiceKind::Station,
-            bundles,
-            Vec::new(),
+            bundles.iter().map(|id| (*id).to_owned()).collect(),
+            vec![TransportBinding::HttpJson {
+                base_url: "https://soland.example/".to_owned(),
+                extension_profile_required: (),
+            }],
         )
     }
 
     #[test]
-    fn profile_ready_fails_closed_until_describe_finishes() {
-        assert!(!profile_ready(None, ProfileId::E2EE_CLIENT_V1));
+    fn realm_creation_does_not_require_identity_resolver_or_upload_transport() {
+        let description = station(&[
+            "ak.operation_bundle.station.current_signer_evidence.v1",
+            "ak.operation_bundle.station.describe.v1",
+            "ak.operation_bundle.station.http_core.v1",
+        ]);
+        assert!(!description.supports_operation(ServiceOperationId::RootIdentityReadResolveV1));
+        assert!(StationFeature::CreateRealm.ready(Some(&description)));
+        assert!(StationFeature::CreateSpace.ready(Some(&description)));
+        assert!(StationFeature::Board.ready(Some(&description)));
     }
 
     #[test]
-    fn client_profile_claim_on_server_does_not_bypass_operation_negotiation() {
-        let mut description = station_description(Vec::new());
+    fn missing_signer_evidence_blocks_creation_but_not_reading_or_verification() {
+        let description = station(&[
+            "ak.operation_bundle.station.describe.v1",
+            "ak.operation_bundle.station.http_core.v1",
+        ]);
+        assert_eq!(
+            StationFeature::CreateRealm.missing_requirements(Some(&description)),
+            vec!["ak.self.current_signer_evidence.read.resolve.v1 (http_json)"]
+        );
+        assert!(StationFeature::Discussion.ready(Some(&description)));
+        assert!(StationFeature::VerifyDevice.ready(Some(&description)));
+        assert!(StationFeature::PublishKeyPackage.ready(Some(&description)));
+    }
+
+    #[test]
+    fn discovery_and_transport_are_required_and_profile_claims_cannot_supply_operations() {
+        assert!(!StationFeature::CreateRealm.ready(None));
+        let mut description = station(&[]);
         description
             .supported_profiles
             .push(ProfileId::FULL_CLIENT_V1.to_owned());
-
-        assert!(!profile_ready(
-            Some(&description),
-            ProfileId::FULL_CLIENT_V1
-        ));
-    }
-
-    #[test]
-    fn full_client_is_ready_from_station_operation_bundles() {
-        let description = station_description(vec![
-            "ak.operation_bundle.station.describe.v1".to_owned(),
-            "ak.operation_bundle.station.http_core.v1".to_owned(),
-            "ak.operation_bundle.station.tus_upload.v1".to_owned(),
-        ]);
-
-        assert!(profile_ready(Some(&description), ProfileId::FULL_CLIENT_V1));
+        assert!(!StationFeature::CreateRealm.ready(Some(&description)));
+        description = station(&["ak.operation_bundle.station.http_core.v1"]);
+        description.transport_bindings.clear();
+        assert!(!StationFeature::VerifyDevice.ready(Some(&description)));
+        description = station(&["ak.operation_bundle.station.http_core.v1"]);
+        description.service_kind = ServiceKind::IdentityRegistry;
+        assert!(!StationFeature::Discussion.ready(Some(&description)));
+        description = station(&["ak.operation_bundle.station.unknown.v1"]);
+        assert!(!StationFeature::Discussion.ready(Some(&description)));
     }
 }

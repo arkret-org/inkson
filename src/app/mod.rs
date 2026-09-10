@@ -8,7 +8,7 @@ use serde_json::Value;
 
 use crate::components::{SecurityStateBadge, SelfAttributionBadge, UiIcon};
 use crate::config::{ClientConfig, LocalConfigStore, normalize_server_url};
-use crate::conformance::profile_ready;
+use crate::conformance::StationFeature;
 use crate::i18n::UiLocale;
 use crate::models::{
     RealmTreeNode, RealmTreeNodeKind, ServiceDescribe, missing_v1_station_requirements,
@@ -106,7 +106,6 @@ mod sidebar;
 mod sidebar_width;
 mod signal_products;
 mod sync_effects;
-use arkret_wire::ProfileId;
 pub(crate) use clipboard::*;
 pub(crate) use command_palette::*;
 use connect::*;
@@ -771,19 +770,7 @@ fn AppBootstrap() -> Element {
                 .unwrap_or_else(&*current_account_avatar_blob_ref)
         }
     })();
-    let minimal_ready = profile_ready(
-        active_server_description.as_ref(),
-        ProfileId::MINIMAL_CLIENT_V1,
-    );
-    let kanban_ready = profile_ready(active_server_description.as_ref(), ProfileId::KANBAN_MVP_V1);
-    let full_ready = profile_ready(
-        active_server_description.as_ref(),
-        ProfileId::FULL_CLIENT_V1,
-    );
-    let e2ee_ready = profile_ready(
-        active_server_description.as_ref(),
-        ProfileId::E2EE_CLIENT_V1,
-    );
+    let board_ready = StationFeature::Board.ready(active_server_description.as_ref());
     let event_write_ready = active_server_description
         .as_ref()
         .map(service_supports_event_envelope_write_plane)
@@ -2831,9 +2818,7 @@ fn AppBootstrap() -> Element {
                                 current_surface: resolved_realm_surface,
                                 principal_id: crate::app::principal_id_owned(principal_id()),
                                 members_active: realm_members_active,
-                                minimal_ready,
-                                kanban_ready,
-                                full_ready,
+                                board_ready,
                             }
                         }
                         div { class: "actions",
@@ -3410,10 +3395,7 @@ fn AppBootstrap() -> Element {
                             frontier_state,
                             sync_cursor,
                             resolved_realm_surface,
-                            minimal_ready,
-                            kanban_ready,
-                            full_ready,
-                            e2ee_ready,
+                            server_description,
                             event_write_ready,
                             active_service_id: active_service_id.clone(),
                             active_realm_id: active_realm_id.clone(),

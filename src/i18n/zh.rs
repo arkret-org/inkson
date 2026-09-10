@@ -1632,6 +1632,9 @@ pub fn chinese_translations() -> TranslationDict {
         "空间用于在 Realm 内组织看板、列表与分区。",
     );
 
+    dict.set("feature_gate.loading", "正在检查服务器能力");
+    dict.set("feature_gate.loading_body", "正在等待服务器能力描述。");
+    dict.set("feature_gate.missing", "缺少的操作或传输绑定：");
     dict.set("profile_gate.title", "此服务器暂不支持该功能");
     dict.set(
         "profile_gate.body",

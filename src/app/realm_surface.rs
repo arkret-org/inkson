@@ -56,14 +56,9 @@ impl RealmSurface {
         }
     }
 
-    pub(crate) fn is_available(
-        self,
-        _minimal_ready: bool,
-        kanban_ready: bool,
-        _full_ready: bool,
-    ) -> bool {
+    pub(crate) fn is_available(self, board_ready: bool) -> bool {
         match self {
-            Self::Board => kanban_ready,
+            Self::Board => board_ready,
         }
     }
 }

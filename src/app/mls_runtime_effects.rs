@@ -1,5 +1,3 @@
-use arkret_wire::ProfileId;
-
 use super::*;
 
 #[derive(Clone, PartialEq)]
@@ -299,7 +297,7 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
                 &session,
                 &account.authority,
                 &account.device_id,
-                profile_ready(description.as_ref(), ProfileId::E2EE_CLIENT_V1),
+                StationFeature::PublishKeyPackage.ready(description.as_ref()),
                 sync_bootstrap_complete(),
             ) else {
                 return;
@@ -499,7 +497,7 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
             };
             let base = account.server_url.to_string();
             let description = server_description();
-            if !profile_ready(description.as_ref(), ProfileId::E2EE_CLIENT_V1)
+            if !StationFeature::MlsAdmission.ready(description.as_ref())
                 || !sync_bootstrap_complete()
             {
                 return;
@@ -759,7 +757,7 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
                 &account.authority,
                 &account.device_id,
                 &realm_id,
-                profile_ready(description.as_ref(), ProfileId::E2EE_CLIENT_V1),
+                StationFeature::WelcomeBootstrap.ready(description.as_ref()),
                 sync_bootstrap_complete(),
             ) else {
                 return;

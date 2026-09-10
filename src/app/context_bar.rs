@@ -6,9 +6,7 @@ pub(super) fn RealmContextBar(
     current_surface: Option<RealmSurface>,
     principal_id: String,
     members_active: bool,
-    minimal_ready: bool,
-    kanban_ready: bool,
-    full_ready: bool,
+    board_ready: bool,
 ) -> Element {
     // A4 — state_store from session context instead of a prop.
     let mut state_store = crate::app::SessionContext::get().state_store;
@@ -22,7 +20,7 @@ pub(super) fn RealmContextBar(
         div { class: "realm-context-bar", "data-testid": "realm-context-bar",
             div { class: "actions realm-nav-inline", "data-testid": "realm-context-inline",
                 for surface in RealmSurface::top_nav() {
-                    if surface.is_available(minimal_ready, kanban_ready, full_ready) {
+                    if surface.is_available(board_ready) {
                         Link {
                             class: if current_surface == Some(surface) { "primary" } else { "secondary" },
                             to: surface.route(realm_id.clone()),
@@ -89,7 +87,7 @@ pub(super) fn RealmContextBar(
                         role: "menu",
                         "aria-label": "Realm views",
                         for surface in RealmSurface::top_nav() {
-                            if surface.is_available(minimal_ready, kanban_ready, full_ready) {
+                            if surface.is_available(board_ready) {
                                 Link {
                                     class: if current_surface == Some(surface) { "realm-nav-menu-item is-active" } else { "realm-nav-menu-item" },
                                     role: "menuitem",

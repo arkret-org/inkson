@@ -47,10 +47,7 @@ pub(super) struct RouteSurfaceState {
     pub(super) frontier_state: Signal<String>,
     pub(super) sync_cursor: Signal<String>,
     pub(super) resolved_realm_surface: Option<RealmSurface>,
-    pub(super) minimal_ready: bool,
-    pub(super) kanban_ready: bool,
-    pub(super) full_ready: bool,
-    pub(super) e2ee_ready: bool,
+    pub(super) server_description: Signal<Option<ServiceDescribe>>,
     pub(super) event_write_ready: bool,
     pub(super) active_service_id: String,
     pub(super) active_realm_id: String,
@@ -93,10 +90,7 @@ pub(super) fn RouteSurface(state: RouteSurfaceState) -> Element {
         frontier_state,
         sync_cursor,
         resolved_realm_surface,
-        minimal_ready,
-        kanban_ready,
-        full_ready,
-        e2ee_ready,
+        server_description,
         event_write_ready,
         active_service_id,
         active_realm_id,
@@ -119,6 +113,7 @@ pub(super) fn RouteSurface(state: RouteSurfaceState) -> Element {
         theme,
         base_url,
     } = state;
+    let server_description = server_description();
     let NavigationState {
         route,
         view,
@@ -148,7 +143,7 @@ pub(super) fn RouteSurface(state: RouteSurfaceState) -> Element {
     // default from ordering, identity reuse, or hidden history.
     let mut default_strand_probe_for = use_signal(String::new);
     if matches!(content_route, Route::Chat { .. })
-        && minimal_ready
+        && StationFeature::Discussion.ready(server_description.as_ref())
         && active_default_strand_id.is_none()
         && !active_realm_id.is_empty()
         && !token().trim().is_empty()
@@ -307,7 +302,7 @@ pub(super) fn RouteSurface(state: RouteSurfaceState) -> Element {
                     Route::Realm { .. } => {
                         match resolved_realm_surface.unwrap_or(RealmSurface::Board) {
                             RealmSurface::Board => {
-                                if kanban_ready {
+                                if StationFeature::Board.ready(server_description.as_ref()) {
                                     rsx! {
                                         crate::views::kanban::KanbanPanel {
                                             plaintext_service_id: active_service_id.clone(),
@@ -324,7 +319,7 @@ pub(super) fn RouteSurface(state: RouteSurfaceState) -> Element {
                                         }
                                     }
                                 } else {
-                                    rsx! { ProfileGateNotice { profile: "kanban_mvp" } }
+                                    rsx! { FeatureGateNotice { feature: StationFeature::Board, missing: (StationFeature::Board).missing_requirements(server_description.as_ref()), pending: server_description.is_none() } }
                                 }
                             }
                         }
@@ -333,7 +328,7 @@ pub(super) fn RouteSurface(state: RouteSurfaceState) -> Element {
                         if selected_realm_id() != *realm_id {
                             selected_realm_id.set(realm_id.clone());
                         }
-                        if minimal_ready {
+                        if StationFeature::Discussion.ready(server_description.as_ref()) {
                             let direct_peer_id = {
                                 let contacts = direct_contact_rows.read();
                                 direct_conversation_peer_id(&contacts, &realm_id, &strand_id)
@@ -359,7 +354,7 @@ pub(super) fn RouteSurface(state: RouteSurfaceState) -> Element {
                                 }
                             }
                         } else {
-                            rsx! { ProfileGateNotice { profile: "minimal_client" } }
+                            rsx! { FeatureGateNotice { feature: StationFeature::Discussion, missing: (StationFeature::Discussion).missing_requirements(server_description.as_ref()), pending: server_description.is_none() } }
                         }
                     },
                     Route::Chat { message, .. } => {
@@ -368,7 +363,7 @@ pub(super) fn RouteSurface(state: RouteSurfaceState) -> Element {
                         {
                             selected_realm_id.set(sid.to_owned());
                         }
-                        if minimal_ready {
+                        if StationFeature::Discussion.ready(server_description.as_ref()) {
                             rsx! {
                                 crate::views::chat::ChatPanel {
                                     plaintext_service_id: active_service_id.clone(),
@@ -387,7 +382,7 @@ pub(super) fn RouteSurface(state: RouteSurfaceState) -> Element {
                                 }
                             }
                         } else {
-                            rsx! { ProfileGateNotice { profile: "minimal_client" } }
+                            rsx! { FeatureGateNotice { feature: StationFeature::Discussion, missing: (StationFeature::Discussion).missing_requirements(server_description.as_ref()), pending: server_description.is_none() } }
                         }
                     },
                     Route::Directory => rsx! {
@@ -430,7 +425,7 @@ pub(super) fn RouteSurface(state: RouteSurfaceState) -> Element {
                         }
                     },
                     Route::Setup | Route::SetupSection { .. } => {
-                        if full_ready {
+                        if setup_feature(&route).is_none_or(|feature| feature.ready(server_description.as_ref())) {
                             rsx! {
                                 crate::views::setup::SetupPanel {
                                     plaintext_service_id: active_service_id.clone(),
@@ -444,7 +439,7 @@ pub(super) fn RouteSurface(state: RouteSurfaceState) -> Element {
                                 }
                             }
                         } else {
-                            rsx! { ProfileGateNotice { profile: "full_client" } }
+                            rsx! { FeatureGateNotice { feature: setup_feature(&route).expect("setup feature is unavailable"), missing: (setup_feature(&route).expect("setup feature is unavailable")).missing_requirements(server_description.as_ref()), pending: server_description.is_none() } }
                         }
                     },
                     Route::Settings
@@ -469,7 +464,7 @@ pub(super) fn RouteSurface(state: RouteSurfaceState) -> Element {
                         }
                     },
                     Route::VerifyDevice => {
-                        if e2ee_ready {
+                        if StationFeature::VerifyDevice.ready(server_description.as_ref()) {
                             rsx! {
                                 crate::views::verify_device::VerifyDevicePanel {
                                     token,
@@ -479,14 +474,14 @@ pub(super) fn RouteSurface(state: RouteSurfaceState) -> Element {
                                 }
                             }
                         } else {
-                            rsx! { ProfileGateNotice { profile: "e2ee_client" } }
+                            rsx! { FeatureGateNotice { feature: StationFeature::VerifyDevice, missing: (StationFeature::VerifyDevice).missing_requirements(server_description.as_ref()), pending: server_description.is_none() } }
                         }
                     },
                     Route::Circles { realm_id } | Route::CircleDetail { realm_id, .. } => {
                         if selected_realm_id() != *realm_id {
                             selected_realm_id.set(realm_id.clone());
                         }
-                        if full_ready {
+                        if StationFeature::Circles.ready(server_description.as_ref()) {
                             rsx! {
                                 crate::views::circles::CirclesPanel {
                                     realm_id: realm_id.clone(),
@@ -496,7 +491,7 @@ pub(super) fn RouteSurface(state: RouteSurfaceState) -> Element {
                                 }
                             }
                         } else {
-                            rsx! { ProfileGateNotice { profile: "full_client" } }
+                            rsx! { FeatureGateNotice { feature: StationFeature::Circles, missing: (StationFeature::Circles).missing_requirements(server_description.as_ref()), pending: server_description.is_none() } }
                         }
                     },
                     Route::RealmMembers { .. } => {
@@ -505,18 +500,14 @@ pub(super) fn RouteSurface(state: RouteSurfaceState) -> Element {
                         {
                             selected_realm_id.set(sid.to_owned());
                         }
-                        if full_ready {
-                            rsx! {
-                                crate::views::realm_admin::RealmMembersPanel {
-                                    principal_id: principal_id.clone(),
-                                    token,
-                                    selected_realm_id: active_realm_id.clone(),
-                                    sync_cursor,
-                                    frontier_state,
-                                }
+                        rsx! {
+                            crate::views::realm_admin::RealmMembersPanel {
+                                principal_id: principal_id.clone(),
+                                token,
+                                selected_realm_id: active_realm_id.clone(),
+                                sync_cursor,
+                                frontier_state,
                             }
-                        } else {
-                            rsx! { ProfileGateNotice { profile: "full_client" } }
                         }
                     },
                     Route::RealmAdmin { .. } | Route::RealmAdminSection { .. } => {
@@ -525,20 +516,16 @@ pub(super) fn RouteSurface(state: RouteSurfaceState) -> Element {
                         {
                             selected_realm_id.set(sid.to_owned());
                         }
-                        if full_ready {
-                            rsx! {
-                                crate::views::realm_admin::RealmAdminPanel {
-                                    principal_id: principal_id.clone(),
-                                    device_id: device_id(),
-                                    token,
-                                    selected_realm_id: active_realm_id.clone(),
-                                    sync_cursor,
-                                    frontier_state,
-                                    active_section: route.realm_admin_section().map(str::to_owned),
-                                }
+                        rsx! {
+                            crate::views::realm_admin::RealmAdminPanel {
+                                principal_id: principal_id.clone(),
+                                device_id: device_id(),
+                                token,
+                                selected_realm_id: active_realm_id.clone(),
+                                sync_cursor,
+                                frontier_state,
+                                active_section: route.realm_admin_section().map(str::to_owned),
                             }
-                        } else {
-                            rsx! { ProfileGateNotice { profile: "full_client" } }
                         }
                     },
                     Route::Kanban
@@ -551,7 +538,7 @@ pub(super) fn RouteSurface(state: RouteSurfaceState) -> Element {
                         {
                             selected_realm_id.set(sid.to_owned());
                         }
-                        if kanban_ready {
+                        if StationFeature::Board.ready(server_description.as_ref()) {
                             rsx! {
                                 crate::views::kanban::KanbanPanel {
                                     plaintext_service_id: active_service_id.clone(),
@@ -568,7 +555,7 @@ pub(super) fn RouteSurface(state: RouteSurfaceState) -> Element {
                                 }
                             }
                         } else {
-                            rsx! { ProfileGateNotice { profile: "kanban_mvp" } }
+                            rsx! { FeatureGateNotice { feature: StationFeature::Board, missing: (StationFeature::Board).missing_requirements(server_description.as_ref()), pending: server_description.is_none() } }
                         }
                     },
                     Route::Notifications => rsx! {
@@ -644,5 +631,51 @@ pub(super) fn RouteSurface(state: RouteSurfaceState) -> Element {
                     },
                 }
             }
+    }
+}
+
+/// Setup overview is local navigation; only its actionable sections need a server.
+fn setup_feature(route: &Route) -> Option<StationFeature> {
+    match route.setup_section() {
+        Some("realms" | "") | None => Some(StationFeature::CreateRealm),
+        Some("new-space") => Some(StationFeature::CreateSpace),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod feature_routing_tests {
+    use super::*;
+
+    #[test]
+    fn setup_gates_only_the_selected_workflow() {
+        assert_eq!(
+            setup_feature(&Route::Setup),
+            Some(StationFeature::CreateRealm)
+        );
+        assert_eq!(
+            setup_feature(&Route::SetupSection {
+                section: "realms".into()
+            }),
+            Some(StationFeature::CreateRealm)
+        );
+        assert_eq!(
+            setup_feature(&Route::SetupSection {
+                section: "new-space".into()
+            }),
+            Some(StationFeature::CreateSpace)
+        );
+        assert_eq!(
+            setup_feature(&Route::SetupSection {
+                section: "overview".into()
+            }),
+            None
+        );
+        assert_eq!(
+            setup_feature(&Route::SetupSection {
+                section: "unknown".into()
+            }),
+            None
+        );
     }
 }
