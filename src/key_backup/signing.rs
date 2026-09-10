@@ -106,7 +106,7 @@ pub fn build_key_backup_unlock_proof(
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("verified recovery session missing proof_summary"))?;
         let kind = match summary.kind {
-            arkret_sdk::RecoveryProofKind::DidRoot => arkret_sdk::ProofKind::PrincipalSigning,
+            arkret_sdk::RecoveryProofKind::DidRoot => arkret_sdk::ProofKind::DidRoot,
             arkret_sdk::RecoveryProofKind::RecoveryUnlock => arkret_sdk::ProofKind::RecoveryUnlock,
             arkret_sdk::RecoveryProofKind::DeviceQuorum => arkret_sdk::ProofKind::DeviceQuorum,
             arkret_sdk::RecoveryProofKind::TrustedRecoveryService => {
@@ -153,7 +153,7 @@ pub fn build_key_backup_unlock_proof(
         })?;
         (
             session_id,
-            arkret_sdk::ProofKind::PrincipalSigning,
+            arkret_sdk::ProofKind::CurrentDevice,
             arkret_sdk::Hash::new(local_digest)?,
         )
     };
@@ -456,13 +456,12 @@ mod tests {
         let proof_value = serde_json::to_value(&proof).unwrap();
         assert!(proof_value["auth_data"].get("device_id").is_none());
         // The device-signed path (no recovery session) MUST declare
-        // `principal_signing`: it is the only proof_kind the server exempts from
-        // requiring a durable recovery-session record. Declaring a recovery-
-        // ceremony kind (e.g. `recovery_unlock`) makes the server fail closed with
-        // `recovery_evidence_unbound` and permanently locks shared-history cards.
+        // `current_device` is the only proof_kind exempt from a durable
+        // recovery-session record. Declaring a recovery-ceremony kind makes the
+        // server fail closed with `recovery_evidence_unbound`.
         assert_eq!(
             proof.proof_kind,
-            arkret_models_crypto::ProofKind::PrincipalSigning
+            arkret_models_crypto::ProofKind::CurrentDevice
         );
     }
 

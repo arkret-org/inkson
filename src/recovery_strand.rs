@@ -4,7 +4,7 @@
 //! [`crate::transport::TransportClient`] that drive the REC-1 recovery strand:
 //!
 //! - 6.1: fetch + parse the active recovery policy.
-//! - 6.3: open a recovery session and sign + submit a `principal_signing` proof.
+//! - 6.3: open a recovery session and sign + submit a `recovery_unlock` proof.
 //!
 //! Recovery completion is a durable protocol operation and is deliberately not
 //! exposed here as a direct HTTP side effect.
@@ -422,7 +422,7 @@ fn principal_scoped_recovery_policy_verification_method_id(
         return Ok(());
     }
     anyhow::bail!(
-        "active signer verification_method `{}` is not scoped to principal_id `{}`; recovery policy requires a principal signing key such as `{}`",
+        "active signer verification_method `{}` is not scoped to principal_id `{}`; recovery policy requires a current accepted device signing key such as `{}`",
         verification_method,
         principal_did,
         format_args!("{principal_did}#<device_id>"),
