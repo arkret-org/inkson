@@ -2152,7 +2152,7 @@ fn apply_notification_projection(
     crate::state::projection::notifications::apply_notification_projection(
         &mut notification_projection,
         &response.updates.notifications,
-        &response.updates.account_data,
+        account_actor,
         &joined_realms,
     );
     if should_save_notification_projection {

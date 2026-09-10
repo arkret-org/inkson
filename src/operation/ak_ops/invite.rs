@@ -76,6 +76,34 @@ pub fn invite_accept(
     )
 }
 
+/// Build an invite acceptance from the exact own-Station preparation.
+///
+/// Unlike [`invite_accept`], this path does not derive the live-target
+/// precondition locally. Both payload and preconditions are copied from the
+/// authenticated preparation result and become signed Event members.
+pub fn prepared_invite_accept(
+    realm_id: &str,
+    actor: &str,
+    core: arkret_sdk::RealmJoinAuthoringCore,
+) -> anyhow::Result<TypedOperationBuilder> {
+    let arkret_sdk::RealmJoinAuthoringCore::InviteAccept {
+        payload,
+        preconditions,
+    } = core
+    else {
+        anyhow::bail!("Realm join preparation did not contain ak.invite.accept")
+    };
+    payload.validate()?;
+    let target_ref = payload.invite_id.to_string();
+    Ok(
+        TypedOperationBuilder::new::<arkret_sdk::event_spec::InviteAccept>(
+            realm_id, actor, payload,
+        )
+        .preconditions(preconditions)
+        .target_ref(target_ref),
+    )
+}
+
 /// The `head_eq` precondition a Move releasing the live-target slot must carry.
 ///
 /// The slot stores the occupying `ak.invite.create` Event id verbatim, in

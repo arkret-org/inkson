@@ -12,7 +12,8 @@ use arkret_models_collaboration::governance::invite_addressing::InviteDeliveryEn
 use arkret_models_collaboration::governance::operation_wire::Invite;
 use arkret_sdk::{
     MemberRosterEntry, MembershipState, Notification, NotificationData, NotificationDelta,
-    NotificationDeltaAction, NotificationKind, RealmId, RealmSyncEntry,
+    NotificationDeltaAction, NotificationIdentity, NotificationKind, NotificationState, RealmId,
+    RealmSyncEntry,
 };
 use serde_json::Value;
 
@@ -129,12 +130,6 @@ pub(crate) fn notification_kind_wire(kind: &NotificationKind) -> &'static str {
     }
 }
 
-fn account_event_notification(event: &arkret_sdk::Event) -> Option<StoredNotification> {
-    let notification =
-        serde_json::from_value::<Notification>(serde_json::to_value(&event.payload).ok()?).ok()?;
-    Some(StoredNotification::Event { notification })
-}
-
 /// Project a newly received holder-private invite delivery into the local
 /// notification inbox.
 ///
@@ -170,21 +165,9 @@ pub(crate) fn upsert_invite_delivery_notification(
 pub(crate) fn apply_notification_projection(
     current: &mut Vec<StoredNotification>,
     deltas: &[NotificationDelta],
-    account_data: &[arkret_sdk::Event],
+    recipient_actor: &arkret_sdk::ActorId,
     joined_realms: &JoinedRealmIds,
 ) {
-    let event_notifications = account_data
-        .iter()
-        .filter_map(account_event_notification)
-        .collect::<Vec<_>>();
-    for notification in event_notifications {
-        let id = notification.notification_id();
-        if let Some(existing) = current.iter_mut().find(|item| item.notification_id() == id) {
-            *existing = notification;
-        } else {
-            current.push(notification);
-        }
-    }
     for delta in deltas {
         let id = delta.id.as_str();
         match (delta.action, delta.data.as_ref()) {
@@ -203,6 +186,40 @@ pub(crate) fn apply_notification_projection(
                     *existing = replacement;
                 } else {
                     current.push(replacement);
+                }
+            }
+            (NotificationDeltaAction::Upsert, Some(NotificationData::OrdinaryProjection(data))) => {
+                let (Some(recipient_account_id), NotificationIdentity::Projection(delivered_id)) =
+                    (recipient_actor.as_account_id(), &delta.id)
+                else {
+                    tracing::error!(
+                        notification_id = id,
+                        "ordinary notification is not bound to an account projection id"
+                    );
+                    continue;
+                };
+                let notification = match data.clone().into_notification(
+                    recipient_account_id,
+                    delivered_id.clone(),
+                    NotificationState::Unread,
+                ) {
+                    Ok(notification) => StoredNotification::Event { notification },
+                    Err(error) => {
+                        tracing::error!(
+                            notification_id = id,
+                            %error,
+                            "discarding ordinary notification with an invalid recipient binding"
+                        );
+                        continue;
+                    }
+                };
+                if let Some(existing) = current
+                    .iter_mut()
+                    .find(|candidate| candidate.notification_id() == id)
+                {
+                    *existing = notification;
+                } else {
+                    current.push(notification);
                 }
             }
             (NotificationDeltaAction::Remove, _) => {
@@ -225,13 +242,15 @@ pub(crate) fn apply_notification_projection(
 #[cfg(test)]
 pub(crate) fn raw_notifications_from_sources(
     notification_response: Option<&[NotificationDelta]>,
-    account_data: &[arkret_sdk::Event],
+    _account_data: &[arkret_sdk::Event],
 ) -> Vec<StoredNotification> {
     let mut projection = Vec::new();
+    let recipient = crate::mls_api_helpers::local_account_actor_id("did:web:alice.example")
+        .expect("valid test account actor");
     apply_notification_projection(
         &mut projection,
         notification_response.unwrap_or_default(),
-        account_data,
+        &recipient,
         &JoinedRealmIds::default(),
     );
     projection

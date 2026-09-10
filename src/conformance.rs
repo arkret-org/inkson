@@ -1,8 +1,9 @@
 //! Feature-local runtime checks. Client conformance profiles are build claims,
 //! not a list of operations every connected Station must provide.
 
-use crate::models::ServiceDescribe;
 use arkret_wire::{BindingKind, ServiceKind, ServiceOperationId, operation_bundle_descriptor};
+
+use crate::models::ServiceDescribe;
 
 /// Baseline operations for a view or background task. Optional actions (media,
 /// encrypted authoring, recovery, etc.) keep their own operation/feature checks.
@@ -131,9 +132,10 @@ impl StationFeature {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use arkret_models_discovery::TransportBinding;
     use arkret_wire::{Did, ProfileId, TrustDomainId};
+
+    use super::*;
 
     fn station(bundles: &[&str]) -> ServiceDescribe {
         ServiceDescribe::development(

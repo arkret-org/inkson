@@ -120,12 +120,33 @@ fn notification_baseline_segments_preserve_previous_segment_and_upsert_by_id() {
     let StoredNotification::Event { notification } = second.clone() else {
         unreachable!()
     };
-    let wire = account_data_event(serde_json::to_value(notification).unwrap());
+    let arkret_sdk::NotificationSource::Event(source) = &notification.source else {
+        unreachable!()
+    };
+    let delta = arkret_sdk::NotificationDelta::try_new(
+        notification.id.clone(),
+        arkret_sdk::NotificationDeltaAction::Upsert,
+        Some(arkret_sdk::NotificationData::OrdinaryProjection(Box::new(
+            arkret_sdk::OrdinaryProjectionContent {
+                realm_id: source.realm_id.clone().unwrap(),
+                source_event_id: source.source_event_id.clone(),
+                source_ref: source.source_ref.clone(),
+                strand_id: source.strand_id.clone(),
+                track_name: source.track_name.clone(),
+                notification_kind: arkret_sdk::OrdinaryNotificationKind::Mention,
+                priority: notification.priority,
+                preview: notification.preview.clone(),
+                created_at: notification.created_at,
+                updated_at: notification.updated_at,
+            },
+        ))),
+    )
+    .unwrap();
     for _ in 0..2 {
         crate::state::projection::notifications::apply_notification_projection(
             &mut current,
-            &[],
-            std::slice::from_ref(&wire),
+            std::slice::from_ref(&delta),
+            &crate::mls_api_helpers::local_account_actor_id("did:web:alice.example").unwrap(),
             &JoinedRealmIds::default(),
         );
     }
@@ -729,7 +750,7 @@ fn read_cursor_targets_pick_latest_event_per_read_scope() {
 }
 
 #[test]
-fn notification_sources_merge_account_data_with_typed_subscribe_deltas() {
+fn notification_sources_use_typed_subscribe_deltas_only() {
     let stored = event(
         1,
         arkret_sdk::NotificationKind::Message,
@@ -740,24 +761,43 @@ fn notification_sources_merge_account_data_with_typed_subscribe_deltas() {
     let crate::state::StoredNotification::Event { notification } = stored else {
         unreachable!("test fixture is Event notification");
     };
-    let account_data = vec![
-        account_data_event(serde_json::to_value(notification).unwrap()),
-        account_data_event(json!({
-            "kind": "ak.profile",
-            "id": "profile"
-        })),
-    ];
+    let arkret_sdk::NotificationSource::Event(source) = &notification.source else {
+        unreachable!("test fixture is Event notification");
+    };
+    let account_data = vec![account_data_event(
+        serde_json::to_value(&notification).unwrap(),
+    )];
 
     let fallback = raw_notifications_from_sources(None, &account_data);
-    assert_eq!(fallback.len(), 1);
+    assert!(fallback.is_empty());
 
     let server_empty = Vec::<arkret_sdk::NotificationDelta>::new();
     assert_eq!(
         raw_notifications_from_sources(Some(&server_empty), &account_data).len(),
-        1
+        0
     );
 
+    let ordinary = arkret_sdk::OrdinaryProjectionContent {
+        realm_id: source.realm_id.clone().unwrap(),
+        source_event_id: source.source_event_id.clone(),
+        source_ref: source.source_ref.clone(),
+        strand_id: source.strand_id.clone(),
+        track_name: source.track_name.clone(),
+        notification_kind: arkret_sdk::OrdinaryNotificationKind::Message,
+        priority: arkret_sdk::NotificationPriority::Normal,
+        preview: notification.preview.clone(),
+        created_at: notification.created_at,
+        updated_at: notification.updated_at,
+    };
     let subscribe_delta = vec![
+        arkret_sdk::NotificationDelta::try_new(
+            notification.id.clone(),
+            arkret_sdk::NotificationDeltaAction::Upsert,
+            Some(arkret_sdk::NotificationData::OrdinaryProjection(Box::new(
+                ordinary,
+            ))),
+        )
+        .unwrap(),
         arkret_sdk::NotificationDelta::try_new(
             arkret_sdk::NotificationId::new("ak:notification:01964137-0000-7000-8000-000000000004")
                 .unwrap(),
