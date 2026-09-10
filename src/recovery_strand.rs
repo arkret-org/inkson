@@ -349,7 +349,7 @@ fn build_signed_genesis_recovery_policy_with_raw_signer(
                 }],
             },
         ],
-        approval_requirement: None,
+        cooldown_seconds: None,
         issued_at,
         not_before: None,
         expires_at: None,

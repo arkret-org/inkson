@@ -593,6 +593,7 @@ pub fn build_agent_pcr_create_event(
             notary,
             genesis_salt: arkret_sdk::GenesisSalt::generate()?,
             trust_domain: arkret_sdk::TrustDomainId::new(trust_domain.to_owned())?,
+            digest_suite: arkret_sdk::DigestSuite::Sha256,
             created_at,
         },
     )?;
