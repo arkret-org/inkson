@@ -291,24 +291,24 @@ impl MediaJoinRequest {
             let route = self
                 .verified_media_routes
                 .iter()
-                .find(|route| &route.route().service_id == service_id)
+                .find(|route| route.route().service_id() == service_id)
                 .ok_or(RtcClientError::TokenIssuerUnauthorised)?;
             let cached = route.route();
             let authenticated = route.authenticated_resolution();
             let record = authenticated
                 .projection()
                 .map_err(|_| RtcClientError::TokenIssuerUnauthorised)?;
-            if cached.service_kind != "media_service"
-                || record.service_kind != "media_service"
+            // The cached route holds the whole projection this evidence
+            // derives, so the two can only differ by being different
+            // projections.
+            if record.service_kind != "media_service"
                 || record.service_id != *service_id
-                || record.did != cached.did
-                || record.method_history_head != cached.method_history_head
-                || record.version_id != cached.version_id
-                || authenticated.normalized_did_document.id != cached.did
+                || cached.projection != record
+                || &authenticated.normalized_did_document.id != cached.did()
             {
                 return Err(RtcClientError::TokenIssuerUnauthorised);
             }
-            route_pairs.push((service_id.clone(), cached.did.clone()));
+            route_pairs.push((service_id.clone(), cached.did().clone()));
         }
 
         let mut anchors = MediaServiceAnchors::new(route_pairs)
@@ -422,7 +422,7 @@ fn register_media_service_keys(
     route: &RouteResolution,
 ) -> Result<(), RtcClientError> {
     let document = &route.authenticated_resolution().normalized_did_document;
-    let service_did = route.route().did.as_str();
+    let service_did = route.route().did().as_str();
 
     let mut registered = 0usize;
     for method in document.verification_methods.keys() {

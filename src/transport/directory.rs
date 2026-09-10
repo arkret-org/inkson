@@ -168,7 +168,7 @@ pub async fn verified_directory_client(
                 ));
             }
         };
-        entry.route_base = resolved.route().base_url.clone();
+        entry.route_base = resolved.route().base_url().to_owned();
         entry.valid_until = resolved.route().cache_expires_at;
         entry.last_used_at = now;
         let route_base = entry.route_base.clone();
