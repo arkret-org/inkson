@@ -289,11 +289,30 @@ pub(crate) async fn refresh_realm_frontier_with_http<S: GovernanceProofStateStor
         .ok_or_else(|| "Realm frontier requires an active account".to_owned())?;
     let epoch = crate::identity::device_directory::cache_epoch();
     let realm = arkret_sdk::RealmId::new(realm_id.to_owned()).map_err(|error| error.to_string())?;
-    let result = http
-        .seals_frontier(realm.clone())
-        .await
-        .map_err(|error| error.to_string())?
-        .frontier;
+    // Realm admission can precede the first asynchronous control Seal.
+    // Retry only that registered transient condition, never an auth failure
+    // or a malformed frontier. Keep the original session pinned while waiting.
+    let mut attempt = 0;
+    let result = loop {
+        if state_store
+            .with_read(|store| store.active_authority())
+            .as_ref()
+            != Some(&authority)
+            || epoch != crate::identity::device_directory::cache_epoch()
+        {
+            return Err("Realm frontier wait cancelled after its session changed".to_owned());
+        }
+        match http.seals_frontier(realm.clone()).await {
+            Ok(result) => break result.frontier,
+            Err(error) => {
+                let Some(delay) = frontier_retry_delay(&error, attempt) else {
+                    return Err(error.to_string());
+                };
+                attempt += 1;
+                crate::runtime_helpers::sleep_for(delay).await;
+            }
+        }
+    };
     if result.realm_id != realm {
         return Err("Station frontier returned another Realm".to_owned());
     }
@@ -307,6 +326,44 @@ pub(crate) async fn refresh_realm_frontier_with_http<S: GovernanceProofStateStor
         store.cache_realm_governance_frontier(result)
     })?;
     Ok(suite)
+}
+
+fn frontier_retry_delay(
+    error: &arkret_sdk::http_client::Error,
+    attempt: u32,
+) -> Option<std::time::Duration> {
+    (error.error_code().is_some_and(|code| {
+        code.as_str() == arkret_sdk::error_codes::ErrorCode::FRONTIER_UNAVAILABLE
+    }) && attempt < 8)
+        .then(|| std::time::Duration::from_millis((250_u64 << attempt).min(2_000)))
+}
+
+#[cfg(test)]
+mod frontier_wait_tests {
+    use super::*;
+
+    #[test]
+    fn frontier_wait_is_bounded_and_does_not_retry_other_failures() {
+        let pending = arkret_sdk::http_client::Error::Api {
+            status: 503,
+            error: Box::new(arkret_sdk::Problem::from_code(
+                "frontier_unavailable",
+                "Realm has no accepted Seal",
+            )),
+        };
+        let delays = (0..8)
+            .map(|attempt| frontier_retry_delay(&pending, attempt).unwrap().as_millis())
+            .collect::<Vec<_>>();
+        assert_eq!(delays, [250, 500, 1000, 2000, 2000, 2000, 2000, 2000]);
+        assert!(frontier_retry_delay(&pending, 8).is_none());
+        for code in ["unauthorized", "not_found", "param_invalid"] {
+            let error = arkret_sdk::http_client::Error::Api {
+                status: 403,
+                error: Box::new(arkret_sdk::Problem::from_code(code, "terminal")),
+            };
+            assert!(frontier_retry_delay(&error, 0).is_none());
+        }
+    }
 }
 
 pub(crate) fn cached_frontier_binding(

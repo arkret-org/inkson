@@ -998,6 +998,9 @@ pub(super) fn RealmsSection(
                                                         );
                                                         selected_realm_id.set(realm_id.clone());
                                                         created_realm_id.set(realm_id.clone());
+                                                        // Admission is irreversible. Keep the accepted Realm
+                                                        // reachable even if post-create initialization fails.
+                                                        create_step.set(NewRealmStep::Done);
                                                         // Optimistic sidebar update goes
                                                         // through the canonical store —
                                                         // the Realm tree Signal is derived
@@ -1052,7 +1055,7 @@ pub(super) fn RealmsSection(
                                                         // live digest suite from a locally verified accepted
                                                         // Seal checkpoint. MLS setup also needs it, but the
                                                         // requirement is Realm-wide rather than encryption-
-                                                        // specific, so establish it before exposing Done.
+                                                        // specific, so establish it before enabling Open.
                                                         tracing::debug!(
                                                             realm_id = %realm_id,
                                                             phase = "governance_checkpoint",
@@ -1118,17 +1121,13 @@ pub(super) fn RealmsSection(
                                                             );
                                                             return;
                                                         }
-                                                        // The canonical Realm transaction is
-                                                        // complete at this point. Transition the
-                                                        // wizard immediately; MLS initialization
-                                                        // and backup below are post-create setup
-                                                        // and must not leave a successfully created
-                                                        // Realm looking like a retryable create draft.
+                                                        // The accepted Realm remains on Done throughout
+                                                        // post-create setup; keep its progress visible while
+                                                        // MLS initialization and backup finish below.
                                                         realm_state.set(BootstrapProgressStrings::fill(
                                                             &strings.accepted,
                                                             &[("id", realm_id.clone())],
                                                         ));
-                                                        create_step.set(NewRealmStep::Done);
 
                                                         if garth::encryption_profile_is_encrypted(
                                                             &encryption_profile,
