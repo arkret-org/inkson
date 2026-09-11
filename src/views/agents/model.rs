@@ -55,7 +55,7 @@ pub fn build_agent_provision_intent(
 }
 
 // ─────────────────────────────────────────────────────────────────────
-// Envelope `actor_kind` is the reducer-stamped Actor Profile classification.
+// Actor Profile `actor_kind` is non-authoritative display metadata.
 // Device and Ghost are not actor kinds; Applet automation is Bot.
 // ─────────────────────────────────────────────────────────────────────
 
@@ -77,7 +77,7 @@ pub fn actor_kind_label(actor_kind: Option<&str>) -> Option<&'static str> {
     }
 }
 
-/// Maps an envelope-level `actor_kind` to the badge CSS class.
+/// Maps an Actor Profile `actor_kind` to the badge CSS class.
 pub fn actor_kind_badge_class(actor_kind: Option<&str>) -> &'static str {
     match actor_kind {
         Some("user") => "badge",

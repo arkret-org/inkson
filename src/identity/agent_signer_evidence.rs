@@ -282,7 +282,10 @@ pub(crate) fn verified_cached_agent_event_endpoint(
 
 fn event_agent_identity(envelope: &Value) -> Option<(arkret_sdk::Event, DidCoreId, DidUrl)> {
     let event: arkret_sdk::Event = serde_json::from_value(envelope.clone()).ok()?;
-    if event.actor_kind != Some(arkret_sdk::EnvelopeActorKind::Agent) || event.applet_id.is_some() {
+    let frozen_agent_evidence = origin_admission(&event)
+        .and_then(|admission| admission.producer_signer_resolution_evidence_ref.as_ref())
+        .is_some();
+    if event.applet_id.is_some() || (event.executed_by.is_none() && !frozen_agent_evidence) {
         return None;
     }
     let agent_id = event
@@ -357,9 +360,6 @@ fn selector_from_object(
     receiver_id: &DidCoreId,
 ) -> Option<EventAgentSelector> {
     if object.get("applet_id").is_some() {
-        return None;
-    }
-    if object.get("actor_kind").and_then(Value::as_str) != Some("agent") {
         return None;
     }
     let (event, agent_id, verification_method) =
@@ -445,8 +445,7 @@ mod historical_result_tests {
         })).unwrap();
         let signing_key = ed25519_dalek::SigningKey::from_bytes(&[31; 32]);
         let public_key = signing_key.verifying_key().to_bytes();
-        let mut event = crate::operation::author_intent_for_test(intent).into_event();
-        event.actor_kind = Some(arkret_sdk::EnvelopeActorKind::Agent);
+        let event = crate::operation::author_intent_for_test(intent).into_event();
         let mut authored = arkret_sdk::AuthoredEvent::finalize_with_digest_suite(
             event,
             arkret_sdk::DigestSuite::Sha256,

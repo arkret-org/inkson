@@ -549,7 +549,7 @@ mod tests {
     }
 
     #[test]
-    fn relinquish_requires_same_actor_kind_and_station() {
+    fn relinquish_requires_same_actor_id_variant_and_station() {
         let principal = arkret_sdk::DidCoreId::new("ak:did_core:web:bob.example").unwrap();
         let station = arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap();
         let subject = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(

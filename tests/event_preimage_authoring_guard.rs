@@ -2,7 +2,7 @@
 
 //! The Event digest preimage has one implementation, and it is not in this repo.
 //!
-//! `conformance/encoding.md` §6 excludes `proofs`, `unsigned`, `actor_kind` and
+//! `conformance/encoding.md` §6 excludes `proofs`, `unsigned` and
 //! `event_id` from the digest preimage. `arkret_sdk::event_digest_preimage` is
 //! the single implementation of that rule. Three sites here used to apply it by
 //! hand, and each drifted at a different point:
@@ -26,8 +26,8 @@ use std::path::{Path, PathBuf};
 /// Deleting either Event-only excluded member from a JSON map is the act of
 /// building a preimage by hand. Removing `proofs` alone is deliberately absent:
 /// non-Event signed objects legally strip their own `proofs` before signing and
-/// have neither `event_id` nor `actor_kind` to drop.
-const HAND_ROLLED_EXCLUSIONS: &[&str] = &[r#"remove("event_id")"#, r#"remove("actor_kind")"#];
+/// have no `event_id` to drop.
+const HAND_ROLLED_EXCLUSIONS: &[&str] = &[r#"remove("event_id")"#];
 
 /// Paths that delete one of those members for a reason unrelated to the digest
 /// preimage. Each entry names what the field is there.

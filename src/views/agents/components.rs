@@ -13,7 +13,7 @@ use crate::ui::button::{Button, ButtonVariant};
 use crate::ui::input::Input;
 use crate::views::helpers::short_protocol_id;
 
-/// Render an `actor_kind` badge for a single envelope. Pure helper so
+/// Render the non-authoritative `actor_kind` badge from an Actor Profile. Pure helper so
 /// the dashboard / chat / kanban can reuse the same colored chip
 /// without duplicating the mapping.
 #[component]

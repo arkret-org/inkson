@@ -198,7 +198,7 @@ mod member_actor_tests {
     use super::*;
 
     #[test]
-    fn circle_membership_preserves_remote_actor_kind_and_station() {
+    fn circle_membership_preserves_remote_actor_id_variant_and_station() {
         let principal = arkret_sdk::DidCoreId::new("ak:did_core:web:bob.example").unwrap();
         let station = arkret_sdk::DidCoreId::new("ak:did_core:web:remote.example").unwrap();
         for target in [

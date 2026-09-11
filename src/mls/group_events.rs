@@ -82,7 +82,7 @@ mod creator_authority_tests {
     use super::*;
 
     #[test]
-    fn creator_gate_binds_station_and_actor_kind() {
+    fn creator_gate_binds_station_and_actor_id_variant() {
         let principal = "ak:did_core:web:creator.example";
         let local = crate::mls_api_helpers::local_account_actor_id(principal).unwrap();
         let mut remote = local.as_account_id().unwrap().clone();

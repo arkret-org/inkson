@@ -218,19 +218,27 @@ fn accepted_direct_message_final<'a>(
     };
     let event = &message.event;
     if event.kind != arkret_sdk::EventKind::MessageCreate
-        || event.executed_by.is_some()
         || event
             .validate_station_admission_binding(digest_suite)
             .is_err()
     {
         return None;
     }
-    if event.actor_kind == Some(arkret_sdk::EnvelopeActorKind::Agent) {
+    let frozen_agent_evidence = event
+        .proofs
+        .iter()
+        .find_map(arkret_sdk::EventProof::as_station_admission)
+        .and_then(|proof| proof.producer_signer_resolution_evidence_ref.as_ref())
+        .is_some();
+    if frozen_agent_evidence {
         let endpoint =
             crate::identity::agent_signer_evidence::verified_cached_agent_event_endpoint(
                 event, store,
             )?;
         return Some((event, endpoint));
+    }
+    if event.executed_by.is_some() {
+        return None;
     }
     let method = event
         .proofs

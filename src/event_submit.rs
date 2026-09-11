@@ -2670,12 +2670,7 @@ impl EventSubmitter {
         let canonical_body_bytes = arkret_sdk::canonical::canonical_json_bytes(&authored_commit)?;
         let transport_idempotency_key = authored_commit.event_id().to_string();
         for welcome in &authored_welcomes {
-            let mut accepted_candidate = welcome.event().clone();
-            accepted_candidate.actor_kind = Some(if accepted_candidate.executed_by.is_some() {
-                arkret_sdk::EnvelopeActorKind::Agent
-            } else {
-                arkret_sdk::EnvelopeActorKind::User
-            });
+            let accepted_candidate = welcome.event().clone();
             let accepted_bytes = arkret_sdk::canonical::canonical_json_bytes(&accepted_candidate)?;
             if accepted_bytes.len() > arkret_sdk::MAX_EVENT_ENVELOPE_BYTES {
                 anyhow::bail!(

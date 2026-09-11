@@ -353,7 +353,6 @@ fn chat_messages_fold_canonical_create_with_streamed_reaction_envelope() {
             "created_at": "2026-07-08T01:44:39.000Z",
             "hlc": "01970e589d21-0004-a13f9c2e",
             "prev_refs": [],
-            "refs": [],
             "payload": {
                 "content": {"kind": "ak.content.text", "body": "canonical hello"},
                 "strand_id": "ak:strand:AbZt0K_NvenxSDAkOnSDRtorrvUXhGqxSoqT2bFL7m8H",
@@ -370,7 +369,6 @@ fn chat_messages_fold_canonical_create_with_streamed_reaction_envelope() {
             "created_at": "2026-07-08T01:44:43.000Z",
             "hlc": "01970e589d22-0004-a13f9c2e",
             "prev_refs": [],
-            "refs": [],
             "payload": {
                 "key": "👍",
                 "target_ref": "ak:message:AfqXI4jyBJWA5HRhSr3SdFP5Qb_2V210Q00mFqUjA7_z"
@@ -418,7 +416,6 @@ fn durable_reaction_folds_onto_controller_only_create() {
             "created_at": "2026-07-08T01:44:39.000Z",
             "hlc": "01970e589d21-0004-a13f9c2e",
             "prev_refs": [],
-            "refs": [],
             "payload": {
                 "content": {"kind": "ak.content.text", "body": "optimistic first"},
                 "strand_id": "ak:strand:AbZt0K_NvenxSDAkOnSDRtorrvUXhGqxSoqT2bFL7m8H",
@@ -435,7 +432,6 @@ fn durable_reaction_folds_onto_controller_only_create() {
             "created_at": "2026-07-08T01:44:43.000Z",
             "hlc": "01970e589d22-0004-a13f9c2e",
             "prev_refs": [],
-            "refs": [],
             "payload": {"key": "👍", "target_ref": message_id}
         }),
     ];
@@ -497,7 +493,6 @@ fn durable_redaction_folds_onto_controller_only_create() {
         "created_at": "2026-07-08T01:44:43.000Z",
         "hlc": "01970e589d22-0004-a13f9c2e",
         "prev_refs": [],
-        "refs": [],
         "payload": {"message_id": message_id, "reason": "user requested tombstone"}
     })];
     sign_chat_fixtures(&mut redactions);

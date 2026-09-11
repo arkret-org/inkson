@@ -391,7 +391,6 @@ fn schema_validator_rejects_obviously_invalid_envelope() {
         "actor_seq": 1,
         "created_at": "2026-05-21T13:00:00.000Z",
         "prev_refs": [],
-        "refs": [],
         "payload": {},
         "proofs": []
     });
@@ -412,7 +411,6 @@ fn schema_validator_rejects_obviously_invalid_envelope() {
         "actor_seq": 1,
         "created_at": "2026-05-21T13:00:00.000Z",
         "prev_refs": [],
-        "refs": [],
         "payload": {},
         "proofs": [{
             "kind": "detached_jws",

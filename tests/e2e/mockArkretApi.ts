@@ -444,7 +444,6 @@ function signedEventDigest(event: Record<string, unknown>) {
   const digestPayload = { ...event };
   delete digestPayload.proofs;
   delete digestPayload.unsigned;
-  delete digestPayload.actor_kind;
   delete digestPayload.event_id;
   return canonicalSha256(digestPayload);
 }

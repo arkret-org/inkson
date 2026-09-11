@@ -203,7 +203,7 @@ fn operation_builder_can_emit_signed_authorization_binding() {
 }
 
 #[test]
-fn event_envelope_accepts_current_optional_top_level_fields() {
+fn event_envelope_accepts_current_optional_top_level_fields_and_rejects_removed_actor_kind() {
     let op = message_builder(
         "ak:realm:Ac3EwB_awdKZ0dXZDsjIRnTX_zdhqT84eUG5NXqUbg0f",
         "did:web:bob",
@@ -232,9 +232,7 @@ fn event_envelope_accepts_current_optional_top_level_fields() {
         "authorization_ref".to_owned(),
         json!("ak:grant:AfUeGRE3CFApB-5spxARHjovex9S5j5RWL8mAUSkpOMS"),
     );
-    object.insert("actor_kind".to_owned(), json!("agent"));
-
-    let parsed: Event = serde_json::from_value(value).unwrap();
+    let parsed: Event = serde_json::from_value(value.clone()).unwrap();
     // `scope_ref` is a REQUIRED producer-signed field in v1 (the wire has no
     // reducer-stamped `effective_scope` any more), and the envelope `realm_id`
     // is derived from it.
@@ -258,10 +256,11 @@ fn event_envelope_accepts_current_optional_top_level_fields() {
         parsed.authorization_ref.as_deref(),
         Some("ak:grant:AfUeGRE3CFApB-5spxARHjovex9S5j5RWL8mAUSkpOMS")
     );
-    assert_eq!(
-        parsed.actor_kind,
-        Some(arkret_sdk::EnvelopeActorKind::Agent)
-    );
+    value
+        .as_object_mut()
+        .unwrap()
+        .insert("actor_kind".to_owned(), json!("agent"));
+    assert!(serde_json::from_value::<Event>(value).is_err());
 }
 
 #[test]

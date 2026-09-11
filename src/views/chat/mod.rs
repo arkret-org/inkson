@@ -702,7 +702,6 @@ fn sign_prepared_sidecar_event(
         || digest != draft.event_digest
         || !event.proofs.is_empty()
         || !event.unsigned.is_empty()
-        || event.actor_kind.is_some()
     {
         anyhow::bail!("prepared Sidecar Event metadata does not match its canonical bytes");
     }
