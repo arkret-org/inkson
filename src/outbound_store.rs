@@ -20,6 +20,7 @@ use garth::outbound::BoxOutboundFuture;
 ///
 /// `secure_key_store::is_wasm_indexeddb_required_secret_key` classifies this
 /// prefix as IndexedDB-only, preventing plaintext localStorage persistence.
+#[cfg_attr(not(any(target_arch = "wasm32", test)), allow(dead_code))]
 pub(crate) const OUTBOUND_QUEUE_KEY_PREFIX: &str = "inkson.outbound.v1::";
 
 /// The hardened entries store, or a refusal.

@@ -33,19 +33,6 @@ pub(crate) fn is_recovery_policy_frontier_pending_error(error: &anyhow::Error) -
     })
 }
 
-/// True only while a private Invite's lifecycle is waiting to enter the
-/// accepted Realm Seal exposed by Directory `resolve_realm`.
-///
-/// Retrying this read is safe because no InviteAccept Event has been authored
-/// yet. Callers must stop on every other status/code pair and must not extend
-/// this predicate to Event submission retries.
-pub(crate) fn is_invite_lifecycle_frontier_pending_error(error: &anyhow::Error) -> bool {
-    api_error_status_and_envelope(error).is_some_and(|(status, envelope)| {
-        status == StatusCode::SERVICE_UNAVAILABLE
-            && envelope.code() == arkret_sdk::error_codes::ErrorCode::FRONTIER_UNAVAILABLE
-    })
-}
-
 pub fn is_mls_keypackage_not_found_error(error: &anyhow::Error) -> bool {
     api_error_status_and_envelope(error).is_some_and(|(_, envelope)| {
         envelope.code() == "mls_keypackage_not_found"
@@ -403,9 +390,7 @@ pub fn normalize_wait_for_sync_token(sync_token: &str) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        is_invite_lifecycle_frontier_pending_error, is_recovery_policy_frontier_pending_error,
-    };
+    use super::is_recovery_policy_frontier_pending_error;
 
     fn api_error(status: u16, code: &str) -> anyhow::Error {
         anyhow::Error::new(arkret_sdk::http_client::Error::Api {
@@ -428,22 +413,6 @@ mod tests {
             arkret_sdk::error_codes::ErrorCode::FRONTIER_UNAVAILABLE,
         )));
         assert!(!is_recovery_policy_frontier_pending_error(&api_error(
-            503,
-            arkret_sdk::error_codes::ErrorCode::FAILED_PRECONDITION,
-        )));
-    }
-
-    #[test]
-    fn invite_lifecycle_frontier_retry_requires_the_registry_status_and_code() {
-        assert!(is_invite_lifecycle_frontier_pending_error(&api_error(
-            503,
-            arkret_sdk::error_codes::ErrorCode::FRONTIER_UNAVAILABLE,
-        )));
-        assert!(!is_invite_lifecycle_frontier_pending_error(&api_error(
-            409,
-            arkret_sdk::error_codes::ErrorCode::FRONTIER_UNAVAILABLE,
-        )));
-        assert!(!is_invite_lifecycle_frontier_pending_error(&api_error(
             503,
             arkret_sdk::error_codes::ErrorCode::FAILED_PRECONDITION,
         )));

@@ -122,6 +122,9 @@ struct CleanupTask {
 #[derive(Clone, Debug)]
 pub(crate) struct CurrentTargetPage {
     pub entries: Vec<CurrentResultEntry>,
+    // Pagination is owned by the 0540 durable-index follow-up. Keep the cursor
+    // in the internal result shape until that reader is wired.
+    #[allow(dead_code)]
     pub next_cursor: Option<String>,
 }
 
@@ -417,6 +420,7 @@ impl CurrentIndex {
         }
         Ok(Some(entry))
     }
+    #[cfg(test)]
     pub(crate) async fn read_selector(
         &self,
         selector: &CurrentSelector,
@@ -492,6 +496,8 @@ impl CurrentIndex {
         }
         Ok(Some(entry))
     }
+    // These bounded readers are the explicit 0540 hand-off surface.
+    #[allow(dead_code)]
     pub(crate) async fn read_progress(
         &self,
         realm: &str,
@@ -510,6 +516,7 @@ impl CurrentIndex {
         self.read_region_page(realm, &target_key(target)?, after, limit)
             .await
     }
+    #[allow(dead_code)]
     pub(crate) async fn read_members_page(
         &self,
         realm: &str,
