@@ -1253,13 +1253,15 @@ impl EventSubmitter {
         {
             return Ok(());
         }
-        if self
-            .state_store
-            .as_ref()
-            .is_some_and(|store| store.read(|store| store.realm_detail_invalidated(realm_id)))
-        {
+        if self.state_store.as_ref().is_some_and(|store| {
+            store.read(|store| {
+                store.realm_detail_invalidated(realm_id)
+                    && store.station_realm_digest_suite(realm_id).is_none()
+            })
+        }) {
             return Err(anyhow::Error::new(arkret_sdk::Error::Http(
-                "Realm current state is refreshing after an account invalidation".to_owned(),
+                "Realm current state is refreshing after an account invalidation and no verified governance checkpoint is available"
+                    .to_owned(),
             )));
         }
         Ok(())
