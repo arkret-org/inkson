@@ -124,14 +124,21 @@ pub(super) fn ChatEffects(
     {
         let realm = selected_realm_id.clone();
         let initial_strand = initial_strand_id.clone();
-        use_effect(move || {
-            if realm.trim().is_empty() {
-                return;
-            }
-            if let Some(desired) = discussion_channel_for_strand(&initial_strand) {
-                event_sink.emit(ChatProjectionEvent::EnsureChannel(desired));
-            }
-        });
+        // These route-derived values are plain component props, not Signals.
+        // The default Strand is often hydrated asynchronously after Chat first
+        // mounts, so make prop changes explicit dependencies; otherwise the
+        // one-shot empty value leaves the composer permanently unavailable.
+        use_effect(use_reactive(
+            (&realm, &initial_strand),
+            move |(realm, initial_strand)| {
+                if realm.trim().is_empty() {
+                    return;
+                }
+                if let Some(desired) = discussion_channel_for_strand(&initial_strand) {
+                    event_sink.emit(ChatProjectionEvent::EnsureChannel(desired));
+                }
+            },
+        ));
     }
 
     {
