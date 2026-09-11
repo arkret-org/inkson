@@ -1122,8 +1122,7 @@ fn build_realm_state_event_for_station_with_set_head<K: arkret_sdk::EventSpec>(
         .build_sdk_event("inkson")
 }
 
-/// Build a `ak.realm.archive` lifecycle facet event. Realm archive is a
-/// reversible boolean register; there is no separate `ak.realm.restore`.
+/// Build the explicit archive or restore Event selected by the user intent.
 pub fn build_realm_archive_event(
     realm_id: &str,
     actor_id: &str,
@@ -1132,13 +1131,19 @@ pub fn build_realm_archive_event(
 ) -> anyhow::Result<crate::operation::LocalOperation> {
     let created_at = event_timestamp();
     // Strong type: realm_archive_payload (additionalProperties:false).
-    let mut typed = arkret_sdk::RealmArchivePayload::new(archived);
+    let mut typed = arkret_sdk::RealmArchivePayload::new();
     if let Some(reason) = reason.map(str::trim).filter(|value| !value.is_empty()) {
         typed = typed.with_reason(reason);
     }
-    TypedOperationBuilder::new::<arkret_sdk::event_spec::RealmArchive>(realm_id, actor_id, typed)
-        .created_at(created_at)
-        .build_sdk_event("inkson")
+    if archived {
+        TypedOperationBuilder::new::<arkret_sdk::event_spec::RealmArchive>(realm_id, actor_id, typed)
+            .created_at(created_at)
+            .build_sdk_event("inkson")
+    } else {
+        TypedOperationBuilder::new::<arkret_sdk::event_spec::RealmRestore>(realm_id, actor_id, typed)
+            .created_at(created_at)
+            .build_sdk_event("inkson")
+    }
 }
 
 /// Build a `ak.realm.destroy` terminal lifecycle event.
