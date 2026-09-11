@@ -185,7 +185,19 @@ impl LocalStateStore {
         {
             return false;
         }
-        self.cached.demand_sync.details.contains_key(realm_id)
+        self.cached
+            .demand_sync
+            .details
+            .get(realm_id)
+            .is_some_and(|state| state.invalidated || !state.complete)
+    }
+
+    pub(crate) fn realm_detail_requires_replacement(&self, realm_id: &str) -> bool {
+        self.cached
+            .demand_sync
+            .details
+            .get(realm_id)
+            .is_some_and(|state| state.invalidated)
     }
 
     /// Runs inside the caller's cursor transaction before derived projection reducers.
@@ -837,6 +849,19 @@ mod tests {
         );
         assert!(accepted.realms.unwrap().entries.is_empty());
         assert!(store.realm_detail_invalidated(REALM));
+    }
+
+    #[test]
+    fn completed_detail_is_current_before_optional_product_cells_exist() {
+        let mut store = store();
+        apply(
+            &mut store,
+            &frame(
+                json!({"kind":"delta","cursor":"ak:cursor:YQ","realms":{REALM:{"baseline":{"snapshot_cursor":"ak:cursor:cw","cut_revision":2,"coverage":{"realm":true,"strand_ids":[],"members":{"mode":"selected","actor_ids":[]},"event_ids":[]},"complete":true}}}}),
+            ),
+        );
+
+        assert!(!store.realm_detail_invalidated(REALM));
     }
 
     #[test]

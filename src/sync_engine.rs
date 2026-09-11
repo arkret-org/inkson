@@ -265,11 +265,24 @@ impl TransportProvider for AccountTransportProvider {
 
     fn account_request(&self, after: Option<String>) -> garth::Result<arkret_sdk::SyncRequestBody> {
         let filter = Some(selected_account_filter(&self.ctx));
-        let previous = self
-            .ctx
-            .state_store
-            .read(|store| store.sync_demand_filter());
-        let replace_filter = (after.is_some() && previous != filter).then_some(true);
+        let (previous, selected_detail_invalidated) = self.ctx.state_store.read(|store| {
+            let invalidated = filter
+                .as_ref()
+                .and_then(|filter| filter.realm_ids.as_ref())
+                .is_some_and(|realms| {
+                    realms
+                        .iter()
+                        .any(|realm| store.realm_detail_requires_replacement(realm.as_str()))
+                });
+            (store.sync_demand_filter(), invalidated)
+        });
+        // An invalidation makes the detail baseline stale even when navigation
+        // (and therefore the filter value) did not change. Explicit replacement
+        // asks the server to resend that bounded baseline instead of entering
+        // another idle long-poll with the same demand.
+        let replace_filter = (after.is_some()
+            && (previous != filter || selected_detail_invalidated))
+            .then_some(true);
         Ok(arkret_sdk::SyncRequestBody {
             after,
             catchup: Some(true),

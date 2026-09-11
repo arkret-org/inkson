@@ -52,6 +52,12 @@ pub struct EventSubmitter {
     authority: Option<arkret_sdk::AccountId>,
     describe_cache: OnceCell<ServiceDescribe>,
     state_store: Option<crate::runtime::input::StateStoreHandle>,
+    /// A freshly accepted Realm has no complete demand-sync projection yet,
+    /// but its setup flow must append the deterministic default-Strand
+    /// follow-ups before that projection can become complete. This narrowly
+    /// scoped exception is installed only by the setup flow for that exact
+    /// Realm; ordinary writes remain fail-closed on stale detail.
+    founding_realm: Option<arkret_sdk::RealmId>,
 }
 
 /// Ordinary Realm and self-principal bootstrap units intentionally publish
@@ -86,9 +92,16 @@ fn uses_bare_online_anchor_submission(anchor_unit: bool, event: &arkret_sdk::Eve
 /// this is raised the write may not have been authored yet, and after a CAS
 /// re-author the Event id is not stable while the user's operation is.
 #[derive(Debug, thiserror::Error)]
-#[error("operation {operation_id} is durably queued for retry")]
+#[error(
+    "operation {operation_id} is durably queued for retry{detail}",
+    detail = reason
+        .as_deref()
+        .map(|reason| format!(": {reason}"))
+        .unwrap_or_default()
+)]
 pub(crate) struct DurablyQueuedError {
     pub(crate) operation_id: String,
+    pub(crate) reason: Option<String>,
 }
 
 #[derive(Clone, Copy)]
@@ -140,6 +153,7 @@ pub(crate) struct AuthoredAttempt {
 struct OutboundAttemptResults {
     accepted: Mutex<BTreeMap<String, SubmitEventResult>>,
     rejected: Mutex<BTreeMap<String, anyhow::Error>>,
+    retryable: Mutex<BTreeMap<String, String>>,
 }
 
 struct EventOutboundSubmitter<'a> {
@@ -503,6 +517,11 @@ impl EventOutboundSubmitter<'_> {
                     Err(error) => {
                         let reason = format!("{error:#}");
                         if let Some(delay) = outbound_retry_delay(&error) {
+                            self.results
+                                .retryable
+                                .lock()
+                                .unwrap_or_else(PoisonError::into_inner)
+                                .insert(item.transaction_id.clone(), reason.clone());
                             Ok(OutboundSubmitOutcome::RetryAfter { delay, reason })
                         } else {
                             self.results
@@ -574,6 +593,11 @@ impl EventOutboundSubmitter<'_> {
                         let error = anyhow::Error::from(error);
                         let reason = format!("{error:#}");
                         if let Some(delay) = outbound_retry_delay(&error) {
+                            self.results
+                                .retryable
+                                .lock()
+                                .unwrap_or_else(PoisonError::into_inner)
+                                .insert(item.transaction_id.clone(), reason.clone());
                             Ok(OutboundSubmitOutcome::RetryAfter { delay, reason })
                         } else {
                             self.results
@@ -670,11 +694,22 @@ impl OutboundSubmitter for EventOutboundSubmitter<'_> {
                 });
             }
             if queued.authored_attempt.is_none() {
-                let attempt = self
+                let attempt = match self
                     .owner
                     .author_frozen_intent(&queued.intent, &queued.local_operation_id)
                     .await
-                    .map_err(|error| garth::Error::Protocol(error.to_string()))?;
+                {
+                    Ok(attempt) => attempt,
+                    Err(error) => {
+                        let reason = format!("author queued Event: {error:#}");
+                        self.results
+                            .retryable
+                            .lock()
+                            .unwrap_or_else(PoisonError::into_inner)
+                            .insert(item.transaction_id.clone(), reason.clone());
+                        return Err(garth::Error::Protocol(reason));
+                    }
+                };
                 queued.authored_attempt = Some(AuthoredEventAttempt {
                     intent_digest: queued.intent_digest.clone(),
                     envelope: attempt.envelope,
@@ -851,6 +886,11 @@ impl OutboundSubmitter for EventOutboundSubmitter<'_> {
                             retry_after_ms = delay.as_millis(),
                             "durable Event submit remains queued after a retryable failure"
                         );
+                        self.results
+                            .retryable
+                            .lock()
+                            .unwrap_or_else(PoisonError::into_inner)
+                            .insert(item.transaction_id.clone(), reason.clone());
                         return Ok(OutboundSubmitOutcome::RetryAfter { delay, reason });
                     }
                     tracing::warn!(
@@ -1207,6 +1247,13 @@ fn outbound_submit_lock() -> &'static tokio::sync::Mutex<()> {
 impl EventSubmitter {
     fn ensure_realm_detail_current(&self, realm_id: &str) -> anyhow::Result<()> {
         if self
+            .founding_realm
+            .as_ref()
+            .is_some_and(|founding| founding.as_str() == realm_id)
+        {
+            return Ok(());
+        }
+        if self
             .state_store
             .as_ref()
             .is_some_and(|store| store.read(|store| store.realm_detail_invalidated(realm_id)))
@@ -1224,6 +1271,7 @@ impl EventSubmitter {
                 .map(|scope| scope.authority),
             describe_cache: OnceCell::new(),
             state_store: None,
+            founding_realm: None,
         }
     }
 
@@ -1237,6 +1285,11 @@ impl EventSubmitter {
 
     pub(crate) fn with_authority(mut self, authority: arkret_sdk::AccountId) -> Self {
         self.authority = Some(authority);
+        self
+    }
+
+    pub(crate) fn for_founding_realm(mut self, realm_id: arkret_sdk::RealmId) -> Self {
+        self.founding_realm = Some(realm_id);
         self
     }
 
@@ -1373,6 +1426,11 @@ impl EventSubmitter {
                 {
                     return Err(DurablyQueuedError {
                         operation_id: local_operation_id,
+                        reason: results
+                            .retryable
+                            .lock()
+                            .unwrap_or_else(PoisonError::into_inner)
+                            .remove(&item.transaction_id),
                     }
                     .into());
                 }
@@ -1518,6 +1576,11 @@ impl EventSubmitter {
                 {
                     return Err(DurablyQueuedError {
                         operation_id: local_operation_id,
+                        reason: results
+                            .retryable
+                            .lock()
+                            .unwrap_or_else(PoisonError::into_inner)
+                            .remove(&item.transaction_id),
                     }
                     .into());
                 }
@@ -1576,12 +1639,32 @@ impl EventSubmitter {
                 );
                 continue;
             }
-            let decision = match crate::identity::authoring_generation::resolve_current_event_authoring_generation(
+            let facts = EventAuthorityFacts::from_intent(&queued.intent);
+            let current = match crate::identity::authoring_generation::resolve_current_event_authoring_generation(
                 &self.http,
-                &EventAuthorityFacts::from_intent(&queued.intent),
+                &facts,
             )
-            .await?
+            .await
             {
+                Ok(current) => current,
+                Err(error) if outbound_retry_delay(&error).is_some() => {
+                    // A browser fetch can remain pending even though bootstrap
+                    // already verified this exact endpoint generation. Permit
+                    // only that exact cached fence to make progress; Soland is
+                    // still authoritative and rejects a superseded generation.
+                    match crate::identity::authoring_generation::cached_event_authoring_generation(&facts)? {
+                        Some(cached) if cached == queued.authoring_generation => {
+                            CurrentEventAuthoringGeneration::Active(cached)
+                        }
+                        Some(_) => CurrentEventAuthoringGeneration::Quarantine(
+                            "authoring_generation_superseded".to_owned(),
+                        ),
+                        None => return Err(error),
+                    }
+                }
+                Err(error) => return Err(error),
+            };
+            let decision = match current {
                 CurrentEventAuthoringGeneration::Active(current)
                     if current == queued.authoring_generation =>
                 {
@@ -2230,7 +2313,12 @@ impl EventSubmitter {
         canonical_body_bytes: &[u8],
     ) -> anyhow::Result<SubmitEventResult> {
         validate_signed_sdk_event_for_submit(signed.event(), signed.digest_suite())?;
-        self.ensure_realm_detail_current(signed.realm_id.as_str())?;
+        // Authoring already failed closed on an invalid Realm detail and froze
+        // the exact governance/CAS basis into these bytes. A notification can
+        // invalidate the local projection between signing and this POST; doing
+        // the same local check again here would starve writes on an active
+        // Realm. The receiver remains authoritative and rejects a stale
+        // frontier, which the durable queue can then handle explicitly.
         if arkret_sdk::canonical::canonical_json_bytes(signed)? != canonical_body_bytes {
             anyhow::bail!("persisted signed Event bytes do not match the queued Event");
         }
@@ -2365,7 +2453,7 @@ impl EventSubmitter {
             generation,
             None,
         )?;
-        self.enqueue_and_drive_sdk_event(queued, None).await
+        self.enqueue_and_drive_sdk_event(queued, None, false).await
     }
 
     async fn submit_sdk_event_queued(
@@ -2374,7 +2462,6 @@ impl EventSubmitter {
         post_accept: Option<PostAcceptAction>,
         state_store: Option<crate::runtime::input::StateStoreHandle>,
     ) -> anyhow::Result<SubmitEventResult> {
-        let _single_writer = outbound_submit_lock().lock().await;
         let intent = operation.intent();
         self.ensure_recovery_material_ready(intent, None).await?;
         self.refresh_direct_message_authority(intent, state_store.as_ref())
@@ -2459,6 +2546,7 @@ impl EventSubmitter {
                 post_accept,
             )?,
             None,
+            true,
         )
         .await
     }
@@ -2479,7 +2567,7 @@ impl EventSubmitter {
             signed_event,
             authoring_generation,
         )?;
-        self.enqueue_and_drive_sdk_event(queued, None).await
+        self.enqueue_and_drive_sdk_event(queued, None, false).await
     }
 
     /// Persist an MLS Add commit together with the exact signed Welcome(s) and
@@ -2600,6 +2688,7 @@ impl EventSubmitter {
                 }),
             )?,
             Some(state_store.clone()),
+            false,
         )
         .await
     }
@@ -2608,7 +2697,17 @@ impl EventSubmitter {
         &self,
         queued: QueuedSdkEvent,
         accepted_mls_state_store: Option<crate::runtime::input::StateStoreHandle>,
+        manage_single_writer: bool,
     ) -> anyhow::Result<SubmitEventResult> {
+        // Most callers already hold the runtime-wide writer gate while they
+        // author a multi-step unit. Ordinary single-Event submissions acquire
+        // it here so a RetryAt wait can yield to account-sync convergence and
+        // reacquire before touching the durable engine again.
+        let mut single_writer = if manage_single_writer {
+            Some(outbound_submit_lock().lock().await)
+        } else {
+            None
+        };
         let mut transaction_id = queued.local_operation_id.clone();
         let durable_post_accept = queued.post_accept.is_some();
         let actor_id = queued.intent.actor_id().clone();
@@ -2750,9 +2849,21 @@ impl EventSubmitter {
             accepted_mls_state_store,
         };
         let hook = InksonPostAcceptHook;
+        let mut interactive_retry_count = 0_u8;
         loop {
             let fence = match self.resolve_queue_generation_fence(&outbound).await {
                 Ok(fence) => fence,
+                Err(error)
+                    if outbound_retry_delay(&error).is_some() && interactive_retry_count < 4 =>
+                {
+                    interactive_retry_count += 1;
+                    drop(single_writer.take());
+                    crate::runtime_helpers::sleep_for(Duration::from_millis(1_100)).await;
+                    if manage_single_writer {
+                        single_writer = Some(outbound_submit_lock().lock().await);
+                    }
+                    continue;
+                }
                 Err(error) if outbound_retry_delay(&error).is_some() => {
                     tracing::warn!(
                         %transaction_id,
@@ -2761,6 +2872,7 @@ impl EventSubmitter {
                     );
                     return Err(DurablyQueuedError {
                         operation_id: transaction_id,
+                        reason: None,
                     }
                     .into());
                 }
@@ -2798,16 +2910,58 @@ impl EventSubmitter {
                     transaction_id = replacement.transaction_id;
                 }
                 OutboundEngineOutcome::Superseded { .. } => {}
-                OutboundEngineOutcome::RetryAt { item, at }
-                    if item.transaction_id == transaction_id =>
-                {
-                    tracing::debug!(%transaction_id, %at, "event remains in durable outbound queue");
+                OutboundEngineOutcome::RetryAt { item, at } => {
+                    let retry_transaction_id = item.transaction_id.clone();
+                    tracing::debug!(
+                        %transaction_id,
+                        %retry_transaction_id,
+                        %at,
+                        "event remains in durable outbound queue"
+                    );
+                    let retry_limit = if self.state_store.as_ref().is_some_and(|store| {
+                        store.read(|state| state.realm_detail_invalidated(item.realm_id.as_str()))
+                    }) {
+                        // Demand-sync invalidations normally converge in a few
+                        // seconds, including multi-frame detail baselines. Keep
+                        // this foreground action attached long enough to report
+                        // the accepted result, while unrelated transport errors
+                        // retain the short interactive retry budget below.
+                        24
+                    } else {
+                        4
+                    };
+                    if interactive_retry_count < retry_limit {
+                        interactive_retry_count += 1;
+                        let delay = (at - crate::clock::now_utc())
+                            .to_std()
+                            .unwrap_or_default()
+                            .saturating_add(Duration::from_millis(25));
+                        drop(single_writer.take());
+                        crate::runtime_helpers::sleep_for(delay).await;
+                        if manage_single_writer {
+                            single_writer = Some(outbound_submit_lock().lock().await);
+                        }
+                        continue;
+                    }
+                    let reason = results
+                        .retryable
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner)
+                        .remove(&retry_transaction_id);
                     return Err(DurablyQueuedError {
-                        operation_id: transaction_id,
+                        operation_id: transaction_id.clone(),
+                        reason: reason.map(|reason| {
+                            if retry_transaction_id == transaction_id {
+                                reason
+                            } else {
+                                format!(
+                                    "blocked by earlier operation {retry_transaction_id}: {reason}"
+                                )
+                            }
+                        }),
                     }
                     .into());
                 }
-                OutboundEngineOutcome::RetryAt { .. } => {}
                 OutboundEngineOutcome::Rejected { item, .. }
                 | OutboundEngineOutcome::Terminal { item, .. }
                     if item.transaction_id == transaction_id =>
@@ -2844,6 +2998,7 @@ impl EventSubmitter {
                     }
                     return Err(DurablyQueuedError {
                         operation_id: transaction_id,
+                        reason: None,
                     }
                     .into());
                 }

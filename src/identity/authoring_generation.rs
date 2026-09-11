@@ -224,6 +224,14 @@ async fn resolve_principal_authoring_generation(
     account_id: &arkret_sdk::AccountId,
     device_id: &str,
 ) -> anyhow::Result<PrincipalGenerationResolution> {
+    #[cfg(target_arch = "wasm32")]
+    let outcome = tokio::select! {
+        outcome = crate::transport::keys::query_keys(http, account_id, device_id) => outcome?,
+        _ = crate::runtime_helpers::sleep_for(std::time::Duration::from_secs(8)) => {
+            anyhow::bail!("HTTP request failed: authoring-generation keys query timed out");
+        }
+    };
+    #[cfg(not(target_arch = "wasm32"))]
     let outcome = crate::transport::keys::query_keys(http, account_id, device_id).await?;
     resolve_principal_authoring_generation_from_keys(&outcome, account_id, device_id)
 }
