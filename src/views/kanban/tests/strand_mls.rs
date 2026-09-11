@@ -215,6 +215,7 @@ fn card_builder_reads_author_plaintext_from_sidecar_without_mls_group() {
         realm_id: realm,
     };
     let strand_view = crate::state::projection_views::StrandProjectionView {
+        object_revision_heads: vec![format!("sha256:{}", "0".repeat(64))],
         strand_id: strand.to_owned(),
         realm_id: realm.to_owned(),
         title: "Encrypted card".to_owned(),
@@ -263,6 +264,7 @@ fn encrypted_card_content_is_locked_exactly_when_it_is_unreadable() {
     let envelope = test_encrypted_content_envelope(realm, "AAAA");
     let strand_view =
         |realm: &str, strand: &str| crate::state::projection_views::StrandProjectionView {
+            object_revision_heads: vec![format!("sha256:{}", "0".repeat(64))],
             strand_id: strand.to_owned(),
             realm_id: realm.to_owned(),
             title: "Encrypted card".to_owned(),

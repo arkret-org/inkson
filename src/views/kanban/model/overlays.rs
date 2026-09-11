@@ -18,6 +18,7 @@ pub(crate) fn local_created_card(
 ) -> KanbanCard {
     KanbanCard {
         id: strand_id.clone(),
+        object_revision_heads: Vec::new(),
         rank,
         title,
         description,
@@ -108,7 +109,7 @@ pub(crate) fn strand_update_operations_from_events(
 pub(crate) fn raw_operation_allows_overlay(payload: &Value) -> bool {
     let write_state =
         json_path_string(Some(payload), &["write_state"]).unwrap_or_else(|| "queued".to_owned());
-    !matches!(write_state.as_str(), "cancelled" | "canceled" | "dropped")
+    matches!(write_state.as_str(), "queued" | "submitting" | "accepted")
 }
 
 pub(crate) fn raw_operation_card_state(payload: &Value) -> CardState {

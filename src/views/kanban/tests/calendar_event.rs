@@ -231,6 +231,7 @@ fn calendar_projection_reads_schedule_and_plain_location() {
         }),
     )]);
     let strand = crate::state::projection_views::StrandProjectionView {
+        object_revision_heads: vec![format!("sha256:{}", "0".repeat(64))],
         strand_id: TEST_CALENDAR_STRAND_ID.to_owned(),
         realm_id: TEST_REALM_ID.to_owned(),
         title: "Planning session".to_owned(),
@@ -402,6 +403,7 @@ fn locally_accepted_rsvp_retains_the_observed_schedule_frontier() {
     let source_event_id =
         arkret_sdk::EventId::from_digest(arkret_sdk::canonical::DigestSuite::Sha256, [9_u8; 32]);
     let projected = vec![crate::state::projection_views::StrandProjectionView {
+        object_revision_heads: vec![format!("sha256:{}", "0".repeat(64))],
         strand_id: TEST_CALENDAR_STRAND_ID.to_owned(),
         realm_id: TEST_REALM_ID.to_owned(),
         title: "Calendar".to_owned(),

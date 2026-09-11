@@ -187,10 +187,18 @@ fn strand_view_from_create_op(
         .clone()
         .or_else(|| json_path_string(Some(object), &["realm_id"]))
         .unwrap_or_default();
+    let object_revision_heads = record
+        .payload
+        .get("event_id")
+        .and_then(Value::as_str)
+        .and_then(|value| arkret_sdk::EventId::new(value.to_owned()).ok())
+        .map(|event_id| vec![event_id.event_digest().to_string()])
+        .unwrap_or_default();
 
     Some(crate::state::projection_views::StrandProjectionView {
         strand_id,
         realm_id,
+        object_revision_heads,
         title,
         summary,
         content,

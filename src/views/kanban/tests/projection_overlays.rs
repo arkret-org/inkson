@@ -305,6 +305,7 @@ fn lifecycle_projection_builds_persisted_board_columns_and_cards() {
         },
     ];
     let strands = vec![crate::state::projection_views::StrandProjectionView {
+        object_revision_heads: vec![format!("sha256:{}", "0".repeat(64))],
         strand_id: "ak:strand:AV624IkuHj3HmxAYE6uyYmBa4Est3gGGdnOsjn71z5L2".to_owned(),
         realm_id: "ak:realm:AZQnaSleDidYaYIvfwYy3au5gnd_DSinxyUHEl7ewtxk".to_owned(),
         title: "Persisted card".to_owned(),
@@ -655,6 +656,7 @@ fn non_spec_strand_patch_paths_are_ignored_by_the_local_overlay() {
 #[test]
 fn non_spec_projection_paths_expose_no_strand_content() {
     let strand = crate::state::projection_views::StrandProjectionView {
+        object_revision_heads: vec![format!("sha256:{}", "0".repeat(64))],
         strand_id: "ak:strand:AV624IkuHj3HmxAYE6uyYmBa4Est3gGGdnOsjn71z5L2".to_owned(),
         realm_id: TEST_REALM_ID.to_owned(),
         title: "Card".to_owned(),

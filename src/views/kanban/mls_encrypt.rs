@@ -3,7 +3,7 @@ use serde_json::{Value, json};
 
 use super::model::*;
 use super::{
-    apply_card_detail_draft, card_detail_update_patch, collect_encryptable_private_patch_values,
+    card_detail_update_patch, collect_encryptable_private_patch_values,
     kanban_plaintext_block_reason, replace_private_patch_values,
 };
 // The MLS commit/genesis event construction moved to
@@ -425,7 +425,7 @@ pub(super) async fn dispatch_card_detail_update(
     sidecar_track_write: Option<SidecarTrackWriteContext>,
     synthesis_entry_id: Option<String>,
     synthesis_revision_body: Option<String>,
-    mut selected_card: Signal<Option<KanbanCard>>,
+    _selected_card: Signal<Option<KanbanCard>>,
     mut state_store: SyncSignal<LocalStateStore>,
     mut board_status: Signal<String>,
 ) -> bool {
@@ -444,10 +444,23 @@ pub(super) async fn dispatch_card_detail_update(
         };
         current.id = canonical_id;
     }
+    if current.state != CardState::Synced {
+        board_status.set(
+            "card has a pending local write; wait for acceptance before editing again".to_owned(),
+        );
+        return false;
+    }
     let patch = match card_detail_update_patch(&current, &draft) {
         Ok(patch) => patch,
         Err(msg) => {
             board_status.set(msg);
+            return false;
+        }
+    };
+    let object_basis_ref = match current.object_revision_basis_ref() {
+        Ok(head) => head,
+        Err(message) => {
+            board_status.set(message);
             return false;
         }
     };
@@ -458,9 +471,6 @@ pub(super) async fn dispatch_card_detail_update(
     let effective_security_encrypted = current
         .security_encrypted
         .unwrap_or_else(|| scope_security_encrypted.unwrap_or(true));
-    let calendar_changed = patch
-        .as_object()
-        .is_some_and(|entries| entries.contains_key(CALENDAR_SUBTREE_PATH));
     let (patch_plan, mls_events) = if effective_security_encrypted {
         match encrypt_private_card_detail_patch_values_for_effective_scope(
             patch,
@@ -520,15 +530,9 @@ pub(super) async fn dispatch_card_detail_update(
         .map(Some)
         .unwrap_or(scope_security_encrypted);
 
-    // Optimistic detail-panel feedback: apply the draft to the open card.
-    // The board itself re-renders from the appended `ak.strand.update` op
-    // below — `columns` is a `use_memo` over `raw_operations`, folded by
-    // `overlay_local_card_update_records`, so there is no direct signal write.
-    let mut updated_card = current.clone();
-    apply_card_detail_draft(&mut updated_card, &draft);
-    if sidecar_track_write.is_none() {
-        selected_card.set(Some(updated_card));
-    }
+    // Do not mutate the detail signal before acceptance. The durable queued
+    // record drives the board overlay; terminal failures are excluded there,
+    // so a rejected Event cannot leave UI state that never existed remotely.
 
     // The holder-local identity of this write. It is allocated before the Event
     // exists, which is exactly why the optimistic row can be keyed by it: the
@@ -592,7 +596,7 @@ pub(super) async fn dispatch_card_detail_update(
         None
     };
     let sidecar_effective_scope = sidecar_effective_scope.clone();
-    let calendar_basis_refs = current.calendar_schedule_basis_refs();
+    let object_basis_refs = vec![object_basis_ref];
     let update_realm_id = realm_id.clone();
     let update_actor_id = actor_id.clone();
     let update_strand_id = current.id.clone();
@@ -779,13 +783,7 @@ pub(super) async fn dispatch_card_detail_update(
             &update_strand_id,
             sealed_patch,
         )
-        .map(|builder| {
-            if calendar_changed {
-                builder.causal_refs(calendar_basis_refs)
-            } else {
-                builder
-            }
-        })
+        .map(|builder| builder.causal_refs(object_basis_refs))
         .and_then(|builder| builder.build_sdk_event("inkson"))
         {
             Ok(op) => {

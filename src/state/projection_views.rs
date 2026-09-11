@@ -49,6 +49,11 @@ pub struct RsvpHeadProjectionView {
 pub struct StrandProjectionView {
     pub strand_id: String,
     pub realm_id: String,
+    /// Complete current head set for the Strand object MV-register. Unlike a
+    /// schedule frontier this is the causal basis for every ordinary Strand
+    /// patch, regardless of which field changes.
+    #[serde(default)]
+    pub object_revision_heads: Vec<String>,
     #[serde(default)]
     pub title: String,
     #[serde(default)]
@@ -144,6 +149,11 @@ impl From<arkret_sdk::ProjectionStrandRow> for StrandProjectionView {
         Self {
             strand_id: row.strand_id.as_str().to_owned(),
             realm_id: row.realm_id.as_str().to_owned(),
+            object_revision_heads: row
+                .object_revision_heads
+                .into_iter()
+                .map(|digest| digest.as_str().to_owned())
+                .collect(),
             title: row.title.unwrap_or_default(),
             summary: row.summary,
             // The SDK strand projection row carries neither Strand content nor

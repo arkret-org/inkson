@@ -864,6 +864,7 @@ fn strand_projection_with_synthesis_content(
     let content: arkret_sdk::ContentBlock =
         serde_json::from_value(content).expect("projection content is a canonical ContentBlock");
     crate::state::projection_views::StrandProjectionView {
+        object_revision_heads: vec![format!("sha256:{}", "0".repeat(64))],
         strand_id: strand_id.to_owned(),
         realm_id: TEST_REALM_ID.to_owned(),
         title: "Keep".to_owned(),

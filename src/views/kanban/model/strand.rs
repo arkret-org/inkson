@@ -224,6 +224,7 @@ pub(crate) fn card_from_strand_projection_for_actor(
         .unwrap_or(KANBAN_SYNTHESIS_CONTENT_PATH);
     KanbanCard {
         id: strand.strand_id.clone(),
+        object_revision_heads: strand.object_revision_heads.clone(),
         rank: strand_projection_placement_string(strand.rank.as_deref()).unwrap_or_default(),
         title: title.clone(),
         description: summary,
