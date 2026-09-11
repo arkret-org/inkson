@@ -256,7 +256,16 @@ pub(super) async fn save_card_detail_edit(
         &card_edit_assignee(),
         &card_edit_due(),
     );
-    let encrypted_realm_write = sidecar_track_write.is_none()
+    let needs_encryption =
+        match super::card_patch::card_detail_patch_needs_encryption(&current, &draft) {
+            Ok(value) => value,
+            Err(error) => {
+                card_detail_edit_status.set(error);
+                return;
+            }
+        };
+    let encrypted_realm_write = needs_encryption
+        && sidecar_track_write.is_none()
         && current
             .security_encrypted
             .unwrap_or_else(|| scope_security_encrypted.unwrap_or(true));
@@ -389,20 +398,17 @@ async fn recover_mls_checkpoint_for_encrypted_write(
     // it is absent, let creator bootstrap resolve the exact immutable
     // ak.realm.create Event from the Station; invitees still skip this path as
     // soon as their projected root names another actor.
-    let should_try_creator_bootstrap = {
-        let store = state_store.read();
-        let state = store.load();
-        let projected_controller = garth::realm_authority_root_controller_for_realm(
-            &state.realm_tree_projections,
-            realm_id,
-        );
-        let local_actor = crate::mls_api_helpers::local_account_actor_id(actor_id).ok();
-        projected_controller.is_none() || projected_controller == local_actor
-    };
-    if should_try_creator_bootstrap {
-        let api = crate::transport::auth::authed_api_ready(base_url, session_credential.to_owned())
-            .await
-            .map_err(|error| format!("creator MLS bootstrap transport: {error}"))?;
+    let api = crate::transport::auth::authed_api_ready(base_url, session_credential.to_owned())
+        .await
+        .map_err(|error| format!("MLS bootstrap transport: {error}"))?;
+    let is_creator = crate::mls::creator_bootstrap::should_resume_creator_genesis(
+        &api,
+        &store_handle,
+        realm_id,
+        authority,
+    )
+    .await?;
+    if is_creator {
         if let Err(error) = crate::mls::creator_bootstrap::ensure_creator_realm_mls_genesis(
             &api,
             &store_handle,
@@ -414,25 +420,22 @@ async fn recover_mls_checkpoint_for_encrypted_write(
         {
             failures.push(format!("creator bootstrap: {error}"));
         }
-    }
-    if encrypted_realm_write_mls_ready(&state_store.read(), realm_id, authority) {
-        return Ok(());
-    }
-
-    match crate::app::bootstrap_mls_welcome_for_realm(
-        base_url.to_owned(),
-        session_credential.to_owned(),
-        actor_id.to_owned(),
-        authority.clone(),
-        device_id.clone(),
-        realm_id.to_owned(),
-        &store_handle,
-        None,
-    )
-    .await
-    {
-        Ok(_) => {}
-        Err(error) => failures.push(format!("Welcome: {error}")),
+    } else {
+        match crate::app::bootstrap_mls_welcome_for_realm(
+            base_url.to_owned(),
+            session_credential.to_owned(),
+            actor_id.to_owned(),
+            authority.clone(),
+            device_id.clone(),
+            realm_id.to_owned(),
+            &store_handle,
+            None,
+        )
+        .await
+        {
+            Ok(_) => {}
+            Err(error) => failures.push(format!("Welcome: {error}")),
+        }
     }
     if encrypted_realm_write_mls_ready(&state_store.read(), realm_id, authority) {
         return Ok(());
@@ -484,14 +487,13 @@ async fn recover_mls_checkpoint_for_encrypted_write(
         return Ok(());
     }
 
-    // Creator genesis (and a first Welcome) mint the account secret, so the
-    // pre-recovery reading above is stale by now; re-read before blaming the
-    // device, and never let the generic banner swallow the concrete failures.
+    // Recovery may have restored key material. Re-read it without conflating
+    // account-root recovery with device approval or a pending Welcome.
     let has_local_account_secret = matches!(
         crate::mls::runtime::load_account_mls_secret(secure_store.as_ref(), authority),
         Ok(Some(_))
     );
-    const NO_SECRET_HINT: &str = "This device has no account MLS secret; unlock it with the Recovery Key or approve this device so it can receive a new Welcome.";
+    const NO_SECRET_HINT: &str = "This device is missing the account encryption key. Restore the original key using account recovery; approving the device again or receiving a Welcome does not restore it.";
     if failures.is_empty() {
         if has_local_account_secret {
             Err(
@@ -713,7 +715,15 @@ pub(super) fn dispatch_calendar_rsvp(
         );
         return;
     }
-    board_status.set("refreshing calendar schedule before RSVP".to_owned());
+    if card.state != CardState::Synced {
+        board_status.set("cannot build RSVP: resolve the current Card first".to_owned());
+        return;
+    }
+    let Some((_, source_event)) = card.authoring_basis.clone() else {
+        board_status.set("cannot build RSVP: waiting for the complete current Card".to_owned());
+        return;
+    };
+    board_status.set("resolving the observed calendar schedule".to_owned());
     let api_token = token();
     let submit_token = api_token.clone();
     let strand_id = card.primary_strand_id.clone();
@@ -727,17 +737,65 @@ pub(super) fn dispatch_calendar_rsvp(
     };
     spawn(async move {
         let built = with_authed_api(&build_base, api_token, |api| async move {
-            let rows = api
-                .http()
-                .events_read_all_pages(&build_realm_id)
-                .await?
-                .events;
-            let events = crate::models::require_complete_event_rows(
-                &rows,
-                "calendar RSVP schedule projection",
+            // Resolve only the frozen object's source closure. Never attach a
+            // newly observed frontier to the calendar value captured by the UI.
+            let mut pending = std::collections::BTreeSet::from([source_event.event_digest()]);
+            let mut seen = std::collections::BTreeSet::new();
+            let mut events = Vec::new();
+            while !pending.is_empty() {
+                if seen.len() + pending.len() > 4096 {
+                    anyhow::bail!("calendar source closure exceeds the local authoring budget");
+                }
+                let batch = pending.iter().take(64).cloned().collect::<Vec<_>>();
+                for digest in &batch {
+                    pending.remove(digest);
+                }
+                let outcome = api
+                    .http()
+                    .events_resolve(&arkret_sdk::EventsResolveRequestBody {
+                        event_ids: Vec::new(),
+                        event_digests: batch.clone(),
+                        include_payload: Some(true),
+                        history_traversal_access: None,
+                        max_response_bytes: Some(8_388_608),
+                    })
+                    .await?;
+                if !outcome.missing.is_empty() || !outcome.unauthorized.is_empty() {
+                    anyhow::bail!("calendar source closure is unavailable");
+                }
+                let mut returned = std::collections::BTreeSet::new();
+                for event in outcome.events {
+                    let digest =
+                        arkret_sdk::Hash::new(event.event_digest_with_digest_suite(digest_suite)?)?;
+                    if !batch.contains(&digest) || !returned.insert(digest.clone()) {
+                        anyhow::bail!("calendar source resolve returned an unexpected Event");
+                    }
+                    seen.insert(digest);
+                    if event.kind != arkret_sdk::EventKind::StrandCreate {
+                        for reference in &event.causal_refs {
+                            if !seen.contains(reference) {
+                                pending.insert(reference.clone());
+                            }
+                        }
+                    }
+                    events.push(event);
+                }
+                pending.retain(|digest| !seen.contains(digest));
+                if returned.len() != batch.len() {
+                    anyhow::bail!("calendar source resolve returned an incomplete batch");
+                }
+            }
+            let schedule_heads = calendar_schedule_revision_heads_at_source(
+                &events,
+                &strand_id,
+                digest_suite,
+                &source_event,
             )?;
-            let schedule_heads =
-                calendar_schedule_revision_heads(&events, &strand_id, digest_suite)?;
+            if schedule_heads.len() != 1 {
+                anyhow::bail!(
+                    "calendar schedule requires explicit conflict resolution before RSVP"
+                );
+            }
             // The actor frontier and HLC belong to the authoring boundary; the
             // builder only states what the user chose.
             calendar_rsvp_operation(

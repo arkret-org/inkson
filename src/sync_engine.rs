@@ -685,12 +685,17 @@ impl AccountStepCommitter for InksonAccountCommitter {
 }
 
 fn selected_account_filter(ctx: &SyncEngineContext) -> arkret_sdk::SyncFilter {
-    let realms = arkret_sdk::RealmId::new(ctx.selected_realm_id.get().trim().to_owned())
+    let realm = ctx.selected_realm_id.get();
+    let strands = ctx
+        .state_store
+        .read(|store| store.product_current_strands(&ctx.account.authority, &realm));
+    let realms = arkret_sdk::RealmId::new(realm.trim().to_owned())
         .ok()
         .into_iter()
         .collect();
     arkret_sdk::SyncFilter {
         realm_ids: Some(realms),
+        strand_ids: strands,
         timeline_limit: Some(20),
         lazy_load_members: Some(true),
         ..Default::default()

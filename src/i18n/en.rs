@@ -938,48 +938,32 @@ pub fn english_translations() -> TranslationDict {
         "Continue with limited access",
     );
     dict.set("device_authorization.reopen", "Authorize this device");
-    dict.set("mls_unlock.title", "Restore encrypted history");
+    dict.set("mls_unlock.title", "Restore encryption keys");
     dict.set(
         "mls_unlock.subtitle",
-        "Use another device or your Recovery Key",
+        "Device authorization and key recovery are separate",
     );
-    dict.set(
-        "mls_unlock.description",
-        "This device is authorized, but it does not have the keys to open encrypted history yet. Restore them from another device you own, or use your recovery key.",
-    );
+    dict.set("mls_unlock.description", "This device is authorized, but its account encryption keys or history material still need recovery. Device approval alone does not restore those secrets.");
     dict.set(
         "mls_unlock.approve_step_existing_title",
-        "From another authorized device",
+        "Device approval is complete",
     );
-    dict.set(
-        "mls_unlock.approve_step_existing_body",
-        "If this device still shows an approval request, approve it on the other device and compare the code. Key sharing continues after approval.",
-    );
+    dict.set("mls_unlock.approve_step_existing_body", "Do not create another pairing request for this device. Approval allows sign-in; it does not replace account-key recovery or MLS group admission.");
     dict.set("mls_unlock.approve_step_new_title", "On this browser");
-    dict.set(
-        "mls_unlock.approve_step_new_body",
-        "Keep this tab open while keys are restored, or choose Use recovery key instead below.",
-    );
+    dict.set("mls_unlock.approve_step_new_body", "Use your recovery key below to restore the existing account keys. Current encrypted sending also requires this device’s accepted MLS membership and durable local state.");
     dict.set(
         "mls_unlock.loading_hint",
         "Restoring multiple encrypted Realms can take a few seconds. Keep this tab open.",
     );
-    dict.set(
-        "mls_unlock.limitation",
-        "You can continue without restoring now, but older encrypted content stays unavailable until this step is complete.",
-    );
-    dict.set("mls_unlock.open_pairing", "Open device approval");
+    dict.set("mls_unlock.limitation", "You may postpone recovery. If the account encryption root is missing, new encrypted content and MLS initialization are also blocked, not just older history.");
     dict.set("mls_unlock.show_recovery_key", "Use recovery key instead");
     dict.set("mls_unlock.hide_recovery_key", "Hide recovery key");
-    dict.set(
-        "mls_unlock.recovery_fallback_hint",
-        "Only use this if none of your other devices are available. Your 24-word recovery key unlocks your encrypted-history backups once the server's checks pass.",
-    );
+    dict.set("mls_unlock.recovery_fallback_hint", "Your 24-word recovery key unlocks the existing encrypted account backup after verification. It does not clone another device or bypass MLS admission.");
     dict.set("mls_unlock.placeholder", "24-word recovery key");
     dict.set("mls_unlock.button_idle", "Unlock with key");
     dict.set("mls_unlock.button_busy", "Unlocking...");
-    dict.set("mls_unlock.dismiss", "Continue without history");
-    dict.set("mls_unlock.reopen", "Restore encrypted history");
+    dict.set("mls_unlock.dismiss", "Not now");
+    dict.set("mls_unlock.reopen", "Restore encryption keys");
     dict.set(
         "mls_unlock.status.enter_passphrase",
         "Enter your 24-word recovery key to unlock encrypted history.",
@@ -3199,27 +3183,14 @@ fn prompt_copy_strings(dict: &mut TranslationDict) {
         "Your 24-word Recovery Key — required to rotate encrypted history backups",
     );
     dict.set("settings.devices.revoke_confirm", "Confirm revoke");
-    dict.set("settings.devices.pair_this_browser", "This browser");
-    dict.set("settings.devices.pair_title", "Approve this device");
-    dict.set("settings.devices.pair_required_badge", "Approval required");
-    dict.set("settings.devices.pair_body", "Generate a pairing QR code or link, then scan or open it on an already-authorized device. No automatic account notification is sent.");
-    dict.set("settings.devices.pair_hide_link", "Hide link");
-    dict.set(
-        "settings.devices.pair_qr_aria_label",
-        "Device approval QR code",
-    );
-    dict.set(
-        "settings.devices.pair_link_aria_label",
-        "Device approval link",
-    );
     dict.set("settings.devices.accept_title", "Approve using a link");
     dict.set(
         "settings.devices.accept_body",
-        "Use this fallback on an authorized device when no confirmation prompt appears.",
+        "Paste the complete pairing link from the new device here. Compare its code and identity before approving.",
     );
     dict.set(
         "settings.devices.accept_placeholder",
-        "Paste the pairing link (…/device-pairing/resolve#token=…) or the token",
+        "Paste the complete pairing link (…#token=…&proof=…)",
     );
     dict.set("settings.devices.session_active", "Signed in");
     dict.set("settings.devices.session_inactive", "Not signed in");
@@ -3227,10 +3198,6 @@ fn prompt_copy_strings(dict: &mut TranslationDict) {
     dict.set("settings.devices.revoke", "Revoke");
     dict.set("settings.devices.revoke_body_before", "This will write ");
     dict.set("settings.devices.revoke_body_after", " to your principal control Realm, remove the device from any E2EE Realm it participates in, and rotate the account MLS history secret. The action cannot be undone.");
-    dict.set("settings.devices.pair_requesting", "Requesting…");
-    dict.set("settings.devices.pair_request", "Request approval");
-    dict.set("settings.devices.pair_checking", "Checking…");
-    dict.set("settings.devices.pair_check", "Check approval");
     dict.set("settings.devices.accept_resolving", "Resolving…");
     dict.set("settings.devices.accept_resolve", "Resolve link");
     dict.set(

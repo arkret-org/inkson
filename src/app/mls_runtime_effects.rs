@@ -823,7 +823,6 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
             // unlock probe afterwards.
             let detect_base = base.clone();
             let detect_session = session.clone();
-            let detect_actor = actor.clone();
             let detect_authority = authority.clone();
             let detect_device = device.clone();
             let creator_bootstrap_realm_id = bootstrap_realm_id.clone();
@@ -833,61 +832,43 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
                 let state_store_task =
                     crate::app::runtime_adapter::state_store_handle(state_store_task);
                 let mut bootstrap_retry_required = false;
-                match bootstrap_mls_welcome_for_realm(
-                    base,
-                    session,
-                    actor,
-                    authority,
-                    device,
-                    bootstrap_realm_id,
-                    &state_store_task,
-                    Some(needs_mls_backup_for_bootstrap),
+                let creator_result = match crate::transport::auth::authed_api_ready(
+                    &detect_base,
+                    detect_session.clone(),
                 )
                 .await
                 {
-                    Ok(outcome) if outcome.applied > 0 => {
-                        crypto_state_task.set(format!(
-                            "MLS Welcome applied for {realm_label}: {} group(s); local MLS state is durable; portable history candidates remain separate from active state",
-                            outcome.applied
-                        ));
+                    Ok(api) => {
+                        match crate::mls::creator_bootstrap::should_resume_creator_genesis(
+                            &api,
+                            &state_store_task,
+                            &creator_bootstrap_realm_id,
+                            &detect_authority,
+                        )
+                        .await
+                        {
+                            Ok(true) => Some((api, true)),
+                            Ok(false) => Some((api, false)),
+                            Err(error) => {
+                                bootstrap_retry_required = true;
+                                last_error_task.set(Some(error));
+                                None
+                            }
+                        }
                     }
-                    Ok(_) => {}
                     Err(error) => {
                         bootstrap_retry_required = true;
-                        tracing::warn!(
-                            realm = %realm_label,
-                            %error,
-                            "MLS Welcome bootstrap remains pending"
-                        );
-                        last_error_task.set(Some(format!("MLS Welcome bootstrap: {error}")));
+                        last_error_task.set(Some(error.to_string()));
+                        None
                     }
-                }
-
-                // A Realm creator never gets a Welcome, so the branch above
-                // does nothing for them. Their epoch-0 bootstrap runs once in
-                // the create wizard; if that attempt was interrupted (component
-                // unmount, network failure, closed tab) the Realm is left with
-                // no pinned governance checkpoint and no local snapshot, and every
-                // encrypted write fails permanently. Replay it here — the gate
-                // is creator-only, so the trusted anchor still comes from the
-                // `encryption-and-audit.md` §2.5.1.1 "Realm create" source, and
-                // the pin still happens only after full bundle verification.
-                if crate::mls::creator_bootstrap::creator_mls_bootstrap_pending(
-                    &state_store_for_probe.read(),
-                    &creator_bootstrap_realm_id,
-                    &detect_actor,
-                ) {
+                };
+                if let Some((api, true)) = creator_result {
                     tracing::warn!(
                         realm = %creator_bootstrap_realm_id,
                         "creator MLS bootstrap pending; replaying epoch-0 setup + ak.mls.genesis",
                     );
-                    let creator_bootstrap_error = match crate::transport::auth::authed_api_ready(
-                        &detect_base,
-                        detect_session.clone(),
-                    )
-                    .await
-                    {
-                        Ok(api) => crate::mls::creator_bootstrap::ensure_creator_realm_mls_genesis(
+                    let creator_bootstrap_error =
+                        crate::mls::creator_bootstrap::ensure_creator_realm_mls_genesis(
                             &api,
                             &state_store_task,
                             &creator_bootstrap_realm_id,
@@ -895,10 +876,7 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
                             &detect_device,
                         )
                         .await
-                        .err()
-                        .map(|error| error.to_string()),
-                        Err(error) => Some(error.to_string()),
-                    };
+                        .err();
                     if let Some(error) = creator_bootstrap_error {
                         bootstrap_retry_required = true;
                         tracing::warn!(
@@ -917,6 +895,32 @@ pub(super) fn MlsRuntimeEffects(state: MlsRuntimeEffectState) -> Element {
                             realm = %creator_bootstrap_realm_id,
                             "creator MLS bootstrap completed",
                         );
+                    }
+                } else if matches!(creator_result, Some((_, false))) {
+                    match bootstrap_mls_welcome_for_realm(
+                        base,
+                        session,
+                        actor,
+                        authority,
+                        device,
+                        bootstrap_realm_id,
+                        &state_store_task,
+                        Some(needs_mls_backup_for_bootstrap),
+                    )
+                    .await
+                    {
+                        Ok(outcome) if outcome.applied > 0 => {
+                            crypto_state_task.set(format!(
+                                "MLS Welcome applied for {realm_label}: {} group(s); local MLS state is durable",
+                                outcome.applied
+                            ));
+                        }
+                        Ok(_) => {}
+                        Err(error) => {
+                            bootstrap_retry_required = true;
+                            tracing::warn!(realm = %realm_label, %error, "MLS Welcome bootstrap remains pending");
+                            last_error_task.set(Some(format!("MLS Welcome bootstrap: {error}")));
+                        }
                     }
                 }
 

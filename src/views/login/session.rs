@@ -649,8 +649,6 @@ pub(super) async fn finish_oidc_callback(
         return Err("Callback state did not match the saved sign-in state.".to_owned());
     }
 
-    let authorization_code = extract_authorization_code_from_callback(&callback_url)
-        .map_err(|error| format!("Callback did not include an authorization code: {error}"))?;
     // T1.Y4 — every gate/account call routes through the resolved
     // `gate_account_base_url` persisted in the scaffold (service-surface §2.5.1).
     let gate_account_base_url = scaffold.gate_account_base_url.clone();
@@ -765,6 +763,10 @@ pub(super) async fn finish_oidc_callback(
     if scaffold.issuer.trim().is_empty() {
         return Err("Sign-in state is missing the OIDC issuer.".to_owned());
     }
+    // An exact durable handoff resumes above without replaying the OIDC code.
+    // A state-only link cannot start a new handoff when that evidence is absent.
+    let authorization_code = extract_authorization_code_from_callback(&callback_url)
+        .map_err(|error| format!("Callback did not include an authorization code: {error}"))?;
     let principal_audience =
         arkret_sdk::DidCoreId::new(scaffold.principal_audience.trim().to_owned())
             .map_err(|error| format!("invalid Station audience core_id: {error}"))?;
@@ -1158,7 +1160,12 @@ pub(crate) async fn issue_bound_handoff_session(
                 pairing_code: pairing.pairing_code.clone(),
             })
             .await
-            .map_err(|error| format!("Read accepted device-pairing status: {error}"))?;
+            .map_err(|error| {
+                classify_returning_verification_error(
+                    "Read accepted device-pairing status",
+                    error.into(),
+                )
+            })?;
         if status.state != arkret_sdk::DevicePairingState::Authorized {
             return Err(ReturningSessionExchangeError::Fatal(
                 "The paired-device session was issued before its staged request reported authorized."
@@ -1174,14 +1181,17 @@ pub(crate) async fn issue_bound_handoff_session(
         )
         .await
         .map_err(|error| {
-            ReturningSessionExchangeError::Fatal(format!(
-                "Verify accepted paired-device authorization Event: {error}"
-            ))
+            classify_returning_verification_error(
+                "Verify accepted paired-device authorization Event",
+                error,
+            )
         })?;
     }
     let account = crate::transport::account::account_me(&principal_http)
         .await
-        .map_err(|error| format!("Station rejected the returning session: {error}"))?;
+        .map_err(|error| {
+            classify_returning_verification_error("Station rejected the returning session", error)
+        })?;
     if account.principal_id != principal_id {
         return Err(ReturningSessionExchangeError::Fatal(
             "Station account does not match the authenticated handoff.".to_owned(),
@@ -1207,7 +1217,7 @@ pub(crate) async fn issue_bound_handoff_session(
     )
     .await
     .map_err(|error| {
-        ReturningSessionExchangeError::Fatal(format!("Verify active principal resolution: {error}"))
+        classify_returning_verification_error("Verify active principal resolution", error)
     })?;
     let persisted_session_grant = persisted_session_grant_from_state(
         &session_grant,

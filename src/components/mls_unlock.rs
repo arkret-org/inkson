@@ -2,11 +2,9 @@ use std::future::Future;
 use std::time::Duration;
 
 use dioxus::prelude::*;
-use dioxus_router::Link;
 
 use super::UiIcon;
 use crate::recovery_crypto::normalize_recovery_key_input;
-use crate::routes::Route;
 use crate::transport::auth::{ApiCallError, with_authed_api};
 use crate::ui::button::{Button, ButtonSize, ButtonVariant};
 use crate::ui::dialog::Dialog;
@@ -376,13 +374,6 @@ pub fn MlsUnlockPrompt(
                 }
             }
             div { class: "modal-foot actions mls-unlock-row",
-                Link {
-                    class: "primary",
-                    "data-testid": "mls-unlock-open-pairing",
-                    to: Route::SettingsDevicesPair,
-                    onclick: move |_| dismissed.set(true),
-                    {crate::i18n::tr("mls_unlock.open_pairing")}
-                }
                 Button {
                     variant: ButtonVariant::Secondary,
                     "data-testid": "mls-unlock-show-recovery-key",

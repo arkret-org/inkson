@@ -301,21 +301,6 @@ pub async fn approve_device_pairing(
 /// Target-device fence before treating an `authorized` status as success.
 /// The status row is only an index; trust comes from the exact accepted Event
 /// and its target-owned attestation binding.
-pub async fn verify_authorized_pairing_event(
-    http: &arkret_sdk::http_client::Client,
-    principal: &arkret_sdk::Did,
-    outcome: &arkret_sdk::DevicePairingStatusOutcome,
-    attestation: &arkret_sdk::DevicePairingTargetProof,
-) -> anyhow::Result<arkret_sdk::Event> {
-    let principal_actor = arkret_sdk::project_did_to_core_id(principal)?;
-    let authority = crate::secure_key_store::active_device_seed_scope()
-        .filter(|scope| scope.authority.principal_id == principal_actor)
-        .map(|scope| scope.authority)
-        .ok_or_else(|| anyhow::anyhow!("pairing verification has no matching active account"))?;
-    verify_authorized_pairing_event_for_authority(http, principal, &authority, outcome, attestation)
-        .await
-}
-
 pub async fn verify_authorized_pairing_event_for_authority(
     http: &arkret_sdk::http_client::Client,
     principal: &arkret_sdk::Did,

@@ -305,7 +305,8 @@ pub(super) fn RouteSurface(state: RouteSurfaceState) -> Element {
                                 if StationFeature::Board.ready(server_description.as_ref()) {
                                     rsx! {
                                         crate::views::kanban::KanbanPanel {
-                                            plaintext_service_id: active_service_id.clone(),
+                                            key: "{principal_core_id}:{active_service_id}:{active_realm_id}",
+                                    plaintext_service_id: active_service_id.clone(),
                                             token,
                                             principal_id: principal_core_id.clone(),
                                             account_primary_handle,
@@ -541,6 +542,7 @@ pub(super) fn RouteSurface(state: RouteSurfaceState) -> Element {
                         if StationFeature::Board.ready(server_description.as_ref()) {
                             rsx! {
                                 crate::views::kanban::KanbanPanel {
+                                    key: "{principal_core_id}:{active_service_id}:{active_realm_id}",
                                     plaintext_service_id: active_service_id.clone(),
                                     token,
                                     principal_id: principal_core_id.clone(),

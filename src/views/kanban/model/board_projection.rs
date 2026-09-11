@@ -1,34 +1,15 @@
-//! Event-sourced kanban board projection.
+//! Kanban presentation and pending local-operation overlays.
 //!
-//! The board is a CLIENT-SIDE derived projection over the realm event log, per
-//! `service-surface.md` requires a client to derive its own local view projection
-//! from synchronized, authorized and decrypted Events; the projection is not an
-//! authoritative source. This module folds the
-//! realm's kanban events — `ak.space.create`, `ak.strand.create`,
-//! `ak.strand.update`, `ak.strand.move` / `ak.strand.reorder`,
-//! `ak.strand.archive` / `ak.strand.restore`, `ak.relation.*` — into the same
-//! [`KanbanColumn`] shape the renderer consumes, WITHOUT depending on the
-//! per-session server projection endpoints (which are visibility-filtered and,
-//! for E2EE realms, cannot carry decrypted content).
-//!
-//! Why event-sourced: the server's `list_strand_projections` is filtered
-//! per-session and never carries another member's card content for an encrypted
-//! realm, whereas the durable event log (reachable via `backfill` /
-//! `events/subscribe`) carries every member's events. Folding the log
-//! client-side is the only spec-correct way to show cross-member cards.
-//!
-//! Reuse boundary: this module folds CREATE + MOVE/REORDER + ARCHIVE (placement
-//! and lifecycle, which decide which column a card lands in). Content UPDATES
-//! (title / summary / body / fields) and ASSIGNMENTS are layered by the
-//! existing, decryption-aware overlays ([`overlay_local_card_update_records`],
-//! [`overlay_local_card_assignment_records`]) so we do not duplicate the
-//! private-field decrypt logic.
+//! Complete object content and source identities come from installed current
+//! entries. Legacy lifecycle rows/Event annotations provide layout and audit
+//! context only; they are never an authoring basis or a canonical MV winner.
+//! The production caller installs current before applying pending UI overlays.
 
 use arkret_wire::event_kind_str;
 
 use super::*;
 
-/// Causally-ordered view of the operations: by `received_at` (HLC-free fallback)
+/// Stable presentation order for local annotations; this is not causal order.
 /// then `operation_id` for determinism. Returns borrows so callers fold without
 /// cloning the whole set.
 fn ordered_operations(ops: &[RawOperationRecord]) -> Vec<&RawOperationRecord> {
@@ -187,18 +168,10 @@ fn strand_view_from_create_op(
         .clone()
         .or_else(|| json_path_string(Some(object), &["realm_id"]))
         .unwrap_or_default();
-    let object_revision_heads = record
-        .payload
-        .get("event_id")
-        .and_then(Value::as_str)
-        .and_then(|value| arkret_sdk::EventId::new(value.to_owned()).ok())
-        .map(|event_id| vec![event_id.event_digest().to_string()])
-        .unwrap_or_default();
 
     Some(crate::state::projection_views::StrandProjectionView {
         strand_id,
         realm_id,
-        object_revision_heads,
         title,
         summary,
         content,
@@ -690,6 +663,128 @@ pub(crate) fn project_board_with_projection_for_actor(
     let columns = overlay_local_card_update_records(columns, ops, decrypt_ctx);
     let columns = overlay_local_card_assignment_records(columns, ops);
     (columns, board_options, board_id)
+}
+
+fn clear_unavailable_card_content(card: &mut KanbanCard) {
+    card.authoring_basis = None;
+    card.title = "Card content unavailable".to_owned();
+    card.description.clear();
+    card.description_body.clear();
+    card.synthesis.clear();
+    card.labels.clear();
+    card.due.clear();
+    card.calendar = CalendarCardFields::default();
+    card.calendar_schedule_basis_refs.clear();
+    card.calendar_rsvp = CalendarRsvpDisplay::default();
+    card.locked_strand = None;
+    card.state = CardState::Quarantined;
+}
+
+/// Install object content from the same current entry that supplies its source
+/// identity. Lifecycle/placement remain separate Control cells.
+pub(crate) fn card_current_page(
+    columns: &[KanbanColumn],
+    page: usize,
+    selected: Option<&KanbanCard>,
+) -> (Vec<arkret_sdk::StrandId>, usize) {
+    // Reserve one of the protocol's 32 targets for an open detail outside the page.
+    const PAGE_SIZE: usize = 31;
+    let mut seen = BTreeSet::new();
+    let ids = columns
+        .iter()
+        .flat_map(|column| &column.cards)
+        .filter_map(|card| arkret_sdk::StrandId::new(card.id.clone()).ok())
+        .filter(|id| seen.insert(id.clone()))
+        .collect::<Vec<_>>();
+    let pages = ids.len().div_ceil(PAGE_SIZE).max(1);
+    let mut requested = ids
+        .into_iter()
+        .skip(page.min(pages - 1) * PAGE_SIZE)
+        .take(PAGE_SIZE)
+        .collect::<Vec<_>>();
+    if let Some(id) = selected.and_then(|card| arkret_sdk::StrandId::new(card.id.clone()).ok()) {
+        if !requested.contains(&id) {
+            requested.push(id);
+        }
+    }
+    requested.sort();
+    (requested, pages)
+}
+
+/// Content and authoring provenance are installed atomically for each card.
+pub(crate) fn install_current_card_sources(
+    columns: &mut [KanbanColumn],
+    entries: &[arkret_sdk::CurrentResultEntry],
+    projected: &[crate::state::projection_views::StrandProjectionView],
+    decrypt_ctx: Option<&MlsDecryptCtx<'_>>,
+    actor: &str,
+) {
+    for card in columns.iter_mut().flat_map(|column| &mut column.cards) {
+        let mut matching = entries.iter().filter(|entry| {
+            entry.selector().cell_id.as_str()
+                == format!("ak:cell:ak.component.strand.object.v1:{}", card.id)
+                && matches!(entry.target(), arkret_sdk::CurrentTarget::Strand { strand_id } if strand_id.as_str() == card.id)
+        });
+        let Some(entry) = matching.next() else {
+            card.authoring_basis = None;
+            if card.state == CardState::Synced {
+                clear_unavailable_card_content(card);
+            }
+            continue;
+        };
+        if matching.next().is_some() {
+            clear_unavailable_card_content(card);
+            continue;
+        }
+        let arkret_sdk::CurrentOutcome::Heads { heads } = entry.result() else {
+            clear_unavailable_card_content(card);
+            continue;
+        };
+        let [head] = heads.as_slice() else {
+            clear_unavailable_card_content(card);
+            card.state = CardState::Conflict;
+            card.title = "Concurrent card versions".to_owned();
+            card.description.clear();
+            card.description_body.clear();
+            card.synthesis.clear();
+            continue;
+        };
+        let Ok(strand) = head.value.as_strand() else {
+            card.authoring_basis = None;
+            card.state = CardState::Quarantined;
+            continue;
+        };
+        let mut view = projected
+            .iter()
+            .find(|row| row.strand_id == card.id)
+            .cloned()
+            .unwrap_or_else(|| {
+                serde_json::from_value(serde_json::json!({
+                    "strand_id": card.id, "realm_id": strand.realm_id, "state": "active"
+                }))
+                .expect("complete lifecycle view defaults")
+            });
+        let metadata = strand.metadata.unwrap_or_default();
+        view.title = metadata.title.unwrap_or_default();
+        view.summary = metadata.summary;
+        view.fields = metadata.fields.into_iter().collect();
+        view.content = strand.content;
+        view.encrypted_content = strand.encrypted_content;
+        view.tracks = strand.tracks;
+        view.schema_refs = strand.schema_refs.unwrap_or_default();
+        let mut complete = card_from_strand_projection_for_actor(&view, decrypt_ctx, actor);
+        complete.rank = card.rank.clone();
+        if complete.calendar == card.calendar {
+            complete.calendar_schedule_basis_refs = card.calendar_schedule_basis_refs.clone();
+        }
+        complete.calendar_rsvp = card.calendar_rsvp.clone();
+        complete.lifecycle = card.lifecycle;
+        complete.assignee = card.assignee.clone();
+        complete.assigned_to_relations = card.assigned_to_relations.clone();
+        complete.authoring_basis =
+            Some((entry.selector().scope_ref.clone(), head.event_id.clone()));
+        *card = complete;
+    }
 }
 
 #[cfg(test)]

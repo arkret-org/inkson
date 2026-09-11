@@ -27,9 +27,6 @@ pub(crate) enum SpaceContainerLifecycleState {
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct KanbanCard {
     pub(crate) id: String,
-    /// Complete accepted head set for `ak.component.strand.object.v1` at the
-    /// projection frontier used to render this card.
-    pub(crate) object_revision_heads: Vec<String>,
     /// The card's current rank inside its column. This is the local
     /// mirror of the `ak.component.strand.position.v1` cell's `rank`
     /// field and seeds the `expected_position` of any subsequent
@@ -66,6 +63,8 @@ pub(crate) struct KanbanCard {
     /// exposed `schedule_revision_heads` yet, and RSVP authoring fails closed
     /// rather than signing an unbacked basis.
     pub(crate) calendar_schedule_basis_refs: Vec<String>,
+    /// Identity captured together with the displayed complete current value.
+    pub(crate) authoring_basis: Option<(arkret_sdk::ScopeRef, arkret_sdk::EventId)>,
     /// Folded RSVP state for the card's calendar: the signed-in actor's own
     /// answer, the aggregate, and how many heads exist but do not count.
     pub(crate) calendar_rsvp: CalendarRsvpDisplay,
@@ -88,24 +87,12 @@ pub(crate) struct KanbanCard {
 }
 
 impl KanbanCard {
-    /// Return the only legal causal base for an ordinary Strand patch.
-    pub(crate) fn object_revision_basis_ref(&self) -> Result<arkret_sdk::Hash, String> {
-        match self.object_revision_heads.as_slice() {
-            [] => Err("card authoring projection has no accepted object revision head yet".to_owned()),
-            [head] => arkret_sdk::Hash::new(head.clone())
-                .map_err(|error| format!("card object revision head is invalid: {error}")),
-            heads => Err(format!(
-                "card has {} concurrent object revisions; resolve the conflict before editing",
-                heads.len()
-            )),
-        }
-    }
-
     /// Parses the observed schedule revision frontier into SDK digests.
     ///
     /// Anything unparseable is dropped rather than guessed: an invalid digest
     /// can never be a legitimate causal edge, and signing it would produce an
     /// RSVP a receiver rejects with `rsvp_basis_not_causal`.
+    #[cfg(test)]
     pub(crate) fn calendar_schedule_basis_refs(&self) -> Vec<arkret_sdk::Hash> {
         self.calendar_schedule_basis_refs
             .iter()

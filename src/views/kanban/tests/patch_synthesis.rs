@@ -1,5 +1,21 @@
 use super::*;
 
+#[test]
+fn save_requires_mls_only_when_the_actual_patch_encrypts_private_values() {
+    let mut current = test_card(
+        "ak:strand:AYn5t7vVVEpjWpz-OryzuNs9zqzSHqMj2K5GK36I3Z5Q",
+        "U",
+    );
+    current.security_encrypted = Some(true);
+    let mut draft = card_detail_draft_from_card(&current);
+    draft.title = "Public title only".to_owned();
+    assert!(!card_detail_patch_needs_encryption(&current, &draft).unwrap());
+    draft.description_body = "Private description".to_owned();
+    assert!(card_detail_patch_needs_encryption(&current, &draft).unwrap());
+    draft.title.clear();
+    assert!(card_detail_patch_needs_encryption(&current, &draft).is_err());
+}
+
 /// Canonical content patch op shared by Description and Synthesis values. The
 /// owning path, not the ContentBlock shape, determines which surface it edits.
 fn content_patch_value(body: &str) -> serde_json::Value {
@@ -141,6 +157,56 @@ fn local_card_update_overlay_replays_queued_summary_and_content_on_top_of_projec
     assert_eq!(card.description_body, "new description");
     assert_eq!(card.synthesis, "new synthesis");
     assert_eq!(card.state, CardState::Queued);
+}
+
+#[test]
+fn terminally_failed_card_update_never_overlays_the_projection() {
+    let mut card = test_card(
+        "ak:strand:AiRwjMAZ14M9aj2p96Vy4ORV9RjgnslFIV7wS1_2Zhig",
+        "U",
+    );
+    card.title = "accepted title".to_owned();
+    let columns = vec![KanbanColumn {
+        id: "ak:space:list-a".to_owned(),
+        title: "A".to_owned(),
+        rank: "U".to_owned(),
+        cards: vec![card],
+        state: SpaceContainerLifecycleState::Active,
+    }];
+    let failed = RawOperationRecord {
+        operation_id: "op-failed".to_owned(),
+        realm_id: None,
+        received_at: chrono::Utc::now(),
+        payload: json!({
+            "kind": "ak.strand.update",
+            "write_state": "failed",
+            "body": {
+                "strand_id": "ak:strand:AiRwjMAZ14M9aj2p96Vy4ORV9RjgnslFIV7wS1_2Zhig",
+                "patch": {
+                    "metadata.title": { "$op": "set", "value": "rejected title" }
+                }
+            }
+        }),
+    };
+
+    let overlaid = overlay_local_card_update_records(columns, &[failed], None);
+    assert_eq!(overlaid[0].cards[0].title, "accepted title");
+    assert_eq!(overlaid[0].cards[0].state, CardState::Synced);
+}
+
+#[test]
+fn authored_card_update_always_carries_the_object_causal_base() {
+    let basis = arkret_sdk::Hash::new(format!("sha256:{}", "3".repeat(64))).unwrap();
+    let operation = build_card_detail_update_operation(
+        TEST_REALM_ID,
+        "ak:did_core:web:alice.example",
+        "ak:strand:AiRwjMAZ14M9aj2p96Vy4ORV9RjgnslFIV7wS1_2Zhig",
+        json!({"metadata.title": {"$op": "set", "value": "new"}}),
+        vec![basis.clone()],
+    )
+    .unwrap();
+
+    assert_eq!(operation.intent().causal_refs(), &[basis]);
 }
 
 #[test]
@@ -864,7 +930,6 @@ fn strand_projection_with_synthesis_content(
     let content: arkret_sdk::ContentBlock =
         serde_json::from_value(content).expect("projection content is a canonical ContentBlock");
     crate::state::projection_views::StrandProjectionView {
-        object_revision_heads: vec![format!("sha256:{}", "0".repeat(64))],
         strand_id: strand_id.to_owned(),
         realm_id: TEST_REALM_ID.to_owned(),
         title: "Keep".to_owned(),
@@ -1100,4 +1165,119 @@ fn seed_strand_ids_are_valid_object_patch_targets() {
         assert_eq!(event.kind().as_str(), "ak.strand.update");
         assert_eq!(event.local_target_ref(), Some(strand_id));
     }
+}
+
+#[test]
+fn card_current_keeps_value_and_event_together_across_remote_replacement() {
+    let id = "ak:strand:AiRwjMAZ14M9aj2p96Vy4ORV9RjgnslFIV7wS1_2Zhig";
+    let source = |byte, title: &str| {
+        let event = arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [byte; 32]);
+        let entry: arkret_sdk::CurrentResultEntry = serde_json::from_value(json!({
+            "selector":{"scope_ref":{"kind":"realm","realm_id":TEST_REALM_ID},
+                "cell_id":format!("ak:cell:ak.component.strand.object.v1:{id}")},
+            "target":{"kind":"strand","strand_id":id},"revision":1,
+            "result":{"status":"heads","heads":[{"event_id":event,"value":{
+                "id":id,"schema":"ak.schema.strand.v1","realm_id":TEST_REALM_ID,
+                "metadata":{"title":title},"tracks":{"synthesis":{"enabled":true,"is_primary":true}},
+                "created_by":{"kind":"account","account_id":{"principal_id":"ak:did_core:web:alice.example",
+                    "station_id":"ak:did_core:web:station.example"}},
+                "created_at":"2026-09-11T00:00:00.000Z"
+            }}]}
+        })).unwrap();
+        (event, entry)
+    };
+    let (event_a, a) = source(1, "A");
+    let (event_b, b) = source(2, "B");
+    let mut columns = vec![KanbanColumn {
+        id: "list".into(),
+        title: "List".into(),
+        rank: "U".into(),
+        cards: vec![test_card(id, "U")],
+        state: SpaceContainerLifecycleState::Active,
+    }];
+    install_current_card_sources(&mut columns, &[a.clone()], &[], None, "");
+    let editor_snapshot = columns[0].cards[0].clone();
+    install_current_card_sources(&mut columns, &[b.clone()], &[], None, "");
+    assert_eq!(editor_snapshot.title, "A");
+    assert_eq!(editor_snapshot.authoring_basis.unwrap().1, event_a);
+    assert_eq!(columns[0].cards[0].title, "B");
+    assert_eq!(
+        columns[0].cards[0].authoring_basis.as_ref().unwrap().1,
+        event_b
+    );
+    let mut conflict = serde_json::to_value(a).unwrap();
+    conflict["result"]["heads"]
+        .as_array_mut()
+        .unwrap()
+        .push(serde_json::to_value(b).unwrap()["result"]["heads"][0].clone());
+    let conflict: arkret_sdk::CurrentResultEntry = serde_json::from_value(conflict).unwrap();
+    let selection = build_card_version_selection(
+        TEST_REALM_ID,
+        "ak:did_core:web:alice.example",
+        &conflict,
+        &event_b,
+    )
+    .unwrap();
+    let payload = selection
+        .typed_payload::<arkret_sdk::event_spec::StrandUpdate>()
+        .unwrap();
+    let arkret_sdk::CurrentOutcome::Heads { heads } = conflict.result() else {
+        panic!("heads");
+    };
+    let base = heads
+        .iter()
+        .find(|head| head.event_id == event_b)
+        .unwrap()
+        .value
+        .as_json();
+    assert_eq!(payload.patch.apply(base).unwrap(), *base);
+    arkret_sdk::canonical::verify_digest(
+        &arkret_sdk::canonical::canonical_json_bytes(base).unwrap(),
+        payload.expected_state_digest.as_ref().unwrap().as_str(),
+    )
+    .unwrap();
+    assert_eq!(selection.intent().causal_refs().len(), 2);
+    assert!(
+        build_card_version_selection(
+            TEST_REALM_ID,
+            "ak:did_core:web:alice.example",
+            &conflict,
+            &arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [99; 32]),
+        )
+        .is_err()
+    );
+    install_current_card_sources(&mut columns, &[conflict], &[], None, "");
+    assert_eq!(columns[0].cards[0].state, CardState::Conflict);
+    assert!(columns[0].cards[0].authoring_basis.is_none());
+}
+
+#[test]
+fn card_current_demand_pages_all_cards_and_reserves_the_open_detail() {
+    let cards = (1u8..=65)
+        .map(|byte| {
+            let id = arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [byte; 32])
+                .to_string()
+                .replace("ak:event:", "ak:strand:");
+            test_card(&id, "U")
+        })
+        .collect::<Vec<_>>();
+    let columns = vec![KanbanColumn {
+        id: "list".into(),
+        title: "List".into(),
+        rank: "U".into(),
+        cards: cards.clone(),
+        state: SpaceContainerLifecycleState::Active,
+    }];
+    let mut covered = BTreeSet::new();
+    for page in 0..3 {
+        let (ids, pages) = card_current_page(&columns, page, None);
+        assert_eq!(pages, 3);
+        assert!(ids.len() <= 31);
+        covered.extend(ids);
+    }
+    assert_eq!(covered.len(), 65);
+    let (ids, _) = card_current_page(&columns, 0, Some(&cards[64]));
+    assert_eq!(ids.len(), 32);
+    assert!(ids.iter().any(|id| id.as_str() == cards[64].id));
+    assert_eq!(card_current_page(&columns, usize::MAX, None).0.len(), 3);
 }

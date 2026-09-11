@@ -998,45 +998,32 @@ pub fn chinese_translations() -> TranslationDict {
     dict.set("device_authorization.open_pairing", "开始设备审批");
     dict.set("device_authorization.dismiss", "以受限模式继续");
     dict.set("device_authorization.reopen", "授权此设备");
-    dict.set("mls_unlock.title", "恢复加密历史");
-    dict.set("mls_unlock.subtitle", "使用另一台设备或恢复密钥");
+    dict.set("mls_unlock.title", "恢复加密密钥");
+    dict.set("mls_unlock.subtitle", "设备授权与密钥恢复是两个独立步骤");
     dict.set(
         "mls_unlock.description",
-        "这台设备已授权,但还没有打开加密历史所需的密钥。请从你自己的另一台设备恢复,或使用恢复密钥。",
+        "此设备已获授权，但账户加密密钥或历史材料仍待恢复。批准设备本身不会恢复这些秘密。",
     );
-    dict.set(
-        "mls_unlock.approve_step_existing_title",
-        "从另一台已授权设备恢复",
-    );
+    dict.set("mls_unlock.approve_step_existing_title", "设备审批已完成");
     dict.set(
         "mls_unlock.approve_step_existing_body",
-        "如果此设备仍显示审批请求，请在另一台设备上比对验证码并批准；批准后会继续共享密钥。",
+        "请勿为此设备重复创建配对请求。批准允许登录，但不能替代账户密钥恢复或 MLS 入群。",
     );
     dict.set("mls_unlock.approve_step_new_title", "在此浏览器上");
-    dict.set(
-        "mls_unlock.approve_step_new_body",
-        "恢复期间请保持此标签页打开，或在下方选择“改用恢复密钥”。",
-    );
+    dict.set("mls_unlock.approve_step_new_body", "在下方使用恢复密钥恢复既有账户密钥。发送新的加密内容还需要此设备已接受的 MLS 成员资格和持久化的本地状态。");
     dict.set(
         "mls_unlock.loading_hint",
         "批量恢复加密 Realm 可能需要几秒钟，请保持此标签页打开。",
     );
-    dict.set(
-        "mls_unlock.limitation",
-        "你可以暂时跳过恢复，但在完成此步骤前仍无法打开较早的加密内容。",
-    );
-    dict.set("mls_unlock.open_pairing", "打开设备审批");
+    dict.set("mls_unlock.limitation", "你可以稍后恢复。如果缺少账户加密 root，新加密内容和 MLS 初始化也会受阻，不只是旧历史不可读。");
     dict.set("mls_unlock.show_recovery_key", "改用恢复密钥");
     dict.set("mls_unlock.hide_recovery_key", "隐藏恢复密钥");
-    dict.set(
-        "mls_unlock.recovery_fallback_hint",
-        "仅在无法使用你的其他设备时使用。输入 24 词恢复密钥,服务器校验通过后即可解锁你的加密历史备份。",
-    );
+    dict.set("mls_unlock.recovery_fallback_hint", "24 词恢复密钥在校验通过后解锁既有账户加密备份；它不会克隆另一台设备，也不能跳过 MLS 入群。");
     dict.set("mls_unlock.placeholder", "24 词恢复密钥");
     dict.set("mls_unlock.button_idle", "用密钥解锁");
     dict.set("mls_unlock.button_busy", "正在解锁…");
-    dict.set("mls_unlock.dismiss", "暂不恢复历史");
-    dict.set("mls_unlock.reopen", "恢复加密历史");
+    dict.set("mls_unlock.dismiss", "稍后恢复");
+    dict.set("mls_unlock.reopen", "恢复加密密钥");
     dict.set(
         "mls_unlock.status.enter_passphrase",
         "输入 24 词恢复密钥以解锁加密历史。",
@@ -2672,24 +2659,14 @@ fn prompt_copy_strings(dict: &mut TranslationDict) {
         "你的 24 词恢复密钥 —— 轮换加密历史备份时必须提供",
     );
     dict.set("settings.devices.revoke_confirm", "确认吊销");
-    dict.set("settings.devices.pair_this_browser", "当前浏览器");
-    dict.set("settings.devices.pair_title", "批准这台设备");
-    dict.set("settings.devices.pair_required_badge", "需要批准");
-    dict.set(
-        "settings.devices.pair_body",
-        "生成配对二维码或链接,然后在一台已授权的设备上扫描或打开它。系统不会自动发送账户通知。",
-    );
-    dict.set("settings.devices.pair_hide_link", "隐藏链接");
-    dict.set("settings.devices.pair_qr_aria_label", "设备批准二维码");
-    dict.set("settings.devices.pair_link_aria_label", "设备批准链接");
     dict.set("settings.devices.accept_title", "用链接批准");
     dict.set(
         "settings.devices.accept_body",
-        "如果已授权设备上没有弹出确认提示,就用这个备用方式。",
+        "在此粘贴新设备生成的完整配对链接。核对比对码与设备身份后批准。",
     );
     dict.set(
         "settings.devices.accept_placeholder",
-        "粘贴配对链接(…/device-pairing/resolve#token=…)或令牌",
+        "粘贴完整配对链接(…#token=…&proof=…)",
     );
     dict.set("settings.devices.session_active", "已登录");
     dict.set("settings.devices.session_inactive", "未登录");
@@ -2697,10 +2674,6 @@ fn prompt_copy_strings(dict: &mut TranslationDict) {
     dict.set("settings.devices.revoke", "吊销");
     dict.set("settings.devices.revoke_body_before", "这会写入 ");
     dict.set("settings.devices.revoke_body_after", " 到你的主控 Realm,把该设备移出它参与的每个端到端加密 Realm,并轮换账户 MLS 历史密钥。此操作无法撤销。");
-    dict.set("settings.devices.pair_requesting", "正在请求…");
-    dict.set("settings.devices.pair_request", "请求批准");
-    dict.set("settings.devices.pair_checking", "正在检查…");
-    dict.set("settings.devices.pair_check", "检查批准状态");
     dict.set("settings.devices.accept_resolving", "正在解析…");
     dict.set("settings.devices.accept_resolve", "解析链接");
     dict.set(

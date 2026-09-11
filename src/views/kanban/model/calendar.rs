@@ -414,6 +414,39 @@ pub(crate) fn calendar_rsvp_operation(
     )
 }
 
+/// Project the schedule observed with one complete current object, excluding
+/// later or unrelated Events even when they are already in the local cache.
+pub(crate) fn calendar_schedule_revision_heads_at_source(
+    events: &[arkret_sdk::Event],
+    strand_id: &str,
+    digest_suite: arkret_sdk::DigestSuite,
+    source: &arkret_sdk::EventId,
+) -> anyhow::Result<Vec<arkret_sdk::Hash>> {
+    let mut by_digest = BTreeMap::new();
+    for event in events {
+        by_digest.insert(
+            arkret_sdk::Hash::new(event.event_digest_with_digest_suite(digest_suite)?)?,
+            event,
+        );
+    }
+    let mut pending = vec![source.event_digest()];
+    let mut seen = BTreeSet::new();
+    let mut closure = Vec::new();
+    while let Some(digest) = pending.pop() {
+        if !seen.insert(digest.clone()) {
+            continue;
+        }
+        let event = by_digest
+            .get(&digest)
+            .ok_or_else(|| anyhow::anyhow!("observed calendar source dependency is missing"))?;
+        if event.kind != arkret_sdk::EventKind::StrandCreate {
+            pending.extend(event.causal_refs.iter().cloned());
+        }
+        closure.push((*event).clone());
+    }
+    calendar_schedule_revision_heads(&closure, strand_id, digest_suite)
+}
+
 pub(crate) fn calendar_schedule_revision_heads(
     events: &[arkret_sdk::Event],
     strand_id: &str,
@@ -494,31 +527,11 @@ fn calendar_event_revises_schedule(event: &arkret_sdk::Event, strand_id: &str) -
 }
 
 fn calendar_patch_revises_schedule(patch: &arkret_wire::patch::Patch) -> bool {
-    patch.iter().any(|(path, operation)| {
-        if path == CALENDAR_SUBTREE_PATH || path.starts_with(&format!("{CALENDAR_SUBTREE_PATH}.")) {
-            return true;
-        }
-        let Some(value) = operation.value() else {
-            return false;
-        };
-        if path == "metadata.fields" {
-            return value
-                .get("value")
-                .or_else(|| value.get("$value"))
-                .or_else(|| value.get("fields"))
-                .or(Some(value))
-                .and_then(Value::as_object)
-                .is_some_and(fields_have_calendar_keys);
-        }
-        if path == "metadata" {
-            return value
-                .get("value")
-                .or_else(|| value.get("$value"))
-                .and_then(|metadata| metadata.get("fields"))
-                .and_then(Value::as_object)
-                .is_some_and(fields_have_calendar_keys);
-        }
-        false
+    patch.iter().any(|(path, _)| {
+        path == "metadata"
+            || path == "metadata.fields"
+            || path == CALENDAR_SUBTREE_PATH
+            || path.starts_with(&format!("{CALENDAR_SUBTREE_PATH}."))
     })
 }
 

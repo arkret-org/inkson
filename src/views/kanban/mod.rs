@@ -1020,7 +1020,7 @@ pub fn KanbanPanel(
                     overlay_local_card_update_records(cols, &raw_operations, decrypt_ctx.as_ref());
                 return overlay_local_card_assignment_records(cols, &raw_operations);
             }
-            let (cols, ..) = project_board_with_projection_for_actor(
+            let (mut cols, ..) = project_board_with_projection_for_actor(
                 &raw_operations,
                 &projected_containers,
                 &projected_strands,
@@ -1029,9 +1029,68 @@ pub fn KanbanPanel(
                 decrypt_ctx.as_ref(),
                 &self_actor_id,
             );
-            cols
+            let entries = decrypt_store
+                .load()
+                .realm_tree_projections
+                .get(&seed_realm_id)
+                .and_then(|value| value.get("current"))
+                .and_then(|value| {
+                    serde_json::from_value::<arkret_sdk::CurrentEntries>(value.clone()).ok()
+                })
+                .map(|current| current.entries)
+                .unwrap_or_default();
+            install_current_card_sources(
+                &mut cols,
+                &entries,
+                &projected_strands,
+                decrypt_ctx.as_ref(),
+                &self_actor_id,
+            );
+            let pending = raw_operations
+                .iter()
+                .filter(|record| {
+                    matches!(
+                        record
+                            .payload
+                            .get("write_state")
+                            .and_then(serde_json::Value::as_str),
+                        Some("queued" | "submitting")
+                    )
+                })
+                .cloned()
+                .collect::<Vec<_>>();
+            let cols = overlay_local_card_update_records(cols, &pending, decrypt_ctx.as_ref());
+            overlay_local_card_assignment_records(cols, &raw_operations)
         }
     });
+    let mut current_card_page = use_signal(|| 0usize);
+    let current_page = use_memo(move || {
+        card_current_page(&columns(), current_card_page(), selected_card().as_ref())
+    });
+    use_effect({
+        let authority = authority.clone();
+        let realm = local_realm_id.clone();
+        move || {
+            let (strands, _) = current_page();
+            state_store
+                .read()
+                .set_product_current_demand(&authority, &realm, Some(strands));
+        }
+    });
+    use_drop({
+        let authority = authority.clone();
+        let realm = local_realm_id.clone();
+        move || {
+            state_store
+                .read()
+                .set_product_current_demand(&authority, &realm, None)
+        }
+    });
+    let (current_card_ids, current_page_count) = current_page();
+    let current_card_ids = current_card_ids
+        .into_iter()
+        .map(|id| id.to_string())
+        .collect::<BTreeSet<_>>();
     let selected_board_value = selected_board();
     let BoardHeader {
         active_pending_board,
@@ -1602,6 +1661,21 @@ pub fn KanbanPanel(
                 "data-testid": "board-status",
                 "{board_status_text}"
             }
+            if current_page_count > 1 {
+                nav { "aria-label": "Card pages",
+                    Button {
+                        disabled: current_card_page() == 0,
+                        onclick: move |_| current_card_page.set(current_card_page().saturating_sub(1)),
+                        "Previous cards"
+                    }
+                    span { "Page {current_card_page().min(current_page_count - 1) + 1} / {current_page_count}" }
+                    Button {
+                        disabled: current_card_page() >= current_page_count - 1,
+                        onclick: move |_| current_card_page.set(current_card_page() + 1),
+                        "Next cards"
+                    }
+                }
+            }
 
             // F-KANBAN-DRAG-VFX-1: derive a dragging snapshot once per
             // render so every column / card can paint the right visual
@@ -1900,7 +1974,7 @@ pub fn KanbanPanel(
                             }
                         }
 
-                for (card_index, card) in active_cards.iter().enumerate()
+                for (card_index, card) in active_cards.iter().enumerate().filter(|(_, card)| current_card_ids.contains(&card.id) || arkret_sdk::StrandId::new(card.id.clone()).is_err())
                 {
                             div {
                                 key: "{card.id}",
@@ -2465,7 +2539,7 @@ pub fn KanbanPanel(
                         if archived_count == 0 {
                             div { class: "muted", {crate::i18n::tr("kanban.archived_cards_empty")} }
                         } else {
-                            for row in archived_cards.iter() {
+                            for row in archived_cards.iter().filter(|row| current_card_ids.iter().any(|id| id.as_str() == row.card.id)) {
                                 div { key: "{row.card.id}", class: "event", "data-testid": "kanban-archived-card-row",
                                     div { class: "event-head",
                                         span { class: "entity-title strand-title-with-security",

@@ -148,6 +148,9 @@ pub struct LocalStateStore {
     /// snapshot into Bob's entry. `None` means this instance has not hydrated a
     /// namespace yet.
     cached_account_key: Option<String>,
+    /// Ephemeral UI demand, not a second current-state or head cache.
+    product_current_demand:
+        Arc<Mutex<Option<(arkret_sdk::AccountId, String, Vec<arkret_sdk::StrandId>)>>>,
     /// Perf: whether `cached` has been reconciled with the persistence layer at
     /// least once. Before this flag existed, an empty/default account (where
     /// `cached == ClientLocalState::default()`) re-read the backing store (disk
@@ -202,6 +205,7 @@ impl Clone for LocalStateStore {
         Self {
             cached: self.cached.clone(),
             cached_account_key: self.cached_account_key.clone(),
+            product_current_demand: Arc::clone(&self.product_current_demand),
             loaded: AtomicBool::new(self.loaded.load(Ordering::Acquire)),
             flush_suspended: self.flush_suspended,
             flush_pending: AtomicBool::new(self.flush_pending.load(Ordering::Acquire)),
@@ -293,6 +297,7 @@ impl Default for LocalStateStore {
         Self {
             cached: ClientLocalState::default(),
             cached_account_key: None,
+            product_current_demand: Arc::new(Mutex::new(None)),
             loaded: AtomicBool::new(false),
             flush_suspended: 0,
             flush_pending: AtomicBool::new(false),
@@ -589,6 +594,7 @@ impl LocalStateStore {
         Self {
             cached: ClientLocalState::default(),
             cached_account_key: None,
+            product_current_demand: Arc::new(Mutex::new(None)),
             loaded: AtomicBool::new(false),
             flush_suspended: 0,
             flush_pending: AtomicBool::new(false),

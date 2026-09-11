@@ -1055,7 +1055,9 @@ pub(crate) async fn bootstrap_mls_welcome_for_scope(
     let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
     if has_welcome {
         for reference in crate::mls::runtime::known_welcome_event_refs(&messages_value)? {
-            crate::mls::accepted_artifact::fetch_ref(&api, state_store.clone(), &reference).await?;
+            crate::mls::accepted_artifact::fetch_ref(&api, state_store.clone(), &reference)
+                .await
+                .map_err(|error| error.to_string())?;
         }
     }
     if has_welcome {
@@ -1405,8 +1407,9 @@ async fn discover_mls_welcome_page(
         .await
         .map_err(|error| error.to_string())?;
         ensure_current()?;
-        let artifact =
-            crate::mls::accepted_artifact::fetch_ref(api, state.clone(), &reference).await?;
+        let artifact = crate::mls::accepted_artifact::fetch_ref(api, state.clone(), &reference)
+            .await
+            .map_err(|error| error.to_string())?;
         ensure_current()?;
         if artifact.event.kind != arkret_sdk::EventKind::MlsWelcome
             || artifact.request.effective_scope != *scope

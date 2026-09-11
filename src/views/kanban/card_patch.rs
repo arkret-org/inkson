@@ -1,10 +1,9 @@
 use serde_json::{Map, Value, json};
 
+#[cfg(test)]
+use super::display_optional_card_field;
 use super::model::*;
-use super::{
-    display_optional_card_field, editor_value_for_optional_card_field,
-    value_is_plaintext_private_content,
-};
+use super::{editor_value_for_optional_card_field, value_is_plaintext_private_content};
 
 /// Build a canonical ContentBlock patch op for Description or Synthesis.
 ///
@@ -110,6 +109,7 @@ pub(super) fn card_detail_update_patch(
     Ok(Value::Object(patch))
 }
 
+#[cfg(test)]
 pub(super) fn apply_card_detail_draft(card: &mut KanbanCard, draft: &CardDetailDraft) {
     card.title = draft.title.trim().to_owned();
     card.description = draft.description.trim().to_owned();
@@ -141,6 +141,14 @@ pub(super) fn patch_plaintext_value_bytes(value: &Value) -> Result<Option<Vec<u8
     serde_json::to_vec(candidate)
         .map(Some)
         .map_err(|err| format!("cannot serialize private patch value for encryption: {err}"))
+}
+
+pub(super) fn card_detail_patch_needs_encryption(
+    current: &KanbanCard,
+    draft: &CardDetailDraft,
+) -> Result<bool, String> {
+    let patch = card_detail_update_patch(current, draft)?;
+    Ok(!collect_encryptable_private_patch_values(&patch)?.is_empty())
 }
 
 pub(super) fn collect_encryptable_private_patch_values(

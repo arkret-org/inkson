@@ -1,6 +1,42 @@
 use super::*;
 
 impl LocalStateStore {
+    pub(crate) fn set_product_current_demand(
+        &self,
+        authority: &arkret_sdk::AccountId,
+        realm: &str,
+        strands: Option<Vec<arkret_sdk::StrandId>>,
+    ) {
+        let mut demand = self
+            .product_current_demand
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        if let Some(mut strands) = strands {
+            strands.sort();
+            strands.dedup();
+            assert!(strands.len() <= 32, "product demand exceeds protocol bound");
+            *demand = Some((authority.clone(), realm.to_owned(), strands));
+        } else if demand
+            .as_ref()
+            .is_some_and(|(a, r, _)| a == authority && r == realm)
+        {
+            *demand = None;
+        }
+    }
+
+    pub(crate) fn product_current_strands(
+        &self,
+        authority: &arkret_sdk::AccountId,
+        realm: &str,
+    ) -> Option<Vec<arkret_sdk::StrandId>> {
+        self.product_current_demand
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .as_ref()
+            .filter(|(a, r, _)| a == authority && r == realm)
+            .map(|(_, _, strands)| strands.clone())
+    }
+
     pub(crate) fn realm_tree_projection(&self, realm_id: &str) -> Option<Value> {
         self.cached.realm_tree_projections.get(realm_id).cloned()
     }

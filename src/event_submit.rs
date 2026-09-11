@@ -201,7 +201,9 @@ impl EventOutboundSubmitter<'_> {
         )
         .map_err(|error| error.to_string())?;
         let authority = self.owner.authority().map_err(|error| error.to_string())?;
-        crate::mls::accepted_artifact::fetch(&api, state_store.clone(), commit.event()).await?;
+        crate::mls::accepted_artifact::fetch(&api, state_store.clone(), commit.event())
+            .await
+            .map_err(|error| error.to_string())?;
         crate::mls::runtime::converge_accepted_local_commit(
             state_store,
             authority,
@@ -1294,17 +1296,17 @@ impl EventSubmitter {
     /// Station's exact founding-Event resolver. This is the asynchronous
     /// fallback for freshly created/cold-loaded Realms whose bounded current
     /// projection has not installed the authority-root cell yet.
-    pub(crate) async fn accepted_realm_creator_matches_actor(
+    pub(crate) async fn accepted_realm_creator_matches_account(
         &self,
         realm_id: &str,
-        actor_id: &str,
+        authority: &arkret_sdk::AccountId,
     ) -> anyhow::Result<bool> {
-        let actor =
-            crate::mls_api_helpers::local_account_actor_id(actor_id).map_err(anyhow::Error::msg)?;
-        Ok(matches!(
-            self.realm_create_authority(realm_id).await?,
-            Some(RealmCreateAuthority::Root { controller }) if controller == actor
-        ))
+        let actor = arkret_sdk::ActorId::account(authority.clone());
+        let founding = self
+            .realm_create_authority(realm_id)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("accepted Realm founding authority is not available"))?;
+        Ok(matches!(founding, RealmCreateAuthority::Root { controller } if controller == actor))
     }
 
     pub(crate) fn for_founding_realm(mut self, realm_id: arkret_sdk::RealmId) -> Self {

@@ -133,16 +133,18 @@ fn creator_mls_bootstrap_incomplete(store: &LocalStateStore, realm_id: &str) -> 
         .contains_key(evidence.transition_ref.as_str())
 }
 
-fn accepted_projected_creator_matches_actor(
-    realm_tree_projections: &std::collections::BTreeMap<String, serde_json::Value>,
+/// Compare the complete account identity with exact accepted founding authority.
+pub(crate) async fn authenticated_account_is_realm_creator(
+    api: &crate::transport::TransportClient,
+    _state_store: &StateStoreHandle,
     realm_id: &str,
-    actor_id: &str,
-) -> bool {
-    let Ok(actor) = crate::mls_api_helpers::local_account_actor_id(actor_id) else {
-        return false;
-    };
-    garth::realm_authority_root_controller_for_realm(realm_tree_projections, realm_id)
-        == Some(actor)
+    authority: &arkret_sdk::AccountId,
+) -> Result<bool, String> {
+    api.event_submitter()
+        .map_err(|error| format!("MLS creator classification client: {error}"))?
+        .accepted_realm_creator_matches_account(realm_id, authority)
+        .await
+        .map_err(|error| format!("resolve accepted Realm creator: {error}"))
 }
 
 /// Refresh the accepted Seal view, acquire + verify + pin the governance
@@ -152,6 +154,26 @@ fn accepted_projected_creator_matches_actor(
 /// Genesis is present in the locally verified checkpoint and its accepted MLS
 /// artifact is durable. A server-side duplicate genesis is resolved to its
 /// accepted Event id rather than treated as an error.
+/// Select the unfinished Genesis transaction, not every device of its account.
+/// Once Genesis exists, a device without that local group must join/recover.
+pub(crate) async fn should_resume_creator_genesis(
+    api: &crate::transport::TransportClient,
+    state_store: &StateStoreHandle,
+    realm_id: &str,
+    authority: &arkret_sdk::AccountId,
+) -> Result<bool, String> {
+    let accepted = api
+        .event_submitter()
+        .map_err(|e| e.to_string())?
+        .find_mls_genesis_event_id(realm_id)
+        .await
+        .map_err(|e| e.to_string())?;
+    if accepted.is_some() {
+        return Ok(state_store.read(|store| store.mls_checkpoint_for(realm_id).is_some()));
+    }
+    authenticated_account_is_realm_creator(api, state_store, realm_id, authority).await
+}
+
 pub(crate) async fn ensure_creator_realm_mls_genesis(
     api: &crate::transport::TransportClient,
     state_store: &StateStoreHandle,
@@ -172,20 +194,12 @@ pub(crate) async fn ensure_creator_realm_mls_genesis(
         authority.station_id, authority.principal_id, device_id, realm_id
     ));
     let _guard = lock.lock().await;
-    let (encrypted, incomplete, accepted_projected_creator) = state_store.read(|store| {
+    let (encrypted, incomplete) = state_store.read(|store| {
         let state = store.load();
         let encrypted =
             garth::security_projection_for_scope_id(&state.realm_tree_projections, realm_id)
                 .is_some_and(garth::realm_projection_is_encrypted);
-        (
-            encrypted,
-            creator_mls_bootstrap_incomplete(store, realm_id),
-            accepted_projected_creator_matches_actor(
-                &state.realm_tree_projections,
-                realm_id,
-                actor_id,
-            ),
-        )
+        (encrypted, creator_mls_bootstrap_incomplete(store, realm_id))
     });
     if !encrypted || !incomplete {
         return Ok(());
@@ -193,16 +207,8 @@ pub(crate) async fn ensure_creator_realm_mls_genesis(
     let submitter = api
         .event_submitter()
         .map_err(|error| format!("MLS genesis Event submitter: {error}"))?;
-    // A projected accepted authority-root is sufficient. The create Event in
-    // an optimistic projection is deliberately not: when current-sync has not
-    // installed the root yet, resolve the exact accepted founding Event from
-    // the authenticated Station before choosing the creator branch.
-    if !accepted_projected_creator
-        && !submitter
-            .accepted_realm_creator_matches_actor(realm_id, actor_id)
-            .await
-            .map_err(|error| format!("resolve accepted Realm creator: {error}"))?
-    {
+    // Resolve exact accepted authority; a local presentation row is not evidence.
+    if !authenticated_account_is_realm_creator(api, state_store, realm_id, authority).await? {
         return Err("the authenticated actor is not the accepted Realm creator".to_owned());
     }
     if state_store.read(|store| {
@@ -518,13 +524,32 @@ async fn wait_for_accepted_transition(
         .await
         {
             Ok(_) => return Ok(()),
-            Err(error) => last_error = error,
-        }
-        if attempt < 19 {
-            crate::runtime_helpers::sleep_for(std::time::Duration::from_millis(250)).await;
+            Err(error) if accepted_artifact_retry_is_allowed(&error, attempt, 20) => {
+                let server_delay = crate::api_error::api_error_status_and_envelope(&error)
+                    .and_then(|(_, problem)| problem.retry_after_ms())
+                    .unwrap_or(0);
+                let delay = server_delay.max(250_u64 << attempt.min(4));
+                last_error = error.to_string();
+                crate::runtime_helpers::sleep_for(std::time::Duration::from_millis(delay)).await;
+            }
+            Err(error) => return Err(error.to_string()),
         }
     }
     Err(last_error)
+}
+
+fn accepted_artifact_retry_is_allowed(
+    error: &anyhow::Error,
+    attempt: usize,
+    attempts: usize,
+) -> bool {
+    attempt + 1 < attempts
+        && crate::api_error::api_error_status_and_envelope(error).is_some_and(
+            |(status, problem)| {
+                status == 503
+                    && problem.code() == arkret_sdk::error_codes::ErrorCode::FRONTIER_UNAVAILABLE
+            },
+        )
 }
 
 /// Poll `ak.self.seals.read.frontier.v1` until the Realm has an accepted Seal.
@@ -686,41 +711,6 @@ mod tests {
     }
 
     #[test]
-    fn optimistic_create_event_does_not_replace_accepted_authority_root() {
-        let mut projection = realm_projection(ACTOR, "mls_rfc9420");
-        let creator = projection
-            .pointer("/state/events/0/actor_id")
-            .unwrap()
-            .clone();
-        let mut projections = std::collections::BTreeMap::from([(REALM.to_owned(), projection)]);
-
-        assert!(!accepted_projected_creator_matches_actor(
-            &projections,
-            REALM,
-            ACTOR
-        ));
-
-        projection = projections.remove(REALM).unwrap();
-        projection["current"] = json!({"entries": [{
-            "selector": {
-                "scope_ref": {"kind": "realm", "realm_id": REALM},
-                "cell_id": "ak:cell:ak.component.realm.authority_root.v1:null"
-            },
-            "result": {"status": "value", "value": {
-                "controller_actor_id": creator,
-                "controller_epoch": 0,
-                "authority_generation": 0
-            }}
-        }]});
-        projections.insert(REALM.to_owned(), projection);
-        assert!(accepted_projected_creator_matches_actor(
-            &projections,
-            REALM,
-            ACTOR
-        ));
-    }
-
-    #[test]
     fn emitted_genesis_with_stale_checkpoint_remains_pending() {
         let mut store = temp_store("stale-checkpoint");
         store.save_realm_tree_projection(REALM, realm_projection(ACTOR, "mls_rfc9420"));
@@ -844,6 +834,30 @@ mod tests {
                 "frontier is not ready",
             )),
         })
+    }
+
+    #[test]
+    fn accepted_artifact_retry_requires_a_typed_pending_problem() {
+        assert!(accepted_artifact_retry_is_allowed(
+            &frontier_error(503, "frontier_unavailable"),
+            0,
+            20
+        ));
+        assert!(!accepted_artifact_retry_is_allowed(
+            &anyhow::anyhow!("503 frontier_unavailable in an unrelated message"),
+            0,
+            20
+        ));
+        assert!(!accepted_artifact_retry_is_allowed(
+            &frontier_error(503, "frontier_unavailable"),
+            19,
+            20
+        ));
+        assert!(!accepted_artifact_retry_is_allowed(
+            &frontier_error(400, "param_invalid"),
+            0,
+            20
+        ));
     }
 
     #[test]

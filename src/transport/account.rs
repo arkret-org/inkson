@@ -40,7 +40,7 @@ pub async fn account_viewer(
 ) -> anyhow::Result<arkret_models_collaboration::account_lifecycle::AccountView> {
     http.account_viewer()
         .await
-        .map_err(|error| anyhow::anyhow!("account viewer: {error}"))
+        .map_err(|error| anyhow::Error::new(error).context("account viewer"))
 }
 
 pub async fn account_me(http: &arkret_sdk::http_client::Client) -> anyhow::Result<CurrentAccount> {

@@ -123,6 +123,36 @@ pub(super) fn classify_returning_session_exchange_error(
     }
 }
 
+pub(super) fn returning_callback_resume_url(
+    callback: &str,
+    state: &str,
+) -> Result<String, url::ParseError> {
+    let mut url = url::Url::parse(callback)?;
+    url.set_query(None);
+    url.set_fragment(None);
+    url.query_pairs_mut().append_pair("state", state);
+    Ok(url.into())
+}
+
+/// Keep typed transport failures retryable without weakening evidence checks.
+pub(super) fn classify_returning_verification_error(
+    stage: &str,
+    error: anyhow::Error,
+) -> ReturningSessionExchangeError {
+    use arkret_sdk::http_client::Error;
+    let retryable = match error.downcast_ref::<Error>() {
+        Some(Error::Http(_)) => true,
+        Some(Error::Api { status, .. }) => *status >= 500 || *status == 429,
+        _ => false,
+    };
+    let message = format!("{stage}: {error:#}");
+    if retryable {
+        ReturningSessionExchangeError::Retryable(message)
+    } else {
+        ReturningSessionExchangeError::Fatal(message)
+    }
+}
+
 pub(super) fn returning_device_block_message(reason: ReturningDeviceBlockReason) -> &'static str {
     match reason {
         ReturningDeviceBlockReason::RevocationPending => {

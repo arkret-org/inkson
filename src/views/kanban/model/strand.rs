@@ -224,7 +224,6 @@ pub(crate) fn card_from_strand_projection_for_actor(
         .unwrap_or(KANBAN_SYNTHESIS_CONTENT_PATH);
     KanbanCard {
         id: strand.strand_id.clone(),
-        object_revision_heads: strand.object_revision_heads.clone(),
         rank: strand_projection_placement_string(strand.rank.as_deref()).unwrap_or_default(),
         title: title.clone(),
         description: summary,
@@ -285,6 +284,7 @@ pub(crate) fn card_from_strand_projection_for_actor(
             None,
             self_actor_id,
         ),
+        authoring_basis: None,
         calendar_schedule_basis_refs: strand.schedule_revision_heads.clone(),
         calendar: calendar_fields_from_metadata(&strand.fields, decrypt_ctx, &strand.strand_id),
         primary_strand_id: strand.strand_id.clone(),

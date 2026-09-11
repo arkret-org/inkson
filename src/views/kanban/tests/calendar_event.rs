@@ -231,7 +231,6 @@ fn calendar_projection_reads_schedule_and_plain_location() {
         }),
     )]);
     let strand = crate::state::projection_views::StrandProjectionView {
-        object_revision_heads: vec![format!("sha256:{}", "0".repeat(64))],
         strand_id: TEST_CALENDAR_STRAND_ID.to_owned(),
         realm_id: TEST_REALM_ID.to_owned(),
         title: "Planning session".to_owned(),
@@ -403,7 +402,6 @@ fn locally_accepted_rsvp_retains_the_observed_schedule_frontier() {
     let source_event_id =
         arkret_sdk::EventId::from_digest(arkret_sdk::canonical::DigestSuite::Sha256, [9_u8; 32]);
     let projected = vec![crate::state::projection_views::StrandProjectionView {
-        object_revision_heads: vec![format!("sha256:{}", "0".repeat(64))],
         strand_id: TEST_CALENDAR_STRAND_ID.to_owned(),
         realm_id: TEST_REALM_ID.to_owned(),
         title: "Calendar".to_owned(),
@@ -518,7 +516,7 @@ fn calendar_overlay_replaces_the_whole_schedule_subtree() {
 }
 
 #[test]
-fn accepted_calendar_overlay_advances_the_local_schedule_frontier() {
+fn calendar_overlay_does_not_invent_a_schedule_frontier_from_one_update() {
     let mut card = test_card(TEST_CALENDAR_STRAND_ID, "U");
     card.calendar_schedule_basis_refs = vec![FRONTIER.to_owned()];
     let columns = vec![KanbanColumn {
@@ -530,7 +528,6 @@ fn accepted_calendar_overlay_advances_the_local_schedule_frontier() {
     }];
     let event_id =
         arkret_sdk::EventId::from_digest(arkret_sdk::canonical::DigestSuite::Sha256, [9_u8; 32]);
-    let expected_head = event_id.event_digest().to_string();
     let accepted = RawOperationRecord {
         operation_id: "ak:operation:0196419b-0000-7000-8000-00000000ca11".to_owned(),
         realm_id: Some(TEST_REALM_ID.to_owned()),
@@ -563,7 +560,7 @@ fn accepted_calendar_overlay_advances_the_local_schedule_frontier() {
     let overlaid = overlay_local_card_update_records(columns, &[accepted], None);
     assert_eq!(
         overlaid[0].cards[0].calendar_schedule_basis_refs,
-        vec![expected_head]
+        vec![FRONTIER.to_owned()]
     );
 }
 
@@ -701,4 +698,109 @@ fn rsvp_display_prefers_the_instance_answer_over_the_series_fallback() {
     // conflict.
     assert_eq!(display.own_status.as_deref(), Some("declined"));
     assert!(!display.own_conflicted);
+}
+
+#[test]
+fn schedule_frontier_is_invariant_under_unrelated_branch_arrival_order() {
+    let realm = arkret_sdk::RealmId::new(TEST_REALM_ID).unwrap();
+    let actor = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+        "ak:did_core:web:alice.example".parse().unwrap(),
+        "ak:did_core:web:station.example".parse().unwrap(),
+    ));
+    let suite = arkret_sdk::DigestSuite::Sha256;
+    let source = |kind: &str, seq, payload: Value, bases: &[&arkret_sdk::Event]| {
+        let mut event = arkret_wire::test_support::raw_event_for_actor_at(
+            kind,
+            arkret_sdk::ScopeRef::Realm {
+                realm_id: realm.clone(),
+            },
+            actor.clone(),
+            seq,
+            "000000000001-0000-00000000".parse().unwrap(),
+            payload,
+            "2026-09-11T00:00:00.000Z".parse().unwrap(),
+        )
+        .unwrap();
+        event.causal_refs = bases
+            .iter()
+            .map(|e| {
+                e.event_digest_with_digest_suite(suite)
+                    .unwrap()
+                    .parse()
+                    .unwrap()
+            })
+            .collect();
+        event.event_id = event.derive_event_id_with_digest_suite(suite).unwrap();
+        event
+    };
+    let a = source(
+        "ak.strand.create",
+        1,
+        json!({"object":{
+            "schema":"ak.schema.strand.v1","realm_id":realm,
+            "created_by":actor,"created_at":"2026-09-11T00:00:00.000Z",
+            "schema_refs":["ak.schema.calendar_event.v1"],
+            "tracks":{"synthesis":{"enabled":true,"is_primary":true}},
+            "metadata":{"fields":{"calendar":{
+                "start":"2026-09-11T09:00:00","end":"2026-09-11T10:00:00",
+                "timezone":"Etc/UTC","tzdb_version":"2025b","all_day":false,"status":"confirmed"
+            }}}
+        }}),
+        &[],
+    );
+    let strand = arkret_sdk::StrandId::from_event_id(&a.event_id).to_string();
+    let t = source(
+        "ak.strand.update",
+        2,
+        json!({"target_ref":strand,
+        "patch":{"metadata.title":{"$op":"set","value":"title"}}}),
+        &[&a],
+    );
+    let c = source(
+        "ak.strand.update",
+        3,
+        json!({"target_ref":strand,
+        "patch":{"metadata.fields.calendar.start":{"$op":"set","value":"2026-09-11T09:30:00"}}}),
+        &[&t],
+    );
+    let x = source(
+        "ak.strand.update",
+        4,
+        json!({"target_ref":strand,
+        "patch":{"metadata.summary":{"$op":"set","value":"branch"}}}),
+        &[&a],
+    );
+    assert_eq!(
+        calendar_schedule_revision_heads_at_source(
+            &[a.clone(), t.clone(), c.clone(), x.clone()],
+            &strand,
+            suite,
+            &t.event_id,
+        )
+        .unwrap(),
+        vec![a.event_id.event_digest()],
+        "new schedule C must not be attached to the old displayed value T",
+    );
+    assert!(
+        calendar_schedule_revision_heads_at_source(
+            &[t.clone(), c.clone()],
+            &strand,
+            suite,
+            &t.event_id,
+        )
+        .is_err(),
+        "a missing ancestor must not produce an invented basis"
+    );
+    let expected = vec![c.event_id.event_digest()];
+    for events in [
+        vec![a.clone(), t.clone(), c.clone(), x.clone()],
+        vec![a.clone(), t.clone(), x.clone(), c.clone()],
+        vec![a.clone(), x.clone(), t.clone(), c.clone()],
+        vec![c, x, t, a],
+    ] {
+        assert_eq!(
+            calendar_schedule_revision_heads(&events, &strand, suite).unwrap(),
+            expected
+        );
+    }
 }

@@ -87,6 +87,7 @@ pub fn LoginPanel(
         auth_status,
     };
     let mut callback_started = use_signal(|| false);
+    let mut callback_retry_url = use_signal(|| Option::<String>::None);
     let mut state_store_write = state_store;
     // Whether the styled Station preset list is expanded. Inkson is a
     // neutral client: the field is a free-text URL input that the user can edit
@@ -133,6 +134,7 @@ pub fn LoginPanel(
         is_busy.set(true);
 
         let callback_device = pending_device_id();
+        let resume_url = returning_callback_resume_url(&callback_url, &returned_state).ok();
         let result = finish_oidc_callback(callback_url, callback_device, state_store_write).await;
         match result {
             Ok(OidcCallbackOutcome::Login(completed)) => {
@@ -291,8 +293,9 @@ pub fn LoginPanel(
                 }
             }
             Ok(OidcCallbackOutcome::RetryableSessionExchange { message }) => {
+                callback_retry_url.set(resume_url);
                 auth_status.set(format!(
-                    "{message} The signed request was preserved; reload this page to retry safely."
+                    "{message} The signed request was preserved. Use Retry verification below to resume it."
                 ));
             }
             Ok(OidcCallbackOutcome::ReturningDeviceBlocked { reason, message }) => {
@@ -481,6 +484,9 @@ pub fn LoginPanel(
 
                 if !auth_status().is_empty() {
                     div { class: "auth-status", "data-testid": "auth-status", role: "status", "{auth_status}" }
+                }
+                if let Some(resume_url) = callback_retry_url() {
+                    a { href: "{resume_url}", "data-testid": "retry-session-verification", "Retry verification" }
                 }
 
                 // G3.Y0 — session state surface for cotest's

@@ -457,13 +457,39 @@ pub(super) async fn dispatch_card_detail_update(
             return false;
         }
     };
-    let object_basis_ref = match current.object_revision_basis_ref() {
-        Ok(head) => head,
-        Err(message) => {
-            board_status.set(message);
-            return false;
-        }
+    let api_token = token();
+    let Some((source_scope, source_event)) = current.authoring_basis.clone() else {
+        board_status
+            .set("The complete current card value is not available for editing yet.".to_owned());
+        return false;
     };
+    let sidecar_effective_scope = match sidecar_track_write
+        .as_ref()
+        .and_then(|context| context.binding.as_ref())
+    {
+        Some(binding) => {
+            let realm_id = match arkret_sdk::RealmId::new(realm_id.clone()) {
+                Ok(realm_id) => realm_id,
+                Err(error) => {
+                    board_status.set(format!("invalid Sidecar Realm id: {error}"));
+                    return false;
+                }
+            };
+            Some(arkret_sdk::ScopeRef::Sidecar {
+                realm_id,
+                sidecar_id: binding.sidecar_id.clone(),
+            })
+        }
+        None => None,
+    };
+    if sidecar_effective_scope
+        .as_ref()
+        .is_some_and(|scope| scope != &source_scope)
+    {
+        board_status.set("The draft source belongs to a different effective scope".to_owned());
+        return false;
+    }
+    let object_basis_ref = source_event.event_digest();
     // R4 fail-closed: when the Realm security state is unknown (`None`),
     // treat the scope as encrypted so we take the encrypt path rather than
     // emitting a plaintext patch. The plaintext-block guard below still
@@ -503,25 +529,6 @@ pub(super) async fn dispatch_card_detail_update(
         pending_history_secrets,
     } = mls_events;
 
-    let sidecar_effective_scope = match sidecar_track_write
-        .as_ref()
-        .and_then(|context| context.binding.as_ref())
-    {
-        Some(binding) => {
-            let realm_id = match arkret_sdk::RealmId::new(realm_id.clone()) {
-                Ok(realm_id) => realm_id,
-                Err(error) => {
-                    board_status.set(format!("invalid Sidecar Realm id: {error}"));
-                    return false;
-                }
-            };
-            Some(arkret_sdk::ScopeRef::Sidecar {
-                realm_id,
-                sidecar_id: binding.sidecar_id.clone(),
-            })
-        }
-        None => None,
-    };
     // R4: feed the guard the three-state security signal. An explicit
     // per-card `security_encrypted` flag (`Some`) wins; otherwise fall back to
     // the scope three-state so an unknown projection fails closed.
@@ -566,7 +573,6 @@ pub(super) async fn dispatch_card_detail_update(
         "submitting {kind} operation {}",
         short_protocol_id(&operation_id)
     ));
-    let api_token = token();
     let mls_commit_operation_id = mls_commit_op
         .as_ref()
         .map(|op| op.local_operation_id().to_string());
@@ -777,20 +783,23 @@ pub(super) async fn dispatch_card_detail_update(
                 return;
             }
         };
-        let submit_event = match crate::operation::ak_ops::strand_update_patch(
+        let submit_event = match build_card_detail_update_operation(
             &update_realm_id,
             &update_actor_id,
             &update_strand_id,
             sealed_patch,
-        )
-        .map(|builder| builder.causal_refs(object_basis_refs))
-        .and_then(|builder| builder.build_sdk_event("inkson"))
-        {
+            object_basis_refs,
+        ) {
             Ok(op) => {
                 let op = op.with_local_operation_id(local_operation_id);
                 match sidecar_effective_scope.as_ref() {
-                    Some(effective_scope) => op.with_effective_scope(effective_scope.clone()),
-                    None => Ok(op),
+                    Some(effective_scope) if effective_scope == &source_scope => {
+                        op.with_effective_scope(effective_scope.clone())
+                    }
+                    Some(_) => Err(anyhow::anyhow!(
+                        "the draft source belongs to a different effective scope"
+                    )),
+                    None => op.with_effective_scope(source_scope.clone()),
                 }
             }
             Err(error) => Err(error),
@@ -920,4 +929,68 @@ pub(super) async fn dispatch_card_detail_update(
         }
     });
     true
+}
+
+pub(super) fn build_card_detail_update_operation(
+    realm_id: &str,
+    actor_id: &str,
+    strand_id: &str,
+    patch: Value,
+    object_basis_refs: Vec<arkret_sdk::Hash>,
+) -> anyhow::Result<crate::operation::LocalOperation> {
+    crate::operation::ak_ops::strand_update_patch(realm_id, actor_id, strand_id, patch)?
+        .causal_refs(object_basis_refs)
+        .build_sdk_event("inkson")
+}
+
+pub(super) fn build_card_version_selection(
+    realm_id: &str,
+    actor_id: &str,
+    entry: &arkret_sdk::CurrentResultEntry,
+    selected_event_id: &arkret_sdk::EventId,
+) -> anyhow::Result<crate::operation::LocalOperation> {
+    let arkret_sdk::CurrentTarget::Strand { strand_id } = entry.target() else {
+        anyhow::bail!("version selection requires a Strand current entry");
+    };
+    let arkret_sdk::CurrentOutcome::Heads { heads } = entry.result() else {
+        anyhow::bail!("version selection requires available current heads");
+    };
+    if heads.len() < 2 {
+        anyhow::bail!("version selection requires an observed conflict");
+    }
+    let selected = heads
+        .iter()
+        .find(|head| &head.event_id == selected_event_id)
+        .ok_or_else(|| anyhow::anyhow!("selected version is not in the observed head set"))?;
+    selected.value.as_strand()?;
+    // An identity patch explicitly retains the selected complete value. If it
+    // includes a calendar, this also declares the chosen schedule revision.
+    let metadata = selected.value.as_json().get("metadata");
+    let patch = serde_json::json!({
+        "metadata": match metadata {
+            Some(value) => serde_json::json!({"$op":"set","value":value}),
+            None => serde_json::json!({"$op":"unset"}),
+        }
+    });
+    let payload = arkret_sdk::StrandPatchPayload {
+        target_ref: strand_id.clone(),
+        patch: serde_json::from_value(patch)?,
+        expected_state_digest: Some(arkret_sdk::Hash::new(
+            arkret_sdk::canonical::sha256_digest(arkret_sdk::canonical::canonical_json_bytes(
+                selected.value.as_json(),
+            )?),
+        )?),
+    };
+    crate::operation::TypedOperationBuilder::new::<arkret_sdk::event_spec::StrandUpdate>(
+        realm_id, actor_id, payload,
+    )
+    .target_ref(strand_id.as_str())
+    .causal_refs(
+        heads
+            .iter()
+            .map(|head| head.event_id.event_digest())
+            .collect(),
+    )
+    .build_sdk_event("inkson")?
+    .with_effective_scope(entry.selector().scope_ref.clone())
 }

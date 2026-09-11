@@ -197,7 +197,6 @@ pub(super) fn test_encrypted_content_envelope(
 pub(super) fn test_card(id: &str, rank: &str) -> KanbanCard {
     KanbanCard {
         id: id.to_owned(),
-        object_revision_heads: vec![format!("sha256:{}", "0".repeat(64))],
         rank: rank.to_owned(),
         title: "test".to_owned(),
         description: String::new(),
@@ -214,6 +213,7 @@ pub(super) fn test_card(id: &str, rank: &str) -> KanbanCard {
         assigned_to_relations: Vec::new(),
         due: String::new(),
         calendar_rsvp: CalendarRsvpDisplay::default(),
+        authoring_basis: None,
         calendar_schedule_basis_refs: Vec::new(),
         calendar: CalendarCardFields::default(),
         primary_strand_id: String::new(),

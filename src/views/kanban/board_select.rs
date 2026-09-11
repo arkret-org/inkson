@@ -64,7 +64,6 @@ pub(super) fn seed_columns() -> Vec<KanbanColumn> {
             rank: "U".to_owned(),
             cards: vec![KanbanCard {
                 id: DEMO_STRAND_LEGAL_REVIEW_ID.to_owned(),
-                object_revision_heads: Vec::new(),
                 // Seed cards seed `cards[i].rank` from the
                 // lexofractional alphabet so the next rank_between
                 // call has well-formed neighbours to work with. "U" is
@@ -86,6 +85,7 @@ pub(super) fn seed_columns() -> Vec<KanbanColumn> {
                 assigned_to_relations: Vec::new(),
                 due: "May 08".to_owned(),
                 calendar_rsvp: CalendarRsvpDisplay::default(),
+                authoring_basis: None,
                 calendar_schedule_basis_refs: Vec::new(),
                 calendar: CalendarCardFields::default(),
                 primary_strand_id: DEMO_STRAND_REVIEW_DISCUSSION_ID.to_owned(),
@@ -107,7 +107,6 @@ pub(super) fn seed_columns() -> Vec<KanbanColumn> {
             rank: "f".to_owned(),
             cards: vec![KanbanCard {
                 id: DEMO_STRAND_ONBOARDING_COPY_ID.to_owned(),
-                object_revision_heads: Vec::new(),
                 rank: "U".to_owned(),
                 title: "Onboarding copy".to_owned(),
                 description: "Waiting on discussion-scoped feedback from support and docs reviewers.".to_owned(),
@@ -124,6 +123,7 @@ pub(super) fn seed_columns() -> Vec<KanbanColumn> {
                 assigned_to_relations: Vec::new(),
                 due: "May 10".to_owned(),
                 calendar_rsvp: CalendarRsvpDisplay::default(),
+                authoring_basis: None,
                 calendar_schedule_basis_refs: Vec::new(),
                 calendar: CalendarCardFields::default(),
                 primary_strand_id: DEMO_STRAND_SUPPORT_DISCUSSION_ID.to_owned(),
@@ -142,7 +142,6 @@ pub(super) fn seed_columns() -> Vec<KanbanColumn> {
             rank: "p".to_owned(),
             cards: vec![KanbanCard {
                 id: DEMO_STRAND_SECURITY_SIGNOFF_ID.to_owned(),
-                object_revision_heads: Vec::new(),
                 rank: "U".to_owned(),
                 title: "Security sign-off".to_owned(),
                 description: "Projection detected a stale column head after an offline move.".to_owned(),
@@ -159,6 +158,7 @@ pub(super) fn seed_columns() -> Vec<KanbanColumn> {
                 assigned_to_relations: Vec::new(),
                 due: "May 01".to_owned(),
                 calendar_rsvp: CalendarRsvpDisplay::default(),
+                authoring_basis: None,
                 calendar_schedule_basis_refs: Vec::new(),
                 calendar: CalendarCardFields::default(),
                 primary_strand_id: DEMO_STRAND_SECURITY_REVIEW_ID.to_owned(),

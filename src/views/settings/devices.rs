@@ -14,10 +14,8 @@
 //!   secret and rewraps local `mls_history` backups.
 //!
 //! The pair strand on `/settings/devices/pair` carries:
-//! - `pair-device-start-button` — on the device being added, generates a pairing request payload.
-//! - `pair-device-qr` — SVG QR code (pure-Rust `qrcode` crate) with the encoded payload mirrored as
-//!   plain text in `pair-device-secret` so e2e harnesses that don't OCR can read it directly.
-//! - `pair-device-status` — feedback area.
+//! - New-device request generation belongs exclusively to onboarding, before login. This
+//!   authenticated settings page only approves another device.
 //! - `accept-pairing-input` / `accept-pairing-button` / `accept-pairing-status` — existing-device
 //!   side: paste or scan the new-device request and approve through the spec account pairing route.
 //!
@@ -35,12 +33,11 @@ use arkret_wire::event_kind_str;
 use dioxus::prelude::*;
 use dioxus_router::Link;
 use dioxus_router::hooks::use_route;
-use serde_json::{Value, json};
+use serde_json::Value;
 
-use crate::components::{EmptyState, EmptyStateKind, HelpTip, QrSharePanel, UiIcon};
+use crate::components::{EmptyState, EmptyStateKind, HelpTip, UiIcon};
 use crate::i18n::{tr, tr_args};
 use crate::identity::device_pairing::approve_device_pairing;
-use crate::operation::uuid_v7;
 use crate::routes::Route;
 use crate::state::LocalStateStore;
 use crate::transport::auth::{with_authed_api, with_authed_sdk_client};
@@ -93,44 +90,6 @@ fn parse_devices(value: &Value) -> Vec<DeviceRow> {
                 .collect()
         })
         .unwrap_or_default()
-}
-
-// Invariant assertions: each `expect` message names the check that
-// establishes it a few lines earlier. Rewriting them as `?` would add
-// error paths no caller can reach.
-#[allow(clippy::expect_used)]
-/// Compact base64url handoff token embedded in the pairing QR deep-link.
-/// Mirrors the agent-pairing token (`{"r":request_id,"c":code}`); the resolving
-/// device decodes it and calls `ak.open.device_pairing.read.resolve.v1`.
-fn build_device_pairing_handoff_token(
-    device_pairing_request_id: &str,
-    pairing_code: &str,
-) -> String {
-    let canonical = arkret_sdk::canonical::canonical_json_bytes(&json!({
-        "r": device_pairing_request_id,
-        "c": pairing_code,
-    }))
-    .expect("a JSON object containing strings always canonicalizes");
-    arkret_sdk::base64url_encode(canonical)
-}
-
-// Invariant assertions: each `expect` message names the check that
-// establishes it a few lines earlier. Rewriting them as `?` would add
-// error paths no caller can reach.
-#[allow(clippy::expect_used)]
-/// The short HTTPS deep-link the new device renders as its QR. The fragment
-/// carries only the handoff token — never in the query string — so it stays out
-/// of server/proxy logs. Mirrors `build_agent_pairing_deep_link`.
-fn build_device_pairing_deep_link(
-    base_url: &str,
-    token: &str,
-    target_proof: &arkret_sdk::DevicePairingTargetProof,
-) -> String {
-    let base = base_url.trim_end_matches('/');
-    let proof = arkret_sdk::canonical::canonical_json_bytes(target_proof)
-        .map(arkret_sdk::base64url_encode)
-        .expect("a typed target proof always canonicalizes");
-    format!("{base}/_arkret/open/device-pairing/resolve#token={token}&proof={proof}")
 }
 
 /// Parse a scanned/pasted pairing deep-link (or a bare token) into the compact
@@ -189,14 +148,6 @@ pub fn SettingsDevicesPanel(
     // session credential arrives) without the user clicking Refresh first.
     let mut auto_loaded = use_signal(|| false);
 
-    // ── Pair (current device side) state ─────────────────────────────
-    let pair_payload = use_signal(String::new);
-    let pair_status = use_signal(String::new);
-    // Staged short-link handle + code (for the new device's status poll).
-    let pair_request_id = use_signal(String::new);
-    let pair_code = use_signal(String::new);
-    let pair_action_busy = use_signal(|| false);
-
     // ── Accept (already-authorized device side) state ─────────────────
     let accept_input = use_signal(String::new);
     let accept_status = use_signal(String::new);
@@ -242,7 +193,7 @@ pub fn SettingsDevicesPanel(
     {
         let base = base_url();
         let api_token = token();
-        use_effect(move || {
+        use_effect(use_reactive!(|(pair_mode,)| {
             if pair_mode || api_token.trim().is_empty() || auto_loaded() {
                 return;
             }
@@ -268,7 +219,7 @@ pub fn SettingsDevicesPanel(
                     }
                 }
             });
-        });
+        }));
     }
 
     rsx! {
@@ -318,16 +269,9 @@ pub fn SettingsDevicesPanel(
 
             if pair_mode {
                 {render_pair_strand(
-                    principal_id,
-                    device_id,
-                    authority.clone(),
                     base_url,
                     token,
-                    pair_payload,
-                    pair_status,
-                    pair_request_id,
-                    pair_code,
-                    pair_action_busy,
+                    auto_loaded,
                     accept_input,
                     accept_status,
                     accept_resolved,
@@ -770,26 +714,14 @@ fn render_revoke_modal(
 
 #[allow(clippy::too_many_arguments)]
 fn render_pair_strand(
-    principal_id: Signal<String>,
-    device_id: Signal<String>,
-    authority: arkret_sdk::AccountId,
     base_url: Signal<String>,
     token: Signal<String>,
-    mut pair_payload: Signal<String>,
-    mut pair_status: Signal<String>,
-    mut pair_request_id: Signal<String>,
-    mut pair_code: Signal<String>,
-    mut pair_action_busy: Signal<bool>,
+    mut auto_loaded: Signal<bool>,
     mut accept_input: Signal<String>,
     mut accept_status: Signal<String>,
     mut accept_resolved: Signal<String>,
     mut accept_action_busy: Signal<bool>,
 ) -> Element {
-    let actor_id = principal_id();
-    let payload_value = pair_payload();
-    let status_value = pair_status();
-    let pair_code_value = pair_code();
-    let pair_busy = pair_action_busy();
     let accept_resolved_value = accept_resolved();
     let resolved_approval = serde_json::from_str::<
         crate::identity::device_pairing::ResolvedPairingApproval,
@@ -798,369 +730,8 @@ fn render_pair_strand(
     .map(|value| PairingApprovalReview::from_bootstrap(&value.bootstrap));
     let accept_busy = accept_action_busy();
 
-    // Render a QR for the current payload (if any). `qrcode` returns
-    // the rendered SVG as a String which Dioxus wraps in
-    // `dangerous_inner_html` — safe here because the SVG body is
-    // produced by the crate from a string we constructed.
-    let qr_svg = if payload_value.is_empty() {
-        String::new()
-    } else {
-        match qrcode::QrCode::with_error_correction_level(
-            payload_value.as_bytes(),
-            qrcode::EcLevel::M,
-        ) {
-            Ok(code) => code
-                .render::<qrcode::render::svg::Color<'_>>()
-                .min_dimensions(192, 192)
-                .quiet_zone(true)
-                .build(),
-            Err(_) => String::new(),
-        }
-    };
-
-    let payload_for_state = payload_value.clone();
-
     rsx! {
         div { class: "device-pairing-layout",
-        // On the new device, create the out-of-band QR/link that an already
-        // authorized device must scan or open.
-        div { class: "event pair-device-card", "data-testid": "pair-device-card",
-            div { class: "event-head",
-                div {
-                    span { class: "device-pairing-eyebrow", {tr("settings.devices.pair_this_browser")} }
-                    h3 { {tr("settings.devices.pair_title")} }
-                }
-                span { class: "badge warning", {tr("settings.devices.pair_required_badge")} }
-            }
-            p { class: "muted",
-                {tr("settings.devices.pair_body")}
-            }
-            div { class: "actions",
-                Button {
-                    variant: ButtonVariant::Primary,
-                    "data-testid": "pair-device-start-button",
-                    disabled: actor_id.trim().is_empty() || pair_busy,
-                    onclick: move |_| {
-                        if pair_action_busy() {
-                            return;
-                        }
-                        let actor = principal_id();
-                        if actor.trim().is_empty() {
-                            pair_status.set("No active session. Sign in first.".to_owned());
-                            return;
-                        }
-                        let requesting_device_id = device_id();
-                        if requesting_device_id.trim().is_empty() {
-                            pair_status.set("This browser has no local device id yet. Sign in again or reload before pairing.".to_owned());
-                            return;
-                        }
-                        let signer = match crate::event_signer::bind_active_signer_device_id(
-                            &requesting_device_id,
-                        ) {
-                            Ok(Some(signer)) => signer,
-                            Ok(None) => {
-                                pair_status.set(
-                                    "This browser has no device identity signer yet. Reload before pairing."
-                                        .to_owned(),
-                                );
-                                return;
-                            }
-                            Err(err) => {
-                                pair_status.set(format!(
-                                    "Binding this device signer failed: {err}"
-                                ));
-                                return;
-                            }
-                        };
-                        let Some(public_key_material) = signer.public_key_base64url() else {
-                            pair_status.set(
-                                "This device signer cannot expose a device public key for pairing."
-                                    .to_owned(),
-                            );
-                            return;
-                        };
-                        let client_nonce = uuid_v7().replace('-', "");
-                        pair_action_busy.set(true);
-                        pair_status.set("Staging pairing request…".to_owned());
-                        let base = base_url();
-                        let api_token = token();
-                        let public_key_material = public_key_material.to_owned();
-                        let authority = authority.clone();
-                        spawn(async move {
-                            let client_nonce = match arkret_sdk::DevicePairingNonce::new(client_nonce)
-                            {
-                                Ok(nonce) => nonce,
-                                Err(error) => {
-                                    pair_status.set(format!(
-                                        "Building the pairing nonce failed: {error}"
-                                    ));
-                                    pair_action_busy.set(false);
-                                    return;
-                                }
-                            };
-                            // 1) Stage the device key server-side (unauthenticated
-                            // `open` endpoint) to obtain a short handle + code. The
-                            // QR then carries only a short deep-link, not the whole
-                            // pubkey payload — matching agent pairing.
-                            let stage_body = match (
-                                arkret_sdk::NonEmptyString::new("OKP".to_owned()),
-                                arkret_sdk::NonEmptyString::new(requesting_device_id.clone()),
-                                arkret_sdk::NonEmptyString::new("Ed25519".to_owned()),
-                                arkret_sdk::Base64UrlString::new(public_key_material.clone()),
-                                arkret_sdk::NonEmptyString::new("New device".to_owned()),
-                                arkret_sdk::NonEmptyString::new("browser".to_owned()),
-                            ) {
-                                (Ok(kty), Ok(kid), Ok(algorithm), Ok(key), Ok(display_name), Ok(platform)) => {
-                                    arkret_sdk::DevicePairingStageRequestBody {
-                                        new_device_pubkey: arkret_sdk::PublicKey {
-                                            kty,
-                                            kid,
-                                            algorithm,
-                                            key,
-                                            key_digest: None,
-                                        },
-                                        client_nonce: client_nonce.clone(),
-                                        display_name: Some(display_name),
-                                        device_metadata: Some(arkret_sdk::DeviceMetadata {
-                                            platform: Some(platform),
-                                            ..Default::default()
-                                        }),
-                                    }
-                                }
-                                _ => {
-                                    pair_status.set(
-                                        "Building the typed pairing request failed.".to_owned(),
-                                    );
-                                    pair_action_busy.set(false);
-                                    return;
-                                }
-                            };
-                            let challenge_public_key = stage_body.new_device_pubkey.clone();
-                            let challenge_stage_body = stage_body.clone();
-                            let stage_outcome = crate::transport::auth::with_endpoint_clients(
-                                &base,
-                                api_token.clone(),
-                                None,
-                                |clients| async move {
-                                    clients.keys().device_pairing_stage(&stage_body).await
-                                },
-                            )
-                            .await;
-                            let stage_outcome = match stage_outcome {
-                                Ok(outcome) => outcome,
-                                Err(err) => {
-                                    pair_status.set(format!(
-                                        "Staging pairing request failed: {}",
-                                        err.display()
-                                    ));
-                                    pair_action_busy.set(false);
-                                    return;
-                                }
-                            };
-                            let request_id =
-                                stage_outcome.device_pairing_request_id.to_string();
-                            let server_code = stage_outcome.pairing_code.to_string();
-                            let challenge =
-                                arkret_sdk::signatures::device_pairing::ServerDevicePairingChallenge::from_stage(
-                                    &challenge_stage_body,
-                                    &stage_outcome,
-                                );
-                            let (_, transcript_digest) =
-                                match arkret_sdk::signatures::device_pairing::server_device_pairing_transcript(
-                                    &challenge_public_key,
-                                    &challenge,
-                                ) {
-                                    Ok(value) => value,
-                                    Err(err) => {
-                                        pair_status.set(format!(
-                                            "Building pairing challenge failed: {err}"
-                                        ));
-                                        pair_action_busy.set(false);
-                                        return;
-                                    }
-                                };
-                            let requesting_device = match arkret_sdk::DeviceId::new(requesting_device_id.clone()) {
-                                Ok(device) => device,
-                                Err(error) => {
-                                    pair_status.set(format!("Invalid target device: {error}"));
-                                    pair_action_busy.set(false);
-                                    return;
-                                }
-                            };
-                            let target_proof = match crate::identity::device_pairing::sign_target_proof(
-                                &signer,
-                                &authority,
-                                &requesting_device,
-                                transcript_digest.clone(),
-                            ).await {
-                                Ok(attestation) => attestation,
-                                Err(err) => {
-                                    pair_status.set(format!(
-                                        "Signing target device attestation failed: {err}"
-                                    ));
-                                    pair_action_busy.set(false);
-                                    return;
-                                }
-                            };
-
-                            // 2) Short deep-link QR + code for out-of-band scan.
-                            let handoff =
-                                build_device_pairing_handoff_token(&request_id, &server_code);
-                            let deep_link = build_device_pairing_deep_link(
-                                &base,
-                                &handoff,
-                                &target_proof,
-                            );
-                            pair_payload.set(deep_link);
-                            pair_request_id.set(request_id.clone());
-                            pair_code.set(server_code.clone());
-                            pair_status.set(
-                                "Pairing link created. Scan or open it on an authorized device, then compare the code before approving."
-                                    .to_owned(),
-                            );
-                            pair_action_busy.set(false);
-                        });
-                    },
-                    if pair_busy { {tr("settings.devices.pair_requesting")} } else { {tr("settings.devices.pair_request")} }
-                }
-                Button {
-                    variant: ButtonVariant::Secondary,
-                    "data-testid": "pair-device-clear-button",
-                    disabled: payload_for_state.is_empty() || pair_busy,
-                    onclick: move |_| {
-                        pair_payload.set(String::new());
-                        pair_request_id.set(String::new());
-                        pair_code.set(String::new());
-                        pair_status.set("Approval request cleared from this screen.".to_owned());
-                    },
-                    {tr("settings.devices.pair_hide_link")}
-                }
-            }
-            if !payload_value.is_empty() {
-                div { class: "pair-device-handoff",
-                    div { class: "device-pair-approval-code-block",
-                        span { class: "muted", {tr("device_pair.compare_code")} }
-                        span {
-                            class: "device-pair-approval-code mono",
-                            "data-testid": "pair-device-code",
-                            "{pair_code_value}"
-                        }
-                    }
-                    QrSharePanel {
-                        qr_svg,
-                        url: payload_value.clone(),
-                        qr_aria_label: tr("settings.devices.pair_qr_aria_label"),
-                        url_aria_label: tr("settings.devices.pair_link_aria_label"),
-                        qr_test_id: "pair-device-qr".to_owned(),
-                        url_test_id: "pair-device-secret".to_owned(),
-                        copy_test_id: "pair-device-copy-button".to_owned(),
-                        url_rows: 4,
-                    }
-                    Button {
-                        variant: ButtonVariant::Secondary,
-                        class: "btn pair-device-status-action",
-                        "data-testid": "pair-device-status-button",
-                        disabled: pair_busy,
-                        onclick: move |_| {
-                            if pair_action_busy() {
-                                return;
-                            }
-                            let request_id = pair_request_id();
-                            let code = pair_code();
-                            let handoff_link = pair_payload();
-                            let principal = principal_id();
-                            if request_id.trim().is_empty() {
-                                pair_status.set("Request approval first.".to_owned());
-                                return;
-                            }
-                            let base = base_url();
-                            let api_token = token();
-                            pair_action_busy.set(true);
-                            pair_status.set("Checking approval status…".to_owned());
-                            spawn(async move {
-                                let status_body: arkret_sdk::DevicePairingStatusRequestBody =
-                                    match serde_json::from_value(json!({
-                                        "device_pairing_request_id": request_id,
-                                        "pairing_code": code,
-                                    })) {
-                                        Ok(body) => body,
-                                        Err(err) => {
-                                            pair_status.set(format!(
-                                                "Building status request failed: {err}"
-                                            ));
-                                            pair_action_busy.set(false);
-                                            return;
-                                        }
-                                    };
-                                match crate::transport::auth::with_endpoint_clients(
-                                    &base,
-                                    api_token,
-                                    None,
-                                    |clients| async move {
-                                        clients.keys().device_pairing_status(&status_body).await
-                                    },
-                                )
-                                .await
-                                {
-                                    Ok(outcome) => {
-                                        if outcome.state == arkret_sdk::DevicePairingState::Authorized {
-                                            let verification = async {
-                                                let attestation = extract_device_pairing_target_proof(&handoff_link)
-                                                    .ok_or_else(|| anyhow::anyhow!("saved pairing handoff omitted target attestation"))?;
-                                                let principal = arkret_sdk::Did::new(principal)?;
-                                                let http = crate::transport::TransportClient::unauthenticated(&base)?
-                                                    .sdk_http_client()?;
-                                                crate::identity::device_pairing::verify_authorized_pairing_event(
-                                                    &http,
-                                                    &principal,
-                                                    &outcome,
-                                                    &attestation,
-                                                ).await
-                                            }.await;
-                                            if let Err(error) = verification {
-                                                pair_status.set(format!(
-                                                    "Pairing authorization could not be verified: {error}"
-                                                ));
-                                                pair_action_busy.set(false);
-                                                return;
-                                            }
-                                        }
-                                        let msg = match outcome.state {
-                                            arkret_sdk::DevicePairingState::Authorized => {
-                                                "Approved. This device now appears in your device list.".to_owned()
-                                            }
-                                            arkret_sdk::DevicePairingState::PendingAuthorization => {
-                                                "Still waiting for approval on another authorized device.".to_owned()
-                                            }
-                                            arkret_sdk::DevicePairingState::Expired => {
-                                                "This request expired. Create a new approval request.".to_owned()
-                                            }
-                                        };
-                                        pair_status.set(msg);
-                                    }
-                                    Err(err) => {
-                                        pair_status.set(format!(
-                                            "Status check failed: {}",
-                                            err.display()
-                                        ));
-                                    }
-                                }
-                                pair_action_busy.set(false);
-                            });
-                        },
-                        UiIcon { name: "refresh" }
-                        if pair_busy { {tr("settings.devices.pair_checking")} } else { {tr("settings.devices.pair_check")} }
-                    }
-                }
-            }
-            if !status_value.is_empty() {
-                div { class: "device-pairing-status", "data-testid": "pair-device-status", role: "status",
-                    UiIcon { name: "activity" }
-                    span { "{status_value}" }
-                }
-            }
-        }
-
         // Role 3 — on an ALREADY-AUTHORIZED device: scan/paste the out-of-band
         // pairing link, resolve it, compare the code, then approve.
         div { class: "event accept-pairing-card", "data-testid": "accept-pairing-card",
@@ -1260,7 +831,7 @@ fn render_pair_strand(
                                 Err(err) => {
                                     accept_resolved.set(String::new());
                                     accept_status.set(format!(
-                                        "Could not resolve pairing link: {}",
+                                        "Could not resolve pairing link: {}. The link may be invalid, expired, or already accepted. Check authorization status on the new device before creating another request.",
                                         err.display()
                                     ));
                                 }
@@ -1332,12 +903,11 @@ fn render_pair_strand(
                                 .await
                                 {
                                     Ok(value) => {
-                                        let _ = value;
+                                        auto_loaded.set(false);
                                         accept_resolved.set(String::new());
                                         accept_input.set(String::new());
                                         accept_status.set(
-                                            "Device paired. It will appear in the device list shortly."
-                                                .to_owned(),
+                                            format!("Device authorization accepted ({}). On the new device, check authorization status and sign in again. Encrypted Realms become available after KeyPackage publication and Welcome processing.", value.authorized_event_ref),
                                         );
                                     }
                                     Err(err) => {
@@ -1365,7 +935,7 @@ fn render_pair_strand(
                     }
                 }
             }
-            div { class: "muted", "data-testid": "accept-pairing-status", "{accept_status}" }
+            div { class: "device-pairing-status", role: "status", "aria-live": "polite", "data-testid": "accept-pairing-status", "{accept_status}" }
         }
         }
     }
@@ -1448,7 +1018,12 @@ mod tests {
     #[test]
     fn extract_device_pairing_token_handles_link_and_bare() {
         let attestation = target_proof();
-        let link = build_device_pairing_deep_link("https://host.example", "abc123", &attestation);
+        let proof = arkret_sdk::base64url_encode(
+            arkret_sdk::canonical::canonical_json_bytes(&attestation).unwrap(),
+        );
+        let link = format!(
+            "https://host.example/_arkret/open/device-pairing/resolve#token=abc123&proof={proof}"
+        );
         assert_eq!(
             extract_device_pairing_token(&link),
             Some("abc123".to_owned())

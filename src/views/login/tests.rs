@@ -383,6 +383,51 @@ fn returning_session_errors_preserve_retry_setup_and_security_boundaries() {
 }
 
 #[test]
+fn returning_verification_retries_transport_but_not_invalid_evidence() {
+    assert_eq!(
+        returning_callback_resume_url(
+            "http://127.0.0.1:8080/auth/callback?code=secret&state=old#fragment",
+            "bound state"
+        )
+        .unwrap(),
+        "http://127.0.0.1:8080/auth/callback?state=bound+state"
+    );
+    use arkret_sdk::http_client::Error;
+    for status in [429, 503] {
+        let error = anyhow::Error::new(Error::Api {
+            status,
+            error: Box::new(arkret_sdk::Problem::from_code(
+                "temporarily_unavailable",
+                "fixture",
+            )),
+        })
+        .context("current principal");
+        assert!(matches!(
+            classify_returning_verification_error("verification", error),
+            ReturningSessionExchangeError::Retryable(_)
+        ));
+    }
+    assert!(matches!(
+        classify_returning_verification_error("verification", Error::Http("offline".into()).into()),
+        ReturningSessionExchangeError::Retryable(_)
+    ));
+    for error in [
+        anyhow::anyhow!("503 in untrusted evidence is not a transport status"),
+        Error::Api {
+            status: 403,
+            error: Box::new(arkret_sdk::Problem::from_code("device_revoked", "fixture")),
+        }
+        .into(),
+        Error::Protocol("authorization event mismatch".into()).into(),
+    ] {
+        assert!(matches!(
+            classify_returning_verification_error("verification", error),
+            ReturningSessionExchangeError::Fatal(_)
+        ));
+    }
+}
+
+#[test]
 fn oidc_callback_restores_bootstrap_device_seed_scope() {
     let authority = arkret_sdk::AccountId::new(
         crate::mls_api_helpers::principal_core_id("did:web:old.example").unwrap(),
