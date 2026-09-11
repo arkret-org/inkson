@@ -7,7 +7,6 @@ pub(crate) mod device_name;
 pub(crate) mod device_pairing;
 pub(crate) mod did_key;
 pub(crate) mod handle;
-pub(crate) mod history;
 pub(crate) mod identity_abandonment;
 pub(crate) mod member_identity_store;
 pub(crate) mod principal_control;

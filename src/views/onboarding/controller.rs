@@ -135,6 +135,7 @@ impl PcrRecoveryController {
         recovery_words: String,
         replacement_device_id: String,
         session: crate::runtime::session::SessionCoordinator,
+        navigator: Navigator,
     ) {
         let Self {
             mut busy,
@@ -180,10 +181,18 @@ impl PcrRecoveryController {
                     .await
                     {
                         Ok(()) => match clear_pending_principal_setup(state_store).await {
-                            Ok(()) => status.set(format!(
-                                "Identity recovered. Device receipt {} and the Standard session grant are durable.",
-                                recovery.readiness.terminal_receipt_id
-                            )),
+                            Ok(()) => {
+                                status.set(format!(
+                                    "Identity recovered. Device receipt {} and the Standard session grant are durable.",
+                                    recovery.readiness.terminal_receipt_id
+                                ));
+                                if let Some(failure) = navigator.replace(Route::Dashboard) {
+                                    tracing::warn!(
+                                        ?failure,
+                                        "recovery completion route canonicalisation failed"
+                                    );
+                                }
+                            }
                             Err(error) => status.set(format!(
                                 "Identity recovered, but local cleanup failed: {error:#}"
                             )),

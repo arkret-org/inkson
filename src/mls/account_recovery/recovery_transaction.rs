@@ -1,21 +1,21 @@
 //! PCR-policy fresh-device recovery.
 //!
-//! Recovery is deliberately a closed two-event unit. The Recovery Key derives
-//! the current DID root and signs `ak.device.reanchor`; the replacement device
-//! signs its own `ak.device.authorize`. No service or second person is an
-//! identity authority in this path.
+//! Recovery is deliberately a closed two-event unit. The accepted recovery
+//! policy authorizes the unit, while the replacement device signs both
+//! `ak.device.reanchor` and `ak.device.authorize` with its identity key.
 
 use arkret_models_collaboration::events_payloads::device_identity::{
     DeviceAuthorizationBindingKind, DeviceOrPrincipalRef, DeviceReanchorPayload,
     UnsignedDeviceAuthorizePayload, device_authorize_payload_digest,
 };
-use arkret_models_crypto::RecoveryAuthorityKind;
+use arkret_models_crypto::{RecoveryAuthorityKind, RecoveryProofKind};
 use arkret_wire::{
-    EventInitialSubmission, EventRef, EventsSubmitBatchRequestBody, Hash, NonEmptyString,
-    PcrPolicyRecoveryBinding, PcrPolicyRecoveryPlan, PreparedEventUnit, ReceiptId,
-    RecoveryIdentityModel, RecoveryPreparedPlan, RecoveryTransactionCreateRequest,
-    SecurityTransaction, SecurityTransactionCreateRequest, SecurityTransactionResultKind,
-    SecurityTransactionStep, TransactionId,
+    ControlProposalAck, ControlProposalAuthorityAck, EventInitialSubmission,
+    EventsSubmitBatchRequestBody, Hash, NonEmptyString, PcrPolicyRecoveryBinding,
+    PcrPolicyRecoveryPlan, PreparedEventUnit, ReceiptId, RecoveryIdentityModel,
+    RecoveryPreparedPlan, RecoveryTransactionCreateRequest, SecurityTransaction,
+    SecurityTransactionCreateRequest, SecurityTransactionResultKind, SecurityTransactionStep,
+    TransactionId,
 };
 use zeroize::Zeroizing;
 
@@ -80,43 +80,6 @@ pub(crate) async fn prepare_pcr_policy_recovery(
             "",
             0,
         )?;
-
-    let http = api.sdk_http_client()?;
-    let history =
-        crate::identity::history::fetch_complete_identity_history(&http, principal_did).await?;
-    if history.method != arkret_sdk::DidMethodUri::Webvh || history.native_history != Some(true) {
-        anyhow::bail!("principal DID does not expose native did:webvh history");
-    }
-    let previous_entry = history
-        .entries
-        .last()
-        .ok_or_else(|| anyhow::anyhow!("principal DID history is empty"))?;
-    let previous_did_version = previous_entry
-        .get("versionId")
-        .and_then(serde_json::Value::as_str)
-        .ok_or_else(|| anyhow::anyhow!("DID history head omits versionId"))?;
-    let current_root_generation = did_webvh_version_sequence(previous_did_version)?;
-    let root_material =
-        arkret_sdk::identity_root::derive_identity_recovery_key_material_from_bip39(
-            recovery_words,
-            "",
-            current_root_generation,
-        )?;
-    let active_update_keys = previous_entry
-        .pointer("/parameters/updateKeys")
-        .and_then(serde_json::Value::as_array)
-        .ok_or_else(|| anyhow::anyhow!("DID history head omits active update keys"))?;
-    if active_update_keys.as_slice()
-        != [serde_json::Value::String(
-            root_material.root_public_key_multikey.clone(),
-        )]
-    {
-        anyhow::bail!("recovery secret does not control the accepted DID history head");
-    }
-    let root_verification_method = format!(
-        "did:key:{key}#{key}",
-        key = root_material.root_public_key_multikey.as_str()
-    );
 
     let submitter = api.event_submitter()?;
     let scope_ref = verified_session
@@ -194,34 +157,15 @@ pub(crate) async fn prepare_pcr_policy_recovery(
         reanchor_payload,
     )?
     .with_prev_refs(frontier.frontier_event_ids)
-    .with_ref(EventRef::new(
-        previous_did_version.to_owned(),
-        "did_recovery_anchor",
-    ))
     .author_with_digest_suite(
         frontier.next_actor_seq,
         reexpiry_start_hlc,
         created_at,
         digest_suite,
     )?;
-    let root_did = arkret_sdk::Did::new(
-        root_verification_method
-            .split_once('#')
-            .map_or(root_verification_method.as_str(), |(did, _)| did)
-            .to_owned(),
-    )?;
-    let root_method =
-        arkret_sdk::DidUrl::new(root_verification_method).map_err(anyhow::Error::msg)?;
-    let root_signer = arkret_sdk::Ed25519PayloadSigner::from_did_key_seed(
-        root_material.root_seed,
-        root_did,
-        root_method.clone(),
-    );
-    arkret_sdk::signatures::sign_event(
+    device_signer.sign_sdk_event_with_context(
         &mut reanchor,
-        &root_signer,
-        &root_method,
-        arkret_sdk::signatures::SignEventOptions::new().with_created_at(created_at),
+        crate::event_signer::EventProofContext::default().with_digest_suite(digest_suite),
     )?;
     let reanchor_event_id = reanchor.event_id().clone();
 
@@ -243,17 +187,67 @@ pub(crate) async fn prepare_pcr_policy_recovery(
         crate::event_signer::EventProofContext::default().with_digest_suite(digest_suite),
     )?;
     let authorize_event_id = authorize.event_id().clone();
-    let reanchor_submission = EventsSubmitBatchRequestBody {
-        events: vec![
-            EventInitialSubmission::online(reanchor.into_event()),
-            EventInitialSubmission::online(authorize.into_event()),
-        ],
-    };
-
+    let reanchor = reanchor.into_event();
+    let authorize = authorize.into_event();
     let proof_summary = verified_session
         .proof_summary
         .clone()
         .ok_or_else(|| anyhow::anyhow!("verified recovery session omitted proof summary"))?;
+    if proof_summary.kind != RecoveryProofKind::RecoveryUnlock {
+        anyhow::bail!("recovery-word flow requires a recovery_unlock proof");
+    }
+    let recovery_verification_method = proof_summary
+        .verification_method
+        .clone()
+        .ok_or_else(|| anyhow::anyhow!("recovery_unlock proof omitted verification method"))?;
+    let recovery_rule = verified_session
+        .publication_authority_context
+        .authority_set_policy
+        .authorization_rules
+        .iter()
+        .find(|rule| rule.rule_id == proof_summary.kind.as_wire_str())
+        .ok_or_else(|| anyhow::anyhow!("verified recovery method has no publication authority"))?;
+    if recovery_rule.threshold != 1
+        || recovery_rule.issuers.len() != 1
+        || recovery_rule.issuers[0].verification_method != recovery_verification_method
+    {
+        anyhow::bail!("recovery_unlock publication authority does not match the verified proof");
+    }
+    let recovery_signer = arkret_sdk::Ed25519PayloadSigner::from_did_key_seed(
+        backup_material.recovery_proof_seed,
+        principal_did.clone(),
+        recovery_verification_method,
+    );
+    let authority_set_ref = verified_session
+        .publication_authority_context
+        .authority_set_ref
+        .authority_set_digest
+        .clone();
+    let proposal_policy = arkret_sdk::ControlProposalDecisionPolicy::default();
+    let proposal_received_at = crate::clock::now_utc();
+    let recovery_submission = |event: arkret_sdk::Event| -> anyhow::Result<_> {
+        let proposal_digest = Hash::new(event.event_digest_with_digest_suite(digest_suite)?)?;
+        let authority_ack = ControlProposalAuthorityAck::issue_with_signer(
+            event.realm_id.clone(),
+            proposal_digest,
+            authority_set_ref.clone(),
+            proposal_received_at,
+            proposal_policy,
+            &recovery_signer,
+        )?;
+        let mut submission = EventInitialSubmission::online(event);
+        submission.control_proposal_ack = Some(
+            ControlProposalAck::from_authority_acks_protocol_bounds(vec![authority_ack])?,
+        );
+        Ok(submission)
+    };
+    let reanchor_submission = EventsSubmitBatchRequestBody {
+        events: vec![
+            recovery_submission(reanchor)?,
+            recovery_submission(authorize)?,
+        ],
+    };
+
     let plan = PcrPolicyRecoveryPlan {
         binding: PcrPolicyRecoveryBinding {
             identity_model: RecoveryIdentityModel::PcrPolicy,
@@ -311,14 +305,6 @@ fn exact_device_reanchor_payload(
     };
     payload.validate().map_err(anyhow::Error::msg)?;
     Ok(payload)
-}
-
-fn did_webvh_version_sequence(version_id: &str) -> anyhow::Result<u64> {
-    version_id
-        .split_once('-')
-        .and_then(|(sequence, _)| sequence.parse::<u64>().ok())
-        .filter(|sequence| *sequence > 0)
-        .ok_or_else(|| anyhow::anyhow!("DID generation is not a canonical did:webvh versionId"))
 }
 
 fn recovery_backup_classes_unlocked(

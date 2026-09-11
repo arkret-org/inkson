@@ -320,35 +320,32 @@ fn build_signed_genesis_recovery_policy_with_raw_signer(
         version: 1,
         supersedes_id: None,
         trust_domain: TrustDomainId::new(trust_domain.to_owned())?,
-        methods: vec![
-            arkret_sdk::RecoveryMethod::DidRoot {},
-            arkret_sdk::RecoveryMethod::RecoveryUnlock {
-                keys: vec![RecoveryKeyEntry {
-                    verification_method: recovery_proof_ref,
+        methods: vec![arkret_sdk::RecoveryMethod::RecoveryUnlock {
+            keys: vec![RecoveryKeyEntry {
+                verification_method: recovery_proof_ref,
+                public_key_multibase: NonEmptyString::new(
+                    key_material.recovery_proof_public_key_multikey.clone(),
+                )
+                .map_err(anyhow::Error::msg)?,
+                signature_algorithm: RecoveryKeySignatureAlgorithm::Ed25519,
+                not_before: issued_at,
+                expires_at: key_expires_at,
+                revoked_at: None,
+                backup_hpke: RecoveryKeyAgreementEntry {
+                    key_agreement_ref: backup_hpke_ref,
+                    key_agreement_algorithm: RecoveryKeyAgreementAlgorithm::X25519,
                     public_key_multibase: NonEmptyString::new(
-                        key_material.recovery_proof_public_key_multikey.clone(),
+                        key_material.backup_hpke_public_key_multikey.clone(),
                     )
                     .map_err(anyhow::Error::msg)?,
-                    signature_algorithm: RecoveryKeySignatureAlgorithm::Ed25519,
+                    hpke_suites: vec![RecoveryHpkeSuite::X25519ChaCha20Poly1305],
+                    usage: RecoveryKeyAgreementUse::BackupHpke,
                     not_before: issued_at,
                     expires_at: key_expires_at,
                     revoked_at: None,
-                    backup_hpke: RecoveryKeyAgreementEntry {
-                        key_agreement_ref: backup_hpke_ref,
-                        key_agreement_algorithm: RecoveryKeyAgreementAlgorithm::X25519,
-                        public_key_multibase: NonEmptyString::new(
-                            key_material.backup_hpke_public_key_multikey.clone(),
-                        )
-                        .map_err(anyhow::Error::msg)?,
-                        hpke_suites: vec![RecoveryHpkeSuite::X25519ChaCha20Poly1305],
-                        usage: RecoveryKeyAgreementUse::BackupHpke,
-                        not_before: issued_at,
-                        expires_at: key_expires_at,
-                        revoked_at: None,
-                    },
-                }],
-            },
-        ],
+                },
+            }],
+        }],
         cooldown_seconds: None,
         issued_at,
         not_before: None,
@@ -671,7 +668,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn genesis_policy_uses_explicit_account_station_before_app_connect() {
+    fn genesis_policy_uses_explicit_account_station_and_only_recovery_key_method() {
         crate::operation::set_authoring_station_id(None);
         let principal_did =
             arkret_sdk::Did::new("did:webvh:z6mkfixture:principal.example".to_owned()).unwrap();
@@ -706,5 +703,10 @@ mod tests {
         let policy: RecoveryPolicy = serde_json::from_value(value).unwrap();
 
         assert_eq!(policy.account_id, account_id);
+        assert_eq!(policy.methods.len(), 1);
+        assert!(matches!(
+            policy.methods.first(),
+            Some(arkret_sdk::RecoveryMethod::RecoveryUnlock { .. })
+        ));
     }
 }

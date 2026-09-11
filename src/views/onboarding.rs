@@ -418,6 +418,7 @@ fn PcrPolicyDeviceRecovery(
     let completion_session = use_context::<crate::runtime::services::RuntimeServices>()
         .session
         .clone();
+    let navigator = use_navigator();
     let mut words = use_signal(String::new);
     let mut status = use_signal(String::new);
     let mut busy = use_signal(|| false);
@@ -439,7 +440,7 @@ fn PcrPolicyDeviceRecovery(
         div { class: "event onboarding-card", "data-testid": "pcr-policy-device-recovery",
             h2 { "Recover this identity" }
             p { class: "muted",
-                "This account already has an identity. Enter its 24-word Recovery Key to prove root control and authorize this device. No approval from another device or administrator is required."
+                "This account already has an identity. Enter its 24-word Recovery Key to satisfy the accepted recovery policy and authorize this device. No approval from another device or administrator is required."
             }
             Label { html_for: "root-recovery-words", "Recovery Key (24 words)" }
             Textarea {
@@ -472,6 +473,7 @@ fn PcrPolicyDeviceRecovery(
                         recovery_words,
                         replacement_device_id,
                         session,
+                        navigator,
                     );
                 },
                 if busy() { "Recovering…" } else { "Authorize this device" }
