@@ -122,6 +122,14 @@ impl SessionCoordinator {
         self.state.borrow().generation
     }
 
+    /// Fence work owned by the previous session without revoking or deleting it.
+    pub fn suspend(&self) {
+        let mut state = self.state.borrow_mut();
+        state.generation = state.generation.wrapping_add(1);
+        state.credential = None;
+        crate::identity::session_refresh::reset_session_grant_runtime();
+    }
+
     pub fn credential(&self) -> Option<String> {
         self.state.borrow().credential.clone()
     }
@@ -202,6 +210,24 @@ impl SessionCoordinator {
 #[cfg(not(target_arch = "wasm32"))]
 mod tests {
     use super::*;
+
+    #[test]
+    fn authentication_transaction_fences_old_denials_without_logout() {
+        let coordinator = SessionCoordinator::new(|| {
+            Box::pin(async { CurrentSessionRefresh::retry_later("unused") })
+        });
+        let old = coordinator.replace("old");
+        let invalidations = Rc::new(RefCell::new(0));
+        let observed = invalidations.clone();
+        coordinator.set_invalidator(move |_| *observed.borrow_mut() += 1);
+        coordinator.suspend();
+        assert!(!coordinator.invalidate_if_generation(old, "late old 401"));
+        assert_eq!(*invalidations.borrow(), 0);
+        let pending = coordinator.generation();
+        coordinator.replace("new");
+        assert!(!coordinator.invalidate_if_generation(pending, "late callback-era 401"));
+        assert_eq!(coordinator.credential().as_deref(), Some("new"));
+    }
 
     #[tokio::test]
     async fn returns_registered_refresher_result() {

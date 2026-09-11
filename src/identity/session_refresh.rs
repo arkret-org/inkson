@@ -14,6 +14,7 @@
 
 #[cfg(target_arch = "wasm32")]
 use std::rc::Rc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 
 use anyhow::Context as _;
@@ -168,10 +169,27 @@ impl AuthenticatedTransportFactory for InksonAuthenticatedTransportFactory {
 
 #[derive(Clone)]
 struct PersistedSessionGrantStore {
+    generation: u64,
     secure_store: Arc<dyn SecureKeyStore + Send + Sync>,
     user_store: crate::secure_key_store::UserLocalStore,
     station_url: Url,
     device_handle: DpopHandle,
+}
+
+impl PersistedSessionGrantStore {
+    fn ensure_current(&self) -> garth::Result<()> {
+        if session_grant_runtime().generation.load(Ordering::SeqCst) != self.generation {
+            return Err(garth::Error::Protocol(
+                "session provider ownership changed".into(),
+            ));
+        }
+        Ok(())
+    }
+}
+
+pub(crate) fn session_credential_mutation_lock() -> &'static tokio::sync::Mutex<()> {
+    static LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
 }
 
 impl SessionGrantStore for PersistedSessionGrantStore {
@@ -195,6 +213,8 @@ impl SessionGrantStore for PersistedSessionGrantStore {
                 .and_then(|grant| serde_json::to_vec(&grant).map_err(Into::into))
                 .map_err(|error: anyhow::Error| garth::Error::Protocol(error.to_string()));
         async move {
+            let _write = session_credential_mutation_lock().lock().await;
+            self.ensure_current()?;
             let encoded = encoded?;
             self.secure_store
                 .put_secret(
@@ -213,6 +233,7 @@ impl SessionGrantStore for PersistedSessionGrantStore {
     }
 
     fn clear(&self) -> garth::Result<()> {
+        self.ensure_current()?;
         self.secure_store
             .delete_secret(
                 &self
@@ -238,6 +259,7 @@ struct ActiveSessionProvider {
 
 #[derive(Default)]
 struct SessionGrantRuntime {
+    generation: AtomicU64,
     provider: Mutex<Option<ActiveSessionProvider>>,
 }
 
@@ -270,6 +292,7 @@ impl SessionGrantRuntime {
     }
 
     fn reset(&self) {
+        self.generation.fetch_add(1, Ordering::SeqCst);
         *self.provider.lock().unwrap_or_else(PoisonError::into_inner) = None;
     }
 }
@@ -300,6 +323,34 @@ fn session_grant_runtime() -> SessionGrantRuntimeHandle {
     {
         SESSION_GRANT_RUNTIME.with(Clone::clone)
     }
+}
+
+/// Remove only the rejected account/device credential; retain all identity,
+/// recovery and pending-authentication keys. A changed grant is not this denial's target.
+pub(crate) async fn clear_rejected_session_grant(
+    account: &crate::config::ActiveAccountContext,
+    expected: Option<&PersistedSessionGrant>,
+    secure_store: &dyn SecureKeyStore,
+) -> anyhow::Result<()> {
+    let user_store = crate::secure_key_store::UserLocalStore::new(
+        account.authority.clone(),
+        account.device_id.clone(),
+    )?;
+    let current =
+        crate::state::load_session_grant_from_user_secure_store(&user_store, secure_store)?;
+    if let Some(current) = current.as_ref() {
+        anyhow::ensure!(
+            expected.is_some_and(|expected| current.account_id == expected.account_id
+                && current.device_id == expected.device_id
+                && current.grant_id == expected.grant_id
+                && current.grant_jwt == expected.grant_jwt),
+            "session changed before rejected grant cleanup"
+        );
+    }
+    secure_store
+        .delete_secret_durable(&user_store.secret_key(LocalStateStore::SECURE_SESSION_GRANT_KEY))
+        .await?;
+    Ok(())
 }
 
 pub fn reset_session_grant_runtime() {
@@ -479,11 +530,7 @@ async fn refresh_authenticated_session_after_unauthorized_with_secure_store(
         session_transport_provider(runtime.as_ref(), &grant, &device_handle, secure_store).await?;
     if let Err(error) = provider.refresh_after_unauthorized().await {
         let error = anyhow::Error::from(error).context("session grant refresh");
-        if crate::api_error::is_terminal_session_grant_refresh_error(&error) {
-            provider
-                .invalidate()
-                .map_err(|invalidate| anyhow::anyhow!("{error}; invalidate grant: {invalidate}"))?;
-        }
+        // The generation-fenced app coordinator owns terminal cleanup.
         return Err(error);
     }
     let client = provider
@@ -515,6 +562,7 @@ async fn session_transport_provider(
     device_handle: &DpopHandle,
     secure_store: Arc<dyn crate::secure_key_store::SecureKeyStore + Send + Sync>,
 ) -> anyhow::Result<InksonSessionProvider> {
+    let generation = runtime.generation.load(Ordering::SeqCst);
     let server_key = normalized_server_key(&grant.station_url);
     if let Some(provider) = runtime.get(&server_key, grant.device_id.as_str()) {
         return Ok(provider);
@@ -553,7 +601,12 @@ async fn session_transport_provider(
     {
         anyhow::bail!("session grant does not match the active authority/device scope");
     }
+    anyhow::ensure!(
+        runtime.generation.load(Ordering::SeqCst) == generation,
+        "session provider ownership changed"
+    );
     let state_store = PersistedSessionGrantStore {
+        generation,
         secure_store,
         user_store: crate::secure_key_store::UserLocalStore::new(
             active_scope.authority,
@@ -586,6 +639,10 @@ async fn session_transport_provider(
             .await?
         }
     };
+    anyhow::ensure!(
+        runtime.generation.load(Ordering::SeqCst) == generation,
+        "session provider ownership changed"
+    );
     runtime.replace(server_key, grant.device_id.to_string(), provider.clone());
     Ok(provider)
 }
@@ -889,6 +946,90 @@ mod tests {
         persisted["account_id"]["principal_id"] = serde_json::Value::String(did.to_string());
 
         assert!(serde_json::from_value::<PersistedSessionGrant>(persisted).is_err());
+    }
+
+    #[tokio::test]
+    async fn rejected_grant_cleanup_preserves_identity_and_pending_auth_material() {
+        let account = crate::test_support::AccountFixture::new("did:web:alice.example").build();
+        let mut grant = test_persisted_grant(account.principal_id().as_str());
+        grant.account_id = account.authority.clone();
+        grant.device_id = account.device_id.clone();
+        let user = crate::secure_key_store::UserLocalStore::new(
+            account.authority.clone(),
+            account.device_id.clone(),
+        )
+        .unwrap();
+        let store = crate::secure_key_store::MemorySecureKeyStore::default();
+        user.save_secret(
+            &store,
+            LocalStateStore::SECURE_SESSION_GRANT_KEY,
+            &serde_json::to_string(&grant).unwrap(),
+        )
+        .unwrap();
+        user.save_secret(
+            &store,
+            LocalStateStore::SECURE_DPOP_DEVICE_KEY,
+            "retained-key",
+        )
+        .unwrap();
+        store
+            .store_secret("test.pending-auth", "retained-transaction")
+            .unwrap();
+        clear_rejected_session_grant(&account, Some(&grant), &store)
+            .await
+            .unwrap();
+        assert!(
+            crate::state::load_session_grant_from_user_secure_store(&user, &store)
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(
+            user.load_secret(&store, LocalStateStore::SECURE_DPOP_DEVICE_KEY)
+                .unwrap()
+                .as_deref(),
+            Some("retained-key")
+        );
+        assert_eq!(
+            store.get_secret("test.pending-auth").unwrap().as_deref(),
+            Some("retained-transaction")
+        );
+        clear_rejected_session_grant(&account, Some(&grant), &store)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn late_denial_does_not_delete_replacement_grant() {
+        let account = crate::test_support::AccountFixture::new("did:web:alice.example").build();
+        let mut old = test_persisted_grant(account.principal_id().as_str());
+        old.account_id = account.authority.clone();
+        old.device_id = account.device_id.clone();
+        let mut replacement = old.clone();
+        replacement.grant_jwt = "replacement.jwt.signature".into();
+        let user = crate::secure_key_store::UserLocalStore::new(
+            account.authority.clone(),
+            account.device_id.clone(),
+        )
+        .unwrap();
+        let store = crate::secure_key_store::MemorySecureKeyStore::default();
+        user.save_secret(
+            &store,
+            LocalStateStore::SECURE_SESSION_GRANT_KEY,
+            &serde_json::to_string(&replacement).unwrap(),
+        )
+        .unwrap();
+        assert!(
+            clear_rejected_session_grant(&account, Some(&old), &store)
+                .await
+                .is_err()
+        );
+        assert_eq!(
+            crate::state::load_session_grant_from_user_secure_store(&user, &store)
+                .unwrap()
+                .unwrap()
+                .grant_jwt,
+            replacement.grant_jwt
+        );
     }
 
     #[test]

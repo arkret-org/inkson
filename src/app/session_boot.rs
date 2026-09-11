@@ -182,20 +182,17 @@ pub(super) fn auth_surface_for_route(
     if !secure_store_ready {
         AuthSurface::Restoring
     } else if matches!(route, Route::Onboarding) {
-        // Account-first onboarding intentionally runs before a session grant
-        // exists; the short-lived handoff credential is held separately. This
-        // check must precede the generic Restoring guard because onboarding
-        // deliberately pauses ConnectionEffects and therefore does not rely on
-        // that effect to reclassify the session boot state.
         AuthSurface::Onboarding
-    } else if !has_session && boot_state == SessionBootState::Restoring {
-        AuthSurface::Restoring
-    } else if has_session {
-        AuthSurface::AppShell
     } else if matches!(route, Route::AuthCallback) {
         AuthSurface::Callback
     } else if matches!(route, Route::Register) {
         AuthSurface::Register
+    } else if matches!(route, Route::Login) {
+        AuthSurface::Login
+    } else if !has_session && boot_state == SessionBootState::Restoring {
+        AuthSurface::Restoring
+    } else if has_session {
+        AuthSurface::AppShell
     } else {
         AuthSurface::Login
     }
@@ -217,16 +214,11 @@ pub(super) fn account_projections_visible(
         && (has_session || !matches!(route, Route::Onboarding))
 }
 
-pub(super) fn should_redirect_to_dashboard_after_login(route: &Route) -> bool {
-    matches!(route, Route::Login | Route::Register | Route::AuthCallback)
-}
-
-pub(super) fn authenticated_content_route(route: &Route, has_session: bool) -> Route {
-    if has_session && should_redirect_to_dashboard_after_login(route) {
-        Route::Dashboard
-    } else {
-        route.clone()
-    }
+pub(super) fn route_owns_authentication(route: &Route) -> bool {
+    matches!(
+        route,
+        Route::Login | Route::Register | Route::AuthCallback | Route::Onboarding
+    )
 }
 
 pub(super) fn initial_session_credential_from_state(

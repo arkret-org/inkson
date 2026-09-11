@@ -20,9 +20,6 @@ pub(super) fn GlobalEffects(
     theme: Signal<String>,
     mut system_theme_is_night: Signal<bool>,
 ) -> Element {
-    let runtime_services = use_context::<crate::runtime::services::RuntimeServices>();
-    let active_account = crate::app::SessionContext::get().active_account;
-
     use_effect(move || {
         crate::i18n::set_locale(&mut i18n_signal, locale());
     });
@@ -47,6 +44,37 @@ pub(super) fn GlobalEffects(
         }
     });
 
+    use_effect(move || {
+        if theme() == "system"
+            && let Some(is_night) = browser_shell_color_scheme_is_dark()
+        {
+            system_theme_is_night.set(is_night);
+        }
+    });
+    use_effect(move || {
+        let resolved_night = theme_renders_as_night(&theme(), system_theme_is_night());
+        apply_document_root_theme(resolved_night);
+    });
+
+    let route = use_route::<Route>();
+    rsx! {
+        if !route_owns_authentication(&route) && secure_store_bootstrap_ready() && !token().trim().is_empty() {
+            AuthenticatedGlobalEffects { base_url, token, state_store, last_error, secure_store_bootstrap_ready, is_server_admin }
+        }
+    }
+}
+
+#[component]
+fn AuthenticatedGlobalEffects(
+    base_url: Signal<String>,
+    token: Signal<String>,
+    state_store: SyncSignal<LocalStateStore>,
+    mut last_error: Signal<Option<String>>,
+    secure_store_bootstrap_ready: Signal<bool>,
+    mut is_server_admin: Signal<bool>,
+) -> Element {
+    let runtime_services = use_context::<crate::runtime::services::RuntimeServices>();
+    let active_account = crate::app::SessionContext::get().active_account;
     let viewer_admin = use_resource(move || {
         let base = base_url();
         let session = token();
@@ -70,18 +98,6 @@ pub(super) fn GlobalEffects(
         if *is_server_admin.peek() != resolved {
             is_server_admin.set(resolved);
         }
-    });
-
-    use_effect(move || {
-        if theme() == "system"
-            && let Some(is_night) = browser_shell_color_scheme_is_dark()
-        {
-            system_theme_is_night.set(is_night);
-        }
-    });
-    use_effect(move || {
-        let resolved_night = theme_renders_as_night(&theme(), system_theme_is_night());
-        apply_document_root_theme(resolved_night);
     });
 
     // Proactive rotation is steady-state maintenance only. Cold-boot restore

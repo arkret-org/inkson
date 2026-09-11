@@ -1,8 +1,8 @@
 use super::connection_handlers::ConnectionRuntimeSignals;
 use super::*;
 
-fn should_run_connection_bootstrap(bootstrap_pending: bool, on_onboarding_route: bool) -> bool {
-    bootstrap_pending && !on_onboarding_route
+fn should_run_connection_bootstrap(bootstrap_pending: bool, authentication_active: bool) -> bool {
+    bootstrap_pending && !authentication_active
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -10,7 +10,7 @@ pub(super) struct ConnectionEffectState {
     pub runtime: ConnectionRuntimeSignals,
     pub secure_store_bootstrap_ready: Signal<bool>,
     pub session_generation: Signal<u64>,
-    pub on_onboarding_route: bool,
+    pub authentication_active: bool,
 }
 
 #[component]
@@ -19,7 +19,7 @@ pub(super) fn ConnectionEffects(state: ConnectionEffectState) -> Element {
         runtime,
         secure_store_bootstrap_ready,
         mut session_generation,
-        on_onboarding_route,
+        authentication_active,
     } = state;
     let ConnectionRuntimeSignals {
         mut connection_status,
@@ -62,11 +62,11 @@ pub(super) fn ConnectionEffects(state: ConnectionEffectState) -> Element {
             session_coordinator.set_invalidator(move |reason| {
                 invalidator_effects.request_cancel_all();
                 session_generation.set(session_generation() + 1);
+                let rejected_grant = state_store.read().session_grant();
+                let rejected_account = active_account.peek().clone();
                 state_store.write().set_session_grant(None);
+                bootstrap_pending.set(false);
                 token.set(String::new());
-                if let Some(account) = active_account.peek().as_ref() {
-                    crate::config::clear_session_credential_secret(account);
-                }
                 persist_config(
                     config_store,
                     base_url(),
@@ -92,7 +92,50 @@ pub(super) fn ConnectionEffects(state: ConnectionEffectState) -> Element {
                     SessionBootState::Unauthenticated,
                     "session coordinator invalidated the active session",
                 );
-                let _ = navigator.push(Route::Login);
+                let cleanup_generation = *session_generation.peek();
+                spawn(async move {
+                    let result = async {
+                        let _commit =
+                            crate::identity::session_refresh::session_credential_mutation_lock()
+                                .lock()
+                                .await;
+                        anyhow::ensure!(
+                            *session_generation.peek() == cleanup_generation,
+                            "session changed before cleanup"
+                        );
+                        if let Some(account) = rejected_account {
+                            let secure_store =
+                                crate::secure_key_store::default_secure_key_store("inkson");
+                            crate::identity::session_refresh::clear_rejected_session_grant(
+                                &account,
+                                rejected_grant.as_ref(),
+                                secure_store.as_ref(),
+                            )
+                            .await?;
+                            if *session_generation.peek() != cleanup_generation {
+                                anyhow::bail!("session changed during rejected grant cleanup");
+                            }
+                            crate::config::clear_session_credential_secret_durable(&account)
+                                .await?;
+                        }
+                        Ok::<_, anyhow::Error>(())
+                    }
+                    .await;
+                    if *session_generation.peek() != cleanup_generation {
+                        return;
+                    }
+                    match result {
+                        Ok(()) => {
+                            navigator.replace(Route::Login);
+                        }
+                        Err(error) => {
+                            tracing::error!(%error, "rejected session cleanup failed");
+                            last_error.set(Some(format!(
+                                "Could not remove the expired session from secure storage: {error}"
+                            )));
+                        }
+                    }
+                });
             });
         });
     }
@@ -185,8 +228,21 @@ pub(super) fn ConnectionEffects(state: ConnectionEffectState) -> Element {
         });
     }
 
+    let mut previous_authentication_active = use_signal(|| false);
+    if authentication_active != *previous_authentication_active.peek() {
+        previous_authentication_active.set(authentication_active);
+        if authentication_active {
+            runtime_services.session.suspend();
+            runtime_services.effects.request_cancel_all();
+            let next_generation = (*session_generation.peek()).wrapping_add(1);
+            session_generation.set(next_generation);
+            bootstrap_pending.set(true);
+            sync_bootstrap_complete.set(false);
+        }
+    }
+
     let secure_store_ready = secure_store_bootstrap_ready();
-    if should_run_connection_bootstrap(bootstrap_pending(), on_onboarding_route) {
+    if should_run_connection_bootstrap(bootstrap_pending(), authentication_active) {
         let active = active_account();
         let base = active
             .as_ref()

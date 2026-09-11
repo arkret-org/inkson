@@ -123,6 +123,18 @@ impl SecureKeyStore for FallbackSecureKeyStore {
         primary
     }
 
+    fn delete_secret_durable<'a>(
+        &'a self,
+        key: &'a str,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), SecureKeyStoreError>> + 'a>>
+    {
+        Box::pin(async move {
+            self.primary.delete_secret_durable(key).await?;
+            let _ = self.fallback.delete_secret(key);
+            Ok(())
+        })
+    }
+
     fn list_secret_keys(&self, prefix: Option<&str>) -> Result<Vec<String>, SecureKeyStoreError> {
         // Union of both tiers' keys (a secret may live only in one). Ignore a
         // tier that cannot enumerate rather than failing the whole listing.

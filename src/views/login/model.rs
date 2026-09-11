@@ -81,13 +81,21 @@ pub(super) fn classify_returning_session_exchange_error(
     let message = format!("Account Authority handoff session issue failed: {error}");
     match &error {
         garth::Error::Http(_) => ReturningSessionExchangeError::Retryable(message),
-        garth::Error::Api { status, error }
-            if *status >= 500
-                || error.error_code()
-                    == Some(
-                        arkret_sdk::error_codes::ErrorCode::SessionGrantReplayIndeterminate,
-                    ) =>
+        garth::Error::Api { error, .. }
+            if matches!(
+                error.error_code(),
+                Some(
+                    arkret_sdk::error_codes::ErrorCode::SessionGrantReplayIndeterminate
+                        | arkret_sdk::error_codes::ErrorCode::SessionGrantReplayExpired
+                        | arkret_sdk::error_codes::ErrorCode::SessionGrantReplayTerminal
+                )
+            ) =>
         {
+            ReturningSessionExchangeError::Fatal(format!(
+                "{message}. This issuance attempt cannot be replayed; authenticate again with a fresh request."
+            ))
+        }
+        garth::Error::Api { status, .. } if *status == 429 || *status >= 500 => {
             ReturningSessionExchangeError::Retryable(message)
         }
         garth::Error::Api { error, .. }

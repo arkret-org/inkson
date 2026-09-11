@@ -26,7 +26,6 @@ impl LoginController {
         returning_principal: Option<arkret_sdk::Did>,
         persisted_account: Option<crate::config::ActiveAccountContext>,
         reset_state_store: SyncSignal<crate::state::LocalStateStore>,
-        session: crate::runtime::session::SessionCoordinator,
     ) {
         let Self {
             mut is_busy,
@@ -215,9 +214,8 @@ impl LoginController {
                 }
             };
 
-            // Invalidation synchronously unmounts this route and pushes Login.
-            // Complete the pending-scope transition in one no-await JS turn;
-            // an URL-only detached task performs external navigation after it.
+            // Authentication already owns this route. Changing local scope
+            // is not a terminal rejection of the previous account session.
             if resume_account_handoff {
                 // An unfinished identity-creation lease is fenced to this DPoP
                 // holder. Rotating the key here makes the same browser look like
@@ -245,8 +243,10 @@ impl LoginController {
                 reset_state_store.write().set_dpop_device_key(None);
             }
             pending_store.activate();
-            prepared_authorization.launch_detached();
-            session.invalidate("starting an account sign-in transaction");
+            if let Err(error) = prepared_authorization.launch() {
+                is_busy.set(false);
+                auth_status.set(error);
+            }
         });
     }
 

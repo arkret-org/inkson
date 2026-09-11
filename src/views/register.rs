@@ -37,7 +37,6 @@ enum RegistrationFailureKind {
 pub fn RegistrationPanel() -> Element {
     let mut station = crate::app::SessionContext::get().base_url;
     let mut state_store = crate::app::SessionContext::get().state_store;
-    let session = use_context::<crate::runtime::services::RuntimeServices>().session;
     let i18n = use_context::<crate::i18n::I18nSignal>();
     let mut busy = use_signal(|| false);
     let mut feedback = use_signal(RegistrationFeedback::default);
@@ -96,7 +95,6 @@ pub fn RegistrationPanel() -> Element {
                     onclick: move |_| {
                         let server = station();
                         let ui_locale = i18n.read().0.code().to_owned();
-                        let session = session.clone();
                         // This route is the explicit new-identity intent.  A
                         // device identity belongs to one principal, so it must
                         // never inherit the active/previous account's id.
@@ -149,10 +147,7 @@ pub fn RegistrationPanel() -> Element {
                                 .await
                                 .map_err(anyhow::Error::msg)?;
 
-                                // `session.invalidate` synchronously unmounts this
-                                // route and routes to Login. Install the pending
-                                // namespace in one no-await boundary, then let an
-                                // URL-only detached task navigate after invalidation.
+                                // The authentication route already fenced the previous session.
                                 state_store.write().begin_pending_login(&device, None);
                                 crate::secure_key_store::reset_device_seed_scope_for_signin(
                                     secure_store.as_ref(),
@@ -165,10 +160,7 @@ pub fn RegistrationPanel() -> Element {
                                     device_id = %device,
                                     "create identity: pending login established; opening authority"
                                 );
-                                prepared_authorization.launch_detached();
-                                session.invalidate(
-                                    "starting a new-account registration transaction",
-                                );
+                                prepared_authorization.launch().map_err(anyhow::Error::msg)?;
                                 Ok(())
                             }
                             .await;

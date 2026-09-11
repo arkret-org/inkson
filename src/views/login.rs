@@ -133,11 +133,22 @@ pub fn LoginPanel(
         callback_started.set(true);
         is_busy.set(true);
 
+        let callback_generation = *session_generation.peek();
         let callback_device = pending_device_id();
         let resume_url = returning_callback_resume_url(&callback_url, &returned_state).ok();
         let result = finish_oidc_callback(callback_url, callback_device, state_store_write).await;
+        if *session_generation.peek() != callback_generation {
+            return;
+        }
         match result {
             Ok(OidcCallbackOutcome::Login(completed)) => {
+                callback_retry_url.set(resume_url.clone());
+                let _commit = crate::identity::session_refresh::session_credential_mutation_lock()
+                    .lock()
+                    .await;
+                if *session_generation.peek() != callback_generation {
+                    return;
+                }
                 let mut account = completed.account.clone();
                 let mut profiles = config_store.read().load_profiles();
                 let profile_id =
@@ -252,6 +263,12 @@ pub fn LoginPanel(
                         "clear returning-session replay checkpoint after accepted account commit failed"
                     );
                 }
+                if *session_generation.peek() != callback_generation {
+                    return;
+                }
+                if let Err(error) = clear_persisted_oidc_scaffold(&returned_state) {
+                    tracing::warn!(%error, "clear committed callback scaffold failed");
+                }
                 active_account.set(Some(account.clone()));
                 base_url.set(station_url.clone());
                 principal_id.set(Some(account.principal_id().clone()));
@@ -314,7 +331,6 @@ pub fn LoginPanel(
     // Every fresh OIDC callback first creates an account handoff. Local account
     // and device evidence is only a returning candidate checked after the
     // handoff reports the authenticated account as Bound.
-    let sign_in_session = session.clone();
     let mut launch_sign_in = move || {
         let principal = base_url();
         let ui_locale = i18n.read().0.code().to_owned();
@@ -346,7 +362,6 @@ pub fn LoginPanel(
             }
         };
         let reset_state_store = state_store;
-        let session = sign_in_session.clone();
         is_busy.set(true);
         auth_status.set("Opening server sign-in...".to_owned());
         controller.launch_sign_in(
@@ -355,7 +370,6 @@ pub fn LoginPanel(
             returning_principal,
             persisted_account,
             reset_state_store,
-            session,
         );
     };
 

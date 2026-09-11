@@ -955,6 +955,11 @@ fn AppBootstrap() -> Element {
                 "data-theme": theme_attr,
                 "data-testid": "auth-shell",
                 div { class: "auth-card",
+                    if matches!(auth_surface, AuthSurface::Login) {
+                        if let Some(error) = last_error() {
+                            div { role: "alert", class: "auth-status", "{error}" }
+                        }
+                    }
                     match auth_surface {
                         AuthSurface::Callback => rsx! {
                             crate::views::login::LoginPanel {
@@ -971,6 +976,7 @@ fn AppBootstrap() -> Element {
                                         SessionBootState::Checking,
                                         "OIDC callback accepted; bootstrap requested",
                                     );
+                                    navigator.replace(Route::Dashboard);
                                 },
                             }
                         },
@@ -1025,6 +1031,7 @@ fn AppBootstrap() -> Element {
                                         SessionBootState::Checking,
                                         "interactive session accepted; bootstrap requested",
                                     );
+                                    navigator.replace(Route::Dashboard);
                                 },
                             }
                         },
@@ -1034,7 +1041,7 @@ fn AppBootstrap() -> Element {
             }
     };
 
-    let content_route = authenticated_content_route(&route, has_session);
+    let content_route = route.clone();
     // Single source of truth for the post-boot account-health prompt chain.
     // Each prompt below renders iff it is the resolved highest-priority one,
     // replacing the per-prompt inline suppression that used to drift apart.
@@ -1174,9 +1181,10 @@ fn AppBootstrap() -> Element {
                         runtime: connection_runtime,
                         secure_store_bootstrap_ready,
                         session_generation,
-                        on_onboarding_route: matches!(&content_route, Route::Onboarding),
+                        authentication_active: route_owns_authentication(&route),
                     }
                 }
+                if matches!(auth_surface, AuthSurface::AppShell) {
                 AccountRecoveryEffects {
                     account_recovery_configured,
                     account_recovery_detection_key_seen,
@@ -1270,15 +1278,6 @@ fn AppBootstrap() -> Element {
                         did_resolution_health,
                     }
                 }
-                SecureStoreEffects {
-                    state: SecureStoreEffectState {
-                        config_store,
-                        principal_id,
-                        device_id,
-                        secure_store_bootstrap_ready,
-                        token,
-                    }
-                }
                 SidecarFoldEvidenceEffects {
                     state: SidecarFoldEvidenceEffectState { principal_id }
                 }
@@ -1296,6 +1295,16 @@ fn AppBootstrap() -> Element {
                     realm_events_route_enabled,
                     realm_live_epoch,
                     profiles: profiles_signal,
+                }
+                }
+                SecureStoreEffects {
+                    state: SecureStoreEffectState {
+                        config_store,
+                        principal_id,
+                        device_id,
+                        secure_store_bootstrap_ready,
+                        token,
+                    }
                 }
                 style { "{DXC_THEME}" }
                 style { "{DXC_BUTTON_STYLE}" }

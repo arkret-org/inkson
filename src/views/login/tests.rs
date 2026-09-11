@@ -329,13 +329,25 @@ fn returning_session_errors_preserve_retry_setup_and_security_boundaries() {
         classify_returning_session_exchange_error(garth::Error::Http("offline".to_owned())),
         ReturningSessionExchangeError::Retryable(_)
     ));
-    assert!(matches!(
-        classify_returning_session_exchange_error(api_exchange_error(
-            503,
-            arkret_sdk::error_codes::ErrorCode::SESSION_GRANT_REPLAY_INDETERMINATE,
-        )),
-        ReturningSessionExchangeError::Retryable(_)
-    ));
+    for code in [
+        arkret_sdk::error_codes::ErrorCode::SESSION_GRANT_REPLAY_INDETERMINATE,
+        arkret_sdk::error_codes::ErrorCode::SESSION_GRANT_REPLAY_EXPIRED,
+        arkret_sdk::error_codes::ErrorCode::SESSION_GRANT_REPLAY_TERMINAL,
+    ] {
+        assert!(matches!(
+            classify_returning_session_exchange_error(api_exchange_error(503, code)),
+            ReturningSessionExchangeError::Fatal(_)
+        ));
+    }
+    for status in [429, 503] {
+        assert!(matches!(
+            classify_returning_session_exchange_error(api_exchange_error(
+                status,
+                "auth_unavailable"
+            )),
+            ReturningSessionExchangeError::Retryable(_)
+        ));
+    }
     assert!(matches!(
         classify_returning_session_exchange_error(api_exchange_error(
             403,

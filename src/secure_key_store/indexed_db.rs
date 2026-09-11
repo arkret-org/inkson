@@ -66,6 +66,7 @@ pub struct IndexedDbSecureKeyStore {
     service_name: String,
     db_name: String,
     cache: Arc<Mutex<HashMap<String, Vec<u8>>>>,
+    mutations: Arc<Mutex<HashMap<String, u64>>>,
     /// Non-extractable AES-GCM CryptoKey, cloned cheaply via JsValue
     /// reference counting. Used by spawn_local persistence tasks. The
     /// The boundary enforces same-thread access at runtime while satisfying
@@ -87,6 +88,31 @@ pub struct IndexedDbSecureKeyStore {
 struct IndexedDbSendBoundary<T>(send_wrapper::SendWrapper<std::sync::Arc<T>>);
 
 impl IndexedDbSecureKeyStore {
+    fn begin_mutation(&self, key: &str) -> Result<u64, SecureKeyStoreError> {
+        let mut mutations = self
+            .mutations
+            .lock()
+            .map_err(|err| SecureKeyStoreError::Backend(format!("mutation lock: {err}")))?;
+        let revision = mutations.entry(key.to_owned()).or_default();
+        *revision = revision.wrapping_add(1);
+        Ok(*revision)
+    }
+
+    fn check_mutation(
+        mutations: &Mutex<HashMap<String, u64>>,
+        key: &str,
+        revision: u64,
+    ) -> Result<(), SecureKeyStoreError> {
+        let current = mutations
+            .lock()
+            .map_err(|err| SecureKeyStoreError::Backend(format!("mutation lock: {err}")))?;
+        if current.get(key).copied() != Some(revision) {
+            return Err(SecureKeyStoreError::Backend(
+                "secret mutation superseded".into(),
+            ));
+        }
+        Ok(())
+    }
     #[cfg(feature = "wasm-localstorage-secrets-test")]
     #[doc(hidden)]
     pub fn close_database_for_test(&self) {
@@ -126,6 +152,7 @@ impl IndexedDbSecureKeyStore {
             service_name: service_name.to_owned(),
             db_name,
             cache: Arc::new(Mutex::new(cache)),
+            mutations: Arc::new(Mutex::new(HashMap::new())),
             crypto_key: IndexedDbSendBoundary(send_wrapper::SendWrapper::new(Arc::new(crypto_key))),
             db: IndexedDbSendBoundary(send_wrapper::SendWrapper::new(Arc::new(db))),
         })
@@ -731,6 +758,60 @@ impl IndexedDbSecureKeyStore {
         }
     }
 
+    async fn idb_write_committed(
+        tx: &web_sys::IdbTransaction,
+        request: &web_sys::IdbRequest,
+    ) -> Result<(), SecureKeyStoreError> {
+        use wasm_bindgen::JsCast;
+        use wasm_bindgen::closure::Closure;
+        struct Guard {
+            tx: web_sys::IdbTransaction,
+            _done: Closure<dyn FnMut(web_sys::Event)>,
+            _failed: Closure<dyn FnMut(web_sys::Event)>,
+        }
+        impl Drop for Guard {
+            fn drop(&mut self) {
+                self.tx.set_oncomplete(None);
+                self.tx.set_onabort(None);
+                self.tx.set_onerror(None);
+                let _ = self.tx.abort();
+            }
+        }
+        let (sender, receiver) = tokio::sync::oneshot::channel();
+        let sender = std::rc::Rc::new(std::cell::RefCell::new(Some(sender)));
+        let done_sender = sender.clone();
+        let done = Closure::<dyn FnMut(web_sys::Event)>::new(move |_| {
+            if let Some(sender) = done_sender.borrow_mut().take() {
+                let _ = sender.send(Ok(()));
+            }
+        });
+        let failed = Closure::<dyn FnMut(web_sys::Event)>::new(move |_| {
+            if let Some(sender) = sender.borrow_mut().take() {
+                let _ = sender.send(Err(SecureKeyStoreError::Backend(
+                    "secret transaction aborted".into(),
+                )));
+            }
+        });
+        tx.set_oncomplete(Some(done.as_ref().unchecked_ref()));
+        tx.set_onabort(Some(failed.as_ref().unchecked_ref()));
+        tx.set_onerror(Some(failed.as_ref().unchecked_ref()));
+        let _guard = Guard {
+            tx: tx.clone(),
+            _done: done,
+            _failed: failed,
+        };
+        let (request_result, completion) = tokio::join!(Self::idb_request_result(request), async {
+            tokio::select! {
+                result = receiver => result.map_err(|_| SecureKeyStoreError::Backend("secret transaction channel closed".into()))?,
+                _ = crate::runtime_helpers::sleep_for(std::time::Duration::from_secs(12)) =>
+                    Err(SecureKeyStoreError::Backend("secret transaction completion timeout".into())),
+            }
+        });
+        request_result
+            .map_err(|err| SecureKeyStoreError::Backend(format!("secret request: {err:?}")))?;
+        completion
+    }
+
     async fn idb_put_value(
         db: &web_sys::IdbDatabase,
         store: &str,
@@ -747,10 +828,7 @@ impl IndexedDbSecureKeyStore {
         let request = obj_store
             .put_with_key(value, &JsValue::from_str(key))
             .map_err(|err| SecureKeyStoreError::Backend(format!("put: {err:?}")))?;
-        Self::idb_request_result(&request)
-            .await
-            .map_err(|err| SecureKeyStoreError::Backend(format!("put awaited: {err:?}")))?;
-        Ok(())
+        Self::idb_write_committed(&tx, &request).await
     }
 
     /// `add` (insert-if-absent) variant of [`idb_put_value`]. Rejects with a
@@ -773,10 +851,7 @@ impl IndexedDbSecureKeyStore {
         let request = obj_store
             .add_with_key(value, &JsValue::from_str(key))
             .map_err(|err| SecureKeyStoreError::Backend(format!("add: {err:?}")))?;
-        Self::idb_request_result(&request)
-            .await
-            .map_err(|err| SecureKeyStoreError::Backend(format!("add awaited: {err:?}")))?;
-        Ok(())
+        Self::idb_write_committed(&tx, &request).await
     }
 
     async fn idb_delete_value(
@@ -794,10 +869,7 @@ impl IndexedDbSecureKeyStore {
         let request = obj_store
             .delete(&JsValue::from_str(key))
             .map_err(|err| SecureKeyStoreError::Backend(format!("delete: {err:?}")))?;
-        Self::idb_request_result(&request)
-            .await
-            .map_err(|err| SecureKeyStoreError::Backend(format!("delete awaited: {err:?}")))?;
-        Ok(())
+        Self::idb_write_committed(&tx, &request).await
     }
 
     /// Read every entry in `store` as `(key, value)` via `getAll` +
@@ -994,6 +1066,8 @@ impl IndexedDbSecureKeyStore {
         crypto_key: &wasm_bindgen::JsValue,
         key: &str,
         plain: &[u8],
+        mutations: &Mutex<HashMap<String, u64>>,
+        revision: u64,
     ) -> Result<(), SecureKeyStoreError> {
         use js_sys::{Object, Reflect, Uint8Array};
         use wasm_bindgen::JsValue;
@@ -1007,7 +1081,9 @@ impl IndexedDbSecureKeyStore {
             .map_err(|err| SecureKeyStoreError::Backend(format!("entry iv: {err:?}")))?;
         Reflect::set(&entry, &JsValue::from_str("ct"), &ct_array)
             .map_err(|err| SecureKeyStoreError::Backend(format!("entry ct: {err:?}")))?;
-        Self::idb_put_value(db, Self::OBJECT_STORE_ENTRIES, key, entry.as_ref()).await
+        Self::check_mutation(mutations, key, revision)?;
+        Self::idb_put_value(db, Self::OBJECT_STORE_ENTRIES, key, entry.as_ref()).await?;
+        Self::check_mutation(mutations, key, revision)
     }
 }
 
@@ -1027,6 +1103,8 @@ impl std::fmt::Debug for IndexedDbSecureKeyStore {
 
 impl SecureKeyStore for IndexedDbSecureKeyStore {
     fn store_secret_bytes(&self, key: &str, value: &[u8]) -> Result<(), SecureKeyStoreError> {
+        let revision = self.begin_mutation(key)?;
+        let mutations = self.mutations.clone();
         // The byte-store contract includes binary MLS secrets. AES-GCM wraps
         // their exact bytes; text callers use the same representation.
         {
@@ -1048,8 +1126,15 @@ impl SecureKeyStore for IndexedDbSecureKeyStore {
         let crypto_key = self.crypto_key.clone();
         let db = self.db.clone();
         wasm_bindgen_futures::spawn_local(async move {
-            match Self::persist_entry_value(&db.0, &crypto_key.0, &key_for_async, &value_for_async)
-                .await
+            match Self::persist_entry_value(
+                &db.0,
+                &crypto_key.0,
+                &key_for_async,
+                &value_for_async,
+                &mutations,
+                revision,
+            )
+            .await
             {
                 Ok(()) => {}
                 Err(err) => {
@@ -1073,7 +1158,16 @@ impl SecureKeyStore for IndexedDbSecureKeyStore {
             // callers that must guarantee durability before a remote party
             // depends on the secret (e.g. the MLS KeyPackage init key before the
             // KeyPackage is advertised to the server).
-            Self::persist_entry_value(&self.db.0, &self.crypto_key.0, key, value).await?;
+            let revision = self.begin_mutation(key)?;
+            Self::persist_entry_value(
+                &self.db.0,
+                &self.crypto_key.0,
+                key,
+                value,
+                &self.mutations,
+                revision,
+            )
+            .await?;
             // A durable caller must never observe an uncommitted value through
             // the process cache. Publish it only after IndexedDB confirms the
             // transaction, and propagate a poisoned cache lock as a failure.
@@ -1106,6 +1200,8 @@ impl SecureKeyStore for IndexedDbSecureKeyStore {
     }
 
     fn delete_secret(&self, key: &str) -> Result<(), SecureKeyStoreError> {
+        let revision = self.begin_mutation(key)?;
+        let mutations = self.mutations.clone();
         {
             let mut guard = self
                 .cache
@@ -1117,6 +1213,9 @@ impl SecureKeyStore for IndexedDbSecureKeyStore {
         let key_for_async = key.to_owned();
         let db = self.db.clone();
         wasm_bindgen_futures::spawn_local(async move {
+            if Self::check_mutation(&mutations, &key_for_async, revision).is_err() {
+                return;
+            }
             if let Err(err) =
                 Self::idb_delete_value(&db.0, Self::OBJECT_STORE_ENTRIES, &key_for_async).await
             {
@@ -1124,6 +1223,23 @@ impl SecureKeyStore for IndexedDbSecureKeyStore {
             }
         });
         Ok(())
+    }
+
+    fn delete_secret_durable<'a>(
+        &'a self,
+        key: &'a str,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), SecureKeyStoreError>> + 'a>>
+    {
+        Box::pin(async move {
+            let revision = self.begin_mutation(key)?;
+            Self::idb_delete_value(&self.db.0, Self::OBJECT_STORE_ENTRIES, key).await?;
+            Self::check_mutation(&self.mutations, key, revision)?;
+            self.cache
+                .lock()
+                .map_err(|err| SecureKeyStoreError::Backend(format!("cache lock: {err}")))?
+                .remove(key);
+            Ok(())
+        })
     }
 
     fn backend_info(&self) -> SecureKeyStoreBackendInfo {

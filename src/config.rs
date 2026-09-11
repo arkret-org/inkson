@@ -388,6 +388,17 @@ pub(crate) fn clear_session_credential_secret(account: &ActiveAccountContext) {
     }
 }
 
+pub(crate) async fn clear_session_credential_secret_durable(
+    account: &ActiveAccountContext,
+) -> anyhow::Result<()> {
+    let key = session_credential_secret_key(account)?;
+    if let Ok(mut cache) = session_credential_cache().lock() {
+        cache.insert(key.clone(), None);
+    }
+    config_secure_store().delete_secret_durable(&key).await?;
+    Ok(())
+}
+
 /// Companion read: the session credential for `principal_id`, from the
 /// in-process cache first, then the SecureKeyStore.
 fn restore_session_credential_secret_from_store(

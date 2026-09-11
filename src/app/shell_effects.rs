@@ -316,21 +316,7 @@ pub(super) fn ShellEffects(state: ShellEffectState) -> Element {
 
     let route = use_route::<Route>();
     use_effect(move || {
-        if should_redirect_to_dashboard_after_login(&route) && !token().trim().is_empty() {
-            // This is the sole authenticated-entry route canonicalizer. It
-            // uses the Dioxus router only; a full document replacement would
-            // restart secure-store hydration and re-enter the boot state
-            // machine immediately after a successful login.
-            spawn(async move {
-                crate::runtime_helpers::sleep_for(std::time::Duration::from_millis(1)).await;
-                if let Some(failure) = navigator.replace(Route::Dashboard) {
-                    tracing::warn!(
-                        ?failure,
-                        "session shell entry-route canonicalisation failed"
-                    );
-                }
-            });
-        } else if matches!(route, Route::Recovery) {
+        if matches!(route, Route::Recovery) {
             let _ = navigator.replace(Route::SettingsRecovery);
         }
     });

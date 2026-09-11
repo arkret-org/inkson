@@ -505,20 +505,9 @@ pub(crate) struct PreparedOidcAuthorization {
 }
 
 impl PreparedOidcAuthorization {
-    fn launch(self) -> Result<(), String> {
+    pub(crate) fn launch(self) -> Result<(), String> {
         open_oidc_authorize_url(&self.authorize_url)
             .map_err(|error| format!("Could not open server sign-in: {error}"))
-    }
-
-    /// Schedule browser navigation outside the route-owned task that is about
-    /// to synchronously invalidate and unmount itself. The detached task owns
-    /// only an already-validated URL; it captures no component Signals.
-    pub(crate) fn launch_detached(self) {
-        dioxus::core::spawn_forever(async move {
-            if let Err(error) = self.launch() {
-                tracing::error!(%error, "launch prepared OIDC authorization failed");
-            }
-        });
     }
 }
 
@@ -737,7 +726,6 @@ pub(super) async fn finish_oidc_callback(
         .await
         {
             Ok(completed) => {
-                let _ = clear_persisted_oidc_scaffold(&scaffold.expected_state);
                 return Ok(OidcCallbackOutcome::Login(Box::new(completed)));
             }
             Err(ReturningSessionExchangeError::DeviceSetupRequired(error)) => {
@@ -843,7 +831,6 @@ pub(super) async fn finish_oidc_callback(
         .await
         {
             Ok(completed) => {
-                let _ = clear_persisted_oidc_scaffold(&scaffold.expected_state);
                 return Ok(OidcCallbackOutcome::Login(Box::new(completed)));
             }
             Err(ReturningSessionExchangeError::DeviceSetupRequired(error)) => {

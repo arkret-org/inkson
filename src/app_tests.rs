@@ -197,14 +197,14 @@ fn unread_notification_count_ignores_read_and_archived_items() {
         ..ClientLocalState::default()
     };
     snapshot.notification_client_state.insert(
-        "ak:notification:0196419b-0000-7000-8000-000000000003".to_owned(),
+        snapshot.notification_projection[2].notification_id(),
         crate::state::NotificationClientState {
             read: true,
             archived: false,
         },
     );
     snapshot.notification_client_state.insert(
-        "ak:notification:0196419b-0000-7000-8000-000000000004".to_owned(),
+        snapshot.notification_projection[3].notification_id(),
         crate::state::NotificationClientState {
             read: false,
             archived: true,
@@ -962,47 +962,39 @@ fn auth_surface_waits_for_secure_store_even_when_memory_has_a_token() {
 }
 
 #[test]
-fn auth_surface_routes_authenticated_login_to_app_shell() {
-    assert_eq!(
-        auth_surface_for_route(&Route::Login, true, SessionBootState::Authenticated, true),
-        AuthSurface::AppShell
-    );
-    assert_eq!(
-        auth_surface_for_route(
-            &Route::AuthCallback,
-            true,
-            SessionBootState::Authenticated,
-            true,
-        ),
-        AuthSurface::AppShell
-    );
-}
-
-#[test]
-fn post_login_navigation_preserves_authenticated_deep_links() {
-    assert!(should_redirect_to_dashboard_after_login(&Route::Login));
-    assert!(should_redirect_to_dashboard_after_login(
-        &Route::AuthCallback
-    ));
-    assert!(!should_redirect_to_dashboard_after_login(
-        &Route::NotificationsSettings
-    ));
-    assert!(!should_redirect_to_dashboard_after_login(
-        &Route::SetupSection {
-            section: "realms".to_owned(),
+fn explicit_authentication_owns_the_route_regardless_of_cached_session() {
+    for (route, surface) in [
+        (Route::Login, AuthSurface::Login),
+        (Route::Register, AuthSurface::Register),
+        (Route::AuthCallback, AuthSurface::Callback),
+        (Route::Onboarding, AuthSurface::Onboarding),
+    ] {
+        assert!(route_owns_authentication(&route));
+        for has_session in [false, true] {
+            for boot in [
+                SessionBootState::Checking,
+                SessionBootState::Restoring,
+                SessionBootState::Authenticated,
+                SessionBootState::Unauthenticated,
+            ] {
+                assert_eq!(
+                    auth_surface_for_route(&route, has_session, boot, false),
+                    AuthSurface::Restoring
+                );
+                assert_eq!(
+                    auth_surface_for_route(&route, has_session, boot, true),
+                    surface
+                );
+            }
         }
-    ));
-}
-
-#[test]
-fn authenticated_auth_routes_render_dashboard_without_a_second_login_panel() {
-    for route in [Route::Login, Route::Register, Route::AuthCallback] {
-        assert_eq!(authenticated_content_route(&route, true), Route::Dashboard);
     }
-    assert_eq!(
-        authenticated_content_route(&Route::Settings, true),
-        Route::Settings
-    );
+    for route in [
+        Route::Dashboard,
+        Route::Settings,
+        Route::NotificationsSettings,
+    ] {
+        assert!(!route_owns_authentication(&route));
+    }
 }
 
 #[test]
