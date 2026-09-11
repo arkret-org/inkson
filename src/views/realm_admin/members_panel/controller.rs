@@ -812,7 +812,27 @@ impl RealmMembersController {
         self.status_msg
             .set(format!("submitting invite for {invitee_label}"));
         let submitted = match api.event_submitter() {
-            Ok(es) => es.submit_sdk_event(&submit_event).await,
+            Ok(es) => {
+                let mut retry_count = 0_u8;
+                loop {
+                    match es.submit_sdk_event(&submit_event).await {
+                        Err(error)
+                            if crate::event_submit::is_durably_queued_error(&error)
+                                && retry_count < 4 =>
+                        {
+                            retry_count += 1;
+                            self.status_msg.set(format!(
+                                "invite queued; retrying {invitee_label} ({retry_count}/4)"
+                            ));
+                            crate::runtime_helpers::sleep_for(std::time::Duration::from_millis(
+                                1_100,
+                            ))
+                            .await;
+                        }
+                        outcome => break outcome,
+                    }
+                }
+            }
             Err(err) => Err(err),
         };
         match submitted {
@@ -889,6 +909,9 @@ impl RealmMembersController {
                             occupant_state.as_deref(),
                         )
                         .await
+                    }
+                    None if crate::event_submit::is_durably_queued_error(&error) => {
+                        format!("invite queued for retry: {invitee_label}")
                     }
                     None => format!(
                         "invite failed: {}",
