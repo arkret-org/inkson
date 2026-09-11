@@ -74,10 +74,9 @@ pub(crate) async fn refresh_realm_governance_frontier<
 /// bootstrap is still incomplete.
 ///
 /// Cheap and synchronous so UI effects can gate on it without spawning. The
-/// creator check is what keeps the trust source inside §2.5.1.1's enumeration:
-/// only the actor that created the Realm may establish the initial replay
-/// checkpoint from its genesis. It mirrors the gate in
-/// creator test is shared with group-event construction.
+/// creator check is only a cheap scheduling hint. The asynchronous entry point
+/// revalidates the creator against the accepted authority-root/founding Event
+/// before it authors Genesis; this local predicate never grants authority.
 pub(crate) fn creator_mls_bootstrap_pending(
     store: &LocalStateStore,
     realm_id: &str,
@@ -98,6 +97,15 @@ pub(crate) fn creator_mls_bootstrap_pending(
     {
         return false;
     }
+    creator_mls_bootstrap_incomplete(store, realm_id)
+}
+
+/// The local completion half of the creator-bootstrap gate. Kept separate
+/// from creator identification because a freshly accepted Realm can have an
+/// optimistic security projection before account current-sync installs the
+/// authority-root cell. In that gap the asynchronous entry point verifies the
+/// exact accepted founding Event directly with the Station.
+fn creator_mls_bootstrap_incomplete(store: &LocalStateStore, realm_id: &str) -> bool {
     let Some(snapshot) = store.mls_checkpoint_for(realm_id) else {
         return true;
     };
@@ -123,6 +131,18 @@ pub(crate) fn creator_mls_bootstrap_pending(
         .snapshot
         .artifacts
         .contains_key(evidence.transition_ref.as_str())
+}
+
+fn accepted_projected_creator_matches_actor(
+    realm_tree_projections: &std::collections::BTreeMap<String, serde_json::Value>,
+    realm_id: &str,
+    actor_id: &str,
+) -> bool {
+    let Ok(actor) = crate::mls_api_helpers::local_account_actor_id(actor_id) else {
+        return false;
+    };
+    garth::realm_authority_root_controller_for_realm(realm_tree_projections, realm_id)
+        == Some(actor)
 }
 
 /// Refresh the accepted Seal view, acquire + verify + pin the governance
@@ -152,8 +172,38 @@ pub(crate) async fn ensure_creator_realm_mls_genesis(
         authority.station_id, authority.principal_id, device_id, realm_id
     ));
     let _guard = lock.lock().await;
-    if state_store.read(|store| !creator_mls_bootstrap_pending(store, realm_id, actor_id)) {
+    let (encrypted, incomplete, accepted_projected_creator) = state_store.read(|store| {
+        let state = store.load();
+        let encrypted =
+            garth::security_projection_for_scope_id(&state.realm_tree_projections, realm_id)
+                .is_some_and(garth::realm_projection_is_encrypted);
+        (
+            encrypted,
+            creator_mls_bootstrap_incomplete(store, realm_id),
+            accepted_projected_creator_matches_actor(
+                &state.realm_tree_projections,
+                realm_id,
+                actor_id,
+            ),
+        )
+    });
+    if !encrypted || !incomplete {
         return Ok(());
+    }
+    let submitter = api
+        .event_submitter()
+        .map_err(|error| format!("MLS genesis Event submitter: {error}"))?;
+    // A projected accepted authority-root is sufficient. The create Event in
+    // an optimistic projection is deliberately not: when current-sync has not
+    // installed the root yet, resolve the exact accepted founding Event from
+    // the authenticated Station before choosing the creator branch.
+    if !accepted_projected_creator
+        && !submitter
+            .accepted_realm_creator_matches_actor(realm_id, actor_id)
+            .await
+            .map_err(|error| format!("resolve accepted Realm creator: {error}"))?
+    {
+        return Err("the authenticated actor is not the accepted Realm creator".to_owned());
     }
     if state_store.read(|store| {
         store.mls_genesis_emitted_for(realm_id) && store.mls_checkpoint_for(realm_id).is_none()
@@ -163,12 +213,11 @@ pub(crate) async fn ensure_creator_realm_mls_genesis(
         ));
     }
 
-    // encryption-and-audit.md 2.5.4 T1. The creator's trust in the checkpoint
-    // comes from the create Event it authored, recognised through realm_id.
+    // encryption-and-audit.md §2.5.4: an ordinary client trusts its
+    // authenticated Account Station's accepted frontier result. The founding
+    // Event above selects the recovery branch; it is not an authorization or
+    // governance-proof substitute.
     refresh_realm_governance_frontier(api, state_store.clone(), realm_id).await?;
-    let submitter = api
-        .event_submitter()
-        .map_err(|error| format!("MLS genesis Event submitter: {error}"))?;
 
     let leaves = crate::mls::governance_proof::singleton_security_frontier_leaf(
         &arkret_sdk::ActorId::account(authority.clone()),
@@ -619,6 +668,56 @@ mod tests {
         let mut store = temp_store("pending");
         store.save_realm_tree_projection(REALM, realm_projection(ACTOR, "mls_rfc9420"));
         assert!(creator_mls_bootstrap_pending(&store, REALM, ACTOR));
+    }
+
+    #[test]
+    fn optimistic_encrypted_realm_is_incomplete_before_authority_current_arrives() {
+        let mut store = temp_store("optimistic-incomplete");
+        store.save_realm_tree_projection(
+            REALM,
+            json!({
+                "__kind": "realm",
+                "content_scheme": "mls_rfc9420",
+                "summary": { "encryption_profile": "mls_rfc9420" }
+            }),
+        );
+        assert!(creator_mls_bootstrap_incomplete(&store, REALM));
+        assert!(!creator_mls_bootstrap_pending(&store, REALM, ACTOR));
+    }
+
+    #[test]
+    fn optimistic_create_event_does_not_replace_accepted_authority_root() {
+        let mut projection = realm_projection(ACTOR, "mls_rfc9420");
+        let creator = projection
+            .pointer("/state/events/0/actor_id")
+            .unwrap()
+            .clone();
+        let mut projections = std::collections::BTreeMap::from([(REALM.to_owned(), projection)]);
+
+        assert!(!accepted_projected_creator_matches_actor(
+            &projections,
+            REALM,
+            ACTOR
+        ));
+
+        projection = projections.remove(REALM).unwrap();
+        projection["current"] = json!({"entries": [{
+            "selector": {
+                "scope_ref": {"kind": "realm", "realm_id": REALM},
+                "cell_id": "ak:cell:ak.component.realm.authority_root.v1:null"
+            },
+            "result": {"status": "value", "value": {
+                "controller_actor_id": creator,
+                "controller_epoch": 0,
+                "authority_generation": 0
+            }}
+        }]});
+        projections.insert(REALM.to_owned(), projection);
+        assert!(accepted_projected_creator_matches_actor(
+            &projections,
+            REALM,
+            ACTOR
+        ));
     }
 
     #[test]

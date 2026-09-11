@@ -1290,6 +1290,23 @@ impl EventSubmitter {
         self
     }
 
+    /// Confirm the immutable creator of an already-accepted Realm through the
+    /// Station's exact founding-Event resolver. This is the asynchronous
+    /// fallback for freshly created/cold-loaded Realms whose bounded current
+    /// projection has not installed the authority-root cell yet.
+    pub(crate) async fn accepted_realm_creator_matches_actor(
+        &self,
+        realm_id: &str,
+        actor_id: &str,
+    ) -> anyhow::Result<bool> {
+        let actor =
+            crate::mls_api_helpers::local_account_actor_id(actor_id).map_err(anyhow::Error::msg)?;
+        Ok(matches!(
+            self.realm_create_authority(realm_id).await?,
+            Some(RealmCreateAuthority::Root { controller }) if controller == actor
+        ))
+    }
+
     pub(crate) fn for_founding_realm(mut self, realm_id: arkret_sdk::RealmId) -> Self {
         self.founding_realm = Some(realm_id);
         self

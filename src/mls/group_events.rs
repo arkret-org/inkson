@@ -45,8 +45,24 @@ pub(crate) fn projected_realm_creator_matches_actor(
     let Ok(actor) = crate::mls_api_helpers::local_account_actor_id(actor_id) else {
         return false;
     };
-    garth::realm_authority_root_controller_for_realm(realm_tree_projections, realm_id)
-        == Some(actor)
+    if garth::realm_authority_root_controller_for_realm(realm_tree_projections, realm_id)
+        == Some(actor.clone())
+    {
+        return true;
+    }
+    let Some(projection) = realm_tree_projections.get(realm_id) else {
+        return false;
+    };
+    crate::realm_tree::projected_state_event_values(projection).any(|event| {
+        event.get("kind").and_then(Value::as_str)
+            == Some(arkret_sdk::EventKind::RealmCreate.as_str())
+            && event
+                .get("actor_id")
+                .cloned()
+                .and_then(|value| serde_json::from_value::<arkret_sdk::ActorId>(value).ok())
+                .as_ref()
+                == Some(&actor)
+    })
 }
 
 pub(crate) fn circle_effective_scope(

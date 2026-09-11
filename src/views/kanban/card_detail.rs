@@ -382,40 +382,24 @@ async fn recover_mls_checkpoint_for_encrypted_write(
         return Ok(());
     }
 
-    // A cold Realm route can render the board from its summary before its
-    // accepted create Event arrives. Absence of that authority fact does not
-    // prove this device needs a Welcome or a history restore. Await the same
-    // canonical projection used by the creator bootstrap gate; never infer
-    // creator authority from the session or the board owner.
-    for attempt in 0..50 {
-        let has_creator_authority = {
-            let store = state_store.read();
-            let state = store.load();
-            garth::realm_authority_root_controller_for_realm(
-                &state.realm_tree_projections,
-                realm_id,
-            )
-            .is_some()
-        };
-        if has_creator_authority {
-            break;
-        }
-        if attempt == 49 {
-            return Err(
-                "encryption_transition_pending: waiting for the accepted Realm creation state"
-                    .to_owned(),
-            );
-        }
-        crate::runtime_helpers::sleep_for(std::time::Duration::from_millis(200)).await;
-    }
-
     let mut failures = Vec::new();
     let store_handle = crate::app::runtime_adapter::state_store_handle(state_store);
-    if crate::mls::creator_bootstrap::creator_mls_bootstrap_pending(
-        &state_store.read(),
-        realm_id,
-        actor_id,
-    ) {
+    // Current-sync can lag behind a newly accepted Realm, so the local
+    // authority-root cell is an optimization rather than a prerequisite. If
+    // it is absent, let creator bootstrap resolve the exact immutable
+    // ak.realm.create Event from the Station; invitees still skip this path as
+    // soon as their projected root names another actor.
+    let should_try_creator_bootstrap = {
+        let store = state_store.read();
+        let state = store.load();
+        let projected_controller = garth::realm_authority_root_controller_for_realm(
+            &state.realm_tree_projections,
+            realm_id,
+        );
+        let local_actor = crate::mls_api_helpers::local_account_actor_id(actor_id).ok();
+        projected_controller.is_none() || projected_controller == local_actor
+    };
+    if should_try_creator_bootstrap {
         let api = crate::transport::auth::authed_api_ready(base_url, session_credential.to_owned())
             .await
             .map_err(|error| format!("creator MLS bootstrap transport: {error}"))?;
