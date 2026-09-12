@@ -56,25 +56,39 @@ fn snapshot_contract_manifest_payload() -> serde_json::Value {
     let realm_id =
         arkret_sdk::RealmId::new("ak:realm:AeI0Z4D734iPt9RpF51PAg0CRjLSQmxPqv9NgUmBJiQi").unwrap();
     let service_id = arkret_sdk::DidCoreId::new("ak:did_core:web:server.local").unwrap();
-    // `realm-state-snapshot-schema.md` section 3: items are reducer cells, never rendered
-    // objects. The Realm genesis log is an ordered_log cell every Realm writes.
+    // `realm-state-snapshot-schema.md` section 3: items are complete registered reducer states,
+    // never rendered objects. Realm create history is a security sequenced log.
     let items = vec![
-        arkret_sdk::RealmStateSnapshotMaterializedItem::value(
+        arkret_sdk::RealmStateSnapshotMaterializedItem::new(
             arkret_sdk::CellRef::new("ak:cell:ak.component.realm.create.v1:null").unwrap(),
-            json!([]),
+            arkret_sdk::CanonicalCellState::SequencedState(arkret_sdk::CanonicalSequencedState {
+                revision_event_id: snapshot_contract_event_id("0000000000c1"),
+                value: json!([]),
+            }),
         )
         .unwrap(),
     ];
+    let eligibility_context = arkret_sdk::SnapshotEligibilityContext {
+        authority_refs: Vec::new(),
+        closure_command_refs: Vec::new(),
+        reducer_contract_digest: snapshot_contract_hash(7),
+    };
     let state_digest = arkret_sdk::state_digest_from_items(&items).unwrap();
     let built = arkret_sdk::build_realm_state_snapshot_chunks(
         &realm_state_snapshot_id,
         arkret_sdk::CORE_REDUCER_PROFILE,
         items,
         4096,
+        arkret_sdk::SnapshotReplayEvidence {
+            eligibility_context: eligibility_context.clone(),
+            replay_events: Vec::new(),
+            replay_authority_refs: Vec::new(),
+        },
     )
     .unwrap();
     let created_at = Utc::now();
     let mut manifest = arkret_sdk::RealmStateSnapshotManifest {
+        eligibility_context,
         id: realm_state_snapshot_id,
         realm_id,
         reducer_profile: arkret_sdk::CORE_REDUCER_PROFILE.to_owned(),

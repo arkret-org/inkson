@@ -303,10 +303,9 @@ fn realm_genesis_seal(input: Value) -> Result<Value> {
         let binding = registry
             .resolve(&input.realm_id, &cell)
             .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-        post_state.insert(
-            cell.clone(),
-            arkret_state::join_cell(binding.model.as_ref(), &cell, &ops),
-        );
+        let state = arkret_state::join_cell(binding.model.as_ref(), &cell, &ops)
+            .map_err(|error| anyhow::anyhow!("bootstrap Cell {cell}: {error}"))?;
+        post_state.insert(cell, state);
     }
     let security_state = post_state
         .iter()
