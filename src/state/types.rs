@@ -396,62 +396,35 @@ fn encode_did_key(signing_key: &SigningKey) -> String {
     crate::identity::did_key::did_key_from_verifying_key(&signing_key.verifying_key())
 }
 
-/// Lifecycle state of a locally-submitted Move. Mirrors the states
-/// soland's Move/Seal pipeline can report via the
-/// `SubmitMoveOutcome.state` field plus the post-seal effects the
-/// next `/sync` cycle exposes:
+/// Local submission progress and projection diagnostics.
 ///
-/// - `PendingSeal` — server accepted the Move into MoveStore, waiting for the next notary batch to
-///   seal it. Initial state for any successful submit.
-/// - `Effective` — notary included the Move in a signed Seal; the reducer ran and the resulting
-///   cell state is now visible.
-/// - `FailedPrecondition` — soland rejected the Move at submit time because a precondition
-///   (`if_state` / `if_cell` / `parent_anchor`) no longer matches the server's view.
-/// - `FailedBottom` — the reducer accepted the Move but produced a bottom (concurrent-candidate)
-///   cell; downstream queries are undefined until an admin resolves the conflict via a `head_in`
-///   repair Move (M8).
-/// - `RejectedSeal` — the notary batch that swept the Move was rejected (signature / signer-set
-///   policy / notary-cell mismatch); the Move never landed.
-/// - `NotaryPaused` — the Space's notary is paused (recovery notary not yet rotated, or quorum
-///   unmet); the Space cannot advance until ops bring it back online.
-/// - `PendingMlsBinding` — the Move targets an E2EE message but its Security Frontier binding
-///   references accepted control state the local MLS group has not yet acknowledged. Held
-///   client-side until the binding is observed; the user sees a toast.
+/// `Effective` requires verified acceptance evidence or completion of the
+/// independent MLS reconciliation path. A sync status label alone cannot
+/// establish a committed command result or ordinary historical eligibility.
+/// `ProjectionUnresolved` describes multiple ordinary causal-register heads;
+/// it is not command rejection and does not authorize a safety-state repair.
+/// `NotaryPaused` and `PendingMlsBinding` retain separate retry conditions.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MoveSubmissionState {
     PendingSeal,
     Effective,
     FailedPrecondition,
-    FailedBottom,
+    ProjectionUnresolved,
     RejectedSeal,
     NotaryPaused,
     PendingMlsBinding,
 }
 
 impl MoveSubmissionState {
-    /// Map a soland `SubmitMoveOutcome.state` string into the typed
-    /// enum. Unknown strings fall back to `PendingSeal` (the safe
-    /// "we accepted it, server will tell us more later" default) so
-    /// new server-side states surface as in-flight rather than as
-    /// failures.
-    pub fn from_submit_state(state: &str, reason: Option<&str>) -> Self {
+    /// Interpret non-authoritative progress labels without creating success.
+    /// The wire `failed_bottom` diagnostic maps to local projection ambiguity.
+    /// Unknown labels and purported terminal success remain pending until an
+    /// independent verified acceptance path establishes the result.
+    pub fn from_submit_state(state: &str, _reason: Option<&str>) -> Self {
         match state {
-            "accepted" | "pending" | "pending_seal" => Self::PendingSeal,
-            "effective" | "sealed" => Self::Effective,
-            "rejected" => match reason.unwrap_or("") {
-                r if r.contains("notary_paused") => Self::NotaryPaused,
-                r if r.contains("rejected_seal") || r.contains("seal_signature") => {
-                    Self::RejectedSeal
-                }
-                r if r.contains("bottom") => Self::FailedBottom,
-                r if r.contains("security_frontier") || r.contains("mls_binding") => {
-                    Self::PendingMlsBinding
-                }
-                _ => Self::FailedPrecondition,
-            },
             "failed_precondition" => Self::FailedPrecondition,
-            "failed_bottom" => Self::FailedBottom,
+            "failed_bottom" => Self::ProjectionUnresolved,
             "rejected_seal" => Self::RejectedSeal,
             "notary_paused" => Self::NotaryPaused,
             "pending_mls_binding" => Self::PendingMlsBinding,
@@ -467,7 +440,7 @@ impl MoveSubmissionState {
             Self::PendingSeal => "pending_seal",
             Self::Effective => "effective",
             Self::FailedPrecondition => "failed_precondition",
-            Self::FailedBottom => "failed_bottom",
+            Self::ProjectionUnresolved => "projection_unresolved",
             Self::RejectedSeal => "rejected_seal",
             Self::NotaryPaused => "notary_paused",
             Self::PendingMlsBinding => "pending_mls_binding",
@@ -481,7 +454,7 @@ impl MoveSubmissionState {
             Self::PendingSeal => "待 Seal",
             Self::Effective => "已生效",
             Self::FailedPrecondition => "前置条件失败",
-            Self::FailedBottom => "Bottom 冲突",
+            Self::ProjectionUnresolved => "投影尚未收敛",
             Self::RejectedSeal => "Seal 拒绝",
             Self::NotaryPaused => "Notary 暂停",
             Self::PendingMlsBinding => "MLS 绑定待覆盖",
@@ -494,34 +467,27 @@ impl MoveSubmissionState {
             Self::PendingSeal => "badge amber",
             Self::Effective => "badge green",
             Self::FailedPrecondition => "badge red",
-            Self::FailedBottom => "badge red",
+            Self::ProjectionUnresolved => "badge amber",
             Self::RejectedSeal => "badge red",
             Self::NotaryPaused => "badge red",
             Self::PendingMlsBinding => "badge amber",
         }
     }
 
-    /// True when the state represents a terminal failure — the UI
-    /// allows the user to click for a detail dialog.
+    /// True when diagnostic details describe a failed admission or invalid Seal.
+    /// This does not establish a terminal command decision.
     pub fn is_failed(self) -> bool {
-        matches!(
-            self,
-            Self::FailedPrecondition | Self::FailedBottom | Self::RejectedSeal | Self::NotaryPaused
-        )
+        matches!(self, Self::FailedPrecondition | Self::RejectedSeal)
     }
 }
 
-/// Per-Move tracking record persisted in the local state store. `move_id`
-/// is content-addressed (`sha256:...`); the reducer round-trips
-/// `realm_id` so client UIs can scope filtering. `kind` is a free-form
-/// classifier the UI uses for icons (e.g. `ak.consent.grant`,
-/// `ak.message.create`, `mls_commit`).
+/// Local submission tracking keyed by a local operation or reconciliation id.
+/// The optional signed Event id correlates non-authoritative sync diagnostics.
+/// `kind` is a local UI classifier, not a protocol execution category.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MoveSubmissionRecord {
     pub move_id: String,
-    /// Server-assigned Event id returned by `ak.self.events.command.submit.v1`. Older
-    /// records may only have `move_id` (the local idempotency alias);
-    /// sync `event_states[]` uses this id, so new records persist it.
+    /// Content-addressed signed Event id returned by submission, when available.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub event_id: Option<String>,
     pub realm_id: String,

@@ -4,8 +4,7 @@ impl LocalStateStore {
     // ── Move submission tracking ─────────────────────────────────────────
 
     /// Record a freshly-submitted Move and its initial state. The
-    /// caller has just received soland's `SubmitMoveOutcome`; the
-    /// state is mapped in via [`MoveSubmissionState::from_submit_state`].
+    /// caller records local progress separately from verified effectiveness.
     /// `kind` is a free-form classifier (e.g. `ak.consent.grant`,
     /// `ak.message.create`, `mls_commit`) the UI uses to decorate
     /// pills + icons.
@@ -23,9 +22,8 @@ impl LocalStateStore {
         )
     }
 
-    /// Record a freshly-submitted Move/Event and remember the server Event id
-    /// when available. Sync `event_states[]` is keyed by server `event_id`,
-    /// while older local queues used `move_id` / idempotency aliases.
+    /// Record a submission and its signed Event id when available.
+    /// Sync diagnostics are keyed only by that exact Event id.
     pub fn record_move_submission_with_event_id(
         &mut self,
         move_id: impl Into<String>,
@@ -53,23 +51,14 @@ impl LocalStateStore {
         record
     }
 
-    fn move_submission_lookup_key(
-        &self,
-        event_id: Option<&str>,
-        move_id: Option<&str>,
-    ) -> Option<String> {
-        for id in [move_id, event_id].into_iter().flatten() {
-            if self.cached.move_submissions.contains_key(id) {
-                return Some(id.to_owned());
-            }
+    fn move_submission_lookup_key(&self, event_id: &str) -> Option<String> {
+        if self.cached.move_submissions.contains_key(event_id) {
+            return Some(event_id.to_owned());
         }
         self.cached
             .move_submissions
             .iter()
-            .find(|(_, record)| {
-                event_id.is_some_and(|id| record.event_id.as_deref() == Some(id))
-                    || move_id.is_some_and(|id| record.move_id == id)
-            })
+            .find(|(_, record)| record.event_id.as_deref() == Some(event_id))
             .map(|(key, _)| key.clone())
     }
 
@@ -83,25 +72,16 @@ impl LocalStateStore {
         self.ensure_cached_loaded();
         let mut updated = 0usize;
         for entry in entries {
-            let event_id = entry.get("event_id").and_then(|v| v.as_str());
-            let move_id = entry.get("move_id").and_then(|v| v.as_str());
-            if event_id.is_none() && move_id.is_none() {
-                continue;
-            }
-            let Some(state_label) = entry
-                .get("event_state")
-                .or_else(|| entry.get("state"))
-                .and_then(|v| v.as_str())
-            else {
+            let Ok(entry) = serde_json::from_value::<
+                arkret_models_collaboration::sync_frames::account_sync::RealmSyncEventState,
+            >(entry.clone()) else {
                 continue;
             };
-            let reason = entry
-                .get("event_state_reason_code")
-                .or_else(|| entry.get("reason_code"))
-                .and_then(|v| v.as_str())
-                .map(str::to_owned);
-            let state = MoveSubmissionState::from_submit_state(state_label, reason.as_deref());
-            let Some(record_key) = self.move_submission_lookup_key(event_id, move_id) else {
+            let event_id = entry.event_id.as_str();
+            let reason = entry.event_state_reason_code;
+            let state =
+                MoveSubmissionState::from_submit_state(&entry.event_state, reason.as_deref());
+            let Some(record_key) = self.move_submission_lookup_key(event_id) else {
                 continue;
             };
             let Some(record) = self.cached.move_submissions.get_mut(&record_key) else {
@@ -110,8 +90,11 @@ impl LocalStateStore {
             if record.realm_id != realm_id {
                 continue;
             }
-            if let Some(event_id) = event_id {
-                record.event_id.get_or_insert_with(|| event_id.to_owned());
+            record.event_id.get_or_insert_with(|| event_id.to_owned());
+            if state == MoveSubmissionState::PendingSeal
+                && record.state == MoveSubmissionState::Effective
+            {
+                continue;
             }
             record.state = state;
             if reason.is_some() {

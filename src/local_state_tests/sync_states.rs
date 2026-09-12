@@ -34,7 +34,7 @@ fn sync_event_states_update_submission_by_event_id() {
     assert_eq!(listed.len(), 1);
     assert_eq!(listed[0].move_id, local_id);
     assert_eq!(listed[0].event_id.as_deref(), Some(event_id));
-    assert_eq!(listed[0].state, MoveSubmissionState::Effective);
+    assert_eq!(listed[0].state, MoveSubmissionState::PendingSeal);
 }
 
 #[test]
@@ -46,8 +46,8 @@ fn sync_event_states_update_submission_keyed_by_event_id() {
     store.record_move_submission(
         event_id,
         realm,
-        "mls_member_remove",
-        MoveSubmissionState::PendingMlsBinding,
+        "ak.message.create",
+        MoveSubmissionState::PendingSeal,
         None,
         None,
     );
@@ -66,12 +66,12 @@ fn sync_event_states_update_submission_keyed_by_event_id() {
     assert_eq!(updated, 1);
     let listed = store.move_submissions_for_realm(realm);
     assert_eq!(listed[0].event_id.as_deref(), Some(event_id));
-    assert_eq!(listed[0].state, MoveSubmissionState::FailedBottom);
+    assert_eq!(listed[0].state, MoveSubmissionState::ProjectionUnresolved);
     assert_eq!(listed[0].reason.as_deref(), Some("cell_in_bottom_state"));
 }
 
 #[test]
-fn sync_event_states_update_submission_when_event_and_move_ids_are_present() {
+fn sync_event_states_reject_retired_move_alias_fields() {
     let path = temp_state_path("move-event-and-move-id-state");
     let mut store = LocalStateStore::with_path(path);
     let realm = "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-";
@@ -97,9 +97,9 @@ fn sync_event_states_update_submission_when_event_and_move_ids_are_present() {
         }),
     );
 
-    assert_eq!(updated, 1);
+    assert_eq!(updated, 0);
     let listed = store.move_submissions_for_realm(realm);
     assert_eq!(listed[0].move_id, move_id);
-    assert_eq!(listed[0].event_id.as_deref(), Some(event_id));
-    assert_eq!(listed[0].state, MoveSubmissionState::Effective);
+    assert_eq!(listed[0].event_id, None);
+    assert_eq!(listed[0].state, MoveSubmissionState::PendingSeal);
 }

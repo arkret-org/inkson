@@ -16,47 +16,29 @@ fn move_submission_state_maps_pending_seal_and_effective() {
         MoveSubmissionState::from_submit_state("accepted", None),
         MoveSubmissionState::PendingSeal
     );
-    assert_eq!(
-        MoveSubmissionState::from_submit_state("effective", None),
-        MoveSubmissionState::Effective
-    );
-    assert_eq!(
-        MoveSubmissionState::from_submit_state("sealed", None),
-        MoveSubmissionState::Effective
-    );
+    for label in [
+        "effective",
+        "sealed",
+        "control_sealed",
+        "data_local",
+        "data_observed",
+        "rejected",
+    ] {
+        assert_eq!(
+            MoveSubmissionState::from_submit_state(label, Some("bottom: guessed reason")),
+            MoveSubmissionState::PendingSeal
+        );
+    }
 }
 
 #[test]
-fn move_submission_state_maps_failure_reasons() {
-    assert_eq!(
-        MoveSubmissionState::from_submit_state(
-            "rejected",
-            Some("notary_paused: recovery notary not signed")
-        ),
-        MoveSubmissionState::NotaryPaused
-    );
-    assert_eq!(
-        MoveSubmissionState::from_submit_state(
-            "rejected",
-            Some("seal_signature_invalid for batch")
-        ),
-        MoveSubmissionState::RejectedSeal
-    );
-    assert_eq!(
-        MoveSubmissionState::from_submit_state(
-            "rejected",
-            Some("bottom: cell has concurrent candidates")
-        ),
-        MoveSubmissionState::FailedBottom
-    );
-    assert_eq!(
-        MoveSubmissionState::from_submit_state("rejected", Some("security_frontier mismatch")),
-        MoveSubmissionState::PendingMlsBinding
-    );
-    assert_eq!(
-        MoveSubmissionState::from_submit_state("rejected", Some("if_state did not match")),
-        MoveSubmissionState::FailedPrecondition
-    );
+fn move_submission_state_keeps_projection_diagnostics_nonterminal() {
+    let state =
+        MoveSubmissionState::from_submit_state("failed_bottom", Some("cell_in_bottom_state"));
+    assert_eq!(state, MoveSubmissionState::ProjectionUnresolved);
+    assert!(!state.is_failed());
+    assert_eq!(state.badge_class(), "badge amber");
+    assert_eq!(state.slug(), "projection_unresolved");
 }
 
 #[test]
@@ -231,7 +213,7 @@ fn move_submission_state_label_and_badge_class_distinct_per_state() {
         MoveSubmissionState::PendingSeal,
         MoveSubmissionState::Effective,
         MoveSubmissionState::FailedPrecondition,
-        MoveSubmissionState::FailedBottom,
+        MoveSubmissionState::ProjectionUnresolved,
         MoveSubmissionState::RejectedSeal,
         MoveSubmissionState::NotaryPaused,
         MoveSubmissionState::PendingMlsBinding,
@@ -240,7 +222,7 @@ fn move_submission_state_label_and_badge_class_distinct_per_state() {
         assert!(!state.label_zh().is_empty());
         assert!(state.badge_class().starts_with("badge"));
     }
-    assert!(MoveSubmissionState::NotaryPaused.is_failed());
+    assert!(!MoveSubmissionState::NotaryPaused.is_failed());
     assert!(!MoveSubmissionState::PendingSeal.is_failed());
     assert!(!MoveSubmissionState::Effective.is_failed());
 }
