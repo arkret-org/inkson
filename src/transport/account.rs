@@ -1389,7 +1389,7 @@ pub async fn request_consent(
 ) -> anyhow::Result<arkret_sdk::ConsentRequestOutcome> {
     let body = arkret_sdk::ConsentRequestRequestBody {
         holder_account_id: holder.clone(),
-        consent_scope: Some(scope.trim().parse()?),
+        consent_scope: scope.trim().parse()?,
     };
     http.post(arkret_wire::PATH_SELF_CONSENT_REQUEST, &body)
         .await

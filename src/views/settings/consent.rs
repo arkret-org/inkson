@@ -3,7 +3,7 @@
 //! Spec `identity/consent-model.md` §2-§4. Consent is a holder-private
 //! decision, orthogonal to capability + membership: the holder grants or
 //! revokes scoped permission for a peer to initiate a contact action
-//! (`direct_message` / `invite` / `voice_call`). The cells are read from the
+//! (`invite` / `voice_call` / `presence`). The cells are read from the
 //! holder-private projection at `/_arkret/self/consent/cells` and mutated via
 //! the `grant` / `revoke` / `request` self-plane commands.
 //!
@@ -48,7 +48,7 @@ struct ConsentRow {
     /// Human label. Always contains the peer principal, plus the rest of the
     /// identity that makes it exact.
     peer_label: String,
-    /// Wire scope (`direct_message` / `invite` / `voice_call` / ...).
+    /// Wire scope (`invite` / `voice_call` / `presence` / ...).
     scope: String,
     /// Effective state: `active` / `pending` / `revoked`.
     state: String,
@@ -92,40 +92,15 @@ fn consent_peer_is_holder(peer: &arkret_sdk::ConsentPeer, holder_principal_id: &
     }
 }
 
-/// Map a wire scope to the UI scope token used by the scope `Select`
-/// (`message` ↔ `direct_message`, `call` ↔ `voice_call`).
-fn wire_scope_to_ui(scope: &str) -> &'static str {
-    match scope {
-        "direct_message" => "message",
-        "voice_call" => "call",
-        "invite" => "invite",
-        "video_call" => "video_call",
-        "presence" => "presence",
-        _ => "message",
-    }
-}
-
-/// Map a UI scope token back to its wire scope.
-fn ui_scope_to_wire(scope: &str) -> &'static str {
-    match scope {
-        "message" => "direct_message",
-        "call" => "voice_call",
-        "invite" => "invite",
-        "video_call" => "video_call",
-        "presence" => "presence",
-        _ => "direct_message",
-    }
-}
-
 /// Human label for a wire scope.
 fn scope_label(scope: &str) -> &'static str {
     match scope {
-        "direct_message" => "Direct messages",
         "invite" => "Group invites",
         "voice_call" => "Voice calls",
         "video_call" => "Video calls",
         "presence" => "Presence",
-        _ => "Contact",
+        "any" => "All consent permissions",
+        _ => "Unknown scope",
     }
 }
 
@@ -201,8 +176,8 @@ pub fn ConsentSettingsPanel(principal_id: Signal<String>, token: Signal<String>)
 
     // Direct-grant form state.
     let mut grant_form_open = use_signal(|| false);
-    let mut grant_scope = use_signal(|| "message".to_owned());
-    let grant_scope_selected = use_memo(move || Some(grant_scope()));
+    let mut grant_scope = use_signal(String::new);
+    let grant_scope_selected = use_memo(move || (!grant_scope().is_empty()).then(|| grant_scope()));
     let mut grant_grantee = use_signal(String::new);
     // The actor branch is matched on the complete ActorId, so the grantee's
     // own Station is part of what is being granted, never an implicit local
@@ -214,16 +189,18 @@ pub fn ConsentSettingsPanel(principal_id: Signal<String>, token: Signal<String>)
     // Outbound-request form state. The holder is a remote account and is
     // closed the same way as the grantee above.
     let mut request_form_open = use_signal(|| false);
-    let mut request_scope = use_signal(|| "message".to_owned());
-    let request_scope_selected = use_memo(move || Some(request_scope()));
+    let mut request_scope = use_signal(String::new);
+    let request_scope_selected =
+        use_memo(move || (!request_scope().is_empty()).then(|| request_scope()));
     let mut request_holder = use_signal(String::new);
     let mut request_holder_station = use_signal(String::new);
 
     // Open pending-detail editor, keyed by `(peer_key, scope)` — the exact
     // wire peer, so two kinds sharing a principal core never share a row.
     let mut detail_open = use_signal(|| Option::<(String, String)>::None);
-    let mut detail_scope = use_signal(|| "message".to_owned());
-    let detail_scope_selected = use_memo(move || Some(detail_scope()));
+    let mut detail_scope = use_signal(String::new);
+    let detail_scope_selected =
+        use_memo(move || (!detail_scope().is_empty()).then(|| detail_scope()));
     let mut detail_valid_until = use_signal(String::new);
 
     let mut busy = use_signal(|| false);
@@ -277,8 +254,14 @@ pub fn ConsentSettingsPanel(principal_id: Signal<String>, token: Signal<String>)
         .collect();
     let show_empty = !grant_form_open() && pending_rows.is_empty() && granted_rows.is_empty();
 
-    let grant_submit_disabled = grant_grantee.read().trim().is_empty() || busy();
-    let request_submit_disabled = request_holder.read().trim().is_empty() || busy();
+    let grant_submit_disabled = grant_grantee.read().trim().is_empty()
+        || grant_scope().parse::<arkret_wire::ConsentScope>().is_err()
+        || busy();
+    let request_submit_disabled = request_holder.read().trim().is_empty()
+        || request_scope()
+            .parse::<arkret_wire::ConsentRequestScope>()
+            .is_err()
+        || busy();
 
     rsx! {
         div { class: "settings", "data-testid": "consent-settings-panel",
@@ -309,7 +292,7 @@ pub fn ConsentSettingsPanel(principal_id: Signal<String>, token: Signal<String>)
                             }
                         }
                         div { class: "muted",
-                            "Decide who may message, invite, or call you. Consent is a "
+                            "Decide who may invite, call, or observe your presence. Consent is a "
                             "private decision — it does not grant any group membership."
                         }
 
@@ -356,9 +339,11 @@ pub fn ConsentSettingsPanel(principal_id: Signal<String>, token: Signal<String>)
                                             grant_scope.set(v);
                                         }
                                     },
-                                    SelectOption::<String> { index: 0usize, value: "message".to_string(), text_value: "Direct messages", "Direct messages" }
-                                    SelectOption::<String> { index: 1usize, value: "invite".to_string(), text_value: "Group invites", "Group invites" }
-                                    SelectOption::<String> { index: 2usize, value: "call".to_string(), text_value: "Calls", "Calls" }
+                                    SelectOption::<String> { index: 0usize, value: "invite".to_string(), text_value: "Group invites", "Group invites" }
+                                    SelectOption::<String> { index: 1usize, value: "voice_call".to_string(), text_value: "Voice calls", "Voice calls" }
+                                    SelectOption::<String> { index: 2usize, value: "video_call".to_string(), text_value: "Video calls", "Video calls" }
+                                    SelectOption::<String> { index: 3usize, value: "presence".to_string(), text_value: "Presence", "Presence" }
+                                    SelectOption::<String> { index: 4usize, value: "any".to_string(), text_value: "All consent permissions", "All consent permissions" }
                                 }
                             }
                             div { class: "field",
@@ -405,7 +390,7 @@ pub fn ConsentSettingsPanel(principal_id: Signal<String>, token: Signal<String>)
                                             let holder = holder.clone();
                                             let grantee = grant_grantee().trim().to_owned();
                                             let grantee_station = grant_grantee_station().trim().to_owned();
-                                            let scope = ui_scope_to_wire(&grant_scope()).to_owned();
+                                            let scope = grant_scope();
                                             let expires_at = parse_ttl(&grant_ttl())
                                                 .map(|d| chrono::Utc::now() + d);
                                             if grantee.is_empty() {
@@ -479,9 +464,10 @@ pub fn ConsentSettingsPanel(principal_id: Signal<String>, token: Signal<String>)
                                     // that branch pins the scope away from invite. The
                                     // grant form above still offers it, because a grant
                                     // may cover the invite scope.
-                                    SelectOption::<String> { index: 0usize, value: "message".to_string(), text_value: "Direct messages", "Direct messages" }
-                                    SelectOption::<String> { index: 1usize, value: "call".to_string(), text_value: "Calls", "Calls" }
+                                    SelectOption::<String> { index: 0usize, value: "voice_call".to_string(), text_value: "Voice calls", "Voice calls" }
+                                    SelectOption::<String> { index: 1usize, value: "video_call".to_string(), text_value: "Video calls", "Video calls" }
                                     SelectOption::<String> { index: 2usize, value: "presence".to_string(), text_value: "Presence", "Presence" }
+                                    SelectOption::<String> { index: 3usize, value: "any".to_string(), text_value: "All consent permissions", "All consent permissions" }
                                 }
                             }
                             div { class: "field",
@@ -516,7 +502,7 @@ pub fn ConsentSettingsPanel(principal_id: Signal<String>, token: Signal<String>)
                                             let api_token = token();
                                             let holder = request_holder().trim().to_owned();
                                             let holder_station = request_holder_station().trim().to_owned();
-                                            let scope = ui_scope_to_wire(&request_scope()).to_owned();
+                                            let scope = request_scope();
                                             if holder.is_empty() {
                                                 return;
                                             }
@@ -595,7 +581,7 @@ pub fn ConsentSettingsPanel(principal_id: Signal<String>, token: Signal<String>)
                                                             let peer_key = peer_key.clone();
                                                             let scope = scope.clone();
                                                             move |_| {
-                                                                detail_scope.set(wire_scope_to_ui(&scope).to_owned());
+                                                                detail_scope.set(scope.clone());
                                                                 detail_valid_until.set(String::new());
                                                                 detail_open.set(Some((peer_key.clone(), scope.clone())));
                                                             }
@@ -620,9 +606,11 @@ pub fn ConsentSettingsPanel(principal_id: Signal<String>, token: Signal<String>)
                                                                         detail_scope.set(v);
                                                                     }
                                                                 },
-                                                                SelectOption::<String> { index: 0usize, value: "message".to_string(), text_value: "Direct messages", "Direct messages" }
-                                                                SelectOption::<String> { index: 1usize, value: "invite".to_string(), text_value: "Group invites", "Group invites" }
-                                                                SelectOption::<String> { index: 2usize, value: "call".to_string(), text_value: "Calls", "Calls" }
+                                                                SelectOption::<String> { index: 0usize, value: "invite".to_string(), text_value: "Group invites", "Group invites" }
+                                                                SelectOption::<String> { index: 1usize, value: "voice_call".to_string(), text_value: "Voice calls", "Voice calls" }
+                                                                SelectOption::<String> { index: 2usize, value: "video_call".to_string(), text_value: "Video calls", "Video calls" }
+                                                                SelectOption::<String> { index: 3usize, value: "presence".to_string(), text_value: "Presence", "Presence" }
+                                                                SelectOption::<String> { index: 4usize, value: "any".to_string(), text_value: "All consent permissions", "All consent permissions" }
                                                             }
                                                         }
                                                         div { class: "field",
@@ -649,7 +637,7 @@ pub fn ConsentSettingsPanel(principal_id: Signal<String>, token: Signal<String>)
                                                                         let api_token = token();
                                                                         let holder = me_did.clone();
                                                                         let peer = peer.clone();
-                                                                        let scope = ui_scope_to_wire(&detail_scope()).to_owned();
+                                                                        let scope = detail_scope();
                                                                         let expires_at = parse_valid_until(&detail_valid_until());
                                                                         busy.set(true);
                                                                         write_status.set("granting…".to_owned());
