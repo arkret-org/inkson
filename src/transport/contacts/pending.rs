@@ -308,10 +308,8 @@ mod tests {
                 signed_event: event,
                 control_proposal_ack: None,
             },
-            predecessor: arkret_sdk::SealId::new(
-                "ak:seal:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
-            )
-            .unwrap(),
+            predecessor: arkret_sdk::SealId::new(format!("ak:seal:sha256:{}", "11".repeat(32)))
+                .unwrap(),
             seal_request: None,
             seal: None,
         };
