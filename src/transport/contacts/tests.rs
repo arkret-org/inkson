@@ -6,6 +6,14 @@ use serde_json::json;
 
 use super::*;
 
+fn local_signer() -> crate::event_signer::InksonEventSigner {
+    crate::event_signer::build_ed25519_device_signer(
+        [17; 32],
+        "did:web:alice.example",
+        "ak:device:01964137-0000-7000-8000-0000000000a1",
+    )
+}
+
 pub(super) fn event(kind: &str) -> arkret_sdk::Event {
     let actor = crate::test_support::account_actor("did:web:alice.example");
     let peer = ContactPeer::Human {
@@ -18,15 +26,28 @@ pub(super) fn event(kind: &str) -> arkret_sdk::Event {
         "actor_id":actor,"actor_seq":1,"created_at":"2026-09-12T12:00:00.000Z",
         "prev_refs":[],"payload":{"peer":peer},"proofs":[]
     })).unwrap();
-    arkret_sdk::AuthoredEvent::finalize_with_digest_suite(event, arkret_sdk::DigestSuite::Sha256)
-        .unwrap()
-        .into_event()
+    let mut event = arkret_sdk::AuthoredEvent::finalize_with_digest_suite(
+        event,
+        arkret_sdk::DigestSuite::Sha256,
+    )
+    .unwrap();
+    local_signer()
+        .sign_sdk_event_with_context(
+            &mut event,
+            crate::event_signer::ProducerProofContext::for_native_unit(
+                arkret_sdk::DigestSuite::Sha256,
+            ),
+        )
+        .unwrap();
+    event.into_event()
 }
 
 pub(super) fn operation_id() -> ProtocolOperationId {
     ProtocolOperationId::new("ak:operation:contact.request.fixture").unwrap()
 }
 
+// Source signatures remain structural placeholders: these tests exercise an
+// authenticated own-Station response, not remote Station/DID authentication.
 fn signature() -> arkret_sdk::ProtocolSignature {
     serde_json::from_value(
         json!({"verification_method":"did:web:principal.example#key",
@@ -48,7 +69,14 @@ fn accepted(event: &arkret_sdk::Event) -> ContactOperationOutcome {
             slot_version: 1,
             slot_predecessor: None,
             previous_terminal_contact_round_id: None,
-            request_event_ref: event.event_id.clone(),
+            request_event_ref: if event.kind.as_str()
+                == arkret_wire::event_kind_str::CONTACT_REQUESTED
+            {
+                event.event_id.clone()
+            } else {
+                self::event(arkret_wire::event_kind_str::CONTACT_REQUESTED).event_id
+            },
+            producer_signer: local_contact_producer(event, &local_signer()).unwrap(),
             source_checkpoint: digest.clone(),
             accepted_at: signature().created_at,
             issuer_id: event.actor_id.as_account_id().unwrap().station_id.clone(),
@@ -63,6 +91,7 @@ fn accepted(event: &arkret_sdk::Event) -> ContactOperationOutcome {
         version: 2,
         predecessor_event_ref: None,
         event_ref: event.event_id.clone(),
+        producer_signer: local_contact_producer(event, &local_signer()).unwrap(),
         granted_to_peer_scopes: vec![ContactScope::DirectMessage],
         terminal: None,
         signature: signature(),
@@ -90,6 +119,7 @@ fn accepted(event: &arkret_sdk::Event) -> ContactOperationOutcome {
                 contact_round_id: digest.clone(),
                 request_receipt: request,
                 response_event_ref: event.event_id.clone(),
+                producer_signer: local_contact_producer(event, &local_signer()).unwrap(),
                 outgoing_slot_absence_digest: digest,
                 accepted_at: signature().created_at,
                 issuer_id: current_proof.issuer_id.clone(),
@@ -103,6 +133,7 @@ fn accepted(event: &arkret_sdk::Event) -> ContactOperationOutcome {
             reject_acceptance_receipt: RejectAcceptanceReceipt {
                 request_receipt: request,
                 reject_event_ref: event.event_id.clone(),
+                producer_signer: local_contact_producer(event, &local_signer()).unwrap(),
                 accepted_at: signature().created_at,
                 issuer_id: current_proof.issuer_id,
                 signature: signature(),
@@ -155,7 +186,9 @@ async fn all_five_contacts_confirm_pending_before_exact_retry() {
                 calls.borrow_mut().push("exact_seal");
                 Ok(())
             },
-            |outcome| validate_contact_commit_outcome(outcome, &event, &operation_id()),
+            |outcome| {
+                validate_contact_commit_outcome(outcome, &event, &operation_id(), &local_signer())
+            },
         )
         .await
         .unwrap();
@@ -191,7 +224,9 @@ async fn terminal_success_failure_and_permission_denial_never_prepare_seal() {
                 confirms.set(confirms.get() + 1);
                 Ok(())
             },
-            |outcome| validate_contact_commit_outcome(outcome, &event, &operation_id()),
+            |outcome| {
+                validate_contact_commit_outcome(outcome, &event, &operation_id(), &local_signer())
+            },
         )
         .await;
         assert_eq!(confirms.get(), 0);
@@ -259,13 +294,17 @@ fn exact_branch_operation_and_event_are_required_but_later_current_head_is_valid
         current_proof.head_event_ref = other.event_id.clone();
         current_proof.complete_through = 3;
     }
-    validate_contact_commit_outcome(&outcome, &event, &operation_id()).unwrap();
-    assert!(validate_contact_commit_outcome(&outcome, &other, &operation_id()).is_err());
+    validate_contact_commit_outcome(&outcome, &event, &operation_id(), &local_signer()).unwrap();
+    assert!(
+        validate_contact_commit_outcome(&outcome, &other, &operation_id(), &local_signer())
+            .is_err()
+    );
     assert!(
         validate_contact_commit_outcome(
             &outcome,
             &event,
-            &ProtocolOperationId::new("ak:operation:other").unwrap()
+            &ProtocolOperationId::new("ak:operation:other").unwrap(),
+            &local_signer()
         )
         .is_err()
     );
@@ -275,7 +314,159 @@ fn exact_branch_operation_and_event_are_required_but_later_current_head_is_valid
     {
         lineage.event_ref = other.event_id;
     }
-    assert!(validate_contact_commit_outcome(&outcome, &event, &operation_id()).is_err());
+    assert!(
+        validate_contact_commit_outcome(&outcome, &event, &operation_id(), &local_signer())
+            .is_err()
+    );
+}
+
+#[test]
+fn every_contact_result_binds_original_producer_method_and_local_key() {
+    for kind in [
+        arkret_wire::event_kind_str::CONTACT_REQUESTED,
+        arkret_wire::event_kind_str::CONTACT_ACCEPTED,
+        arkret_wire::event_kind_str::CONTACT_REJECTED,
+        arkret_wire::event_kind_str::CONTACT_SCOPE_UPDATE,
+        arkret_wire::event_kind_str::CONTACT_TOMBSTONE,
+    ] {
+        let event = event(kind);
+        let result = accepted(&event);
+        validate_contact_commit_outcome(&result, &event, &operation_id(), &local_signer()).unwrap();
+        let other_key = crate::event_signer::build_ed25519_device_signer(
+            [18; 32],
+            "did:web:alice.example",
+            "ak:device:01964137-0000-7000-8000-0000000000a1",
+        );
+        assert!(
+            validate_contact_commit_outcome(&result, &event, &operation_id(), &other_key).is_err()
+        );
+        for method_mutation in [false, true] {
+            let count = if kind == arkret_wire::event_kind_str::CONTACT_ACCEPTED {
+                2
+            } else {
+                1
+            };
+            for index in 0..count {
+                let mut changed = result.clone();
+                let ContactOperationOutcome::Accepted { outcome } = &mut changed else {
+                    unreachable!()
+                };
+                let descriptor = match outcome {
+                    ContactAcceptedOutcome::Request {
+                        request_acceptance_receipt,
+                        ..
+                    } => &mut request_acceptance_receipt.core.producer_signer,
+                    ContactAcceptedOutcome::Response {
+                        normal_response_acceptance_receipt,
+                        lineage,
+                        ..
+                    } => {
+                        if index == 0 {
+                            &mut normal_response_acceptance_receipt.producer_signer
+                        } else {
+                            &mut lineage.producer_signer
+                        }
+                    }
+                    ContactAcceptedOutcome::Reject {
+                        reject_acceptance_receipt,
+                        ..
+                    } => &mut reject_acceptance_receipt.producer_signer,
+                    ContactAcceptedOutcome::ScopeUpdate { lineage, .. }
+                    | ContactAcceptedOutcome::Tombstone { lineage, .. } => {
+                        &mut lineage.producer_signer
+                    }
+                };
+                if method_mutation {
+                    descriptor.verification_method =
+                        arkret_sdk::DidUrl::new("did:web:alice.example#other-device").unwrap();
+                } else {
+                    descriptor.public_key_b64u =
+                        arkret_sdk::Base64UrlString::new(other_key.public_key_base64url().unwrap())
+                            .unwrap();
+                }
+                assert!(
+                    validate_contact_commit_outcome(
+                        &changed,
+                        &event,
+                        &operation_id(),
+                        &local_signer()
+                    )
+                    .is_err(),
+                    "{kind} descriptor {index} must bind the original producer"
+                );
+            }
+        }
+        let mut no_proof = event.clone();
+        no_proof.proofs.clear();
+        assert!(
+            validate_contact_commit_outcome(&result, &no_proof, &operation_id(), &local_signer())
+                .is_err()
+        );
+        let mut duplicate = event.clone();
+        duplicate.proofs.push(duplicate.proofs[0].clone());
+        assert!(
+            validate_contact_commit_outcome(&result, &duplicate, &operation_id(), &local_signer())
+                .is_err()
+        );
+    }
+}
+
+#[test]
+fn nested_peer_request_keeps_its_own_producer_and_original_event_signature_is_real() {
+    use arkret_sdk::signatures::proof::{
+        Ed25519DetachedJwsVerifier, EventVerifier, PublicKeyMaterial,
+    };
+    use base64::Engine;
+
+    let event = event(arkret_wire::event_kind_str::CONTACT_ACCEPTED);
+    let descriptor = local_contact_producer(&event, &local_signer()).unwrap();
+    let proof = &event.proofs[0];
+    let signature = base64::engine::general_purpose::URL_SAFE_NO_PAD
+        .decode(proof.jws.split('.').nth(2).unwrap())
+        .unwrap();
+    Ed25519DetachedJwsVerifier::new()
+        .verify(
+            &proof.canonical_binding_bytes(&event.actor_id).unwrap(),
+            &signature,
+            &PublicKeyMaterial::Ed25519Raw {
+                bytes: descriptor.public_key_bytes().unwrap().to_vec(),
+            },
+        )
+        .expect("the fixture original Event is signed by the bound local device");
+    let mut result = accepted(&event);
+    if let ContactOperationOutcome::Accepted {
+        outcome:
+            ContactAcceptedOutcome::Response {
+                normal_response_acceptance_receipt,
+                ..
+            },
+    } = &mut result
+    {
+        normal_response_acceptance_receipt
+            .request_receipt
+            .core
+            .producer_signer
+            .verification_method =
+            arkret_sdk::DidUrl::new("did:web:bob.example#peer-device").unwrap();
+    }
+    validate_contact_commit_outcome(&result, &event, &operation_id(), &local_signer()).unwrap();
+    if let ContactOperationOutcome::Accepted {
+        outcome:
+            ContactAcceptedOutcome::Response {
+                normal_response_acceptance_receipt,
+                ..
+            },
+    } = &mut result
+    {
+        normal_response_acceptance_receipt
+            .request_receipt
+            .core
+            .request_event_ref = event.event_id.clone();
+    }
+    assert!(
+        validate_contact_commit_outcome(&result, &event, &operation_id(), &local_signer()).is_err(),
+        "any descriptor claiming the exact local Event must agree, even when nested"
+    );
 }
 
 #[test]

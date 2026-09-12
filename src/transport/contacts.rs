@@ -344,7 +344,12 @@ async fn run_contact_commit(
             Ok(())
         },
         |outcome| {
-            validate_contact_commit_outcome(outcome, &commit.signed_event, &commit.operation_id)
+            validate_contact_commit_outcome(
+                outcome,
+                &commit.signed_event,
+                &commit.operation_id,
+                &fence.signer,
+            )
         },
     )
     .await;
@@ -406,6 +411,7 @@ fn validate_contact_commit_outcome(
     outcome: &ContactOperationOutcome,
     event: &arkret_sdk::Event,
     operation_id: &ProtocolOperationId,
+    signer: &crate::event_signer::InksonEventSigner,
 ) -> anyhow::Result<()> {
     use arkret_sdk::contact_operations::{
         ContactAcceptedOutcome as Accepted, ContactResultKind as Kind,
@@ -418,12 +424,23 @@ fn validate_contact_commit_outcome(
         arkret_wire::event_kind_str::CONTACT_TOMBSTONE => Kind::Tombstone,
         _ => anyhow::bail!("Contact commit uses an unregistered Event kind"),
     };
+    let producer = matches!(outcome, ContactOperationOutcome::Accepted { .. })
+        .then(|| local_contact_producer(event, signer))
+        .transpose()?;
+    let check_producer = |returned: &arkret_sdk::contact_operations::ContactProducerSigner| {
+        anyhow::ensure!(
+            Some(returned) == producer.as_ref(),
+            "Contact result changed the exact Event producer method or local signing key"
+        );
+        Ok::<(), anyhow::Error>(())
+    };
     let (kind, returned_operation, event_ref) = match outcome {
         ContactOperationOutcome::Accepted { outcome } => match outcome {
             Accepted::Request {
                 operation_id,
                 request_acceptance_receipt,
             } => {
+                check_producer(&request_acceptance_receipt.core.producer_signer)?;
                 let peer: ContactPeer = serde_json::from_value(
                     event
                         .payload
@@ -453,6 +470,21 @@ fn validate_contact_commit_outcome(
                 lineage,
                 current_proof,
             } => {
+                check_producer(&normal_response_acceptance_receipt.producer_signer)?;
+                check_producer(&lineage.producer_signer)?;
+                if normal_response_acceptance_receipt
+                    .request_receipt
+                    .core
+                    .request_event_ref
+                    == event.event_id
+                {
+                    check_producer(
+                        &normal_response_acceptance_receipt
+                            .request_receipt
+                            .core
+                            .producer_signer,
+                    )?;
+                }
                 anyhow::ensure!(
                     lineage.event_ref == event.event_id,
                     "Contact response projection changed the exact Event"
@@ -467,16 +499,33 @@ fn validate_contact_commit_outcome(
             Accepted::Reject {
                 operation_id,
                 reject_acceptance_receipt,
-            } => (
-                Kind::Reject,
-                operation_id,
-                &reject_acceptance_receipt.reject_event_ref,
-            ),
+            } => {
+                check_producer(&reject_acceptance_receipt.producer_signer)?;
+                if reject_acceptance_receipt
+                    .request_receipt
+                    .core
+                    .request_event_ref
+                    == event.event_id
+                {
+                    check_producer(
+                        &reject_acceptance_receipt
+                            .request_receipt
+                            .core
+                            .producer_signer,
+                    )?;
+                }
+                (
+                    Kind::Reject,
+                    operation_id,
+                    &reject_acceptance_receipt.reject_event_ref,
+                )
+            }
             Accepted::ScopeUpdate {
                 operation_id,
                 lineage,
                 current_proof,
             } => {
+                check_producer(&lineage.producer_signer)?;
                 validate_contact_current_result(event, lineage, current_proof)?;
                 (Kind::ScopeUpdate, operation_id, &lineage.event_ref)
             }
@@ -485,6 +534,7 @@ fn validate_contact_commit_outcome(
                 lineage,
                 current_proof,
             } => {
+                check_producer(&lineage.producer_signer)?;
                 validate_contact_current_result(event, lineage, current_proof)?;
                 (Kind::Tombstone, operation_id, &lineage.event_ref)
             }
@@ -505,6 +555,36 @@ fn validate_contact_commit_outcome(
         "Contact accepted result changed the operation, branch or exact Event"
     );
     Ok(())
+}
+
+/// Bind the server-trusted result to the original locally authored Event.
+/// The frozen signer is a local input, never obtained from the response or an
+/// online directory. The enclosing session fence also protects resumed intents.
+fn local_contact_producer(
+    event: &arkret_sdk::Event,
+    signer: &crate::event_signer::InksonEventSigner,
+) -> anyhow::Result<arkret_sdk::contact_operations::ContactProducerSigner> {
+    let [proof] = event.proofs.as_slice() else {
+        anyhow::bail!("Contact Event must retain its unique original producer proof");
+    };
+    let method = signer.verification_method_for_sdk_event(event)?;
+    anyhow::ensure!(
+        proof.verification_method == method,
+        "Contact Event proof differs from the frozen local signer"
+    );
+    event.validate_proof_bindings_with_digest_suite(
+        event.event_id.digest_suite_code().digest_suite(),
+    )?;
+    let descriptor = arkret_sdk::contact_operations::ContactProducerSigner {
+        verification_method: method,
+        public_key_b64u: arkret_sdk::Base64UrlString::new(
+            signer
+                .public_key_base64url()
+                .ok_or_else(|| anyhow::anyhow!("Contact signer has no local Ed25519 public key"))?,
+        )?,
+    };
+    descriptor.validate()?;
+    Ok(descriptor)
 }
 
 fn validate_contact_current_result(
