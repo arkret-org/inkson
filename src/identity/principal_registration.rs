@@ -399,6 +399,17 @@ pub async fn complete_account_handoff_binding(
             dpop.sdk_account_handoff_auth(account_handoff_grant),
         ))
         .build()?;
+    let binding_context = garth::IdentityCreationBindingContext {
+        account_subject: expected_account_subject.clone(),
+        dpop_jkt: handoff.holder_jkt.clone(),
+        audience_id: handoff.audience_id.clone(),
+        origin: arkret_sdk::WebOrigin::new(
+            url::Url::parse(&handoff.gate_account_base_url)?
+                .origin()
+                .ascii_serialization(),
+        )?,
+        trust_domain: arkret_sdk::TrustDomainId::new(handoff.trust_domain.clone())?,
+    };
     let expected_principal_id = arkret_sdk::project_did_to_core_id(&checkpoint.did)?;
     let prepared =
         crate::identity::account_auth::load_prepared_identity_creation_request(handoff, checkpoint)
@@ -479,8 +490,8 @@ pub async fn complete_account_handoff_binding(
         .await?;
         let request = garth::identity_creation_register_request(
             &challenge,
-            expected_account_subject,
-            did_operation,
+            &challenge_request,
+            &binding_context,
             unit.clone(),
             initial.clone(),
             &key_material.root_seed,
@@ -538,8 +549,8 @@ pub async fn complete_account_handoff_binding(
             .await?;
             let request = garth::identity_creation_register_request(
                 &challenge,
-                expected_account_subject,
-                checkpoint.did_operation.clone(),
+                &renewed_challenge_request,
+                &binding_context,
                 unit.clone(),
                 initial.clone(),
                 &key_material.root_seed,
@@ -721,7 +732,10 @@ fn check_registration_result_binding(
     if validated.principal_id != receipt.principal_id
         || validated.operation_digest != receipt.operation_digest
         || validated.did_version_id != registration.control_proof.did_version_id
-        || validated.log_head_digest != registration.control_proof.log_head_digest
+        || validated.log_head_digest.as_str()
+            != registration
+                .registration_did_evidence_draft
+                .method_history_head
         || validated.control_key_digest != registration.control_proof.control_key_digest
     {
         anyhow::bail!("registration result does not match the frozen inception pins");
