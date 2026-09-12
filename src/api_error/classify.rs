@@ -95,8 +95,9 @@ pub fn is_account_viewer_projection_missing_error(error: &anyhow::Error) -> bool
 ///
 /// This state is deliberately non-terminal for local client material: the
 /// client must retain recovery, session, KeyPackage and to-device state while
-/// the proposal can still be signed-rejected. Callers may surface or retry the
-/// blocked operation, but must not route this predicate through logout cleanup.
+/// the proposal can still receive a rejected command outcome in a Seal.
+/// Callers may surface or retry the blocked operation, but must not route this
+/// predicate through logout cleanup.
 pub fn is_device_revocation_pending_error(error: &anyhow::Error) -> bool {
     api_error_status_and_envelope(error).is_some_and(|(status, envelope)| {
         status == StatusCode::CONFLICT
