@@ -1599,7 +1599,6 @@ export async function mockArkretApi(
         "control-proposal-ack",
         {
           request,
-          device_id: currentDeviceId,
           digest_suite: "sha256",
         },
       );

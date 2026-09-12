@@ -1295,7 +1295,7 @@ fn actor_frontier_stamp_carries_into_the_ordered_log_issuer_seq() {
     let intent = crate::event_builders::build_realm_create_event(
         arkret_sdk::GenesisSalt::new("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA").unwrap(),
         "did:web:alice.example",
-        crate::event_builders::test_quorum_notary("did:web:alice.example").unwrap(),
+        crate::event_builders::test_authority_notary("did:web:alice.example").unwrap(),
         "Frontier",
         None,
         "invite_only",
@@ -1528,7 +1528,7 @@ async fn realm_bootstrap_preparation_requires_verified_producer_evidence() {
         arkret_sdk::GenesisSalt::new("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA").unwrap(),
         "did:web:alice.example",
         "did:web:server.example",
-        crate::event_builders::test_quorum_notary("did:web:server.example").unwrap(),
+        crate::event_builders::test_authority_notary("did:web:server.example").unwrap(),
         "https://server.example",
         "Engineering",
         Some("Realm genesis must not query its own nonexistent frontier"),

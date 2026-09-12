@@ -54,13 +54,8 @@ pub fn test_notary(signer_did: &str) -> arkret_sdk::NotaryValue {
         key_kind: arkret_sdk::NotaryKeyKind::Ed25519Raw32,
         jose_algorithm: arkret_sdk::NotaryJoseAlgorithm::Ed25519,
         frozen_public_key_b64u: arkret_sdk::base64url_encode(public_key),
-        frozen_public_key_digest: arkret_sdk::Hash::new(arkret_sdk::canonical::sha256_digest(
-            public_key,
-        ))
-        .expect("test notary key digest is canonical"),
     };
-    arkret_sdk::NotaryValue::new(vec![descriptor], 0, 1_000)
-        .expect("one-voter quorum notary is valid")
+    arkret_sdk::NotaryValue::new(descriptor, 1_000).expect("single authority notary is valid")
 }
 
 /// The pinned signing stamp for position `actor_seq`.

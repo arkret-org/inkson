@@ -2863,7 +2863,7 @@ mod tests {
             arkret_sdk::DidUrl::new("did:web:station.example#key-1").unwrap(),
         );
         let accepted_at = chrono::Utc::now();
-        let ack = arkret_sdk::ControlProposalAuthorityAck::issue_with_signer(
+        let ack = arkret_sdk::ControlProposalAck::issue_with_signer(
             sdk_realm_id(),
             proposal.event_id.event_digest(),
             arkret_sdk::Hash::new(format!("sha256:{}", "1".repeat(64))).unwrap(),
@@ -2872,8 +2872,7 @@ mod tests {
             &signer,
         )
         .unwrap();
-        let ack =
-            arkret_sdk::ControlProposalAck::from_authority_acks_protocol_bounds(vec![ack]).unwrap();
+        let ack = ack;
         let mut viewer: arkret_sdk::AccountView = serde_json::from_value(json!({
             "principal_id":principal,"state":"active","devices":[{
                 "device_id":device,"status":"revoked","verification_state":"verified",

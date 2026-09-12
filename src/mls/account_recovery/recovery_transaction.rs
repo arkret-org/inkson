@@ -10,12 +10,11 @@ use arkret_models_collaboration::events_payloads::device_identity::{
 };
 use arkret_models_crypto::{RecoveryAuthorityKind, RecoveryProofKind};
 use arkret_wire::{
-    ControlProposalAck, ControlProposalAuthorityAck, EventInitialSubmission,
-    EventsSubmitBatchRequestBody, Hash, NonEmptyString, PcrPolicyRecoveryBinding,
-    PcrPolicyRecoveryPlan, PreparedEventUnit, ReceiptId, RecoveryIdentityModel,
-    RecoveryPreparedPlan, RecoveryTransactionCreateRequest, SecurityTransaction,
-    SecurityTransactionCreateRequest, SecurityTransactionResultKind, SecurityTransactionStep,
-    TransactionId,
+    ControlProposalAck, EventInitialSubmission, EventsSubmitBatchRequestBody, Hash, NonEmptyString,
+    PcrPolicyRecoveryBinding, PcrPolicyRecoveryPlan, PreparedEventUnit, ReceiptId,
+    RecoveryIdentityModel, RecoveryPreparedPlan, RecoveryTransactionCreateRequest,
+    SecurityTransaction, SecurityTransactionCreateRequest, SecurityTransactionResultKind,
+    SecurityTransactionStep, TransactionId,
 };
 use zeroize::Zeroizing;
 
@@ -227,7 +226,7 @@ pub(crate) async fn prepare_pcr_policy_recovery(
     let proposal_received_at = crate::clock::now_utc();
     let recovery_submission = |event: arkret_sdk::Event| -> anyhow::Result<_> {
         let proposal_digest = Hash::new(event.event_digest_with_digest_suite(digest_suite)?)?;
-        let authority_ack = ControlProposalAuthorityAck::issue_with_signer(
+        let authority_ack = ControlProposalAck::issue_with_signer(
             event.realm_id.clone(),
             proposal_digest,
             authority_set_ref.clone(),
@@ -236,9 +235,7 @@ pub(crate) async fn prepare_pcr_policy_recovery(
             &recovery_signer,
         )?;
         let mut submission = EventInitialSubmission::online(event);
-        submission.control_proposal_ack = Some(
-            ControlProposalAck::from_authority_acks_protocol_bounds(vec![authority_ack])?,
-        );
+        submission.control_proposal_ack = Some(authority_ack);
         Ok(submission)
     };
     let reanchor_submission = EventsSubmitBatchRequestBody {

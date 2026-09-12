@@ -23,7 +23,6 @@ struct PrincipalLocatorInput {
 #[derive(Debug, Deserialize)]
 struct ControlProposalAckInput {
     request: arkret_wire::ControlProposalAckIssueRequest,
-    device_id: String,
     digest_suite: arkret_sdk::DigestSuite,
 }
 
@@ -112,17 +111,13 @@ fn demo_realm_genesis() -> Result<Value> {
     let producer_evidence_ref = producer_evidence.evidence_ref()?;
     let notary_public_key = authority.signing_key.verifying_key().to_bytes();
     let notary = arkret_sdk::NotaryValue::new(
-        vec![arkret_sdk::NotarySignerDescriptor {
+        arkret_sdk::NotarySignerDescriptor {
             actor_id: arkret_sdk::ActorId::service(authority.service_id.clone()),
             verification_method: authority.verification_method.clone(),
             key_kind: arkret_sdk::NotaryKeyKind::Ed25519Raw32,
             jose_algorithm: arkret_sdk::NotaryJoseAlgorithm::Ed25519,
             frozen_public_key_b64u: arkret_sdk::base64url_encode(notary_public_key),
-            frozen_public_key_digest: arkret_sdk::Hash::new(arkret_sdk::canonical::sha256_digest(
-                notary_public_key,
-            ))?,
-        }],
-        0,
+        },
         1_000,
     )?;
     inkson::operation::set_authoring_station_id(Some(authority.service_id.clone()));
@@ -343,7 +338,7 @@ fn realm_genesis_seal(input: Value) -> Result<Value> {
         .clone();
     let command_results = executed.command_results;
     let covered_event_digests = delta.clone();
-    let seal = arkret_sdk::Seal::sign_with_signers(
+    let seal = arkret_sdk::Seal::sign_with_signer(
         arkret_sdk::UnsignedSeal {
             realm_id: input.realm_id,
             predecessor_ref: None,
@@ -361,11 +356,9 @@ fn realm_genesis_seal(input: Value) -> Result<Value> {
             command_results,
             authorization_closures: Vec::new(),
             existence_anchors: Vec::new(),
-            transaction_records: Vec::new(),
         },
-        0,
         digest_suite,
-        &[&signer],
+        &signer,
     )?;
     seal.validate_id(digest_suite)?;
     seal.validate_structural()?;
@@ -590,12 +583,6 @@ fn control_proposal_ack(input: Value) -> Result<Value> {
         .validate_structural()
         .map_err(|error| anyhow::anyhow!("validate Control Proposal Ack request: {error}"))?;
     let event = &input.request.event;
-    let controller = event.executed_by.as_ref().unwrap_or(&event.actor_id);
-    let signer = inkson::event_signer::build_ed25519_device_signer(
-        [1_u8; 32],
-        controller.signing_principal_id().as_str(),
-        input.device_id,
-    );
     let policy = arkret_wire::ControlProposalDecisionPolicy::default();
     let received_at = chrono::Utc::now();
     let proposal_digest =
@@ -613,60 +600,33 @@ fn control_proposal_ack(input: Value) -> Result<Value> {
             .to_bytes();
     let authority_set_ref = arkret_sdk::Hash::new(
         arkret_sdk::canonical::canonical_sha256(&arkret_sdk::NotaryValue::new(
-            vec![arkret_sdk::NotarySignerDescriptor {
+            arkret_sdk::NotarySignerDescriptor {
                 actor_id: arkret_sdk::ActorId::service(arkret_sdk::DidCoreId::new(
                     "ak:did_core:web:server.local".to_owned(),
                 )?),
-                verification_method: notary_verification_method,
+                verification_method: notary_verification_method.clone(),
                 key_kind: arkret_sdk::NotaryKeyKind::Ed25519Raw32,
                 jose_algorithm: arkret_sdk::NotaryJoseAlgorithm::Ed25519,
                 frozen_public_key_b64u: arkret_sdk::base64url_encode(notary_public_key),
-                frozen_public_key_digest: arkret_sdk::Hash::new(
-                    arkret_sdk::canonical::sha256_digest(notary_public_key),
-                )?,
-            }],
-            0,
+            },
             1_000,
         )?)
         .context("digest proposal authority set")?,
     )
     .context("construct proposal authority-set digest")?;
-    let mut member = arkret_wire::ControlProposalAuthorityAck {
-        realm_id: event.realm_id.clone(),
-        proposal_digest,
-        received_at,
-        decision_due_at: received_at + policy.decision_window,
-        absolute_due_at: received_at + policy.absolute_horizon,
-        authority_set_ref,
-        signature: arkret_wire::PayloadSignature {
-            verification_method: arkret_sdk::DidUrl::new(signer.verification_method().to_owned())
-                .map_err(|error| {
-                anyhow::anyhow!("proposal verification method: {error}")
-            })?,
-            payload_digest: arkret_sdk::Hash::new(format!("sha256:{}", "00".repeat(32)))
-                .context("construct proposal placeholder digest")?,
-            created_at: received_at,
-            jws: String::new(),
-        },
-    };
-    let signing_bytes = member
-        .canonical_bytes_for_signature()
-        .context("materialize proposal authority Ack transcript")?;
-    member.signature.payload_digest = member
-        .authority_ack_digest()
-        .context("digest proposal authority Ack")?;
-    member.signature.jws = format!(
-        "{}..{}",
-        arkret_sdk::base64url_encode(br#"{"alg":"Ed25519"}"#),
-        arkret_sdk::base64url_encode(
-            signer
-                .sign_raw(&signing_bytes)
-                .map_err(|error| anyhow::anyhow!("sign proposal authority Ack: {error}"))?
-        )
+    let signer = arkret_signatures::Ed25519PayloadSigner::new(
+        arkret_signatures::development_signing_key(notary_verification_method.as_str()),
+        arkret_sdk::Did::new("did:web:server.local")?,
+        notary_verification_method,
     );
-    member
-        .validate_protocol_bounds()
-        .map_err(|error| anyhow::anyhow!("validate proposal authority Ack: {error}"))?;
+    let member = arkret_wire::ControlProposalAck::issue_with_signer(
+        event.realm_id.clone(),
+        proposal_digest,
+        authority_set_ref,
+        received_at,
+        policy,
+        &signer,
+    )?;
     serde_json::to_value(arkret_wire::ControlProposalAckIssueOutcome {
         authority_ack: member,
     })

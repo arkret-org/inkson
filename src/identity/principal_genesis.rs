@@ -112,7 +112,7 @@ pub fn build_genesis_unit(
     let founding_notary_public_key =
         decode_founding_device_public_key(payload.device_public_key_did.as_str())?;
     let founding_notary = arkret_sdk::NotaryValue::new(
-        vec![arkret_sdk::NotarySignerDescriptor {
+        arkret_sdk::NotarySignerDescriptor {
             actor_id: arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
                 principal_id.clone(),
                 station_id.clone(),
@@ -125,11 +125,7 @@ pub fn build_genesis_unit(
             key_kind: arkret_sdk::NotaryKeyKind::Ed25519Raw32,
             jose_algorithm: arkret_sdk::NotaryJoseAlgorithm::Ed25519,
             frozen_public_key_b64u: arkret_sdk::base64url_encode(founding_notary_public_key),
-            frozen_public_key_digest: arkret_sdk::Hash::new(arkret_sdk::canonical::sha256_digest(
-                founding_notary_public_key,
-            ))?,
-        }],
-        0,
+        },
         1_000,
     )?;
     let mut create = arkret_bootstrap::build_self_principal_pcr_create(

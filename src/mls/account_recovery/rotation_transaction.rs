@@ -903,14 +903,10 @@ mod rotation_resume_tests {
             covered_event_digests: Vec::new(),
             previous_state_root: None,
             previous_digest_algorithm: None,
-            notary_signature: arkret_sdk::MultiSignature {
-                kind: arkret_sdk::MultiSigKind::MultiSig,
-                signatures: vec![arkret_sdk::SealSignature {
-                    verification_method: arkret_sdk::DidUrl::new(verification_method).unwrap(),
-                    payload_digest: zero_hash,
-                    jws: String::new(),
-                }],
-                view: 0,
+            notary_signature: arkret_sdk::SealSignature {
+                verification_method: arkret_sdk::DidUrl::new(verification_method).unwrap(),
+                payload_digest: zero_hash,
+                jws: String::new(),
             },
             sealed_at: chrono::Utc::now(),
             hlc: arkret_sdk::Hlc::new("01970e589d21-0005-a13f9c2e").unwrap(),
@@ -921,7 +917,6 @@ mod rotation_resume_tests {
             command_results: Vec::new(),
             authorization_closures: Vec::new(),
             existence_anchors: Vec::new(),
-            transaction_records: Vec::new(),
         };
         let trust_anchor = ControllerBackupTrustAnchor {
             authorize_event_id: arkret_sdk::EventId::new(

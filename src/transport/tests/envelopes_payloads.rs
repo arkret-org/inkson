@@ -5,7 +5,7 @@ use crate::event_builders::{
     build_member_state_transition_event, build_realm_bootstrap_steps_for_station,
     build_realm_create_event, build_realm_state_event_for_station,
     build_sas_key_verification_content, build_signed_device_verification_proof,
-    build_space_create_event, test_quorum_notary,
+    build_space_create_event, test_authority_notary,
 };
 use crate::operation::TypedOperationBuilder;
 use crate::realm_defaults::RECOMMENDED_REALM_ENCRYPTION_FLOOR;
@@ -39,7 +39,7 @@ fn space_bootstrap_events_use_canonical_create_and_facet_kinds() {
             test_genesis_salt(),
             "did:web:alice.example",
             "did:web:server.example",
-            test_quorum_notary("did:web:server.example").unwrap(),
+            test_authority_notary("did:web:server.example").unwrap(),
             "https://server.example",
             "Engineering",
             Some("Roadmap work"),
@@ -111,7 +111,8 @@ fn space_bootstrap_events_use_canonical_create_and_facet_kinds() {
     assert_eq!(events[1].payload["schema"], "ak.schema.realm_profile.v1");
     assert_eq!(events[1].payload["title"], "Engineering");
     assert_eq!(events[1].payload["summary"], "Roadmap work");
-    assert_eq!(create.payload["object"]["notary"]["kind"], "quorum");
+    assert!(create.payload["object"]["notary"].get("kind").is_none());
+    assert!(create.payload["object"]["notary"].get("signers").is_none());
     assert_eq!(
         create.payload["object"]["notary"]["signer"]["actor_id"],
         json!({
@@ -236,7 +237,7 @@ fn plaintext_realm_create_does_not_claim_e2ee_floors() {
     let envelope = build_realm_create_event(
         test_genesis_salt(),
         "did:web:alice.example",
-        test_quorum_notary("did:web:server.example").unwrap(),
+        test_authority_notary("did:web:server.example").unwrap(),
         "Public updates",
         None,
         "listed",
@@ -272,7 +273,7 @@ fn realm_bootstrap_rejects_prejoin_history_with_strict_mls_scheme() {
         test_genesis_salt(),
         "did:web:alice.example",
         "did:web:server.example",
-        test_quorum_notary("did:web:server.example").unwrap(),
+        test_authority_notary("did:web:server.example").unwrap(),
         "https://server.example",
         "Strict history",
         None,
@@ -304,7 +305,7 @@ fn realm_bootstrap_allows_joined_history_with_strict_mls_scheme() {
             test_genesis_salt(),
             "did:web:alice.example",
             "did:web:server.example",
-            test_quorum_notary("did:web:server.example").unwrap(),
+            test_authority_notary("did:web:server.example").unwrap(),
             "https://server.example",
             "Strict history",
             None,
@@ -351,7 +352,7 @@ fn bootstrap_envelopes_have_no_sdk_digest_drift() {
             test_genesis_salt(),
             "did:web:alice.example",
             "did:web:server.example",
-            test_quorum_notary("did:web:server.example").unwrap(),
+            test_authority_notary("did:web:server.example").unwrap(),
             "https://server.example",
             "Engineering",
             None,
@@ -536,7 +537,7 @@ fn realm_bootstrap_payloads_match_spec_schema() {
             test_genesis_salt(),
             "did:web:alice.example",
             "did:web:server.example",
-            test_quorum_notary("did:web:server.example").unwrap(),
+            test_authority_notary("did:web:server.example").unwrap(),
             "https://server.example",
             "Engineering",
             Some("Roadmap work"),

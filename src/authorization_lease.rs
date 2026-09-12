@@ -13,7 +13,7 @@ use std::collections::BTreeMap;
 use std::sync::{Mutex, OnceLock, PoisonError};
 
 use arkret_sdk::EventPayloadExt as _;
-use arkret_wire::{AuthorizationLease, ControlProposalAuthorityAck};
+use arkret_wire::{AuthorizationLease, ControlProposalAck};
 
 /// No usable lease covers this Event's actor and signed scope.
 #[derive(Clone, Debug, thiserror::Error)]
@@ -43,8 +43,8 @@ fn leases() -> &'static Mutex<BTreeMap<LeaseKey, AuthorizationLease>> {
 type ControlProposalAckKey = (String, String, String);
 
 fn local_control_proposal_acks()
--> &'static Mutex<BTreeMap<ControlProposalAckKey, ControlProposalAuthorityAck>> {
-    static ACKS: OnceLock<Mutex<BTreeMap<ControlProposalAckKey, ControlProposalAuthorityAck>>> =
+-> &'static Mutex<BTreeMap<ControlProposalAckKey, ControlProposalAck>> {
+    static ACKS: OnceLock<Mutex<BTreeMap<ControlProposalAckKey, ControlProposalAck>>> =
         OnceLock::new();
     ACKS.get_or_init(|| Mutex::new(BTreeMap::new()))
 }
@@ -357,11 +357,7 @@ pub async fn standard_initial_submission(
             ProposalAuthorityRoute::ReceivingAuthority => None,
         };
         if let Some(authority_ack) = authority_ack {
-            submission.control_proposal_ack = Some(
-                arkret_wire::ControlProposalAck::from_authority_acks_protocol_bounds(vec![
-                    authority_ack,
-                ])?,
-            );
+            submission.control_proposal_ack = Some(authority_ack);
         }
     }
     submission
@@ -444,11 +440,7 @@ pub async fn delayed_initial_submission(
             ),
         };
         if let Some(authority_ack) = authority_ack {
-            submission.control_proposal_ack = Some(
-                arkret_wire::ControlProposalAck::from_authority_acks_protocol_bounds(vec![
-                    authority_ack,
-                ])?,
-            );
+            submission.control_proposal_ack = Some(authority_ack);
         }
     }
     submission
@@ -520,7 +512,7 @@ impl LocalAccountAuthority {
         event: &arkret_sdk::Event,
         digest_suite: arkret_sdk::DigestSuite,
         signer: &crate::event_signer::InksonEventSigner,
-    ) -> anyhow::Result<ControlProposalAuthorityAck> {
+    ) -> anyhow::Result<ControlProposalAck> {
         let signer_principal = arkret_sdk::Did::new(signer.signer_did().to_owned())?;
         if arkret_sdk::project_did_to_core_id(&signer_principal)? != self.signer_actor_id {
             anyhow::bail!("active signer does not project to the proposal authority actor");
@@ -543,7 +535,7 @@ impl LocalAccountAuthority {
         }
 
         let adapter = signer.payload_signer_adapter_for_principal(&signer_principal)?;
-        let member = ControlProposalAuthorityAck::issue_with_signer(
+        let member = ControlProposalAck::issue_with_signer(
             event.realm_id.clone(),
             proposal_digest,
             self.authority_set_ref.clone(),
@@ -742,12 +734,7 @@ fn self_principal_pcr_authority_set_ref_from_events(
     if payload.object.purpose != arkret_sdk::RealmPurpose::PrincipalControl {
         anyhow::bail!("Event is not in a principal-control Realm");
     }
-    let [signer] = payload.object.notary.signers.as_slice() else {
-        anyhow::bail!("self principal PCR genesis does not use a one-member quorum notary");
-    };
-    if payload.object.notary.fault_tolerance != 0 {
-        anyhow::bail!("self principal PCR genesis notary has an invalid fault tolerance");
-    }
+    let signer = &payload.object.notary.signer;
     if signer.actor_id.signing_principal_id() != event.actor_id.signing_principal_id() {
         anyhow::bail!("self principal PCR notary does not match the provision Event actor");
     }

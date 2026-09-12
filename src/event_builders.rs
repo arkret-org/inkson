@@ -357,7 +357,7 @@ pub(crate) fn test_inception_root_key_multibase(principal_did: &str) -> String {
 /// pattern such as `[7u8; 32]` does not decompress to a curve point, and
 /// `NotarySignerDescriptor::validate` does not catch that today.
 #[cfg(test)]
-pub(crate) fn test_quorum_notary(signer_did: &str) -> anyhow::Result<arkret_sdk::NotaryValue> {
+pub(crate) fn test_authority_notary(signer_did: &str) -> anyhow::Result<arkret_sdk::NotaryValue> {
     let did = arkret_sdk::Did::new(signer_did.to_owned())?;
     let actor_id = arkret_sdk::ActorId::service(arkret_sdk::project_did_to_core_id(&did)?);
     let verification_method =
@@ -370,11 +370,8 @@ pub(crate) fn test_quorum_notary(signer_did: &str) -> anyhow::Result<arkret_sdk:
         key_kind: arkret_sdk::NotaryKeyKind::Ed25519Raw32,
         jose_algorithm: arkret_sdk::NotaryJoseAlgorithm::Ed25519,
         frozen_public_key_b64u: arkret_sdk::base64url_encode(public_key),
-        frozen_public_key_digest: arkret_sdk::Hash::new(arkret_sdk::canonical::sha256_digest(
-            public_key,
-        ))?,
     };
-    Ok(arkret_sdk::NotaryValue::new(vec![descriptor], 0, 1_000)?)
+    Ok(arkret_sdk::NotaryValue::new(descriptor, 1_000)?)
 }
 
 /// Build the closed `ak.schema.realm_genesis.v1` object as the SDK strong type.
@@ -568,11 +565,8 @@ pub fn agent_inception_notary(
         key_kind: arkret_sdk::NotaryKeyKind::Ed25519Raw32,
         jose_algorithm: arkret_sdk::NotaryJoseAlgorithm::Ed25519,
         frozen_public_key_b64u: arkret_sdk::base64url_encode(public_key),
-        frozen_public_key_digest: arkret_sdk::Hash::new(arkret_sdk::canonical::sha256_digest(
-            public_key,
-        ))?,
     };
-    Ok(arkret_sdk::NotaryValue::new(vec![descriptor], 0, 1_000)?)
+    Ok(arkret_sdk::NotaryValue::new(descriptor, 1_000)?)
 }
 
 pub fn build_agent_pcr_create_event(
@@ -1798,7 +1792,7 @@ mod notary_derivation_tests {
                     .unwrap(),
                 "did:web:alice.example",
                 "did:web:alice.example",
-                test_quorum_notary("did:web:alice.example").unwrap(),
+                test_authority_notary("did:web:alice.example").unwrap(),
                 "https://alice.example",
                 "Ordinary Realm",
                 Some("summary"),
@@ -1878,7 +1872,7 @@ mod notary_derivation_tests {
                     .unwrap(),
                 "did:web:alice.example",
                 "did:web:alice.example",
-                test_quorum_notary("did:web:alice.example").unwrap(),
+                test_authority_notary("did:web:alice.example").unwrap(),
                 "https://alice.example",
                 "Explicit Station Realm",
                 None,

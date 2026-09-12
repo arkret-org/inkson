@@ -1472,8 +1472,6 @@ mod tests {
             key_kind: arkret_sdk::NotaryKeyKind::Ed25519Raw32,
             jose_algorithm: arkret_sdk::NotaryJoseAlgorithm::Ed25519,
             frozen_public_key_b64u: arkret_sdk::base64url_encode(public_key),
-            frozen_public_key_digest: Hash::new(arkret_sdk::canonical::sha256_digest(public_key))
-                .unwrap(),
         };
 
         arkret_signatures::verify_frozen_notary_signature(

@@ -1093,17 +1093,15 @@ mod direct_conversation_genesis_tests {
                 "digest_algorithm": "sha256",
                 "security_class": "standard",
                 "encryption_profile": "mls_rfc9420",
-                "notary": {"kind": "quorum", "fault_tolerance": 0,
-                    "max_clock_error_ms": 1000, "signers": [{
+                "notary": {"signer": {
                     "actor_id": {"kind": "account", "account_id": {
                         "principal_id": "ak:did_core:web:alice.example",
                         "station_id": "ak:did_core:web:station.example"
                     }},
                     "verification_method": "did:web:alice.example#key-1",
                     "key_kind": "ed25519_raw32", "jose_algorithm": "Ed25519",
-                    "frozen_public_key_b64u": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
-                    "frozen_public_key_digest": "sha256:66687aadf862bd776c8fc18b8e9f8e20089714856ee233b3902a591d0d5f2925"
-                }]}
+                    "frozen_public_key_b64u": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+                }, "max_clock_error_ms": 1000}
             }}
         }]}})
     }

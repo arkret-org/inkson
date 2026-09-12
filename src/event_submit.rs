@@ -2022,7 +2022,7 @@ impl EventSubmitter {
             .map_err(anyhow::Error::from)?;
         let descriptor = arkret_sdk::ed25519_notary_signer_descriptor_from_evidence(&evidence)
             .map_err(anyhow::Error::from)?;
-        arkret_sdk::NotaryValue::new(vec![descriptor], 0, 1_000).map_err(anyhow::Error::from)
+        arkret_sdk::NotaryValue::new(descriptor, 1_000).map_err(anyhow::Error::from)
     }
 
     /// Resolve the current Seal required by an ephemeral Signal envelope.
