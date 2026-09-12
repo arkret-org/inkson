@@ -847,8 +847,9 @@ mod verification_method_controller_tests {
             "did:key:z6MkhHrTbtosB4xyyJM217fS4ry35F7JhZ5oA9uVHErBJDL5",
         )
         .unwrap();
-        let evidence: arkret_sdk::SignerEvidenceRef =
-            "ak:signer_evidence:sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".parse().unwrap();
+        let evidence = arkret_sdk::SignerEvidenceRef::new(
+            "ak:signer_evidence:sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        ).unwrap();
         let now = chrono::Utc::now();
         let version = super::VerifiedProjectionVersion {
             generation_ref: 1,

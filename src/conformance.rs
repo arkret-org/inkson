@@ -80,7 +80,7 @@ impl StationFeature {
             Self::MlsAdmission => &[
                 SelfKeysKeypackagesCommandClaimV1,
                 SelfKeysKeypackagesCommandConsumeV1,
-                SelfSealsReadMembershipAuthorityV1,
+                SelfSealsReadHistoryAuthorityV1,
                 SelfSealsReadMlsGovernanceProofV1,
                 SelfEventsCommandSubmitV1,
             ],

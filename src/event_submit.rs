@@ -672,7 +672,7 @@ pub(crate) async fn require_server_committed_unit(
     );
     let seal = &seals[0];
     seal.validate_structural()?;
-    seal.validate_id(seal.id.digest_suite_code().digest_suite())?;
+    seal.validate_id(seal.state_root.digest_suite()?)?;
     require_committed_unit_result(&seal.command_results, &event_id.event_digest())
 }
 

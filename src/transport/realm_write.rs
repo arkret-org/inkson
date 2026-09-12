@@ -284,7 +284,7 @@ pub async fn update_realm_metadata(
 fn settled_realm_profile_head(
     rows: &[arkret_sdk::EventReadRow],
 ) -> anyhow::Result<(Value, arkret_sdk::Hash)> {
-    use arkret_sdk::CellRegistry as _;
+    use arkret_state::CellStateRegistry as _;
 
     let cell = arkret_sdk::CellRef::new(arkret_wire::REALM_PROFILE_CELL.to_owned())?;
     let registry = arkret_sdk::lattice_registry::build_sdk_state_registry();
@@ -349,7 +349,7 @@ fn settled_realm_profile_head(
                 if effect.cell_id == cell {
                     ops.push(arkret_state::state_model::ordered_log::IssuedOp {
                         issuer_id: event.actor_id.clone(),
-                        op: arkret_state::SealedOp::from_projection(digest.clone(), &effect)
+                        op: arkret_state::StateWrite::from_projection(digest.clone(), &effect)
                             .with_supersedes(event.causal_refs.clone()),
                     });
                 }
@@ -366,7 +366,7 @@ fn settled_realm_profile_head(
     let binding = registry
         .resolve(&realm_id, &cell)
         .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-    match arkret_state::join_cell(binding.model.as_ref(), &cell, &ops) {
+    match arkret_state::join_cell(binding.model.as_ref(), &cell, &ops)? {
         arkret_state::ResolvedCellState::Causal(state) => {
             let [head] = state.heads.as_slice() else {
                 anyhow::bail!("Realm profile causal register has no unique head");

@@ -1547,7 +1547,9 @@ pub async fn verify_and_install_response_page_from_local_state(
         outcome.validate_for_request(&query)?;
         transitions.insert(
             result.evidence_ref().as_ref().to_owned(),
-            outcome.transition_head,
+            outcome
+                .transition_head
+                .epoch_head(&outcome.governance_binding)?,
         );
     }
     anyhow::ensure!(
