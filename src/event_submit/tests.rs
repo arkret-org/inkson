@@ -1352,15 +1352,116 @@ fn a_frontier_for_another_actor_is_not_a_chain_basis() {
     )
     .unwrap();
 
-    let error = actor_chain_basis_from_frontier(
-        &realm_id,
-        intent.actor_id().signing_principal_id().as_str(),
-        mismatched,
-    )
-    .unwrap_err()
-    .to_string();
+    let error = actor_chain_basis_from_frontier(&realm_id, intent.actor_id(), mismatched)
+        .unwrap_err()
+        .to_string();
 
     assert!(error.contains("realm actor frontier mismatch"), "{error}");
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+#[tokio::test]
+async fn receiver_frontier_preserves_account_station_and_rejects_substitution() {
+    use std::io::{Read as _, Write as _};
+    use std::net::TcpListener;
+
+    let actor = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+        "ak:did_core:web:alice-frontier.example".parse().unwrap(),
+        "ak:did_core:web:origin-a.example".parse().unwrap(),
+    ));
+    let realm = arkret_sdk::RealmId::from_event_id(&arkret_sdk::EventId::from_digest(
+        arkret_sdk::DigestSuite::Sha256,
+        [31; 32],
+    ));
+    for substitute_station in [false, true] {
+        let response_actor = if substitute_station {
+            arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
+                actor.signing_principal_id().clone(),
+                "ak:did_core:web:receiver-b.example".parse().unwrap(),
+            ))
+        } else {
+            actor.clone()
+        };
+        let frontier = arkret_sdk::RealmActorFrontierView::new(
+            realm.clone(),
+            response_actor,
+            0,
+            vec![],
+            arkret_sdk::DigestSuite::Sha256,
+        )
+        .unwrap();
+        assert_eq!(
+            actor_chain_basis_from_frontier(&realm, &actor, frontier.clone()).is_err(),
+            substitute_station,
+        );
+        let response = serde_json::to_vec(&arkret_sdk::EventsFrontierState {
+            frontier: arkret_sdk::EventsFrontierView::RealmActor(frontier),
+        })
+        .unwrap();
+        let receiver = TcpListener::bind("127.0.0.1:0").unwrap();
+        receiver.set_nonblocking(true).unwrap();
+        let url = format!("http://{}/", receiver.local_addr().unwrap());
+        let server = std::thread::spawn(move || {
+            let deadline = std::time::Instant::now() + Duration::from_secs(10);
+            let (mut stream, _) = loop {
+                match receiver.accept() {
+                    Ok(connection) => break connection,
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        assert!(
+                            std::time::Instant::now() < deadline,
+                            "frontier request did not reach receiver B"
+                        );
+                        std::thread::sleep(Duration::from_millis(10));
+                    }
+                    Err(error) => panic!("receiver failed: {error}"),
+                }
+            };
+            stream
+                .set_read_timeout(Some(Duration::from_secs(10)))
+                .unwrap();
+            let mut request = Vec::new();
+            let mut buffer = [0; 4096];
+            let (body_start, body_len) = loop {
+                let count = stream.read(&mut buffer).unwrap();
+                assert_ne!(count, 0);
+                request.extend_from_slice(&buffer[..count]);
+                if let Some(index) = request.windows(4).position(|part| part == b"\r\n\r\n") {
+                    let headers = String::from_utf8_lossy(&request[..index]);
+                    assert!(headers.starts_with("QUERY /_arkret/self/events/frontier HTTP/1.1"));
+                    let length = headers
+                        .lines()
+                        .find_map(|line| {
+                            let (name, value) = line.split_once(':')?;
+                            name.eq_ignore_ascii_case("content-length")
+                                .then(|| value.trim().parse::<usize>().unwrap())
+                        })
+                        .unwrap();
+                    break (index + 4, length);
+                }
+            };
+            while request.len() < body_start + body_len {
+                let count = stream.read(&mut buffer).unwrap();
+                assert_ne!(count, 0);
+                request.extend_from_slice(&buffer[..count]);
+            }
+            let body: Value =
+                serde_json::from_slice(&request[body_start..body_start + body_len]).unwrap();
+            write!(stream, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", response.len()).unwrap();
+            stream.write_all(&response).unwrap();
+            body
+        });
+        let http = arkret_sdk::http_client::Client::builder(url.parse().unwrap())
+            .allow_insecure_localhost()
+            .build()
+            .unwrap();
+        let result = EventSubmitter::new(http)
+            .events_frontier_actor(&actor, &realm)
+            .await;
+        let request = server.join().unwrap();
+        assert_eq!(request["actor_id"], serde_json::to_value(&actor).unwrap());
+        assert_eq!(request["realm_id"], serde_json::to_value(&realm).unwrap());
+        assert_eq!(result.is_err(), substitute_station);
+    }
 }
 
 #[test]
@@ -1386,7 +1487,7 @@ fn an_empty_frontier_authors_the_first_chain_position() {
 }
 
 #[tokio::test]
-async fn realm_bootstrap_preparation_requires_a_described_station() {
+async fn realm_bootstrap_preparation_requires_verified_producer_evidence() {
     crate::operation::set_authoring_station_id(Some(
         arkret_sdk::DidCoreId::new("ak:did_core:web:server.example").unwrap(),
     ));
@@ -1430,13 +1531,13 @@ async fn realm_bootstrap_preparation_requires_a_described_station() {
         .with_authority(test_authority())
         .author_event_unit(steps)
         .await
-        .expect_err("authoring must resolve the selected Station");
+        .expect_err("authoring must have verified producer evidence");
     crate::operation::set_proof_mode(previous_proof_mode);
-    assert!(format!("{error:#}").contains("server describe"));
+    assert!(format!("{error:#}").contains("verified signer-resolution evidence"));
 }
 
 #[tokio::test]
-async fn ordinary_event_preparation_requires_describe_before_remote_frontier() {
+async fn ordinary_event_preparation_queries_receiver_frontier_without_describe() {
     crate::operation::set_authoring_station_id(Some(
         arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap(),
     ));
@@ -1452,11 +1553,11 @@ async fn ordinary_event_preparation_requires_describe_before_remote_frontier() {
         .with_authority(crate::test_support::authority("ak:did_core:web:alice.example"))
         .author_independent_events(vec![intent])
         .await
-        .expect_err("ordinary Realm Event must refresh its combined actor frontier");
+        .expect_err("ordinary Realm Event must query the selected receiver's actor frontier");
 
     let detail = format!("{error:#}");
     assert!(
-        detail.contains("server describe"),
+        detail.contains("refresh actor frontier") && !detail.contains("server describe"),
         "unexpected preparation error: {detail}"
     );
 }

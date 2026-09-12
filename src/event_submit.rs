@@ -1013,12 +1013,10 @@ pub(crate) fn reset_verified_recovery_gates() {
 /// from it, a wrong `actor_seq` is signed content.
 fn actor_chain_basis_from_frontier(
     realm_id: &arkret_sdk::RealmId,
-    actor_id: &str,
+    actor_id: &arkret_sdk::ActorId,
     frontier: arkret_sdk::RealmActorFrontierView,
 ) -> anyhow::Result<(u64, Vec<arkret_sdk::EventId>)> {
-    if frontier.actor_id.signing_principal_id().as_str() != actor_id
-        || &frontier.realm_id != realm_id
-    {
+    if &frontier.actor_id != actor_id || &frontier.realm_id != realm_id {
         anyhow::bail!(
             "realm actor frontier mismatch: intent scope ({realm_id}, {actor_id}) but frontier scope ({}, {})",
             frontier.realm_id,
@@ -2176,15 +2174,12 @@ impl EventSubmitter {
     /// `(realm_id, actor_id)` frontier used for Event authoring.
     pub async fn events_frontier_actor(
         &self,
-        actor_id: &str,
-        realm_id: &str,
+        actor_id: &arkret_sdk::ActorId,
+        realm_id: &arkret_sdk::RealmId,
     ) -> anyhow::Result<arkret_sdk::RealmActorFrontierView> {
         let selector = arkret_sdk::EventsFrontierSelector::RealmActor {
-            actor_id: arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
-                crate::mls_api_helpers::principal_core_id(actor_id)?,
-                self.describe_cached().await?.service_id.clone(),
-            )),
-            realm_id: arkret_sdk::RealmId::new(realm_id.to_owned())?,
+            actor_id: actor_id.clone(),
+            realm_id: realm_id.clone(),
         };
         let state = self
             .http
@@ -2229,21 +2224,18 @@ impl EventSubmitter {
             .as_deref()
             .and_then(crate::identity::device_directory::public_key_from_directory_value)
             .ok_or_else(|| anyhow::anyhow!("active endpoint signer public key is invalid"))?;
-        if !matches!(
-            crate::identity::device_directory::cached_device_signing_key(&actor, device_id),
-            crate::identity::device_directory::CacheLookup::Hit(cached) if cached == signer_key
-        ) {
+        let (retained_key, evidence_ref) =
+            crate::identity::device_directory::retained_device_authoring_evidence(&actor, device_id)
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "frontier_unavailable: verified signer-resolution evidence is unavailable for the active device"
+                    )
+                })?;
+        if retained_key != signer_key {
             anyhow::bail!(
                 "frontier_unavailable: retained device evidence does not bind the active signer"
             );
         }
-        let evidence_ref =
-            crate::identity::device_directory::cached_device_signer_evidence_ref(&actor, device_id);
-        let evidence_ref = evidence_ref.ok_or_else(|| {
-            anyhow::anyhow!(
-                "frontier_unavailable: verified signer-resolution evidence is unavailable for the active device"
-            )
-        })?;
         Ok(crate::event_signer::ProducerProofContext::new()
             .with_digest_suite(digest_suite)
             .with_signer_resolution_evidence_ref(evidence_ref))
@@ -3502,13 +3494,10 @@ impl EventSubmitter {
         let Some(realm_id) = intent.realm_id_opt() else {
             return Ok((0, Vec::new()));
         };
-        let actor_id = intent.actor_id().signing_principal_id().as_str().to_owned();
-        match self
-            .events_frontier_actor(&actor_id, realm_id.as_str())
-            .await
-        {
-            Ok(frontier) => actor_chain_basis_from_frontier(realm_id, &actor_id, frontier),
-            Err(error) => Err(actor_frontier_refresh_error(&actor_id, error)),
+        let actor_id = intent.actor_id();
+        match self.events_frontier_actor(actor_id, realm_id).await {
+            Ok(frontier) => actor_chain_basis_from_frontier(realm_id, actor_id, frontier),
+            Err(error) => Err(actor_frontier_refresh_error(&actor_id.to_string(), error)),
         }
     }
 

@@ -128,16 +128,17 @@ pub fn cached_device_authorize_event_id(actor: &str, device: &str) -> Option<ark
         .and_then(|entry| entry.authorize_event_id.clone())
 }
 
-pub(crate) fn cached_device_signer_evidence_ref(
+/// Read previously verified producer evidence for ordinary Event authoring.
+/// Query-cache freshness is not an authorization deadline. A known revocation,
+/// generation replacement, or invalidation removes the retained key and proof.
+pub(crate) fn retained_device_authoring_evidence(
     actor: &str,
     device: &str,
-) -> Option<arkret_sdk::SignerEvidenceRef> {
-    let now = crate::clock::now_unix_ms();
+) -> Option<(PublicKeyMaterial, arkret_sdk::SignerEvidenceRef)> {
     let guard = CACHE.read().unwrap_or_else(|poison| poison.into_inner());
-    guard
-        .get(&cache_key(actor, device)?)
-        .filter(|entry| entry.expires_at_ms > now && entry.key.is_some())
-        .and_then(|entry| entry.signer_evidence_ref.clone())
+    let entry = guard.get(&cache_key(actor, device)?)?;
+    entry.verified_projection.as_ref()?;
+    Some((entry.key.clone()?, entry.signer_evidence_ref.clone()?))
 }
 
 /// Restore the active device's last verified authoring authority after a cold
@@ -799,7 +800,8 @@ mod verification_method_controller_tests {
             Some(generation)
         );
         assert_eq!(
-            super::cached_device_signer_evidence_ref(&account.to_string(), device.as_str()),
+            super::retained_device_authoring_evidence(&account.to_string(), device.as_str())
+                .map(|(_, evidence)| evidence),
             Some(match persisted.current_signer_evidence {
                 arkret_models_collaboration::current_signer_evidence::CurrentSignerEvidence::AccountDevice {
                     signer_evidence_ref,
@@ -827,6 +829,73 @@ mod verification_method_controller_tests {
         assert!(super::accepted_device_evidence(&outcome, &account, device.as_str()).is_none());
         super::reset_session_cache();
         crate::identity::authoring_generation::reset_verified_authoring_generations();
+    }
+
+    #[test]
+    fn ordinary_authoring_retains_verified_evidence_past_lookup_ttl_until_revocation() {
+        let account = arkret_sdk::AccountId::new(
+            "ak:did_core:web:retained-author.example".parse().unwrap(),
+            "ak:did_core:web:retained-station.example".parse().unwrap(),
+        )
+        .to_string();
+        let device = "ak:device:0196419b-0000-7000-8000-000000000081";
+        let key = super::public_key_from_directory_value(
+            "did:key:z6MkhHrTbtosB4xyyJM217fS4ry35F7JhZ5oA9uVHErBJDL5",
+        )
+        .unwrap();
+        let evidence: arkret_sdk::SignerEvidenceRef =
+            "ak:signer_evidence:sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".parse().unwrap();
+        let now = chrono::Utc::now();
+        let version = super::VerifiedProjectionVersion {
+            generation_ref: 1,
+            attested_at: now,
+            projection_digest: "active".to_owned(),
+        };
+        assert!(super::store_entry_at_epoch(
+            super::cache_epoch(),
+            &account,
+            device,
+            Some(key.clone()),
+            Some(arkret_sdk::EventId::from_digest(
+                arkret_sdk::DigestSuite::Sha256,
+                [81; 32]
+            )),
+            Some(evidence.clone()),
+            Some(crate::clock::now_unix_ms() + 60_000),
+            Some(version.clone()),
+        ));
+        {
+            let mut cache = super::CACHE.write().unwrap();
+            cache
+                .get_mut(&super::cache_key(&account, device).unwrap())
+                .unwrap()
+                .expires_at_ms = 0;
+        }
+        assert!(matches!(
+            super::cached_device_signing_key(&account, device),
+            super::CacheLookup::Miss
+        ));
+        assert_eq!(
+            super::retained_device_authoring_evidence(&account, device),
+            Some((key, evidence))
+        );
+        let revoked = super::VerifiedProjectionVersion {
+            attested_at: now + chrono::Duration::seconds(1),
+            projection_digest: "revoked".to_owned(),
+            ..version
+        };
+        assert!(super::store_entry_at_epoch(
+            super::cache_epoch(),
+            &account,
+            device,
+            None,
+            None,
+            None,
+            None,
+            Some(revoked),
+        ));
+        assert!(super::known_device_revoked(&account, device));
+        assert!(super::retained_device_authoring_evidence(&account, device).is_none());
     }
 
     #[test]

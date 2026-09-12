@@ -88,8 +88,8 @@ pub(crate) async fn prepare_pcr_policy_recovery(
         .clone();
     let frontier = submitter
         .events_frontier_actor(
-            verified_session.account_id.principal_id.as_str(),
-            scope_ref.realm_id().as_str(),
+            &arkret_sdk::ActorId::account(verified_session.account_id.clone()),
+            scope_ref.realm_id(),
         )
         .await?;
     frontier.validate()?;
