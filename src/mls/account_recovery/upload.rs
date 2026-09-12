@@ -196,7 +196,7 @@ async fn ensure_initial_active_series(
         &http,
         &account_actor,
         control_realm,
-        vec![frontier.id.clone()],
+        frontier.id.clone(),
         vec![active_series_digest.clone()],
     )
     .await?;

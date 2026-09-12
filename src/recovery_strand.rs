@@ -87,12 +87,20 @@ pub async fn refresh_principal_bootstrap_frontier(
     let accepted = http
         .seals_resolve(&arkret_sdk::SelfSealResolveRequestBody {
             realm_id: bootstrap_seal.realm_id.clone(),
-            seal_refs: vec![bootstrap_seal.id.clone()],
+            selection: arkret_sdk::SealResolveSelection::SealRefs {
+                seal_refs: vec![bootstrap_seal.id.clone()],
+            },
             history_traversal_access: None,
         })
         .await?;
+    let accepted = match accepted {
+        arkret_sdk::SealResolveOutcome::Seals { seals, .. } => seals,
+        arkret_sdk::SealResolveOutcome::Conclusions { .. } => {
+            anyhow::bail!("Seal resolve returned conclusions for an exact Seal request")
+        }
+    };
     anyhow::ensure!(
-        accepted.seals.as_slice() == [bootstrap_seal.clone()],
+        accepted.as_slice() == [bootstrap_seal.clone()],
         "Station has not accepted the exact PCR bootstrap Seal"
     );
     crate::mls::governance_proof::refresh_realm_frontier_with_http(
@@ -169,10 +177,18 @@ pub async fn verify_recovery_authority_evidence(
     let resolved_seals = http
         .seals_resolve(&arkret_sdk::SelfSealResolveRequestBody {
             realm_id: evidence.bootstrap_seal.realm_id.clone(),
-            seal_refs: vec![evidence.bootstrap_seal.id.clone()],
+            selection: arkret_sdk::SealResolveSelection::SealRefs {
+                seal_refs: vec![evidence.bootstrap_seal.id.clone()],
+            },
             history_traversal_access: None,
         })
         .await?;
+    let resolved_seals = match resolved_seals {
+        arkret_sdk::SealResolveOutcome::Seals { seals, .. } => seals,
+        arkret_sdk::SealResolveOutcome::Conclusions { .. } => {
+            anyhow::bail!("Seal resolve returned conclusions for an exact Seal request")
+        }
+    };
     if !resolved
         .events
         .iter()
@@ -182,7 +198,6 @@ pub async fn verify_recovery_authority_evidence(
             .iter()
             .any(|event| accepted_event_matches_genesis_basis(event, authorize, &authorize_digest))
         || !resolved_seals
-            .seals
             .iter()
             .any(|seal| seal == &evidence.bootstrap_seal)
     {
@@ -192,10 +207,9 @@ pub async fn verify_recovery_authority_evidence(
 }
 
 /// The frozen PCR genesis unit contains producer-authored Events. Resolution
-/// returns the accepted envelopes, which add exactly the Station
-/// admission proof. Compare the producer-authored projection byte-for-byte and
-/// independently require a valid admission binding; whole-envelope equality
-/// would incorrectly reject every legitimately admitted Event.
+/// returns the accepted producer envelope. Compare its canonical digest and
+/// producer-authored fields byte-for-byte; receiver-local admission metadata
+/// never becomes part of the Event.
 fn accepted_event_matches_genesis_basis(
     accepted: &arkret_sdk::Event,
     authored: &arkret_sdk::Event,

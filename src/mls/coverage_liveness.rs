@@ -1,7 +1,7 @@
 //! `encryption-and-audit.md` §2.4.1 / §2.5.2 — recover a scope from
 //! `epoch_update_required` by advancing the MLS epoch.
 //!
-//! §2.5.2 gates every E2EE application DataEvent on the accepted MLS Security
+//! §2.5.2 gates every E2EE application ordinary Event on the accepted MLS Security
 //! Frontier. Membership or key-access control changes require an accepted
 //! `ak.mls.commit` whose governance binding projects the new control state and
 //! active leaf set. §2.4.1 makes the sender MUST pause until that happens.
@@ -31,7 +31,7 @@ use crate::state::LocalStateStore;
 /// Record a receiver's governance-binding coverage refusal for the effective
 /// scope that produced it. Returns `true` when the error was that refusal.
 ///
-/// Call this from every E2EE application DataEvent send path: without it the
+/// Call this from every E2EE application ordinary Event send path: without it the
 /// refusal is just another failed submit and the epoch never advances.
 pub(crate) fn note_e2ee_submit_refusal(
     state_store: &StateStoreHandle,

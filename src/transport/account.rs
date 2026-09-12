@@ -1347,11 +1347,20 @@ async fn wait_for_consent_dots_in_seal(
             let seals = http
                 .seals_resolve(&arkret_sdk::SelfSealResolveRequestBody {
                     realm_id: realm_id.clone(),
-                    seal_refs: frontier.seal_basis.leaves,
+                    selection: arkret_sdk::SealResolveSelection::SealRefs {
+                        seal_refs: frontier.seal_basis.leaves,
+                    },
                     history_traversal_access: None,
                 })
-                .await?
-                .seals;
+                .await?;
+            let seals = match seals {
+                arkret_sdk::SealResolveOutcome::Seals { seals, .. } => seals,
+                arkret_sdk::SealResolveOutcome::Conclusions { .. } => {
+                    return Err(arkret_sdk::http_client::Error::Protocol(
+                        "Seal resolve returned conclusions for an exact Seal request".to_owned(),
+                    ));
+                }
+            };
             Ok::<_, arkret_sdk::http_client::Error>(digests.iter().all(|digest| {
                 seals.iter().any(|seal| {
                     seal.delta.contains(digest) || seal.covered_event_digests.contains(digest)

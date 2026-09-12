@@ -65,7 +65,7 @@ pub(crate) async fn prepare_and_sign_pcr_successor(
     http: &arkret_sdk::http_client::Client,
     actor_id: &arkret_sdk::ActorId,
     realm_id: &arkret_sdk::RealmId,
-    predecessor_refs: Vec<arkret_sdk::SealId>,
+    predecessor_ref: arkret_sdk::SealId,
     event_digests: Vec<arkret_sdk::Hash>,
 ) -> anyhow::Result<arkret_sdk::Seal> {
     let signer =
@@ -80,7 +80,7 @@ pub(crate) async fn prepare_and_sign_pcr_successor(
     )?;
     let request = arkret_sdk::SealPrepareRequestBody {
         realm_id: realm_id.clone(),
-        predecessor_refs,
+        predecessor_ref,
         event_digests,
         hlc,
     };

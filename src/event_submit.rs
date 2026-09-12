@@ -2116,12 +2116,19 @@ impl EventSubmitter {
             .http
             .seals_resolve(&arkret_sdk::SelfSealResolveRequestBody {
                 realm_id: view.realm_id.clone(),
-                seal_refs: vec![leaf.clone()],
+                selection: arkret_sdk::SealResolveSelection::SealRefs {
+                    seal_refs: vec![leaf.clone()],
+                },
                 history_traversal_access: None,
             })
             .await?;
-        outcome
-            .seals
+        let seals = match outcome {
+            arkret_sdk::SealResolveOutcome::Seals { seals, .. } => seals,
+            arkret_sdk::SealResolveOutcome::Conclusions { .. } => {
+                anyhow::bail!("Seal resolve returned conclusions for an exact Seal request")
+            }
+        };
+        seals
             .into_iter()
             .find(|seal| seal.id == leaf)
             .ok_or_else(|| anyhow::anyhow!("accepted Realm Seal frontier leaf did not resolve"))
@@ -3219,12 +3226,6 @@ impl EventSubmitter {
             let seal_view = self.seals_frontier_realm_view(realm_id.as_str()).await?;
             intent.with_seal_basis(seal_view.seal_basis())
         } else {
-            if !intent.preconditions().is_empty() {
-                anyhow::bail!(
-                    "DataEvent {} carries preconditions; ordinary DataEvents use AuthContext authority evidence only",
-                    intent.kind().as_str()
-                );
-            }
             let store = self.state_store.as_ref().ok_or_else(|| {
                 anyhow::anyhow!(
                     "frontier_unavailable: {} authoring has no verified local authority store",
@@ -3242,11 +3243,12 @@ impl EventSubmitter {
             let authority_ref = arkret_sdk::SealId::new(authority_ref).map_err(|error| {
                 anyhow::anyhow!("verified authority reference is invalid: {error}")
             })?;
-            let auth_context = data_event_auth_context(&intent, vec![authority_ref])?;
+            let auth_context = ordinary_event_auth_context(&intent, vec![authority_ref])?;
             intent.with_auth_context(auth_context)
         };
-        // This is routine authoring telemetry. Ordinary Data Events carry
-        // verified authority evidence in AuthContext and no safety precondition.
+        // This is routine authoring telemetry. Ordinary Events carry verified
+        // authority evidence in AuthContext; optional preconditions are
+        // evaluated against their signed causal basis.
         tracing::debug!(
             kind = %intent.kind().as_str(),
             has_seal_basis = intent.seal_basis().is_some(),

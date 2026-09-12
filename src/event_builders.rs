@@ -918,12 +918,9 @@ pub fn build_space_create_event(
     // `created_at` to construction time).
     space_object.created_at = created_at;
 
-    // No `preconditions`: `ak.space.create` is a DataEvent
-    // (`contract-registry.json` plane `data`), and
-    // `event-envelope.schema.json` forbids a DataEvent from carrying
-    // `preconditions`; the submit gate attaches only its AuthContext authority
-    // evidence. The registered contract projects `payload.object` into the
-    // space metadata causal register.
+    // This create has no domain precondition. The submit gate attaches its
+    // AuthContext authority evidence; the registered contract projects
+    // `payload.object` into the space metadata causal register.
     let space_body = arkret_sdk::SpaceCreatePayload::new(space_object);
     TypedOperationBuilder::new::<arkret_sdk::event_spec::SpaceCreate>(
         realm_id, actor_id, space_body,
