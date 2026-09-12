@@ -2116,12 +2116,14 @@ impl EventSubmitter {
             .http
             .seals_resolve(&arkret_sdk::SelfSealResolveRequestBody {
                 realm_id: view.realm_id.clone(),
-                seal_refs: vec![leaf.clone()],
+                selection: arkret_sdk::SealResolveSelection::SealRefs {
+                    seal_refs: vec![leaf.clone()],
+                },
                 history_traversal_access: None,
             })
             .await?;
         outcome
-            .seals
+            .into_seals()?
             .into_iter()
             .find(|seal| seal.id == leaf)
             .ok_or_else(|| anyhow::anyhow!("accepted Realm Seal frontier leaf did not resolve"))

@@ -87,12 +87,14 @@ pub async fn refresh_principal_bootstrap_frontier(
     let accepted = http
         .seals_resolve(&arkret_sdk::SelfSealResolveRequestBody {
             realm_id: bootstrap_seal.realm_id.clone(),
-            seal_refs: vec![bootstrap_seal.id.clone()],
+            selection: arkret_sdk::SealResolveSelection::SealRefs {
+                seal_refs: vec![bootstrap_seal.id.clone()],
+            },
             history_traversal_access: None,
         })
         .await?;
     anyhow::ensure!(
-        accepted.seals.as_slice() == [bootstrap_seal.clone()],
+        accepted.into_seals()?.as_slice() == [bootstrap_seal.clone()],
         "Station has not accepted the exact PCR bootstrap Seal"
     );
     crate::mls::governance_proof::refresh_realm_frontier_with_http(
@@ -169,7 +171,9 @@ pub async fn verify_recovery_authority_evidence(
     let resolved_seals = http
         .seals_resolve(&arkret_sdk::SelfSealResolveRequestBody {
             realm_id: evidence.bootstrap_seal.realm_id.clone(),
-            seal_refs: vec![evidence.bootstrap_seal.id.clone()],
+            selection: arkret_sdk::SealResolveSelection::SealRefs {
+                seal_refs: vec![evidence.bootstrap_seal.id.clone()],
+            },
             history_traversal_access: None,
         })
         .await?;
@@ -182,7 +186,7 @@ pub async fn verify_recovery_authority_evidence(
             .iter()
             .any(|event| accepted_event_matches_genesis_basis(event, authorize, &authorize_digest))
         || !resolved_seals
-            .seals
+            .into_seals()?
             .iter()
             .any(|seal| seal == &evidence.bootstrap_seal)
     {
