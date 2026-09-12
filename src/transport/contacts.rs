@@ -427,9 +427,14 @@ fn validate_contact_commit_outcome(
     let producer = matches!(outcome, ContactOperationOutcome::Accepted { .. })
         .then(|| local_contact_producer(event, signer))
         .transpose()?;
-    let check_producer = |returned: &arkret_sdk::contact_operations::ContactProducerSigner| {
+    let check_producer = |returned: &arkret_sdk::contact_operations::ContactProducerSigner,
+                          holder: &ContactPeer| {
+        returned.validate_for_event(event, holder)?;
         anyhow::ensure!(
-            Some(returned) == producer.as_ref(),
+            producer
+                .as_ref()
+                .is_some_and(|(method, key)| returned.verification_method() == method
+                    && returned.public_key_b64u() == key),
             "Contact result changed the exact Event producer method or local signing key"
         );
         Ok::<(), anyhow::Error>(())
@@ -440,7 +445,10 @@ fn validate_contact_commit_outcome(
                 operation_id,
                 request_acceptance_receipt,
             } => {
-                check_producer(&request_acceptance_receipt.core.producer_signer)?;
+                check_producer(
+                    &request_acceptance_receipt.core.producer_signer,
+                    &request_acceptance_receipt.core.holder,
+                )?;
                 let peer: ContactPeer = serde_json::from_value(
                     event
                         .payload
@@ -470,8 +478,11 @@ fn validate_contact_commit_outcome(
                 lineage,
                 current_proof,
             } => {
-                check_producer(&normal_response_acceptance_receipt.producer_signer)?;
-                check_producer(&lineage.producer_signer)?;
+                check_producer(
+                    &normal_response_acceptance_receipt.producer_signer,
+                    &normal_response_acceptance_receipt.request_receipt.core.peer,
+                )?;
+                check_producer(&lineage.producer_signer, &lineage.issuer)?;
                 if normal_response_acceptance_receipt
                     .request_receipt
                     .core
@@ -483,6 +494,10 @@ fn validate_contact_commit_outcome(
                             .request_receipt
                             .core
                             .producer_signer,
+                        &normal_response_acceptance_receipt
+                            .request_receipt
+                            .core
+                            .holder,
                     )?;
                 }
                 anyhow::ensure!(
@@ -500,7 +515,10 @@ fn validate_contact_commit_outcome(
                 operation_id,
                 reject_acceptance_receipt,
             } => {
-                check_producer(&reject_acceptance_receipt.producer_signer)?;
+                check_producer(
+                    &reject_acceptance_receipt.producer_signer,
+                    &reject_acceptance_receipt.request_receipt.core.peer,
+                )?;
                 if reject_acceptance_receipt
                     .request_receipt
                     .core
@@ -512,6 +530,7 @@ fn validate_contact_commit_outcome(
                             .request_receipt
                             .core
                             .producer_signer,
+                        &reject_acceptance_receipt.request_receipt.core.holder,
                     )?;
                 }
                 (
@@ -525,7 +544,7 @@ fn validate_contact_commit_outcome(
                 lineage,
                 current_proof,
             } => {
-                check_producer(&lineage.producer_signer)?;
+                check_producer(&lineage.producer_signer, &lineage.issuer)?;
                 validate_contact_current_result(event, lineage, current_proof)?;
                 (Kind::ScopeUpdate, operation_id, &lineage.event_ref)
             }
@@ -534,7 +553,7 @@ fn validate_contact_commit_outcome(
                 lineage,
                 current_proof,
             } => {
-                check_producer(&lineage.producer_signer)?;
+                check_producer(&lineage.producer_signer, &lineage.issuer)?;
                 validate_contact_current_result(event, lineage, current_proof)?;
                 (Kind::Tombstone, operation_id, &lineage.event_ref)
             }
@@ -563,7 +582,7 @@ fn validate_contact_commit_outcome(
 fn local_contact_producer(
     event: &arkret_sdk::Event,
     signer: &crate::event_signer::InksonEventSigner,
-) -> anyhow::Result<arkret_sdk::contact_operations::ContactProducerSigner> {
+) -> anyhow::Result<(arkret_sdk::DidUrl, arkret_sdk::Base64UrlString)> {
     let [proof] = event.proofs.as_slice() else {
         anyhow::bail!("Contact Event must retain its unique original producer proof");
     };
@@ -575,17 +594,17 @@ fn local_contact_producer(
     event.validate_proof_bindings_with_digest_suite(
         event.event_id.digest_suite_code().digest_suite(),
     )?;
-    let descriptor = arkret_sdk::contact_operations::ContactProducerSigner {
-        verification_method: method,
-        public_key_b64u: arkret_sdk::Base64UrlString::new(
-            signer
-                .public_key_base64url()
-                .ok_or_else(|| anyhow::anyhow!("Contact signer has no local Ed25519 public key"))?,
-        )
-        .map_err(anyhow::Error::msg)?,
-    };
-    descriptor.validate()?;
-    Ok(descriptor)
+    let key = arkret_sdk::Base64UrlString::new(
+        signer
+            .public_key_base64url()
+            .ok_or_else(|| anyhow::anyhow!("Contact signer has no local Ed25519 public key"))?,
+    )
+    .map_err(anyhow::Error::msg)?;
+    // The own-Station result supplies the source-authenticated public Agent
+    // locator. The client checks its exact actor branch without performing a
+    // second Station's historical verification or introducing an online gate.
+    arkret_sdk::contact_operations::ContactProducerSigner::direct(method.clone(), key.clone())?;
+    Ok((method, key))
 }
 
 fn validate_contact_current_result(
