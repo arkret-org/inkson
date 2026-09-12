@@ -20,7 +20,12 @@ pub(crate) async fn discover(base_url: &str) -> anyhow::Result<ServiceDescribe> 
     let description =
         arkret_sdk::http_client::station_connection::fetch_station_description(&base, true).await?;
     let binding = StationConnectionBinding::from_description(&base, &description, true)?;
-    compare_and_store(&binding, None).await?;
+    if let Err(error) = compare_and_store(&binding, None).await {
+        // A discovered mismatch or unavailable trust store must not leave an
+        // earlier authentication route reusable by a later credential refresh.
+        crate::identity::account_auth::clear_authority_resolver_cache();
+        return Err(error);
+    }
     Ok(description)
 }
 
