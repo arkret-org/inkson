@@ -409,6 +409,7 @@ fn build_request(
         domestic_app_id: None,
         registration_id: None,
         display_name: Some("inkson"),
+        visible_notification_opt_in: false,
         idempotency_key: Some(idempotency_key.as_str()),
         request_id: None,
         proof: None,

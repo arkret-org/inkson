@@ -428,28 +428,8 @@ mod tests {
             backend_token: "jwt".to_owned(),
             participant_id: "ak:rtc_participant:self".to_owned(),
             participant_binding: arkret_sdk::CallMediaParticipantBinding {
-                scheme: arkret_sdk::ParticipantBinding::SCHEMA.to_owned(),
                 sig: "sig".to_owned(),
                 issuer_kid: arkret_sdk::DidUrl::new("did:web:media.example#key-1").unwrap(),
-                realm_id: arkret_sdk::RealmId::new(
-                    "ak:realm:AVxu7KCm9qmiOqakDKBXUia9rbZ3NBurP875XbqG1rbs",
-                )
-                .unwrap(),
-                call_id: arkret_sdk::CallId::new(
-                    "ak:call:AYf05kF8z4cSo8r6qmqXgu4KPuv2YtKBlsE00FOmblaz",
-                )
-                .unwrap(),
-                focus_id: "fra-1".to_owned(),
-                actor_id: crate::mls_api_helpers::local_account_actor_id("did:web:alice.example")
-                    .unwrap(),
-                device_id: arkret_sdk::DeviceId::new(
-                    "ak:device:01904100-0000-7000-8000-000000000005",
-                )
-                .unwrap(),
-                participant_id: "ak:rtc_participant:self".to_owned(),
-                issued_at: chrono::DateTime::parse_from_rfc3339("2026-04-26T00:00:00.000Z")
-                    .unwrap()
-                    .with_timezone(&chrono::Utc),
                 expires_at: chrono::DateTime::parse_from_rfc3339("2026-04-26T00:05:00.000Z")
                     .unwrap()
                     .with_timezone(&chrono::Utc),

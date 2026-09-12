@@ -181,7 +181,12 @@ pub(crate) async fn prefetch_from_realm_projections(
                 producer_signer_evidence_ref: selected
                     .producer_signer_resolution_evidence_ref
                     .clone(),
-                key,
+                key: arkret_sdk::StationSigningKey {
+                    actor: selector.actor,
+                    verification_method: selector.verification_method,
+                    public_key_b64u: key.public_key_b64u,
+                    authorization_ref: key.authorization_ref,
+                },
                 cached_at_unix_ms: crate::clock::now_unix_ms(),
             };
             let Some(key) = historical_key(&entry, selected, &recipient) else {

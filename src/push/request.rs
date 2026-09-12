@@ -35,6 +35,7 @@ pub fn build_unregister_request(
         domestic_app_id: None,
         registration_id,
         display_name: None,
+        visible_notification_opt_in: false,
         idempotency_key: Some(&idempotency_key),
         request_id: None,
         proof: None,

@@ -140,27 +140,16 @@ pub(super) async fn submit_call_state_participant(
     };
     let (focus, roster_delta) = if target_state == arkret_sdk::CallLifecycleState::Connecting {
         let binding = &session.participant_binding;
-        let participant_binding = arkret_sdk::ParticipantBinding {
-            scheme: binding.scheme.clone(),
-            realm_id: binding.realm_id.clone(),
-            call_id: binding.call_id.as_str().to_owned(),
-            focus_id: binding.focus_id.clone(),
-            actor_id: binding.actor_id.clone(),
-            device_id: binding.device_id.as_str().to_owned(),
-            participant_id: binding.participant_id.clone(),
-            issued_at: binding.issued_at,
-            expires_at: binding.expires_at,
-            issuer_kid: binding.issuer_kid.clone(),
-            sig: binding.sig.clone(),
-        };
+        let participant_binding = binding.clone();
         let participant = arkret_sdk::CallParticipant {
             actor_id: crate::mls_api_helpers::local_account_actor_id(actor)
                 .map_err(|err| err.to_string())?,
             device_id: device.to_owned(),
             joined_at: None,
             foci_preferred: Some(vec![session.focus_id.clone()]),
-            participant_id: session.participant_id.clone(),
-            participant_binding,
+            participant_id: Some(session.participant_id.clone()),
+            participant_binding: Some(participant_binding),
+            focus_id: Some(session.focus_id.clone()),
             media: Some(arkret_sdk::CallParticipantMedia {
                 audio: Some(session.desired_media.audio),
                 video: Some(session.desired_media.video),
