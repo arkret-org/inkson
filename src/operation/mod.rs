@@ -277,6 +277,7 @@ pub struct LocalOperation {
     intent: EventIntent,
     local_operation_id: LocalOperationId,
     local_target_ref: Option<String>,
+    publication_event: Option<arkret_sdk::Event>,
 }
 
 impl LocalOperation {
@@ -288,7 +289,21 @@ impl LocalOperation {
             intent,
             local_operation_id: LocalOperationId::new(),
             local_target_ref: None,
+            publication_event: None,
         }
+    }
+
+    pub fn with_publication_event(mut self, event: arkret_sdk::Event) -> anyhow::Result<Self> {
+        anyhow::ensure!(
+            *self.intent.kind() == arkret_sdk::EventKind::AgentActionApprove,
+            "publication dependency requires Agent action approval"
+        );
+        self.publication_event = Some(event);
+        Ok(self)
+    }
+
+    pub fn publication_event(&self) -> Option<&arkret_sdk::Event> {
+        self.publication_event.as_ref()
     }
 
     /// The semantic operation, ready to be positioned on the actor chain.
@@ -612,6 +627,7 @@ impl TypedOperationBuilder {
             intent: self.intent?,
             local_operation_id: LocalOperationId::new(),
             local_target_ref: self.target_ref,
+            publication_event: None,
         })
     }
 }

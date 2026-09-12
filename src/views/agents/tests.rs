@@ -705,64 +705,23 @@ mod agent_tests {
     }
 
     #[test]
-    fn build_action_approve_payload_binds_draft_digest() {
-        let draft = serde_json::json!({
-            "type": "ak.agent.draft.v1",
-            "draft_id": "0197-draft",
-            "agent_id": "ak:did_core:web:agents.example:summary",
-            "proposed_action": "ak.message.create",
-            "target": {"kind": "realm", "realm_id": "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19"},
-            "content": {"body": "draft text"},
-        });
-        let payload = serde_json::to_value(
-            build_action_approve_payload(
-                &draft,
-                "2026-06-26T00:00:00.000Z",
-                "2026-06-26T01:00:00.000Z",
-            )
-            .unwrap(),
-        )
-        .unwrap();
-        assert_eq!(payload["draft_id"], "0197-draft");
-        assert_eq!(payload["proposed_action"], "ak.message.create");
-        assert_eq!(payload["approved_at"], "2026-06-26T00:00:00.000Z");
-        assert_eq!(payload["expires_at"], "2026-06-26T01:00:00.000Z");
-        let digest = payload["draft_content_digest"].as_str().unwrap();
-        assert!(digest.starts_with("sha256:"));
-        // Approving as-is means both digests match.
-        assert_eq!(
-            payload["draft_content_digest"],
-            payload["approved_payload_digest"]
-        );
-        // Nonce is a fresh uuid, not empty.
-        assert!(!payload["approval_nonce"].as_str().unwrap().is_empty());
-        assert!(!payload["approval_id"].as_str().unwrap().is_empty());
-    }
-
-    #[test]
-    fn build_action_approve_payload_prefers_action_request_digest() {
-        let request = serde_json::json!({
-            "request_id": "ak:agent-action-request:0197",
-            "agent_id": "ak:did_core:web:agents.example:summary",
-            "proposed_action": "ak.message.create",
-            "target": {"kind": "realm", "realm_id": "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19"},
-            "request_canonical_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-        });
-        let payload = serde_json::to_value(
-            build_action_approve_payload(
+    fn approval_refuses_payload_digest_or_draft_content_without_a_signed_event() {
+        for request in [
+            serde_json::json!({"content": {"body": "draft text"}}),
+            serde_json::json!({"request_canonical_digest": format!("sha256:{}", "b".repeat(64))}),
+        ] {
+            let error = build_action_approve_payload(
                 &request,
                 "2026-06-26T00:00:00.000Z",
                 "2026-06-26T01:00:00.000Z",
             )
-            .unwrap(),
-        )
-        .unwrap();
-        assert_eq!(payload["request_id"], "ak:agent-action-request:0197");
-        assert_eq!(
-            payload["approved_payload_digest"],
-            "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-        );
-        assert!(payload.get("draft_content_digest").is_none());
+            .unwrap_err();
+            assert!(
+                error
+                    .to_string()
+                    .contains("complete pre-signed publication Event")
+            );
+        }
     }
 
     #[test]

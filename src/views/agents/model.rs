@@ -974,6 +974,28 @@ fn non_empty_field(payload: &Value, field: &str) -> Option<String> {
         .map(ToOwned::to_owned)
 }
 
+/// Read the exact pre-signed Event supplied for controller approval. Draft
+/// content or a payload digest cannot stand in for a signed publication.
+pub fn approval_publication(request: &Value) -> anyhow::Result<arkret_sdk::Event> {
+    let publication: arkret_sdk::Event =
+        serde_json::from_value(request.get("publication_event").cloned().ok_or_else(|| {
+            anyhow::anyhow!("approval requires the complete pre-signed publication Event")
+        })?)?;
+    anyhow::ensure!(
+        publication.auth_context.is_some()
+            && publication.seal_basis.is_none()
+            && arkret_schema::classify_event_execution(&publication)?
+                == Some(arkret_sdk::CbsEffectPlane::Data),
+        "approval publication must be an ordinary data Event"
+    );
+    anyhow::ensure!(
+        request.get("agent_id").and_then(Value::as_str)
+            == Some(publication.actor_id.signing_principal_id().as_str()),
+        "approval publication does not belong to the requested Agent"
+    );
+    Ok(publication)
+}
+
 /// Build a `ak.agent.action_approve` payload for a controller-owned
 /// draft or action request using the current schema fields.
 pub fn build_action_approve_payload(
@@ -982,10 +1004,7 @@ pub fn build_action_approve_payload(
     expires_at: &str,
 ) -> anyhow::Result<arkret_sdk::AgentActionApprovePayload> {
     let draft_content_digest = request.get("content").and_then(canonical_digest);
-    let approved_payload_digest = non_empty_field(request, "approved_payload_digest")
-        .or_else(|| non_empty_field(request, "request_canonical_digest"))
-        .or_else(|| draft_content_digest.clone())
-        .unwrap_or_default();
+    let publication = approval_publication(request)?;
     let agent_id = request
         .get("agent_id")
         .and_then(Value::as_str)
@@ -1005,7 +1024,7 @@ pub fn build_action_approve_payload(
         agent_id: arkret_sdk::DidCoreId::new(agent_id.to_owned())?,
         proposed_action: proposed_action.to_owned(),
         target: serde_json::from_value(target)?,
-        approved_payload_digest: arkret_sdk::Hash::new(approved_payload_digest)?,
+        approved_event_id: publication.event_id,
         draft_content_digest: draft_content_digest
             .map(arkret_sdk::Hash::new)
             .transpose()?,

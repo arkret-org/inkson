@@ -746,6 +746,10 @@ mod verification_method_controller_tests {
                     .unwrap(),
                     authorized_generation_ref: 7,
                     device_status: arkret_models_crypto::DeviceStatus::Active,
+                    authorization_window: arkret_models_crypto::DeviceAuthorizationWindow {
+                        not_before: now,
+                        expires_at: None,
+                    },
                     attested_at: now,
                     expires_at: now + chrono::Duration::minutes(5),
                 },

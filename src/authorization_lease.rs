@@ -314,6 +314,7 @@ pub fn initial_submission(
 ) -> anyhow::Result<arkret_wire::EventInitialSubmission> {
     let authorization_lease = lease_for_event(event, crate::clock::now_utc())?;
     Ok(arkret_wire::EventInitialSubmission {
+        publication_event: None,
         mls_frontier_leaves: None,
         event: event.clone(),
         authorization_lease: Some(authorization_lease),
@@ -341,7 +342,25 @@ pub async fn standard_initial_submission(
     digest_suite: arkret_sdk::DigestSuite,
     mls_frontier_leaves: Option<&[arkret_sdk::MlsSecurityFrontierLeaf]>,
 ) -> anyhow::Result<arkret_wire::EventInitialSubmission> {
+    standard_initial_submission_with_publication(
+        http,
+        event,
+        digest_suite,
+        mls_frontier_leaves,
+        None,
+    )
+    .await
+}
+
+pub async fn standard_initial_submission_with_publication(
+    http: &arkret_sdk::http_client::Client,
+    event: &arkret_sdk::Event,
+    digest_suite: arkret_sdk::DigestSuite,
+    mls_frontier_leaves: Option<&[arkret_sdk::MlsSecurityFrontierLeaf]>,
+    publication_event: Option<&arkret_sdk::Event>,
+) -> anyhow::Result<arkret_wire::EventInitialSubmission> {
     let mut submission = arkret_wire::EventInitialSubmission::online(event.clone());
+    submission.publication_event = publication_event.cloned();
     submission.mls_frontier_leaves = mls_frontier_leaves.map(<[_]>::to_vec);
     let managed_genesis = is_agent_pcr_genesis(event);
     if arkret_schema::classify_event_execution(event)? == Some(arkret_sdk::CbsEffectPlane::Control)

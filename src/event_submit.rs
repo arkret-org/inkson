@@ -2376,11 +2376,12 @@ impl EventSubmitter {
         // permanently rejected (`offline-publication.md` §2). Replaying a
         // stale wrapper would hide that from the user instead of prompting a
         // re-authorization.
-        let submission = crate::authorization_lease::standard_initial_submission(
+        let submission = crate::authorization_lease::standard_initial_submission_with_publication(
             &self.http,
             signed,
             signed.digest_suite(),
             signed.mls_frontier_leaves(),
+            signed.publication_event(),
         )
         .await?;
         let response: arkret_sdk::EventsSubmitOutcome = self
@@ -2508,6 +2509,11 @@ impl EventSubmitter {
         state_store: Option<crate::runtime::input::StateStoreHandle>,
     ) -> anyhow::Result<SubmitEventResult> {
         let intent = operation.intent();
+        anyhow::ensure!(
+            (intent.kind() == &arkret_sdk::EventKind::AgentActionApprove)
+                == operation.publication_event().is_some(),
+            "a complete publication Event is required exactly for Agent action approval"
+        );
         self.ensure_recovery_material_ready(intent, None).await?;
         self.refresh_direct_message_authority(intent, state_store.as_ref())
             .await?;
@@ -2582,7 +2588,8 @@ impl EventSubmitter {
         }
         let digest_suite =
             self.trusted_digest_suite_for_intent(&intent, None, state_store.as_ref())?;
-        let queued_intent = QueuedEventIntent::new(intent, digest_suite);
+        let mut queued_intent = QueuedEventIntent::new(intent, digest_suite);
+        queued_intent.publication_event = operation.publication_event().cloned();
         self.enqueue_and_drive_sdk_event(
             QueuedSdkEvent::unauthored(
                 queued_intent,
@@ -3236,13 +3243,22 @@ impl EventSubmitter {
         intent: &QueuedEventIntent,
         local_operation_id: &str,
     ) -> anyhow::Result<AuthoredAttempt> {
-        self.author_intent(
-            &intent.intent,
-            local_operation_id,
-            SemanticAuthoring::FrozenIntent,
-            intent.digest_suite,
-        )
-        .await
+        let mut attempt = self
+            .author_intent(
+                &intent.intent,
+                local_operation_id,
+                SemanticAuthoring::FrozenIntent,
+                intent.digest_suite,
+            )
+            .await?;
+        if let Some(publication) = &intent.publication_event {
+            attempt
+                .envelope
+                .bind_publication_event(publication.clone())?;
+            attempt.canonical_body_bytes =
+                arkret_sdk::canonical::canonical_json_bytes(&attempt.envelope)?;
+        }
+        Ok(attempt)
     }
 
     /// Resolve the CBS basis this attempt authors against.
@@ -3616,11 +3632,12 @@ impl EventSubmitter {
                     .map_err(anyhow::Error::from)?;
                 submission
             } else {
-                crate::authorization_lease::standard_initial_submission(
+                crate::authorization_lease::standard_initial_submission_with_publication(
                     &self.http,
                     event,
                     event.digest_suite(),
                     event.mls_frontier_leaves(),
+                    event.publication_event(),
                 )
                 .await?
             };
@@ -3754,11 +3771,12 @@ impl EventSubmitter {
         let mut submissions = Vec::with_capacity(events.len());
         for event in events {
             submissions.push(
-                crate::authorization_lease::standard_initial_submission(
+                crate::authorization_lease::standard_initial_submission_with_publication(
                     &self.http,
                     event,
                     event.digest_suite(),
                     event.mls_frontier_leaves(),
+                    event.publication_event(),
                 )
                 .await?,
             );

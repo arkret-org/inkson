@@ -6,7 +6,8 @@ use serde_json::{Value, json};
 
 use super::model::{
     ActionApproveDialogState, ActionRequestNonceStatus, actor_kind_badge_class, actor_kind_label,
-    build_action_approve_payload, build_action_reject_payload, is_action_request_expired,
+    approval_publication, build_action_approve_payload, build_action_reject_payload,
+    is_action_request_expired,
 };
 use crate::transport::auth::with_authed_api;
 use crate::ui::button::{Button, ButtonVariant};
@@ -31,26 +32,17 @@ pub fn ActorKindBadge(actor_kind: Option<String>) -> Element {
     }
 }
 
-/// Action-approve dialog component. Renders the payload digest,
-/// expiry, and single-use nonce status of an incoming
-/// `ak.agent.action_request` notification; on confirm it submits a
-/// `ak.agent.action_approve` event.
-///
-/// TODO(P3-impl): the action_request payload pipe goes through
-/// chime's push frame parser (chime P3) → this dialog. Today the
-/// dialog accepts a payload-digest string as input so the wire
-/// envelope can be exercised; full integration with the notification
-/// stream lands in P3-impl.
+/// Review a complete pre-signed Agent publication before submitting its
+/// target-Realm approval command. The attachment remains immutable on retries.
 #[component]
 pub fn ActionApproveDialog(
     token: Signal<String>,
     actor_id: String,
-    space_id: String,
     request_id: String,
     agent_id: String,
     proposed_action: String,
     target_json: String,
-    payload_digest: String,
+    publication_event: arkret_sdk::Event,
     expires_at: String,
     nonce_status: String,
     now: String,
@@ -80,8 +72,8 @@ pub fn ActionApproveDialog(
                 span { "Approve agent action" }
                 span { class: "{nonce_st.badge_class()}", "nonce {nonce_st.label()}" }
             }
-            div { class: "muted", "data-testid": "action-approve-payload-digest",
-                "payload digest: {payload_digest}"
+            div { class: "muted", "data-testid": "action-approve-publication-event",
+                "publication Event: {publication_event.event_id}"
             }
             div { class: "muted", "data-testid": "action-approve-expires-at",
                 "expires_at: {expires_at}"
@@ -101,43 +93,38 @@ pub fn ActionApproveDialog(
                     onclick: {
                         let base = base_url.clone();
                         let actor = actor_id.clone();
-                        let space = space_id.clone();
                         let request_id = request_id.clone();
                         let agent = agent_id.clone();
                         let action = proposed_action.clone();
                         let target_json = target_json.clone();
-                        let digest = payload_digest.clone();
+                        let publication = publication_event.clone();
                         let approval_expires_at = expires_at.clone();
                         move |_| {
                             state.set(ActionApproveDialogState::Submitting);
                             let base = base.clone();
                             let actor = actor.clone();
-                            let space = space.clone();
                             let request_id = request_id.clone();
                             let agent = agent.clone();
                             let action = action.clone();
                             let target_json = target_json.clone();
-                            let digest = digest.clone();
+                            let publication = publication.clone();
                             let approval_expires_at = approval_expires_at.clone();
                             let api_token = token();
                             spawn(async move {
-                                // Submit a ak.agent.action_approve
-                                // event. The payload carries the
-                                // request_id + the digest we approved
-                                // so the reducer can match it back to
-                                // the originating action_request and
-                                // burn the single-use nonce.
-                                let target = serde_json::from_str::<Value>(&target_json)
-                                    .unwrap_or_else(|_| json!({
-                                        "kind": "realm",
-                                        "realm_id": space.clone(),
-                                    }));
+                                let target = match serde_json::from_str::<arkret_sdk::AgentActionTarget>(&target_json) {
+                                    Ok(target) => target,
+                                    Err(error) => {
+                                        state.set(ActionApproveDialogState::Reviewing);
+                                        status_text.set(format!("invalid approval target: {error}"));
+                                        return;
+                                    }
+                                };
                                 let request_payload = json!({
                                     "request_id": request_id,
                                     "agent_id": agent,
                                     "proposed_action": action,
                                     "target": target,
-                                    "request_canonical_digest": digest,
+                                    "publication_event": publication,
                                 });
                                 let approved_at = crate::clock::now_timestamp();
                                 let op = build_action_approve_payload(
@@ -146,14 +133,16 @@ pub fn ActionApproveDialog(
                                     &approval_expires_at,
                                 )
                                 .and_then(|payload| {
+                                    let publication = approval_publication(&request_payload)?;
                                     crate::operation::TypedOperationBuilder::new::<
                                         arkret_sdk::event_spec::AgentActionApprove,
                                     >(
-                                        &space,
+                                        &publication.realm_id.to_string(),
                                         &actor,
                                         payload,
                                     )
-                                    .build_sdk_event("inkson")
+                                    .build_sdk_event("inkson")?
+                                    .with_publication_event(publication)
                                 });
                                 let op = match op {
                                     Ok(op) => op,
@@ -355,13 +344,10 @@ pub fn DraftApprovalPanel(token: Signal<String>, controller_principal_id: String
                                         Button {
                                             variant: ButtonVariant::Primary,
                                             "data-testid": "agent-draft-approve-button",
-                                            disabled: principal_realm.is_none(),
                                             onclick: {
                                                 let base = base_url.clone();
                                                 let actor = controller_principal_id.clone();
-                                                let realm = principal_realm.clone();
                                                 move |_| {
-                                                    let Some(realm) = realm.clone() else { return; };
                                                     let base = base.clone();
                                                     let actor = actor.clone();
                                                     let api_token = token();
@@ -376,14 +362,16 @@ pub fn DraftApprovalPanel(token: Signal<String>, controller_principal_id: String
                                                         &approval_expires_at,
                                                     )
                                                     .and_then(|payload| {
+                                                        let publication = approval_publication(&draft)?;
                                                         crate::operation::TypedOperationBuilder::new::<
                                                             arkret_sdk::event_spec::AgentActionApprove,
                                                         >(
-                                                            &realm,
+                                                            &publication.realm_id.to_string(),
                                                             &actor,
                                                             payload,
                                                         )
-                                                        .build_sdk_event("inkson")
+                                                        .build_sdk_event("inkson")?
+                                    .with_publication_event(publication)
                                                     });
                                                     spawn(async move {
                                                         let op = match op {
