@@ -1402,6 +1402,18 @@ pub(super) fn connect(
                 );
                 crypto_state.set("Session active".to_owned());
 
+                // Resume exact private Contact bytes only after this account's
+                // signer and authenticated transport have both been installed.
+                if let Ok(http) = authed.sdk_http_client() {
+                    let resumed = crate::transport::resume_pending_contact(&http).await;
+                    if session.generation() != bootstrap_session_generation {
+                        return;
+                    }
+                    if resumed.is_err() {
+                        tracing::warn!(target: "session_boot", "Contact confirmation remains queued for exact retry");
+                    }
+                }
+
                 // Session/service bootstrap does not enumerate account Realms.
                 // The single account engine durably installs each summary page
                 // and demanded Realm detail as soon as its frame arrives.

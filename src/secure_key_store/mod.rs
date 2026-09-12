@@ -217,6 +217,7 @@ pub(crate) fn is_wasm_indexeddb_required_secret_key(key: &str) -> bool {
         || key.starts_with(PENDING_LOGOUT_SECRET_KEY_PREFIX)
         || key.contains(&format!(".{PENDING_LOGOUT_SECRET_KEY_PREFIX}"))
         || scoped_prefix(crate::identity::account_auth::ACCOUNT_HANDOFF_GRANT_SECRET_KEY_PREFIX)
+        || scoped_prefix(crate::transport::CONTACT_PENDING_COMMIT_SECRET_KEY)
         || scoped_prefix(
             crate::identity::account_auth::PREPARED_IDENTITY_CREATION_REQUEST_SECRET_KEY_PREFIX,
         )

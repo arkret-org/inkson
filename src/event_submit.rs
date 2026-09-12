@@ -656,6 +656,20 @@ pub(crate) async fn require_server_committed_unit(
     event_id: &arkret_sdk::EventId,
     seal_id: &arkret_sdk::SealId,
 ) -> anyhow::Result<()> {
+    let outcome = server_command_unit_outcome(http, realm_id, event_id, seal_id).await?;
+    anyhow::ensure!(
+        outcome == arkret_sdk::CommandOutcome::Committed,
+        "terminal command unit was rejected"
+    );
+    Ok(())
+}
+
+pub(crate) async fn server_command_unit_outcome(
+    http: &arkret_sdk::http_client::Client,
+    realm_id: &arkret_sdk::RealmId,
+    event_id: &arkret_sdk::EventId,
+    seal_id: &arkret_sdk::SealId,
+) -> anyhow::Result<arkret_sdk::CommandOutcome> {
     let seals = http
         .seals_resolve(&arkret_sdk::SelfSealResolveRequestBody {
             realm_id: realm_id.clone(),
@@ -673,13 +687,13 @@ pub(crate) async fn require_server_committed_unit(
     let seal = &seals[0];
     seal.validate_structural()?;
     seal.validate_id(seal.state_root.digest_suite()?)?;
-    require_committed_unit_result(&seal.command_results, &event_id.event_digest())
+    command_unit_outcome(&seal.command_results, &event_id.event_digest())
 }
 
-fn require_committed_unit_result(
+pub(crate) fn command_unit_outcome(
     results: &[arkret_sdk::SealCommandOutcome],
     event_digest: &arkret_sdk::Hash,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<arkret_sdk::CommandOutcome> {
     let mut matching = results
         .iter()
         .filter(|result| result.unit_event_digests.contains(event_digest));
@@ -690,12 +704,7 @@ fn require_committed_unit_result(
         matching.next().is_none(),
         "terminal Seal repeats a command unit member"
     );
-    anyhow::ensure!(
-        result.outcome == arkret_sdk::CommandOutcome::Committed,
-        "terminal command unit was rejected: {:?}",
-        result.reason_code
-    );
-    Ok(())
+    Ok(result.outcome)
 }
 
 /// Compare a producer-authored Event with its accepted projection.

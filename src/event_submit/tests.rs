@@ -14,9 +14,12 @@ fn sealed_command_requires_its_exact_unit_to_be_committed() {
         arkret_sdk::DigestSuite::Sha256,
     )
     .unwrap();
-    assert!(require_committed_unit_result(std::slice::from_ref(&committed), &member).is_ok());
-    assert!(require_committed_unit_result(std::slice::from_ref(&committed), &absent).is_err());
-    assert!(require_committed_unit_result(&[committed.clone(), committed], &member).is_err());
+    assert_eq!(
+        command_unit_outcome(std::slice::from_ref(&committed), &member).unwrap(),
+        arkret_sdk::CommandOutcome::Committed
+    );
+    assert!(command_unit_outcome(std::slice::from_ref(&committed), &absent).is_err());
+    assert!(command_unit_outcome(&[committed.clone(), committed], &member).is_err());
     let rejected = arkret_sdk::SealCommandOutcome::rejected(
         first.clone(),
         vec![first, member.clone()],
@@ -24,7 +27,10 @@ fn sealed_command_requires_its_exact_unit_to_be_committed() {
         arkret_sdk::DigestSuite::Sha256,
     )
     .unwrap();
-    assert!(require_committed_unit_result(&[rejected], &member).is_err());
+    assert_eq!(
+        command_unit_outcome(&[rejected], &member).unwrap(),
+        arkret_sdk::CommandOutcome::Rejected
+    );
 }
 
 #[test]

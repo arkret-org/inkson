@@ -3,6 +3,9 @@ pub mod auth;
 mod blob;
 pub mod circle;
 mod contacts;
+pub(crate) use contacts::pending::{
+    SECRET_KEY as CONTACT_PENDING_COMMIT_SECRET_KEY, resume_pending_contact,
+};
 pub(crate) use contacts::{
     DEFAULT_CONTACT_SCOPE_NAMES, prepare_principal_successor_seal, submit_principal_successor_seal,
 };
