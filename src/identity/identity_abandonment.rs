@@ -1,4 +1,4 @@
-//! Explicit two-handoff abandonment of a never-accepted provisional identity.
+//! Explicit abandonment of a never-accepted provisional identity.
 
 use crate::state::{PendingAccountHandoff, PendingIdentityAbandonment};
 
@@ -38,20 +38,6 @@ fn target_from_handoff(
     })
 }
 
-pub fn has_fresh_confirmation_handoff(
-    _handoff: &PendingAccountHandoff,
-    pending: &PendingIdentityAbandonment,
-) -> bool {
-    let ready = !pending.fresh_authentication_required;
-    tracing::debug!(
-        challenge_request_id = %pending.challenge.request_id,
-        server_requires_fresh_authentication = pending.fresh_authentication_required,
-        challenge_expired = pending.challenge.expires_at <= chrono::Utc::now(),
-        "evaluated identity-abandonment confirmation readiness"
-    );
-    ready
-}
-
 fn account_client(
     handoff: &PendingAccountHandoff,
     dpop: &crate::identity::account_auth::grant_dpop::DpopHandle,
@@ -71,49 +57,18 @@ fn account_client(
         .build()?)
 }
 
-pub async fn issue_challenge(
-    handoff: &PendingAccountHandoff,
-    dpop: &crate::identity::account_auth::grant_dpop::DpopHandle,
-) -> anyhow::Result<PendingIdentityAbandonment> {
-    if handoff
-        .identity_abandonment
-        .as_ref()
-        .is_some_and(|pending| pending.challenge.expires_at > chrono::Utc::now())
-    {
-        anyhow::bail!("identity abandonment challenge is already pending");
-    }
-    let grant = crate::identity::account_auth::load_account_handoff_grant(handoff)?
-        .ok_or_else(|| anyhow::anyhow!("account handoff credential is unavailable"))?;
+/// Freeze the explicit local command before any network call. This is not
+/// authorization evidence; the Account Authority checks fresh authentication.
+pub fn prepare(handoff: &PendingAccountHandoff) -> anyhow::Result<PendingIdentityAbandonment> {
     let target = target_from_handoff(handoff)?;
-    let request = arkret_sdk::IdentityAbandonmentChallengeRequestBody {
-        request_id: arkret_sdk::RequestId::new_v7_at(crate::clock::now_unix_ms()),
-        identity_creation_lease_id: target.lease_id,
-        lease_fence: target.lease_fence,
-        principal_id: target.principal_id,
-        did_version_id: target.did_version_id,
-    };
-    let challenge = account_client(handoff, dpop, grant)?
-        .auth_issue_identity_abandonment_challenge(&request)
-        .await?;
-    if challenge.request_id != request.request_id
-        || challenge.identity_creation_lease_id != request.identity_creation_lease_id
-        || challenge.lease_fence != request.lease_fence
-        || challenge.principal_id != request.principal_id
-        || challenge.did_version_id != request.did_version_id
-        || challenge.consequence_disclosure
-            != arkret_sdk::IDENTITY_ABANDONMENT_CONSEQUENCE_DISCLOSURE
-    {
-        anyhow::bail!("identity abandonment challenge changed the frozen provisional identity");
-    }
-    tracing::info!(
-        handoff_request_id = %handoff.request_id,
-        challenge_request_id = %challenge.request_id,
-        challenge_expires_at = %challenge.expires_at,
-        "persisting identity-abandonment challenge before fresh authentication"
-    );
     Ok(PendingIdentityAbandonment {
-        challenge,
-        fresh_authentication_required: true,
+        request: arkret_sdk::IdentityAbandonmentRequestBody {
+            request_id: arkret_sdk::RequestId::new_v7_at(crate::clock::now_unix_ms()),
+            identity_creation_lease_id: target.lease_id,
+            lease_fence: target.lease_fence,
+            principal_id: target.principal_id,
+            did_version_id: target.did_version_id,
+        },
     })
 }
 
@@ -122,46 +77,26 @@ pub async fn confirm(
     pending: &PendingIdentityAbandonment,
     dpop: &crate::identity::account_auth::grant_dpop::DpopHandle,
 ) -> anyhow::Result<arkret_sdk::IdentityAbandonmentOutcome> {
-    let grant = crate::identity::account_auth::load_account_handoff_grant(handoff)?;
-    tracing::info!(
-        handoff_request_id = %handoff.request_id,
-        challenge_request_id = %pending.challenge.request_id,
-        handoff_grant_present = grant.is_some(),
-        challenge_expired = pending.challenge.expires_at <= chrono::Utc::now(),
-        "validating identity-abandonment confirmation state"
-    );
-    let grant =
-        grant.ok_or_else(|| anyhow::anyhow!("fresh account handoff credential is unavailable"))?;
-    tracing::info!(
-        handoff_request_id = %handoff.request_id,
-        challenge_request_id = %pending.challenge.request_id,
-        server_requires_fresh_authentication = pending.fresh_authentication_required,
-        "using Account Authority abandonment freshness decision"
-    );
-    if pending.fresh_authentication_required {
-        anyhow::bail!("identity abandonment confirmation requires a fresh account handoff");
+    let grant = crate::identity::account_auth::load_account_handoff_grant(handoff)?
+        .ok_or_else(|| anyhow::anyhow!("fresh account handoff credential is unavailable"))?;
+    let request = &pending.request;
+    let target = target_from_handoff(handoff)?;
+    if request.identity_creation_lease_id != target.lease_id
+        || request.lease_fence != target.lease_fence
+        || request.principal_id != target.principal_id
+        || request.did_version_id != target.did_version_id
+    {
+        anyhow::bail!("abandonment target changed; review the current identity before confirming");
     }
-    if pending.challenge.expires_at <= chrono::Utc::now() {
-        anyhow::bail!("identity abandonment challenge expired; issue a new challenge");
-    }
-    let request = arkret_sdk::IdentityAbandonmentRequestBody {
-        request_id: pending.challenge.request_id.clone(),
-        challenge_id: pending.challenge.challenge_id.clone(),
-        challenge: pending.challenge.challenge.clone(),
-        identity_creation_lease_id: pending.challenge.identity_creation_lease_id.clone(),
-        lease_fence: pending.challenge.lease_fence,
-        principal_id: pending.challenge.principal_id.clone(),
-        did_version_id: pending.challenge.did_version_id.clone(),
-    };
     let outcome = account_client(handoff, dpop, grant)?
-        .auth_abandon_identity_creation(&request)
+        .auth_abandon_identity_creation(request)
         .await?;
     if outcome.request_id != request.request_id
         || outcome.principal_id != request.principal_id
         || outcome.did_version_id != request.did_version_id
-        || outcome.status != arkret_sdk::IdentityAbandonmentStatus::Abandoned
+        || handoff.account_subject.as_ref() != Some(&outcome.account_subject)
     {
-        anyhow::bail!("identity abandonment terminal does not match the frozen challenge");
+        anyhow::bail!("identity abandonment terminal does not match the frozen command");
     }
     Ok(outcome)
 }

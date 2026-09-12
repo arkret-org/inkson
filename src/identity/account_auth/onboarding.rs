@@ -1,9 +1,6 @@
 //! Server-authoritative onboarding reconciliation.
 
-use crate::state::{
-    LocalStateStore, PendingAccountHandoff, PendingIdentityAbandonment,
-    PendingPrincipalRegistrationStage,
-};
+use crate::state::{LocalStateStore, PendingAccountHandoff, PendingPrincipalRegistrationStage};
 
 fn account_client(
     handoff: &PendingAccountHandoff,
@@ -142,16 +139,6 @@ fn reconcile_onboarding_state(
         }
     }
 
-    handoff.identity_abandonment = match snapshot.goal {
-        arkret_sdk::AccountOnboardingGoal::CompleteIdentity => None,
-        arkret_sdk::AccountOnboardingGoal::AbandonProvisionalIdentity {
-            challenge,
-            fresh_authentication_required,
-        } => Some(PendingIdentityAbandonment {
-            challenge,
-            fresh_authentication_required,
-        }),
-    };
     Ok(handoff)
 }
 
@@ -172,6 +159,14 @@ pub fn persist_reconciled_handoff(
         }
     }
 
+    if handoff.identity_abandonment.is_none()
+        && let Some(previous) = store.pending_account_handoff()
+        && previous.account_subject == handoff.account_subject
+        && previous.lease_id == handoff.lease_id
+        && previous.lease_fence == handoff.lease_fence
+    {
+        handoff.identity_abandonment = previous.identity_abandonment;
+    }
     if let Some(mut checkpoint) = store.pending_principal_registration() {
         let belongs = crate::identity::principal_registration::checkpoint_belongs_to_handoff(
             &checkpoint,
@@ -188,14 +183,6 @@ pub fn persist_reconciled_handoff(
         if checkpoint.stage == PendingPrincipalRegistrationStage::RegisterRequestPrepared {
             stored_artifacts
                 .push(arkret_sdk::IdentityCreationLocalArtifactKind::PreparedRegistrationRequest);
-        }
-        if let Some(pending) = handoff.identity_abandonment.as_ref() {
-            stored_artifacts
-                .push(arkret_sdk::IdentityCreationLocalArtifactKind::AbandonmentChallenge);
-            if !pending.fresh_authentication_required {
-                stored_artifacts
-                    .push(arkret_sdk::IdentityCreationLocalArtifactKind::FreshAccountHandoff);
-            }
         }
         let valid_artifacts = if belongs && allowed {
             stored_artifacts.clone()
@@ -221,11 +208,7 @@ pub fn persist_reconciled_handoff(
                 expires_at,
                 reserved_identity: handoff.reserved_identity.clone(),
             };
-            let goal = if handoff.identity_abandonment.is_some() {
-                arkret_sdk::IdentityCreationGoal::AbandonProvisionalIdentity
-            } else {
-                arkret_sdk::IdentityCreationGoal::CompleteIdentity
-            };
+            let goal = arkret_sdk::IdentityCreationGoal::CompleteIdentity;
             let plan = garth::reconcile_identity_creation(
                 &lease,
                 goal,

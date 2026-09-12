@@ -713,13 +713,6 @@ fn PendingAccountIdentityCreation(
             .pending_principal_registration()
             .and_then(|checkpoint| checkpoint.identity_abandonment)
     });
-    let abandonment_challenge_expired = pending_abandonment
-        .as_ref()
-        .is_some_and(|pending| pending.challenge.expires_at <= chrono::Utc::now());
-    let abandonment_confirmation_ready = pending_abandonment.as_ref().is_some_and(|pending| {
-        crate::identity::identity_abandonment::has_fresh_confirmation_handoff(&handoff, pending)
-    });
-
     if let Some(retry_after_ms) = handoff.retry_after_ms {
         let retry_after_seconds = retry_after_ms.div_ceil(1_000).max(1);
         return rsx! {
@@ -776,27 +769,10 @@ fn PendingAccountIdentityCreation(
                 }
                 div { class: "onboarding-footer-actions",
                     Link { class: "secondary", to: Route::Login, "Authenticate again" }
-                    if abandonment_challenge_expired {
-                        Button {
-                            variant: ButtonVariant::Primary,
-                            "data-testid": "restart-identity-abandonment-challenge",
-                            disabled: busy(),
-                            onclick: move |_| {
-                                let Some(handoff) = state_store.read().pending_account_handoff() else {
-                                    status.set("Authenticate the account again before renewing the abandonment challenge.".to_owned());
-                                    return;
-                                };
-                                busy.set(true);
-                                status.set("Renewing explicit abandonment challenge…".to_owned());
-                                controller.renew_abandonment_challenge(handoff);
-                            },
-                            if busy() { "Renewing…" } else { "Renew expired challenge" }
-                        }
-                    } else {
                         Button {
                             variant: ButtonVariant::Primary,
                             "data-testid": "confirm-identity-abandonment",
-                            disabled: busy() || !abandonment_confirmation_ready,
+                            disabled: busy(),
                             onclick: move |_| {
                                 let Some(handoff) = state_store.read().pending_account_handoff() else {
                                     status.set("Authenticate the account again before confirming abandonment.".to_owned());
@@ -810,7 +786,6 @@ fn PendingAccountIdentityCreation(
                             },
                             if busy() { "Confirming…" } else { "Permanently abandon identity" }
                         }
-                    }
                 }
                 if !status().is_empty() {
                     div { class: "form-hint-warn", role: "status", "{status}" }
@@ -1006,13 +981,13 @@ fn PendingAccountIdentityCreation(
                     if handoff.reserved_identity.is_some() {
                         Button {
                             variant: ButtonVariant::Secondary,
-                            "data-testid": "issue-identity-abandonment-challenge",
+                            "data-testid": "prepare-identity-abandonment",
                             disabled: busy(),
                             onclick: move |_| {
                                 let handoff = handoff_for_abandonment.clone();
                                 busy.set(true);
-                                status.set("Issuing explicit abandonment challenge…".to_owned());
-                                controller.issue_abandonment_challenge(handoff);
+                                status.set("Preparing explicit abandonment…".to_owned());
+                                controller.prepare_abandonment(handoff);
                             },
                             "Give up this provisional identity"
                         }

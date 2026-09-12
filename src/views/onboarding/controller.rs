@@ -228,43 +228,6 @@ impl IdentityCreationController {
         });
     }
 
-    /// Renew an expired explicit-abandonment challenge.
-    pub(super) fn renew_abandonment_challenge(
-        self,
-        mut handoff: crate::state::PendingAccountHandoff,
-    ) {
-        let Self {
-            mut busy,
-            mut status,
-            mut state_store,
-            ..
-        } = self;
-        spawn(async move {
-            let result = async {
-                let dpop = {
-                    let mut store = state_store.write();
-                    crate::identity::account_auth::grant_dpop::ensure_device_key(&mut store)?
-                };
-                let pending =
-                    crate::identity::identity_abandonment::issue_challenge(&handoff, &dpop).await?;
-                handoff.identity_abandonment = Some(pending);
-                let barrier = {
-                    let mut store = state_store.write();
-                    store.set_pending_account_handoff(Some(handoff.clone()))?;
-                    store.begin_durable_flush()?
-                };
-                barrier.wait().await?;
-                crate::identity::account_auth::clear_account_handoff_grant(&handoff)
-            }
-            .await;
-            match result {
-                Ok(()) => status.set("Challenge renewed. Authenticate once more with a fresh account handoff to confirm.".to_owned()),
-                Err(error) => status.set(format!("Could not renew abandonment challenge: {error}")),
-            }
-            busy.set(false);
-        });
-    }
-
     /// Confirm explicit abandonment of the reserved identity.
     pub(super) fn confirm_abandonment(
         self,
@@ -299,11 +262,8 @@ impl IdentityCreationController {
         });
     }
 
-    /// Issue the explicit-abandonment challenge for a reserved identity.
-    pub(super) fn issue_abandonment_challenge(
-        self,
-        mut handoff: crate::state::PendingAccountHandoff,
-    ) {
+    /// Freeze the explicit abandonment command for user review.
+    pub(super) fn prepare_abandonment(self, mut handoff: crate::state::PendingAccountHandoff) {
         let Self {
             mut busy,
             mut status,
@@ -312,12 +272,7 @@ impl IdentityCreationController {
         } = self;
         spawn(async move {
             let result = async {
-                let dpop = {
-                    let mut store = state_store.write();
-                    crate::identity::account_auth::grant_dpop::ensure_device_key(&mut store)?
-                };
-                let pending =
-                    crate::identity::identity_abandonment::issue_challenge(&handoff, &dpop).await?;
+                let pending = crate::identity::identity_abandonment::prepare(&handoff)?;
                 handoff.identity_abandonment = Some(pending);
                 let barrier = {
                     let mut store = state_store.write();
@@ -325,15 +280,15 @@ impl IdentityCreationController {
                     store.begin_durable_flush()?
                 };
                 barrier.wait().await?;
-                crate::identity::account_auth::clear_account_handoff_grant(&handoff)
+                Ok::<(), anyhow::Error>(())
             }
             .await;
             match result {
                 Ok(()) => status.set(
-                    "Challenge saved. Authenticate again with a fresh account handoff to confirm."
+                    "Review the identity and authenticate again before confirming abandonment."
                         .to_owned(),
                 ),
-                Err(error) => status.set(format!("Could not issue abandonment challenge: {error}")),
+                Err(error) => status.set(format!("Could not prepare abandonment: {error}")),
             }
             busy.set(false);
         });

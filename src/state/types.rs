@@ -625,11 +625,8 @@ pub struct PendingAccountHandoff {
     /// bound this account setup to one exact DID inception operation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reserved_identity: Option<arkret_sdk::ReservedIdentityCreation>,
-    /// Durable explicit-abandonment challenge for a reserved identity whose
-    /// registration control may no longer be available on this device.  It
-    /// belongs to the account handoff rather than the registration checkpoint:
-    /// the protocol deliberately authorizes abandonment with account handoff
-    /// grants when no principal or recovery secret exists yet.
+    /// Locally frozen explicit command. The server checks authentication and
+    /// current reservation state before applying it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub identity_abandonment: Option<PendingIdentityAbandonment>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -671,8 +668,7 @@ pub struct PendingPrincipalRegistration {
     #[serde(rename = "did")]
     pub did: arkret_sdk::Did,
     pub version_id: String,
-    /// Durable explicit-abandonment challenge projected by the Account
-    /// Authority together with its authoritative reauthentication decision.
+    /// Locally frozen explicit command, retained for exact submission retry.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub identity_abandonment: Option<PendingIdentityAbandonment>,
     pub root_public_key_multibase: String,
@@ -712,10 +708,8 @@ pub struct PendingPrincipalRegistration {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct PendingIdentityAbandonment {
-    pub challenge: arkret_sdk::IdentityAbandonmentChallengeOutcome,
-    /// Account Authority freshness decision for the current handoff. This is
-    /// never inferred by comparing locally persisted bearer credentials.
-    pub fresh_authentication_required: bool,
+    /// Frozen user-selected command for exact retry, never authentication evidence.
+    pub request: arkret_sdk::IdentityAbandonmentRequestBody,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
