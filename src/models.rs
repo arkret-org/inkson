@@ -2,8 +2,8 @@ use std::collections::BTreeMap;
 
 use arkret_sdk::contact_operations::ContactScope;
 pub use arkret_sdk::{
-    ClaimedProfileEntry, ContactAgentProjection, ContactList, ContactListRow,
-    DirectConversationSummary, InteropSurfaceEntry, ServiceDescribe, VerifiedProfileEntry,
+    ContactAgentProjection, ContactList, ContactListRow, DirectConversationSummary,
+    InteropSurfaceEntry, ServiceDescribe, VerifiedProfileEntry,
 };
 use arkret_wire::ProfileId;
 use serde::{Deserialize, Serialize};

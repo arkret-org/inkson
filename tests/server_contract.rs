@@ -151,7 +151,6 @@ fn inkson_accepts_server_contract_payloads() {
         "limits": {"storage": "memory", "max_limit": 100},
         "rate_limit_policy": {},
         "plaintext_visibility": {"data_classes": [], "max_visibility": "none"},
-        "claimed_profiles": [],
         "verified_profiles": [],
         "interop_surfaces": [],
         "development_mode": true,
@@ -202,7 +201,6 @@ fn inkson_accepts_server_contract_payloads() {
         "auth_metadata": {},
         "limits": {},
         "plaintext_visibility": {"data_classes": [], "max_visibility": "none"},
-        "claimed_profiles": [],
         "verified_profiles": [],
         "interop_surfaces": [],
         "development_mode": false
@@ -255,13 +253,11 @@ fn inkson_accepts_server_contract_payloads() {
         "limits": {},
         "plaintext_visibility": {},
         "rate_limit_policy": {},
-        "claimed_profiles": [],
         "verified_profiles": [],
         "interop_surfaces": [],
         "development_mode": false,
         "resource_kinds": ["realm", "organization", "actor"],
         "restricted_query_proof": false,
-        "ingest_modes": ["push"],
         "accept_policy_kind": "open",
         "default_ttl_seconds": 86400,
         "max_ttl_seconds": 604800,
@@ -568,7 +564,6 @@ fn server_description_gates_event_envelope_write_plane() {
         "auth_metadata": {},
         "limits": {},
         "plaintext_visibility": {"data_classes": [], "max_visibility": "none"},
-        "claimed_profiles": [],
         "verified_profiles": [],
         "interop_surfaces": [],
         "development_mode": true,
@@ -611,12 +606,6 @@ fn server_description_gates_event_envelope_write_plane() {
         "auth_metadata": {},
         "limits": {"storage": "postgres"},
         "plaintext_visibility": {"data_classes": [], "max_visibility": "none"},
-        "claimed_profiles": [
-            {
-                "profile_id": "ak.profile.core_event_store.v1",
-                "claim_kind": "self_claimed"
-            }
-        ],
         "verified_profiles": [],
         "interop_surfaces": [external_interop_surface],
         "development_mode": true,
@@ -637,10 +626,10 @@ fn server_description_gates_event_envelope_write_plane() {
         .is_err()
     );
 
-    // A partial / pre-v2 describe payload now fails to deserialize at all —
+    // A partial describe payload now fails to deserialize at all —
     // the SDK type is strict per `service-describe.schema.json`, so inkson
     // can no longer accept a stripped-down describe and flag it post-hoc.
-    // This is the spec-correct fail-closed behaviour for v2.
+    // This is the spec-correct fail-closed behaviour for v1.
     assert!(
         parse_server_description(json!({
             "service_id": "ak:did_core:web:minimal.local",
@@ -678,7 +667,6 @@ fn server_description_gates_event_envelope_write_plane() {
         "auth_metadata": {},
         "limits": {},
         "plaintext_visibility": {"data_classes": [], "max_visibility": "none"},
-        "claimed_profiles": [],
         "verified_profiles": [],
         "interop_surfaces": [],
         "development_mode": true,
