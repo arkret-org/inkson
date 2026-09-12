@@ -1136,13 +1136,17 @@ pub fn build_realm_archive_event(
         typed = typed.with_reason(reason);
     }
     if archived {
-        TypedOperationBuilder::new::<arkret_sdk::event_spec::RealmArchive>(realm_id, actor_id, typed)
-            .created_at(created_at)
-            .build_sdk_event("inkson")
+        TypedOperationBuilder::new::<arkret_sdk::event_spec::RealmArchive>(
+            realm_id, actor_id, typed,
+        )
+        .created_at(created_at)
+        .build_sdk_event("inkson")
     } else {
-        TypedOperationBuilder::new::<arkret_sdk::event_spec::RealmRestore>(realm_id, actor_id, typed)
-            .created_at(created_at)
-            .build_sdk_event("inkson")
+        TypedOperationBuilder::new::<arkret_sdk::event_spec::RealmRestore>(
+            realm_id, actor_id, typed,
+        )
+        .created_at(created_at)
+        .build_sdk_event("inkson")
     }
 }
 
