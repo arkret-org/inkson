@@ -2148,22 +2148,7 @@ pub(crate) fn encrypt_message_with_device_snapshot(
             return Err(MlsRuntimeError::EncryptionTransitionPending);
         }
     }
-    // Direct Conversation §7.2 permits the founder's exporter messages before
-    // the peer's durable Welcome. A full Realm roster already includes the
-    // peer at that point and is not a reason to reject this registered phase.
-    // The exact group-state reference and epoch/binding fences remain required.
-    let provisional_founder = event_kind == event_kind_str::MESSAGE_CREATE
-        && circle.is_none()
-        && sidecar_binding.is_none()
-        && matches!(
-            crate::mls::direct_binding::message_authority(
-                state_store,
-                realm_id,
-                &arkret_sdk::ActorId::account(authority.clone())
-            ),
-            Some(crate::mls::direct_binding::MessageAuthority::ProvisionalFounder(_))
-        );
-    if sidecar_binding.is_none() && !provisional_founder {
+    if sidecar_binding.is_none() {
         ensure_realm_membership_is_covered_for_send(state_store, realm_id, circle, &group)?;
     }
     let use_exporter_aead = sidecar_binding.is_none()

@@ -219,18 +219,12 @@ fn accepted_direct_message_final<'a>(
     let event = &message.event;
     if event.kind != arkret_sdk::EventKind::MessageCreate
         || event
-            .validate_station_admission_binding(digest_suite)
+            .validate_proof_bindings_with_digest_suite(digest_suite)
             .is_err()
     {
         return None;
     }
-    let frozen_agent_evidence = event
-        .proofs
-        .iter()
-        .find_map(arkret_sdk::EventProof::as_station_admission)
-        .and_then(|proof| proof.producer_signer_resolution_evidence_ref.as_ref())
-        .is_some();
-    if frozen_agent_evidence {
+    if event.executed_by.is_some() || event.payload.get("agent_context").is_some() {
         let endpoint =
             crate::identity::agent_signer_evidence::verified_cached_agent_event_endpoint(
                 event, store,
@@ -240,12 +234,7 @@ fn accepted_direct_message_final<'a>(
     if event.executed_by.is_some() {
         return None;
     }
-    let method = event
-        .proofs
-        .iter()
-        .find_map(arkret_sdk::EventProof::as_producer)?
-        .verification_method
-        .as_str();
+    let method = event.proofs.first()?.verification_method.as_str();
     let (controller, device) = method.rsplit_once('#')?;
     let controller = crate::mls_api_helpers::principal_core_id(controller).ok()?;
     if &controller != event.actor_id.signing_principal_id() {
@@ -506,51 +495,24 @@ mod tests {
                 .unwrap(),
         )
         .unwrap();
-        event.proofs.push(
-            arkret_sdk::ProducerEventProof {
-                kind: "detached_jws".to_owned(),
-                verification_method: arkret_sdk::DidUrl::new(format!(
-                    "{ACTOR_CONTROLLER}#{DEVICE_ID}"
-                ))
+        event.proofs.push(arkret_sdk::ProducerEventProof {
+            kind: "detached_jws".to_owned(),
+            verification_method: arkret_sdk::DidUrl::new(format!("{ACTOR_CONTROLLER}#{DEVICE_ID}"))
                 .unwrap(),
-                event_digest,
-                signer_resolution_evidence_ref: None,
-                created_at: event.created_at,
-                domain: None,
-                audience: None,
-                proof_purpose: None,
-                jws: "a..b".to_owned(),
-            }
-            .into(),
-        );
-        let producer = event.proofs[0].as_producer().unwrap().clone();
-        event.proofs.push(
-            arkret_sdk::StationAdmissionProof {
-                kind: arkret_sdk::StationAdmissionProofKind::StationAdmission,
-                verification_method: arkret_sdk::DidUrl::new(
-                    "did:web:principal.example#admission-1",
-                )
-                .unwrap(),
-                event_digest: producer.event_digest.clone(),
-                producer_proof_digest: arkret_sdk::StationAdmissionProof::producer_proof_digest(
-                    &producer,
-                )
-                .unwrap(),
-                producer_verification_method: producer.verification_method.clone(),
-                producer_signing_key_did: arkret_sdk::DidKey::new("did:key:z6MkhFixtureDeviceKey")
-                    .unwrap(),
-                producer_signer_resolution_evidence_ref: None,
-                signer_resolution_evidence_ref: arkret_sdk::SignerEvidenceRef::new(format!(
+            event_digest,
+            signer_resolution_evidence_ref: Some(
+                arkret_sdk::SignerEvidenceRef::new(format!(
                     "ak:signer_evidence:sha256:{}",
                     "11".repeat(32)
                 ))
                 .unwrap(),
-                applet_installation_digest: None,
-                accepted_at: event.created_at,
-                jws: "header..admission".to_owned(),
-            }
-            .into(),
-        );
+            ),
+            created_at: event.created_at,
+            domain: None,
+            audience: None,
+            proof_purpose: None,
+            jws: "a..b".to_owned(),
+        });
         match garth::InboundDecoder::new()
             .try_decode_event(event)
             .unwrap()

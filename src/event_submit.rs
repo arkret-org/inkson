@@ -643,35 +643,17 @@ pub(crate) async fn require_server_sealed_event(
 
 /// Compare a producer-authored Event with its accepted projection.
 ///
-/// Acceptance appends exactly one Station admission proof. That
-/// proof is outside the producer transcript but is part of the retained
-/// accepted envelope, so whole-envelope equality would reject every valid
-/// admission. Validate the closed accepted proof set first, then remove only
-/// that receiver-added proof and compare the producer-authored projection
-/// exactly. No producer proof or business field is normalized.
+/// Ordinary acceptance retains the exact producer envelope. The receiver does
+/// not append an admission proof or rewrite any signed field.
 pub(crate) fn accepted_event_preserves_authored_envelope(
     accepted: &arkret_sdk::Event,
     authored: &arkret_sdk::Event,
     digest_suite: arkret_sdk::DigestSuite,
 ) -> anyhow::Result<bool> {
-    if accepted.event_id != authored.event_id
-        || arkret_sdk::Hash::new(accepted.event_digest_with_digest_suite(digest_suite)?)?
-            != arkret_sdk::Hash::new(authored.event_digest_with_digest_suite(digest_suite)?)?
-        || accepted
-            .validate_station_admission_binding(digest_suite)
-            .is_err()
-    {
-        return Ok(false);
-    }
-    let mut accepted_authored_projection = accepted.clone();
-    accepted_authored_projection
-        .proofs
-        .retain(|proof| proof.as_station_admission().is_none());
-    let mut expected_authored_projection = authored.clone();
-    expected_authored_projection
-        .proofs
-        .retain(|proof| proof.as_station_admission().is_none());
-    Ok(accepted_authored_projection == expected_authored_projection)
+    Ok(accepted.event_id == authored.event_id
+        && arkret_sdk::Hash::new(accepted.event_digest_with_digest_suite(digest_suite)?)?
+            == arkret_sdk::Hash::new(authored.event_digest_with_digest_suite(digest_suite)?)?
+        && accepted == authored)
 }
 
 impl OutboundSubmitter for EventOutboundSubmitter<'_> {
@@ -851,10 +833,10 @@ impl OutboundSubmitter for EventOutboundSubmitter<'_> {
                         }
                         let replacement = self
                             .owner
-                            .reauthor_after_explicit_cas(&queued)
+                            .reauthor_after_actor_frontier_conflict(&queued)
                             .await
                             .map_err(|error| garth::Error::Protocol(error.to_string()))?;
-                        // A CAS re-author is a NEW attempt at the SAME user
+                        // A frontier-conflict re-author is a new attempt at the same user
                         // operation: it gets its own queue slot keyed by the
                         // Event it actually authored, while
                         // `local_operation_id` stays put so receipt, backfill
@@ -1199,7 +1181,7 @@ fn completed_outbound_result(item: &garth::SendQueueItem) -> SubmitEventResult {
 /// The queue may reach `Sent` after the HTTP request was accepted but before
 /// the component-owned future that initiated it gets to process the response.
 /// `local_operation_id` is the stable holder-local identity across retries and
-/// CAS re-authoring, while `remote_event_id` is the content-bound identity the
+/// actor-frontier re-authoring, while `remote_event_id` is the content-bound identity the
 /// server assigned. Replaying this join from the durable queue makes receipt
 /// reconciliation restart-safe and independent of the originating UI scope.
 fn reconcile_sent_outbound_item(
@@ -1621,8 +1603,6 @@ impl EventSubmitter {
     ) -> anyhow::Result<crate::identity::authoring_generation::ResolvedQueueGenerationFence> {
         use garth::SendQueueStatus;
 
-        use crate::identity::authoring_generation::CurrentEventAuthoringGeneration;
-
         let mut decisions = BTreeMap::new();
         for item in outbound.snapshot().await?.items {
             if !matches!(
@@ -1661,43 +1641,19 @@ impl EventSubmitter {
                 continue;
             }
             let facts = EventAuthorityFacts::from_intent(&queued.intent);
-            let current = match crate::identity::authoring_generation::resolve_current_event_authoring_generation(
-                &self.http,
+            let current = crate::identity::authoring_generation::cached_event_authoring_generation(
                 &facts,
-            )
-            .await
-            {
-                Ok(current) => current,
-                Err(error) if outbound_retry_delay(&error).is_some() => {
-                    // A browser fetch can remain pending even though bootstrap
-                    // already verified this exact endpoint generation. Permit
-                    // only that exact cached fence to make progress; Soland is
-                    // still authoritative and rejects a superseded generation.
-                    match crate::identity::authoring_generation::cached_event_authoring_generation(&facts)? {
-                        Some(cached) if cached == queued.authoring_generation => {
-                            CurrentEventAuthoringGeneration::Active(cached)
-                        }
-                        Some(_) => CurrentEventAuthoringGeneration::Quarantine(
-                            "authoring_generation_superseded".to_owned(),
-                        ),
-                        None => return Err(error),
-                    }
-                }
-                Err(error) => return Err(error),
-            };
-            let decision = match current {
-                CurrentEventAuthoringGeneration::Active(current)
-                    if current == queued.authoring_generation =>
-                {
-                    OutboundGenerationFenceDecision::Current
-                }
-                CurrentEventAuthoringGeneration::Active(_) => {
-                    OutboundGenerationFenceDecision::Quarantine {
-                        reason: "authoring_generation_superseded".to_owned(),
-                    }
-                }
-                CurrentEventAuthoringGeneration::Quarantine(reason) => {
-                    OutboundGenerationFenceDecision::Quarantine { reason }
+            )?
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "frontier_unavailable: no locally verified device authoring authority is available"
+                )
+            })?;
+            let decision = if current == queued.authoring_generation {
+                OutboundGenerationFenceDecision::Current
+            } else {
+                OutboundGenerationFenceDecision::Quarantine {
+                    reason: "authoring_generation_superseded".to_owned(),
                 }
             };
             decisions.insert(item.transaction_id, decision);
@@ -1940,14 +1896,10 @@ impl EventSubmitter {
             .await
     }
 
-    async fn verify_origin_station(&self, intent: &EventIntent) -> anyhow::Result<()> {
-        // The captured authority is the closed AccountId this submitter was
-        // created for. An account-kind actor with that principal MUST carry
-        // that Station: a builder that rebuilt the actor from the principal plus
-        // the ambient authoring slot while the slot named another Station would
-        // otherwise author under a different account (account-lifecycle.md
-        // §156/§158). Agent, service and pairwise actors are not this account
-        // and are judged by the origin check below only.
+    async fn verify_actor_authority(&self, intent: &EventIntent) -> anyhow::Result<()> {
+        // The captured authority is the exact AccountId this submitter was
+        // created for. Reject an account actor that substitutes another hosted
+        // account while retaining the authenticated principal.
         if let (Some(authority), Some(actor_account)) =
             (self.authority.as_ref(), intent.actor_id().as_account_id())
             && actor_account.principal_id == authority.principal_id
@@ -1957,14 +1909,6 @@ impl EventSubmitter {
                 "Event actor names Station {} but the authenticated account is hosted at {}",
                 actor_account.station_id,
                 authority.station_id
-            );
-        }
-        let origin = self.describe_cached().await?.service_id.clone();
-        if intent.actor_id().route_service_id() != &origin {
-            anyhow::bail!(
-                "Event-declared origin {} does not match this Station {}",
-                intent.actor_id().route_service_id(),
-                origin
             );
         }
         Ok(())
@@ -2023,12 +1967,11 @@ impl EventSubmitter {
             .map_err(anyhow::Error::from)?;
         let descriptor = arkret_sdk::ed25519_notary_signer_descriptor_from_evidence(&evidence)
             .map_err(anyhow::Error::from)?;
-        Ok(arkret_sdk::NotaryValue::single_signer(descriptor))
+        arkret_sdk::NotaryValue::new(vec![descriptor], 0, 1_000).map_err(anyhow::Error::from)
     }
 
-    /// Mint a DataEvent `seal_ref` head from the membership-gated Realm Seal
-    /// view. Only the CBS data-plane stamping path uses this.
-    pub(crate) async fn current_seal_for(&self, realm_id: &str) -> anyhow::Result<String> {
+    /// Resolve the current Seal required by an ephemeral Signal envelope.
+    async fn current_signal_seal_for(&self, realm_id: &str) -> anyhow::Result<String> {
         let view = self.seals_frontier_realm_view(realm_id).await?;
         Ok(view.sole_leaf()?.to_string())
     }
@@ -2082,7 +2025,9 @@ impl EventSubmitter {
         payload: &crate::signal::SignalPayload,
         state_store: &crate::runtime::input::StateStoreHandle,
     ) -> anyhow::Result<arkret_sdk::SignalSubmitOutcome> {
-        let seal_ref = self.current_seal_for(scope_ref.realm_id().as_str()).await?;
+        let seal_ref = self
+            .current_signal_seal_for(scope_ref.realm_id().as_str())
+            .await?;
         let header = crate::signal::SignalHeader::new(
             scope_ref,
             arkret_sdk::ActorId::account(authority.clone()),
@@ -2144,9 +2089,8 @@ impl EventSubmitter {
     /// `QUERY /_arkret/self/seals/frontier` — complete accepted Realm Seal
     /// antichain.
     ///
-    /// This is the spec-registered account-client sourcing for minting a
-    /// single-leaf Control Move `seal_basis` (`view.seal_basis()`) and a
-    /// DataEvent `seal_ref` (`view.seal_id`) — SPEC-SOL-003 resolution.
+    /// This is the account-client source for the exact accepted Seal basis of
+    /// a safety Control Move. Ordinary Events do not query this frontier.
     /// Fails closed (never fabricates a basis) when the server cannot
     /// serve the view or answers for a different Realm.
     pub async fn seals_frontier_realm_view(
@@ -2264,14 +2208,43 @@ impl EventSubmitter {
             .map_err(|error| anyhow::anyhow!("events describe: {error}"))
     }
 
-    pub(crate) fn event_proof_context(
+    pub(crate) async fn event_proof_context(
         &self,
         digest_suite: arkret_sdk::DigestSuite,
-    ) -> crate::event_signer::EventProofContext {
+    ) -> anyhow::Result<crate::event_signer::ProducerProofContext> {
         // Durable Event envelopes are portable Realm facts. Binding their
         // proof to the authoring Station would make the original
         // signature unverifiable after federation to another Realm host.
-        crate::event_signer::EventProofContext::new().with_digest_suite(digest_suite)
+        let authority = self.authority()?;
+        let signer = crate::event_signer::active_signer()
+            .ok_or_else(|| anyhow::anyhow!("active endpoint signer is unavailable"))?;
+        let device_id = signer
+            .device_id()
+            .ok_or_else(|| anyhow::anyhow!("active endpoint signer has no device id"))?;
+        let actor = authority.to_string();
+        let signer_key = signer
+            .public_key_multibase()
+            .as_deref()
+            .and_then(crate::identity::device_directory::public_key_from_directory_value)
+            .ok_or_else(|| anyhow::anyhow!("active endpoint signer public key is invalid"))?;
+        if !matches!(
+            crate::identity::device_directory::cached_device_signing_key(&actor, device_id),
+            crate::identity::device_directory::CacheLookup::Hit(cached) if cached == signer_key
+        ) {
+            anyhow::bail!(
+                "frontier_unavailable: retained device evidence does not bind the active signer"
+            );
+        }
+        let evidence_ref =
+            crate::identity::device_directory::cached_device_signer_evidence_ref(&actor, device_id);
+        let evidence_ref = evidence_ref.ok_or_else(|| {
+            anyhow::anyhow!(
+                "frontier_unavailable: verified signer-resolution evidence is unavailable for the active device"
+            )
+        })?;
+        Ok(crate::event_signer::ProducerProofContext::new()
+            .with_digest_suite(digest_suite)
+            .with_signer_resolution_evidence_ref(evidence_ref))
     }
 
     fn trusted_digest_suite_for_intent(
@@ -2460,7 +2433,7 @@ impl EventSubmitter {
             anyhow::bail!("prepared join expired while checking signing prerequisites");
         }
         signer
-            .sign_sdk_event_with_context(&mut event, self.event_proof_context(suite))
+            .sign_sdk_event_with_context(&mut event, self.event_proof_context(suite).await?)
             .map_err(|e| anyhow::anyhow!("sign prepared join Event: {e}"))?;
         let canonical_body_bytes = arkret_sdk::canonical::canonical_json_bytes(&event)?;
         let key = prepared.request_id.to_string();
@@ -2530,7 +2503,8 @@ impl EventSubmitter {
                 }
                 Err(error) => return Err(error),
             };
-        if intent.kind() != &arkret_sdk::EventKind::RealmCreate {
+        if intent.kind().is_control_plane() && intent.kind() != &arkret_sdk::EventKind::RealmCreate
+        {
             let realm_id = intent.realm_id_opt().ok_or_else(|| {
                 anyhow::anyhow!(
                     "{} needs a verified Realm checkpoint but carries no Realm scope",
@@ -3040,7 +3014,7 @@ impl EventSubmitter {
     /// operation identity does NOT change: this is one user operation trying
     /// again, and receipt, backfill and the optimistic row must keep seeing it
     /// that way.
-    async fn reauthor_after_explicit_cas(
+    async fn reauthor_after_actor_frontier_conflict(
         &self,
         previous: &QueuedSdkEvent,
     ) -> anyhow::Result<QueuedSdkEvent> {
@@ -3076,10 +3050,12 @@ impl EventSubmitter {
         authoring: SemanticAuthoring,
         digest_suite: arkret_sdk::DigestSuite,
     ) -> anyhow::Result<AuthoredAttempt> {
-        if let Some(realm_id) = intent.realm_id_opt() {
+        if intent.kind().is_control_plane()
+            && let Some(realm_id) = intent.realm_id_opt()
+        {
             self.ensure_realm_detail_current(realm_id.as_str())?;
         }
-        self.verify_origin_station(intent).await?;
+        self.verify_actor_authority(intent).await?;
         let mut intent = intent.clone();
         // The authority-root claim is a producer-signed envelope member and a
         // SEMANTIC decision: a fresh submission may resolve one, while a replay
@@ -3095,7 +3071,7 @@ impl EventSubmitter {
         let (actor_seq, prev_refs) = self.resolve_actor_chain_basis(&intent).await?;
         intent = intent.with_prev_refs(prev_refs);
         let hlc = self.issue_intent_hlc(&intent).await?;
-        let proof_context = self.event_proof_context(digest_suite);
+        let proof_context = self.event_proof_context(digest_suite).await?;
         let mut event = intent
             .clone()
             .author_with_digest_suite(actor_seq, hlc, proof_context.digest_suite)
@@ -3112,7 +3088,7 @@ impl EventSubmitter {
         Ok(AuthoredAttempt {
             // Per-attempt transport identity. A byte-identical retry authors the
             // same content and therefore reuses this key, which is exactly
-            // idempotent-resubmit; a CAS re-author changes the content and gets
+            // idempotent-resubmit; a frontier re-author changes the content and gets
             // a new one. The holder-local operation id, which joins the receipt
             // back to its optimistic row, deliberately does NOT move.
             transport_idempotency_key: event.event_id().to_string(),
@@ -3125,7 +3101,7 @@ impl EventSubmitter {
         &self,
         intent: &EventIntent,
         event: &mut arkret_sdk::AuthoredEvent,
-        proof_context: crate::event_signer::EventProofContext,
+        proof_context: crate::event_signer::ProducerProofContext,
     ) -> anyhow::Result<()> {
         if matches!(
             event.kind,
@@ -3223,8 +3199,7 @@ impl EventSubmitter {
     /// pre-join `ak.invite.accept` carries the only Seal view its author could
     /// read, and re-resolving it would need membership the invitee lacks.
     async fn stamp_cbs_basis_for_intent(&self, intent: EventIntent) -> anyhow::Result<EventIntent> {
-        if intent.seal_ref().is_some()
-            || intent.auth_context().is_some()
+        if intent.auth_context().is_some()
             || intent.seal_basis().is_some()
             || cbs_exempt_reducer_kind(intent.kind())
         {
@@ -3246,26 +3221,34 @@ impl EventSubmitter {
         } else {
             if !intent.preconditions().is_empty() {
                 anyhow::bail!(
-                    "DataEvent {} carries preconditions; CBS DataEvents must use seal_ref + auth_context only",
+                    "DataEvent {} carries preconditions; ordinary DataEvents use AuthContext authority evidence only",
                     intent.kind().as_str()
                 );
             }
-            let seal = self.current_seal_for(realm_id.as_str()).await?;
-            let auth_context = data_event_auth_context(&intent)?;
-            intent
-                .with_seal_ref(
-                    arkret_sdk::SealId::new(seal)
-                        .map_err(|err| anyhow::anyhow!("current seal id is invalid: {err}"))?,
+            let store = self.state_store.as_ref().ok_or_else(|| {
+                anyhow::anyhow!(
+                    "frontier_unavailable: {} authoring has no verified local authority store",
+                    intent.kind().as_str()
                 )
-                .with_auth_context(auth_context)
+            })?;
+            let authority_ref = store
+                .read(|state| state.confirmed_seal_ref_for_realm(realm_id.as_str()))
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "frontier_unavailable: {} authoring has no unique verified authority decision",
+                        intent.kind().as_str()
+                    )
+                })?;
+            let authority_ref = arkret_sdk::SealId::new(authority_ref).map_err(|error| {
+                anyhow::anyhow!("verified authority reference is invalid: {error}")
+            })?;
+            let auth_context = data_event_auth_context(&intent, vec![authority_ref])?;
+            intent.with_auth_context(auth_context)
         };
-        // This is routine authoring telemetry. Data Events intentionally carry
-        // `seal_ref + auth_context` and no `seal_basis`, so warning on the
-        // expected `has_seal_basis = false` shape only creates false alarms in
-        // the browser console.
+        // This is routine authoring telemetry. Ordinary Data Events carry
+        // verified authority evidence in AuthContext and no safety precondition.
         tracing::debug!(
             kind = %intent.kind().as_str(),
-            seal_ref = ?intent.seal_ref().map(arkret_sdk::SealId::as_str),
             has_seal_basis = intent.seal_basis().is_some(),
             authorization_ref = ?intent.authorization_ref(),
             "authored CBS basis for submit attempt"
@@ -3286,19 +3269,25 @@ impl EventSubmitter {
         let Some(realm) = intent.realm_id_opt() else {
             return Ok(());
         };
-        if !matches!(
-            self.realm_create_authority(realm.as_str()).await?,
-            Some(RealmCreateAuthority::DirectConversation)
-        ) {
-            return Ok(());
-        }
         let store = state_store.or(self.state_store.as_ref()).ok_or_else(|| {
             anyhow::anyhow!("Direct Conversation requires an account state store")
         })?;
+        if store.read(|state| state.realm_collaboration_role(realm.as_str()))
+            != Some(arkret_sdk::CollaborationRealmRole::DirectConversation)
+        {
+            return Ok(());
+        }
         let authority = self
             .authority
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("Direct Conversation requires an account"))?;
+        if store.read(|state| {
+            state
+                .direct_message_context(realm.as_str(), intent.actor_id())
+                .is_some()
+        }) {
+            return Ok(());
+        }
         let epoch = crate::identity::device_directory::cache_epoch();
         let peer = store
             .read(|state| state.direct_conversation_peer(realm.as_str()))
@@ -3364,6 +3353,33 @@ impl EventSubmitter {
         let Some(realm_id) = intent.realm_id_opt().cloned() else {
             return intent;
         };
+        let local_direct_conversation = state_store.is_some_and(|store| {
+            store.read(|state| state.realm_collaboration_role(realm_id.as_str()))
+                == Some(arkret_sdk::CollaborationRealmRole::DirectConversation)
+        });
+        if intent.kind() == &arkret_sdk::EventKind::MessageCreate && local_direct_conversation {
+            if let Some(context) = state_store.and_then(|store| {
+                store.read(|state| {
+                    state.direct_message_context(realm_id.as_str(), intent.actor_id())
+                })
+            }) {
+                return intent
+                    .with_authorization_ref(
+                        arkret_sdk::AuthorizationRef::new(
+                            arkret_wire::AuthoritySourceId::DIRECT_CONVERSATION_PARTICIPANT_V1,
+                        )
+                        .expect("registered Direct Conversation authority source"),
+                    )
+                    .with_ref(arkret_sdk::EventRef::new(
+                        context.binding_event_ref.to_string(),
+                        "direct_conversation_binding",
+                    ));
+            }
+            return intent;
+        }
+        if intent.kind().is_data_plane() {
+            return intent;
+        }
         let authority = match self.realm_create_authority(realm_id.as_str()).await {
             Ok(authority) => authority,
             Err(error) => {
@@ -3405,33 +3421,6 @@ impl EventSubmitter {
                     ).expect("registered bootstrap authority source"))
                         .with_ref(arkret_sdk::EventRef::new(founding_ref, "direct_conversation_founding_unit"));
                 }
-            }
-            if intent.kind() != &arkret_sdk::EventKind::MessageCreate {
-                return intent;
-            }
-            if let Some(context) = state_store.and_then(|store| {
-                store.read(|state| {
-                    state.direct_message_context(realm_id.as_str(), intent.actor_id())
-                })
-            }) && let Ok(auth_context) = data_event_auth_context(&intent)
-            {
-                use crate::mls::direct_binding::MessageAuthority;
-                let (source, role, reference) = match context.authority {
-                    MessageAuthority::Participant(reference) => (
-                        arkret_wire::AuthoritySourceId::DIRECT_CONVERSATION_PARTICIPANT_V1,
-                        "direct_conversation_binding", reference),
-                    MessageAuthority::ProvisionalFounder(reference) => (
-                        arkret_wire::AuthoritySourceId::DIRECT_CONVERSATION_BOOTSTRAP_PARTICIPANT_V1,
-                        "direct_conversation_founding_unit", reference),
-                };
-                return intent
-                    .with_authorization_ref(
-                        arkret_sdk::AuthorizationRef::new(source)
-                            .expect("registered Direct Conversation authority source"),
-                    )
-                    .with_ref(arkret_sdk::EventRef::new(reference.to_string(), role))
-                    .with_seal_ref(context.seal_ref)
-                    .with_auth_context(auth_context);
             }
             return intent;
         }
@@ -3544,8 +3533,8 @@ impl EventSubmitter {
     ///
     /// SDK Events MUST already be signed by the caller (typically via
     /// `event_signer::sign_sdk_event_with_active_context`) — the batch path
-    /// does not auto-sign because callers commonly need an atomic seal_ref +
-    /// sign sequence the per-event helper cannot replicate.
+    /// does not auto-sign because callers may need to bind a dependent unit
+    /// before the per-event helper can submit it.
     pub(crate) async fn submit_signed_sdk_events_batch(
         &self,
         sdk_events: &[arkret_sdk::AuthoredEvent],
@@ -3562,7 +3551,9 @@ impl EventSubmitter {
         // shapes (distinguished by JSON shape), so it is sent
         // unconditionally — no capability negotiation exists in the spec.
         for sdk_event in sdk_events {
-            self.ensure_realm_detail_current(sdk_event.realm_id.as_str())?;
+            if sdk_event.kind.is_control_plane() {
+                self.ensure_realm_detail_current(sdk_event.realm_id.as_str())?;
+            }
             validate_signed_sdk_event_for_submit(sdk_event.event(), sdk_event.digest_suite())?;
         }
         // `idempotency_key` is not a body field in v1: it travels only in the
@@ -3652,7 +3643,7 @@ impl EventSubmitter {
         let mut chain = UnitAuthoringChain::default();
         for step in steps {
             for mut intent in step(&authored)? {
-                self.verify_origin_station(&intent).await?;
+                self.verify_actor_authority(&intent).await?;
                 validate_capability_grant_payload(&intent)?;
                 chain.observe(&intent, authored.is_empty())?;
                 let (actor_seq, prev_refs) = match chain.basis_within_unit(&intent)? {
@@ -3671,15 +3662,18 @@ impl EventSubmitter {
                     // The Realm create Event is the SHA-256 bootstrap identity.
                     // Other founding Events use the live suite declared by its
                     // payload before the first Seal exists.
-                    (true, Some(_)) => self.event_proof_context(arkret_sdk::DigestSuite::Sha256),
-                    (false, Some(digest_suite)) => self.event_proof_context(digest_suite),
+                    (true, Some(_)) => {
+                        self.event_proof_context(arkret_sdk::DigestSuite::Sha256)
+                            .await?
+                    }
+                    (false, Some(digest_suite)) => self.event_proof_context(digest_suite).await?,
                     (_, None) => {
                         let digest_suite = self.trusted_digest_suite_for_intent(
                             &intent,
                             None,
                             self.state_store.as_ref(),
                         )?;
-                        self.event_proof_context(digest_suite)
+                        self.event_proof_context(digest_suite).await?
                     }
                 };
                 let mut event = intent
@@ -3828,9 +3822,9 @@ fn validate_signed_sdk_event_for_submit(
     event: &arkret_sdk::Event,
     digest_suite: arkret_sdk::DigestSuite,
 ) -> anyhow::Result<()> {
-    let [arkret_sdk::EventProof::Producer(_)] = event.proofs.as_slice() else {
+    let [_producer] = event.proofs.as_slice() else {
         anyhow::bail!(
-            "submit requires exactly one producer proof and forbids caller-supplied admission proofs (event_id={}, kind={})",
+            "submit requires exactly one producer proof (event_id={}, kind={})",
             event.event_id,
             event.kind.as_str()
         );

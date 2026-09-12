@@ -89,10 +89,6 @@ fn add_r3_error_keys_zh(dict: &mut TranslationDict) {
     );
 
     dict.set(
-        "error.recovery.witness_revoke_lagging",
-        "恢复协助者的移除尚未同步完成。请稍等片刻,然后重试。",
-    );
-    dict.set(
         "error.recovery.policy_mismatch",
         "Recovery policy 不匹配:服务器上的 policy 版本与请求不一致。",
     );

@@ -902,7 +902,6 @@ pub(super) fn send_encrypted_message(
                 return;
             }
         };
-        let seal_view = state_store.read().seal_view_for_realm(&realm);
         let api = match authed_api_with_sync(&base, api_token.clone(), wait_for) {
             Ok(api) => api,
             Err(error) => {
@@ -926,7 +925,6 @@ pub(super) fn send_encrypted_message(
         let secure_build = match crate::views::secure_send::build_secure_send(
             &api,
             state_store,
-            &seal_view,
             &realm,
             &authority_for_sidecar,
             &actor,

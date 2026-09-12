@@ -2711,7 +2711,13 @@ mod tests {
                 ))
                 .unwrap(),
                 event_digest,
-                signer_resolution_evidence_ref: None,
+                signer_resolution_evidence_ref: Some(
+                    arkret_sdk::SignerEvidenceRef::new(format!(
+                        "ak:signer_evidence:sha256:{}",
+                        "11".repeat(32)
+                    ))
+                    .unwrap(),
+                ),
                 created_at: event.created_at,
                 domain: None,
                 audience: None,
@@ -2724,10 +2730,7 @@ mod tests {
         let record = membership_operation_from_event(&event).unwrap();
         assert_eq!(record.payload["signing_device_id"], device_id);
 
-        event.proofs[0]
-            .as_producer_mut()
-            .unwrap()
-            .verification_method =
+        event.proofs[0].verification_method =
             arkret_sdk::DidUrl::new(format!("did:web:mallory.example#{device_id}")).unwrap();
         let record = membership_operation_from_event(&event).unwrap();
         assert!(record.payload.get("signing_device_id").is_none());

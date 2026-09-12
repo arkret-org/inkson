@@ -90,13 +90,22 @@ fn verify_event_producer(selector: &EventAgentSelector, key: &[u8; 32]) -> bool 
     let material = PublicKeyMaterial::Ed25519Raw {
         bytes: key.to_vec(),
     };
-    event.proofs.iter().filter_map(arkret_sdk::EventProof::as_producer).any(|proof| {
-        if proof.verification_method != selector.verification_method { return false }
-        let Ok(proof) = serde_json::to_value(proof) else { return false };
+    event.proofs.iter().any(|proof| {
+        if proof.verification_method != selector.verification_method {
+            return false;
+        }
+        let Ok(proof) = serde_json::to_value(proof) else {
+            return false;
+        };
         crate::identity::device_directory::verify_proof_value_for_signer_result_with_digest_suite(
-            &preimage, &proof, selector.agent_id.as_str(),
-            event.actor_id.signing_principal_id().as_str(), &material, suite,
-        ).is_ok()
+            &preimage,
+            &proof,
+            selector.agent_id.as_str(),
+            event.actor_id.signing_principal_id().as_str(),
+            &material,
+            suite,
+        )
+        .is_ok()
     })
 }
 
@@ -282,9 +291,7 @@ pub(crate) fn verified_cached_agent_event_endpoint(
 
 fn event_agent_identity(envelope: &Value) -> Option<(arkret_sdk::Event, DidCoreId, DidUrl)> {
     let event: arkret_sdk::Event = serde_json::from_value(envelope.clone()).ok()?;
-    let frozen_agent_evidence = origin_admission(&event)
-        .and_then(|admission| admission.producer_signer_resolution_evidence_ref.as_ref())
-        .is_some();
+    let frozen_agent_evidence = !event.proofs.is_empty();
     if event.applet_id.is_some() || (event.executed_by.is_none() && !frozen_agent_evidence) {
         return None;
     }
@@ -297,7 +304,6 @@ fn event_agent_identity(envelope: &Value) -> Option<(arkret_sdk::Event, DidCoreI
     let verification_method = event
         .proofs
         .iter()
-        .filter_map(arkret_sdk::EventProof::as_producer)
         .find(|proof| {
             proof
                 .verification_method
@@ -310,13 +316,6 @@ fn event_agent_identity(envelope: &Value) -> Option<(arkret_sdk::Event, DidCoreI
         .verification_method
         .clone();
     Some((event, agent_id, verification_method))
-}
-
-fn origin_admission(event: &arkret_sdk::Event) -> Option<&arkret_sdk::StationAdmissionProof> {
-    event.proofs.iter().find_map(|proof| match proof {
-        arkret_sdk::EventProof::StationAdmission(value) => Some(value),
-        arkret_sdk::EventProof::Producer(_) => None,
-    })
 }
 
 fn actor_id_from_full(did: &Did) -> Option<DidCoreId> {
@@ -370,7 +369,7 @@ fn selector_from_object(
     {
         return None;
     }
-    let admission = origin_admission(&event)?;
+    let producer = event.proofs.first()?;
     Some(EventAgentSelector {
         accepted_event: event.clone(),
         realm_id,
@@ -382,10 +381,8 @@ fn selector_from_object(
         agent_id,
         verification_method,
         event_id: event.event_id.clone(),
-        producer_accepted_at: admission.accepted_at,
-        producer_signer_resolution_evidence_ref: admission
-            .producer_signer_resolution_evidence_ref
-            .clone()?,
+        producer_accepted_at: producer.created_at,
+        producer_signer_resolution_evidence_ref: producer.signer_resolution_evidence_ref.clone()?,
         receiver_id: receiver_id.clone(),
     })
 }

@@ -59,7 +59,8 @@ pub fn test_notary(signer_did: &str) -> arkret_sdk::NotaryValue {
         ))
         .expect("test notary key digest is canonical"),
     };
-    arkret_sdk::NotaryValue::single_signer(descriptor)
+    arkret_sdk::NotaryValue::new(vec![descriptor], 0, 1_000)
+        .expect("one-voter quorum notary is valid")
 }
 
 /// The pinned signing stamp for position `actor_seq`.

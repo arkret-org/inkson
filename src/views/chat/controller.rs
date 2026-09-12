@@ -973,7 +973,6 @@ impl ChatController {
                         return;
                     }
                 };
-                let seal_view = state_store.read().seal_view_for_realm(&message.realm_id);
                 let api = match authed_api_with_sync(&base_url, api_token.clone(), wait_for) {
                     Ok(api) => api,
                     Err(error) => {
@@ -989,7 +988,6 @@ impl ChatController {
                 let build = match crate::views::secure_send::build_secure_send(
                     &api,
                     state_store,
-                    &seal_view,
                     &message.realm_id,
                     &authority,
                     actor.as_str(),

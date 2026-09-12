@@ -263,10 +263,6 @@ pub async fn update_profile(
         None,
     )
     .await?;
-    let mut successor_seal = Some(
-        crate::transport::contacts::prepare_principal_successor_seal(submitter.http(), &signed)
-            .await?,
-    );
     let body = arkret_models_collaboration::account_lifecycle::AccountUpdateProfileRequestBody {
         profile_event,
     };
@@ -276,38 +272,11 @@ pub async fn update_profile(
         accepted_basis.as_ref(),
         signed.digest_suite(),
     )?;
-    const FRONTIER_RETRY_ATTEMPTS: usize = 120;
-    for attempt in 0..FRONTIER_RETRY_ATTEMPTS {
-        match submitter
-            .http()
-            .account_update_profile(&body, signed.digest_suite())
-            .await
-        {
-            Ok(outcome) => return Ok(outcome),
-            Err(error) => {
-                let error = anyhow::Error::from(error);
-                if profile_frontier_pending(&error) && attempt + 1 < FRONTIER_RETRY_ATTEMPTS {
-                    if let Some(context) = successor_seal.take() {
-                        crate::transport::contacts::submit_principal_successor_seal(
-                            submitter.http(),
-                            context,
-                            &signed,
-                        )
-                        .await?;
-                    }
-                    crate::runtime_helpers::sleep_for(std::time::Duration::from_millis(250)).await;
-                    continue;
-                }
-                return Err(error);
-            }
-        }
-    }
-    unreachable!("bounded account profile retry loop always returns")
-}
-
-fn profile_frontier_pending(error: &anyhow::Error) -> bool {
-    crate::api_error::api_error_status_and_envelope(error)
-        .is_some_and(|(_, envelope)| envelope.code() == "frontier_unavailable")
+    submitter
+        .http()
+        .account_update_profile(&body, signed.digest_suite())
+        .await
+        .map_err(Into::into)
 }
 
 pub async fn respond_contact(
@@ -1680,7 +1649,7 @@ pub async fn delete_account_data(submitter: &EventSubmitter, type_key: &str) -> 
 /// Create or update a scheduled-send plan (spec `models/personal-productivity.md`
 /// §4): the plan is validated, encrypted, and written to
 /// `ak.scheduled_send.v1:<scheduled_send_id>` through the account-data
-/// `cas_register` loop; a `cas_conflict` re-reads the authoritative entry,
+/// atomic revision loop; a stale revision re-reads the authoritative entry,
 /// merges on decrypted plaintext, and retries with the new
 /// `expected_revision`.
 pub async fn put_scheduled_send_plan(

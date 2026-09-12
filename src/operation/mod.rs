@@ -325,10 +325,6 @@ impl LocalOperation {
             .unwrap_or_else(|| self.local_operation_id.as_str())
     }
 
-    pub fn seal_ref(&self) -> Option<&arkret_sdk::SealId> {
-        self.intent.seal_ref()
-    }
-
     pub fn seal_basis(&self) -> Option<&SealBasis> {
         self.intent.seal_basis()
     }
@@ -592,15 +588,6 @@ impl TypedOperationBuilder {
         self.map_intent(|intent| Ok(intent.with_causal_refs(causal_refs)))
     }
 
-    pub fn seal_ref(self, seal_ref: impl Into<String>) -> Self {
-        self.map_intent(|intent| {
-            Ok(intent.with_seal_ref(
-                arkret_sdk::SealId::new(seal_ref.into())
-                    .map_err(|err| anyhow::anyhow!("invalid seal_ref: {err}"))?,
-            ))
-        })
-    }
-
     pub fn seal_basis(self, seal_basis: SealBasis) -> Self {
         self.map_intent(|intent| Ok(intent.with_seal_basis(seal_basis)))
     }
@@ -647,6 +634,7 @@ pub trait AuthoredEventExt {
         signer_did: impl Into<String>,
         key_id: impl Into<String>,
         signing_key: &ed25519_dalek::SigningKey,
+        signer_resolution_evidence_ref: arkret_sdk::SignerEvidenceRef,
     ) -> anyhow::Result<()>;
 }
 
@@ -654,22 +642,27 @@ impl AuthoredEventExt for AuthoredEvent {
     fn sign_ed25519(
         &mut self,
         signer_did: impl Into<String>,
-        _key_id: impl Into<String>,
+        key_id: impl Into<String>,
         signing_key: &ed25519_dalek::SigningKey,
+        signer_resolution_evidence_ref: arkret_sdk::SignerEvidenceRef,
     ) -> anyhow::Result<()> {
         use std::sync::Arc;
 
         use arkret_sdk::signatures::proof::Ed25519DetachedJwsSigner;
 
         let signer_did = signer_did.into();
-        let sdk_signer =
-            Ed25519DetachedJwsSigner::new(signing_key.clone(), format!("{signer_did}#device"));
+        let sdk_signer = Ed25519DetachedJwsSigner::new(signing_key.clone(), key_id.into());
         let signer = crate::event_signer::InksonEventSigner::from_dyn_signer(
             Arc::new(sdk_signer),
             signer_did.clone(),
         );
         signer
-            .sign_envelope(self)
+            .sign_envelope_with_context(
+                self,
+                crate::event_signer::ProducerProofContext::new()
+                    .with_digest_suite(self.digest_suite())
+                    .with_signer_resolution_evidence_ref(signer_resolution_evidence_ref),
+            )
             .map_err(|err| anyhow::anyhow!("Ed25519 sign rejected: {err}"))?;
         Ok(())
     }
@@ -697,10 +690,10 @@ impl EventExt for Event {
     }
 
     fn require_proof(&self) -> anyhow::Result<&ProducerEventProof> {
-        self.proofs
-            .iter()
-            .find_map(arkret_sdk::EventProof::as_producer)
-            .ok_or_else(|| anyhow::anyhow!("event envelope missing proof"))
+        let [proof] = self.proofs.as_slice() else {
+            anyhow::bail!("event envelope must contain exactly one producer proof");
+        };
+        Ok(proof)
     }
 }
 

@@ -129,6 +129,7 @@ pub(super) fn validate_projected_cbs_plane(
 /// Build the signer/key-epoch context pinned by a DataEvent.
 pub(super) fn data_event_auth_context(
     intent: &EventIntent,
+    authority_refs: Vec<arkret_sdk::SealId>,
 ) -> anyhow::Result<arkret_sdk::AuthContext> {
     let actor_id = intent.executed_by().unwrap_or_else(|| intent.actor_id());
     let signer = crate::event_signer::active_signer()
@@ -141,6 +142,7 @@ pub(super) fn data_event_auth_context(
         key_id: data_event_key_id_for(intent),
         key_epoch: 0,
         credential_epoch: None,
+        authority_refs,
     })
 }
 

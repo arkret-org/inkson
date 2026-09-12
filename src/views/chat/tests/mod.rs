@@ -137,7 +137,13 @@ fn sign_chat_fixture(value: &mut Value) {
                 )
                 .unwrap(),
                 event_digest: arkret_sdk::Hash::new(event_digest).unwrap(),
-                signer_resolution_evidence_ref: None,
+                signer_resolution_evidence_ref: Some(
+                    arkret_sdk::SignerEvidenceRef::new(format!(
+                        "ak:signer_evidence:sha256:{}",
+                        "11".repeat(32)
+                    ))
+                    .unwrap(),
+                ),
                 created_at: chrono::DateTime::parse_from_rfc3339("2026-07-10T00:00:00.000Z")
                     .unwrap()
                     .with_timezone(&chrono::Utc),

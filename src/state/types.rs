@@ -810,6 +810,18 @@ pub struct CachedHistoricalAgentSignerKey {
     pub cached_at_unix_ms: u64,
 }
 
+/// Last locally verified authoring authority for this account's active device.
+/// The complete evidence closure and its generation fence are persisted in the
+/// existing account-state value so an ordinary Event can be authored after a
+/// cold offline start. A later verified revocation clears the whole record.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PersistedDeviceAuthoringAuthority {
+    pub current_signer_evidence:
+        arkret_models_collaboration::current_signer_evidence::CurrentSignerEvidence,
+    pub authoring_generation: garth::AuthoringGeneration,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub(crate) struct StoredClientDelivery {
     pub id: u64,
@@ -968,11 +980,9 @@ pub struct ClientLocalState {
     /// policy is `required` or `disabled`.
     #[serde(default)]
     pub read_receipt_policy_snapshots: BTreeMap<String, ReadReceiptPolicySnapshot>,
-    /// Latest Seal view per Space, threaded from `/sync`'s Seal
-    /// projection (P0 M3). Move builders pull `frontier[0]` from here
-    /// instead of using the empty-bytes sentinel. UIs use the
-    /// `bottom_cells` map to surface conflict banners when a cell is
-    /// `bottom=expose`.
+    /// Latest verified Realm safety view from `/sync`. Safety-event builders
+    /// may use its sole confirmed head as a precondition; ordinary events use
+    /// it only as the authority evidence captured in `AuthContext`.
     #[serde(default)]
     pub seal_views: BTreeMap<String, LocalSealView>,
     #[serde(default)]
@@ -982,6 +992,10 @@ pub struct ClientLocalState {
     /// this in place of the historical `[42; 32]` demo seed.
     #[serde(default)]
     pub local_identity: Option<LocalIdentityRecord>,
+    /// Complete last-verified device evidence plus the matching accepted
+    /// authoring generation. Absence means authoring is not initialized.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub device_authoring_authority: Option<PersistedDeviceAuthoringAuthority>,
     /// Locally-submitted Move state tracker. Keyed by `move_id`; entries
     /// arrive when `submit_move` succeeds and get updated when the next
     /// sync surfaces an Seal that includes the id (or a rejection).
@@ -1478,6 +1492,7 @@ impl Default for ClientLocalState {
             seal_views: BTreeMap::new(),
             push_registration: None,
             local_identity: None,
+            device_authoring_authority: None,
             move_submissions: BTreeMap::new(),
             plain_local_data: BTreeMap::new(),
             read_cursors: BTreeMap::new(),

@@ -106,18 +106,10 @@ pub fn RealmAdminPanel(
     // that's in a failed state stores its move_id here; the detail block
     // below renders the reason / seal_ref.
     let mut move_detail_open = use_signal(|| Option::<String>::None);
-    // the former conflict-repair submit dialog was removed —
-    // `ak.conflict.repair` is not in the spec event-kind-registry (186
-    // kinds, no conflict/repair entry), so the client must not mint that
-    // wire kind. The bottom-cells banner below stays as read-only
-    // diagnostics; repair tooling returns once a repair kind is
-    // registered via AKP.
     // Read the local seal view for this realm once per render. Surfaces:
-    //  - bottom_cells set → "concurrent candidates unresolved" banner (P0 M5)
-    //  - frontier head    → debug visibility into what Move builders thread
+    //  - the unique confirmation head used by safety commands
     //  - state_root       → admin can confirm divergence between local + server
     let SealDiagnostics {
-        bottom_cells,
         leaf_count: seal_leaf_count,
         frontier_label: seal_frontier_label,
         state_root_label: seal_state_root_label,
@@ -139,11 +131,7 @@ pub fn RealmAdminPanel(
         badge: security_health_badge,
         next_step: security_next_step,
         alert_count,
-    } = realm_security_health(
-        realm_paused,
-        realm_pending_mls_binding,
-        !bottom_cells.is_empty(),
-    );
+    } = realm_security_health(realm_paused, realm_pending_mls_binding);
     let active_section = RealmAdminSection::from_slug(active_section.as_deref());
     // The account-sync writer can update the shared store outside this
     // component's reactive scope. Subscribe to its canonical cursor so a
@@ -435,50 +423,6 @@ pub fn RealmAdminPanel(
                                                     }
                                                 }
                                                 div { "submitted_at: {record.submitted_at}" }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            // Bottom/conflict banner — rendered when the projection
-            // exposes unresolved concurrent candidates. P0 M5.
-            if active_section == RealmAdminSection::Repair && !bottom_cells.is_empty() {
-                div { class: "event", "data-testid": "bottom-cells-banner",
-                    div { class: "event-head",
-                        span { "Concurrent candidates unresolved" }
-                        span { class: "badge red", "bottom/conflict" }
-                    }
-                    div { class: "muted",
-                        "One or more cells in this Realm's projection have unresolved bottom/conflict diagnostics — soland received concurrent Events it cannot deterministically merge. Repair requires a registered recovery-repair event kind (pending AKP registration); until then this panel is read-only diagnostics for operators."
-                    }
-                    for (cell_ref, info) in &bottom_cells {
-                        {
-                            let cell_ref_label = short_protocol_id(cell_ref);
-                            rsx! {
-                                div { class: "muted", "data-testid": "bottom-cell-row",
-                                    title: "{cell_ref}",
-                                    "{cell_ref_label} · status={info.status}"
-                                }
-                                // Side-by-side render of the competing heads so the
-                                // operator can see what they're picking between
-                                // instead of pasting blind JSON.
-                                if !info.heads.is_empty() {
-                                    div { class: "metric-grid", "data-testid": "bottom-cell-heads",
-                                        for head in &info.heads {
-                                            {
-                                                let head_move_id_label = short_protocol_id(&head.move_id);
-                                                rsx! {
-                                                    div { class: "metric", "data-testid": "bottom-cell-head",
-                                                        strong { "data-testid": "bottom-cell-head-move-id", title: "{head.move_id}", "{head_move_id_label}" }
-                                                        span { "data-testid": "bottom-cell-head-value",
-                                                            "{serde_json::to_string(&head.value).unwrap_or_default()}"
-                                                        }
-                                                    }
-                                                }
                                             }
                                         }
                                     }

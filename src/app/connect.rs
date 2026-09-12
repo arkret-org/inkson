@@ -481,6 +481,13 @@ fn device_authorization_probe_from_account_viewer(
     (needs_authorization, has_other)
 }
 
+fn clear_verified_device_authoring_authority(mut state_store: SyncSignal<LocalStateStore>) {
+    crate::identity::device_directory::reset_session_cache();
+    crate::identity::authoring_generation::reset_verified_authoring_generations();
+    crate::authorization_lease::clear_leases();
+    state_store.write().set_device_authoring_authority(None);
+}
+
 /// Determine whether the current device is durably authorized. This is a
 /// read-only probe: the account-first onboarding flow owns the atomic founding
 /// device bootstrap, while every later or key-mismatched device must use the
@@ -489,6 +496,7 @@ pub(super) async fn probe_device_authorization(
     account: &crate::config::ActiveAccountContext,
     device: &str,
     principal_api: &TransportClient,
+    state_store: SyncSignal<LocalStateStore>,
 ) -> anyhow::Result<(bool, bool)> {
     // The account-viewer helpers read `devices[]` leniently via `Value`
     // accessors; serialize the typed `AccountView` back to its wire JSON.
@@ -496,7 +504,7 @@ pub(super) async fn probe_device_authorization(
         &crate::transport::keys::list_devices(&principal_api.sdk_http_client()?).await?,
     )?;
     let signer_matches_directory =
-        current_event_signer_matches_directory(principal_api, account, device).await?;
+        current_event_signer_matches_directory(principal_api, account, device, state_store).await?;
     Ok(device_authorization_probe_from_account_viewer(
         &viewer,
         device,
@@ -513,6 +521,7 @@ async fn current_event_signer_matches_directory(
     principal_api: &TransportClient,
     account: &crate::config::ActiveAccountContext,
     device: &str,
+    mut state_store: SyncSignal<LocalStateStore>,
 ) -> anyhow::Result<bool> {
     let signer = match crate::event_signer::active_signer() {
         Some(signer) => signer,
@@ -526,9 +535,11 @@ async fn current_event_signer_matches_directory(
         .unwrap_or(signer);
     let signer_did = arkret_sdk::Did::new(signer.signer_did().to_owned())?;
     if &arkret_sdk::project_did_to_core_id(&signer_did)? != actor_id {
+        clear_verified_device_authoring_authority(state_store);
         return Ok(false);
     }
     let Some(public_key) = signer.public_key_multibase() else {
+        clear_verified_device_authoring_authority(state_store);
         return Ok(false);
     };
     let device_cache_epoch = crate::identity::device_directory::cache_epoch();
@@ -549,6 +560,7 @@ async fn current_event_signer_matches_directory(
         })
         == Some(expected_key.as_str());
     if !signer_matches {
+        clear_verified_device_authoring_authority(state_store);
         return Ok(false);
     }
     let accepted_key =
@@ -562,11 +574,39 @@ async fn current_event_signer_matches_directory(
         != crate::identity::device_directory::public_key_from_directory_value(&expected_key)
             .as_ref()
     {
+        clear_verified_device_authoring_authority(state_store);
         return Ok(false);
     }
-    crate::identity::authoring_generation::cache_principal_authoring_generation_from_keys(
-        &outcome, account_id, device,
+    let active =
+        crate::identity::authoring_generation::cache_principal_authoring_generation_from_keys(
+            &outcome, account_id, device,
+        )?;
+    if !active {
+        clear_verified_device_authoring_authority(state_store);
+        return Ok(false);
+    }
+    let generation = crate::identity::authoring_generation::cached_principal_authoring_generation(
+        account_id, device,
     )
+    .ok_or_else(|| anyhow::anyhow!("verified authoring generation was not retained"))?;
+    let persisted =
+        crate::identity::device_directory::persisted_device_authoring_authority_from_outcome(
+            &outcome, account_id, &device_id, generation,
+        )
+        .ok_or_else(|| anyhow::anyhow!("verified device authoring evidence is incomplete"))?;
+    if !crate::identity::device_directory::restore_persisted_device_authoring_authority(
+        device_cache_epoch,
+        account_id,
+        &device_id,
+        &persisted,
+    ) {
+        clear_verified_device_authoring_authority(state_store);
+        return Ok(false);
+    }
+    state_store
+        .write()
+        .set_device_authoring_authority(Some(persisted));
+    Ok(true)
 }
 
 pub(super) fn connect(
@@ -1225,7 +1265,7 @@ pub(super) fn connect(
                     "device authorization check",
                     &session,
                     bootstrap_session_generation,
-                    probe_device_authorization(&accepted_account, &device, &authed),
+                    probe_device_authorization(&accepted_account, &device, &authed, state_store),
                 )
                 .await
                 else {
@@ -1268,6 +1308,7 @@ pub(super) fn connect(
                                             &accepted_account,
                                             &device,
                                             &authed,
+                                            state_store,
                                         ),
                                     )
                                     .await

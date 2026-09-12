@@ -834,41 +834,20 @@ mod tests {
             )
             .unwrap(),
             event_digest: digest.clone(),
-            signer_resolution_evidence_ref: None,
+            signer_resolution_evidence_ref: Some(
+                arkret_sdk::SignerEvidenceRef::new(format!(
+                    "ak:signer_evidence:sha256:{}",
+                    "11".repeat(32)
+                ))
+                .unwrap(),
+            ),
             created_at: event.created_at,
             domain: None,
             audience: None,
             proof_purpose: None,
             jws: "header..producer".to_owned(),
         };
-        event.proofs.push(producer.clone().into());
-        event.proofs.push(
-            arkret_sdk::StationAdmissionProof {
-                kind: arkret_sdk::StationAdmissionProofKind::StationAdmission,
-                verification_method: arkret_sdk::DidUrl::new(
-                    "did:web:principal.example#admission-1",
-                )
-                .unwrap(),
-                event_digest: digest,
-                producer_proof_digest: arkret_sdk::StationAdmissionProof::producer_proof_digest(
-                    &producer,
-                )
-                .unwrap(),
-                producer_verification_method: producer.verification_method.clone(),
-                producer_signing_key_did: arkret_sdk::DidKey::new("did:key:z6MkhFixtureDeviceKey")
-                    .unwrap(),
-                producer_signer_resolution_evidence_ref: None,
-                signer_resolution_evidence_ref: arkret_sdk::SignerEvidenceRef::new(format!(
-                    "ak:signer_evidence:sha256:{}",
-                    "11".repeat(32)
-                ))
-                .unwrap(),
-                applet_installation_digest: None,
-                accepted_at: event.created_at,
-                jws: "header..admission".to_owned(),
-            }
-            .into(),
-        );
+        event.proofs.push(producer);
         let event_id = event.event_id.clone();
         let frames = vec![
             arkret_sdk::EventsSubscribeFrame::Event {

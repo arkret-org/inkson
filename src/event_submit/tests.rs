@@ -139,7 +139,7 @@ fn durable_sent_item_repairs_optimistic_operation_by_local_id() {
             chrono::Utc::now(),
         )
         .unwrap();
-    // A CAS re-author can change the queue transaction id, but the holder-local
+    // A frontier re-author can change the queue transaction id, but the holder-local
     // operation id remains the join key for the optimistic row.
     sent.local_operation_id = local_operation_id.to_owned();
     sent.status = garth::SendQueueStatus::Sent;
@@ -214,7 +214,7 @@ fn scheduled_dispatch_crash_retry_preserves_exact_signed_event_bytes() {
     signer
         .sign_sdk_event_with_context(
             &mut event,
-            crate::event_signer::EventProofContext::default(),
+            crate::event_signer::test_producer_proof_context(arkret_sdk::DigestSuite::Sha256),
         )
         .unwrap();
 
@@ -931,7 +931,7 @@ async fn direct_message_create_facts_do_not_replace_current_station_result() {
         .await;
     assert_eq!(result, original);
     assert!(result.authorization_ref().is_none());
-    assert!(result.seal_ref().is_none());
+    assert!(result.auth_context().is_none());
 }
 
 #[test]
@@ -988,17 +988,15 @@ fn stamped_intent_round_trips_through_authoring_without_semantic_drift() {
         .with_prev_refs(vec![fixture_event_id(
             "ak:event:AdymfEYKFegRsXpyi5Or3ormR7igvbwtXIp8HyMfOvWE",
         )])
-        .with_seal_ref(
-            arkret_sdk::SealId::new(
-                "ak:seal:sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
-                    .to_owned(),
-            )
-            .unwrap(),
-        )
         .with_auth_context(arkret_sdk::AuthContext {
             key_id: arkret_sdk::OpaqueLocalId::new("device").unwrap(),
             key_epoch: 0,
             credential_epoch: None,
+            authority_refs: vec![arkret_sdk::SealId::new(
+                "ak:seal:sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+                    .to_owned(),
+            )
+            .unwrap()],
         })
         .author_with_digest_suite(
             7,
@@ -1036,44 +1034,14 @@ fn queued_mls_admission_round_trips_exact_welcome_material() {
                 "did:web:alice.example",
                 "did:web:alice.example#device",
                 &ed25519_dalek::SigningKey::from_bytes(&[30_u8; 32]),
+                crate::event_signer::test_producer_proof_context(arkret_sdk::DigestSuite::Sha256)
+                    .signer_resolution_evidence_ref
+                    .unwrap(),
             )
             .expect("the Proposal signs");
     }
     let authored_proposal = proposal.event().clone();
-    let producer = authored_proposal
-        .proofs
-        .iter()
-        .find_map(arkret_sdk::EventProof::as_producer)
-        .cloned()
-        .expect("the authored Proposal has its producer proof");
     let mut accepted_proposal = authored_proposal.clone();
-    accepted_proposal.proofs.push(
-        arkret_sdk::StationAdmissionProof {
-            kind: arkret_sdk::StationAdmissionProofKind::StationAdmission,
-            verification_method: arkret_sdk::DidUrl::new("did:web:principal.example#admission-1")
-                .unwrap(),
-            event_digest: producer.event_digest.clone(),
-            producer_proof_digest: arkret_sdk::StationAdmissionProof::producer_proof_digest(
-                &producer,
-            )
-            .unwrap(),
-            producer_verification_method: producer.verification_method.clone(),
-            producer_signing_key_did: arkret_sdk::DidKey::new("did:key:z6MkhFixtureDeviceKey")
-                .unwrap(),
-            producer_signer_resolution_evidence_ref: producer
-                .signer_resolution_evidence_ref
-                .clone(),
-            signer_resolution_evidence_ref: arkret_sdk::SignerEvidenceRef::new(format!(
-                "ak:signer_evidence:sha256:{}",
-                "11".repeat(32)
-            ))
-            .unwrap(),
-            applet_installation_digest: None,
-            accepted_at: authored_proposal.created_at,
-            jws: "header..admission".to_owned(),
-        }
-        .into(),
-    );
     assert!(
         accepted_event_preserves_authored_envelope(
             &accepted_proposal,
@@ -1155,6 +1123,9 @@ fn queued_mls_admission_round_trips_exact_welcome_material() {
                 "did:web:alice.example",
                 "did:web:alice.example#device",
                 &ed25519_dalek::SigningKey::from_bytes(&[31_u8; 32]),
+                crate::event_signer::test_producer_proof_context(arkret_sdk::DigestSuite::Sha256)
+                    .signer_resolution_evidence_ref
+                    .unwrap(),
             )
             .expect("the Welcome signs");
     }
@@ -1299,7 +1270,7 @@ fn actor_frontier_stamp_carries_into_the_ordered_log_issuer_seq() {
     let intent = crate::event_builders::build_realm_create_event(
         arkret_sdk::GenesisSalt::new("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA").unwrap(),
         "did:web:alice.example",
-        crate::event_builders::test_single_signer_notary("did:web:alice.example").unwrap(),
+        crate::event_builders::test_quorum_notary("did:web:alice.example").unwrap(),
         "Frontier",
         None,
         "invite_only",
@@ -1431,7 +1402,7 @@ async fn realm_bootstrap_preparation_requires_a_described_station() {
         arkret_sdk::GenesisSalt::new("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA").unwrap(),
         "did:web:alice.example",
         "did:web:server.example",
-        crate::event_builders::test_single_signer_notary("did:web:server.example").unwrap(),
+        crate::event_builders::test_quorum_notary("did:web:server.example").unwrap(),
         "https://server.example",
         "Engineering",
         Some("Realm genesis must not query its own nonexistent frontier"),

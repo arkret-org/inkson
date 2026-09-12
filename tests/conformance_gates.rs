@@ -249,7 +249,16 @@ fn sign_authored(envelope: &mut arkret_sdk::AuthoredEvent) {
     let signer_did = TEST_ACTOR_DID;
     let key_id = format!("{signer_did}#device");
     envelope
-        .sign_ed25519(signer_did, key_id, test_signing_key())
+        .sign_ed25519(
+            signer_did,
+            key_id,
+            test_signing_key(),
+            arkret_sdk::SignerEvidenceRef::new(format!(
+                "ak:signer_evidence:sha256:{}",
+                "11".repeat(32)
+            ))
+            .unwrap(),
+        )
         .expect("Ed25519 sign succeeds for schema-conformant envelope");
 }
 
@@ -296,16 +305,9 @@ fn wire_envelope_from_intent(intent: inkson::operation::EventIntent) -> arkret_s
         if intent.seal_basis().is_none() {
             intent = intent.with_seal_basis(test_seal_basis());
         }
-    // DataEvent: the schema requires `seal_ref` AND `auth_context` together,
-    // and forbids `seal_basis` alongside them. Both are attached by the submit
-    // pipeline before identity is derived from what goes on the wire.
+    // DataEvent: the signed auth context carries verified authority references
+    // and forbids a Control Move `seal_basis` alongside it.
     } else if intent.kind().is_data_plane() {
-        if intent.seal_ref().is_none() {
-            intent = intent.with_seal_ref(
-                arkret_sdk::SealId::new(TEST_ANCHOR_REF.to_owned())
-                    .expect("test seal id is canonical"),
-            );
-        }
         if intent.auth_context().is_none() {
             intent = intent.with_auth_context(test_auth_context());
         }
@@ -314,7 +316,16 @@ fn wire_envelope_from_intent(intent: inkson::operation::EventIntent) -> arkret_s
     let signer_did = TEST_ACTOR_DID;
     let key_id = format!("{signer_did}#device");
     envelope
-        .sign_ed25519(signer_did, key_id, test_signing_key())
+        .sign_ed25519(
+            signer_did,
+            key_id,
+            test_signing_key(),
+            arkret_sdk::SignerEvidenceRef::new(format!(
+                "ak:signer_evidence:sha256:{}",
+                "11".repeat(32)
+            ))
+            .unwrap(),
+        )
         .expect("Ed25519 sign succeeds for schema-conformant envelope");
     envelope
 }
@@ -329,10 +340,7 @@ fn cbs_exempt_reducer_kind(kind: &EventKind) -> bool {
         || arkret_policy::realm_bootstrap::is_realm_bootstrap_followup_kind(kind)
 }
 
-/// The `{did, key_id, key_epoch}` a DataEvent pins so the receiver knows which
-/// signing key to verify authorization with at `seal_ref`. Effective
-/// capabilities are still derived from the accepted basis; this only names the
-/// key, it never selects a capability.
+/// The key coordinates and verified authority decision a DataEvent pins.
 fn test_auth_context() -> arkret_sdk::AuthContext {
     arkret_sdk::AuthContext {
         // `key_id` is the bare verification-method fragment with the `ak:`
@@ -342,6 +350,10 @@ fn test_auth_context() -> arkret_sdk::AuthContext {
         key_id: arkret_sdk::OpaqueLocalId::new("device").unwrap(),
         key_epoch: 0,
         credential_epoch: None,
+        authority_refs: vec![
+            arkret_sdk::SealId::new(TEST_ANCHOR_REF.to_owned())
+                .expect("test authority ref is canonical"),
+        ],
     }
 }
 
@@ -399,7 +411,7 @@ fn schema_validator_rejects_obviously_invalid_envelope() {
         "validator accepted a malformed event_id; resolver wiring is broken"
     );
 
-    // Reducer-input kind missing preconditions/effects/seal_ref MUST
+    // Reducer-input kind missing preconditions/effects MUST
     // be rejected per the `then.required` rule on the reducer-kind
     // branch of the top-level `allOf`. If this slips through, the
     // schema validator is silently degraded to a syntax-only checker.
@@ -423,7 +435,7 @@ fn schema_validator_rejects_obviously_invalid_envelope() {
     assert!(
         !validator.is_valid(&reducer_missing_required),
         "validator accepted a reducer-input ak.realm.create envelope \
-         missing preconditions/effects/seal_ref; the conditional `if/then` \
+         missing preconditions/effects; the conditional `if/then` \
          branch on event-envelope.schema.json is not being evaluated"
     );
 }

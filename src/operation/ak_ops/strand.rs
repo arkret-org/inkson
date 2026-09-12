@@ -155,11 +155,10 @@ pub fn strand_update_patch(
     )
 }
 
-/// Strand position CAS update. The server reducer compares
-/// `expected_position` to the cell's current value; on mismatch the
-/// response is `cas_conflict` and the client should rebase against the
-/// new head.
-pub fn strand_position_cas_update(
+/// Strand position update. The sequenced state reducer compares the optional
+/// expected position with its current value and returns the current result when
+/// the submitted revision is stale.
+pub fn strand_position_update(
     realm_id: &str,
     actor: &str,
     kind: &str,
@@ -184,17 +183,17 @@ pub fn strand_position_cas_update(
     let effect_rank = position_field(&effect_position, "rank");
 
     let Some(effect_space) = effect_space else {
-        anyhow::bail!("strand position CAS update requires effect_position.space_id");
+        anyhow::bail!("strand position update requires effect_position.space_id");
     };
     let Some(effect_rank) = effect_rank else {
-        anyhow::bail!("strand position CAS update requires effect_position.rank");
+        anyhow::bail!("strand position update requires effect_position.rank");
     };
 
     // Strong types: strand_reorder_payload / strand_move_payload
     // (additionalProperties:false). The reorder path stays within a
     // single List Space (effect_space == space_id); the move path treats
     // effect_space as the destination target_space_id and carries the
-    // optional from_space_id / expected_position CAS hints.
+    // optional from_space_id / expected_position revision hints.
     match kind {
         event_kind_str::STRAND_REORDER => {
             let payload = strand_reorder_payload(

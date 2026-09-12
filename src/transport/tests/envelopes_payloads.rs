@@ -5,7 +5,7 @@ use crate::event_builders::{
     build_member_state_transition_event, build_realm_bootstrap_steps_for_station,
     build_realm_create_event, build_realm_state_event_for_station,
     build_sas_key_verification_content, build_signed_device_verification_proof,
-    build_space_create_event, test_single_signer_notary,
+    build_space_create_event, test_quorum_notary,
 };
 use crate::operation::TypedOperationBuilder;
 use crate::realm_defaults::RECOMMENDED_REALM_ENCRYPTION_FLOOR;
@@ -39,7 +39,7 @@ fn space_bootstrap_events_use_canonical_create_and_facet_kinds() {
             test_genesis_salt(),
             "did:web:alice.example",
             "did:web:server.example",
-            test_single_signer_notary("did:web:server.example").unwrap(),
+            test_quorum_notary("did:web:server.example").unwrap(),
             "https://server.example",
             "Engineering",
             Some("Roadmap work"),
@@ -111,7 +111,7 @@ fn space_bootstrap_events_use_canonical_create_and_facet_kinds() {
     assert_eq!(events[1].payload["schema"], "ak.schema.realm_profile.v1");
     assert_eq!(events[1].payload["title"], "Engineering");
     assert_eq!(events[1].payload["summary"], "Roadmap work");
-    assert_eq!(create.payload["object"]["notary"]["kind"], "single_signer");
+    assert_eq!(create.payload["object"]["notary"]["kind"], "quorum");
     assert_eq!(
         create.payload["object"]["notary"]["signer"]["actor_id"],
         json!({
@@ -169,10 +169,8 @@ fn space_bootstrap_events_use_canonical_create_and_facet_kinds() {
             facet.kind.as_str()
         );
     }
-    // seal_ref starts unset on the typed envelope. Realm genesis
-    // has no snapshot head yet, so the create event relies on its
-    // `head_eq null` precondition instead of a prior seal.
-    assert!(create.seal_ref.is_none());
+    // Realm genesis has no prior authority decision.
+    assert!(create.auth_context.is_none());
     // The typed builder leaves the envelope unsigned — the active
     // signer attaches the detached JWS proof at submit time.
     assert!(create.proofs.is_empty());
@@ -238,7 +236,7 @@ fn plaintext_realm_create_does_not_claim_e2ee_floors() {
     let envelope = build_realm_create_event(
         test_genesis_salt(),
         "did:web:alice.example",
-        test_single_signer_notary("did:web:server.example").unwrap(),
+        test_quorum_notary("did:web:server.example").unwrap(),
         "Public updates",
         None,
         "listed",
@@ -274,7 +272,7 @@ fn realm_bootstrap_rejects_prejoin_history_with_strict_mls_scheme() {
         test_genesis_salt(),
         "did:web:alice.example",
         "did:web:server.example",
-        test_single_signer_notary("did:web:server.example").unwrap(),
+        test_quorum_notary("did:web:server.example").unwrap(),
         "https://server.example",
         "Strict history",
         None,
@@ -306,7 +304,7 @@ fn realm_bootstrap_allows_joined_history_with_strict_mls_scheme() {
             test_genesis_salt(),
             "did:web:alice.example",
             "did:web:server.example",
-            test_single_signer_notary("did:web:server.example").unwrap(),
+            test_quorum_notary("did:web:server.example").unwrap(),
             "https://server.example",
             "Strict history",
             None,
@@ -353,7 +351,7 @@ fn bootstrap_envelopes_have_no_sdk_digest_drift() {
             test_genesis_salt(),
             "did:web:alice.example",
             "did:web:server.example",
-            test_single_signer_notary("did:web:server.example").unwrap(),
+            test_quorum_notary("did:web:server.example").unwrap(),
             "https://server.example",
             "Engineering",
             None,
@@ -538,7 +536,7 @@ fn realm_bootstrap_payloads_match_spec_schema() {
             test_genesis_salt(),
             "did:web:alice.example",
             "did:web:server.example",
-            test_single_signer_notary("did:web:server.example").unwrap(),
+            test_quorum_notary("did:web:server.example").unwrap(),
             "https://server.example",
             "Engineering",
             Some("Roadmap work"),

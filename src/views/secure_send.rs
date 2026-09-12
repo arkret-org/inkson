@@ -24,7 +24,7 @@
 
 use dioxus::prelude::*;
 
-use crate::state::{LocalSealView, LocalStateStore, MoveSubmissionState};
+use crate::state::{LocalStateStore, MoveSubmissionState};
 
 /// Result of the local MLS encrypt step.
 ///
@@ -214,8 +214,6 @@ pub(crate) struct SecureSendBuild {
     /// Post-commit snapshot — persisted by the caller ONLY after the server
     /// accepts the commit (persist-on-accept).
     pub new_mls_checkpoint: Option<crate::mls::persistence::MlsLocalCheckpointEnvelope>,
-    /// The Realm move-seal ref captured at build time (covered-seals binding).
-    pub seal_ref: String,
     /// History-secret update that must commit before either MLS event is sent.
     pub pending_history_secrets: Option<crate::state::PendingHistorySecrets>,
     /// Exact executable MLS scope used for snapshot/ref persistence.
@@ -230,8 +228,6 @@ pub(crate) struct SecureSendBuild {
 /// loaded / encrypted / committed for this Realm. The caller MUST surface the
 /// message and abort — never fall back to a plaintext or fake send.
 ///
-/// `seal_view` is the caller-captured `seal_view_for_realm(realm_id)` snapshot;
-/// passing it in keeps the (synchronous) `state_store` read at the call site.
 /// `metadata_plaintext_bytes` — optional `encrypted_metadata` plaintext (the
 /// canonical `MessageMetadata` JSON, e.g. carrying
 /// `message_metadata.sidecar_exchange_binding`). It is MLS-encrypted under the
@@ -242,7 +238,6 @@ pub(crate) struct SecureSendBuild {
 pub(crate) async fn build_secure_send(
     api: &crate::transport::TransportClient,
     state_store: SyncSignal<LocalStateStore>,
-    seal_view: &LocalSealView,
     realm_id: &str,
     authority: &arkret_sdk::AccountId,
     actor: &str,
@@ -294,12 +289,6 @@ pub(crate) async fn build_secure_send(
         device_id,
     )
     .await?;
-    let refreshed_seal_view = state_store.read().seal_view_for_realm(realm_id);
-    let seal_ref = if refreshed_seal_view.frontier.is_empty() {
-        seal_view.move_seal_ref()
-    } else {
-        refreshed_seal_view.move_seal_ref()
-    };
     let (
         local_schedule_hash,
         local_member_ids,
@@ -444,7 +433,6 @@ pub(crate) async fn build_secure_send(
         message_plan,
         message_local_operation_id,
         new_mls_checkpoint,
-        seal_ref,
         pending_history_secrets,
         effective_scope,
     })
@@ -459,7 +447,6 @@ pub(crate) async fn build_secure_send(
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn build_sidecar_exchange_control_send(
     state_store: SyncSignal<LocalStateStore>,
-    seal_view: &LocalSealView,
     realm_id: &str,
     authority: &arkret_sdk::AccountId,
     actor: &str,
@@ -582,7 +569,6 @@ pub(crate) async fn build_sidecar_exchange_control_send(
         message_plan,
         message_local_operation_id,
         new_mls_checkpoint,
-        seal_ref: seal_view.move_seal_ref(),
         pending_history_secrets,
         effective_scope,
     })
@@ -622,7 +608,6 @@ pub(crate) async fn submit_secure_send(
         message_plan,
         message_local_operation_id: _,
         new_mls_checkpoint,
-        seal_ref,
         pending_history_secrets,
         effective_scope,
     } = build;
@@ -669,7 +654,7 @@ pub(crate) async fn submit_secure_send(
                         "mls_commit".to_owned(),
                         MoveSubmissionState::from_submit_state("accepted", None),
                         None,
-                        Some(seal_ref.clone()),
+                        None,
                     );
                 }
 

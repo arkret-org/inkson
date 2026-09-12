@@ -1,21 +1,14 @@
 //! Endorse the existing Direct Conversation after its exact-pair MLS admission.
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) enum MessageAuthority {
-    Participant(arkret_sdk::EventId),
-    ProvisionalFounder(arkret_sdk::EventId),
-}
-
-/// Read the last exact own-Station result for display/encryption. Every new
-/// Message submit refreshes this context before freezing its authoring intent.
+/// Read the last verified exact-pair binding for display and encryption.
 pub(crate) fn message_authority(
     store: &crate::state::LocalStateStore,
     realm: &str,
     actor: &arkret_sdk::ActorId,
-) -> Option<MessageAuthority> {
+) -> Option<arkret_sdk::EventId> {
     store
         .direct_message_context(realm, actor)
-        .map(|context| context.authority)
+        .map(|context| context.binding_event_ref)
 }
 
 static QUERY_SEQUENCE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
@@ -89,7 +82,7 @@ pub(crate) async fn install_resolved_message_context(
         state.set_direct_message_context(realm.to_string(), None);
         state.save_direct_conversation_peer(realm.to_string(), peer.clone())
     })?;
-    let (authority, group_state_ref) = match outcome {
+    let (binding_event_ref, group_state_ref) = match outcome {
         DirectConversationResolveOutcome::Found {
             coordinates,
             group_state_ref,
@@ -113,63 +106,10 @@ pub(crate) async fn install_resolved_message_context(
                     && decision.accepted_seal_id.is_some(),
                 "Direct Conversation endorsement is not sealed"
             );
-            (
-                MessageAuthority::Participant(reference),
-                group_state_ref.clone(),
-            )
-        }
-        DirectConversationResolveOutcome::Provisional {
-            group_state_ref: Some(group_state_ref),
-            ..
-        } => {
-            let reference = arkret_sdk::EventId::new(format!(
-                "ak:event:{}",
-                realm.as_str().trim_start_matches("ak:realm:")
-            ))?;
-            let resolved = http
-                .events_resolve(&arkret_sdk::EventsResolveRequestBody {
-                    event_ids: vec![reference.clone()],
-                    event_digests: vec![],
-                    include_payload: Some(true),
-                    history_traversal_access: None,
-                    max_response_bytes: Some(8 * 1024 * 1024),
-                })
-                .await?;
-            anyhow::ensure!(
-                resolved.missing.is_empty()
-                    && resolved.unauthorized.is_empty()
-                    && resolved.events.len() == 1,
-                "Direct Conversation founding Event unavailable"
-            );
-            let create = &resolved.events[0];
-            anyhow::ensure!(
-                create.event_id == reference
-                    && create.realm_id == realm
-                    && create.kind == arkret_sdk::EventKind::RealmCreate
-                    && create
-                        .payload
-                        .get("object")
-                        .and_then(|object| object.get("purpose"))
-                        .and_then(serde_json::Value::as_str)
-                        == Some("direct_conversation"),
-                "Direct Conversation founding result differs"
-            );
-            if create.actor_id.as_account_id() != Some(account) {
-                return Ok(());
-            }
-            (
-                MessageAuthority::ProvisionalFounder(reference),
-                group_state_ref.clone(),
-            )
+            (reference, group_state_ref.clone())
         }
         _ => return Ok(()),
     };
-    let frontier = http.seals_frontier(realm.clone()).await?.frontier;
-    anyhow::ensure!(
-        frontier.realm_id == realm,
-        "Direct Conversation frontier differs"
-    );
-    let seal_ref = frontier.sole_leaf()?.clone();
     store.write(|state| -> anyhow::Result<()> {
         anyhow::ensure!(
             state.active_authority().as_ref() == Some(account)
@@ -177,18 +117,14 @@ pub(crate) async fn install_resolved_message_context(
                 && query_is_current(account, &peer, query_sequence),
             "Direct Conversation result arrived after session or query changed"
         );
-        state
-            .cache_realm_governance_frontier(frontier)
-            .map_err(anyhow::Error::msg)?;
         state.set_direct_message_context(
             realm.to_string(),
             Some(crate::state::DirectMessageContext {
                 account: account.clone(),
                 session_epoch: epoch,
                 query_sequence,
-                authority,
+                binding_event_ref,
                 group_state_ref,
-                seal_ref,
             }),
         );
         Ok(())

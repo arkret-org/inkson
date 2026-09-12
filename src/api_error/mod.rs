@@ -194,14 +194,10 @@ pub(crate) fn user_facing_error_key(error: &anyhow::Error) -> Option<&'static st
         }
         if matches!(
             reason,
-            r if r == ReasonCode::RECOVERY_WITNESS_REVOKE_LAGGING
-                || r == ReasonCode::RECOVERY_POLICY_MISMATCH
+            r if r == ReasonCode::RECOVERY_POLICY_MISMATCH
                 || r == ReasonCode::CHALLENGE_PROOF_INVALID
         ) {
             return Some(match reason {
-                r if r == ReasonCode::RECOVERY_WITNESS_REVOKE_LAGGING => {
-                    "error.recovery.witness_revoke_lagging"
-                }
                 r if r == ReasonCode::RECOVERY_POLICY_MISMATCH => "error.recovery.policy_mismatch",
                 _ => "error.recovery.challenge_proof_invalid",
             });

@@ -74,7 +74,7 @@ pub fn scheduled_send_account_data_value(
     )?)
 }
 
-/// Elect the plan that survives a `cas_conflict` retry. Spec §4 leaves the
+/// Elect the plan that survives an atomic revision retry. Spec §4 leaves the
 /// merge on the decrypted plaintext to the client; both candidates MUST bind
 /// the same `scheduled_send_id` (the account-data key already does), and the
 /// newer `updated_hlc` wins, mirroring the draft-sync last-writer-wins rule.

@@ -212,7 +212,7 @@ pub(crate) fn test_issuer_policy(issuer_did: &str, domain: &str) -> HandleIssuer
 /// the Realm's effective `handle_issuer_policies`, read from the accepted
 /// `ak.realm.policy_bundle` revisions in the Realm projection.
 ///
-/// The bundle cell is a `cas_register`, so the highest accepted
+/// The bundle cell is sequenced state, so the current accepted
 /// `policy_revision` is the effective one. An empty result is not "no
 /// constraint": §3.2.1 Step 0 makes the issuer filter mandatory, so an empty
 /// policy makes the inline candidate set empty and the renderer degrades

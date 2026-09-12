@@ -52,7 +52,6 @@ struct ValidateMockResponseInput {
 struct RealmGenesisSealInput {
     realm_id: arkret_sdk::RealmId,
     events: Vec<arkret_sdk::Event>,
-    producer_signing_keys: BTreeMap<String, arkret_sdk::DidKey>,
 }
 
 struct MockServiceAuthority {
@@ -105,27 +104,31 @@ fn demo_realm_genesis() -> Result<Value> {
     use inkson::operation::AuthoredEventExt as _;
 
     let authority = mock_service_authority()?;
-    let producer_signing_key = ed25519_dalek::SigningKey::from_bytes(&[1_u8; 32]);
-    let producer_key_material = arkret_sdk::ed25519_pubkey_to_did_key_multibase(
-        producer_signing_key.verifying_key().as_bytes(),
-    );
-    let producer_did = arkret_sdk::Did::new(format!("did:key:{producer_key_material}"))?;
-    let producer_id = arkret_wire::project_did_to_core_id(&producer_did)?;
-    let notary_public_key = authority.signing_key.verifying_key().to_bytes();
-    let notary = arkret_sdk::NotaryValue::single_signer(arkret_sdk::NotarySignerDescriptor {
-        actor_id: arkret_sdk::ActorId::service(authority.service_id.clone()),
+    let producer_evidence = arkret_sdk::AuthenticatedSignerResolutionEvidence::Service {
+        signer_id: authority.service_id.clone(),
         verification_method: authority.verification_method.clone(),
-        key_kind: arkret_sdk::NotaryKeyKind::Ed25519Raw32,
-        jose_algorithm: arkret_sdk::NotaryJoseAlgorithm::Ed25519,
-        frozen_public_key_b64u: arkret_sdk::base64url_encode(notary_public_key),
-        frozen_public_key_digest: arkret_sdk::Hash::new(arkret_sdk::canonical::sha256_digest(
-            notary_public_key,
-        ))?,
-    });
+        authenticated_resolution: authority.resolution.clone(),
+    };
+    let producer_evidence_ref = producer_evidence.evidence_ref()?;
+    let notary_public_key = authority.signing_key.verifying_key().to_bytes();
+    let notary = arkret_sdk::NotaryValue::new(
+        vec![arkret_sdk::NotarySignerDescriptor {
+            actor_id: arkret_sdk::ActorId::service(authority.service_id.clone()),
+            verification_method: authority.verification_method.clone(),
+            key_kind: arkret_sdk::NotaryKeyKind::Ed25519Raw32,
+            jose_algorithm: arkret_sdk::NotaryJoseAlgorithm::Ed25519,
+            frozen_public_key_b64u: arkret_sdk::base64url_encode(notary_public_key),
+            frozen_public_key_digest: arkret_sdk::Hash::new(arkret_sdk::canonical::sha256_digest(
+                notary_public_key,
+            ))?,
+        }],
+        0,
+        1_000,
+    )?;
     inkson::operation::set_authoring_station_id(Some(authority.service_id.clone()));
     let operation = inkson::event_builders::build_realm_create_event(
         arkret_sdk::GenesisSalt::new(arkret_sdk::base64url_encode([9_u8; 32]))?,
-        producer_id.as_str(),
+        authority.service_id.as_str(),
         notary,
         "Arkret Demo Realm",
         Some("SDK-authored E2E Realm fixture"),
@@ -151,21 +154,15 @@ fn demo_realm_genesis() -> Result<Value> {
             arkret_sdk::DigestSuite::Sha256,
         )?;
     event.sign_ed25519(
-        producer_did.as_str(),
-        format!("{producer_did}#device"),
-        &producer_signing_key,
+        authority.did.as_str(),
+        authority.verification_method.as_str(),
+        &authority.signing_key,
+        producer_evidence_ref.clone(),
     )?;
     let realm_id = event.realm_id.clone();
-    let verification_method = event
-        .proofs
-        .first()
-        .and_then(arkret_sdk::EventProof::as_producer)
-        .context("demo Realm genesis lacks producer proof")?
-        .verification_method
-        .clone();
     let facets = inkson::event_builders::RealmBootstrapFacets {
         station_id: authority.service_id.clone(),
-        actor_id: producer_id.to_string(),
+        actor_id: authority.service_id.to_string(),
         notary_did: authority.did.to_string(),
         notary_service_origin: "https://server.local".to_owned(),
         title: "Arkret Demo Realm".to_owned(),
@@ -202,18 +199,16 @@ fn demo_realm_genesis() -> Result<Value> {
                 arkret_sdk::DigestSuite::Sha256,
             )?;
         followup.sign_ed25519(
-            producer_did.as_str(),
-            format!("{producer_did}#device"),
-            &producer_signing_key,
+            authority.did.as_str(),
+            authority.verification_method.as_str(),
+            &authority.signing_key,
+            producer_evidence_ref.clone(),
         )?;
         events.push(followup.event().clone());
     }
     let mut fixture = realm_genesis_seal(json!({
         "realm_id": realm_id,
-        "events": events,
-        "producer_signing_keys": {
-            verification_method.as_str(): format!("did:key:{producer_key_material}")
-        }
+        "events": events
     }))?;
     fixture
         .as_object_mut()
@@ -227,7 +222,7 @@ fn realm_genesis_seal(input: Value) -> Result<Value> {
 
     use arkret_sdk::{CellRegistry as _, PayloadSigner as _};
 
-    let mut input: RealmGenesisSealInput =
+    let input: RealmGenesisSealInput =
         serde_json::from_value(input).context("parse Realm genesis Seal input")?;
     anyhow::ensure!(
         input
@@ -239,67 +234,26 @@ fn realm_genesis_seal(input: Value) -> Result<Value> {
 
     let digest_suite = arkret_sdk::DigestSuite::Sha256;
     let authority = mock_service_authority()?;
-    let signer_evidence = arkret_sdk::AuthenticatedSignerResolutionEvidence::Service {
-        signer_id: authority.service_id.clone(),
-        verification_method: authority.verification_method.clone(),
-        authenticated_resolution: authority.resolution.clone(),
-    };
-    signer_evidence.validate_attester_binding()?;
-    let signer_evidence_ref = signer_evidence.evidence_ref()?;
-    let admission_signer = arkret_signatures::Ed25519PayloadSigner::new(
-        authority.signing_key.clone(),
-        authority.did.clone(),
-        authority.verification_method.clone(),
-    );
-    for event in &mut input.events {
+    for event in &input.events {
         anyhow::ensure!(
             event.actor_id.route_service_id() == &authority.service_id,
             "Realm genesis Event targets a different Station"
         );
-        let producer = match event.proofs.as_slice() {
-            [arkret_sdk::EventProof::Producer(producer)] => producer.clone(),
-            _ => bail!("Realm genesis input must contain caller-submission Events"),
+        let [producer] = event.proofs.as_slice() else {
+            bail!("Realm genesis input must contain exactly one producer proof");
         };
-        let producer_signing_key = input
-            .producer_signing_keys
-            .get(producer.verification_method.as_str())
-            .with_context(|| {
-                format!(
-                    "missing producer signing key for {}",
-                    producer.verification_method
-                )
-            })?
-            .clone();
-        let accepted_at = chrono::Utc::now();
-        let mut admission = arkret_sdk::StationAdmissionProof {
-            kind: arkret_sdk::StationAdmissionProofKind::StationAdmission,
-            verification_method: authority.verification_method.clone(),
-            event_digest: producer.event_digest.clone(),
-            producer_proof_digest: arkret_sdk::StationAdmissionProof::producer_proof_digest(
-                &producer,
-            )?,
-            producer_verification_method: producer.verification_method.clone(),
-            producer_signing_key_did: producer_signing_key,
-            producer_signer_resolution_evidence_ref: None,
-            signer_resolution_evidence_ref: signer_evidence_ref.clone(),
-            applet_installation_digest: None,
-            accepted_at,
-            jws: String::new(),
-        };
-        admission.jws = admission_signer
-            .sign_payload(&admission.canonical_binding_bytes()?)?
-            .jws;
-        admission.validate_binding(
-            &producer.event_digest,
-            &producer,
-            event.actor_id.route_service_id(),
-        )?;
-        event.proofs.push(admission.into());
+        producer
+            .signer_resolution_evidence_ref
+            .as_ref()
+            .context("Realm genesis producer proof omitted signer evidence")?
+            .content_digest()?;
     }
-    let registry = arkret_sdk::lattice_registry::build_sdk_cell_registry();
+    let registry = arkret_sdk::lattice_registry::build_sdk_state_registry();
     let pre_state = BTreeMap::new();
-    let mut ops_by_cell =
-        BTreeMap::<arkret_sdk::CellRef, Vec<arkret_state::lattice::ordered_log::IssuedOp>>::new();
+    let mut ops_by_cell = BTreeMap::<
+        arkret_sdk::CellRef,
+        Vec<arkret_state::state_model::ordered_log::IssuedOp>,
+    >::new();
     let mut event_digests = Vec::with_capacity(input.events.len());
     for event in &input.events {
         let digest = arkret_sdk::Hash::new(event.event_digest_with_digest_suite(digest_suite)?)?;
@@ -317,7 +271,7 @@ fn realm_genesis_seal(input: Value) -> Result<Value> {
             .map_err(|error| anyhow::anyhow!(error.to_string()))?
             {
                 ops_by_cell.entry(effect.cell_id.clone()).or_default().push(
-                    arkret_state::lattice::ordered_log::IssuedOp {
+                    arkret_state::state_model::ordered_log::IssuedOp {
                         issuer_id: event.actor_id.clone(),
                         op: arkret_state::SealedOp::from_projection(digest.clone(), &effect),
                     },
@@ -328,30 +282,24 @@ fn realm_genesis_seal(input: Value) -> Result<Value> {
     }
 
     let mut post_state = BTreeMap::new();
-    let mut post_cas_heads = arkret_state::CasHeadsByCell::new();
+    let mut post_causal_heads = arkret_state::CausalHeadsByCell::new();
     for (cell, ops) in ops_by_cell {
         let binding = registry
             .resolve(&input.realm_id, &cell)
             .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-        // Both causal registers (`cas_register` and `fsm`) contribute active
-        // heads to the §6.2.1 state_root, derived from the same registered ops
-        // as the value join. FSM heads carry the transition's target value.
-        if arkret_state::is_causal_register(binding.lattice.kind()) {
-            let heads = arkret_state::causal_heads_for_batches(
-                binding.lattice.kind(),
-                std::slice::from_ref(&ops),
-            );
+        if binding.state_model == arkret_state::StateModelKind::CausalRegister {
+            let heads = arkret_state::causal_heads_for_batches(std::slice::from_ref(&ops));
             if !heads.is_empty() {
-                post_cas_heads.insert(cell.clone(), heads);
+                post_causal_heads.insert(cell.clone(), heads);
             }
         }
         post_state.insert(
             cell.clone(),
-            arkret_state::join_cell(binding.lattice.as_ref(), &cell, &ops),
+            arkret_state::join_cell(binding.model.as_ref(), &cell, &ops),
         );
     }
     let state_root = arkret_state::compute_state_root(
-        arkret_state::GovernanceView::new(&post_state, &post_cas_heads),
+        arkret_state::GovernanceView::new(&post_state, &post_causal_heads),
         digest_suite,
     )?;
 
@@ -637,8 +585,8 @@ fn control_proposal_ack(input: Value) -> Result<Value> {
         arkret_signatures::development_verifying_key(notary_verification_method.as_str())
             .to_bytes();
     let authority_set_ref = arkret_sdk::Hash::new(
-        arkret_sdk::canonical::canonical_sha256(&arkret_sdk::NotaryValue::single_signer(
-            arkret_sdk::NotarySignerDescriptor {
+        arkret_sdk::canonical::canonical_sha256(&arkret_sdk::NotaryValue::new(
+            vec![arkret_sdk::NotarySignerDescriptor {
                 actor_id: arkret_sdk::ActorId::service(arkret_sdk::DidCoreId::new(
                     "ak:did_core:web:server.local".to_owned(),
                 )?),
@@ -649,8 +597,10 @@ fn control_proposal_ack(input: Value) -> Result<Value> {
                 frozen_public_key_digest: arkret_sdk::Hash::new(
                     arkret_sdk::canonical::sha256_digest(notary_public_key),
                 )?,
-            },
-        ))
+            }],
+            0,
+            1_000,
+        )?)
         .context("digest proposal authority set")?,
     )
     .context("construct proposal authority-set digest")?;

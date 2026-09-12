@@ -558,7 +558,7 @@ mod agent_tests {
                 agent_actor_id.clone(),
                 key_state.controller_account_id.station_id.clone(),
             )),
-            "the Agent event must retain its exact origin Station binding"
+            "the Agent event must retain its exact controller account binding"
         );
         assert_eq!(event.payload["agent_id"], agent_actor_id.as_str());
         assert_eq!(

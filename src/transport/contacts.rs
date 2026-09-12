@@ -173,10 +173,9 @@ pub(crate) fn sign_prepared_contact_event(
     let principal =
         arkret_sdk::project_did_to_core_id(&arkret_sdk::Did::new(signer.signer_did().to_owned())?)?;
     principal_successor_actor(&event.actor_id, &principal)?;
-    signer.sign_sdk_event_with_context(
-        &mut event,
-        crate::event_signer::EventProofContext::default(),
-    )?;
+    let digest_suite = event.digest_suite();
+    let proof_context = crate::event_signer::cached_active_event_proof_context(digest_suite)?;
+    signer.sign_sdk_event_with_context(&mut event, proof_context)?;
     let signed_digest =
         arkret_sdk::Hash::new(event.event_digest_with_digest_suite(event.digest_suite())?)?;
     if signed_digest != draft.event_digest {

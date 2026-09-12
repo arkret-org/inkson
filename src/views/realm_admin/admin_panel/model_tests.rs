@@ -97,33 +97,24 @@ fn governance_failure_hints_cover_the_reducer_rejection_reasons() {
 
 #[test]
 fn a_paused_notary_outranks_every_other_alert() {
-    // All three conditions at once: the advice has to be the one that unblocks
-    // the others, and the badge count still reports all three.
-    let health = realm_security_health(true, true, true);
+    let health = realm_security_health(true, true);
     assert_eq!(health.label, "Writes paused");
     assert_eq!(health.badge, "badge red");
     assert!(health.next_step.contains("Realm security service"));
-    assert_eq!(health.alert_count, 3);
-}
-
-#[test]
-fn a_pending_binding_outranks_an_unresolved_fork() {
-    let health = realm_security_health(false, true, true);
-    assert_eq!(health.label, "Binding pending");
-    assert_eq!(health.badge, "badge amber");
     assert_eq!(health.alert_count, 2);
 }
 
 #[test]
-fn bottom_cells_alone_ask_for_repair() {
-    let health = realm_security_health(false, false, true);
-    assert_eq!(health.label, "Repair needed");
+fn a_pending_binding_is_reported() {
+    let health = realm_security_health(false, true);
+    assert_eq!(health.label, "Binding pending");
+    assert_eq!(health.badge, "badge amber");
     assert_eq!(health.alert_count, 1);
 }
 
 #[test]
 fn a_quiet_realm_reports_no_action_and_no_alerts() {
-    let health = realm_security_health(false, false, false);
+    let health = realm_security_health(false, false);
     assert_eq!(health.label, "No active alerts");
     assert_eq!(health.badge, "badge green");
     assert_eq!(health.alert_count, 0);
@@ -137,19 +128,18 @@ fn seal_diagnostics_name_the_reason_a_value_is_absent() {
     assert!(empty.frontier_label.contains("no Seal seen"));
     assert_eq!(empty.state_root_label, "(not published)");
     assert!(empty.mls_epoch_label.contains("no MLS epoch published"));
-    assert!(empty.bottom_cells.is_empty());
 }
 
 #[test]
 fn seal_diagnostics_render_the_published_values() {
     let mut view = crate::state::LocalSealView {
-        frontier: vec!["head-a".to_owned(), "head-b".to_owned()],
+        frontier: vec!["head-a".to_owned()],
         ..crate::state::LocalSealView::default()
     };
     view.state_root = Some("sha256:root".to_owned());
     view.mls_epoch = Some(7);
     let rendered = seal_diagnostics(&view);
-    assert_eq!(rendered.frontier_label, "head-a, head-b");
+    assert_eq!(rendered.frontier_label, "head-a");
     assert_eq!(rendered.state_root_label, "sha256:root");
     assert_eq!(rendered.mls_epoch_label, "7");
 }

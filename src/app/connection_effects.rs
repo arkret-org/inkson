@@ -191,7 +191,13 @@ pub(super) fn ConnectionEffects(state: ConnectionEffectState) -> Element {
             spawn(async move {
                 let result =
                     crate::transport::auth::with_authed_api(&base, session, |api| async move {
-                        super::connect::probe_device_authorization(&account, &device, &api).await
+                        super::connect::probe_device_authorization(
+                            &account,
+                            &device,
+                            &api,
+                            state_store,
+                        )
+                        .await
                     })
                     .await;
                 match result {

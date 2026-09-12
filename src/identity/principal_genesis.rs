@@ -111,8 +111,8 @@ pub fn build_genesis_unit(
     descriptor.validate()?;
     let founding_notary_public_key =
         decode_founding_device_public_key(payload.device_public_key_did.as_str())?;
-    let founding_notary =
-        arkret_sdk::NotaryValue::single_signer(arkret_sdk::NotarySignerDescriptor {
+    let founding_notary = arkret_sdk::NotaryValue::new(
+        vec![arkret_sdk::NotarySignerDescriptor {
             actor_id: arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
                 principal_id.clone(),
                 station_id.clone(),
@@ -128,8 +128,10 @@ pub fn build_genesis_unit(
             frozen_public_key_digest: arkret_sdk::Hash::new(arkret_sdk::canonical::sha256_digest(
                 founding_notary_public_key,
             ))?,
-        });
-    founding_notary.validate()?;
+        }],
+        0,
+        1_000,
+    )?;
     let mut create = arkret_bootstrap::build_self_principal_pcr_create(
         arkret_bootstrap::SelfPrincipalPcrCreateInput {
             principal_id: principal_id.clone(),
@@ -164,7 +166,7 @@ pub fn build_genesis_unit(
         &mut create,
         &root_signer,
         &root_method,
-        arkret_sdk::signatures::SignEventOptions::new().with_created_at(created_at),
+        arkret_sdk::signatures::SignEventOptions::for_native_unit().with_created_at(created_at),
     )?;
 
     // The PCR Realm exists only after the signed create draft has a stable
@@ -195,8 +197,9 @@ pub fn build_genesis_unit(
     device_signer
         .sign_sdk_event_with_context(
             &mut authorize,
-            crate::event_signer::EventProofContext::default()
-                .with_digest_suite(arkret_sdk::canonical::DigestSuite::Sha256),
+            crate::event_signer::ProducerProofContext::for_native_unit(
+                arkret_sdk::canonical::DigestSuite::Sha256,
+            ),
         )
         .map_err(|error| anyhow::anyhow!(error.to_string()))?;
     arkret_bootstrap::build_self_principal_pcr_genesis_unit(

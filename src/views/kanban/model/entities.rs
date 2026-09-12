@@ -377,7 +377,7 @@ impl CardState {
             CardState::Optimistic | CardState::Queued | CardState::Submitted => {
                 "Sending; waiting for server confirmation"
             }
-            CardState::Accepted => "Server accepted the event; waiting for projection/seal",
+            CardState::Accepted => "Server accepted the event; waiting for projection",
             CardState::SoftFailed => "Server did not accept this event",
             CardState::Quarantined => "Write failed; open the queue for details",
             CardState::Conflict => "Server reported a CAS conflict",

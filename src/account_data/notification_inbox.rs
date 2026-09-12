@@ -3,7 +3,7 @@
 //!
 //! Per `zh/discovery/client-preferences.md` §3.2 this key carries only
 //! `dismissed` / `archived`; `read` / `unread` stay derived from the read
-//! cursor and MUST NOT be written here. The key is a `cas_register`, so the
+//! cursor and MUST NOT be written here. The value uses atomic revision checks, so the
 //! merge below runs on plaintext inside the account-data CAS retry loop.
 
 use std::cmp::Ordering;
@@ -41,7 +41,7 @@ pub fn notification_inbox_value_from_plaintext(
 
 /// Elect the winner between the local intent and whatever the server holds.
 ///
-/// This is the body of the CAS retry loop's merge closure: on a `cas_conflict`
+/// This is the body of the revision retry loop's merge closure: on a stale revision
 /// the caller re-reads the authoritative value and calls this again, so every
 /// device converges on the same plaintext without server-side ordering.
 pub fn merge_notification_inbox_values(

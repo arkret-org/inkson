@@ -352,9 +352,7 @@ pub(crate) fn test_inception_root_key_multibase(principal_did: &str) -> String {
 /// pattern such as `[7u8; 32]` does not decompress to a curve point, and
 /// `NotarySignerDescriptor::validate` does not catch that today.
 #[cfg(test)]
-pub(crate) fn test_single_signer_notary(
-    signer_did: &str,
-) -> anyhow::Result<arkret_sdk::NotaryValue> {
+pub(crate) fn test_quorum_notary(signer_did: &str) -> anyhow::Result<arkret_sdk::NotaryValue> {
     let did = arkret_sdk::Did::new(signer_did.to_owned())?;
     let actor_id = arkret_sdk::ActorId::service(arkret_sdk::project_did_to_core_id(&did)?);
     let verification_method =
@@ -371,7 +369,7 @@ pub(crate) fn test_single_signer_notary(
             public_key,
         ))?,
     };
-    Ok(arkret_sdk::NotaryValue::single_signer(descriptor))
+    Ok(arkret_sdk::NotaryValue::new(vec![descriptor], 0, 1_000)?)
 }
 
 /// Build the closed `ak.schema.realm_genesis.v1` object as the SDK strong type.
@@ -569,9 +567,7 @@ pub fn agent_inception_notary(
             public_key,
         ))?,
     };
-    let notary = arkret_sdk::NotaryValue::single_signer(descriptor);
-    notary.validate()?;
-    Ok(notary)
+    Ok(arkret_sdk::NotaryValue::new(vec![descriptor], 0, 1_000)?)
 }
 
 pub fn build_agent_pcr_create_event(
@@ -925,11 +921,9 @@ pub fn build_space_create_event(
     // No `preconditions`: `ak.space.create` is a DataEvent
     // (`contract-registry.json` plane `data`), and
     // `event-envelope.schema.json` forbids a DataEvent from carrying
-    // `preconditions` alongside the `seal_ref` + `auth_context` pair the submit
-    // gate attaches. The pre-v1 builder asserted `head_eq null` on
-    // `ak.component.space.create.v1`, which is not even the cell this kind
-    // writes — the registered contract sets `payload.object` into the
-    // `mv_register` `ak.component.space.metadata.v1`.
+    // `preconditions`; the submit gate attaches only its AuthContext authority
+    // evidence. The registered contract projects `payload.object` into the
+    // space metadata causal register.
     let space_body = arkret_sdk::SpaceCreatePayload::new(space_object);
     TypedOperationBuilder::new::<arkret_sdk::event_spec::SpaceCreate>(
         realm_id, actor_id, space_body,
@@ -1287,9 +1281,9 @@ fn build_realm_alias_event_for_station(
     )
 }
 
-/// Rename an already-claimed alias. `settled_payload` is the whole current cell
-/// value; the `cas_register` head_eq precondition is what makes a concurrent
-/// rename lose instead of silently overwriting a live address.
+/// Rename an already-claimed alias. `settled_payload` is the whole current
+/// sequenced value, so a concurrent rename returns the current result instead
+/// of silently overwriting a live address.
 pub fn build_realm_alias_rename_event(
     realm_id: &str,
     actor_id: &str,
@@ -1626,10 +1620,27 @@ pub fn build_signed_device_verification_proof(
     );
     let payload_digest = arkret_sdk::Hash::new(arkret_sdk::canonical::sha256_digest(&canonical))
         .map_err(|error| anyhow::anyhow!("hash device verification proof: {error}"))?;
+    let principal_id = crate::mls_api_helpers::principal_core_id(from_actor)
+        .map_err(|error| anyhow::anyhow!("verification actor is invalid: {error}"))?;
+    let public_key = arkret_sdk::signatures::proof::PublicKeyMaterial::Ed25519Raw {
+        bytes: signing_key.verifying_key().to_bytes().to_vec(),
+    };
+    let signer_resolution_evidence_ref =
+        crate::identity::device_directory::cached_signer_evidence_ref_for_principal_device_and_key(
+            &principal_id,
+            from_device,
+            &public_key,
+        )
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "frontier_unavailable: verified signer-resolution evidence is unavailable for the verification device"
+            )
+        })?;
     let signature = arkret_sdk::signatures::proof::build_proof_envelope(
         arkret_sdk::signatures::proof::detached_jws_kind(),
         verification_method,
         payload_digest,
+        signer_resolution_evidence_ref,
         None,
         None,
         signer.sign_detached_jws(&canonical),
@@ -1782,7 +1793,7 @@ mod notary_derivation_tests {
                     .unwrap(),
                 "did:web:alice.example",
                 "did:web:alice.example",
-                test_single_signer_notary("did:web:alice.example").unwrap(),
+                test_quorum_notary("did:web:alice.example").unwrap(),
                 "https://alice.example",
                 "Ordinary Realm",
                 Some("summary"),
@@ -1862,7 +1873,7 @@ mod notary_derivation_tests {
                     .unwrap(),
                 "did:web:alice.example",
                 "did:web:alice.example",
-                test_single_signer_notary("did:web:alice.example").unwrap(),
+                test_quorum_notary("did:web:alice.example").unwrap(),
                 "https://alice.example",
                 "Explicit Station Realm",
                 None,

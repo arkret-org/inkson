@@ -153,7 +153,7 @@ fn calendar_rsvp_operation_carries_the_complete_entry_and_effect() {
     );
     // v1 ships no producer `effects[]`. The receiver derives the write from the
     // registered `ak.rsvp.set` contract, whose `effect_projection` is
-    // `set value = {"field": "payload.entry"}` over the `mv_register` facet —
+    // `set value = {"field": "payload.entry"}` over the causal-register facet —
     // so asserting the projection is the successor to the old array, and a
     // stronger claim: the pre-closure client shipped no effect at all and the
     // Event never reached its cell.

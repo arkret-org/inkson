@@ -254,7 +254,7 @@ fn operation_actor_principal_id(record: &RawOperationRecord) -> Option<String> {
         .map(|actor| actor.as_str().to_owned())
 }
 
-/// Fold an accepted `ak.rsvp.set` into the Strand's local `mv_register`
+/// Fold an accepted `ak.rsvp.set` into the Strand's local causal-register
 /// projection. The canonical Strand list deliberately omits RSVP cells, so
 /// the Event log is the client-side source for this component.
 fn apply_rsvp_set_to_view(
@@ -976,7 +976,7 @@ mod tests {
         raw_operations: Vec<RawOperationRecord>,
     }
 
-    impl garth::projection::RealmStateReducer for ClientCoreKanbanProjector {
+    impl garth::projection::RealmEventProjector for ClientCoreKanbanProjector {
         fn apply_domain_events(
             &mut self,
             _realm_id: &arkret_sdk::RealmId,
@@ -1541,11 +1541,11 @@ mod tests {
         assert_eq!(columns[0].cards[0].title, "same card");
     }
 
-    /// The local CAS move op (from `submit_strand_position_cas_move`) carries
+    /// The local position update (from `submit_strand_position_move`) carries
     /// the canonical `strand_move_payload` in `body`; folding it relocates the
     /// card without waiting for a server round-trip.
     #[test]
-    fn local_optimistic_cas_move_op_relocates_card() {
+    fn local_optimistic_position_update_relocates_card() {
         let strand = "ak:strand:AehHUAw7pG3uDCWpiYTXKGpYyIQ9S_ZjiBFq0AkbTrVN";
         let mut events = vec![
             space_create_event(BOARD, "board", "Board1", None),
@@ -1735,9 +1735,9 @@ mod tests {
     }
 
     #[test]
-    fn real_cas_move_builder_relocates_card() {
+    fn real_position_update_builder_relocates_card() {
         let strand = "ak:strand:ATNM2hIwr2IImD7_Vm-Ze42J3ky6Xpa4CG1kNnH8_Zf3";
-        let move_body = crate::operation::ak_ops::strand_position_cas_update(
+        let move_body = crate::operation::ak_ops::strand_position_update(
             REALM,
             "ak:did_core:web:alice.example",
             "ak.strand.move",

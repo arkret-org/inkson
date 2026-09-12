@@ -1753,7 +1753,6 @@ mod tests {
         spaces.insert(
             "ak:realm:ARDR2oN-Bh8J55KxFHM6s_izSsUg0-1gh3XfOjfjJ9HE".to_owned(),
             json!({
-                "bottom_cells": [],
                 "ephemeral": [],
                 "strands": [{
                     "strand_id": "ak:strand:ARDR2oN-Bh8J55KxFHM6s_izSsUg0-1gh3XfOjfjJ9HE",

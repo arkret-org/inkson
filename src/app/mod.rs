@@ -287,6 +287,24 @@ fn AppBootstrap() -> Element {
     let initial_config = LocalConfigStore::default().load();
     let initial_state_store = LocalStateStore::default();
     let initial_local_state = initial_state_store.load();
+    if let (Some(account), Some(persisted)) = (
+        initial_config.active_account.as_ref(),
+        initial_local_state.device_authoring_authority.as_ref(),
+    ) {
+        let cache_epoch = crate::identity::device_directory::cache_epoch();
+        if crate::identity::device_directory::restore_persisted_device_authoring_authority(
+            cache_epoch,
+            &account.authority,
+            &account.device_id,
+            persisted,
+        ) {
+            crate::identity::authoring_generation::cache_verified_principal_generation(
+                &account.authority,
+                account.device_id.as_str(),
+                &persisted.authoring_generation,
+            );
+        }
+    }
     let initial_session_credential = initial_session_credential_from_state(
         &initial_local_state,
         &initial_config,

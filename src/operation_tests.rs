@@ -510,8 +510,8 @@ fn strand_update_builders_match_registered_object_patch_schema() {
 }
 
 #[test]
-fn strand_position_cas_update_rejects_incomplete_effect_position() {
-    let error = ak_ops::strand_position_cas_update(
+fn strand_position_update_rejects_incomplete_effect_position() {
+    let error = ak_ops::strand_position_update(
         "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-",
         "did:web:alice",
         "ak.strand.move",
@@ -594,8 +594,8 @@ fn object_patch_family_builders_match_registered_payload_schema() {
 }
 
 #[test]
-fn strand_position_cas_update_emits_canonical_move_payload() {
-    let op = ak_ops::strand_position_cas_update(
+fn strand_position_update_emits_canonical_move_payload() {
+    let op = ak_ops::strand_position_update(
         "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-",
         "did:web:alice",
         "ak.strand.move",
@@ -632,8 +632,8 @@ fn strand_position_cas_update_emits_canonical_move_payload() {
 }
 
 #[test]
-fn strand_position_cas_update_emits_canonical_reorder_payload() {
-    let op = ak_ops::strand_position_cas_update(
+fn strand_position_update_emits_canonical_reorder_payload() {
+    let op = ak_ops::strand_position_update(
         "ak:realm:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-",
         "did:web:alice",
         "ak.strand.reorder",
@@ -778,14 +778,17 @@ fn sign_ed25519_attaches_typed_proof() {
     let identity = event.event_id().clone();
     let signing_key = SigningKey::from_bytes(&[7u8; 32]);
     event
-        .sign_ed25519("did:web:alice", "did:web:alice#k1", &signing_key)
+        .sign_ed25519(
+            "did:web:alice",
+            "did:web:alice#k1",
+            &signing_key,
+            crate::event_signer::test_producer_proof_context(arkret_sdk::DigestSuite::Sha256)
+                .signer_resolution_evidence_ref
+                .unwrap(),
+        )
         .expect("sign ok");
-    let proof = event
-        .proofs
-        .iter()
-        .find_map(arkret_sdk::EventProof::as_producer)
-        .expect("proof present");
-    assert_eq!(proof.verification_method, "did:web:alice#device");
+    let proof = event.proofs.first().expect("proof present");
+    assert_eq!(proof.verification_method, "did:web:alice#k1");
     assert!(proof.event_digest.as_str().starts_with("sha256:"));
     // JWS layout: header.. (detached) ..sig — 3 parts separated by '.'.
     assert_eq!(proof.jws.matches('.').count(), 2);
@@ -832,6 +835,9 @@ fn a_signed_envelope_keeps_the_digest_its_proof_committed_to() {
             "did:web:alice.example",
             "did:web:alice.example#k1",
             &signing_key,
+            crate::event_signer::test_producer_proof_context(arkret_sdk::DigestSuite::Sha256)
+                .signer_resolution_evidence_ref
+                .unwrap(),
         )
         .expect("sign ok");
 

@@ -165,7 +165,7 @@ pub(crate) async fn prepare_pcr_policy_recovery(
     )?;
     device_signer.sign_sdk_event_with_context(
         &mut reanchor,
-        crate::event_signer::EventProofContext::default().with_digest_suite(digest_suite),
+        crate::event_signer::ProducerProofContext::for_native_unit(digest_suite),
     )?;
     let reanchor_event_id = reanchor.event_id().clone();
 
@@ -184,7 +184,7 @@ pub(crate) async fn prepare_pcr_policy_recovery(
         )?;
     device_signer.sign_sdk_event_with_context(
         &mut authorize,
-        crate::event_signer::EventProofContext::default().with_digest_suite(digest_suite),
+        crate::event_signer::ProducerProofContext::for_native_unit(digest_suite),
     )?;
     let authorize_event_id = authorize.event_id().clone();
     let reanchor = reanchor.into_event();

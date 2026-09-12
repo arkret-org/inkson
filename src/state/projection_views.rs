@@ -33,7 +33,7 @@ pub struct RsvpCellProjectionView {
     pub heads: Vec<RsvpHeadProjectionView>,
 }
 
-/// One `mv_register` head. `entry` is the complete signed lattice value.
+/// One causal-register head. `entry` is the complete signed value.
 #[derive(Clone, Debug, Default, PartialEq, serde::Deserialize)]
 pub struct RsvpHeadProjectionView {
     #[serde(default)]
@@ -91,7 +91,7 @@ pub struct StrandProjectionView {
     /// RSVP path fail-closed.
     #[serde(default)]
     pub schedule_revision_heads: Vec<String>,
-    /// Live RSVP `mv_register` heads for this Strand. Concurrent responses stay
+    /// Live RSVP causal-register heads for this Strand. Concurrent responses stay
     /// side by side; the UI shows them as an unresolved conflict rather than
     /// silently choosing one.
     #[serde(default)]

@@ -364,10 +364,8 @@ impl LocalStateStore {
         }
     }
 
-    /// Get the latest Seal view for a Realm. Returns the Default view
-    /// (empty frontier / empty leaves / no state_root) when none has been
-    /// observed yet — Move builders treat that as "use sha256(empty)
-    /// sentinel".
+    /// Get the latest verified Seal view for a Realm. An empty frontier means
+    /// no authority basis is available; callers must not synthesize one.
     pub fn seal_view_for_realm(&self, realm_id: &str) -> LocalSealView {
         self.load()
             .seal_views
@@ -430,11 +428,11 @@ impl LocalStateStore {
         self.load().seal_views
     }
 
-    /// Convenience: pick the right `seal_ref` to thread into a Move
-    /// builder for a given Realm. Returns the lex-min frontier head when
-    /// available, otherwise the `sha256(empty)` sentinel. Mirrors
-    /// [`LocalSealView::move_seal_ref`].
-    pub fn seal_ref_for_realm_move(&self, realm_id: &str) -> String {
-        self.seal_view_for_realm(realm_id).move_seal_ref()
+    /// The Realm's one last verified safety head. Empty and competing
+    /// lineages both return `None` and must remain pending.
+    pub fn confirmed_seal_ref_for_realm(&self, realm_id: &str) -> Option<String> {
+        self.seal_view_for_realm(realm_id)
+            .confirmed_seal_ref()
+            .map(ToOwned::to_owned)
     }
 }

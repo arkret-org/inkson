@@ -717,16 +717,14 @@ fn sign_prepared_sidecar_event(
     }
     signer.sign_sdk_event_with_context(
         &mut event,
-        crate::event_signer::EventProofContext::default(),
+        crate::event_signer::cached_active_event_proof_context(digest_suite)?,
     )?;
     let signed_digest = arkret_sdk::Hash::new(event.event_digest_with_digest_suite(digest_suite)?)?;
     if signed_digest != draft.event_digest
         || event.proofs.is_empty()
         || event.proofs.iter().any(|proof| {
-            proof.as_producer().is_none_or(|proof| {
-                proof.event_digest != draft.event_digest
-                    || proof.verification_method != expected_verification_method
-            })
+            proof.event_digest != draft.event_digest
+                || proof.verification_method != expected_verification_method
         })
     {
         anyhow::bail!("signed Sidecar Event no longer matches its reservation draft");
@@ -1176,12 +1174,10 @@ async fn submit_source_routed_sidecar_message(
     message_metadata.set_sidecar_exchange_binding(&binding)?;
     let metadata_bytes = serde_json::to_vec(&message_metadata)?;
     let message_id = new_chat_local_id();
-    let seal_view = state_store.read().seal_view_for_realm(source_realm_id);
     let api = crate::transport::auth::authed_api_with_sync(base_url, api_token.clone(), None)?;
     let build = crate::views::secure_send::build_secure_send(
         &api,
         state_store,
-        &seal_view,
         source_realm_id,
         authority,
         controller_principal_id,
@@ -1678,10 +1674,6 @@ pub fn ChatPanel(
                     &arkret_sdk::ActorId::account(account.authority),
                 )
             });
-    let provisional_founder = matches!(
-        direct_message_authority,
-        Some(crate::mls::direct_binding::MessageAuthority::ProvisionalFounder(_))
-    );
     let mut selected_realm_pending_mls_binding_reason = state_store
         .read()
         .realm_pending_mls_binding_reason(&selected_realm_id);
@@ -1722,28 +1714,7 @@ pub fn ChatPanel(
                     "Waiting for this device's encryption keys. Keep this conversation open to receive the MLS Welcome."
                         .to_owned(),
                 );
-            } else if provisional_founder
-                && state_store
-                    .read()
-                    .mls_checkpoint_for_effective_scope(&selected_realm_id, None)
-                    .is_none_or(|snapshot| {
-                        let Ok(realm_id) = arkret_sdk::RealmId::new(selected_realm_id.clone())
-                        else {
-                            return true;
-                        };
-                        state_store
-                            .read()
-                            .mls_group_state_ref_for_scope(
-                                &arkret_sdk::ScopeRef::Realm { realm_id },
-                                &snapshot.group_id,
-                                snapshot.epoch,
-                            )
-                            .is_err()
-                    })
-            {
-                selected_realm_pending_mls_binding_reason =
-                    Some("Waiting for the verified conversation encryption state.".to_owned());
-            } else if roster_matches == Some(false) && !provisional_founder {
+            } else if roster_matches == Some(false) {
                 selected_realm_pending_mls_binding_reason = Some(
                     "encryption_transition_pending: synced roster differs from the verified MLS group"
                         .to_owned(),

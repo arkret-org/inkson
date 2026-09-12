@@ -612,7 +612,13 @@ fn accepted_invite_route_recovers_from_canonical_history_after_restart() {
                     .unwrap(),
             )
             .unwrap(),
-            signer_resolution_evidence_ref: None,
+            signer_resolution_evidence_ref: Some(
+                arkret_sdk::SignerEvidenceRef::new(format!(
+                    "ak:signer_evidence:sha256:{}",
+                    "11".repeat(32)
+                ))
+                .unwrap(),
+            ),
             created_at: accept.created_at,
             domain: None,
             audience: None,

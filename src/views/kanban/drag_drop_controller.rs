@@ -128,7 +128,7 @@ fn queued_lifecycle_record(
     })?)
 }
 
-/// Closed set of bodies for a queued strand-position CAS write.
+/// Closed set of bodies for a queued strand-position update.
 #[derive(Serialize)]
 #[serde(untagged)]
 enum QueuedStrandPositionBody {
@@ -136,7 +136,7 @@ enum QueuedStrandPositionBody {
     Reorder(arkret_sdk::StrandReorderPayload),
 }
 
-/// Queued op-log record written by `submit_strand_position_cas_move`.
+/// Queued op-log record written by `submit_strand_position_move`.
 #[derive(Serialize)]
 struct QueuedStrandPositionRecord<'a> {
     kind: &'static str,
@@ -449,7 +449,6 @@ pub(super) fn submit_kanban_card_create(
     mut board_status: Signal<String>,
 ) {
     let kind = event_kind_str::STRAND_CREATE;
-    let seal_ref = state_store.read().seal_ref_for_realm_move(&realm_id);
     if actor_id.trim().is_empty() {
         board_status.set("sign in before updating cards".to_owned());
         return;
@@ -566,7 +565,6 @@ pub(super) fn submit_kanban_card_create(
     let list_for_position = command.list_space_id.clone();
     let rank_for_position = command.rank.clone();
     let actor_for_position = actor_id.clone();
-    let seal_for_record = seal_ref.clone();
     let kind_for_record = kind.to_owned();
     let op_for_track = op_id.clone();
     let submit_event = event;
@@ -603,7 +601,7 @@ pub(super) fn submit_kanban_card_create(
                     kind_for_record.clone(),
                     state,
                     None,
-                    Some(seal_for_record.clone()),
+                    None,
                 );
                 tracing::debug!(
                     operation_id = %short_protocol_id(&op_for_track),
@@ -621,7 +619,7 @@ pub(super) fn submit_kanban_card_create(
                 };
                 let strand_id =
                     arkret_sdk::StrandId::from_event_id(&accepted_event_id).into_string();
-                let move_event = match crate::operation::ak_ops::strand_position_cas_update(
+                let move_event = match crate::operation::ak_ops::strand_position_update(
                     &realm_for_record,
                     &actor_for_position,
                     event_kind_str::STRAND_MOVE,
@@ -695,7 +693,7 @@ pub(super) fn submit_kanban_card_create(
                             event_kind_str::STRAND_MOVE.to_owned(),
                             MoveSubmissionState::from_submit_state("accepted", None),
                             None,
-                            Some(seal_for_record),
+                            None,
                         );
                     }
                     Err(error) => {
@@ -789,7 +787,7 @@ pub(super) fn dispatch_strand_position_move(
             return;
         }
     };
-    // The move shows immediately because `submit_strand_position_cas_move`
+    // The move shows immediately because `submit_strand_position_move`
     // appends the canonical move/reorder op to `raw_operations` (write_state
     // `submitted`), which the `columns` `use_memo` folds via `project_board` —
     // no direct signal mutation. It is not marked accepted until the server
@@ -807,7 +805,7 @@ pub(super) fn dispatch_strand_position_move(
     } else {
         event_kind_str::STRAND_MOVE
     };
-    submit_strand_position_cas_move(
+    submit_strand_position_move(
         base_url,
         token,
         realm_id,
@@ -1183,9 +1181,9 @@ pub(super) fn dispatch_board_archive_cascade(
     });
 }
 
-/// Build, sign, and submit a `ak.strand.move` / `ak.strand.reorder` CAS event.
+/// Build, sign, and submit a sequenced `ak.strand.move` or `ak.strand.reorder` event.
 #[allow(clippy::too_many_arguments)]
-pub(super) fn submit_strand_position_cas_move(
+pub(super) fn submit_strand_position_move(
     base_url: String,
     token: Signal<String>,
     realm_id: String,
@@ -1198,7 +1196,6 @@ pub(super) fn submit_strand_position_cas_move(
     mut state_store: SyncSignal<LocalStateStore>,
     mut board_status: Signal<String>,
 ) {
-    let seal_ref = state_store.read().seal_ref_for_realm_move(&realm_id);
     if actor_id.trim().is_empty() {
         board_status.set("sign in before moving cards".to_owned());
         return;
@@ -1221,7 +1218,7 @@ pub(super) fn submit_strand_position_cas_move(
         }
         StrandPositionEffect::Remove => serde_json::Value::Null,
     };
-    let envelope = match crate::operation::ak_ops::strand_position_cas_update(
+    let envelope = match crate::operation::ak_ops::strand_position_update(
         &realm_id,
         &actor_id,
         kind,
@@ -1298,7 +1295,6 @@ pub(super) fn submit_strand_position_cas_move(
     let api_token = token();
     let move_for_track = move_id.clone();
     let kind_for_record = kind.to_owned();
-    let seal_for_record = seal_ref.clone();
     let realm_for_record = realm_id.clone();
     let submit_event = event;
     spawn(async move {
@@ -1326,7 +1322,7 @@ pub(super) fn submit_strand_position_cas_move(
                     kind_for_record.clone(),
                     submission_state,
                     None,
-                    Some(seal_for_record),
+                    None,
                 );
                 board_status.set(format!(
                     "{kind_for_record} event {} accepted by server; pending seal (event_id={})",

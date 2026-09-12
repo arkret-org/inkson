@@ -364,7 +364,6 @@ pub async fn verify_authorized_pairing_event_for_authority(
         || !event
             .proofs
             .iter()
-            .filter_map(arkret_sdk::EventProof::as_producer)
             .any(|proof| {
                 proof
                     .verification_method

@@ -23,11 +23,9 @@ pub(super) async fn submit_poll_operation(
         .ok_or_else(|| anyhow::anyhow!("poll operation is missing its canonical Content Block"))?;
     let content_bytes = serde_json::to_vec(content)?;
     let event_id = if context.encrypted {
-        let seal_view = state_store.read().seal_view_for_realm(realm_id);
         let mut build = crate::views::secure_send::build_secure_send(
             api,
             state_store,
-            &seal_view,
             realm_id,
             &context.authority,
             context.authority.principal_id.as_str(),

@@ -5,9 +5,8 @@ pub(crate) struct DirectMessageContext {
     pub account: arkret_sdk::AccountId,
     pub session_epoch: u64,
     pub query_sequence: u64,
-    pub authority: crate::mls::direct_binding::MessageAuthority,
+    pub binding_event_ref: arkret_sdk::EventId,
     pub group_state_ref: arkret_sdk::EventId,
-    pub seal_ref: arkret_sdk::SealId,
 }
 
 impl LocalStateStore {
@@ -74,11 +73,6 @@ impl LocalStateStore {
                         context.query_sequence,
                     )
                 })
-            || self
-                .cached
-                .seal_views
-                .get(realm)
-                .is_none_or(|view| view.frontier != [context.seal_ref.to_string()])
         {
             return None;
         }
@@ -96,7 +90,7 @@ mod tests {
         )
     }
     #[test]
-    fn direct_result_is_scoped_to_account_query_and_observed_frontier() {
+    fn direct_result_is_scoped_to_account_and_query() {
         let path = std::env::temp_dir().join(format!(
             "inkson-dc-{}.json",
             std::time::SystemTime::now()
@@ -126,25 +120,14 @@ mod tests {
             .unwrap();
         let sequence = crate::mls::direct_binding::begin_query(&authority, &peer).unwrap();
         let reference = arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [7; 32]);
-        let seal = arkret_sdk::SealId::new(format!("ak:seal:sha256:{}", "07".repeat(32))).unwrap();
-        store.cached.seal_views.insert(
-            realm.into(),
-            LocalSealView {
-                frontier: vec![seal.to_string()],
-                ..Default::default()
-            },
-        );
         store.set_direct_message_context(
             realm.into(),
             Some(DirectMessageContext {
                 account: authority.clone(),
                 session_epoch: crate::identity::device_directory::cache_epoch(),
                 query_sequence: sequence,
-                authority: crate::mls::direct_binding::MessageAuthority::Participant(
-                    reference.clone(),
-                ),
+                binding_event_ref: reference.clone(),
                 group_state_ref: reference,
-                seal_ref: seal,
             }),
         );
         assert!(
@@ -163,18 +146,6 @@ mod tests {
         let json = serde_json::to_value(&store.cached).unwrap();
         assert!(json.get("direct_message_contexts").is_none());
         assert!(json["direct_conversation_peers"].get(realm).is_some());
-        store
-            .cached
-            .seal_views
-            .get_mut(realm)
-            .unwrap()
-            .frontier
-            .clear();
-        assert!(
-            store
-                .direct_message_context(realm, &arkret_sdk::ActorId::account(authority.clone()))
-                .is_none()
-        );
         crate::mls::direct_binding::begin_query(&authority, &peer).unwrap();
         assert!(!crate::mls::direct_binding::query_is_current(
             &authority, &peer, sequence

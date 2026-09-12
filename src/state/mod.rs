@@ -56,7 +56,7 @@ const TO_DEVICE_RECEIPTS_MAX: usize = 4096;
 // the `crate::state::*` public paths and the `impl LocalStateStore` /
 // tests `use super::*` resolution unchanged.
 mod types;
-pub use garth::{BottomCellInfo, LocalSealView};
+pub use garth::LocalSealView;
 pub use types::*;
 
 mod mls_sidecar;
@@ -329,6 +329,15 @@ fn member_handle_cache_key(
 }
 
 impl LocalStateStore {
+    pub(crate) fn set_device_authoring_authority(
+        &mut self,
+        authority: Option<PersistedDeviceAuthoringAuthority>,
+    ) {
+        self.ensure_cached_loaded();
+        self.cached.device_authoring_authority = authority;
+        let _ = self.flush();
+    }
+
     pub(crate) fn apply_sidecar_view_state(
         &mut self,
         view_state: arkret_sdk::AgentSidecarViewState,

@@ -906,12 +906,8 @@ pub(crate) async fn submit_pending_sidecar_auto_close(
     ) else {
         return Ok(());
     };
-    let seal_view = state_store
-        .read()
-        .seal_view_for_realm(&intent.source_realm_id);
     let build = crate::views::secure_send::build_sidecar_exchange_control_send(
         state_store,
-        &seal_view,
         &intent.source_realm_id,
         authority,
         intent.controller_account_id.principal_id.as_str(),
@@ -1116,14 +1112,14 @@ fn event_refs_after(event: &arkret_sdk::Event) -> Vec<arkret_sdk::EventId> {
 }
 
 fn event_actor_id(event: &arkret_sdk::Event) -> Option<arkret_sdk::DidCoreId> {
-    event.proofs.iter().find_map(|proof| {
-        let proof = proof.as_producer()?;
-        let controller = proof.verification_method.as_str().split_once('#')?.0;
-        let did = arkret_sdk::Did::new(controller.to_owned()).ok()?;
-        (arkret_sdk::project_did_to_core_id(&did).ok().as_ref()
-            == Some(event.actor_id.signing_principal_id()))
-        .then(|| event.actor_id.signing_principal_id().clone())
-    })
+    let [proof] = event.proofs.as_slice() else {
+        return None;
+    };
+    let controller = proof.verification_method.as_str().split_once('#')?.0;
+    let did = arkret_sdk::Did::new(controller.to_owned()).ok()?;
+    (arkret_sdk::project_did_to_core_id(&did).ok().as_ref()
+        == Some(event.actor_id.signing_principal_id()))
+    .then(|| event.actor_id.signing_principal_id().clone())
 }
 
 /// Refold every locally known exchange of `controller_principal_id` in `realm_id` from
@@ -2872,7 +2868,13 @@ mod tests {
                 ))
                 .unwrap(),
                 event_digest,
-                signer_resolution_evidence_ref: None,
+                signer_resolution_evidence_ref: Some(
+                    arkret_sdk::SignerEvidenceRef::new(format!(
+                        "ak:signer_evidence:sha256:{}",
+                        "11".repeat(32)
+                    ))
+                    .unwrap(),
+                ),
                 created_at: event.created_at,
                 domain: None,
                 audience: None,

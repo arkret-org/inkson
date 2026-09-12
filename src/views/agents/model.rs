@@ -503,6 +503,10 @@ pub fn build_requested_scope_disclosure_for_pairing(
     if expires_at <= issued_at {
         anyhow::bail!("runtime key request has expired");
     }
+    let signer_resolution_evidence_ref =
+        crate::event_signer::cached_active_event_proof_context(arkret_sdk::DigestSuite::Sha256)?
+            .signer_resolution_evidence_ref
+            .ok_or_else(|| anyhow::anyhow!("verified signer-resolution evidence is unavailable"))?;
     let mut disclosure = AgentRequestedScopeDisclosure {
         schema: arkret_sdk::SchemaId::AgentRequestedScopeDisclosureV1,
         request_id: RequestId::new(format!("ak:request:{request_uuid}"))?,
@@ -520,7 +524,7 @@ pub fn build_requested_scope_disclosure_for_pairing(
             kind: "detached_jws".to_owned(),
             verification_method: verification_method.clone(),
             event_digest: Hash::new(format!("sha256:{}", "0".repeat(64)))?,
-            signer_resolution_evidence_ref: None,
+            signer_resolution_evidence_ref: Some(signer_resolution_evidence_ref),
             created_at: issued_at,
             domain: None,
             audience: None,
@@ -759,7 +763,7 @@ fn validate_runtime_approval_candidate(
 /// approval.
 /// R3 spec sync (b47ff6ec) — UI label for an agent FSM state.
 ///
-/// `ak.agent.{pause,resume,deactivate}` lattice is now `fsm` (terminal:
+/// `ak.agent.{pause,resume,deactivate}` uses sequenced domain transitions (terminal:
 /// `deactivated`). The badge text mirrors the wire vocabulary; unknown
 /// values fall through so future state additions are still legible.
 pub fn agent_state_label(state: &str) -> &str {

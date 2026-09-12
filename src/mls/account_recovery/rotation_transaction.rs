@@ -894,7 +894,7 @@ mod rotation_resume_tests {
         let frontier = arkret_sdk::Seal {
             id: arkret_sdk::SealId::new(format!("ak:seal:sha256:{}", "00".repeat(32))).unwrap(),
             realm_id: realm_id.clone(),
-            predecessor_refs: Vec::new(),
+            predecessor_ref: None,
             delta: Vec::new(),
             control_event_set_root: zero_hash.clone(),
             state_root: zero_hash.clone(),

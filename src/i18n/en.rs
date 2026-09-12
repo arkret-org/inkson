@@ -2271,10 +2271,6 @@ fn add_r3_error_keys(dict: &mut TranslationDict) {
 
     // Recovery.
     dict.set(
-        "error.recovery.witness_revoke_lagging",
-        "The recovery helper's removal has not finished syncing yet. Wait a moment, then try again.",
-    );
-    dict.set(
         "error.recovery.policy_mismatch",
         "Recovery policy mismatch: the on-server policy version differs from the request.",
     );

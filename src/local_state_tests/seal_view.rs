@@ -1,38 +1,33 @@
-//! Seal-view defaults, frontier selection, bottom-cell conflict resolution,
-//! sync-body parsing, and cross-realm aggregation.
+//! Seal-view defaults, unique confirmation-head handling, sync-body parsing,
+//! and cross-realm aggregation.
 
 use super::*;
 
 #[test]
-fn seal_view_default_returns_empty_bytes_sentinel() {
+fn seal_view_default_has_no_fabricated_basis() {
     let path = temp_state_path("seal-default");
     let store = LocalStateStore::with_path(path);
     let view = store.seal_view_for_realm("ak:realm:A_UALC69_WeDbu3WQ3suidUfmxa1MAW5tIIxjRS1C9yE");
     assert!(view.frontier.is_empty());
     assert!(view.leaves.is_empty());
     assert!(view.state_root.is_none());
-    assert_eq!(view.move_seal_ref(), LocalSealView::EMPTY_ANCHOR_REF);
     assert_eq!(
-        store.seal_ref_for_realm_move("ak:realm:A_UALC69_WeDbu3WQ3suidUfmxa1MAW5tIIxjRS1C9yE"),
-        LocalSealView::EMPTY_ANCHOR_REF
+        store.confirmed_seal_ref_for_realm("ak:realm:A_UALC69_WeDbu3WQ3suidUfmxa1MAW5tIIxjRS1C9yE"),
+        None
     );
 }
 
 #[test]
-fn seal_view_set_persists_and_picks_lex_min_frontier() {
+fn seal_view_set_persists_the_unique_confirmed_head() {
     let path = temp_state_path("seal-set");
     {
         let mut store = LocalStateStore::with_path(path.clone());
         store.set_realm_seal_view(
             "ak:realm:A_UALC69_WeDbu3WQ3suidUfmxa1MAW5tIIxjRS1C9yE",
             LocalSealView {
-                frontier: vec![
-                    "ak:seal:sha256:bbb".to_owned(),
-                    "ak:seal:sha256:aaa".to_owned(),
-                ],
+                frontier: vec!["ak:seal:sha256:aaa".to_owned()],
                 leaves: vec!["sha256:lf1".to_owned()],
                 state_root: Some("ak:state:sha256:abc".to_owned()),
-                bottom_cells: BTreeMap::new(),
                 mls_epoch: None,
                 key_schedule_hash: None,
             },
@@ -40,13 +35,13 @@ fn seal_view_set_persists_and_picks_lex_min_frontier() {
     }
     let reader = LocalStateStore::with_path(path);
     let view = reader.seal_view_for_realm("ak:realm:A_UALC69_WeDbu3WQ3suidUfmxa1MAW5tIIxjRS1C9yE");
-    assert_eq!(view.frontier.len(), 2);
+    assert_eq!(view.frontier.len(), 1);
     assert_eq!(view.leaves.len(), 1);
     assert_eq!(view.state_root.as_deref(), Some("ak:state:sha256:abc"));
-    assert_eq!(view.move_seal_ref(), "ak:seal:sha256:aaa");
     assert_eq!(
-        reader.seal_ref_for_realm_move("ak:realm:A_UALC69_WeDbu3WQ3suidUfmxa1MAW5tIIxjRS1C9yE"),
-        "ak:seal:sha256:aaa"
+        reader
+            .confirmed_seal_ref_for_realm("ak:realm:A_UALC69_WeDbu3WQ3suidUfmxa1MAW5tIIxjRS1C9yE"),
+        Some("ak:seal:sha256:aaa".to_owned())
     );
 }
 
@@ -76,23 +71,6 @@ fn seal_views_aggregates_across_realms() {
 
 // ── sync-body merge (client-sync.md publishes no Seal view on the Realm delta)
 
-fn conflict_bottoms_body(cell: &str) -> serde_json::Value {
-    serde_json::json!({
-        "bottoms": [{
-            "cell": cell,
-            "status": "conflict",
-            "bottom": {
-                "kind": "conflict",
-                "cells": [cell],
-                "event_ids": [
-                    "ak:event:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-",
-                    "ak:event:AQM8rE4gp8l4axkSbbb9_dkqwWE8ZPYHwFsC24o2mrIL"
-                ]
-            }
-        }]
-    })
-}
-
 #[test]
 fn sync_body_without_seal_view_preserves_the_authoritative_frontier() {
     let path = temp_state_path("seal-merge-preserve");
@@ -109,40 +87,15 @@ fn sync_body_without_seal_view_preserves_the_authoritative_frontier() {
 
     // `RealmSyncEntry` has no `seal_view` field, so every real sync body looks
     // like this. It says nothing about the frontier and must not clear it.
-    let cell = "ak:cell:ak.component.strand.position.v1:ak:space:board:ak:strand:card";
     store.merge_realm_seal_view_from_sync_body(
         "ak:realm:A_UALC69_WeDbu3WQ3suidUfmxa1MAW5tIIxjRS1C9yE",
-        &conflict_bottoms_body(cell),
+        &serde_json::json!({"current":{"entries":[]}}),
     );
 
     let view = store.seal_view_for_realm("ak:realm:A_UALC69_WeDbu3WQ3suidUfmxa1MAW5tIIxjRS1C9yE");
     assert_eq!(view.frontier, vec!["ak:seal:sha256:aaa".to_owned()]);
     assert_eq!(view.state_root.as_deref(), Some("ak:state:sha256:abc"));
     assert_eq!(view.mls_epoch, Some(3));
-    assert_eq!(view.move_seal_ref(), "ak:seal:sha256:aaa");
-    // The projection-only bottoms are still refreshed from the body.
-    assert!(view.bottom_cells.contains_key(cell));
-    let _ = std::fs::remove_file(path);
-}
-
-#[test]
-fn sync_body_bottoms_do_not_accumulate_across_windows() {
-    let path = temp_state_path("seal-merge-bottoms");
-    let mut store = LocalStateStore::with_path(path.clone());
-    let first = "ak:cell:ak.component.strand.position.v1:ak:space:board:ak:strand:first";
-    let second = "ak:cell:ak.component.strand.position.v1:ak:space:board:ak:strand:second";
-    store.merge_realm_seal_view_from_sync_body(
-        "ak:realm:A_UALC69_WeDbu3WQ3suidUfmxa1MAW5tIIxjRS1C9yE",
-        &conflict_bottoms_body(first),
-    );
-    store.merge_realm_seal_view_from_sync_body(
-        "ak:realm:A_UALC69_WeDbu3WQ3suidUfmxa1MAW5tIIxjRS1C9yE",
-        &conflict_bottoms_body(second),
-    );
-
-    let view = store.seal_view_for_realm("ak:realm:A_UALC69_WeDbu3WQ3suidUfmxa1MAW5tIIxjRS1C9yE");
-    assert!(!view.bottom_cells.contains_key(first));
-    assert!(view.bottom_cells.contains_key(second));
     let _ = std::fs::remove_file(path);
 }
 
@@ -178,7 +131,7 @@ fn sync_merge_keeps_the_verified_governance_proof_a_bare_set_would_evict() {
     let realm = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
     let mls_group_id = arkret_sdk::base64url_encode(realm.as_bytes());
     let anchor = "ak:seal:sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
-    let body = conflict_bottoms_body("ak:cell:ak.component.member.state.v1:did:webvh:zfixture:a");
+    let body = serde_json::json!({"current":{"entries":[]}});
 
     let merge_path = temp_state_path("seal-merge-proof");
     let mut merged = LocalStateStore::with_path(merge_path.clone());

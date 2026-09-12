@@ -1,8 +1,8 @@
 //! Active-write event signer wired against the SDK's unified
-//! `EventProofBuilder` / `Ed25519DetachedJwsSigner` pipeline.
+//! `ProducerProofBuilder` / `Ed25519DetachedJwsSigner` pipeline.
 //!
 //! T5.2 (2026-05-20) — T5.1 landed `Ed25519DetachedJwsSigner` and
-//! `EventProofBuilder` in the SDK
+//! `ProducerProofBuilder` in the SDK
 //! (`arkret-rust-sdk/crates/signatures/src/proof.rs`). Before T5.2
 //! inkson's previous Event signing helper hand-rolled
 //! the same canonical-bytes → JWS pipeline, which meant a bug fixed in
@@ -23,7 +23,7 @@
 //!
 //! ## Canonical bytes alignment
 //!
-//! The SDK's `EventProofBuilder` operates over an opaque `T: Serialize`.
+//! The SDK's `ProducerProofBuilder` operates over an opaque `T: Serialize`.
 //! The builder now emits `arkret_sdk::Event` directly, so this module derives
 //! `Event::event_digest()` from the SDK event in place.
 //!
@@ -114,16 +114,17 @@ pub enum EventSignerError {
     RawSigningUnavailable,
 }
 
-/// Domain/audience binding carried by EventProof and included in the
+/// Domain/audience binding carried by the producer proof and included in the
 /// canonical proof-binding bytes that the detached JWS signs.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct EventProofContext {
+pub struct ProducerProofContext {
     pub domain: Option<String>,
     pub audience: Option<Audience>,
     pub digest_suite: arkret_sdk::canonical::DigestSuite,
+    pub signer_resolution_evidence_ref: Option<arkret_sdk::SignerEvidenceRef>,
 }
 
-impl EventProofContext {
+impl ProducerProofContext {
     pub fn new() -> Self {
         Self::default()
     }
@@ -142,6 +143,76 @@ impl EventProofContext {
         self.digest_suite = digest_suite;
         self
     }
+
+    pub fn with_signer_resolution_evidence_ref(
+        mut self,
+        signer_resolution_evidence_ref: arkret_sdk::SignerEvidenceRef,
+    ) -> Self {
+        self.signer_resolution_evidence_ref = Some(signer_resolution_evidence_ref);
+        self
+    }
+
+    pub fn for_native_unit(digest_suite: arkret_sdk::canonical::DigestSuite) -> Self {
+        Self {
+            digest_suite,
+            ..Self::default()
+        }
+    }
+}
+
+pub(crate) fn cached_active_event_proof_context(
+    digest_suite: arkret_sdk::DigestSuite,
+) -> Result<ProducerProofContext, EventSignerError> {
+    let signer = active_signer().ok_or(EventSignerError::MissingSigner {
+        mode: "active-device",
+    })?;
+    let device_id = signer.device_id().ok_or_else(|| {
+        EventSignerError::Encoding("active endpoint signer has no device id".to_owned())
+    })?;
+    let did = Did::new(signer.signer_did().to_owned())
+        .map_err(|error| EventSignerError::Encoding(error.to_string()))?;
+    let principal_id = arkret_sdk::project_did_to_core_id(&did)
+        .map_err(|error| EventSignerError::Encoding(error.to_string()))?;
+    let public_key = signer.public_key_multibase().ok_or_else(|| {
+        EventSignerError::Encoding("active endpoint signer has no public key".to_owned())
+    })?;
+    let public_key =
+        crate::identity::device_directory::public_key_from_directory_value(&public_key)
+            .ok_or_else(|| {
+                EventSignerError::Encoding(
+                    "active endpoint signer public key is invalid".to_owned(),
+                )
+            })?;
+    let evidence_ref =
+        crate::identity::device_directory::cached_signer_evidence_ref_for_principal_device_and_key(
+            &principal_id,
+            device_id,
+            &public_key,
+        )
+        .ok_or_else(|| {
+            EventSignerError::Encoding(
+                "verified signer-resolution evidence is unavailable for the active device"
+                    .to_owned(),
+            )
+        })?;
+    Ok(ProducerProofContext::new()
+        .with_digest_suite(digest_suite)
+        .with_signer_resolution_evidence_ref(evidence_ref))
+}
+
+#[cfg(test)]
+pub(crate) fn test_producer_proof_context(
+    digest_suite: arkret_sdk::DigestSuite,
+) -> ProducerProofContext {
+    ProducerProofContext::new()
+        .with_digest_suite(digest_suite)
+        .with_signer_resolution_evidence_ref(
+            arkret_sdk::SignerEvidenceRef::new(format!(
+                "ak:signer_evidence:sha256:{}",
+                "11".repeat(32)
+            ))
+            .expect("test signer evidence ref is canonical"),
+        )
 }
 
 /// Opaque handle wrapping an SDK [`SdkEventSigner`] trait object plus
@@ -455,14 +526,18 @@ impl InksonEventSigner {
     ///
     /// Updates [`Self::last_signed_at_snapshot`] on success.
     pub fn sign_envelope(&self, event: &mut AuthoredEvent) -> Result<(), EventSignerError> {
-        self.sign_envelope_with_context(event, EventProofContext::default())
+        #[cfg(test)]
+        let context = test_producer_proof_context(event.digest_suite());
+        #[cfg(not(test))]
+        let context = cached_active_event_proof_context(event.digest_suite())?;
+        self.sign_envelope_with_context(event, context)
     }
 
-    /// Sign `event` with an explicit EventProof domain/audience binding.
+    /// Sign `event` with an explicit producer-proof domain/audience binding.
     pub fn sign_envelope_with_context(
         &self,
         event: &mut AuthoredEvent,
-        context: EventProofContext,
+        context: ProducerProofContext,
     ) -> Result<(), EventSignerError> {
         self.sign_sdk_event_with_context(event, context)
     }
@@ -472,7 +547,7 @@ impl InksonEventSigner {
     pub fn sign_sdk_event_with_context(
         &self,
         event: &mut AuthoredEvent,
-        context: EventProofContext,
+        context: ProducerProofContext,
     ) -> Result<(), EventSignerError> {
         // Authoring settled the digest suite when it derived the identity, and
         // the proof must be bound under that same suite. A caller-supplied
@@ -503,18 +578,19 @@ impl InksonEventSigner {
                 .map_err(|error| EventSignerError::Encoding(error.to_string()))?,
             verification_method: verification_method.clone(),
         };
-        arkret_sdk::signatures::sign_event(
-            event,
-            &signer,
-            &verification_method,
-            arkret_sdk::signatures::SignEventOptions {
-                domain: context.domain,
-                audience: proof_audience,
-                created_at: Some(crate::clock::now_utc()),
-                signer_resolution_evidence_ref: None,
-            },
-        )
-        .map_err(|error| EventSignerError::Backend(error.to_string()))?;
+        let mut options = match context.signer_resolution_evidence_ref {
+            Some(evidence_ref) => arkret_sdk::signatures::SignEventOptions::new(evidence_ref),
+            None => arkret_sdk::signatures::SignEventOptions::for_native_unit(),
+        }
+        .with_created_at(crate::clock::now_utc());
+        if let Some(domain) = context.domain {
+            options = options.with_domain(domain);
+        }
+        if let Some(audience) = proof_audience {
+            options = options.with_audience(audience);
+        }
+        arkret_sdk::signatures::sign_event(event, &signer, &verification_method, options)
+            .map_err(|error| EventSignerError::Backend(error.to_string()))?;
 
         if let Ok(mut guard) = self.last_signed_at.lock() {
             *guard = Some(crate::clock::now_utc());
@@ -1022,7 +1098,7 @@ pub fn should_auto_sign() -> bool {
 
 pub fn sign_sdk_event_with_active_context(
     event: &mut AuthoredEvent,
-    context: EventProofContext,
+    context: ProducerProofContext,
 ) -> Result<(), EventSignerError> {
     let mode = current_proof_mode();
     if !should_auto_sign() {
@@ -1164,11 +1240,7 @@ mod tests {
     }
 
     fn producer_proof(event: &arkret_sdk::Event) -> &arkret_sdk::ProducerEventProof {
-        event
-            .proofs
-            .iter()
-            .find_map(arkret_sdk::EventProof::as_producer)
-            .expect("producer proof")
+        event.proofs.first().expect("producer proof")
     }
 
     #[test]
@@ -1260,7 +1332,10 @@ mod tests {
         assert_eq!(rebound.public_key_multibase(), public_key);
         let mut event = message_event(principal.as_str(), "principal-bound");
         rebound
-            .sign_sdk_event_with_context(&mut event, EventProofContext::default())
+            .sign_sdk_event_with_context(
+                &mut event,
+                test_producer_proof_context(arkret_sdk::DigestSuite::Sha256),
+            )
             .unwrap();
         assert_eq!(
             producer_proof(&event).verification_method.as_str(),
@@ -1577,9 +1652,14 @@ mod tests {
 
         let mut event = message_event("did:web:carol.example", "bound");
 
-        let context = EventProofContext::new()
+        let context = ProducerProofContext::new()
             .with_domain("ak:trust_domain:server.example")
-            .with_audience(Audience::Single("did:web:server.example".to_owned()));
+            .with_audience(Audience::Single("did:web:server.example".to_owned()))
+            .with_signer_resolution_evidence_ref(
+                test_producer_proof_context(arkret_sdk::DigestSuite::Sha256)
+                    .signer_resolution_evidence_ref
+                    .unwrap(),
+            );
         signer
             .sign_envelope_with_context(&mut event, context)
             .expect("sign");
@@ -1623,10 +1703,15 @@ mod tests {
             "typed",
             arkret_sdk::canonical::DigestSuite::Blake3,
         );
-        let context = EventProofContext::new()
+        let context = ProducerProofContext::new()
             .with_domain("did:web:server.example")
             .with_audience(Audience::Single("did:web:server.example".to_owned()))
-            .with_digest_suite(arkret_sdk::canonical::DigestSuite::Blake3);
+            .with_digest_suite(arkret_sdk::canonical::DigestSuite::Blake3)
+            .with_signer_resolution_evidence_ref(
+                test_producer_proof_context(arkret_sdk::DigestSuite::Blake3)
+                    .signer_resolution_evidence_ref
+                    .unwrap(),
+            );
 
         signer
             .sign_sdk_event_with_context(&mut event, context)
@@ -1653,10 +1738,16 @@ mod tests {
         let mut event = message_event("did:web:sdk.example", "typed");
 
         signer
-            .sign_sdk_event_with_context(&mut event, EventProofContext::default())
+            .sign_sdk_event_with_context(
+                &mut event,
+                test_producer_proof_context(arkret_sdk::DigestSuite::Sha256),
+            )
             .unwrap();
         signer
-            .sign_sdk_event_with_context(&mut event, EventProofContext::default())
+            .sign_sdk_event_with_context(
+                &mut event,
+                test_producer_proof_context(arkret_sdk::DigestSuite::Sha256),
+            )
             .unwrap();
 
         assert_eq!(event.proofs.len(), 1);
@@ -1678,11 +1769,17 @@ mod tests {
         let mut event = message_event("did:web:sdk.example", "typed");
 
         first
-            .sign_sdk_event_with_context(&mut event, EventProofContext::default())
+            .sign_sdk_event_with_context(
+                &mut event,
+                test_producer_proof_context(arkret_sdk::DigestSuite::Sha256),
+            )
             .unwrap();
         let original = event.proofs.clone();
         let error = second
-            .sign_sdk_event_with_context(&mut event, EventProofContext::default())
+            .sign_sdk_event_with_context(
+                &mut event,
+                test_producer_proof_context(arkret_sdk::DigestSuite::Sha256),
+            )
             .unwrap_err();
 
         assert!(!error.to_string().is_empty());

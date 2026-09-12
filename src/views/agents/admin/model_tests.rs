@@ -232,6 +232,8 @@ fn test_pairing_view(status: AgentLifecycleState, runtime_state: AgentRuntimeSta
             approval_requested_at: None,
             authorized_event_ref: None,
             active_authorizations,
+            signer_resolution_evidence_ref: None,
+            current_signer_evidence: None,
         }),
     }
 }

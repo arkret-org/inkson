@@ -21,7 +21,7 @@ fn principal_generation_cache_key(account_id: &arkret_sdk::AccountId, device_id:
     format!("{account_id}\u{1f}{device_id}")
 }
 
-fn cache_verified_principal_generation(
+pub(crate) fn cache_verified_principal_generation(
     account_id: &arkret_sdk::AccountId,
     device_id: &str,
     generation: &AuthoringGeneration,
@@ -165,75 +165,19 @@ pub(crate) fn cached_event_authoring_generation(
 }
 
 pub(crate) async fn resolve_event_authoring_generation(
-    http: &arkret_sdk::http_client::Client,
+    _http: &arkret_sdk::http_client::Client,
     facts: &EventAuthorityFacts<'_>,
 ) -> anyhow::Result<AuthoringGeneration> {
-    match resolve_current_event_authoring_generation(http, facts).await? {
-        CurrentEventAuthoringGeneration::Active(generation) => Ok(generation),
-        CurrentEventAuthoringGeneration::Quarantine(reason) => anyhow::bail!(reason),
-    }
-}
-
-pub(crate) enum CurrentEventAuthoringGeneration {
-    Active(AuthoringGeneration),
-    Quarantine(String),
-}
-
-pub(crate) async fn resolve_current_event_authoring_generation(
-    http: &arkret_sdk::http_client::Client,
-    facts: &EventAuthorityFacts<'_>,
-) -> anyhow::Result<CurrentEventAuthoringGeneration> {
-    let authority_principal = facts.authority_principal();
-    let account_id = facts.authority_account()?;
-    let signer = crate::event_signer::active_signer().ok_or_else(|| {
-        anyhow::anyhow!("no active signer configured for generation-fenced write")
-    })?;
-    let device_id = signer.device_id().ok_or_else(|| {
-        anyhow::anyhow!("active signer has no device_id for generation-fenced write")
-    })?;
-    let controller_generation =
-        match resolve_principal_authoring_generation(http, account_id, device_id).await? {
-            PrincipalGenerationResolution::Active(generation) => generation,
-            PrincipalGenerationResolution::Quarantine(reason) => {
-                return Ok(CurrentEventAuthoringGeneration::Quarantine(reason));
-            }
-        };
-    cache_verified_principal_generation(account_id, device_id, &controller_generation);
-
-    if facts.is_delegated() {
-        return AuthoringGeneration::agent(
-            authority_principal,
-            &controller_generation,
-            facts.authorization_ref_str(),
+    cached_event_authoring_generation(facts)?.ok_or_else(|| {
+        anyhow::anyhow!(
+            "frontier_unavailable: no locally verified device authoring authority is available"
         )
-        .map(CurrentEventAuthoringGeneration::Active)
-        .map_err(anyhow::Error::from);
-    }
-    Ok(CurrentEventAuthoringGeneration::Active(
-        controller_generation,
-    ))
+    })
 }
 
 enum PrincipalGenerationResolution {
     Active(AuthoringGeneration),
     Quarantine(String),
-}
-
-async fn resolve_principal_authoring_generation(
-    http: &arkret_sdk::http_client::Client,
-    account_id: &arkret_sdk::AccountId,
-    device_id: &str,
-) -> anyhow::Result<PrincipalGenerationResolution> {
-    #[cfg(target_arch = "wasm32")]
-    let outcome = tokio::select! {
-        outcome = crate::transport::keys::query_keys(http, account_id, device_id) => outcome?,
-        _ = crate::runtime_helpers::sleep_for(std::time::Duration::from_secs(8)) => {
-            anyhow::bail!("HTTP request failed: authoring-generation keys query timed out");
-        }
-    };
-    #[cfg(not(target_arch = "wasm32"))]
-    let outcome = crate::transport::keys::query_keys(http, account_id, device_id).await?;
-    resolve_principal_authoring_generation_from_keys(&outcome, account_id, device_id)
 }
 
 /// Cache the current authoring generation from a keys projection that the
@@ -251,7 +195,14 @@ pub(crate) fn cache_principal_authoring_generation_from_keys(
             cache_verified_principal_generation(account_id, device_id, &generation);
             Ok(true)
         }
-        PrincipalGenerationResolution::Quarantine(_) => Ok(false),
+        PrincipalGenerationResolution::Quarantine(_) => {
+            verified_generation_cache()
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .remove(&principal_generation_cache_key(account_id, device_id));
+            crate::authorization_lease::clear_leases();
+            Ok(false)
+        }
     }
 }
 

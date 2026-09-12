@@ -2,7 +2,7 @@
 //!
 //! The panel is the plan-lifecycle UI: it creates, lists, modifies, and
 //! cancels `ak.scheduled_send.v1` plans for the discussion the composer is
-//! bound to. Writes go through the encrypted account-data `cas_register`
+//! bound to. Writes go through encrypted account-data revision updates
 //! loop; expiry dispatch itself is the session-wide driver in
 //! [`crate::scheduled_send`].
 

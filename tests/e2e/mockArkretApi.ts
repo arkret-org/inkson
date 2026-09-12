@@ -1625,7 +1625,7 @@ export async function mockArkretApi(
         events.length > 0 &&
         events.every(
           (event) =>
-            event.seal_ref === undefined && event.seal_basis === undefined,
+            event.auth_context === undefined && event.seal_basis === undefined,
         );
       const anchorEventDigests = isAnchorUnit
         ? events.map((event) => String(event.proofs?.[0]?.event_digest ?? ""))
@@ -1646,11 +1646,12 @@ export async function mockArkretApi(
           }
         : undefined;
       const authorizationLeases = events.map((event, index) => {
-        const basisRef = anchorUnitBasis ?? event.seal_ref ?? event.seal_basis;
+        const authorityRef = event.auth_context?.authority_refs?.[0];
+        const basisRef = anchorUnitBasis ?? (authorityRef ? { seal: authorityRef } : event.seal_basis);
         const sourceRef = isAnchorUnit
           ? `anchor-unit:${anchorUnitBasis!.anchor_unit.unit_digest}`
-          : typeof event.seal_ref === "string"
-            ? event.seal_ref
+          : typeof authorityRef === "string"
+            ? authorityRef
             : String(event.seal_basis?.leaves?.[0] ?? "principal-control");
         const verificationMethod = `${event.actor_id}#e2e-device-key`;
         const authoritySetPolicy = {

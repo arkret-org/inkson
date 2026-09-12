@@ -772,14 +772,6 @@ pub(crate) async fn reconcile_mls_admissions_for_realm(
         let local_state = state_store.read().clone();
         if local_state.realm_collaboration_role(&realm_id)
             == Some(arkret_sdk::CollaborationRealmRole::DirectConversation)
-            && matches!(
-                crate::mls::direct_binding::message_authority(
-                    &local_state,
-                    &realm_id,
-                    &arkret_sdk::ActorId::account(account.authority.clone())
-                ),
-                Some(crate::mls::direct_binding::MessageAuthority::ProvisionalFounder(_))
-            )
             && accepted_events.iter().any(|event| {
                 event.kind == arkret_sdk::EventKind::RealmCreate
                     && event.actor_id.to_string() == self_actor

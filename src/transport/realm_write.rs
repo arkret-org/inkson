@@ -523,7 +523,7 @@ pub async fn set_realm_policy_events(
         // so this write is a legal policy_bundle revision rather than an
         // unregistered extra key.
         //
-        // The cell is a `cas_register`: this revision restates the COMPLETE
+        // The cell is sequenced state: this revision restates the complete
         // enabled component set, and anything omitted is cleared. Starting from
         // the recommended genesis bundle keeps the encryption floors.
         let mut policy_bundle = recommended_realm_policy_bundle_value();

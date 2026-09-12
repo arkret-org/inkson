@@ -84,8 +84,8 @@ pub(super) fn governance_failure_hint(error_text: &str) -> Option<&'static str> 
 
 /// The one alert line the Security section leads with.
 ///
-/// The three conditions are not independent — a paused notary makes the
-/// pending-binding advice wrong, and both outrank an unresolved fork — so the
+/// The two conditions are not independent — a paused notary makes the
+/// pending-binding advice wrong — so the
 /// ladder has to be read in order. Keeping it here means the order is stated
 /// once and can be asserted without mounting the panel.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -93,17 +93,15 @@ pub(super) struct RealmSecurityHealth {
     pub(super) label: &'static str,
     pub(super) badge: &'static str,
     pub(super) next_step: &'static str,
-    /// How many of the three conditions are active, for the section badge.
+    /// How many conditions are active, for the section badge.
     pub(super) alert_count: usize,
 }
 
 pub(super) fn realm_security_health(
     paused: bool,
     pending_mls_binding: bool,
-    has_bottom_cells: bool,
 ) -> RealmSecurityHealth {
-    let alert_count =
-        usize::from(paused) + usize::from(pending_mls_binding) + usize::from(has_bottom_cells);
+    let alert_count = usize::from(paused) + usize::from(pending_mls_binding);
     let (label, badge, next_step) = if paused {
         (
             "Writes paused",
@@ -115,12 +113,6 @@ pub(super) fn realm_security_health(
             "Binding pending",
             "badge amber",
             "Wait for the encrypted update to finish, then retry if the alert remains.",
-        )
-    } else if has_bottom_cells {
-        (
-            "Repair needed",
-            "badge red",
-            "Open Repair & Danger to review the conflicting changes.",
         )
     } else {
         ("No active alerts", "badge green", "No action needed.")
@@ -136,7 +128,6 @@ pub(super) fn realm_security_health(
 /// Read-only Seal diagnostics, each with the sentinel text that says *why* a
 /// value is absent rather than rendering an empty cell.
 pub(super) struct SealDiagnostics {
-    pub(super) bottom_cells: Vec<(String, crate::state::BottomCellInfo)>,
     /// Move ids covered by the current Seal batch.
     pub(super) leaf_count: usize,
     pub(super) frontier_label: String,
@@ -146,14 +137,9 @@ pub(super) struct SealDiagnostics {
 
 pub(super) fn seal_diagnostics(seal_view: &crate::state::LocalSealView) -> SealDiagnostics {
     SealDiagnostics {
-        bottom_cells: seal_view
-            .bottom_cells
-            .iter()
-            .map(|(key, info)| (key.clone(), info.clone()))
-            .collect(),
         leaf_count: seal_view.leaves.len(),
         frontier_label: if seal_view.frontier.is_empty() {
-            "(no Seal seen — using sha256(empty) sentinel)".to_owned()
+            "(no verified Seal head)".to_owned()
         } else {
             seal_view.frontier.join(", ")
         },
@@ -161,7 +147,7 @@ pub(super) fn seal_diagnostics(seal_view: &crate::state::LocalSealView) -> SealD
             .state_root
             .clone()
             .unwrap_or_else(|| "(not published)".to_owned()),
-        // MLS epoch from the cas-register value of ak.component.mls.epoch.v1.
+        // MLS epoch from the sequenced state of ak.component.mls.epoch.v1.
         mls_epoch_label: seal_view
             .mls_epoch
             .map(|epoch| epoch.to_string())

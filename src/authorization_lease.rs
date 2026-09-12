@@ -121,22 +121,34 @@ pub fn lease_for_event(
         actor_id: event.actor_id.signing_principal_id().as_str().to_owned(),
     };
     let scope = serde_json::to_string(&event.scope_ref).map_err(|_| missing())?;
-    let expected_basis = if let Some(seal_ref) = &event.seal_ref {
-        serde_json::to_string(&arkret_wire::LeaseBasisRef::Seal(seal_ref.clone()))
-            .map_err(|_| missing())?
-    } else if let Some(seal_basis) = &event.seal_basis {
-        serde_json::to_string(&arkret_wire::LeaseBasisRef::Joined(seal_basis.clone()))
-            .map_err(|_| missing())?
-    } else {
-        String::new()
-    };
+    let mut expected_bases = event
+        .auth_context
+        .as_ref()
+        .map(|context| {
+            context
+                .authority_refs
+                .iter()
+                .map(|seal_ref| {
+                    serde_json::to_string(&arkret_wire::LeaseBasisRef::Seal(seal_ref.clone()))
+                })
+                .collect::<Result<Vec<_>, _>>()
+        })
+        .transpose()
+        .map_err(|_| missing())?
+        .unwrap_or_default();
+    if let Some(seal_basis) = &event.seal_basis {
+        expected_bases.push(
+            serde_json::to_string(&arkret_wire::LeaseBasisRef::Joined(seal_basis.clone()))
+                .map_err(|_| missing())?,
+        );
+    }
     let held = leases().lock().unwrap_or_else(PoisonError::into_inner);
     let mut matching = held
         .iter()
         .filter(|((actor_id, _, lease_scope, action, basis, _), lease)| {
             actor_id == event.actor_id.signing_principal_id().as_str()
                 && lease_scope == &scope
-                && (expected_basis.is_empty() || basis == &expected_basis)
+                && (expected_bases.is_empty() || expected_bases.contains(basis))
                 && lease_covers_event_kind(action, event.kind.as_str())
                 && lease.actor_id == event.actor_id
                 && lease.scope_ref == event.scope_ref
@@ -190,7 +202,7 @@ pub async fn acquire_for_events(
         tracing::warn!(
             event_id = %event.event_id,
             kind = %event.kind.as_str(),
-            seal_ref = ?event.seal_ref.as_ref().map(|seal| seal.as_str()),
+            authority_refs = ?event.auth_context.as_ref().map(|context| &context.authority_refs),
             authorization_ref = ?event.authorization_ref,
             "requesting publication lease for signed Event"
         );
@@ -275,10 +287,13 @@ pub async fn ensure_for_events(
     if events.is_empty() {
         anyhow::bail!("authorization lease issuance requires at least one Event");
     }
-    if events
-        .iter()
-        .any(|event| event.seal_ref.is_none() && event.seal_basis.is_none())
-    {
+    if events.iter().any(|event| {
+        event
+            .auth_context
+            .as_ref()
+            .is_none_or(|context| context.authority_refs.is_empty())
+            && event.seal_basis.is_none()
+    }) {
         acquire_for_events(http, events, digest_suites).await?;
         return Ok(());
     }
@@ -338,7 +353,7 @@ pub async fn standard_initial_submission(
                 })?;
                 Some(local.issue_authority_ack(event, digest_suite, &signer)?)
             }
-            ProposalAuthorityRoute::StationAdmission => None,
+            ProposalAuthorityRoute::ReceivingAuthority => None,
         };
         if let Some(authority_ack) = authority_ack {
             submission.control_proposal_ack = Some(
@@ -406,7 +421,7 @@ pub async fn delayed_initial_submission(
                 })?;
                 Some(local.issue_authority_ack(event, digest_suite, &signer)?)
             }
-            ProposalAuthorityRoute::StationAdmission => Some(
+            ProposalAuthorityRoute::ReceivingAuthority => Some(
                 http.issue_control_proposal_ack(
                     &arkret_wire::ControlProposalAckIssueRequest {
                         event: event.clone(),
@@ -484,7 +499,7 @@ pub(crate) enum ProposalAuthorityRoute {
     /// The already-authenticated receiving Station performs the
     /// atomic admission check (or issues the delayed-publication Ack) from its
     /// accepted state. This branch performs no DID/PCR resolution in Inkson.
-    StationAdmission,
+    ReceivingAuthority,
     /// This device holds the whole proposal authority for the Realm.
     LocalPrincipal(LocalAccountAuthority),
 }
@@ -574,10 +589,10 @@ pub(crate) enum ProposalAuthorityRouteKind {
     /// A pre-join membership proposal is intentionally unable to read Realm
     /// history. The receiving Station validates its candidate basis
     /// and pending invite/application state directly.
-    PreJoinStationAdmission,
+    PreJoinExternalAuthority,
     /// An ordinary Realm is admitted by the already-authenticated receiving
     /// Station. This is not a human current-DID/PCR lookup.
-    StationAdmission,
+    ReceivingAuthority,
     /// A Agent's Control Realm, written by its delegated controller.
     AgentPcr,
     /// A controller's own principal-control Realm.  Agent provisioning is a
@@ -601,7 +616,7 @@ fn classify_proposal_authority_route(
                 })
                 .is_some_and(|membership| matches!(membership.as_str(), "join" | "knock")));
     if pre_join_membership_proposal {
-        return Ok(ProposalAuthorityRouteKind::PreJoinStationAdmission);
+        return Ok(ProposalAuthorityRouteKind::PreJoinExternalAuthority);
     }
     // The managed-delegation shape is checked first: it names both a different
     // executor and the Agent's `#managed-controller` delegation, so it can only
@@ -622,7 +637,7 @@ fn classify_proposal_authority_route(
     if event.kind == arkret_sdk::EventKind::AgentProvision || recovery_policy_set {
         return Ok(ProposalAuthorityRouteKind::SelfPrincipalPcr);
     }
-    Ok(ProposalAuthorityRouteKind::StationAdmission)
+    Ok(ProposalAuthorityRouteKind::ReceivingAuthority)
 }
 
 async fn resolve_proposal_authority_route(
@@ -630,10 +645,10 @@ async fn resolve_proposal_authority_route(
     event: &arkret_sdk::Event,
 ) -> anyhow::Result<ProposalAuthorityRoute> {
     match classify_proposal_authority_route(event)? {
-        ProposalAuthorityRouteKind::PreJoinStationAdmission => {
-            Ok(ProposalAuthorityRoute::StationAdmission)
+        ProposalAuthorityRouteKind::PreJoinExternalAuthority => {
+            Ok(ProposalAuthorityRoute::ReceivingAuthority)
         }
-        ProposalAuthorityRouteKind::StationAdmission => {
+        ProposalAuthorityRouteKind::ReceivingAuthority => {
             let accepted = http
                 .events_read_all_pages(event.realm_id.as_str())
                 .await
@@ -644,7 +659,7 @@ async fn resolve_proposal_authority_route(
             )?;
             match self_principal_pcr_authority_set_ref_from_events(event, &accepted_events) {
                 Ok(_) => Ok(ProposalAuthorityRoute::AuthorityAuthoredSelfPrincipal),
-                Err(_) => Ok(ProposalAuthorityRoute::StationAdmission),
+                Err(_) => Ok(ProposalAuthorityRoute::ReceivingAuthority),
             }
         }
         ProposalAuthorityRouteKind::AgentPcr => {
@@ -725,9 +740,12 @@ fn self_principal_pcr_authority_set_ref_from_events(
     if payload.object.purpose != arkret_sdk::RealmPurpose::PrincipalControl {
         anyhow::bail!("Event is not in a principal-control Realm");
     }
-    let arkret_sdk::NotaryValue::SingleSigner { signer, .. } = &payload.object.notary else {
-        anyhow::bail!("self principal PCR genesis does not use a single-signer notary");
+    let [signer] = payload.object.notary.signers.as_slice() else {
+        anyhow::bail!("self principal PCR genesis does not use a one-member quorum notary");
     };
+    if payload.object.notary.fault_tolerance != 0 {
+        anyhow::bail!("self principal PCR genesis notary has an invalid fault tolerance");
+    }
     if signer.actor_id.signing_principal_id() != event.actor_id.signing_principal_id() {
         anyhow::bail!("self principal PCR notary does not match the provision Event actor");
     }
@@ -987,7 +1005,7 @@ mod tests {
         let ordinary = event();
         assert_eq!(
             classify_proposal_authority_route(&ordinary).unwrap(),
-            ProposalAuthorityRouteKind::StationAdmission,
+            ProposalAuthorityRouteKind::ReceivingAuthority,
             "an ordinary Realm write must not degrade to a local self-signature"
         );
 
@@ -1024,7 +1042,7 @@ mod tests {
         );
         assert_eq!(
             classify_proposal_authority_route(&foreign_delegation).unwrap(),
-            ProposalAuthorityRouteKind::StationAdmission
+            ProposalAuthorityRouteKind::ReceivingAuthority
         );
 
         // Self-executed writes are never managed delegations, whatever the
@@ -1033,7 +1051,7 @@ mod tests {
         self_executed.executed_by = Some(self_executed.actor_id.clone());
         assert_eq!(
             classify_proposal_authority_route(&self_executed).unwrap(),
-            ProposalAuthorityRouteKind::StationAdmission
+            ProposalAuthorityRouteKind::ReceivingAuthority
         );
 
         let mut invite_accept = event();
@@ -1044,7 +1062,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             classify_proposal_authority_route(&invite_accept).unwrap(),
-            ProposalAuthorityRouteKind::PreJoinStationAdmission,
+            ProposalAuthorityRouteKind::PreJoinExternalAuthority,
             "an invitee must not need membership-gated Realm history to submit acceptance"
         );
 
@@ -1053,7 +1071,7 @@ mod tests {
             serde_json::from_value(serde_json::json!({ "membership": "knock" })).unwrap();
         assert_eq!(
             classify_proposal_authority_route(&knock).unwrap(),
-            ProposalAuthorityRouteKind::PreJoinStationAdmission,
+            ProposalAuthorityRouteKind::PreJoinExternalAuthority,
             "a knock applicant must not need membership-gated Realm history"
         );
     }
@@ -1128,7 +1146,13 @@ mod tests {
                 )
                 .unwrap(),
                 event_digest,
-                signer_resolution_evidence_ref: None,
+                signer_resolution_evidence_ref: Some(
+                    arkret_sdk::SignerEvidenceRef::new(format!(
+                        "ak:signer_evidence:sha256:{}",
+                        "11".repeat(32)
+                    ))
+                    .unwrap(),
+                ),
                 created_at: provision.created_at,
                 domain: None,
                 audience: None,
@@ -1236,7 +1260,12 @@ mod tests {
         install_lease(second.clone()).unwrap();
 
         let mut target = event();
-        target.seal_ref = Some(second_basis);
+        target.auth_context = Some(arkret_sdk::AuthContext {
+            key_id: arkret_sdk::OpaqueLocalId::new("device").unwrap(),
+            key_epoch: 0,
+            credential_epoch: None,
+            authority_refs: vec![second_basis],
+        });
         let selected = lease_for_event(&target, now).unwrap();
         assert_eq!(selected.basis_ref, second.basis_ref);
         assert_eq!(leases().lock().unwrap().len(), 2);
