@@ -1181,14 +1181,14 @@ pub(super) async fn refresh_mls_governance_target_basis(
         let result: anyhow::Result<_> = async {
             let view = submitter.seals_frontier_realm_view(realm_id).await?;
             for actor in &actors {
-                let request = arkret_sdk::MembershipAuthorityRequestBody {
+                let request = arkret_sdk::HistoryAuthorityRequestBody {
                     effective_scope: arkret_sdk::HistoryEffectiveScope::Realm {
                         realm_id: view.realm_id.clone(),
                     },
                     actor_id: actor.clone(),
                     seal_basis: view.seal_basis.clone(),
                 };
-                let outcome = http.membership_authority(&request).await?;
+                let outcome = http.history_authority(&request).await?;
                 outcome.validate_for_account(&request, &account.authority)?;
             }
             Ok(view)

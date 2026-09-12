@@ -280,13 +280,18 @@ pub async fn author_and_create_ordinary_human_request(
         history.authorization_incarnation == plan.requester_authorization_incarnation,
         "history request membership changed before authoring"
     );
+    let history_floor = history.history_floor_epoch.ok_or_else(|| {
+        anyhow::anyhow!("frontier_unavailable: accepted MLS history floor is unavailable")
+    })?;
     anyhow::ensure!(
         plan.requested_ranges
             .iter()
-            .all(|range| range.from_epoch >= history.history_floor_epoch),
+            .all(|range| range.from_epoch >= history_floor),
         "history request range is below the current scope floor"
     );
-    let join_epoch = history.join_epoch;
+    let join_epoch = history.join_epoch.ok_or_else(|| {
+        anyhow::anyhow!("frontier_unavailable: accepted MLS join epoch is unavailable")
+    })?;
     if let Ok(durable) = runtime(state_store).durable_request(&plan.request_id) {
         if durable.request.effective_scope != plan.effective_scope
             || durable.request.requested_ranges != plan.requested_ranges
@@ -510,7 +515,10 @@ async fn build_member_source_attempt(
             == request_record.request.requester_authorization_incarnation,
         "history target has left or rejoined since its request"
     );
-    selected.retain(|secret| secret.epoch >= history.history_floor_epoch);
+    let history_floor = history.history_floor_epoch.ok_or_else(|| {
+        anyhow::anyhow!("frontier_unavailable: accepted MLS history floor is unavailable")
+    })?;
+    selected.retain(|secret| secret.epoch >= history_floor);
     if selected.is_empty() {
         return Ok(None);
     }
@@ -791,7 +799,10 @@ pub async fn converge_member_history_recovery(
             }
         };
         let incarnation = history.authorization_incarnation;
-        let floor = history.history_floor_epoch;
+        let Some(floor) = history.history_floor_epoch else {
+            outcome.pending_errors += 1;
+            continue;
+        };
         let requested_ranges = ranges_at_or_after(requested_ranges, floor);
         if requested_ranges.is_empty() {
             continue;

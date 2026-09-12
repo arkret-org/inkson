@@ -166,7 +166,7 @@ async fn current_authorization_incarnation(
     target: &arkret_sdk::ActorId,
 ) -> Result<arkret_sdk::AuthorizationIncarnation, String> {
     let epoch = crate::identity::device_directory::cache_epoch();
-    let request = arkret_sdk::MembershipAuthorityRequestBody {
+    let request = arkret_sdk::HistoryAuthorityRequestBody {
         effective_scope: arkret_sdk::HistoryEffectiveScope::Realm {
             realm_id: realm_id
                 .parse()
@@ -186,7 +186,7 @@ async fn current_authorization_incarnation(
         },
     };
     let outcome = http
-        .membership_authority(&request)
+        .history_authority(&request)
         .await
         .map_err(|error| error.to_string())?;
     outcome
