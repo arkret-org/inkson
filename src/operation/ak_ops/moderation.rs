@@ -10,7 +10,7 @@ use serde_json::json;
 
 use super::{TypedOperationBuilder, did_id, trim_realm_id};
 
-/// Build the caller-authored `ak.self.moderation.report` DataEvent submitted by
+/// Build the caller-authored `ak.self.moderation.report` ordinary Event submitted by
 /// the self-service report endpoint. The durable report id is derived from this
 /// Event id; it is never guessed or carried in the payload.
 pub fn moderation_report(

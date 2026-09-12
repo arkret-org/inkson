@@ -126,8 +126,8 @@ pub(super) fn validate_projected_cbs_plane(
     Ok(())
 }
 
-/// Build the signer/key-epoch context pinned by a DataEvent.
-pub(super) fn data_event_auth_context(
+/// Build the signer/key-epoch context pinned by an ordinary Event.
+pub(super) fn ordinary_event_auth_context(
     intent: &EventIntent,
     authority_refs: Vec<arkret_sdk::SealId>,
 ) -> anyhow::Result<arkret_sdk::AuthContext> {
@@ -139,14 +139,14 @@ pub(super) fn data_event_auth_context(
         anyhow::bail!("active signer did does not project to AuthContext actor");
     }
     Ok(arkret_sdk::AuthContext {
-        key_id: data_event_key_id_for(intent),
+        key_id: ordinary_event_key_id_for(intent),
         key_epoch: 0,
         credential_epoch: None,
         authority_refs,
     })
 }
 
-fn data_event_key_id_for(intent: &EventIntent) -> arkret_sdk::OpaqueLocalId {
+fn ordinary_event_key_id_for(intent: &EventIntent) -> arkret_sdk::OpaqueLocalId {
     let controller = intent
         .executed_by()
         .map(|actor| actor.signing_principal_id().as_str())

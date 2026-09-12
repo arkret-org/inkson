@@ -65,7 +65,7 @@ pub(crate) async fn prepare_and_sign_pcr_successor(
     http: &arkret_sdk::http_client::Client,
     actor_id: &arkret_sdk::ActorId,
     realm_id: &arkret_sdk::RealmId,
-    predecessor_refs: Vec<arkret_sdk::SealId>,
+    predecessor_ref: arkret_sdk::SealId,
     event_digests: Vec<arkret_sdk::Hash>,
 ) -> anyhow::Result<arkret_sdk::Seal> {
     let signer =
@@ -78,12 +78,9 @@ pub(crate) async fn prepare_and_sign_pcr_successor(
         device_id,
         realm_id.as_str(),
     )?;
-    let [predecessor_ref] = predecessor_refs.as_slice() else {
-        anyhow::bail!("PCR successor requires exactly one confirmed predecessor");
-    };
     let request = arkret_sdk::SealPrepareRequestBody {
         realm_id: realm_id.clone(),
-        predecessor_ref: predecessor_ref.clone(),
+        predecessor_ref,
         event_digests,
         hlc,
     };

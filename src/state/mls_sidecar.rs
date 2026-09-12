@@ -1347,7 +1347,7 @@ impl LocalStateStore {
     }
 
     /// The receiver's `mls_governance_binding_stale` message for this effective
-    /// scope, when its last E2EE application DataEvent was refused for
+    /// scope, when its last E2EE application ordinary Event was refused for
     /// governance-Seal coverage (`encryption-and-audit.md` §2.4.1
     /// `epoch_update_required`). `None` means no receiver has reported a
     /// coverage gap.

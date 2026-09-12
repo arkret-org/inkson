@@ -93,8 +93,9 @@ pub async fn refresh_principal_bootstrap_frontier(
             history_traversal_access: None,
         })
         .await?;
+    let accepted = accepted.into_seals()?;
     anyhow::ensure!(
-        accepted.into_seals()?.as_slice() == [bootstrap_seal.clone()],
+        accepted.as_slice() == [bootstrap_seal.clone()],
         "Station has not accepted the exact PCR bootstrap Seal"
     );
     crate::mls::governance_proof::refresh_realm_frontier_with_http(
@@ -177,6 +178,7 @@ pub async fn verify_recovery_authority_evidence(
             history_traversal_access: None,
         })
         .await?;
+    let resolved_seals = resolved_seals.into_seals()?;
     if !resolved
         .events
         .iter()
@@ -186,7 +188,6 @@ pub async fn verify_recovery_authority_evidence(
             .iter()
             .any(|event| accepted_event_matches_genesis_basis(event, authorize, &authorize_digest))
         || !resolved_seals
-            .into_seals()?
             .iter()
             .any(|seal| seal == &evidence.bootstrap_seal)
     {
@@ -196,10 +197,9 @@ pub async fn verify_recovery_authority_evidence(
 }
 
 /// The frozen PCR genesis unit contains producer-authored Events. Resolution
-/// returns the accepted envelopes, which add exactly the Station
-/// admission proof. Compare the producer-authored projection byte-for-byte and
-/// independently require a valid admission binding; whole-envelope equality
-/// would incorrectly reject every legitimately admitted Event.
+/// returns the accepted producer envelope. Compare its canonical digest and
+/// producer-authored fields byte-for-byte; receiver-local admission metadata
+/// never becomes part of the Event.
 fn accepted_event_matches_genesis_basis(
     accepted: &arkret_sdk::Event,
     authored: &arkret_sdk::Event,

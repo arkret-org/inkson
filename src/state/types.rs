@@ -1078,7 +1078,7 @@ pub struct ClientLocalState {
     #[serde(default)]
     pub historical_agent_signer_keys: BTreeMap<String, CachedHistoricalAgentSignerKey>,
     /// `encryption-and-audit.md` §2.4.1 `epoch_update_required` — effective
-    /// scopes whose last E2EE application DataEvent was refused with
+    /// scopes whose last E2EE application ordinary Event was refused with
     /// `mls_governance_binding_stale`, keyed by
     /// `mls_effective_scope_checkpoint_key`.
     ///

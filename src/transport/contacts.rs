@@ -114,7 +114,7 @@ pub(crate) async fn submit_principal_successor_seal(
         http,
         &context.actor_id,
         &context.control_realm,
-        vec![context.predecessor],
+        context.predecessor,
         vec![principal_digest.clone()],
     )
     .await?;

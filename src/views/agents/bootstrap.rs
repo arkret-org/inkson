@@ -132,7 +132,7 @@ pub(crate) async fn ensure_agent_pcr_seal_current(
         let pending = http
             .pcr_pending_control(&arkret_sdk::PcrPendingControlRequestBody {
                 realm_id: realm.clone(),
-                predecessor_ref: view.sole_leaf()?.clone(),
+                predecessor_ref: head.id.clone(),
                 limit: 1,
             })
             .await?;
@@ -143,7 +143,7 @@ pub(crate) async fn ensure_agent_pcr_seal_current(
             http,
             &controller_actor,
             &realm,
-            view.seal_basis.leaves.clone(),
+            head.id.clone(),
             pending.event_digests,
         )
         .await?;
@@ -186,7 +186,7 @@ pub(crate) async fn seal_self_principal_event_current(
         &http,
         &controller_actor_id,
         realm_id,
-        vec![predecessor.id.clone()],
+        predecessor.id.clone(),
         vec![expected_digest.clone()],
     )
     .await?;

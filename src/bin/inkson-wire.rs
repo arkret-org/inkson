@@ -282,26 +282,42 @@ fn realm_genesis_seal(input: Value) -> Result<Value> {
     }
 
     let mut post_state = BTreeMap::new();
-    let mut post_causal_heads = arkret_state::CausalHeadsByCell::new();
     for (cell, ops) in ops_by_cell {
         let binding = registry
             .resolve(&input.realm_id, &cell)
             .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-        if binding.state_model == arkret_state::StateModelKind::CausalRegister {
-            let heads = arkret_state::causal_heads_for_batches(std::slice::from_ref(&ops));
-            if !heads.is_empty() {
-                post_causal_heads.insert(cell.clone(), heads);
-            }
-        }
         post_state.insert(
             cell.clone(),
             arkret_state::join_cell(binding.model.as_ref(), &cell, &ops),
         );
     }
+    let security_state = post_state
+        .into_iter()
+        .filter(|(cell, _)| {
+            registry
+                .resolve(&input.realm_id, cell)
+                .is_ok_and(|binding| binding.execution == arkret_sdk::EventCellExecution::Security)
+        })
+        .collect::<BTreeMap<_, _>>();
     let state_root = arkret_state::compute_state_root(
-        arkret_state::GovernanceView::new(&post_state, &post_causal_heads),
+        arkret_state::GovernanceView::new(&security_state),
         digest_suite,
     )?;
+    let command_effects = security_state
+        .iter()
+        .map(|(cell_id, state)| match state {
+            arkret_state::ResolvedCellState::Sequenced(state) => {
+                Ok(arkret_sdk::CommandResultEffect {
+                    cell_id: cell_id.clone(),
+                    state: arkret_sdk::CommandResultCellState {
+                        revision_event_id: state.revision_event_id.clone(),
+                        value: state.value.clone(),
+                    },
+                })
+            }
+            _ => anyhow::bail!("Seal state_root contains a non-sequenced cell"),
+        })
+        .collect::<Result<Vec<_>>>()?;
 
     let signer = arkret_signatures::Ed25519PayloadSigner::new(
         authority.signing_key,
@@ -318,27 +334,47 @@ fn realm_genesis_seal(input: Value) -> Result<Value> {
     delta.dedup();
     let covered = delta.iter().cloned().collect::<BTreeSet<_>>();
     let control_event_set_root = arkret_state::control_event_set_root(&covered, digest_suite)?;
-    let completeness_events = input
+    let configuration_ref = input
         .events
-        .iter()
-        .cloned()
-        .map(|event| (event, digest_suite))
-        .collect::<Vec<_>>();
-    let completeness_root = arkret_state::control_event_completeness_root(
-        &completeness_events,
-        &covered,
+        .first()
+        .context("Realm genesis Seal has no configuration Event")?
+        .event_id
+        .clone();
+    let command_event_digest = event_digests
+        .first()
+        .context("Realm genesis Seal has no command Event digest")?
+        .1
+        .clone();
+    let command_results = vec![arkret_sdk::SealCommandOutcome::committed(
+        command_event_digest,
+        delta.clone(),
+        command_effects,
         digest_suite,
-    )?;
-    let seal = arkret_sdk::Seal::sign_single_with_roots(
-        input.realm_id,
-        Vec::new(),
-        delta,
-        control_event_set_root,
-        completeness_root,
-        state_root,
-        hlc,
+    )?];
+    let covered_event_digests = delta.clone();
+    let seal = arkret_sdk::Seal::sign_with_signers(
+        arkret_sdk::UnsignedSeal {
+            realm_id: input.realm_id,
+            predecessor_ref: None,
+            delta,
+            control_event_set_root,
+            state_root,
+            notary_seq: 0,
+            availability_receipt_digests: Vec::new(),
+            covered_event_digests,
+            previous_state_root: None,
+            previous_digest_algorithm: None,
+            sealed_at: chrono::Utc::now(),
+            hlc,
+            configuration_ref,
+            command_results,
+            authorization_closures: Vec::new(),
+            existence_anchors: Vec::new(),
+            transaction_records: Vec::new(),
+        },
+        0,
         digest_suite,
-        &signer,
+        &[&signer],
     )?;
     seal.validate_id(digest_suite)?;
     seal.validate_structural()?;

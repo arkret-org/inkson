@@ -305,7 +305,7 @@ fn wire_envelope_from_intent(intent: inkson::operation::EventIntent) -> arkret_s
         if intent.seal_basis().is_none() {
             intent = intent.with_seal_basis(test_seal_basis());
         }
-    // DataEvent: the signed auth context carries verified authority references
+    // Ordinary Event: the signed auth context carries verified authority references
     // and forbids a Control Move `seal_basis` alongside it.
     } else if intent.kind().is_data_plane() {
         if intent.auth_context().is_none() {
@@ -340,12 +340,12 @@ fn cbs_exempt_reducer_kind(kind: &EventKind) -> bool {
         || arkret_policy::realm_bootstrap::is_realm_bootstrap_followup_kind(kind)
 }
 
-/// The key coordinates and verified authority decision a DataEvent pins.
+/// The key coordinates and verified authority decision an ordinary Event pins.
 fn test_auth_context() -> arkret_sdk::AuthContext {
     arkret_sdk::AuthContext {
         // `key_id` is the bare verification-method fragment with the `ak:`
         // sigil dropped (the schema pattern forbids both `#` and the typed-ID
-        // lexical space), which is what `data_event_key_id_for` produces from
+        // lexical space), which is what `ordinary_event_key_id_for` produces from
         // the active signer's device id.
         key_id: arkret_sdk::OpaqueLocalId::new("device").unwrap(),
         key_epoch: 0,

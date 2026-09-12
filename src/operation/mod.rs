@@ -167,9 +167,9 @@ pub fn set_authoring_station_id(station_id: Option<arkret_sdk::DidCoreId>) {
 /// components as a loose identity), it is never the Station of a remote
 /// subject (an inviter, invitee, grantee, holder, requester or contact), and
 /// it is not installed yet while first enrollment runs ahead of `describe`.
-/// `EventSubmitter::verify_origin_station` re-checks every authored Event
-/// against the captured authority, so a use outside these rules fails closed
-/// instead of authoring under another account.
+/// Event builders use this only to construct the stable local `AccountId`.
+/// Submission later needs the producer proof and cached authority evidence;
+/// it does not contact this Station or ask it to approve each Event.
 pub(crate) fn authoring_station_id() -> anyhow::Result<arkret_sdk::DidCoreId> {
     #[cfg(test)]
     if let Some(station_id) = TEST_AUTHORING_STATION_ID.with(|slot| slot.borrow().clone()) {
