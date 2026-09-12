@@ -42,6 +42,48 @@ pub(super) fn event(kind: &str) -> arkret_sdk::Event {
     event.into_event()
 }
 
+fn direct_producer(
+    event: &arkret_sdk::Event,
+    signer: &crate::event_signer::InksonEventSigner,
+) -> ContactProducerSigner {
+    let (method, key) = local_contact_producer(event, signer).unwrap();
+    ContactProducerSigner::direct(method, key).unwrap()
+}
+
+fn peer_request() -> (arkret_sdk::Event, ContactProducerSigner) {
+    let signer = crate::event_signer::build_ed25519_device_signer(
+        [18; 32],
+        "did:web:bob.example",
+        "ak:device:01964137-0000-7000-8000-0000000000b1",
+    );
+    let mut request = event(arkret_wire::event_kind_str::CONTACT_REQUESTED);
+    request.actor_id = crate::test_support::account_actor("did:web:bob.example");
+    request.payload.insert(
+        "peer".into(),
+        serde_json::to_value(ContactPeer::Human {
+            account_id: crate::test_support::authority("did:web:alice.example"),
+        })
+        .unwrap(),
+    );
+    request.proofs.clear();
+    let mut authored = arkret_sdk::AuthoredEvent::finalize_with_digest_suite(
+        request,
+        arkret_sdk::DigestSuite::Sha256,
+    )
+    .unwrap();
+    signer
+        .sign_sdk_event_with_context(
+            &mut authored,
+            crate::event_signer::ProducerProofContext::for_native_unit(
+                arkret_sdk::DigestSuite::Sha256,
+            ),
+        )
+        .unwrap();
+    let event = authored.into_event();
+    let producer = direct_producer(&event, &signer);
+    (event, producer)
+}
+
 pub(super) fn operation_id() -> ProtocolOperationId {
     ProtocolOperationId::new("ak:operation:contact.request.fixture").unwrap()
 }
@@ -62,10 +104,20 @@ fn accepted(event: &arkret_sdk::Event) -> ContactOperationOutcome {
         account_id: event.actor_id.as_account_id().unwrap().clone(),
     };
     let digest = arkret_sdk::Hash::new(format!("sha256:{}", "11".repeat(32))).unwrap();
+    let incoming = peer_request();
+    let is_request = event.kind.as_str() == arkret_wire::event_kind_str::CONTACT_REQUESTED;
     let request = RequestAcceptanceReceipt {
         core: RequestAcceptanceReceiptCore {
-            holder: holder.clone(),
-            peer: peer.clone(),
+            holder: if is_request {
+                holder.clone()
+            } else {
+                peer.clone()
+            },
+            peer: if is_request {
+                peer.clone()
+            } else {
+                holder.clone()
+            },
             slot_version: 1,
             slot_predecessor: None,
             previous_terminal_contact_round_id: None,
@@ -74,9 +126,13 @@ fn accepted(event: &arkret_sdk::Event) -> ContactOperationOutcome {
             {
                 event.event_id.clone()
             } else {
-                self::event(arkret_wire::event_kind_str::CONTACT_REQUESTED).event_id
+                incoming.0.event_id.clone()
             },
-            producer_signer: local_contact_producer(event, &local_signer()).unwrap(),
+            producer_signer: if is_request {
+                direct_producer(event, &local_signer())
+            } else {
+                incoming.1.clone()
+            },
             source_checkpoint: digest.clone(),
             accepted_at: signature().created_at,
             issuer_id: event.actor_id.as_account_id().unwrap().station_id.clone(),
@@ -91,7 +147,7 @@ fn accepted(event: &arkret_sdk::Event) -> ContactOperationOutcome {
         version: 2,
         predecessor_event_ref: None,
         event_ref: event.event_id.clone(),
-        producer_signer: local_contact_producer(event, &local_signer()).unwrap(),
+        producer_signer: direct_producer(event, &local_signer()),
         granted_to_peer_scopes: vec![ContactScope::DirectMessage],
         terminal: None,
         signature: signature(),
@@ -119,7 +175,7 @@ fn accepted(event: &arkret_sdk::Event) -> ContactOperationOutcome {
                 contact_round_id: digest.clone(),
                 request_receipt: request,
                 response_event_ref: event.event_id.clone(),
-                producer_signer: local_contact_producer(event, &local_signer()).unwrap(),
+                producer_signer: direct_producer(event, &local_signer()),
                 outgoing_slot_absence_digest: digest,
                 accepted_at: signature().created_at,
                 issuer_id: current_proof.issuer_id.clone(),
@@ -133,7 +189,7 @@ fn accepted(event: &arkret_sdk::Event) -> ContactOperationOutcome {
             reject_acceptance_receipt: RejectAcceptanceReceipt {
                 request_receipt: request,
                 reject_event_ref: event.event_id.clone(),
-                producer_signer: local_contact_producer(event, &local_signer()).unwrap(),
+                producer_signer: direct_producer(event, &local_signer()),
                 accepted_at: signature().created_at,
                 issuer_id: current_proof.issuer_id,
                 signature: signature(),
@@ -376,14 +432,20 @@ fn every_contact_result_binds_original_producer_method_and_local_key() {
                         &mut lineage.producer_signer
                     }
                 };
-                if method_mutation {
-                    descriptor.verification_method =
-                        arkret_sdk::DidUrl::new("did:web:alice.example#other-device").unwrap();
-                } else {
-                    descriptor.public_key_b64u =
+                *descriptor = ContactProducerSigner::direct(
+                    if method_mutation {
+                        arkret_sdk::DidUrl::new("did:web:alice.example#other-device").unwrap()
+                    } else {
+                        descriptor.verification_method().clone()
+                    },
+                    if method_mutation {
+                        descriptor.public_key_b64u().clone()
+                    } else {
                         arkret_sdk::Base64UrlString::new(other_key.public_key_base64url().unwrap())
-                            .unwrap();
-                }
+                            .unwrap()
+                    },
+                )
+                .unwrap();
                 assert!(
                     validate_contact_commit_outcome(
                         &changed,
@@ -419,7 +481,7 @@ fn nested_peer_request_keeps_its_own_producer_and_original_event_signature_is_re
     use base64::Engine;
 
     let event = event(arkret_wire::event_kind_str::CONTACT_ACCEPTED);
-    let descriptor = local_contact_producer(&event, &local_signer()).unwrap();
+    let descriptor = direct_producer(&event, &local_signer());
     let proof = &event.proofs[0];
     let signature = base64::engine::general_purpose::URL_SAFE_NO_PAD
         .decode(proof.jws.split('.').nth(2).unwrap())
@@ -442,12 +504,15 @@ fn nested_peer_request_keeps_its_own_producer_and_original_event_signature_is_re
             },
     } = &mut result
     {
-        normal_response_acceptance_receipt
+        let producer = &mut normal_response_acceptance_receipt
             .request_receipt
             .core
-            .producer_signer
-            .verification_method =
-            arkret_sdk::DidUrl::new("did:web:bob.example#peer-device").unwrap();
+            .producer_signer;
+        *producer = ContactProducerSigner::direct(
+            arkret_sdk::DidUrl::new("did:web:bob.example#peer-device").unwrap(),
+            producer.public_key_b64u().clone(),
+        )
+        .unwrap();
     }
     validate_contact_commit_outcome(&result, &event, &operation_id(), &local_signer()).unwrap();
     if let ContactOperationOutcome::Accepted {
