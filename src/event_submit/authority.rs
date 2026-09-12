@@ -74,25 +74,18 @@ pub(super) fn realm_authority_root_claim(
     }
 }
 
-/// CBS plane through which the registered event contract routes this intent.
+/// Execution lane selected by the intent's actual registered writes.
 pub(super) fn cbs_effect_plane_for_intent(
-    kind: &arkret_sdk::events::kinds::EventKind,
+    intent: &EventIntent,
 ) -> anyhow::Result<Option<CbsEffectPlane>> {
-    let plane = kind.cbs_plane();
-    if kind.is_reducer_input() && plane.is_none() {
-        anyhow::bail!(
-            "reducer-input kind {} declares no known CBS plane",
-            kind.as_str()
-        );
-    }
-    Ok(plane)
+    arkret_sdk::classify_intent_execution(intent).map_err(anyhow::Error::from)
 }
 
-/// Prove the authored event's projected cells all sit on its declared plane.
+/// Check the projection's aggregate lane, retaining atomic mixed D/S commands.
 pub(super) fn validate_projected_cbs_plane(
     event: &arkret_sdk::AuthoredEvent,
 ) -> anyhow::Result<()> {
-    let Some(plane) = cbs_effect_plane_for_intent(&event.kind)? else {
+    let Some(plane) = arkret_schema::classify_event_execution(event.event())? else {
         return Ok(());
     };
     let digest_suite = event.digest_suite();
@@ -101,6 +94,7 @@ pub(super) fn validate_projected_cbs_plane(
     // The schema projector still requires an explicit resolver so that a
     // future grant-ref dependency cannot silently acquire invented ancestry;
     // an empty resolver derives direct roots and fails closed for grant refs.
+    let mut projected_plane = None;
     for write in arkret_sdk::schema::project_registered_cell_writes_with_authority_resolver(
         event,
         digest_suite,
@@ -116,12 +110,15 @@ pub(super) fn validate_projected_cbs_plane(
                 cell.component()
             )
         })?;
-        if cell_plane != plane {
-            anyhow::bail!(
-                "event {} projects a {cell_plane:?} cell on the {plane:?} plane",
-                event.event_id
-            );
+        if projected_plane.is_none() || cell_plane == CbsEffectPlane::Control {
+            projected_plane = Some(cell_plane);
         }
+    }
+    if projected_plane != Some(plane) {
+        anyhow::bail!(
+            "event {} projects {projected_plane:?} writes but declares {plane:?} execution",
+            event.event_id
+        );
     }
     Ok(())
 }

@@ -2554,7 +2554,8 @@ impl EventSubmitter {
                 }
                 Err(error) => return Err(error),
             };
-        if intent.kind().is_control_plane() && intent.kind() != &arkret_sdk::EventKind::RealmCreate
+        if cbs_effect_plane_for_intent(&intent)? == Some(CbsEffectPlane::Control)
+            && intent.kind() != &arkret_sdk::EventKind::RealmCreate
         {
             let realm_id = intent.realm_id_opt().ok_or_else(|| {
                 anyhow::anyhow!(
@@ -3101,7 +3102,7 @@ impl EventSubmitter {
         authoring: SemanticAuthoring,
         digest_suite: arkret_sdk::DigestSuite,
     ) -> anyhow::Result<AuthoredAttempt> {
-        if intent.kind().is_control_plane()
+        if cbs_effect_plane_for_intent(intent)? == Some(CbsEffectPlane::Control)
             && let Some(realm_id) = intent.realm_id_opt()
         {
             self.ensure_realm_detail_current(realm_id.as_str())?;
@@ -3256,17 +3257,16 @@ impl EventSubmitter {
         {
             return Ok(intent);
         }
-        cbs_effect_plane_for_intent(intent.kind())?;
-        if !intent.kind().is_control_plane() && !intent.kind().is_data_plane() {
+        let Some(plane) = cbs_effect_plane_for_intent(&intent)? else {
             return Ok(intent);
-        }
+        };
         let realm_id = intent.realm_id_opt().cloned().ok_or_else(|| {
             anyhow::anyhow!(
                 "{} needs a CBS basis but carries no Realm scope",
                 intent.kind().as_str()
             )
         })?;
-        let intent = if intent.kind().is_control_plane() {
+        let intent = if plane == CbsEffectPlane::Control {
             let seal_view = self.seals_frontier_realm_view(realm_id.as_str()).await?;
             intent.with_seal_basis(seal_view.seal_basis())
         } else {
@@ -3423,7 +3423,7 @@ impl EventSubmitter {
             }
             return intent;
         }
-        if intent.kind().is_data_plane() {
+        if cbs_effect_plane_for_intent(&intent).ok().flatten() != Some(CbsEffectPlane::Control) {
             return intent;
         }
         let authority = match self.realm_create_authority(realm_id.as_str()).await {
@@ -3594,7 +3594,9 @@ impl EventSubmitter {
         // shapes (distinguished by JSON shape), so it is sent
         // unconditionally — no capability negotiation exists in the spec.
         for sdk_event in sdk_events {
-            if sdk_event.kind.is_control_plane() {
+            if arkret_schema::classify_event_execution(sdk_event.event())?
+                == Some(CbsEffectPlane::Control)
+            {
                 self.ensure_realm_detail_current(sdk_event.realm_id.as_str())?;
             }
             validate_signed_sdk_event_for_submit(sdk_event.event(), sdk_event.digest_suite())?;

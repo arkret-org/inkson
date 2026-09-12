@@ -1562,6 +1562,128 @@ async fn realm_bootstrap_preparation_requires_verified_producer_evidence() {
 }
 
 #[tokio::test]
+async fn space_update_metadata_authoring_skips_seal_refresh_but_policy_requires_it() {
+    let mut source = sdk_event_without_proof("did:web:alice.example");
+    source.kind = arkret_sdk::EventKind::SpaceUpdate;
+    source.payload = serde_json::from_value(json!({
+        "space_id": "ak:space:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
+        "patch": {"title": {"$op": "set", "value": "Renamed"}}
+    }))
+    .unwrap();
+    source.auth_context = Some(arkret_sdk::AuthContext {
+        key_id: arkret_sdk::OpaqueLocalId::new("device").unwrap(),
+        key_epoch: 0,
+        credential_epoch: None,
+        authority_refs: vec![
+            arkret_sdk::SealId::new(format!("ak:seal:sha256:{}", "11".repeat(32))).unwrap(),
+        ],
+    });
+    let http = arkret_sdk::http_client::Client::builder("http://127.0.0.1:9/".parse().unwrap())
+        .allow_insecure_localhost()
+        .build()
+        .unwrap();
+    let submitter =
+        EventSubmitter::new(http).with_authority(source.actor_id.as_account_id().unwrap().clone());
+    let ordinary = EventIntent::from_authored(&source);
+    assert_eq!(
+        cbs_effect_plane_for_intent(&ordinary).unwrap(),
+        Some(CbsEffectPlane::Data)
+    );
+    assert_eq!(
+        arkret_schema::classify_event_execution(&source).unwrap(),
+        Some(CbsEffectPlane::Data)
+    );
+    let mut authored = crate::operation::author_intent_for_test(ordinary.clone());
+    validate_projected_cbs_plane(&authored).unwrap();
+    // This exercises wrapper routing and structural proof binding; signature
+    // cryptography is checked at the separate producer verification boundary.
+    authored.attach_proof(arkret_sdk::ProducerEventProof {
+        kind: arkret_sdk::proof_kind::DETACHED_JWS.to_owned(),
+        verification_method: arkret_sdk::DidUrl::new("did:web:alice.example#device").unwrap(),
+        event_digest: arkret_sdk::Hash::new(
+            authored
+                .event()
+                .event_digest_with_digest_suite(arkret_sdk::DigestSuite::Sha256)
+                .unwrap(),
+        )
+        .unwrap(),
+        signer_resolution_evidence_ref: Some(
+            arkret_sdk::SignerEvidenceRef::new(format!(
+                "ak:signer_evidence:sha256:{}",
+                "22".repeat(32)
+            ))
+            .unwrap(),
+        ),
+        created_at: authored.created_at,
+        domain: None,
+        audience: None,
+        proof_purpose: None,
+        jws: "fixture..signature".to_owned(),
+    });
+    let submission = crate::authorization_lease::standard_initial_submission(
+        &submitter.http,
+        authored.event(),
+        arkret_sdk::DigestSuite::Sha256,
+        None,
+    )
+    .await
+    .expect("metadata-only SpaceUpdate must not query proposal authority");
+    assert!(submission.control_proposal_ack.is_none());
+    assert!(submission.authorization_lease.is_none());
+    let error = submitter
+        .author_intent(
+            &ordinary,
+            "metadata-update",
+            SemanticAuthoring::Fresh,
+            arkret_sdk::DigestSuite::Sha256,
+        )
+        .await
+        .err()
+        .expect("the receiver's actor frontier is unavailable");
+    assert!(
+        format!("{error:#}").contains("refresh actor frontier"),
+        "{error:#}"
+    );
+
+    source.auth_context = None;
+    let error = submitter
+        .stamp_cbs_basis_for_intent(EventIntent::from_authored(&source))
+        .await
+        .err()
+        .expect("ordinary authority evidence must already be retained locally");
+    assert!(
+        format!("{error:#}").contains("verified local authority store"),
+        "{error:#}"
+    );
+
+    source.payload.insert(
+        "child_scope_policy".to_owned(),
+        json!({"kind": "allow_any"}),
+    );
+    let control = EventIntent::from_authored(&source);
+    assert_eq!(
+        cbs_effect_plane_for_intent(&control).unwrap(),
+        Some(CbsEffectPlane::Control)
+    );
+    let pinned_control = control.clone().with_seal_basis(arkret_sdk::SealBasis {
+        leaves: vec![
+            arkret_sdk::SealId::new(format!("ak:seal:sha256:{}", "11".repeat(32))).unwrap(),
+        ],
+    });
+    validate_projected_cbs_plane(&crate::operation::author_intent_for_test(pinned_control))
+        .unwrap();
+    let error = submitter
+        .stamp_cbs_basis_for_intent(control)
+        .await
+        .err()
+        .expect("a safety write queries its current Seal basis");
+    assert!(
+        !format!("{error:#}").contains("verified local authority store"),
+        "{error:#}"
+    );
+}
+
+#[tokio::test]
 async fn ordinary_event_preparation_queries_receiver_frontier_without_describe() {
     crate::operation::set_authoring_station_id(Some(
         arkret_sdk::DidCoreId::new("ak:did_core:web:principal.example").unwrap(),

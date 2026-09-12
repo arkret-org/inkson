@@ -344,7 +344,8 @@ pub async fn standard_initial_submission(
     let mut submission = arkret_wire::EventInitialSubmission::online(event.clone());
     submission.mls_frontier_leaves = mls_frontier_leaves.map(<[_]>::to_vec);
     let managed_genesis = is_agent_pcr_genesis(event);
-    if event.kind.is_control_plane() {
+    if arkret_schema::classify_event_execution(event)? == Some(arkret_sdk::CbsEffectPlane::Control)
+    {
         let authority_ack = match resolve_proposal_authority_route(http, event).await? {
             ProposalAuthorityRoute::AuthorityAuthoredSelfPrincipal => None,
             ProposalAuthorityRoute::LocalPrincipal(local) => {
@@ -412,7 +413,8 @@ pub async fn delayed_initial_submission(
 ) -> anyhow::Result<arkret_wire::EventInitialSubmission> {
     let mut submission = initial_submission(event)?;
     let managed_genesis = is_agent_pcr_genesis(event);
-    if event.kind.is_control_plane() {
+    if arkret_schema::classify_event_execution(event)? == Some(arkret_sdk::CbsEffectPlane::Control)
+    {
         let authority_ack = match resolve_proposal_authority_route(http, event).await? {
             ProposalAuthorityRoute::AuthorityAuthoredSelfPrincipal => None,
             ProposalAuthorityRoute::LocalPrincipal(local) => {
