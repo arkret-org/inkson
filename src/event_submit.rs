@@ -638,7 +638,64 @@ pub(crate) async fn require_server_sealed_event(
             event.event_id
         );
     }
+    require_server_committed_unit(
+        http,
+        &event.realm_id,
+        &event.event_id,
+        outcome.accepted_seal_id.as_ref().expect("checked above"),
+    )
+    .await?;
     Ok(digest_suite)
+}
+
+/// Inspect the exact terminal unit reported by the authenticated Station.
+/// A sealed rejection is final but must never install a staged success.
+pub(crate) async fn require_server_committed_unit(
+    http: &arkret_sdk::http_client::Client,
+    realm_id: &arkret_sdk::RealmId,
+    event_id: &arkret_sdk::EventId,
+    seal_id: &arkret_sdk::SealId,
+) -> anyhow::Result<()> {
+    let seals = http
+        .seals_resolve(&arkret_sdk::SelfSealResolveRequestBody {
+            realm_id: realm_id.clone(),
+            selection: arkret_sdk::SealResolveSelection::SealRefs {
+                seal_refs: vec![seal_id.clone()],
+            },
+            history_traversal_access: None,
+        })
+        .await?
+        .into_seals()?;
+    anyhow::ensure!(
+        seals.len() == 1 && seals[0].id == *seal_id && seals[0].realm_id == *realm_id,
+        "terminal command Seal did not resolve exactly"
+    );
+    let seal = &seals[0];
+    seal.validate_structural()?;
+    seal.validate_id(seal.id.digest_suite_code().digest_suite())?;
+    require_committed_unit_result(&seal.command_results, &event_id.event_digest())
+}
+
+fn require_committed_unit_result(
+    results: &[arkret_sdk::SealCommandOutcome],
+    event_digest: &arkret_sdk::Hash,
+) -> anyhow::Result<()> {
+    let mut matching = results
+        .iter()
+        .filter(|result| result.unit_event_digests.contains(event_digest));
+    let result = matching
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("terminal Seal omits the requested command unit"))?;
+    anyhow::ensure!(
+        matching.next().is_none(),
+        "terminal Seal repeats a command unit member"
+    );
+    anyhow::ensure!(
+        result.outcome == arkret_sdk::CommandOutcome::Committed,
+        "terminal command unit was rejected: {:?}",
+        result.reason_code
+    );
+    Ok(())
 }
 
 /// Compare a producer-authored Event with its accepted projection.

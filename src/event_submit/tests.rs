@@ -3,6 +3,31 @@ use serde_json::json;
 use super::*;
 
 #[test]
+fn sealed_command_requires_its_exact_unit_to_be_committed() {
+    let first = arkret_sdk::Hash::new(format!("sha256:{}", "11".repeat(32))).unwrap();
+    let member = arkret_sdk::Hash::new(format!("sha256:{}", "22".repeat(32))).unwrap();
+    let absent = arkret_sdk::Hash::new(format!("sha256:{}", "33".repeat(32))).unwrap();
+    let committed = arkret_sdk::SealCommandOutcome::committed(
+        first.clone(),
+        vec![first.clone(), member.clone()],
+        vec![],
+        arkret_sdk::DigestSuite::Sha256,
+    )
+    .unwrap();
+    assert!(require_committed_unit_result(std::slice::from_ref(&committed), &member).is_ok());
+    assert!(require_committed_unit_result(std::slice::from_ref(&committed), &absent).is_err());
+    assert!(require_committed_unit_result(&[committed.clone(), committed], &member).is_err());
+    let rejected = arkret_sdk::SealCommandOutcome::rejected(
+        first.clone(),
+        vec![first, member.clone()],
+        arkret_sdk::ReasonCode::ActorSignatureRevoked,
+        arkret_sdk::DigestSuite::Sha256,
+    )
+    .unwrap();
+    assert!(require_committed_unit_result(&[rejected], &member).is_err());
+}
+
+#[test]
 fn recovery_gate_cache_key_normalizes_full_and_core_principal_ids() {
     let device_id = "ak:device:01964137-0000-7000-8000-0000000000a1";
     assert_eq!(

@@ -106,6 +106,13 @@ pub(crate) async fn install_resolved_message_context(
                     && decision.accepted_seal_id.is_some(),
                 "Direct Conversation endorsement is not sealed"
             );
+            crate::event_submit::require_server_committed_unit(
+                http,
+                &realm,
+                &reference,
+                decision.accepted_seal_id.as_ref().expect("checked above"),
+            )
+            .await?;
             (reference, group_state_ref.clone())
         }
         _ => return Ok(()),
