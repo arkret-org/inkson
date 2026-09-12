@@ -327,11 +327,14 @@ fn member_handle_cache_records_fresh_negative_lookup() {
 #[test]
 fn witness_attestations_are_built_from_the_sdk_witness_projection() {
     // `realm-state-snapshot-schema.md` section 3: items are reducer cells, never rendered
-    // objects. The Realm genesis log is an ordered_log cell every Realm writes.
+    // objects. The Realm genesis log is a sequenced security cell.
     let items = vec![
-        arkret_sdk::RealmStateSnapshotMaterializedItem::value(
+        arkret_sdk::RealmStateSnapshotMaterializedItem::new(
             arkret_sdk::CellRef::new("ak:cell:ak.component.realm.create.v1:null").unwrap(),
-            json!([]),
+            arkret_sdk::CanonicalCellState::SequencedState(arkret_sdk::CanonicalSequencedState {
+                revision_event_id: snapshot_event_id("genesis"),
+                value: json!([]),
+            }),
         )
         .unwrap(),
     ];

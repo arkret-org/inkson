@@ -122,11 +122,21 @@ pub(super) fn realm_state_snapshot_manifest_for_items(
         arkret_sdk::RealmId::new("ak:realm:AZEvldDJcWI9IRHqP2BMibDDfc59Ax_LwrbsrQmeD6Ml").unwrap();
     let service_id = crate::mls_api_helpers::principal_core_id("did:web:server.example").unwrap();
     let state_digest = arkret_sdk::state_digest_from_items(&items).unwrap();
+    let eligibility_context = arkret_sdk::SnapshotEligibilityContext {
+        authority_refs: Vec::new(),
+        closure_command_refs: Vec::new(),
+        reducer_contract_digest: snapshot_hash(7),
+    };
     let built = arkret_sdk::build_realm_state_snapshot_chunks(
         &realm_state_snapshot_id,
         arkret_sdk::CORE_REDUCER_PROFILE,
         items,
         4096,
+        arkret_sdk::SnapshotReplayEvidence {
+            eligibility_context: eligibility_context.clone(),
+            replay_events: Vec::new(),
+            replay_authority_refs: Vec::new(),
+        },
     )
     .unwrap();
     let chunk_payloads = built
@@ -139,6 +149,7 @@ pub(super) fn realm_state_snapshot_manifest_for_items(
         .collect::<Vec<_>>();
     let created_at = Utc::now();
     let mut manifest = arkret_sdk::RealmStateSnapshotManifest {
+        eligibility_context,
         id: realm_state_snapshot_id,
         realm_id,
         reducer_profile: arkret_sdk::CORE_REDUCER_PROFILE.to_owned(),
