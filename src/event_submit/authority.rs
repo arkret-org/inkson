@@ -123,58 +123,17 @@ pub(super) fn validate_projected_cbs_plane(
     Ok(())
 }
 
-/// Build the signer/key-epoch context pinned by an ordinary Event.
+/// Freeze the authority references for an ordinary Event after checking the local signer identity.
 pub(super) fn ordinary_event_auth_context(
     intent: &EventIntent,
     authority_refs: Vec<arkret_sdk::SealId>,
 ) -> anyhow::Result<arkret_sdk::AuthContext> {
     let actor_id = intent.executed_by().unwrap_or_else(|| intent.actor_id());
     let signer = crate::event_signer::active_signer()
-        .ok_or_else(|| anyhow::anyhow!("active signer is required for AuthContext"))?;
+        .ok_or_else(|| anyhow::anyhow!("active signer is required for ordinary Event authoring"))?;
     let did = arkret_sdk::Did::new(signer.signer_did().to_owned())?;
     if arkret_sdk::project_did_to_core_id(&did)? != *actor_id.signing_principal_id() {
-        anyhow::bail!("active signer did does not project to AuthContext actor");
+        anyhow::bail!("active signer did does not project to the Event signing principal");
     }
-    Ok(arkret_sdk::AuthContext {
-        key_id: ordinary_event_key_id_for(intent),
-        key_epoch: 0,
-        credential_epoch: None,
-        authority_refs,
-    })
-}
-
-fn ordinary_event_key_id_for(intent: &EventIntent) -> arkret_sdk::OpaqueLocalId {
-    let controller = intent
-        .executed_by()
-        .map(|actor| actor.signing_principal_id().as_str())
-        .unwrap_or_else(|| intent.actor_id().signing_principal_id().as_str());
-    let Some(signer) = crate::event_signer::active_signer() else {
-        return fallback_key_id();
-    };
-    if let Some(device_id) = signer.device_id() {
-        return opaque_key_id(device_id);
-    }
-    let method = signer.verification_method();
-    let method_without_query = method
-        .split_once('?')
-        .map(|(head, _)| head)
-        .unwrap_or(method);
-    let Some((method_controller, fragment)) = method_without_query.split_once('#') else {
-        return fallback_key_id();
-    };
-    if method_controller == controller && !fragment.is_empty() {
-        opaque_key_id(fragment)
-    } else {
-        fallback_key_id()
-    }
-}
-
-fn opaque_key_id(value: &str) -> arkret_sdk::OpaqueLocalId {
-    arkret_sdk::OpaqueLocalId::new(value.strip_prefix("ak:").unwrap_or(value))
-        .unwrap_or_else(|_| fallback_key_id())
-}
-
-#[allow(clippy::expect_used)]
-fn fallback_key_id() -> arkret_sdk::OpaqueLocalId {
-    arkret_sdk::OpaqueLocalId::new("device").expect("device is a valid opaque local id")
+    Ok(arkret_sdk::AuthContext { authority_refs })
 }

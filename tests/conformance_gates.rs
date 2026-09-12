@@ -343,13 +343,6 @@ fn cbs_exempt_reducer_kind(kind: &EventKind) -> bool {
 /// The key coordinates and verified authority decision an ordinary Event pins.
 fn test_auth_context() -> arkret_sdk::AuthContext {
     arkret_sdk::AuthContext {
-        // `key_id` is the bare verification-method fragment with the `ak:`
-        // sigil dropped (the schema pattern forbids both `#` and the typed-ID
-        // lexical space), which is what `ordinary_event_key_id_for` produces from
-        // the active signer's device id.
-        key_id: arkret_sdk::OpaqueLocalId::new("device").unwrap(),
-        key_epoch: 0,
-        credential_epoch: None,
         authority_refs: vec![
             arkret_sdk::SealId::new(TEST_ANCHOR_REF.to_owned())
                 .expect("test authority ref is canonical"),

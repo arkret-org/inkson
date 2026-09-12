@@ -1269,9 +1269,6 @@ mod tests {
 
         let mut target = event();
         target.auth_context = Some(arkret_sdk::AuthContext {
-            key_id: arkret_sdk::OpaqueLocalId::new("device").unwrap(),
-            key_epoch: 0,
-            credential_epoch: None,
             authority_refs: vec![second_basis],
         });
         let selected = lease_for_event(&target, now).unwrap();

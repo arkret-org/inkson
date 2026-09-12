@@ -1020,9 +1020,6 @@ fn stamped_intent_round_trips_through_authoring_without_semantic_drift() {
             "ak:event:AdymfEYKFegRsXpyi5Or3ormR7igvbwtXIp8HyMfOvWE",
         )])
         .with_auth_context(arkret_sdk::AuthContext {
-            key_id: arkret_sdk::OpaqueLocalId::new("device").unwrap(),
-            key_epoch: 0,
-            credential_epoch: None,
             authority_refs: vec![arkret_sdk::SealId::new(
                 "ak:seal:sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
                     .to_owned(),
@@ -1577,9 +1574,6 @@ async fn space_update_metadata_authoring_skips_seal_refresh_but_policy_requires_
     }))
     .unwrap();
     source.auth_context = Some(arkret_sdk::AuthContext {
-        key_id: arkret_sdk::OpaqueLocalId::new("device").unwrap(),
-        key_epoch: 0,
-        credential_epoch: None,
         authority_refs: vec![
             arkret_sdk::SealId::new(format!("ak:seal:sha256:{}", "11".repeat(32))).unwrap(),
         ],
