@@ -30,6 +30,12 @@ pub fn build_oidc_authorize_scaffold(
     entry_point: &OidcEntryPoint,
     ui_locale: &str,
 ) -> anyhow::Result<OidcScaffoldBundle> {
+    if let Some(issuer) = &method.issuer_uri {
+        anyhow::ensure!(
+            issuer == &discovery.issuer,
+            "OIDC discovery issuer differs from the selected Station authentication method"
+        );
+    }
     let client_id = method
         .client_id
         .as_deref()
@@ -143,6 +149,7 @@ fn build_standard_authorize_url(
 /// routing needed for either a returning-device session grant or an account
 /// handoff.
 pub fn build_persisted_oidc_scaffold(
+    station_binding: &arkret_sdk::StationConnectionBinding,
     bundle: &OidcScaffoldBundle,
     gate_account_base_url: &str,
     station_url: &str,
@@ -153,6 +160,7 @@ pub fn build_persisted_oidc_scaffold(
     expected_device_id: Option<&arkret_sdk::DeviceId>,
 ) -> PersistedOidcScaffold {
     PersistedOidcScaffold {
+        station_binding: station_binding.clone(),
         expected_state: bundle.state.clone(),
         expected_nonce: bundle.nonce.clone(),
         code_verifier: bundle.code_verifier.clone(),

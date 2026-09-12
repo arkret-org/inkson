@@ -214,6 +214,22 @@ fn test_oidc_method() -> arkret_sdk::AuthMethod {
     }
 }
 
+#[test]
+fn authorize_scaffold_rejects_replaced_issuer() {
+    let mut discovery = test_discovery();
+    discovery.issuer = "https://other-issuer.example".into();
+    let error = build_oidc_authorize_scaffold(
+        &discovery,
+        &test_oidc_method(),
+        "https://app.example/auth/callback",
+        "ak:did_core:web:station.example",
+        &OidcEntryPoint::SignIn,
+        "en",
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("discovery issuer differs"));
+}
+
 /// State and nonce tokens MUST diverge across calls (RFC 6749 §10.12 /
 /// RFC 7636 unguessability).
 #[test]
@@ -260,6 +276,12 @@ fn persisted_scaffold_carries_returning_account_candidate() {
     let expected = arkret_sdk::Did::new("did:webvh:z6mkfixture:alice.example".to_owned()).unwrap();
 
     let scaffold = build_persisted_oidc_scaffold(
+        &arkret_sdk::StationConnectionBinding {
+            service_id: principal_description().service_id,
+            base_url: "https://principal.example/".into(),
+            trust_domain: principal_description().trust_domain,
+            auth_metadata: principal_description().auth_metadata,
+        },
         &bundle,
         "https://auth.example/_arkret/gate/account",
         "https://principal.example",
@@ -452,15 +474,14 @@ fn resolve_gate_account_base_url_prefers_account_authority() {
 }
 
 #[test]
-fn resolve_gate_account_base_url_derives_from_account_authority_origin() {
+fn resolve_gate_account_base_url_rejects_missing_published_base() {
     let mut metadata = arkret_sdk::AuthMetadata::minimal();
     metadata.account_authority = Some(arkret_sdk::AccountAuthority {
         origin: arkret_sdk::WebOrigin::new("https://aa.example").unwrap(),
         gate_account_base_url: String::new(),
         extra: Default::default(),
     });
-    let base = resolve_gate_account_base_url("https://principal.example", &metadata).unwrap();
-    assert_eq!(base, "https://aa.example/_arkret/gate/account");
+    assert!(resolve_gate_account_base_url("https://principal.example", &metadata).is_err());
 }
 
 #[test]

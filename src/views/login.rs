@@ -88,6 +88,8 @@ pub fn LoginPanel(
     };
     let mut callback_started = use_signal(|| false);
     let mut callback_retry_url = use_signal(|| Option::<String>::None);
+    let mut connection_change =
+        use_signal(|| Option::<crate::station_connection::ConnectionTrustChange>::None);
     let mut state_store_write = state_store;
     // Whether the styled Station preset list is expanded. Inkson is a
     // neutral client: the field is a free-text URL input that the user can edit
@@ -498,6 +500,78 @@ pub fn LoginPanel(
 
                 if !auth_status().is_empty() {
                     div { class: "auth-status", "data-testid": "auth-status", role: "status", "{auth_status}" }
+                }
+                if !auto_capture_callback && auth_status().contains("Station identity or authentication changed") {
+                    Button {
+                        variant: ButtonVariant::Ghost,
+                        disabled: is_busy(),
+                        onclick: move |_| {
+                            is_busy.set(true);
+                            let selected = base_url();
+                            spawn(async move {
+                                match crate::station_connection::discover(&selected).await {
+                                    Err(error) => {
+                                        if let Some(change) = error.downcast_ref::<crate::station_connection::ConnectionTrustChange>() {
+                                            connection_change.set(Some(change.clone()));
+                                        } else { auth_status.set(error.to_string()); }
+                                    }
+                                    Ok(_) => auth_status.set("The server connection still matches the saved identity.".into()),
+                                }
+                                is_busy.set(false);
+                            });
+                        },
+                        "Review changed server"
+                    }
+                }
+                if let Some(change) = connection_change() {
+                    div { class: "auth-status", role: "alert",
+                        p { "This server's identity or sign-in provider changed. Continue only if you intended this change. A new sign-in is required." }
+                        p { "Server: {change.candidate.base_url}" }
+                        p { "Previous identity: {change.previous.service_id}" }
+                        p { "New identity: {change.candidate.service_id}" }
+                        p { "Previous trust domain: {change.previous.trust_domain}" }
+                        p { "New trust domain: {change.candidate.trust_domain}" }
+                        pre { "{crate::station_connection::authentication_summary(&change.previous)}" }
+                        pre { "{crate::station_connection::authentication_summary(&change.candidate)}" }
+                        Button {
+                            variant: ButtonVariant::Ghost,
+                            disabled: is_busy(),
+                            onclick: move |_| connection_change.set(None),
+                            "Keep previous connection"
+                        }
+                        Button {
+                            variant: ButtonVariant::Primary,
+                            disabled: is_busy() || !same_server_url(&base_url(), &change.candidate.base_url),
+                            onclick: {
+                                let session = session.clone();
+                                move |_| {
+                                    let change = change.clone();
+                                    let session = session.clone();
+                                    is_busy.set(true);
+                                    spawn(async move {
+                                        if let Err(error) = crate::station_connection::clear_pending_authentication(
+                                            &mut state_store_write.write(), &change.previous.base_url,
+                                        ) {
+                                            auth_status.set(error.to_string());
+                                            is_busy.set(false);
+                                            return;
+                                        }
+                                        match crate::station_connection::confirm_change(&change).await {
+                                            Ok(()) => {
+                                                session.invalidate("Station connection changed; sign in again");
+                                                callback_retry_url.set(None);
+                                                connection_change.set(None);
+                                                auth_status.set("New connection accepted. Start a new sign-in.".into());
+                                            }
+                                            Err(error) => auth_status.set(error.to_string()),
+                                        }
+                                        is_busy.set(false);
+                                    });
+                                }
+                            },
+                            "Trust this connection and sign in again"
+                        }
+                    }
                 }
                 if let Some(resume_url) = callback_retry_url() {
                     a { href: "{resume_url}", "data-testid": "retry-session-verification", "Retry verification" }

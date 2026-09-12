@@ -3,14 +3,12 @@ use std::collections::HashMap;
 
 use url::Url;
 
-use super::util::principal_audience;
-use crate::config::validate_server_url;
 use crate::transport::TransportClient;
 
 thread_local! {
     /// Process-wide cache of resolved account authorities, keyed by principal
     /// server URL. The `/_arkret/describe` `auth_metadata` this is derived from
-    /// is deployment-stable, so ONE probe per server connection suffices.
+    /// is pinned durably before entering this connection-local cache.
     /// Without it, every session-grant rotation rebuilds a fresh `TransportClient`
     /// and re-fetches describe (the per-instance `describe_cached` OnceCell is
     /// useless across instances), so any upstream refresh loop becomes a
@@ -91,12 +89,6 @@ impl AuthorityResolver {
         {
             return Ok(cached);
         }
-        // DIAG (describe-storm): only reached on a cache MISS, so if `describe`
-        // keeps hitting the network from the coauth/session-refresh path this
-        // fires repeatedly. A steady stream here means an upstream refresh loop;
-        // silence here means describe is coming from another caller. Remove once
-        // the driver is fixed.
-        tracing::warn!(target: "recovery_diag", server = %key, "authority discover cache-miss -> real describe");
         let principal = TransportClient::unauthenticated(station_url)?;
         let description = principal.describe().await?;
         let resolver = Self::from_description(station_url, &description)?;
@@ -110,14 +102,7 @@ impl AuthorityResolver {
     ) -> anyhow::Result<Self> {
         let metadata = &description.auth_metadata;
         let gate_account_base_url = resolve_gate_account_base_url(station_url, metadata)?;
-        let principal_audience = {
-            let service_id = description.service_id.as_str().trim();
-            if service_id.is_empty() {
-                principal_audience(station_url)?
-            } else {
-                service_id.to_owned()
-            }
-        };
+        let principal_audience = description.service_id.to_string();
         Ok(Self {
             gate_account_base_url,
             principal_audience,
@@ -141,30 +126,20 @@ impl AuthorityResolver {
 
 /// Derive the single client-visible `gate_account_base_url` from `auth_metadata`.
 ///
-/// `account_authority.gate_account_base_url` is canonical. When the authority
-/// publishes only `origin`, derive `{origin}/_arkret/gate/account`.
+/// The published base is mandatory; the origin is not a fallback route.
 pub(crate) fn resolve_gate_account_base_url(
     _station_url: &str,
     metadata: &arkret_sdk::AuthMetadata,
 ) -> anyhow::Result<String> {
-    if let Some(authority) = metadata.account_authority.as_ref() {
-        let base = authority.gate_account_base_url.trim();
-        if !base.is_empty() {
-            return Ok(normalize_gate_account_base_url(base));
-        }
-        let origin = authority.origin.as_str();
-        if !origin.is_empty() {
-            return gate_account_base_url_from_origin(origin);
-        }
-    }
-    anyhow::bail!("Station describe is missing auth_metadata.account_authority")
-}
-
-fn gate_account_base_url_from_origin(origin: &str) -> anyhow::Result<String> {
-    let url = validate_server_url(origin)?;
-    let base = url.join("_arkret/gate/account").map_err(|error| {
-        anyhow::anyhow!("invalid gate account base from origin {origin}: {error}")
+    let authority = metadata.account_authority.as_ref().ok_or_else(|| {
+        anyhow::anyhow!("Station describe is missing auth_metadata.account_authority")
     })?;
+    let base = Url::parse(&authority.gate_account_base_url)?;
+    arkret_sdk::validate_connection_url(&base, true)?;
+    anyhow::ensure!(
+        base.origin().ascii_serialization() == authority.origin.as_str(),
+        "Account Authority origin differs from its published base"
+    );
     Ok(normalize_gate_account_base_url(base.as_str()))
 }
 

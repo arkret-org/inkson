@@ -3,9 +3,7 @@ use tokio::sync::OnceCell;
 pub(crate) async fn fetch_service_describe(
     http: &arkret_sdk::http_client::Client,
 ) -> anyhow::Result<crate::models::ServiceDescribe> {
-    http.describe()
-        .await
-        .map_err(|error| anyhow::Error::new(error).context("server describe"))
+    crate::station_connection::discover(http.base_url().as_str()).await
 }
 
 pub(crate) async fn cached_service_describe<'a>(
