@@ -41,6 +41,16 @@ pub(crate) fn begin_query(
     }
     Ok(sequence)
 }
+pub(crate) fn invalidate_query(
+    account: &arkret_sdk::AccountId,
+    peer: &arkret_sdk::contact_operations::ContactPeer,
+) {
+    if let Ok(key) = query_key(account, peer)
+        && let Ok(mut queries) = QUERIES.get_or_init(Default::default).lock()
+    {
+        queries.remove(&key);
+    }
+}
 pub(crate) fn query_is_current(
     account: &arkret_sdk::AccountId,
     peer: &arkret_sdk::contact_operations::ContactPeer,
@@ -65,23 +75,34 @@ pub(crate) async fn install_resolved_message_context(
 ) -> anyhow::Result<()> {
     use arkret_sdk::direct_conversation_ops::DirectConversationResolveOutcome;
     outcome.validate_shape()?;
+    // A refresh in flight is not a revocation. Only a current authenticated
+    // result may replace or invalidate an installed authoring context.
+    store.write(|state| -> anyhow::Result<()> {
+        anyhow::ensure!(
+            state.active_authority().as_ref() == Some(account)
+                && epoch == crate::identity::device_directory::cache_epoch()
+                && query_is_current(account, &peer, query_sequence),
+            "Direct Conversation account or query changed"
+        );
+        if matches!(outcome, DirectConversationResolveOutcome::TemporarilyUnavailable { .. }) {
+            return Ok(());
+        }
+        let Some(coordinates) = outcome.coordinates() else {
+            state.invalidate_direct_message_peer(account, &peer);
+            return Ok(());
+        };
+        let realm = coordinates.realm_id.to_string();
+        if !matches!(outcome,
+            DirectConversationResolveOutcome::Found { send_blockers, .. } if send_blockers.is_empty()
+        ) {
+            state.set_direct_message_context(realm.clone(), None);
+        }
+        state.save_direct_conversation_peer(realm, peer.clone())
+    })?;
     let Some(coordinates) = outcome.coordinates() else {
         return Ok(());
     };
     let realm = coordinates.realm_id.clone();
-    anyhow::ensure!(
-        query_is_current(account, &peer, query_sequence),
-        "Direct Conversation query was superseded"
-    );
-    store.write(|state| -> anyhow::Result<()> {
-        anyhow::ensure!(
-            state.active_authority().as_ref() == Some(account)
-                && epoch == crate::identity::device_directory::cache_epoch(),
-            "Direct Conversation account changed"
-        );
-        state.set_direct_message_context(realm.to_string(), None);
-        state.save_direct_conversation_peer(realm.to_string(), peer.clone())
-    })?;
     let (binding_event_ref, group_state_ref) = match outcome {
         DirectConversationResolveOutcome::Found {
             coordinates,
@@ -91,28 +112,38 @@ pub(crate) async fn install_resolved_message_context(
             let reference = coordinates.binding_event_ref.clone().ok_or_else(|| {
                 anyhow::anyhow!("Found Direct Conversation omits binding reference")
             })?;
-            let decision = http
-                .read_control_proposal_decision(
-                    &arkret_sdk::ControlProposalDecisionReadRequestBody {
-                        realm_id: realm.clone(),
-                        proposal_digest: reference.event_digest(),
-                    },
+            let already_confirmed = store.read(|state| {
+                state
+                    .direct_message_context(
+                        realm.as_str(),
+                        &arkret_sdk::ActorId::account(account.clone()),
+                    )
+                    .is_some_and(|context| context.binding_event_ref == reference)
+            });
+            if !already_confirmed {
+                let decision = http
+                    .read_control_proposal_decision(
+                        &arkret_sdk::ControlProposalDecisionReadRequestBody {
+                            realm_id: realm.clone(),
+                            proposal_digest: reference.event_digest(),
+                        },
+                    )
+                    .await?;
+                anyhow::ensure!(
+                    decision.proposal_event_kind
+                        == arkret_sdk::EventKind::DirectConversationBound.as_str()
+                        && decision.proposal_state == arkret_sdk::ControlProposalState::Sealed
+                        && decision.accepted_seal_id.is_some(),
+                    "Direct Conversation endorsement is not sealed"
+                );
+                crate::event_submit::require_server_committed_unit(
+                    http,
+                    &realm,
+                    &reference,
+                    decision.accepted_seal_id.as_ref().expect("checked above"),
                 )
                 .await?;
-            anyhow::ensure!(
-                decision.proposal_event_kind
-                    == arkret_sdk::EventKind::DirectConversationBound.as_str()
-                    && decision.proposal_state == arkret_sdk::ControlProposalState::Sealed
-                    && decision.accepted_seal_id.is_some(),
-                "Direct Conversation endorsement is not sealed"
-            );
-            crate::event_submit::require_server_committed_unit(
-                http,
-                &realm,
-                &reference,
-                decision.accepted_seal_id.as_ref().expect("checked above"),
-            )
-            .await?;
+            }
             (reference, group_state_ref.clone())
         }
         _ => return Ok(()),
@@ -121,8 +152,9 @@ pub(crate) async fn install_resolved_message_context(
         anyhow::ensure!(
             state.active_authority().as_ref() == Some(account)
                 && epoch == crate::identity::device_directory::cache_epoch()
-                && query_is_current(account, &peer, query_sequence),
-            "Direct Conversation result arrived after session or query changed"
+                && query_is_current(account, &peer, query_sequence)
+                && state.direct_conversation_peer(realm.as_str()).as_ref() == Some(&peer),
+            "Direct Conversation result arrived after session, query or peer changed"
         );
         state.set_direct_message_context(
             realm.to_string(),

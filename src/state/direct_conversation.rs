@@ -23,6 +23,12 @@ impl LocalStateStore {
     ) -> anyhow::Result<()> {
         self.ensure_cached_loaded();
         if self.cached.direct_conversation_peers.get(&realm) != Some(&peer) {
+            if let Some(account) = self.active_authority()
+                && let Some(previous) = self.cached.direct_conversation_peers.get(&realm)
+            {
+                crate::mls::direct_binding::invalidate_query(&account, previous);
+            }
+            self.cached.direct_message_contexts.remove(&realm);
             self.cached.direct_conversation_peers.insert(realm, peer);
             self.flush()?;
         }
@@ -53,6 +59,16 @@ impl LocalStateStore {
             self.cached.direct_message_contexts.remove(&key);
         }
     }
+    pub(crate) fn invalidate_direct_message_peer(
+        &mut self,
+        account: &arkret_sdk::AccountId,
+        peer: &arkret_sdk::contact_operations::ContactPeer,
+    ) {
+        let peers = &self.cached.direct_conversation_peers;
+        self.cached
+            .direct_message_contexts
+            .retain(|realm, context| &context.account != account || peers.get(realm) != Some(peer));
+    }
     pub(crate) fn direct_message_context(
         &self,
         realm: &str,
@@ -62,17 +78,7 @@ impl LocalStateStore {
         if actor.as_account_id() != Some(&context.account)
             || self.active_authority().as_ref() != Some(&context.account)
             || context.session_epoch != crate::identity::device_directory::cache_epoch()
-            || self
-                .cached
-                .direct_conversation_peers
-                .get(realm)
-                .is_none_or(|peer| {
-                    !crate::mls::direct_binding::query_is_current(
-                        &context.account,
-                        peer,
-                        context.query_sequence,
-                    )
-                })
+            || !self.cached.direct_conversation_peers.contains_key(realm)
         {
             return None;
         }
@@ -90,7 +96,7 @@ mod tests {
         )
     }
     #[test]
-    fn direct_result_is_scoped_to_account_and_query() {
+    fn direct_result_survives_pending_refresh_but_not_account_or_peer_changes() {
         let path = std::env::temp_dir().join(format!(
             "inkson-dc-{}.json",
             std::time::SystemTime::now()
@@ -146,9 +152,60 @@ mod tests {
         let json = serde_json::to_value(&store.cached).unwrap();
         assert!(json.get("direct_message_contexts").is_none());
         assert!(json["direct_conversation_peers"].get(realm).is_some());
-        crate::mls::direct_binding::begin_query(&authority, &peer).unwrap();
+        let refresh_sequence = crate::mls::direct_binding::begin_query(&authority, &peer).unwrap();
         assert!(!crate::mls::direct_binding::query_is_current(
             &authority, &peer, sequence
         ));
+        assert!(
+            store
+                .direct_message_context(realm, &arkret_sdk::ActorId::account(authority.clone()))
+                .is_some()
+        );
+        store.invalidate_direct_message_peer(&account("another-station"), &peer);
+        assert!(
+            store
+                .direct_message_context(realm, &arkret_sdk::ActorId::account(authority.clone()))
+                .is_some()
+        );
+        store.invalidate_direct_message_peer(&authority, &peer);
+        assert!(
+            store
+                .direct_message_context(realm, &arkret_sdk::ActorId::account(authority.clone()))
+                .is_none()
+        );
+        store.set_direct_message_context(
+            realm.into(),
+            Some(DirectMessageContext {
+                account: authority.clone(),
+                session_epoch: crate::identity::device_directory::cache_epoch(),
+                query_sequence: sequence,
+                binding_event_ref: arkret_sdk::EventId::from_digest(
+                    arkret_sdk::DigestSuite::Sha256,
+                    [7; 32],
+                ),
+                group_state_ref: arkret_sdk::EventId::from_digest(
+                    arkret_sdk::DigestSuite::Sha256,
+                    [8; 32],
+                ),
+            }),
+        );
+        store
+            .save_direct_conversation_peer(
+                realm.into(),
+                arkret_sdk::contact_operations::ContactPeer::Human {
+                    account_id: account("replacement-peer"),
+                },
+            )
+            .unwrap();
+        assert!(!crate::mls::direct_binding::query_is_current(
+            &authority,
+            &peer,
+            refresh_sequence
+        ));
+        assert!(
+            store
+                .direct_message_context(realm, &arkret_sdk::ActorId::account(authority))
+                .is_none()
+        );
     }
 }
