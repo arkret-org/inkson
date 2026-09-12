@@ -581,7 +581,8 @@ fn local_contact_producer(
             signer
                 .public_key_base64url()
                 .ok_or_else(|| anyhow::anyhow!("Contact signer has no local Ed25519 public key"))?,
-        )?,
+        )
+        .map_err(anyhow::Error::msg)?,
     };
     descriptor.validate()?;
     Ok(descriptor)
