@@ -548,7 +548,7 @@ pub fn RealmAdminPanel(
                 }
                 // Realm governance — the two authority-root transitions
                 // (`ak.realm.owner.transfer` / `ak.realm.authority.reset`). Both are sealed
-                // control events with concurrency_class=security_barrier:
+                // control events whose registered execution is security:
                 // the payload pins `expected_state_digest` to the replayed
                 // root value, so a concurrent transition rejects with
                 // `realm_authority_root_conflict` instead of merging.
