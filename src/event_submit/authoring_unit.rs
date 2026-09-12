@@ -107,10 +107,19 @@ pub(super) fn validate_authored_unit_shape(
         .map_err(|error| anyhow::anyhow!("prepared self-principal PCR unit: {error}"));
     }
     if events.len() == 1
-        && arkret_bootstrap::materialize_agent_pcr_control(&events, &|event| {
-            crate::operation::cell_write_projector(event, arkret_sdk::DigestSuite::Sha256)
-        })
-        .is_ok()
+        && arkret_bootstrap::agent_pcr_genesis_control_unit(&events[0])
+            .and_then(|unit| {
+                arkret_bootstrap::materialize_agent_pcr_control(
+                    std::slice::from_ref(&unit),
+                    &|event| {
+                        crate::operation::cell_write_projector(
+                            event,
+                            arkret_sdk::DigestSuite::Sha256,
+                        )
+                    },
+                )
+            })
+            .is_ok()
     {
         return Ok(());
     }
