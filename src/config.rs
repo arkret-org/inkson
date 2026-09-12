@@ -849,7 +849,7 @@ impl LocalConfigStore {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn default_config_path() -> PathBuf {
+pub(crate) fn default_config_path() -> PathBuf {
     std::env::var_os("INKSON_CONFIG_PATH")
         .map(PathBuf::from)
         .unwrap_or_else(|| app_data_dir().join("config.json"))

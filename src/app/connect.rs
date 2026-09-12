@@ -145,8 +145,8 @@ async fn accepted_account_context(
     let device_id = arkret_sdk::DeviceId::new(device_id.trim().to_owned())?;
     let server_url = url::Url::parse(server_url)?;
 
-    // Login/onboarding only publish ActiveAccountContext after verifying the
-    // complete principal + Station resolution histories. Connect must
+    // Login/onboarding publish ActiveAccountContext after binding the selected
+    // Station and its authenticated current-principal result. Connect must
     // reuse that accepted state instead of making an empty, session-scoped DID
     // cache a second authentication authority. The cache is an optimization for
     // later resolutions and is intentionally cleared across account changes.
@@ -677,12 +677,8 @@ pub(super) fn connect(
         last_error.set(None);
         match current_base_api(&base, state_store) {
             Ok(api) => {
-                // Probe `/server/describe` for status text, but treat failure
-                // as non-fatal: a transient describe error (CORS preflight,
-                // server warming up, brief 5xx) must not block the sync below
-                // — otherwise an existing session with cached/server-side
-                // the Realm tree silently renders "No Realm tree loaded" until the user
-                // manually retries.
+                // A connection must validate durable Station/authentication trust
+                // before any credential refresh or private synchronization.
                 let description = match bootstrap_request("server describe", api.describe()).await {
                     Ok(description) => {
                         let missing = missing_v1_station_requirements(&description);
@@ -744,15 +740,17 @@ pub(super) fn connect(
                     }
                     Err(error) => {
                         status.set(format!(
-                            "{}: describe failed: {error}; trying sync",
-                            ConnectionState::Reconnecting.label()
+                            "{}: describe failed: {error}",
+                            ConnectionState::Error.label()
                         ));
                         network_state.set("reconnecting".to_owned());
                         last_error.set(Some(format!("describe: {error}")));
                         server_probe_status.set(format!("server describe failed: {error}"));
                         crate::operation::set_authoring_station_id(None);
                         server_description.set(None);
-                        None
+                        network_state.set("offline".to_owned());
+                        sync_bootstrap_complete.set(true);
+                        return;
                     }
                 };
 

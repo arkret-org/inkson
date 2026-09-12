@@ -550,7 +550,14 @@ pub(crate) async fn prepare_oidc_authorization(
     )
     .map_err(|error| format!("Sign-in URL preparation failed: {error}"))?;
 
+    let station_binding = arkret_sdk::StationConnectionBinding::from_description(
+        principal.base_url(),
+        &description,
+        true,
+    )
+    .map_err(|error| error.to_string())?;
     let scaffold = build_persisted_oidc_scaffold(
+        &station_binding,
         &bundle,
         &resolver.gate_account_base_url,
         station_url,
@@ -637,6 +644,20 @@ pub(super) async fn finish_oidc_callback(
     if returned_state != scaffold.expected_state {
         return Err("Callback state did not match the saved sign-in state.".to_owned());
     }
+
+    // A restored callback is bound to the original Station and auth configuration.
+    // Re-enrollment never forwards an old authorization code to a new provider.
+    let description = crate::station_connection::discover(&scaffold.station_url)
+        .await
+        .map_err(|error| error.to_string())?;
+    let base = crate::config::validate_server_url(&scaffold.station_url)
+        .map_err(|error| error.to_string())?;
+    let binding = arkret_sdk::StationConnectionBinding::from_description(&base, &description, true)
+        .map_err(|error| error.to_string())?;
+    scaffold
+        .station_binding
+        .require_same(&binding)
+        .map_err(|error| error.to_string())?;
 
     // T1.Y4 — every gate/account call routes through the resolved
     // `gate_account_base_url` persisted in the scaffold (service-surface §2.5.1).

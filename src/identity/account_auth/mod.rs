@@ -51,6 +51,7 @@ pub struct OidcScaffoldBundle {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PersistedOidcScaffold {
+    pub station_binding: arkret_sdk::StationConnectionBinding,
     pub expected_state: String,
     pub expected_nonce: String,
     pub code_verifier: String,

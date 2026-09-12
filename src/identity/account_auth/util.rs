@@ -4,15 +4,6 @@ use sha2::{Digest, Sha256};
 
 #[cfg(not(target_arch = "wasm32"))]
 use super::INKSON_OIDC_REDIRECT_URI_NATIVE;
-use crate::config::validate_server_url;
-
-pub(crate) fn principal_audience(station_url: &str) -> anyhow::Result<String> {
-    Ok(validate_server_url(station_url)?
-        .join("api")?
-        .to_string()
-        .trim_end_matches('/')
-        .to_owned())
-}
 
 #[cfg(target_arch = "wasm32")]
 pub(crate) fn current_oidc_redirect_uri() -> String {
