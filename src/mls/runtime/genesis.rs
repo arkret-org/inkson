@@ -443,11 +443,12 @@ pub fn build_mls_genesis_payload(
     let ratchet_tree_digest = crate::canonical::sha256_digest(&summary.ratchet_tree_bytes);
     let group_info_ref = format!("ak:blob:{group_info_digest}");
     let ratchet_tree_ref = format!("ak:blob:{ratchet_tree_digest}");
+    if governance_binding.mls_group_id() != summary.group_id {
+        return Err(MlsRuntimeError::Genesis(
+            "MLS Genesis material belongs to a different scope-derived group".to_owned(),
+        ));
+    }
     let payload = arkret_sdk::MlsGenesisPayload {
-        mls_group_id: arkret_sdk::MlsGroupId::new(summary.group_id.clone())
-            .map_err(|error| MlsRuntimeError::Genesis(format!("invalid MLS group id: {error}")))?,
-        effective_scope: governance_binding.effective_scope().clone(),
-        epoch: arkret_sdk::MlsGenesisEpoch,
         cipher_suite: arkret_sdk::NonEmptyString::new(summary.cipher_suite.clone()).map_err(
             |error| MlsRuntimeError::Genesis(format!("invalid MLS cipher suite: {error}")),
         )?,

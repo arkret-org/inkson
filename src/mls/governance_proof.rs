@@ -7,7 +7,6 @@ pub(crate) fn bind_sidecar_scope(
     arkret_sdk::MlsGovernanceBindingPayload::sidecar(
         base.realm_id().clone(),
         sidecar_binding.sidecar_id.clone(),
-        base.mls_group_id(),
         base.previous_epoch(),
         base.next_epoch(),
         base.security_frontier_digest().clone(),
@@ -590,7 +589,7 @@ pub(crate) fn install_cached_transition_leaf_bindings_with_hints(
         .find(|entry| {
             &entry.outcome.governance_binding == binding
                 && entry.request.mls_group_id.as_str() == group.group_id()
-                && entry.outcome.transition_head.next_epoch == group.epoch()
+                && entry.outcome.governance_binding.next_epoch() == group.epoch()
         })
         .map(|entry| entry.outcome.mls_frontier_leaves);
     let frontier_leaves = match accepted_leaves {
@@ -907,7 +906,6 @@ fn binding_from_station_fixture(
         arkret_wire::ScopeRef::Realm { realm_id } => {
             arkret_sdk::MlsGovernanceBindingPayload::realm(
                 realm_id.clone(),
-                request.mls_group_id.clone(),
                 request.previous_epoch,
                 request.next_epoch,
                 security_frontier_digest,
@@ -923,7 +921,6 @@ fn binding_from_station_fixture(
         } => arkret_sdk::MlsGovernanceBindingPayload::circle(
             realm_id.clone(),
             circle_id.clone(),
-            request.mls_group_id.clone(),
             request.previous_epoch,
             request.next_epoch,
             security_frontier_digest,
@@ -938,7 +935,6 @@ fn binding_from_station_fixture(
         } => arkret_sdk::MlsGovernanceBindingPayload::sidecar(
             realm_id.clone(),
             sidecar_id.clone(),
-            request.mls_group_id.clone(),
             request.previous_epoch,
             request.next_epoch,
             security_frontier_digest,

@@ -181,7 +181,8 @@ impl LocalStateStore {
                 arkret_sdk::EventKind::MlsGenesis => {
                     serde_json::from_value::<arkret_sdk::MlsGenesisPayload>(payload)
                         .map_err(|error| format!("decode accepted MLS Genesis: {error}"))?
-                        .effective_scope
+                        .effective_scope()
+                        .clone()
                 }
                 arkret_sdk::EventKind::MlsCommit => {
                     serde_json::from_value::<arkret_sdk::MlsCommitPayload>(payload)
@@ -1492,7 +1493,6 @@ mod tests {
         let group = "AQID";
         let binding = arkret_sdk::MlsGovernanceBindingPayload::realm(
             arkret_sdk::RealmId::new(realm).unwrap(),
-            group,
             0,
             1,
             arkret_sdk::Hash::new(format!("sha256:{}", "a5".repeat(32))).unwrap(),
@@ -1511,7 +1511,7 @@ mod tests {
             ratchet_tree: None,
         };
         let payload =
-            arkret_sdk::MlsCommitPayload::new(0, id.to_string(), Vec::new(), &commit, binding)
+            arkret_sdk::MlsCommitPayload::new(id.to_string(), Vec::new(), &commit, binding)
                 .unwrap();
         let event = serde_json::from_value(json!({
             "event_id": id, "kind": "ak.mls.commit", "realm_id": realm,

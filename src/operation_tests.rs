@@ -345,7 +345,6 @@ fn mls_commit_builder_matches_registered_payload_schema() {
     let group_id = "mls-group-kanban-test";
     let governance_binding = arkret_sdk::MlsGovernanceBindingPayload::realm(
         arkret_sdk::RealmId::new(realm_id.to_owned()).unwrap(),
-        group_id,
         0,
         1,
         arkret_sdk::Hash::new(
@@ -368,7 +367,6 @@ fn mls_commit_builder_matches_registered_payload_schema() {
         ratchet_tree: None,
     };
     let payload = arkret_sdk::MlsCommitPayload::new(
-        0,
         "ak:event:Aepgr15HbtERKfqPAh9SrfWBdihSvX_c94JvujvBS2f-",
         Vec::new(),
         &commit,

@@ -340,7 +340,6 @@ impl MlsCommitBasis {
         proposal_refs: Vec<arkret_sdk::EventId>,
     ) -> Result<crate::operation::LocalOperation, String> {
         let payload = arkret_sdk::MlsCommitPayload::new(
-            self.prev_epoch,
             self.base_group_state_ref.to_string(),
             proposal_refs,
             &self.commit_envelope,

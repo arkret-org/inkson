@@ -995,7 +995,6 @@ mod tests {
         let governance_binding = MlsGovernanceBindingPayload::realm(
             RealmId::new("ak:realm:AVxu7KCm9qmiOqakDKBXUia9rbZ3NBurP875XbqG1rbs".to_owned())
                 .unwrap(),
-            "Z3JvdXA",
             6,
             7,
             arkret_sdk::Hash::new(format!("sha256:{}", "00".repeat(32))).unwrap(),

@@ -270,8 +270,8 @@ impl HostArtifactApplicator {
                     .state
                     .read(|store| {
                         store.staged_mls_checkpoint_for_scope_and_group(
-                            &payload.effective_scope,
-                            payload.mls_group_id.as_str(),
+                            payload.effective_scope(),
+                            payload.mls_group_id(),
                         )
                     })
                     .filter(|snapshot| snapshot.epoch == 0)
@@ -281,7 +281,7 @@ impl HostArtifactApplicator {
                 let group = crate::mls::persistence::restore_envelope(&staged, snapshot_secret, 0)
                     .map_err(protocol)?;
                 Ok((
-                    payload.effective_scope,
+                    payload.effective_scope().clone(),
                     payload.governance_binding,
                     group,
                     event.clone(),
@@ -600,7 +600,7 @@ fn locally_executable(
             let payload = event_payload::<arkret_sdk::MlsGenesisPayload>(event)
                 .map_err(|error| error.to_string())?;
             if consumer
-                .ready_checkpoint(&payload.effective_scope, payload.mls_group_id.as_str())
+                .ready_checkpoint(payload.effective_scope(), payload.mls_group_id())
                 .map_err(|error| error.to_string())?
                 .is_some()
             {
@@ -608,8 +608,8 @@ fn locally_executable(
             }
             Ok(state
                 .staged_mls_checkpoint_for_scope_and_group(
-                    &payload.effective_scope,
-                    payload.mls_group_id.as_str(),
+                    payload.effective_scope(),
+                    payload.mls_group_id(),
                 )
                 .is_some())
         }
@@ -630,10 +630,10 @@ fn locally_executable(
             if consumer
                 .ready_checkpoint(
                     payload.governance_binding.effective_scope(),
-                    payload.mls_group_id.as_str(),
+                    payload.mls_group_id(),
                 )
                 .map_err(|error| error.to_string())?
-                .is_some_and(|snapshot| snapshot.epoch >= payload.epoch)
+                .is_some_and(|snapshot| snapshot.epoch >= payload.epoch())
             {
                 return Ok(false);
             }
@@ -681,7 +681,7 @@ pub(crate) async fn converge_accepted_mls_artifacts(
     });
     entries.sort_by_key(|entry| {
         (
-            entry.outcome.transition_head.next_epoch,
+            entry.outcome.governance_binding.next_epoch(),
             entry.event.kind == arkret_sdk::EventKind::MlsWelcome,
         )
     });
@@ -766,9 +766,8 @@ mod tests {
         previous_epoch: u64,
         next_epoch: u64,
     ) -> arkret_sdk::MlsGovernanceBindingPayload {
-        arkret_sdk::MlsGovernanceBindingPayload::realm(
+        let binding = arkret_sdk::MlsGovernanceBindingPayload::realm(
             arkret_sdk::RealmId::new(REALM.to_owned()).unwrap(),
-            group_id,
             previous_epoch,
             next_epoch,
             arkret_sdk::Hash::new(format!("sha256:{}", "a5".repeat(32))).unwrap(),
@@ -777,7 +776,9 @@ mod tests {
             arkret_sdk::ProfileId::MLS_GOVERNANCE_BINDING_FULL_V1,
             arkret_sdk::CORE_REDUCER_PROFILE,
         )
-        .unwrap()
+        .unwrap();
+        assert_eq!(binding.mls_group_id(), group_id);
+        binding
     }
 
     #[test]
@@ -848,7 +849,6 @@ mod tests {
         )
         .unwrap();
         let payload = arkret_sdk::MlsCommitPayload::new(
-            0,
             "ak:event:AZEvldDJcWI9IRHqP2BMibDDfc59Ax_LwrbsrQmeD6Ml",
             Vec::new(),
             &add.commit,
@@ -928,7 +928,6 @@ mod tests {
             ratchet_tree: None,
         };
         let payload = arkret_sdk::MlsCommitPayload::new(
-            0,
             "ak:event:AZEvldDJcWI9IRHqP2BMibDDfc59Ax_LwrbsrQmeD6Ml",
             Vec::new(),
             &commit,

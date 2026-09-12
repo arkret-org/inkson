@@ -774,10 +774,12 @@ fn build_mls_welcome_payload_with_requester(
     } else {
         Some(claim.principal_id.clone())
     };
+    if governance_binding.mls_group_id() != welcome.group_id
+        || governance_binding.next_epoch() != welcome.epoch
+    {
+        return Err("MLS Welcome material differs from its governance transition".to_owned());
+    }
     let payload = arkret_sdk::MlsWelcomePayload {
-        mls_group_id: arkret_sdk::MlsGroupId::new(welcome.group_id.clone())
-            .map_err(|err| format!("invalid MLS Welcome group id: {err}"))?,
-        epoch: welcome.epoch,
         recipient_principal_id,
         recipient,
         sender_device_id,
@@ -1041,7 +1043,6 @@ mod tests {
             },
             arkret_sdk::MlsGovernanceBindingPayload::realm(
                 arkret_sdk::RealmId::new(realm_id.to_owned()).unwrap(),
-                &group_id,
                 7,
                 8,
                 arkret_sdk::Hash::new(format!("sha256:{}", "a1".repeat(32))).unwrap(),

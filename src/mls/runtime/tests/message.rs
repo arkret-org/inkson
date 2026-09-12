@@ -1386,14 +1386,14 @@ fn welcome_claim_receipt_context_must_match_exact_requester_realm_group_and_targ
 }
 
 #[test]
-fn local_welcome_hint_filters_by_realm_group_id() {
+fn local_welcome_hint_filters_by_governance_realm() {
     let realm = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
     let other_realm = "ak:realm:ASeIBHNVQyeIcU4aBIt2t2BF_ikuVMH0kNru_HgO_gG1";
     let messages = vec![
         json!({
             "kind": "ak.mls.welcome",
             "content": {
-                "mls_group_id": mls_group_id_for_realm(realm).unwrap(),
+                "governance_binding": { "effective_scope": { "kind": "realm", "realm_id": realm } },
             },
             "unsigned": {
                 "mls_welcome_id": "ak:mls_welcome:01904100-0000-7000-8000-0000000000aa",
@@ -1402,7 +1402,7 @@ fn local_welcome_hint_filters_by_realm_group_id() {
         json!({
             "kind": "ak.mls.welcome",
             "content": {
-                "mls_group_id": mls_group_id_for_realm(other_realm).unwrap(),
+                "governance_binding": { "effective_scope": { "kind": "realm", "realm_id": other_realm } },
                 "claim_envelope": {
                     "welcome_digest": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
                 },
@@ -1418,7 +1418,7 @@ fn local_welcome_hint_filters_by_realm_group_id() {
         json!({
             "kind": "ak.key.verification.request",
             "content": {
-                "mls_group_id": mls_group_id_for_realm(realm).unwrap(),
+                "governance_binding": { "effective_scope": { "kind": "realm", "realm_id": realm } },
             },
         }),
     ];
@@ -1445,10 +1445,6 @@ fn realm_welcome_filter_keeps_circle_scope_from_same_realm() {
     let message = json!({
         "kind": "ak.mls.welcome",
         "content": {
-            "mls_group_id": arkret_sdk::ScopeRef::Circle {
-                realm_id: arkret_sdk::RealmId::new(realm.to_owned()).unwrap(),
-                circle_id: arkret_sdk::CircleId::new(circle.to_owned()).unwrap(),
-            }.canonical_mls_group_id().unwrap(),
             "governance_binding": {
                 "effective_scope": {
                     "kind": "circle",

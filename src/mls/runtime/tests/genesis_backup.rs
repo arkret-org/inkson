@@ -5,7 +5,7 @@ use crate::secure_key_store::MemorySecureKeyStore;
 use crate::state::isolated_store_for_tests as temp_state_store;
 use crate::test_support as fixture;
 
-fn genesis_governance_binding(group_id: &str) -> arkret_sdk::MlsGovernanceBindingPayload {
+fn genesis_governance_binding() -> arkret_sdk::MlsGovernanceBindingPayload {
     let realm_id =
         arkret_sdk::RealmId::new("ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19").unwrap();
     let security_frontier_digest = arkret_sdk::Hash::new(
@@ -15,7 +15,6 @@ fn genesis_governance_binding(group_id: &str) -> arkret_sdk::MlsGovernanceBindin
     // Genesis installs epoch 0 (governance binding epoch 0 -> 0).
     arkret_sdk::MlsGovernanceBindingPayload::realm(
         realm_id,
-        group_id,
         0,
         0,
         security_frontier_digest,
@@ -46,16 +45,14 @@ fn build_mls_genesis_payload_has_required_fields() {
     )
     .unwrap()
     .expect("creator snapshot should be created");
-    let binding = genesis_governance_binding(&summary.group_id);
+    let binding = genesis_governance_binding();
     let typed_payload = build_mls_genesis_payload(&summary, &binding).unwrap();
     let payload = serde_json::to_value(&typed_payload).unwrap();
 
-    // epoch MUST be the literal 0 the schema/reducer require.
-    assert_eq!(payload["epoch"].as_u64(), Some(0));
-    assert_eq!(
-        payload["mls_group_id"].as_str(),
-        Some(summary.group_id.as_str())
-    );
+    assert_eq!(typed_payload.epoch(), 0);
+    assert_eq!(typed_payload.mls_group_id(), summary.group_id);
+    assert!(payload.get("epoch").is_none());
+    assert!(payload.get("mls_group_id").is_none());
     // cipher_suite is the SDK ciphersuite string form — non-empty.
     assert!(!payload["cipher_suite"].as_str().unwrap_or("").is_empty());
     // governance_binding present and carries the genesis 0 -> 0 epochs.
@@ -68,11 +65,12 @@ fn build_mls_genesis_payload_has_required_fields() {
         payload["governance_binding"]["next_epoch"].as_u64(),
         Some(0)
     );
-    // effective_scope mirrors the governance binding's.
-    assert_eq!(
-        payload["effective_scope"],
-        payload["governance_binding"]["effective_scope"]
-    );
+    assert_eq!(typed_payload.effective_scope(), binding.effective_scope());
+    assert!(payload.get("effective_scope").is_none());
+    assert!(payload["governance_binding"].get("mls_group_id").is_none());
+    let mut wrong_summary = summary.clone();
+    wrong_summary.group_id = "different-group".to_owned();
+    assert!(build_mls_genesis_payload(&wrong_summary, &binding).is_err());
     // Content digests are carried only by the refs; sibling digest mirrors are forbidden.
     assert!(payload.get("group_info_digest").is_none());
     assert!(payload.get("ratchet_tree_digest").is_none());

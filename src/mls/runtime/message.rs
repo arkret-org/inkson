@@ -1065,6 +1065,8 @@ fn welcome_consume_candidate(
 ) -> Option<WelcomeConsumeCandidate> {
     let payload =
         serde_json::from_value::<arkret_sdk::MlsWelcomePayload>(entry.content.clone()).ok()?;
+    let epoch = payload.epoch();
+    let group_id = payload.mls_group_id().to_owned();
     let receipt = &payload.claim_receipt;
     let strand_id = receipt.request.strand_id.as_ref().map(ToString::to_string);
     Some(WelcomeConsumeCandidate {
@@ -1085,8 +1087,8 @@ fn welcome_consume_candidate(
         welcome_event_id: entry.welcome_event_id.clone()?,
         realm_id: realm_id.to_owned(),
         strand_id,
-        mls_group_id: payload.mls_group_id.as_str().to_owned(),
-        epoch: payload.epoch,
+        mls_group_id: group_id,
+        epoch,
         welcome_digest: payload.claim_envelope.welcome_digest,
     })
 }
@@ -1500,8 +1502,8 @@ pub(super) fn decode_welcome_envelope(
     let recipient =
         welcome_recipient_endpoint(&durable.recipient_principal_id, durable.recipient.clone())?;
     Ok(arkret_sdk::MlsWelcomeEnvelope {
-        group_id: durable.mls_group_id.as_str().to_owned(),
-        epoch: durable.epoch,
+        group_id: durable.mls_group_id().to_owned(),
+        epoch: durable.epoch(),
         recipient,
         welcome: ciphertext,
         welcome_hash,
@@ -1541,7 +1543,7 @@ pub(super) fn validate_welcome_claim_receipt_context(
             })
         || request.intended_realm_id != welcome.claim_envelope.intended_realm_id
         || request.intended_realm_id.as_str() != welcome.governance_binding.realm_id().as_str()
-        || request.mls_group_id.as_str() != welcome.mls_group_id.as_str()
+        || request.mls_group_id.as_str() != welcome.mls_group_id()
         || request.target_principal_id().as_ref() != Some(target_principal_id)
     {
         return Err(
