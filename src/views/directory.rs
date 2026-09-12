@@ -1315,7 +1315,6 @@ fn value_vec(value: &Value, key: &str) -> Vec<String> {
 mod tests {
     use arkret_sdk::contact_operations::{
         ContactAcceptedOutcome, ContactOperationOutcome, RequestAcceptanceReceipt,
-        RequestAcceptanceReceiptCore,
     };
     use serde_json::json;
 
@@ -1323,32 +1322,21 @@ mod tests {
 
     #[test]
     fn accepted_contact_request_renders_pending_without_debug_receipt() {
-        let core: RequestAcceptanceReceiptCore = serde_json::from_value(json!({
-            "holder": {"kind": "human", "account_id": {
-                "principal_id": "ak:did_core:web:alice.example",
-                "station_id": "ak:did_core:web:principal.example"
-            }},
-            "peer": {"kind": "human", "account_id": {
-                "principal_id": "ak:did_core:web:bob.example",
-                "station_id": "ak:did_core:web:principal.example"
-            }},
-            "slot_version": 1,
-            "request_event_ref": "ak:event:AffHQLS6LHEezp3Czebm6JrWc0UdDt4xsoYf_l2OnrHI",
-            "source_checkpoint": "sha256:04597468570b5436fdcfe18337daf5bbf2515b148e37dc629cdeea1e63057e85",
-            "accepted_at": "2026-08-14T00:00:00.000Z",
-            "issuer_id": "ak:did_core:web:service.example"
-        }))
+        // This view consumes its own Station's result. Reuse a real signed KAT
+        // receipt rather than maintaining a second protocol fixture here.
+        let kat = arkret_schema_conformance::spec_json_artifact("fixtures/contact-round-kat.json")
+            .unwrap();
+        let receipt: RequestAcceptanceReceipt = serde_json::from_value(
+            kat["delegated_actor_locator_kat"]["cases"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|case| case["name"] == "human")
+                .unwrap()["signed_request_receipt"]
+                .clone(),
+        )
         .unwrap();
-        let receipt: RequestAcceptanceReceipt = serde_json::from_value(json!({
-            "core": core,
-            "receipt_digest": "sha256:43258cff783fe7036d8a43033f830adfc60ec037382473548ac742b888292777",
-            "signature": {
-                "verification_method": "did:web:service.example#receipt",
-                "created_at": "2026-08-14T00:00:00.000Z",
-                "jws": "fixture"
-            }
-        }))
-        .unwrap();
+        receipt.validate_shape().unwrap();
         let outcome = ContactOperationOutcome::Accepted {
             outcome: ContactAcceptedOutcome::Request {
                 operation_id: arkret_sdk::ProtocolOperationId::new(
