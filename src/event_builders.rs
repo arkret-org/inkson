@@ -300,7 +300,12 @@ pub fn build_realm_bootstrap_facet_intents(
 }
 
 /// The creator membership. The complete ActorId carries its Station route.
-fn build_realm_bootstrap_membership_intent(
+/// Build the creator-membership member of the registered Realm bootstrap unit.
+///
+/// This is public for protocol fixture producers that author the same closed
+/// unit without the application's submit queue. Normal product flows should
+/// use [`build_realm_bootstrap_steps_for_station`].
+pub fn build_realm_bootstrap_membership_intent(
     facets: &RealmBootstrapFacets,
     realm_id: &str,
 ) -> anyhow::Result<crate::operation::EventIntent> {
@@ -1007,27 +1012,30 @@ pub fn build_space_lifecycle_event(
     .build_sdk_event("inkson")
 }
 
-/// Build a replacement for the singleton Realm profile CAS register.
+/// Build a replacement for the singleton Realm profile causal register.
 ///
-/// Unlike the bootstrap profile write, a replacement must name the complete
-/// currently settled profile value in `head_eq`. Merely attaching the latest
-/// Seal basis does not create a CAS supersession edge: omitting this guard
-/// would make the replacement a second chain head and resolve the profile cell
-/// to Bottom.
+/// The producer signs both an optional predicate over its verified causal
+/// basis and the exact causal head digest it supersedes. A concurrent writer
+/// may still create another head; the causal-register reducer preserves both
+/// and reports Bottom instead of pretending this is a globally serialized CAS.
 pub fn build_realm_profile_replacement_event(
     realm_id: &str,
     actor_id: &str,
     digest_suite: arkret_sdk::DigestSuite,
     payload: arkret_sdk::RealmProfile,
     expected_head: Value,
+    expected_head_digest: arkret_sdk::Hash,
 ) -> anyhow::Result<crate::operation::LocalOperation> {
-    build_realm_state_event_for_station_with_set_head::<arkret_sdk::event_spec::RealmProfile>(
-        crate::operation::authoring_station_id()?,
-        realm_id,
-        actor_id,
-        digest_suite,
-        payload,
-        Some(expected_head),
+    Ok(
+        build_realm_state_event_for_station_with_set_head::<arkret_sdk::event_spec::RealmProfile>(
+            crate::operation::authoring_station_id()?,
+            realm_id,
+            actor_id,
+            digest_suite,
+            payload,
+            Some(expected_head),
+        )?
+        .with_causal_refs(vec![expected_head_digest]),
     )
 }
 
@@ -1075,7 +1083,7 @@ fn build_realm_state_event_for_station_with_set_head<K: arkret_sdk::EventSpec>(
     // admission resolve exactly the same target. These Realm facet builders are
     // intentionally single-target: if a future contract becomes conditional or
     // multi-target, fail closed and require a purpose-built authoring path
-    // instead of silently putting CAS on the wrong cell.
+    // instead of silently putting a predicate on the wrong cell.
     //
     // The projection runs on the intent, because the precondition it produces is
     // producer-signed content and so has to be in place before the identity is

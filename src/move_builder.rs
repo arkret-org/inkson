@@ -16,7 +16,7 @@
 //! The did:key multibase encoding helpers previously defined here now live
 //! in [`crate::identity::did_key`] (shared with `local_state`).
 
-/// Identifies the cas-register cell that holds a Strand's position inside
+/// Identifies the causal-register cell that holds a Strand's position inside
 /// a given Board. Per
 /// [`spec/v1/zh/models/realm-and-space.md`
 /// §3.6](../../arkret-spec/spec/v1/zh/models/realm-and-space.md) the cell key is
@@ -26,7 +26,7 @@ pub fn strand_position_cell_id(board_space_id: &str, strand_id: &str) -> String 
     format!("ak:cell:ak.component.strand.position.v1:{board_space_id}:{strand_id}")
 }
 
-/// CAS pre-state that the caller expects to find on the position cell
+/// Causal-basis predicate that the caller expects to find on the position cell
 /// before the write applies. Compiled into a `head_eq` precondition per
 /// [`spec/v1/zh/sync/operations-sync.md`
 /// §9.1](../../arkret-spec/spec/v1/zh/sync/operations-sync.md).
@@ -49,7 +49,7 @@ pub enum StrandPositionExpectation {
 }
 
 /// Effect value for a `ak.strand.move` / `ak.strand.reorder` write. Compiles
-/// to a cas-register `set` with `{"list_space_id", "rank"}` per
+/// to a causal-register `set` with `{"list_space_id", "rank"}` per
 /// [`operations-sync.md` §9.1-9.2](../../arkret-spec/spec/v1/zh/sync/operations-sync.md).
 ///
 /// `Remove` is the "Strand leaves the Board" effect — compiles to

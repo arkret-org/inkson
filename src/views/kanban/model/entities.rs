@@ -193,7 +193,7 @@ pub(crate) struct LockedStrand {
     pub(crate) reason: String,
 }
 
-/// Snapshot of the card-being-dragged's pre-move state. The cas-register
+/// Snapshot of the card-being-dragged's pre-move state. The causal-register
 /// model in [`operations-sync.md` §9.1](../../arkret-spec/spec/v1/zh/sync/operations-sync.md)
 /// requires the source `(list_space_id, rank)` to seed `head_eq` on the
 /// resulting `ak.strand.move` / `ak.strand.reorder` Move. We capture it on

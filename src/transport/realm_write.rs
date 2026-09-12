@@ -269,20 +269,28 @@ pub async fn update_realm_metadata(
         .events_read_all_pages(realm_id)
         .await?
         .events;
-    let expected_head = settled_realm_profile_payload(&rows)?;
+    let (expected_head, expected_head_digest) = settled_realm_profile_head(&rows)?;
     let event = build_realm_profile_replacement_event(
         realm_id,
         actor_id,
         digest_suite,
         profile,
         expected_head,
+        expected_head_digest,
     )?;
     submitter.submit_sdk_event(&event).await
 }
 
-fn settled_realm_profile_payload(rows: &[arkret_sdk::EventReadRow]) -> anyhow::Result<Value> {
-    let cell = arkret_wire::REALM_PROFILE_CELL;
-    let mut entries = Vec::new();
+fn settled_realm_profile_head(
+    rows: &[arkret_sdk::EventReadRow],
+) -> anyhow::Result<(Value, arkret_sdk::Hash)> {
+    use arkret_sdk::CellRegistry as _;
+
+    let cell = arkret_sdk::CellRef::new(arkret_wire::REALM_PROFILE_CELL.to_owned())?;
+    let registry = arkret_sdk::lattice_registry::build_sdk_state_registry();
+    let pre_state = std::collections::BTreeMap::new();
+    let mut realm_id = None;
+    let mut ops = Vec::new();
 
     for row in rows {
         let event = match row {
@@ -291,7 +299,7 @@ fn settled_realm_profile_payload(rows: &[arkret_sdk::EventReadRow]) -> anyhow::R
                 if view.kind == arkret_sdk::EventKind::RealmProfile =>
             {
                 anyhow::bail!(
-                    "Realm profile Event {} is redacted; an exact CAS head cannot be authored",
+                    "Realm profile Event {} is redacted; its causal head cannot be reconstructed",
                     view.event_id
                 );
             }
@@ -299,7 +307,7 @@ fn settled_realm_profile_payload(rows: &[arkret_sdk::EventReadRow]) -> anyhow::R
                 if stub.kind == Some(arkret_sdk::EventKind::RealmProfile) =>
             {
                 anyhow::bail!(
-                    "a Realm profile Event is reference-locked; an exact CAS head cannot be authored"
+                    "a Realm profile Event is reference-locked; its causal head cannot be reconstructed"
                 );
             }
             arkret_sdk::EventReadRow::Redacted(_)
@@ -309,62 +317,67 @@ fn settled_realm_profile_payload(rows: &[arkret_sdk::EventReadRow]) -> anyhow::R
             continue;
         }
         let payload = serde_json::to_value(&event.payload)?;
-        let typed = serde_json::from_value::<arkret_sdk::RealmProfile>(payload.clone())?;
+        let typed = serde_json::from_value::<arkret_sdk::RealmProfile>(payload)?;
         if typed.schema != arkret_wire::SchemaId::REALM_PROFILE_V1 || typed.title.is_empty() {
             anyhow::bail!(
                 "accepted Realm profile Event {} has an invalid payload",
                 event.event_id
             );
         }
-        let matching: Vec<_> = event
-            .preconditions
-            .iter()
-            .filter(|guard| guard.cell_id.as_str() == cell)
-            .collect();
-        let [guard] = matching.as_slice() else {
-            anyhow::bail!(
-                "Realm profile Event {} must carry exactly one head_eq guard for {cell}",
-                event.event_id
-            );
-        };
-        let Some(head_eq_value) = guard
-            .predicate
-            .value
-            .clone()
-            .filter(|_| guard.predicate.op == arkret_sdk::PredicateOp::HeadEq)
-        else {
-            anyhow::bail!(
-                "Realm profile Event {} must carry a value-bearing head_eq guard for {cell}",
-                event.event_id
-            );
-        };
-        entries.push((event.event_id.to_string(), head_eq_value, payload));
+        if realm_id
+            .as_ref()
+            .is_some_and(|realm_id| realm_id != &event.realm_id)
+        {
+            anyhow::bail!("Realm profile history crosses Realm boundaries");
+        }
+        realm_id.get_or_insert_with(|| event.realm_id.clone());
+        let digest = event.event_id.event_digest();
+        let digest_suite = digest.digest_suite()?;
+        let writes = arkret_schema::project_registered_operation_writes(
+            &arkret_sdk::ProjectedEventInput::from(event),
+            digest_suite,
+        )?;
+        for write in writes {
+            for effect in arkret_state::resolve_projected_write(
+                &write,
+                &event.realm_id,
+                &pre_state,
+                &registry,
+            )
+            .map_err(|error| anyhow::anyhow!(error.to_string()))?
+            {
+                if effect.cell_id == cell {
+                    ops.push(arkret_state::state_model::ordered_log::IssuedOp {
+                        issuer_id: event.actor_id.clone(),
+                        op: arkret_state::SealedOp::from_projection(digest.clone(), &effect)
+                            .with_supersedes(event.causal_refs.clone()),
+                    });
+                }
+            }
+        }
     }
 
-    if entries.is_empty() {
+    let realm_id = realm_id.ok_or_else(|| {
+        anyhow::anyhow!("Realm profile is missing from the accepted Realm history")
+    })?;
+    if ops.is_empty() {
         anyhow::bail!("Realm profile is missing from the accepted Realm history");
     }
-    settle_realm_profile_chain(entries)
-}
-
-fn settle_realm_profile_chain(mut entries: Vec<(String, Value, Value)>) -> anyhow::Result<Value> {
-    let mut current = Value::Null;
-    while !entries.is_empty() {
-        let candidates = entries
-            .iter()
-            .enumerate()
-            .filter_map(|(index, (_, expected, _))| (expected == &current).then_some(index))
-            .collect::<Vec<_>>();
-        let [next] = candidates.as_slice() else {
-            anyhow::bail!(
-                "Realm profile history is not a single CAS chain at Event {}; conflict recovery is required",
-                entries[0].0
-            );
-        };
-        let (_, _, payload) = entries.swap_remove(*next);
-        current = payload;
+    let binding = registry
+        .resolve(&realm_id, &cell)
+        .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+    match arkret_state::join_cell(binding.model.as_ref(), &cell, &ops) {
+        arkret_state::ResolvedCellState::Causal(state) => {
+            let [head] = state.heads.as_slice() else {
+                anyhow::bail!("Realm profile causal register has no unique head");
+            };
+            Ok((head.value.clone(), head.event_id.event_digest()))
+        }
+        arkret_state::ResolvedCellState::Bottom(_) => {
+            anyhow::bail!("Realm profile causal register is Bottom; explicit recovery is required")
+        }
+        _ => anyhow::bail!("Realm profile registry did not resolve as a causal register"),
     }
-    Ok(current)
 }
 
 fn latest_realm_alias_payload(rows: &[arkret_sdk::EventReadRow]) -> anyhow::Result<Option<Value>> {
@@ -920,7 +933,7 @@ mod tests {
     }
 
     #[test]
-    fn realm_profile_replacement_chains_from_the_complete_current_value() {
+    fn realm_profile_replacement_supersedes_the_identified_causal_head() {
         let initial = build_realm_state_event_for_station::<arkret_sdk::event_spec::RealmProfile>(
             crate::test_support::core_id(crate::test_support::STATION_ID),
             REALM_ID,
@@ -932,7 +945,8 @@ mod tests {
         let initial_row = arkret_sdk::EventReadRow::Event(
             crate::operation::author_for_test(&initial).into_event(),
         );
-        let expected = settled_realm_profile_payload(std::slice::from_ref(&initial_row)).unwrap();
+        let (expected, expected_digest) =
+            settled_realm_profile_head(std::slice::from_ref(&initial_row)).unwrap();
 
         let replacement = build_realm_profile_replacement_event(
             REALM_ID,
@@ -940,15 +954,17 @@ mod tests {
             arkret_sdk::DigestSuite::Sha256,
             arkret_sdk::RealmProfile::new("Platform").unwrap(),
             expected.clone(),
+            expected_digest.clone(),
         )
         .unwrap();
 
         let [guard] = replacement.intent().preconditions() else {
-            panic!("profile replacement must carry one exact CAS guard");
+            panic!("profile replacement must carry one exact causal-basis predicate");
         };
         assert_eq!(guard.cell_id.as_str(), arkret_wire::REALM_PROFILE_CELL);
         assert_eq!(guard.predicate.op, arkret_sdk::PredicateOp::HeadEq);
         assert_eq!(guard.predicate.value.as_ref(), Some(&expected));
+        assert_eq!(replacement.intent().causal_refs(), &[expected_digest]);
 
         let mut rows = vec![
             initial_row,
@@ -957,19 +973,19 @@ mod tests {
             ),
         ];
         assert_eq!(
-            settled_realm_profile_payload(&rows).unwrap()["title"],
+            settled_realm_profile_head(&rows).unwrap().0["title"],
             serde_json::json!("Platform")
         );
         rows.reverse();
         assert_eq!(
-            settled_realm_profile_payload(&rows).unwrap()["title"],
+            settled_realm_profile_head(&rows).unwrap().0["title"],
             serde_json::json!("Platform"),
-            "event pagination order must not change the CAS chain head"
+            "event pagination order must not change the causal-register head"
         );
     }
 
     #[test]
-    fn realm_profile_history_rejects_a_replacement_without_a_cas_guard() {
+    fn realm_profile_history_preserves_concurrent_heads_as_bottom() {
         let initial = build_realm_state_event_for_station::<arkret_sdk::event_spec::RealmProfile>(
             crate::test_support::core_id(crate::test_support::STATION_ID),
             REALM_ID,
@@ -996,11 +1012,9 @@ mod tests {
             arkret_sdk::EventReadRow::Event(unguarded_event),
         ];
 
-        let error = settled_realm_profile_payload(&rows).unwrap_err();
+        let error = settled_realm_profile_head(&rows).unwrap_err();
         assert!(
-            error
-                .to_string()
-                .contains("must carry exactly one head_eq guard"),
+            error.to_string().contains("causal register is Bottom"),
             "{error:#}"
         );
     }

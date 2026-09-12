@@ -322,7 +322,7 @@ pub fn initial_submission(
         // guessed here.
         cbs_proof_bundles: Vec::new(),
         // Control Moves acquire their authority Ack separately, including
-        // caller-proven closed anchors. DataEvents keep it absent.
+        // caller-proven closed anchors. Ordinary Events keep it absent.
         control_proposal_ack: None,
         membership_compensation_evidence: None,
     })
@@ -333,7 +333,7 @@ pub fn initial_submission(
 /// A non-genesis Control Move resolves its [`ProposalAuthorityRoute`] first,
 /// then either signs the authority Ack locally or asks the authenticated
 /// Station for its independently signed one, and finally assembles the
-/// canonical Ack set. DataEvents do not enter the proposal protocol and
+/// canonical Ack set. Ordinary Events do not enter the proposal protocol and
 /// therefore keep the Ack field absent.
 pub async fn standard_initial_submission(
     http: &arkret_sdk::http_client::Client,

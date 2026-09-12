@@ -226,7 +226,7 @@ pub struct ReadMarkerRecord {
 /// `required` (server forces send) or `disabled` (server forbids send).
 ///
 /// Until the sync wires the policy from soland's `ak.component.realm.read_receipt_policy.v1`
-/// cas-register cell, this is populated by tests / dev tooling only.
+/// sequenced-state cell, this is populated by tests / dev tooling only.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReadReceiptPolicySnapshot {
     /// Disclosure mode — `optional` (default), `required`, or `disabled`.
@@ -975,7 +975,7 @@ pub struct ClientLocalState {
     /// Server-declared `ak.realm.read_receipt_policy` snapshots, keyed by
     /// realm id. Populated when sync (P0 M3) lands — surfaces the
     /// disclosure / visibility values from the
-    /// `ak.component.realm.read_receipt_policy.v1` cas-register cell so
+    /// `ak.component.realm.read_receipt_policy.v1` sequenced-state cell so
     /// the settings UI can lock per-Realm toggles when the server's
     /// policy is `required` or `disabled`.
     #[serde(default)]

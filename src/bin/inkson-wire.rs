@@ -181,8 +181,16 @@ fn demo_realm_genesis() -> Result<Value> {
         realm_id.as_str(),
         arkret_sdk::DigestSuite::Sha256,
     )?;
+    let membership = inkson::event_builders::build_realm_bootstrap_membership_intent(
+        &facets,
+        realm_id.as_str(),
+    )?;
     let mut events = vec![event.event().clone()];
-    for (index, intent) in followups.into_iter().enumerate() {
+    for (index, intent) in followups
+        .into_iter()
+        .chain(std::iter::once(membership))
+        .enumerate()
+    {
         let actor_seq = index as u64 + 1;
         let created_at = created_at + chrono::Duration::seconds(actor_seq as i64);
         let prev_ref = events
@@ -231,6 +239,8 @@ fn realm_genesis_seal(input: Value) -> Result<Value> {
             .all(|event| event.realm_id == input.realm_id),
         "Realm genesis Seal Events belong to another Realm"
     );
+    arkret_policy::realm_bootstrap::validate_realm_bootstrap_unit(&input.events)
+        .map_err(|error| anyhow::anyhow!(error.reason_code()))?;
 
     let digest_suite = arkret_sdk::DigestSuite::Sha256;
     let authority = mock_service_authority()?;
@@ -254,6 +264,9 @@ fn realm_genesis_seal(input: Value) -> Result<Value> {
         arkret_sdk::CellRef,
         Vec<arkret_state::state_model::ordered_log::IssuedOp>,
     >::new();
+    // Keep the registered unit order separate from the Seal delta. A Realm
+    // bootstrap is one atomic command unit, but its ordinary D members are
+    // initial state only and never become Seal-covered security Events.
     let mut event_digests = Vec::with_capacity(input.events.len());
     for event in &input.events {
         let digest = arkret_sdk::Hash::new(event.event_digest_with_digest_suite(digest_suite)?)?;
@@ -278,7 +291,11 @@ fn realm_genesis_seal(input: Value) -> Result<Value> {
                 );
             }
         }
-        event_digests.push((event.event_id.clone(), digest));
+        event_digests.push((
+            event.event_id.clone(),
+            digest,
+            event.kind.is_control_plane(),
+        ));
     }
 
     let mut post_state = BTreeMap::new();
@@ -292,18 +309,22 @@ fn realm_genesis_seal(input: Value) -> Result<Value> {
         );
     }
     let security_state = post_state
-        .into_iter()
+        .iter()
         .filter(|(cell, _)| {
             registry
                 .resolve(&input.realm_id, cell)
                 .is_ok_and(|binding| binding.execution == arkret_sdk::EventCellExecution::Security)
         })
+        .map(|(cell, state)| (cell.clone(), state.clone()))
         .collect::<BTreeMap<_, _>>();
     let state_root = arkret_state::compute_state_root(
         arkret_state::GovernanceView::new(&security_state),
         digest_suite,
     )?;
-    let command_effects = security_state
+    // result_digest commits the complete final state of every Cell touched by
+    // the registered unit. That includes bootstrap D initial values even
+    // though state_root and delta remain security-only.
+    let command_effects = post_state
         .iter()
         .map(|(cell_id, state)| match state {
             arkret_state::ResolvedCellState::Sequenced(state) => {
@@ -315,7 +336,26 @@ fn realm_genesis_seal(input: Value) -> Result<Value> {
                     },
                 })
             }
-            _ => anyhow::bail!("Seal state_root contains a non-sequenced cell"),
+            arkret_state::ResolvedCellState::Causal(state) => {
+                let [head] = state.heads.as_slice() else {
+                    anyhow::bail!(
+                        "bootstrap D cell {cell_id} did not resolve to one identity-preserving head"
+                    );
+                };
+                Ok(arkret_sdk::CommandResultEffect {
+                    cell_id: cell_id.clone(),
+                    state: arkret_sdk::CommandResultCellState {
+                        revision_event_id: head.event_id.clone(),
+                        value: head.value.clone(),
+                    },
+                })
+            }
+            arkret_state::ResolvedCellState::Bottom(_) => {
+                anyhow::bail!("bootstrap D cell {cell_id} resolved to Bottom")
+            }
+            arkret_state::ResolvedCellState::Value(_) => anyhow::bail!(
+                "bootstrap Cell {cell_id} has no Event-identified revision for command effects"
+            ),
         })
         .collect::<Result<Vec<_>>>()?;
 
@@ -328,7 +368,8 @@ fn realm_genesis_seal(input: Value) -> Result<Value> {
     let hlc = arkret_sdk::Hlc::new(format!("{physical_ms:012x}-0000-5ea10000"))?;
     let mut delta = event_digests
         .iter()
-        .map(|(_, digest)| digest.clone())
+        .filter(|(_, _, security)| *security)
+        .map(|(_, digest, _)| digest.clone())
         .collect::<Vec<_>>();
     delta.sort_by(|left, right| left.as_str().cmp(right.as_str()));
     delta.dedup();
@@ -345,9 +386,13 @@ fn realm_genesis_seal(input: Value) -> Result<Value> {
         .context("Realm genesis Seal has no command Event digest")?
         .1
         .clone();
+    let unit_event_digests = event_digests
+        .iter()
+        .map(|(_, digest, _)| digest.clone())
+        .collect::<Vec<_>>();
     let command_results = vec![arkret_sdk::SealCommandOutcome::committed(
         command_event_digest,
-        delta.clone(),
+        unit_event_digests,
         command_effects,
         digest_suite,
     )?];
@@ -380,7 +425,7 @@ fn realm_genesis_seal(input: Value) -> Result<Value> {
     seal.validate_structural()?;
     let event_digests = event_digests
         .into_iter()
-        .map(|(event_id, digest)| json!({ "event_id": event_id, "digest": digest }))
+        .map(|(event_id, digest, _)| json!({ "event_id": event_id, "digest": digest }))
         .collect::<Vec<_>>();
     Ok(json!({
         "seal": seal,

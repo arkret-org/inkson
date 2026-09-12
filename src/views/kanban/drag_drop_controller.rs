@@ -744,7 +744,7 @@ pub(super) struct ColumnNeighbours {
 /// - Cross-column drop ⇒ `ak.strand.move` Event kind.
 /// - Same-column drop ⇒ `ak.strand.reorder`.
 /// - Both compile to the same `ak:cell:ak.component.strand.position.v1:<board>:<strand>`
-///   cas-register cell; the difference is whether `effect.list_space_id` equals
+///   causal-register cell; the difference is whether `effect.list_space_id` equals
 ///   `expected.list_space_id`.
 pub(super) fn dispatch_strand_position_move(
     base_url: String,

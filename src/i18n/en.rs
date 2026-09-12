@@ -2775,7 +2775,7 @@ fn setup_option_strings(dict: &mut TranslationDict) {
     dict.set("setup.opt.space_kind.board", "Board");
     dict.set(
         "setup.opt.space_kind.board.hint",
-        "Kanban / pipeline view. Cells track strand placement (rank cas-register).",
+        "Kanban / pipeline view. Cells track strand placement (causal register).",
     );
     dict.set("setup.opt.space_kind.list", "List");
     dict.set(

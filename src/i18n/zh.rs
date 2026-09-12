@@ -2301,7 +2301,7 @@ fn setup_option_strings(dict: &mut TranslationDict) {
     dict.set("setup.opt.space_kind.board", "看板");
     dict.set(
         "setup.opt.space_kind.board.hint",
-        "看板 / 流水线视图。单元格跟踪流程的位置（rank cas-register）。",
+        "看板 / 流水线视图。单元格以因果寄存器跟踪流程位置。",
     );
     dict.set("setup.opt.space_kind.list", "列表");
     dict.set(

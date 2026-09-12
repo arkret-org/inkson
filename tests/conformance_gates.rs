@@ -9,7 +9,7 @@
 //! (`seal_basis` when the kind is a Control Move, `proofs[0]` from a real
 //! Ed25519 signer), serialise, and validate
 //! against `arkret-spec/spec/v1/artifacts/schemas/event-envelope.schema.json`.
-//! Schema distinguishes Control Moves, DataEvents, and a few bootstrap/facet
+//! Schema distinguishes Control Moves, ordinary Events, and a few bootstrap/facet
 //! reducer kinds; the gate therefore covers both the builder output and the
 //! sign-and-stamp pipeline immediately downstream.
 
@@ -411,10 +411,9 @@ fn schema_validator_rejects_obviously_invalid_envelope() {
         "validator accepted a malformed event_id; resolver wiring is broken"
     );
 
-    // Reducer-input kind missing preconditions/effects MUST
-    // be rejected per the `then.required` rule on the reducer-kind
-    // branch of the top-level `allOf`. If this slips through, the
-    // schema validator is silently degraded to a syntax-only checker.
+    // A reducer-input envelope missing its required scope MUST be rejected.
+    // Preconditions are optional for both ordinary Events and Control Moves;
+    // registered effects are reducer-derived and have no envelope field.
     let reducer_missing_required = serde_json::json!({
         "event_id": "ak:event:AZEAhO4CFzelWMJKtLZI-HSeK3Nh28YP3M24_4uLoFAF",
         "kind": "ak.realm.create",
@@ -435,7 +434,7 @@ fn schema_validator_rejects_obviously_invalid_envelope() {
     assert!(
         !validator.is_valid(&reducer_missing_required),
         "validator accepted a reducer-input ak.realm.create envelope \
-         missing preconditions/effects; the conditional `if/then` \
+         missing scope_ref; the conditional \
          branch on event-envelope.schema.json is not being evaluated"
     );
 }

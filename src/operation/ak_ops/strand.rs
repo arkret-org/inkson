@@ -11,7 +11,7 @@ use super::{
 
 /// Build a `ak.strand.watch.set` operation. Spec:
 /// `arkret-spec/spec/v1/zh/models/strand-and-message.md §8.3` —
-/// writes the cas-register cell `ak.component.strand.watch.v1` keyed by
+/// writes the causal-register cell `ak.component.strand.watch.v1` keyed by
 /// `(strand_id, watcher_actor_id)`.
 ///
 /// `level` is one of `mentions_only` / `participating` / `all` / `muted`,
