@@ -83,6 +83,92 @@ fn same_principal_core(left: &str, right: &str) -> bool {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+enum WatchCurrentProjection {
+    Loading,
+    Settled {
+        level: WatchLevel,
+        basis_refs: Vec<arkret_sdk::Hash>,
+    },
+    Conflict {
+        basis_refs: Vec<arkret_sdk::Hash>,
+    },
+    Unavailable,
+}
+
+fn current_watch_projection(
+    state_store: &LocalStateStore,
+    realm_id: &str,
+    strand_id: &str,
+    actor_id: &str,
+) -> WatchCurrentProjection {
+    let Ok(cell) = ak_ops::strand_watch_cell_ref(strand_id, actor_id) else {
+        return WatchCurrentProjection::Unavailable;
+    };
+    let Some(projection) = state_store.realm_tree_projection(realm_id) else {
+        return WatchCurrentProjection::Loading;
+    };
+    let Ok(current) = serde_json::from_value::<arkret_sdk::CurrentEntries>(
+        projection.get("current").cloned().unwrap_or(Value::Null),
+    ) else {
+        return WatchCurrentProjection::Loading;
+    };
+    let target_matches = |entry: &&arkret_sdk::CurrentResultEntry| matches!(entry.target(), arkret_sdk::CurrentTarget::Strand { strand_id: id } if id.as_str() == strand_id);
+    let object_cell = format!("ak:cell:ak.component.strand.object.v1:{strand_id}");
+    let object_is_loaded = current
+        .entries
+        .iter()
+        .any(|entry| entry.selector().cell_id.as_str() == object_cell && target_matches(&entry));
+    let mut matching = current
+        .entries
+        .iter()
+        .filter(|entry| entry.selector().cell_id == cell && target_matches(entry));
+    let Some(entry) = matching.next() else {
+        return if object_is_loaded {
+            WatchCurrentProjection::Settled {
+                level: WatchLevel::MentionsOnly,
+                basis_refs: Vec::new(),
+            }
+        } else {
+            WatchCurrentProjection::Loading
+        };
+    };
+    if matching.next().is_some() {
+        return WatchCurrentProjection::Unavailable;
+    }
+    match entry.result() {
+        arkret_sdk::CurrentOutcome::Heads { heads } if heads.len() == 1 => {
+            let value = heads[0].value.as_json();
+            let level = match value.get("level").and_then(Value::as_str) {
+                Some("mentions_only") | None => WatchLevel::MentionsOnly,
+                Some("participating") => WatchLevel::Participating,
+                Some("all") => WatchLevel::All,
+                Some("muted") => WatchLevel::Muted,
+                Some(_) => return WatchCurrentProjection::Unavailable,
+            };
+            WatchCurrentProjection::Settled {
+                level,
+                basis_refs: vec![heads[0].event_id.event_digest()],
+            }
+        }
+        arkret_sdk::CurrentOutcome::Heads { heads } => {
+            let mut basis_refs = heads
+                .iter()
+                .map(|head| head.event_id.event_digest())
+                .collect::<Vec<_>>();
+            basis_refs.sort();
+            basis_refs.dedup();
+            WatchCurrentProjection::Conflict { basis_refs }
+        }
+        arkret_sdk::CurrentOutcome::Removed => WatchCurrentProjection::Settled {
+            level: WatchLevel::MentionsOnly,
+            basis_refs: Vec::new(),
+        },
+        arkret_sdk::CurrentOutcome::Unavailable { .. }
+        | arkret_sdk::CurrentOutcome::Value { .. } => WatchCurrentProjection::Unavailable,
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MentionInsertRequest {
     request_id: String,
     target_id: String,
@@ -191,6 +277,7 @@ fn timeline_projection_key(
         message.reply_to.hash(&mut projection);
         message.reactions.hash(&mut projection);
         message.edited.hash(&mut projection);
+        message.revision_basis_refs.hash(&mut projection);
         message.redacted.hash(&mut projection);
         message.pending.hash(&mut projection);
         message.failed.hash(&mut projection);
@@ -1588,6 +1675,45 @@ pub fn ChatPanel(
         }
     });
     let selected_channel_value = selected_channel();
+    use_effect({
+        let authority = authority.clone();
+        let realm = selected_realm_id.clone();
+        move || {
+            let strands = arkret_sdk::StrandId::new(selected_channel())
+                .ok()
+                .into_iter()
+                .collect();
+            state_store.read().set_product_current_demand(
+                &authority,
+                &realm,
+                Some(strands),
+                Vec::new(),
+            );
+        }
+    });
+    use_drop({
+        let authority = authority.clone();
+        let realm = selected_realm_id.clone();
+        move || {
+            state_store
+                .read()
+                .set_product_current_demand(&authority, &realm, None, Vec::new())
+        }
+    });
+    let watch_current = current_watch_projection(
+        &state_store.read(),
+        &selected_realm_id,
+        &selected_channel_value,
+        &principal_id,
+    );
+    use_effect({
+        let watch_current = watch_current.clone();
+        move || {
+            if let WatchCurrentProjection::Settled { level, .. } = watch_current {
+                strand_watch_level.set(level);
+            }
+        }
+    });
     let all_channels = channels();
     let mut private_sidecar_strand_ids = all_channels
         .iter()
@@ -2499,13 +2625,33 @@ pub fn ChatPanel(
                         // optimistically update the local signal first;
                         // a network failure rolls back via status_msg.
                         {
-                            let level_now = strand_watch_level();
+                            let optimistic_level = strand_watch_level();
+                            let (level_now, watch_basis_refs, watch_conflict, watch_unavailable) =
+                                match &watch_current {
+                                    WatchCurrentProjection::Settled { level, basis_refs } => {
+                                        (*level, basis_refs.clone(), false, false)
+                                    }
+                                    WatchCurrentProjection::Conflict { basis_refs } => {
+                                        (optimistic_level, basis_refs.clone(), true, false)
+                                    }
+                                    WatchCurrentProjection::Unavailable => {
+                                        (optimistic_level, Vec::new(), false, true)
+                                    }
+                                    WatchCurrentProjection::Loading => {
+                                        (optimistic_level, Vec::new(), false, true)
+                                    }
+                                };
                             let menu_open = watch_level_menu_open();
-                            let level_label = crate::i18n::tr(watch_level_label_key(level_now));
+                            let level_label = if watch_conflict {
+                                "Conflict".to_owned()
+                            } else {
+                                crate::i18n::tr(watch_level_label_key(level_now))
+                            };
                             let strand_id_for_watch = selected_channel_value.clone();
                             let realm_for_watch = selected_realm_id.clone();
                             let actor_for_watch = principal_id.clone();
                             let watch_disabled = strand_id_for_watch.trim().is_empty()
+                                || watch_unavailable
                                 || !sidecar_privacy_gate.allows_strand(
                                     crate::sidecar::SidecarDisclosureSurface::Watch,
                                     &strand_id_for_watch,
@@ -2544,6 +2690,7 @@ pub fn ChatPanel(
                                                             let realm_for_click = realm_for_watch.clone();
                                                             let actor_for_click = actor_for_watch.clone();
                                                             let base_for_click = base_url.clone();
+                                                            let basis_for_click = watch_basis_refs.clone();
                                                             let is_active = level_now == option;
                                                             rsx! {
                                                                 Button {
@@ -2566,7 +2713,9 @@ pub fn ChatPanel(
                                                                             Some(watch_level_wire_value(option)),
                                                                             None,
                                                                         ) {
-                                                                            Ok(builder) => builder.build_sdk_event("inkson"),
+                                                                            Ok(builder) => builder
+                                                                                .causal_refs(basis_for_click.clone())
+                                                                                .build_sdk_event("inkson"),
                                                                             Err(err) => {
                                                                                 tracing::warn!("strand_watch_set build failed: {err:#}");
                                                                                 strand_watch_level.set(prev);

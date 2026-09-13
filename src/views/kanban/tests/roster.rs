@@ -19,9 +19,14 @@ fn assignment_mutations_preserve_same_principal_accounts_at_different_stations()
         "U",
     );
     let selected = std::collections::BTreeSet::from([first.clone(), second.clone()]);
-    let creates =
-        card_assignment_mutations(TEST_REALM_ID, "did:web:author.example", &card, &selected)
-            .unwrap();
+    let creates = card_assignment_mutations(
+        TEST_REALM_ID,
+        "did:web:author.example",
+        &card,
+        &selected,
+        &std::collections::BTreeMap::new(),
+    )
+    .unwrap();
     assert_eq!(creates.len(), 2);
     for mutation in &creates {
         assert_eq!(
@@ -40,10 +45,30 @@ fn assignment_mutations_preserve_same_principal_accounts_at_different_stations()
         },
     ];
     let retained = std::collections::BTreeSet::from([second.clone()]);
-    let removes =
-        card_assignment_mutations(TEST_REALM_ID, "did:web:author.example", &card, &retained)
-            .unwrap();
+    let removed_head = arkret_sdk::Hash::new(format!("sha256:{}", "42".repeat(32))).unwrap();
+    let bases = std::collections::BTreeMap::from([
+        (
+            "ak:relation:AiRwjMAZ14M9aj2p96Vy4ORV9RjgnslFIV7wS1_2Zhig".to_owned(),
+            vec![removed_head.clone()],
+        ),
+        (
+            "ak:relation:AFjQnGmj11wy2rA2YjgbfhdhIJlFu9cPeZN5Ld0XzQp4".to_owned(),
+            Vec::new(),
+        ),
+    ]);
+    let removes = card_assignment_mutations(
+        TEST_REALM_ID,
+        "did:web:author.example",
+        &card,
+        &retained,
+        &bases,
+    )
+    .unwrap();
     assert_eq!(removes.len(), 1);
+    assert_eq!(
+        removes[0].operation().intent().causal_refs(),
+        &[removed_head]
+    );
     assert_eq!(removes[0].actor_id(), &first);
     assert_eq!(
         assignment_relations_after_mutations(&card, &retained, &removes)[0].actor_id,

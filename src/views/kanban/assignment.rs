@@ -95,6 +95,7 @@ pub(super) fn card_assignment_mutations(
     actor_id: &str,
     current: &KanbanCard,
     selected_actor_ids: &BTreeSet<arkret_sdk::ActorId>,
+    lifecycle_bases: &BTreeMap<String, Vec<arkret_sdk::Hash>>,
 ) -> Result<Vec<CardAssignmentMutation>, String> {
     let current_actor_ids = card_assigned_actor_ids(current)
         .into_iter()
@@ -144,9 +145,16 @@ pub(super) fn card_assignment_mutations(
             ));
         };
         for relation_id in relation_ids {
+            let basis_refs = lifecycle_bases.get(relation_id).ok_or_else(|| {
+                format!(
+                    "assignment relation {} has no canonical lifecycle basis; refresh before removing it",
+                    short_protocol_id(relation_id)
+                )
+            })?;
             let operation =
                 crate::operation::ak_ops::relation_tombstone(realm_id, actor_id, relation_id)
                     .map_err(|err| format!("cannot build assigned_to tombstone: {err:#}"))?
+                    .causal_refs(basis_refs.clone())
                     .build_sdk_event("inkson")
                     .map_err(|err| format!("cannot build assigned_to tombstone event: {err}"))?;
             mutations.push(CardAssignmentMutation::Tombstone {
@@ -157,6 +165,51 @@ pub(super) fn card_assignment_mutations(
         }
     }
     Ok(mutations)
+}
+
+fn assignment_lifecycle_bases(
+    state_store: &LocalStateStore,
+    realm_id: &str,
+    current: &KanbanCard,
+) -> Result<BTreeMap<String, Vec<arkret_sdk::Hash>>, String> {
+    let entries = state_store
+        .realm_tree_projection(realm_id)
+        .and_then(|projection| projection.get("current").cloned())
+        .and_then(|value| serde_json::from_value::<arkret_sdk::CurrentEntries>(value).ok())
+        .map(|current| current.entries)
+        .ok_or_else(|| "assignment current state is still loading".to_owned())?;
+    let mut result = BTreeMap::new();
+    for relation in &current.assigned_to_relations {
+        let relation_id = relation.relation_id.trim();
+        let lifecycle = format!("ak:cell:ak.component.relation.lifecycle.v1:{relation_id}");
+        let object = format!("ak:cell:ak.component.relation.v1:{relation_id}");
+        let refs = match current_register_basis(&entries, &lifecycle) {
+            CurrentRegisterBasis::Heads(refs) => refs,
+            CurrentRegisterBasis::Removed => Vec::new(),
+            CurrentRegisterBasis::Missing
+                if !matches!(
+                    current_register_basis(&entries, &object),
+                    CurrentRegisterBasis::Missing | CurrentRegisterBasis::Unavailable
+                ) =>
+            {
+                Vec::new()
+            }
+            CurrentRegisterBasis::Missing => {
+                return Err(format!(
+                    "assignment relation {} is still loading",
+                    short_protocol_id(relation_id)
+                ));
+            }
+            CurrentRegisterBasis::Unavailable => {
+                return Err(format!(
+                    "assignment relation {} is unresolved",
+                    short_protocol_id(relation_id)
+                ));
+            }
+        };
+        result.insert(relation_id.to_owned(), refs);
+    }
+    Ok(result)
 }
 
 pub(super) fn assignment_relations_after_mutations(
@@ -237,15 +290,29 @@ pub(super) fn dispatch_card_assignees_update(
         return false;
     }
 
-    let mutations =
-        match card_assignment_mutations(&realm_id, &actor_id, &current, &selected_actor_ids) {
-            Ok(mutations) => mutations,
-            Err(msg) => {
-                assignee_edit_status.set(msg.clone());
-                board_status.set(msg);
-                return false;
-            }
-        };
+    let lifecycle_bases = match assignment_lifecycle_bases(&state_store.read(), &realm_id, &current)
+    {
+        Ok(bases) => bases,
+        Err(msg) => {
+            assignee_edit_status.set(msg.clone());
+            board_status.set(msg);
+            return false;
+        }
+    };
+    let mutations = match card_assignment_mutations(
+        &realm_id,
+        &actor_id,
+        &current,
+        &selected_actor_ids,
+        &lifecycle_bases,
+    ) {
+        Ok(mutations) => mutations,
+        Err(msg) => {
+            assignee_edit_status.set(msg.clone());
+            board_status.set(msg);
+            return false;
+        }
+    };
     if mutations.is_empty() {
         board_status.set("No assignee changes to save".to_owned());
         assignee_edit_status.set(String::new());

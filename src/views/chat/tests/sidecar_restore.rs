@@ -255,6 +255,7 @@ fn pending_message_refreshes_from_restored_private_plaintext_sidecar() {
         redacted: false,
         edited: false,
         revisions: Vec::new(),
+        revision_basis_refs: Vec::new(),
         pending: false,
         failed: false,
         error: None,

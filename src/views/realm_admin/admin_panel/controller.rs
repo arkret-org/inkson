@@ -114,6 +114,7 @@ impl RealmAdminController {
                 kind,
                 event_kind,
                 updates_alias,
+                causal_refs,
             } = subject;
             let submit_home_realm_id = home_realm_id.clone();
             match crate::transport::auth::with_event_submitter(
@@ -131,6 +132,7 @@ impl RealmAdminController {
                                 &actor_id,
                                 digest_suite,
                                 patch,
+                                causal_refs,
                             )
                             .await
                         }
@@ -141,6 +143,7 @@ impl RealmAdminController {
                                 &subject_id,
                                 &actor_id,
                                 patch,
+                                causal_refs,
                             )
                             .await
                         }
@@ -601,6 +604,7 @@ pub(super) struct MetadataWriteSubject {
     pub(super) kind: RealmTreeNodeKind,
     pub(super) event_kind: &'static str,
     pub(super) updates_alias: bool,
+    pub(super) causal_refs: Vec<arkret_sdk::Hash>,
 }
 
 /// The values a successful Realm profile save writes back into local state.

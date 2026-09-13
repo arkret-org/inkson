@@ -6,6 +6,7 @@ impl LocalStateStore {
         authority: &arkret_sdk::AccountId,
         realm: &str,
         strands: Option<Vec<arkret_sdk::StrandId>>,
+        mut cells: Vec<arkret_sdk::CellRef>,
     ) {
         let mut demand = self
             .product_current_demand
@@ -14,11 +15,17 @@ impl LocalStateStore {
         if let Some(mut strands) = strands {
             strands.sort();
             strands.dedup();
+            cells.sort();
+            cells.dedup();
             assert!(strands.len() <= 32, "product demand exceeds protocol bound");
-            *demand = Some((authority.clone(), realm.to_owned(), strands));
+            assert!(
+                cells.len() <= 256,
+                "product cell demand exceeds local bound"
+            );
+            *demand = Some((authority.clone(), realm.to_owned(), strands, cells));
         } else if demand
             .as_ref()
-            .is_some_and(|(a, r, _)| a == authority && r == realm)
+            .is_some_and(|(a, r, _, _)| a == authority && r == realm)
         {
             *demand = None;
         }
@@ -33,8 +40,22 @@ impl LocalStateStore {
             .lock()
             .unwrap_or_else(|p| p.into_inner())
             .as_ref()
-            .filter(|(a, r, _)| a == authority && r == realm)
-            .map(|(_, _, strands)| strands.clone())
+            .filter(|(a, r, _, _)| a == authority && r == realm)
+            .map(|(_, _, strands, _)| strands.clone())
+    }
+
+    pub(crate) fn product_current_cells(
+        &self,
+        authority: &arkret_sdk::AccountId,
+        realm: &str,
+    ) -> Vec<arkret_sdk::CellRef> {
+        self.product_current_demand
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .as_ref()
+            .filter(|(a, r, _, _)| a == authority && r == realm)
+            .map(|(_, _, _, cells)| cells.clone())
+            .unwrap_or_default()
     }
 
     pub(crate) fn realm_tree_projection(&self, realm_id: &str) -> Option<Value> {

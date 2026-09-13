@@ -225,6 +225,7 @@ pub(crate) fn card_from_strand_projection_for_actor(
     KanbanCard {
         id: strand.strand_id.clone(),
         rank: strand_projection_placement_string(strand.rank.as_deref()).unwrap_or_default(),
+        position_basis_refs: Vec::new(),
         title: title.clone(),
         description: summary,
         description_body: private_strand_field_text(
@@ -294,5 +295,6 @@ pub(crate) fn card_from_strand_projection_for_actor(
         security_encrypted: strand_projection_security_state(strand),
         state: CardState::Synced,
         lifecycle: strand_lifecycle_from_projection(&strand.state),
+        lifecycle_basis_refs: Vec::new(),
     }
 }

@@ -4,6 +4,41 @@ use arkret_wire::event_kind_str;
 use serde::Serialize;
 
 use super::*;
+
+fn current_cell_basis_from_store(
+    state_store: &LocalStateStore,
+    realm_id: &str,
+    family: &str,
+    subject: &str,
+    missing_witness_family: Option<&str>,
+) -> Result<Vec<arkret_sdk::Hash>, String> {
+    let entries = state_store
+        .realm_tree_projection(realm_id)
+        .and_then(|projection| projection.get("current").cloned())
+        .and_then(|value| serde_json::from_value::<arkret_sdk::CurrentEntries>(value).ok())
+        .map(|current| current.entries)
+        .ok_or_else(|| "canonical current state is still loading".to_owned())?;
+    let cell = format!("ak:cell:{family}:{subject}");
+    match current_register_basis(&entries, &cell) {
+        CurrentRegisterBasis::Heads(refs) => Ok(refs),
+        CurrentRegisterBasis::Removed => Ok(Vec::new()),
+        CurrentRegisterBasis::Missing
+            if missing_witness_family.is_some_and(|witness_family| {
+                let witness = format!("ak:cell:{witness_family}:{subject}");
+                !matches!(
+                    current_register_basis(&entries, &witness),
+                    CurrentRegisterBasis::Missing | CurrentRegisterBasis::Unavailable
+                )
+            }) =>
+        {
+            Ok(Vec::new())
+        }
+        CurrentRegisterBasis::Missing => Err("canonical current cell is still loading".to_owned()),
+        CurrentRegisterBasis::Unavailable => {
+            Err("canonical current cell is unavailable".to_owned())
+        }
+    }
+}
 // Imports the drag-and-drop helpers relied on while they lived in the
 // monolithic `kanban/mod.rs`; re-added here after the structural split since
 // the component-only parent no longer brings them into scope.
@@ -338,13 +373,26 @@ pub(super) fn submit_column_order_updates(
         "Column order sending... ({update_count} rank updates)"
     ));
     for (column_id, rank) in updates {
+        let basis_refs = match current_cell_basis_from_store(
+            &state_store.read(),
+            &realm_id,
+            "ak.component.space.metadata.v1",
+            &column_id,
+            None,
+        ) {
+            Ok(refs) => refs,
+            Err(error) => {
+                board_status.set(format!("Column order blocked: {error}"));
+                return;
+            }
+        };
         let op = match crate::operation::ak_ops::space_update_patch(
             &realm_id,
             &actor_id,
             &column_id,
             json!({ "rank": rank }),
         ) {
-            Ok(builder) => match builder.build_sdk_event("inkson") {
+            Ok(builder) => match builder.causal_refs(basis_refs).build_sdk_event("inkson") {
                 Ok(event) => event,
                 Err(err) => {
                     board_status.set(format!("Column order failed: {err}"));
@@ -396,13 +444,26 @@ pub(super) fn submit_column_rename(
         board_status.set("select a Realm before renaming lists".to_owned());
         return;
     }
+    let basis_refs = match current_cell_basis_from_store(
+        &state_store.read(),
+        &realm_id,
+        "ak.component.space.metadata.v1",
+        &column_id,
+        None,
+    ) {
+        Ok(refs) => refs,
+        Err(error) => {
+            board_status.set(format!("List rename blocked: {error}"));
+            return;
+        }
+    };
     let op = match crate::operation::ak_ops::space_update_patch(
         &realm_id,
         &actor_id,
         &column_id,
         json!({ "title": title }),
     ) {
-        Ok(builder) => match builder.build_sdk_event("inkson") {
+        Ok(builder) => match builder.causal_refs(basis_refs).build_sdk_event("inkson") {
             Ok(event) => event,
             Err(err) => {
                 board_status.set(format!("List rename failed: {err}"));
@@ -419,6 +480,52 @@ pub(super) fn submit_column_rename(
         token,
         realm_id,
         op,
+        scope_security_encrypted,
+        state_store,
+        board_status,
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn submit_space_metadata_resolution(
+    base_url: String,
+    token: Signal<String>,
+    realm_id: String,
+    actor_id: String,
+    column_id: String,
+    title: String,
+    rank: String,
+    basis_refs: Vec<arkret_sdk::Hash>,
+    scope_security_encrypted: Option<bool>,
+    state_store: SyncSignal<LocalStateStore>,
+    board_status: Signal<String>,
+) {
+    let builder = match crate::operation::ak_ops::space_update_patch(
+        &realm_id,
+        &actor_id,
+        &column_id,
+        json!({ "title": title, "rank": rank }),
+    ) {
+        Ok(builder) => builder,
+        Err(error) => {
+            let mut status = board_status;
+            status.set(format!("List conflict resolution failed: {error:#}"));
+            return;
+        }
+    };
+    let operation = match builder.causal_refs(basis_refs).build_sdk_event("inkson") {
+        Ok(operation) => operation,
+        Err(error) => {
+            let mut status = board_status;
+            status.set(format!("List conflict resolution failed: {error}"));
+            return;
+        }
+    };
+    submit_kanban_operation_event(
+        base_url,
+        token,
+        realm_id,
+        operation,
         scope_security_encrypted,
         state_store,
         board_status,
@@ -737,7 +844,8 @@ pub(super) struct ColumnNeighbours {
 
 /// End-to-end handler for a drag-drop landing. Computes the new rank,
 /// decides cross-list move vs in-list reorder, updates the local
-/// pending state, and submits the spec-compliant CAS Move.
+/// pending state, and submits an Event whose causal refs cover the observed
+/// position frontier.
 ///
 /// Spec mapping ([views.md §2.6](../../arkret-spec/spec/v1/zh/models/views.md)):
 ///
@@ -758,6 +866,10 @@ pub(super) fn dispatch_strand_position_move(
     state_store: SyncSignal<LocalStateStore>,
     mut board_status: Signal<String>,
 ) {
+    if dragged.position_basis_refs.is_empty() {
+        board_status.set("Card position is not current yet; refresh before moving it.".to_owned());
+        return;
+    }
     // Don't emit a Move when the drag and drop land on the same exact
     // position: same column, dragged card already sits between
     // `prev_rank` and `next_rank` because we'd be re-asserting its
@@ -787,14 +899,19 @@ pub(super) fn dispatch_strand_position_move(
             return;
         }
     };
-    // The move shows immediately because `submit_strand_position_move`
-    // appends the canonical move/reorder op to `raw_operations` (write_state
-    // `submitted`), which the `columns` `use_memo` folds via `project_board` —
-    // no direct signal mutation. It is not marked accepted until the server
-    // returns from ak.events.submit.
-    let expected = StrandPositionExpectation::At {
-        list_space_id: dragged.from_column_id.clone(),
-        rank: dragged.from_rank.clone(),
+    // `submit_strand_position_move` appends the canonical move/reorder op to
+    // `raw_operations`; the current position result remains authoritative, so
+    // the UI does not claim a settled destination until sync observes it.
+    let expected = if dragged.position_basis_refs.len() == 1 {
+        StrandPositionExpectation::At {
+            list_space_id: dragged.from_column_id.clone(),
+            rank: dragged.from_rank.clone(),
+            head_ref: dragged.position_basis_refs[0].clone(),
+        }
+    } else {
+        StrandPositionExpectation::Conflict {
+            head_refs: dragged.position_basis_refs.clone(),
+        }
     };
     let effect = StrandPositionEffect::SetPosition {
         list_space_id: target_column_id.clone(),
@@ -860,6 +977,19 @@ pub(super) fn dispatch_space_container_lifecycle(
     mut state_store: SyncSignal<LocalStateStore>,
     mut board_status: Signal<String>,
 ) {
+    let lifecycle_basis_refs = match current_cell_basis_from_store(
+        &state_store.read(),
+        &realm_id,
+        "ak.component.space.lifecycle.v1",
+        &space_container_id,
+        Some("ak.component.space.metadata.v1"),
+    ) {
+        Ok(refs) => refs,
+        Err(error) => {
+            board_status.set(format!("lifecycle update blocked: {error}"));
+            return;
+        }
+    };
     // Only Active <-> Archived are dispatchable; Tombstone is server-only.
     let builder = match target {
         SpaceContainerLifecycleState::Archived => {
@@ -872,6 +1002,13 @@ pub(super) fn dispatch_space_container_lifecycle(
             board_status.set("lifecycle update failed: tombstone is not dispatchable".to_owned());
             return;
         }
+        SpaceContainerLifecycleState::Conflict
+        | SpaceContainerLifecycleState::Unavailable
+        | SpaceContainerLifecycleState::PositionConflict => {
+            board_status
+                .set("lifecycle update failed: canonical Space state is unresolved".to_owned());
+            return;
+        }
     };
     let builder = match builder {
         Ok(builder) => builder,
@@ -880,7 +1017,10 @@ pub(super) fn dispatch_space_container_lifecycle(
             return;
         }
     };
-    let event = match builder.build_sdk_event("inkson") {
+    let event = match builder
+        .causal_refs(lifecycle_basis_refs)
+        .build_sdk_event("inkson")
+    {
         Ok(event) => event,
         Err(err) => {
             board_status.set(format!("lifecycle update failed: {err}"));
@@ -955,6 +1095,7 @@ pub(super) fn dispatch_strand_lifecycle(
     actor_id: String,
     strand_id: String,
     target: StrandLifecycleState,
+    lifecycle_basis_refs: Vec<arkret_sdk::Hash>,
     mut state_store: SyncSignal<LocalStateStore>,
     mut board_status: Signal<String>,
 ) {
@@ -966,12 +1107,18 @@ pub(super) fn dispatch_strand_lifecycle(
         StrandLifecycleState::Active => {
             crate::operation::ak_ops::strand_restore(&realm_id, &actor_id, &strand_id)
         }
-        StrandLifecycleState::Redacted => {
-            board_status.set("lifecycle update failed: redaction is not dispatchable".to_owned());
+        StrandLifecycleState::Redacted
+        | StrandLifecycleState::Conflict
+        | StrandLifecycleState::Unavailable => {
+            board_status
+                .set("lifecycle update failed: target state is not dispatchable".to_owned());
             return;
         }
     };
-    let event = match builder.and_then(|builder| builder.build_sdk_event("inkson")) {
+    let event = match builder
+        .map(|builder| builder.causal_refs(lifecycle_basis_refs))
+        .and_then(|builder| builder.build_sdk_event("inkson"))
+    {
         Ok(event) => event,
         Err(err) => {
             board_status.set(format!("lifecycle update failed: {err:#}"));
@@ -1058,11 +1205,16 @@ pub(super) fn dispatch_board_archive_cascade(
     // the user is looking at. A later joiner may not possess the historical
     // create Events, so consulting the raw Event log alone would omit visible
     // pre-join cards and lists from the cascade.
-    let active_card_ids: Vec<String> = projected_columns
+    let active_cards: Vec<(String, Vec<arkret_sdk::Hash>)> = projected_columns
         .iter()
         .flat_map(|column| column.cards.iter())
         .filter(|card| card.lifecycle == StrandLifecycleState::Active)
-        .map(|card| card.primary_strand_id.clone())
+        .map(|card| {
+            (
+                card.primary_strand_id.clone(),
+                card.lifecycle_basis_refs.clone(),
+            )
+        })
         .collect();
     let active_list_ids: Vec<String> = projected_columns
         .iter()
@@ -1073,8 +1225,9 @@ pub(super) fn dispatch_board_archive_cascade(
     // Build every archive event up front so a build error aborts before any
     // optimistic op is appended.
     let mut events: Vec<crate::operation::LocalOperation> = Vec::new();
-    for strand_id in &active_card_ids {
+    for (strand_id, lifecycle_basis_refs) in &active_cards {
         match crate::operation::ak_ops::strand_archive(&realm_id, &actor_id, strand_id)
+            .map(|builder| builder.causal_refs(lifecycle_basis_refs.clone()))
             .and_then(|builder| builder.build_sdk_event("inkson"))
         {
             Ok(event) => events.push(event),
@@ -1088,7 +1241,21 @@ pub(super) fn dispatch_board_archive_cascade(
         .iter()
         .chain(std::iter::once(&board_space_id))
     {
+        let lifecycle_basis_refs = match current_cell_basis_from_store(
+            &state_store.read(),
+            &realm_id,
+            "ak.component.space.lifecycle.v1",
+            list_id,
+            Some("ak.component.space.metadata.v1"),
+        ) {
+            Ok(refs) => refs,
+            Err(error) => {
+                board_status.set(format!("cannot archive board: {error}"));
+                return;
+            }
+        };
         match crate::operation::ak_ops::realm_archive(&realm_id, &actor_id, list_id)
+            .map(|builder| builder.causal_refs(lifecycle_basis_refs))
             .and_then(|builder| builder.build_sdk_event("inkson"))
         {
             Ok(event) => events.push(event),
@@ -1181,7 +1348,8 @@ pub(super) fn dispatch_board_archive_cascade(
     });
 }
 
-/// Build, sign, and submit a sequenced `ak.strand.move` or `ak.strand.reorder` event.
+/// Build, sign, and submit an ordinary causal `ak.strand.move` or
+/// `ak.strand.reorder` Event.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn submit_strand_position_move(
     base_url: String,
@@ -1205,10 +1373,13 @@ pub(super) fn submit_strand_position_move(
         StrandPositionExpectation::At {
             list_space_id,
             rank,
+            ..
         } => {
             json!({"list_space_id": list_space_id, "rank": rank})
         }
+        StrandPositionExpectation::Conflict { .. } => serde_json::Value::Null,
     };
+    let causal_refs = expected.causal_refs();
     let effect_json = match &effect {
         StrandPositionEffect::SetPosition {
             list_space_id,
@@ -1227,7 +1398,7 @@ pub(super) fn submit_strand_position_move(
         expected_json.clone(),
         effect_json.clone(),
     ) {
-        Ok(builder) => builder.build_sdk_event("inkson"),
+        Ok(builder) => builder.causal_refs(causal_refs).build_sdk_event("inkson"),
         Err(err) => {
             board_status.set(format!("cannot submit {kind}: {err:#}"));
             return;
@@ -1260,7 +1431,9 @@ pub(super) fn submit_strand_position_move(
             StrandPositionExpectation::At {
                 list_space_id,
                 rank,
+                ..
             } => json!({"space_id": list_space_id, "rank": rank}),
+            StrandPositionExpectation::Conflict { .. } => serde_json::Value::Null,
         },
         target_position: match &effect {
             StrandPositionEffect::SetPosition {
@@ -1269,11 +1442,9 @@ pub(super) fn submit_strand_position_move(
             } => json!({"space_id": list_space_id, "rank": rank}),
             StrandPositionEffect::Remove => serde_json::Value::Null,
         },
-        // Canonical move/reorder payload so the event-sourced
-        // `project_board` reducer (`apply_move_to_view` /
-        // `apply_reorder_to_view`) folds the optimistic move immediately —
-        // `columns` is a pure `use_memo` over `raw_operations`, so the
-        // relocation must live in the op log, not a direct signal mutation.
+        // Canonical move/reorder payload retained in the durable local op log.
+        // The Board may use it as a discovery overlay, but canonical current
+        // position always replaces its lossy arrival-ordered placement.
         body,
         write_state: "submitted",
     }) {
@@ -1304,10 +1475,9 @@ pub(super) fn submit_strand_position_move(
         .await;
         match submit_result {
             Ok(resp) => {
-                // events.submit accepted path: the server has folded the
-                // CAS update into the cell. cas_conflict surfaces as an
-                // Err arm because the envelope was rejected with a
-                // non-200 status — that branch is handled below.
+                // events.submit accepted path: the ordinary Event is durable.
+                // The canonical current result decides whether it is the sole
+                // position head or remains concurrent with another write.
                 state_store.write().update_raw_operation_write_state(
                     &move_for_track,
                     "accepted",
@@ -1325,7 +1495,7 @@ pub(super) fn submit_strand_position_move(
                     None,
                 );
                 board_status.set(format!(
-                    "{kind_for_record} event {} accepted by server; pending seal (event_id={})",
+                    "{kind_for_record} event {} accepted by server; awaiting current projection (event_id={})",
                     short_protocol_id(&move_for_track),
                     short_protocol_id(&resp.event_id)
                 ));

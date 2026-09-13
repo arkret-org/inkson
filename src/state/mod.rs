@@ -149,8 +149,16 @@ pub struct LocalStateStore {
     /// namespace yet.
     cached_account_key: Option<String>,
     /// Ephemeral UI demand, not a second current-state or head cache.
-    product_current_demand:
-        Arc<Mutex<Option<(arkret_sdk::AccountId, String, Vec<arkret_sdk::StrandId>)>>>,
+    product_current_demand: Arc<
+        Mutex<
+            Option<(
+                arkret_sdk::AccountId,
+                String,
+                Vec<arkret_sdk::StrandId>,
+                Vec<arkret_sdk::CellRef>,
+            )>,
+        >,
+    >,
     /// Perf: whether `cached` has been reconciled with the persistence layer at
     /// least once. Before this flag existed, an empty/default account (where
     /// `cached == ClientLocalState::default()`) re-read the backing store (disk

@@ -282,6 +282,7 @@ fn chat_message_reply_target_prefers_protocol_message_id() {
         redacted: false,
         edited: false,
         revisions: Vec::new(),
+        revision_basis_refs: Vec::new(),
         pending: false,
         failed: false,
         error: None,
@@ -316,6 +317,7 @@ fn chat_message_mutation_target_prefers_protocol_message_id_after_revision() {
         redacted: false,
         edited: true,
         revisions: vec!["hello".to_owned()],
+        revision_basis_refs: Vec::new(),
         pending: false,
         failed: false,
         error: None,
@@ -584,6 +586,25 @@ fn chat_message_revise_operation_addresses_message_target_via_message_id() {
             &serde_json::to_value(op.payload()).unwrap(),
         )
         .unwrap();
+}
+
+#[test]
+fn chat_message_revise_operation_covers_every_observed_revision_head() {
+    let heads = vec![
+        arkret_sdk::Hash::new(format!("sha256:{}", "31".repeat(32))).unwrap(),
+        arkret_sdk::Hash::new(format!("sha256:{}", "32".repeat(32))).unwrap(),
+    ];
+    let content = chat_content_block_for_body("resolved branch").unwrap();
+    let op = chat_message_revise_operation_with_content(
+        "ak:realm:AcLZB9aC8iMR8iBq1sUbB77yPclZIvptyHtZVgiszdI5",
+        "ak:did_core:web:bob.example",
+        "ak:message:AfzYurOSCYsUDGb3xQWTsa9dxNQ7f1QNrv24y4BoMawo",
+        content,
+        heads.clone(),
+    )
+    .expect("builds");
+
+    assert_eq!(op.intent().causal_refs(), heads);
 }
 
 /// Same single-carrier rule for `message_redact_payload`.

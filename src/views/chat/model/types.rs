@@ -141,6 +141,10 @@ pub(crate) struct ChatMessage {
     pub(crate) redacted: bool,
     pub(crate) edited: bool,
     pub(crate) revisions: Vec<String>,
+    /// Event digests of every currently observed maximal revision branch.
+    /// A subsequent edit covers this complete observed frontier; more than one
+    /// ref also drives the ordinary-branch conflict affordance in the UI.
+    pub(crate) revision_basis_refs: Vec<arkret_sdk::Hash>,
     pub(crate) pending: bool,
     pub(crate) failed: bool,
     pub(crate) error: Option<String>,

@@ -42,6 +42,82 @@ use effects::KanbanEffects;
 use model::*;
 pub(crate) use model::{calendar_schedule_revision_heads, strand_views_from_ops};
 
+fn current_board_cell_demand(
+    columns: &[KanbanColumn],
+    selected_board: Option<&str>,
+) -> Vec<arkret_sdk::CellRef> {
+    let mut cells = BTreeSet::new();
+    let spaces = selected_board
+        .into_iter()
+        .chain(columns.iter().map(|column| column.id.as_str()))
+        .filter(|id| arkret_sdk::SpaceId::new((*id).to_owned()).is_ok());
+    for space_id in spaces {
+        for family in [
+            "ak.component.space.metadata.v1",
+            "ak.component.space.lifecycle.v1",
+            "ak.component.space.parent.v1",
+        ] {
+            if let Ok(cell) = arkret_sdk::CellRef::new(format!("ak:cell:{family}:{space_id}")) {
+                cells.insert(cell);
+            }
+        }
+    }
+    for relation_id in columns
+        .iter()
+        .flat_map(|column| &column.cards)
+        .flat_map(|card| &card.assigned_to_relations)
+        .map(|relation| relation.relation_id.as_str())
+    {
+        for family in [
+            "ak.component.relation.v1",
+            "ak.component.relation.lifecycle.v1",
+        ] {
+            if let Ok(cell) = arkret_sdk::CellRef::new(format!("ak:cell:{family}:{relation_id}")) {
+                cells.insert(cell);
+            }
+        }
+    }
+    cells.into_iter().take(256).collect()
+}
+
+fn space_metadata_conflict_choices(
+    state_store: &LocalStateStore,
+    realm_id: &str,
+    space_id: &str,
+) -> (Vec<arkret_sdk::Hash>, Vec<(String, String)>) {
+    let entries = state_store
+        .realm_tree_projection(realm_id)
+        .and_then(|projection| projection.get("current").cloned())
+        .and_then(|value| serde_json::from_value::<arkret_sdk::CurrentEntries>(value).ok())
+        .map(|current| current.entries)
+        .unwrap_or_default();
+    let cell = format!("ak:cell:ak.component.space.metadata.v1:{space_id}");
+    let Some(entry) = entries
+        .iter()
+        .find(|entry| entry.selector().cell_id.as_str() == cell)
+    else {
+        return (Vec::new(), Vec::new());
+    };
+    let arkret_sdk::CurrentOutcome::Heads { heads } = entry.result() else {
+        return (Vec::new(), Vec::new());
+    };
+    let mut refs = heads
+        .iter()
+        .map(|head| head.event_id.event_digest())
+        .collect::<Vec<_>>();
+    refs.sort();
+    refs.dedup();
+    let choices = heads
+        .iter()
+        .filter_map(|head| {
+            serde_json::from_value::<arkret_sdk::Space>(head.value.as_json().clone())
+                .ok()
+                .map(|space| (space.title, space.rank.unwrap_or_default()))
+        })
+        .collect();
+    (refs, choices)
+}
+
 #[cfg(test)]
 pub(crate) use crate::state::projection::kanban_ops::kanban_operations_from_events;
 
@@ -1039,6 +1115,16 @@ pub fn KanbanPanel(
                 })
                 .map(|current| current.entries)
                 .unwrap_or_default();
+            install_current_strand_positions(
+                &mut cols,
+                &entries,
+                &projected_strands,
+                &board_id,
+                decrypt_ctx.as_ref(),
+                &self_actor_id,
+            );
+            install_current_strand_lifecycles(&mut cols, &entries);
+            install_current_space_cells(&mut cols, &entries);
             install_current_card_sources(
                 &mut cols,
                 &entries,
@@ -1072,9 +1158,14 @@ pub fn KanbanPanel(
         let realm = local_realm_id.clone();
         move || {
             let (strands, _) = current_page();
+            let selected = selected_board();
+            let cells = current_board_cell_demand(
+                &columns(),
+                selected.as_ref().map(arkret_sdk::SpaceId::as_str),
+            );
             state_store
                 .read()
-                .set_product_current_demand(&authority, &realm, Some(strands));
+                .set_product_current_demand(&authority, &realm, Some(strands), cells);
         }
     });
     use_drop({
@@ -1083,7 +1174,7 @@ pub fn KanbanPanel(
         move || {
             state_store
                 .read()
-                .set_product_current_demand(&authority, &realm, None)
+                .set_product_current_demand(&authority, &realm, None, Vec::new())
         }
     });
     let (current_card_ids, current_page_count) = current_page();
@@ -1473,7 +1564,10 @@ pub fn KanbanPanel(
                                                 );
                                                 return;
                                             };
-                                            let col_count = columns().len();
+                                            let col_count = columns()
+                                                .iter()
+                                                .filter(|column| column.state == SpaceContainerLifecycleState::Active)
+                                                .count();
                                             let rank = format!("r{:03}", col_count + 1);
                                             let op = match crate::operation::ak_ops::space_create(
                                                 &realm,
@@ -1874,8 +1968,8 @@ pub fn KanbanPanel(
                                 button {
                                     class: "column-drag-handle",
                                     "data-testid": "column-drag-handle",
-                                    disabled: columns().iter().any(|column| arkret_sdk::SpaceId::new(column.id.clone()).is_err()),
-                                    draggable: if columns().iter().all(|column| arkret_sdk::SpaceId::new(column.id.clone()).is_ok()) { "true" } else { "false" },
+                                    disabled: columns().iter().filter(|column| column.state == SpaceContainerLifecycleState::Active).any(|column| arkret_sdk::SpaceId::new(column.id.clone()).is_err()),
+                                    draggable: if columns().iter().filter(|column| column.state == SpaceContainerLifecycleState::Active).all(|column| arkret_sdk::SpaceId::new(column.id.clone()).is_ok()) { "true" } else { "false" },
                                     title: "Drag column {column.title}",
                                     "aria-label": "Drag column {column.title}",
                                     ondragstart: {
@@ -1974,7 +2068,12 @@ pub fn KanbanPanel(
                             }
                         }
 
-                for (card_index, card) in active_cards.iter().enumerate().filter(|(_, card)| current_card_ids.contains(&card.id) || arkret_sdk::StrandId::new(card.id.clone()).is_err())
+                for (card_index, card) in active_cards.iter().enumerate().filter(|(_, card)| {
+                    let optimistic_local_id = arkret_sdk::StrandId::new(card.id.clone()).is_err();
+                    optimistic_local_id
+                        || (current_card_ids.contains(&card.id)
+                            && card.position_basis_refs.len() == 1)
+                })
                 {
                             div {
                                 key: "{card.id}",
@@ -2055,11 +2154,13 @@ pub fn KanbanPanel(
                                     let card_id = card.id.clone();
                                     let column_id = column.id.clone();
                                     let from_rank = card.rank.clone();
+                                    let position_basis_refs = card.position_basis_refs.clone();
                                     move |_| {
                                         dragging_card.set(Some(DraggedCard {
                                             card_id: card_id.clone(),
                                             from_column_id: column_id.clone(),
                                             from_rank: from_rank.clone(),
+                                            position_basis_refs: position_basis_refs.clone(),
                                         }));
                                     }
                                 },
@@ -2208,6 +2309,8 @@ pub fn KanbanPanel(
                                                     let realm = selected_realm_id.clone();
                                                     let actor = principal_id.clone();
                                                     let strand_id = card.id.clone();
+                                                    let lifecycle_basis_refs =
+                                                        card.lifecycle_basis_refs.clone();
                                                     move |evt: dioxus::events::MouseEvent| {
                                                         evt.stop_propagation();
                                                         if !card_settled {
@@ -2223,6 +2326,7 @@ pub fn KanbanPanel(
                                                             actor.clone(),
                                                             strand_id.clone(),
                                                             StrandLifecycleState::Archived,
+                                                            lifecycle_basis_refs.clone(),
                                                             state_store,
                                                             board_status,
                                                         );
@@ -2430,6 +2534,296 @@ pub fn KanbanPanel(
                 }
             }
 
+            // A multi-head lifecycle cell has no single active/archived value.
+            // The protocol's conservative repair is an explicit restore that
+            // observes every head; never let arrival order pick a state.
+            {
+                let lifecycle_issues = columns()
+                    .iter()
+                    .flat_map(|column| column.cards.iter())
+                    .filter(|card| {
+                        matches!(
+                            card.lifecycle,
+                            StrandLifecycleState::Conflict
+                                | StrandLifecycleState::Unavailable
+                        )
+                    })
+                    .cloned()
+                    .collect::<Vec<_>>();
+                rsx! {
+                    if !lifecycle_issues.is_empty() {
+                        details {
+                            class: "event board-maintenance",
+                            "data-testid": "kanban-lifecycle-conflicts",
+                            open: true,
+                            summary {
+                                span { "Lifecycle conflicts" }
+                                span { "{lifecycle_issues.len()} card(s)" }
+                            }
+                            for card in lifecycle_issues.iter() {
+                                div {
+                                    key: "{card.id}",
+                                    class: "event",
+                                    "data-testid": "kanban-lifecycle-conflict-row",
+                                    div { class: "event-head",
+                                        span { class: "entity-title", "{card.title}" }
+                                        span { "{card.lifecycle_basis_refs.len()} concurrent head(s)" }
+                                    }
+                                    if card.lifecycle == StrandLifecycleState::Conflict
+                                        && card.lifecycle_basis_refs.len() > 1
+                                    {
+                                        Button {
+                                            variant: ButtonVariant::Secondary,
+                                            "data-testid": "lifecycle-conflict-restore-button",
+                                            title: "Restore and cover every lifecycle head",
+                                            onclick: {
+                                                let base = base_url.clone();
+                                                let realm = selected_realm_id.clone();
+                                                let actor = principal_id.clone();
+                                                let strand_id = card.id.clone();
+                                                let lifecycle_basis_refs =
+                                                    card.lifecycle_basis_refs.clone();
+                                                move |_| {
+                                                    dispatch_strand_lifecycle(
+                                                        base.clone(),
+                                                        token,
+                                                        realm.clone(),
+                                                        actor.clone(),
+                                                        strand_id.clone(),
+                                                        StrandLifecycleState::Active,
+                                                        lifecycle_basis_refs.clone(),
+                                                        state_store,
+                                                        board_status,
+                                                    );
+                                                }
+                                            },
+                                            "Resolve by restoring"
+                                        }
+                                    } else {
+                                        div { class: "muted", "Lifecycle data is unavailable; refresh to retry." }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // A multi-head position cell has no effective List placement.
+            // Keep it outside the Board grid and require an explicit target;
+            // that resolving Move observes every displayed head.
+            {
+                let cols = columns();
+                let conflicts = cols
+                    .iter()
+                    .find(|column| {
+                        column.state == SpaceContainerLifecycleState::PositionConflict
+                    })
+                    .map(|column| {
+                        column
+                            .cards
+                            .iter()
+                            .filter(|card| card.lifecycle == StrandLifecycleState::Active)
+                            .cloned()
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+                let targets = cols
+                    .into_iter()
+                    .filter(|column| column.state == SpaceContainerLifecycleState::Active)
+                    .collect::<Vec<_>>();
+                rsx! {
+                    if !conflicts.is_empty() {
+                        details {
+                            class: "event board-maintenance",
+                            "data-testid": "kanban-position-conflicts",
+                            open: true,
+                            summary {
+                                span { "Position conflicts" }
+                                span { "{conflicts.len()} card(s)" }
+                            }
+                            for card in conflicts.iter() {
+                                div {
+                                    key: "{card.id}",
+                                    class: "event",
+                                    "data-testid": "kanban-position-conflict-row",
+                                    div { class: "event-head",
+                                        span { class: "entity-title", "{card.title}" }
+                                        span { "{card.position_basis_refs.len()} concurrent head(s)" }
+                                    }
+                                    if card.position_basis_refs.len() > 1 {
+                                        div { class: "board-column-actions",
+                                            for target in targets.iter() {
+                                                Button {
+                                                    variant: ButtonVariant::Secondary,
+                                                    "data-testid": "position-conflict-resolve-button",
+                                                    title: "Resolve into {target.title}",
+                                                    onclick: {
+                                                        let base = base_url.clone();
+                                                        let realm = selected_realm_id.clone();
+                                                        let actor = principal_id.clone();
+                                                        let card_id = card.id.clone();
+                                                        let head_refs = card.position_basis_refs.clone();
+                                                        let target_id = target.id.clone();
+                                                        let previous_rank = target
+                                                            .cards
+                                                            .iter()
+                                                            .filter(|candidate| {
+                                                                candidate.lifecycle
+                                                                    == StrandLifecycleState::Active
+                                                            })
+                                                            .last()
+                                                            .map(|candidate| candidate.rank.clone());
+                                                        move |_| {
+                                                            let Some(board_id) = selected_board()
+                                                                .map(|id| id.to_string())
+                                                            else {
+                                                                board_status.set(
+                                                                    "Select a Board before resolving the conflict."
+                                                                        .to_owned(),
+                                                                );
+                                                                return;
+                                                            };
+                                                            dispatch_strand_position_move(
+                                                                base.clone(),
+                                                                token,
+                                                                realm.clone(),
+                                                                board_id,
+                                                                actor.clone(),
+                                                                DraggedCard {
+                                                                    card_id: card_id.clone(),
+                                                                    from_column_id: String::new(),
+                                                                    from_rank: String::new(),
+                                                                    position_basis_refs: head_refs.clone(),
+                                                                },
+                                                                target_id.clone(),
+                                                                ColumnNeighbours {
+                                                                    prev_rank: previous_rank.clone(),
+                                                                    next_rank: None,
+                                                                },
+                                                                state_store,
+                                                                board_status,
+                                                            );
+                                                        }
+                                                    },
+                                                    "Resolve to {target.title}"
+                                                }
+                                            }
+                                        }
+                                    } else {
+                                        div { class: "muted", "Position data is unavailable; refresh to retry." }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            {
+                let unresolved: Vec<KanbanColumn> = columns()
+                    .iter()
+                    .filter(|column| {
+                        matches!(
+                            column.state,
+                            SpaceContainerLifecycleState::Conflict
+                                | SpaceContainerLifecycleState::Unavailable
+                        )
+                    })
+                    .cloned()
+                    .collect();
+                if !unresolved.is_empty() {
+                    rsx! {
+                        details { class: "event board-maintenance", open: true, "data-testid": "kanban-space-conflicts",
+                            summary { "Unresolved list state ({unresolved.len()})" }
+                            for column in unresolved {
+                                {
+                                    let (metadata_refs, choices) = space_metadata_conflict_choices(
+                                        &state_store.read(),
+                                        &selected_realm_id,
+                                        &column.id,
+                                    );
+                                    rsx! {
+                                        div { key: "space-conflict-{column.id}", class: "event",
+                                            div { class: "event-head",
+                                                span { class: "entity-title", "{column.id}" }
+                                                span { "Canonical Space state has no single winner." }
+                                            }
+                                            if choices.len() > 1 {
+                                                div { class: "workflow-actions",
+                                                    for (index, (title, rank)) in choices.iter().enumerate() {
+                                                        Button {
+                                                            key: "space-metadata-choice-{column.id}-{index}",
+                                                            variant: ButtonVariant::Secondary,
+                                                            "data-testid": "space-metadata-conflict-choice",
+                                                            onclick: {
+                                                                let base = base_url.clone();
+                                                                let realm = selected_realm_id.clone();
+                                                                let actor = principal_id.clone();
+                                                                let column_id = column.id.clone();
+                                                                let title = title.clone();
+                                                                let rank = rank.clone();
+                                                                let refs = metadata_refs.clone();
+                                                                move |_| submit_space_metadata_resolution(
+                                                                    base.clone(),
+                                                                    token,
+                                                                    realm.clone(),
+                                                                    actor.clone(),
+                                                                    column_id.clone(),
+                                                                    title.clone(),
+                                                                    rank.clone(),
+                                                                    refs.clone(),
+                                                                    selected_scope_security_encrypted,
+                                                                    state_store,
+                                                                    board_status,
+                                                                )
+                                                            },
+                                                            "Choose metadata branch: {title} / rank {rank}"
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                            div { class: "workflow-actions",
+                                                Button {
+                                                    variant: ButtonVariant::Secondary,
+                                                    onclick: {
+                                                        let base = base_url.clone();
+                                                        let realm = selected_realm_id.clone();
+                                                        let actor = principal_id.clone();
+                                                        let id = column.id.clone();
+                                                        move |_| dispatch_space_container_lifecycle(
+                                                            base.clone(), token, realm.clone(), actor.clone(), id.clone(),
+                                                            SpaceContainerLifecycleState::Active, state_store, board_status,
+                                                        )
+                                                    },
+                                                    "Resolve lifecycle as active"
+                                                }
+                                                Button {
+                                                    variant: ButtonVariant::Secondary,
+                                                    onclick: {
+                                                        let base = base_url.clone();
+                                                        let realm = selected_realm_id.clone();
+                                                        let actor = principal_id.clone();
+                                                        let id = column.id.clone();
+                                                        move |_| dispatch_space_container_lifecycle(
+                                                            base.clone(), token, realm.clone(), actor.clone(), id.clone(),
+                                                            SpaceContainerLifecycleState::Archived, state_store, board_status,
+                                                        )
+                                                    },
+                                                    "Resolve lifecycle as archived"
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    rsx! {}
+                }
+            }
+
             // Archived lists panel — c`ak.space.archivefecycle `archived` state.
             // Lists appear here after `ak.space.archive` is accepted and
             // are removed from the main boar`ak.space.restoreh row carries
@@ -2565,6 +2959,8 @@ pub fn KanbanPanel(
                                                         let realm = selected_realm_id.clone();
                                                         let actor = principal_id.clone();
                                                         let strand_id = row.card.id.clone();
+                                                        let lifecycle_basis_refs =
+                                                            row.card.lifecycle_basis_refs.clone();
                                                         move |_| {
                                                             dispatch_strand_lifecycle(
                                                                 base.clone(),
@@ -2573,6 +2969,7 @@ pub fn KanbanPanel(
                                                                 actor.clone(),
                                                                 strand_id.clone(),
                                                                 StrandLifecycleState::Active,
+                                                                lifecycle_basis_refs.clone(),
                                                                 state_store,
                                                                 board_status,
                                                             );

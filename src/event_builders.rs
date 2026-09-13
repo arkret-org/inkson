@@ -1033,6 +1033,29 @@ pub fn build_realm_profile_replacement_event(
     )
 }
 
+/// Build a Realm profile write over every canonical causal-register head.
+/// Multi-head conflict resolution cannot truthfully use a single-value CAS
+/// predicate, so this form signs the complete current head set instead.
+pub fn build_realm_profile_resolution_event(
+    realm_id: &str,
+    actor_id: &str,
+    digest_suite: arkret_sdk::DigestSuite,
+    payload: arkret_sdk::RealmProfile,
+    causal_refs: Vec<arkret_sdk::Hash>,
+) -> anyhow::Result<crate::operation::LocalOperation> {
+    Ok(
+        build_realm_state_event_for_station_with_set_head::<arkret_sdk::event_spec::RealmProfile>(
+            crate::operation::authoring_station_id()?,
+            realm_id,
+            actor_id,
+            digest_suite,
+            payload,
+            None,
+        )?
+        .with_causal_refs(causal_refs),
+    )
+}
+
 /// Build a Realm facet state event (`ak.realm.join_rule`,
 /// `ak.realm.history_access`, `ak.realm.discovery`, ...) for the author's
 /// explicit Station. Production callers take the Station from the submitter's

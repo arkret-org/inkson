@@ -22,6 +22,16 @@ pub(crate) enum SpaceContainerLifecycleState {
     /// Server-only terminal state. UI never produces this; the variant
     /// exists so `dispatch_space_container_lifecycle` can exhaustively match.
     Tombstoned,
+    /// One of the Space metadata/lifecycle causal registers has concurrent
+    /// heads. The UI keeps the container visible but must not silently pick a
+    /// title, rank, or lifecycle winner.
+    Conflict,
+    /// The canonical Space state is unavailable or malformed.
+    Unavailable,
+    /// Holder-local diagnostic bucket for Strands whose canonical position
+    /// cell has multiple heads (or is otherwise unavailable). This is not a
+    /// Space and must never participate in Board ordering or lifecycle writes.
+    PositionConflict,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -33,6 +43,10 @@ pub(crate) struct KanbanCard {
     /// `ak.strand.move` / `ak.strand.reorder` Move. When the projection
     /// refreshes (server-side cell update), this must be re-synced.
     pub(crate) rank: String,
+    /// Canonical Event digests of the currently observed position heads.
+    /// A normal settled card has exactly one. Multiple refs mean the position
+    /// is unresolved and a resolving Move must observe every ref.
+    pub(crate) position_basis_refs: Vec<arkret_sdk::Hash>,
     pub(crate) title: String,
     /// Strand `metadata.summary` — the short one-line/paragraph overview.
     pub(crate) description: String,
@@ -84,6 +98,11 @@ pub(crate) struct KanbanCard {
     /// irreversible terminal (content cleared, envelope/audit retained); UI
     /// never emits it but renders a withdrawn-message placeholder for it.
     pub(crate) lifecycle: StrandLifecycleState,
+    /// Canonical Event digests of the currently observed lifecycle heads.
+    /// Empty is the valid initial `active` state (the create Event does not
+    /// write the lifecycle cell); one ref is settled, and multiple refs are
+    /// an archive conflict that a restore must cover in full.
+    pub(crate) lifecycle_basis_refs: Vec<arkret_sdk::Hash>,
 }
 
 impl KanbanCard {
@@ -185,6 +204,13 @@ pub(crate) enum StrandLifecycleState {
     /// content but retains the envelope and audit trail, so the UI renders a
     /// withdrawn-message placeholder rather than hiding the Strand.
     Redacted,
+    /// The causal lifecycle register has multiple heads. The card is kept out
+    /// of ordinary active/archived surfaces until an explicit restore observes
+    /// every head and converges the register.
+    Conflict,
+    /// The exact lifecycle result is unavailable or malformed. Never infer a
+    /// state from the arrival-ordered convenience projection in this case.
+    Unavailable,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -194,17 +220,17 @@ pub(crate) struct LockedStrand {
 }
 
 /// Snapshot of the card-being-dragged's pre-move state. The causal-register
-/// model in [`operations-sync.md` §9.1](../../arkret-spec/spec/v1/zh/sync/operations-sync.md)
-/// requires the source `(list_space_id, rank)` to seed `head_eq` on the
-/// resulting `ak.strand.move` / `ak.strand.reorder` Move. We capture it on
-/// `ondragstart` so the drop handler doesn't have to re-derive it from
-/// the column state (which may have been mutated optimistically in the
-/// meantime).
+/// model requires the resulting Event to reference the exact position heads
+/// observed by the user. We capture the frontier on `ondragstart` so the drop
+/// handler does not infer a winner from a later holder-local projection.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct DraggedCard {
     pub(crate) card_id: String,
     pub(crate) from_column_id: String,
     pub(crate) from_rank: String,
+    /// Exact position frontier captured with the rendered card. The drop
+    /// command signs these refs instead of inferring a winner from UI order.
+    pub(crate) position_basis_refs: Vec<arkret_sdk::Hash>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -336,7 +362,7 @@ impl CardState {
             CardState::Accepted => "pending seal",
             CardState::SoftFailed => "soft failed",
             CardState::Quarantined => "quarantined",
-            CardState::Conflict => "CAS conflict",
+            CardState::Conflict => "conflict",
         }
     }
 
@@ -380,7 +406,7 @@ impl CardState {
             CardState::Accepted => "Server accepted the event; waiting for projection",
             CardState::SoftFailed => "Server did not accept this event",
             CardState::Quarantined => "Write failed; open the queue for details",
-            CardState::Conflict => "Server reported a CAS conflict",
+            CardState::Conflict => "Concurrent state requires explicit resolution",
         }
     }
 }

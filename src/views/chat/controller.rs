@@ -698,12 +698,21 @@ impl ChatController {
             self.editing_message.set(None);
             return;
         }
+        let mut revision_basis_refs = Vec::new();
         if let Some(message) = self
             .messages
             .write()
             .iter_mut()
             .find(|message| message.id == message_id)
         {
+            if message.pending {
+                self.status_msg.set(
+                    "Wait for the current message write to settle before editing again".to_owned(),
+                );
+                self.editing_message.set(None);
+                return;
+            }
+            revision_basis_refs = message.revision_basis_refs.clone();
             message.revisions.push(message.body.clone());
             message.body = content.clone();
             message.content_format = Some(arkret_sdk::TextFormat::Markdown);
@@ -735,6 +744,7 @@ impl ChatController {
                     actor.as_str(),
                     &target_ref,
                     content_block,
+                    revision_basis_refs,
                 ) {
                     Ok(operation) => match authed_api_with_sync(&base_url, api_token, wait_for) {
                         Ok(api) => match api.event_submitter() {
@@ -776,7 +786,15 @@ impl ChatController {
                 }
             };
             match result {
-                Ok(_) => {
+                Ok(response) => {
+                    if let Ok(event_id) = arkret_sdk::EventId::new(response.event_id.clone())
+                        && let Some(message) = messages
+                            .write()
+                            .iter_mut()
+                            .find(|message| message.id == message_id)
+                    {
+                        message.revision_basis_refs = vec![event_id.event_digest()];
+                    }
                     mark_message_command_succeeded(&mut messages, &message_id);
                     status_msg.set("Message updated".to_owned());
                 }

@@ -739,6 +739,22 @@ async fn refresh_current_product_view(
             entries.insert(entry.selector().canonical_key()?, entry);
         }
     }
+    for cell in ctx
+        .state_store
+        .read(|store| store.product_current_cells(&ctx.account.authority, &realm_id))
+    {
+        if entries.len() >= 512 {
+            break;
+        }
+        if let Some(entry) = index.read_selector_ready(&selector(cell.as_str())?).await? {
+            let bytes = arkret_sdk::canonical::canonical_json_bytes(&entry)?.len();
+            if bytes > remaining_bytes {
+                break;
+            }
+            remaining_bytes -= bytes;
+            entries.insert(entry.selector().canonical_key()?, entry);
+        }
+    }
     let default_strand = entries.values().find_map(|entry| {
         if entry.selector().cell_id.as_str() != crate::current_projection::REQUIRED_REALM_CELLS[3] {
             return None;

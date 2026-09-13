@@ -147,7 +147,7 @@ pub(crate) fn chat_message_revise_operation(
     body: &str,
 ) -> anyhow::Result<crate::operation::LocalOperation> {
     let content = chat_content_block_for_body(body)?;
-    chat_message_revise_operation_with_content(realm_id, actor, event_id, content)
+    chat_message_revise_operation_with_content(realm_id, actor, event_id, content, Vec::new())
 }
 
 pub(crate) fn chat_message_revise_operation_with_content(
@@ -155,12 +155,14 @@ pub(crate) fn chat_message_revise_operation_with_content(
     actor: &str,
     event_id: &str,
     content: arkret_sdk::ContentBlock,
+    causal_refs: Vec<arkret_sdk::Hash>,
 ) -> anyhow::Result<crate::operation::LocalOperation> {
     // Route through the SDK-typed `message_revise_payload` builder rather than a
     // hand-rolled `json!` body: it validates ids at build time and addresses a
     // `ak:message:` target via the payload's `message_id` field (falling back to
     // `target_ref` for event/local refs), matching the schema's anyOf.
     crate::operation::ak_ops::message_revise_content(realm_id, actor, event_id, content)?
+        .causal_refs(causal_refs)
         .build_sdk_event("inkson")
 }
 

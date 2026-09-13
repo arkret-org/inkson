@@ -80,6 +80,7 @@ fn sidecar_projection_message_for_realm(
         redacted: false,
         edited: false,
         revisions: Vec::new(),
+        revision_basis_refs: Vec::new(),
         pending: false,
         failed: false,
         error: None,

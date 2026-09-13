@@ -478,6 +478,7 @@ fn durable_redaction_folds_onto_controller_only_create() {
         edited: false,
         redacted: false,
         revisions: Vec::new(),
+        revision_basis_refs: Vec::new(),
         reply_to: None,
         reactions: Vec::new(),
         mentions: Vec::new(),
@@ -529,6 +530,7 @@ fn chat_messages_fold_revision_chain_into_latest_message() {
             "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:bob.example","station_id":"ak:did_core:web:principal.example"}},
             "realm_id": "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0",
             "created_at": "2026-05-22T10:01:00.000Z",
+            "prev_refs": ["ak:event:AuVYtOcVkQu9JLkr0AO35k8Vn36NgL7qI1NnvHuzyDDs"],
             "payload": {
                 "message_id": "ak:message:AuVYtOcVkQu9JLkr0AO35k8Vn36NgL7qI1NnvHuzyDDs",
                 "content": {"kind": "ak.content.text", "body": "v2"}
@@ -540,6 +542,7 @@ fn chat_messages_fold_revision_chain_into_latest_message() {
             "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:bob.example","station_id":"ak:did_core:web:principal.example"}},
             "realm_id": "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0",
             "created_at": "2026-05-22T10:02:00.000Z",
+            "prev_refs": ["ak:event:AugQeQYGPoF9zEbbEIcD8ndn7DUoCaZVaJ9EM6u1rvuo"],
             "payload": {
                 "message_id": "ak:message:AuVYtOcVkQu9JLkr0AO35k8Vn36NgL7qI1NnvHuzyDDs",
                 "content": {"kind": "ak.content.text", "body": "v3"}
@@ -613,6 +616,73 @@ fn chat_messages_fold_revision_chain_into_latest_message() {
         vec!["v1".to_owned(), "v2".to_owned()],
         "replaying durable history onto an already-folded row must not count the current body as a revision"
     );
+}
+
+#[test]
+fn concurrent_message_revisions_are_arrival_order_independent_and_keep_every_head() {
+    let message_event = "ak:event:AuVYtOcVkQu9JLkr0AO35k8Vn36NgL7qI1NnvHuzyDDs";
+    let message_id = "ak:message:AuVYtOcVkQu9JLkr0AO35k8Vn36NgL7qI1NnvHuzyDDs";
+    let revision_a = "ak:event:AugQeQYGPoF9zEbbEIcD8ndn7DUoCaZVaJ9EM6u1rvuo";
+    let revision_b = "ak:event:AmDOsZS5t1FOYT8QB0mLKRUnOOqWz9iWSIfk6RKZ91T8";
+    let mut events = vec![
+        json!({
+            "event_id": message_event,
+            "kind": "ak.message.create",
+            "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:bob.example","station_id":"ak:did_core:web:principal.example"}},
+            "realm_id": "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0",
+            "created_at": "2026-05-22T10:00:00.000Z",
+            "payload": {
+                "strand_id": "ak:strand:ARJxD7BSUwmnyinQVd_KxLCG7gwfyIFlTzeJk7F_phHE",
+                "message_id": message_id,
+                "content": {"kind": "ak.content.text", "body": "original"}
+            }
+        }),
+        json!({
+            "event_id": revision_a,
+            "kind": "ak.message.revise",
+            "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:bob.example","station_id":"ak:did_core:web:principal.example"}},
+            "realm_id": "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0",
+            "created_at": "2026-05-22T10:01:00.000Z",
+            "prev_refs": [message_event],
+            "payload": {"message_id": message_id, "content": {"kind": "ak.content.text", "body": "branch a"}}
+        }),
+        json!({
+            "event_id": revision_b,
+            "kind": "ak.message.revise",
+            "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:alice.example","station_id":"ak:did_core:web:principal.example"}},
+            "realm_id": "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0",
+            "created_at": "2026-05-22T10:02:00.000Z",
+            "prev_refs": [message_event],
+            "payload": {"message_id": message_id, "content": {"kind": "ak.content.text", "body": "branch b"}}
+        }),
+    ];
+    sign_chat_fixtures(&mut events);
+    let mut reversed = events.clone();
+    reversed.reverse();
+
+    let forward = chat_messages_from_events_with_sidecar(
+        "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0",
+        &events,
+        None,
+        None,
+    );
+    let backward = chat_messages_from_events_with_sidecar(
+        "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0",
+        &reversed,
+        None,
+        None,
+    );
+
+    assert_eq!(forward[0].body, backward[0].body);
+    assert_eq!(
+        forward[0].revision_basis_refs,
+        backward[0].revision_basis_refs
+    );
+    assert_eq!(forward[0].revision_basis_refs.len(), 2);
+    let mut visible = forward[0].revisions.clone();
+    visible.push(forward[0].body.clone());
+    assert!(visible.contains(&"branch a".to_owned()));
+    assert!(visible.contains(&"branch b".to_owned()));
 }
 
 #[test]
@@ -828,6 +898,7 @@ fn merge_chat_messages_dedupes_tombstones_by_protocol_message_id() {
             redacted: true,
             edited: false,
             revisions: Vec::new(),
+            revision_basis_refs: Vec::new(),
             pending: false,
             failed: false,
             error: None,
@@ -917,6 +988,7 @@ fn merge_chat_messages_keeps_newer_revision_when_older_create_arrives_late() {
             redacted: false,
             edited: false,
             revisions: Vec::new(),
+            revision_basis_refs: Vec::new(),
             pending: false,
             failed: false,
             error: None,
@@ -1165,6 +1237,7 @@ fn local_redaction_tombstone_replaces_raw_message_without_plaintext() {
         redacted: false,
         edited: false,
         revisions: Vec::new(),
+        revision_basis_refs: Vec::new(),
         pending: false,
         failed: false,
         error: None,

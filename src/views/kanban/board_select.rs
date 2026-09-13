@@ -70,6 +70,7 @@ pub(super) fn seed_columns() -> Vec<KanbanColumn> {
                 // the alphabet midpoint; subsequent seeds at "f" and
                 // "p" keep them strictly ascending.
                 rank: "U".to_owned(),
+                position_basis_refs: Vec::new(),
                 title: "Legal review for public beta".to_owned(),
                 description: "Finalize external processor wording before launch checklist can move.".to_owned(),
                 description_body: String::new(),
@@ -98,6 +99,7 @@ pub(super) fn seed_columns() -> Vec<KanbanColumn> {
                 security_encrypted: None,
                 state: CardState::Synced,
                 lifecycle: StrandLifecycleState::Active,
+                lifecycle_basis_refs: Vec::new(),
             }],
             state: SpaceContainerLifecycleState::Active,
         },
@@ -108,6 +110,7 @@ pub(super) fn seed_columns() -> Vec<KanbanColumn> {
             cards: vec![KanbanCard {
                 id: DEMO_STRAND_ONBOARDING_COPY_ID.to_owned(),
                 rank: "U".to_owned(),
+                position_basis_refs: Vec::new(),
                 title: "Onboarding copy".to_owned(),
                 description: "Waiting on discussion-scoped feedback from support and docs reviewers.".to_owned(),
                 description_body: String::new(),
@@ -133,6 +136,7 @@ pub(super) fn seed_columns() -> Vec<KanbanColumn> {
                 security_encrypted: None,
                 state: CardState::Queued,
                 lifecycle: StrandLifecycleState::Active,
+                lifecycle_basis_refs: Vec::new(),
             }],
             state: SpaceContainerLifecycleState::Active,
         },
@@ -143,6 +147,7 @@ pub(super) fn seed_columns() -> Vec<KanbanColumn> {
             cards: vec![KanbanCard {
                 id: DEMO_STRAND_SECURITY_SIGNOFF_ID.to_owned(),
                 rank: "U".to_owned(),
+                position_basis_refs: Vec::new(),
                 title: "Security sign-off".to_owned(),
                 description: "Projection detected a stale column head after an offline move.".to_owned(),
                 description_body: String::new(),
@@ -171,6 +176,7 @@ pub(super) fn seed_columns() -> Vec<KanbanColumn> {
                 security_encrypted: None,
                 state: CardState::Conflict,
                 lifecycle: StrandLifecycleState::Active,
+                lifecycle_basis_refs: Vec::new(),
             }],
             state: SpaceContainerLifecycleState::Active,
         },

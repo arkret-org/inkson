@@ -8,6 +8,9 @@
 use arkret_wire::event_kind_str;
 
 use super::*;
+use crate::move_builder::strand_position_cell_id;
+
+pub(crate) const POSITION_CONFLICT_COLUMN_ID: &str = "inkson:diagnostic:strand-position-conflicts";
 
 /// Stable presentation order for local annotations; this is not causal order.
 /// then `operation_id` for determinism. Returns borrows so callers fold without
@@ -665,6 +668,352 @@ pub(crate) fn project_board_with_projection_for_actor(
     (columns, board_options, board_id)
 }
 
+fn take_card(columns: &mut [KanbanColumn], strand_id: &str) -> Option<KanbanCard> {
+    for column in columns {
+        if let Some(index) = column.cards.iter().position(|card| card.id == strand_id) {
+            return Some(column.cards.remove(index));
+        }
+    }
+    None
+}
+
+fn projected_card(
+    projected: &[crate::state::projection_views::StrandProjectionView],
+    strand_id: &str,
+    decrypt_ctx: Option<&MlsDecryptCtx<'_>>,
+    actor: &str,
+) -> Option<KanbanCard> {
+    projected
+        .iter()
+        .find(|strand| strand.strand_id == strand_id)
+        .map(|strand| card_from_strand_projection_for_actor(strand, decrypt_ctx, actor))
+}
+
+fn push_position_diagnostic(
+    diagnostics: &mut Vec<KanbanCard>,
+    mut card: KanbanCard,
+    state: CardState,
+    refs: Vec<arkret_sdk::Hash>,
+) {
+    card.state = state;
+    card.position_basis_refs = refs;
+    diagnostics.push(card);
+}
+
+/// Replace the lossy placement columns in the convenience Strand projection
+/// with the canonical `ak.component.strand.position.v1` current result.
+///
+/// A projection row cannot encode multiple causal-register heads. Therefore it
+/// is only a discovery/content baseline: one current head places the card,
+/// multiple heads move it into a non-Space diagnostic bucket, and removed
+/// means the Strand is currently unplaced. Arrival order never selects a head.
+pub(crate) fn install_current_strand_positions(
+    columns: &mut Vec<KanbanColumn>,
+    entries: &[arkret_sdk::CurrentResultEntry],
+    projected: &[crate::state::projection_views::StrandProjectionView],
+    board_space_id: &str,
+    decrypt_ctx: Option<&MlsDecryptCtx<'_>>,
+    actor: &str,
+) {
+    columns.retain(|column| column.id != POSITION_CONFLICT_COLUMN_ID);
+    let mut by_strand = BTreeMap::<String, Vec<&arkret_sdk::CurrentResultEntry>>::new();
+    for entry in entries {
+        let arkret_sdk::CurrentTarget::Strand { strand_id } = entry.target() else {
+            continue;
+        };
+        let expected_cell = strand_position_cell_id(board_space_id, strand_id.as_str());
+        if entry.selector().cell_id.as_str() == expected_cell {
+            by_strand
+                .entry(strand_id.as_str().to_owned())
+                .or_default()
+                .push(entry);
+        }
+    }
+
+    let mut diagnostics = Vec::new();
+    for (strand_id, matching) in by_strand {
+        let card = take_card(columns, &strand_id)
+            .or_else(|| projected_card(projected, &strand_id, decrypt_ctx, actor));
+        let Some(mut card) = card else {
+            continue;
+        };
+        if matching.len() != 1 {
+            push_position_diagnostic(&mut diagnostics, card, CardState::Quarantined, Vec::new());
+            continue;
+        }
+        match matching[0].result() {
+            arkret_sdk::CurrentOutcome::Heads { heads } if heads.len() == 1 => {
+                let value = heads[0].value.as_json();
+                let Some(list_space_id) = value.get("list_space_id").and_then(Value::as_str) else {
+                    push_position_diagnostic(
+                        &mut diagnostics,
+                        card,
+                        CardState::Quarantined,
+                        Vec::new(),
+                    );
+                    continue;
+                };
+                let Some(rank) = value.get("rank").and_then(Value::as_str) else {
+                    push_position_diagnostic(
+                        &mut diagnostics,
+                        card,
+                        CardState::Quarantined,
+                        Vec::new(),
+                    );
+                    continue;
+                };
+                card.rank = rank.to_owned();
+                card.position_basis_refs = vec![heads[0].event_id.event_digest()];
+                if matches!(card.state, CardState::Conflict | CardState::Quarantined) {
+                    card.state = CardState::Synced;
+                }
+                if let Some(column) = columns.iter_mut().find(|column| column.id == list_space_id) {
+                    column.cards.push(card);
+                } else {
+                    push_position_diagnostic(
+                        &mut diagnostics,
+                        card,
+                        CardState::Quarantined,
+                        Vec::new(),
+                    );
+                }
+            }
+            arkret_sdk::CurrentOutcome::Heads { heads } => {
+                let mut refs = heads
+                    .iter()
+                    .map(|head| head.event_id.event_digest())
+                    .collect::<Vec<_>>();
+                refs.sort();
+                refs.dedup();
+                push_position_diagnostic(&mut diagnostics, card, CardState::Conflict, refs);
+            }
+            arkret_sdk::CurrentOutcome::Removed => {
+                // A removed position is a valid unplaced Strand. Keeping it out
+                // of every List is the complete effective projection.
+            }
+            arkret_sdk::CurrentOutcome::Unavailable { .. }
+            | arkret_sdk::CurrentOutcome::Value { .. } => {
+                push_position_diagnostic(
+                    &mut diagnostics,
+                    card,
+                    CardState::Quarantined,
+                    Vec::new(),
+                );
+            }
+        }
+    }
+    for column in columns.iter_mut() {
+        sort_kanban_cards(&mut column.cards);
+    }
+    if !diagnostics.is_empty() {
+        sort_kanban_cards(&mut diagnostics);
+        columns.push(KanbanColumn {
+            id: POSITION_CONFLICT_COLUMN_ID.to_owned(),
+            title: "Position conflicts".to_owned(),
+            rank: String::new(),
+            cards: diagnostics,
+            state: SpaceContainerLifecycleState::PositionConflict,
+        });
+    }
+}
+
+/// Replace the convenience projection's single Strand lifecycle value with
+/// the canonical causal-register result. A missing lifecycle cell is the
+/// protocol's initial `active` state; it is trusted only when the same bounded
+/// current page contains the Strand object selector, proving the target page
+/// has actually arrived.
+pub(crate) fn install_current_strand_lifecycles(
+    columns: &mut [KanbanColumn],
+    entries: &[arkret_sdk::CurrentResultEntry],
+) {
+    for column in columns {
+        for card in &mut column.cards {
+            let object_cell = format!("ak:cell:ak.component.strand.object.v1:{}", card.id);
+            let lifecycle_cell = format!("ak:cell:ak.component.strand.lifecycle.v1:{}", card.id);
+            let target_matches = |entry: &&arkret_sdk::CurrentResultEntry| matches!(entry.target(), arkret_sdk::CurrentTarget::Strand { strand_id } if strand_id.as_str() == card.id);
+            let object_is_loaded = entries.iter().any(|entry| {
+                entry.selector().cell_id.as_str() == object_cell && target_matches(&entry)
+            });
+            let mut matching = entries.iter().filter(|entry| {
+                entry.selector().cell_id.as_str() == lifecycle_cell && target_matches(entry)
+            });
+            let Some(entry) = matching.next() else {
+                if object_is_loaded {
+                    card.lifecycle = StrandLifecycleState::Active;
+                    card.lifecycle_basis_refs.clear();
+                }
+                continue;
+            };
+            if matching.next().is_some() {
+                card.lifecycle = StrandLifecycleState::Unavailable;
+                card.lifecycle_basis_refs.clear();
+                continue;
+            }
+            match entry.result() {
+                arkret_sdk::CurrentOutcome::Heads { heads } if heads.len() == 1 => {
+                    card.lifecycle_basis_refs = vec![heads[0].event_id.event_digest()];
+                    card.lifecycle = match heads[0].value.as_json().as_str() {
+                        Some("active") => StrandLifecycleState::Active,
+                        Some("archived") => StrandLifecycleState::Archived,
+                        _ => {
+                            card.lifecycle_basis_refs.clear();
+                            StrandLifecycleState::Unavailable
+                        }
+                    };
+                }
+                arkret_sdk::CurrentOutcome::Heads { heads } => {
+                    let mut refs = heads
+                        .iter()
+                        .map(|head| head.event_id.event_digest())
+                        .collect::<Vec<_>>();
+                    refs.sort();
+                    refs.dedup();
+                    card.lifecycle_basis_refs = refs;
+                    card.lifecycle = StrandLifecycleState::Conflict;
+                }
+                arkret_sdk::CurrentOutcome::Removed => {
+                    card.lifecycle = StrandLifecycleState::Active;
+                    card.lifecycle_basis_refs.clear();
+                }
+                arkret_sdk::CurrentOutcome::Unavailable { .. }
+                | arkret_sdk::CurrentOutcome::Value { .. } => {
+                    card.lifecycle = StrandLifecycleState::Unavailable;
+                    card.lifecycle_basis_refs.clear();
+                }
+            }
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum CurrentRegisterBasis {
+    Missing,
+    Heads(Vec<arkret_sdk::Hash>),
+    Removed,
+    Unavailable,
+}
+
+pub(crate) fn current_register_basis(
+    entries: &[arkret_sdk::CurrentResultEntry],
+    cell_id: &str,
+) -> CurrentRegisterBasis {
+    let mut matching = entries
+        .iter()
+        .filter(|entry| entry.selector().cell_id.as_str() == cell_id);
+    let Some(entry) = matching.next() else {
+        return CurrentRegisterBasis::Missing;
+    };
+    if matching.next().is_some() {
+        return CurrentRegisterBasis::Unavailable;
+    }
+    match entry.result() {
+        arkret_sdk::CurrentOutcome::Heads { heads } => {
+            let mut refs = heads
+                .iter()
+                .map(|head| head.event_id.event_digest())
+                .collect::<Vec<_>>();
+            refs.sort();
+            refs.dedup();
+            CurrentRegisterBasis::Heads(refs)
+        }
+        arkret_sdk::CurrentOutcome::Removed => CurrentRegisterBasis::Removed,
+        arkret_sdk::CurrentOutcome::Unavailable { .. }
+        | arkret_sdk::CurrentOutcome::Value { .. } => CurrentRegisterBasis::Unavailable,
+    }
+}
+
+/// Replace lossy Space title/rank/lifecycle fields with their canonical
+/// causal-register results. Concurrent heads remain an explicit container
+/// conflict and never acquire an arrival-order title, rank, or lifecycle.
+pub(crate) fn install_current_space_cells(
+    columns: &mut [KanbanColumn],
+    entries: &[arkret_sdk::CurrentResultEntry],
+) {
+    for column in columns {
+        if column.state == SpaceContainerLifecycleState::PositionConflict {
+            continue;
+        }
+        let metadata_cell = format!("ak:cell:ak.component.space.metadata.v1:{}", column.id);
+        let mut metadata = entries
+            .iter()
+            .filter(|entry| entry.selector().cell_id.as_str() == metadata_cell);
+        if let Some(entry) = metadata.next() {
+            if metadata.next().is_some() {
+                column.state = SpaceContainerLifecycleState::Unavailable;
+            } else {
+                match entry.result() {
+                    arkret_sdk::CurrentOutcome::Heads { heads } if heads.len() == 1 => {
+                        match serde_json::from_value::<arkret_sdk::Space>(
+                            heads[0].value.as_json().clone(),
+                        ) {
+                            Ok(space) => {
+                                column.title = space.title;
+                                column.rank = space.rank.unwrap_or_default();
+                            }
+                            Err(_) => column.state = SpaceContainerLifecycleState::Unavailable,
+                        }
+                    }
+                    arkret_sdk::CurrentOutcome::Heads { .. } => {
+                        column.title = "Concurrent list metadata".to_owned();
+                        column.rank = column.id.clone();
+                        column.state = SpaceContainerLifecycleState::Conflict;
+                    }
+                    arkret_sdk::CurrentOutcome::Removed
+                    | arkret_sdk::CurrentOutcome::Unavailable { .. }
+                    | arkret_sdk::CurrentOutcome::Value { .. } => {
+                        column.state = SpaceContainerLifecycleState::Unavailable;
+                    }
+                }
+            }
+        }
+
+        let lifecycle_cell = format!("ak:cell:ak.component.space.lifecycle.v1:{}", column.id);
+        let mut lifecycle = entries
+            .iter()
+            .filter(|entry| entry.selector().cell_id.as_str() == lifecycle_cell);
+        let Some(entry) = lifecycle.next() else {
+            continue;
+        };
+        if lifecycle.next().is_some() {
+            column.state = SpaceContainerLifecycleState::Unavailable;
+            continue;
+        }
+        match entry.result() {
+            arkret_sdk::CurrentOutcome::Heads { heads } if heads.len() == 1 => {
+                if matches!(
+                    column.state,
+                    SpaceContainerLifecycleState::Conflict
+                        | SpaceContainerLifecycleState::Unavailable
+                ) {
+                    continue;
+                }
+                column.state = match heads[0].value.as_json().as_str() {
+                    Some("active") => SpaceContainerLifecycleState::Active,
+                    Some("archived") => SpaceContainerLifecycleState::Archived,
+                    Some("tombstoned") => SpaceContainerLifecycleState::Tombstoned,
+                    _ => SpaceContainerLifecycleState::Unavailable,
+                };
+            }
+            arkret_sdk::CurrentOutcome::Heads { .. } => {
+                column.state = SpaceContainerLifecycleState::Conflict;
+            }
+            arkret_sdk::CurrentOutcome::Removed => {
+                if !matches!(
+                    column.state,
+                    SpaceContainerLifecycleState::Conflict
+                        | SpaceContainerLifecycleState::Unavailable
+                ) {
+                    column.state = SpaceContainerLifecycleState::Active;
+                }
+            }
+            arkret_sdk::CurrentOutcome::Unavailable { .. }
+            | arkret_sdk::CurrentOutcome::Value { .. } => {
+                column.state = SpaceContainerLifecycleState::Unavailable;
+            }
+        }
+    }
+}
+
 fn clear_unavailable_card_content(card: &mut KanbanCard) {
     card.authoring_basis = None;
     card.title = "Card content unavailable".to_owned();
@@ -719,71 +1068,80 @@ pub(crate) fn install_current_card_sources(
     decrypt_ctx: Option<&MlsDecryptCtx<'_>>,
     actor: &str,
 ) {
-    for card in columns.iter_mut().flat_map(|column| &mut column.cards) {
-        let mut matching = entries.iter().filter(|entry| {
+    for column in columns {
+        let preserve_position_state =
+            column.state == SpaceContainerLifecycleState::PositionConflict;
+        for card in &mut column.cards {
+            let mut matching = entries.iter().filter(|entry| {
             entry.selector().cell_id.as_str()
                 == format!("ak:cell:ak.component.strand.object.v1:{}", card.id)
                 && matches!(entry.target(), arkret_sdk::CurrentTarget::Strand { strand_id } if strand_id.as_str() == card.id)
         });
-        let Some(entry) = matching.next() else {
-            card.authoring_basis = None;
-            if card.state == CardState::Synced {
+            let Some(entry) = matching.next() else {
+                card.authoring_basis = None;
+                if card.state == CardState::Synced {
+                    clear_unavailable_card_content(card);
+                }
+                continue;
+            };
+            if matching.next().is_some() {
                 clear_unavailable_card_content(card);
+                continue;
             }
-            continue;
-        };
-        if matching.next().is_some() {
-            clear_unavailable_card_content(card);
-            continue;
+            let arkret_sdk::CurrentOutcome::Heads { heads } = entry.result() else {
+                clear_unavailable_card_content(card);
+                continue;
+            };
+            let [head] = heads.as_slice() else {
+                clear_unavailable_card_content(card);
+                card.state = CardState::Conflict;
+                card.title = "Concurrent card versions".to_owned();
+                card.description.clear();
+                card.description_body.clear();
+                card.synthesis.clear();
+                continue;
+            };
+            let Ok(strand) = head.value.as_strand() else {
+                card.authoring_basis = None;
+                card.state = CardState::Quarantined;
+                continue;
+            };
+            let mut view = projected
+                .iter()
+                .find(|row| row.strand_id == card.id)
+                .cloned()
+                .unwrap_or_else(|| {
+                    serde_json::from_value(serde_json::json!({
+                        "strand_id": card.id, "realm_id": strand.realm_id, "state": "active"
+                    }))
+                    .expect("complete lifecycle view defaults")
+                });
+            let metadata = strand.metadata.unwrap_or_default();
+            view.title = metadata.title.unwrap_or_default();
+            view.summary = metadata.summary;
+            view.fields = metadata.fields.into_iter().collect();
+            view.content = strand.content;
+            view.encrypted_content = strand.encrypted_content;
+            view.tracks = strand.tracks;
+            view.schema_refs = strand.schema_refs.unwrap_or_default();
+            let mut complete = card_from_strand_projection_for_actor(&view, decrypt_ctx, actor);
+            complete.rank = card.rank.clone();
+            complete.position_basis_refs = card.position_basis_refs.clone();
+            if preserve_position_state {
+                complete.state = card.state;
+            }
+            if complete.calendar == card.calendar {
+                complete.calendar_schedule_basis_refs = card.calendar_schedule_basis_refs.clone();
+            }
+            complete.calendar_rsvp = card.calendar_rsvp.clone();
+            complete.lifecycle = card.lifecycle;
+            complete.lifecycle_basis_refs = card.lifecycle_basis_refs.clone();
+            complete.assignee = card.assignee.clone();
+            complete.assigned_to_relations = card.assigned_to_relations.clone();
+            complete.authoring_basis =
+                Some((entry.selector().scope_ref.clone(), head.event_id.clone()));
+            *card = complete;
         }
-        let arkret_sdk::CurrentOutcome::Heads { heads } = entry.result() else {
-            clear_unavailable_card_content(card);
-            continue;
-        };
-        let [head] = heads.as_slice() else {
-            clear_unavailable_card_content(card);
-            card.state = CardState::Conflict;
-            card.title = "Concurrent card versions".to_owned();
-            card.description.clear();
-            card.description_body.clear();
-            card.synthesis.clear();
-            continue;
-        };
-        let Ok(strand) = head.value.as_strand() else {
-            card.authoring_basis = None;
-            card.state = CardState::Quarantined;
-            continue;
-        };
-        let mut view = projected
-            .iter()
-            .find(|row| row.strand_id == card.id)
-            .cloned()
-            .unwrap_or_else(|| {
-                serde_json::from_value(serde_json::json!({
-                    "strand_id": card.id, "realm_id": strand.realm_id, "state": "active"
-                }))
-                .expect("complete lifecycle view defaults")
-            });
-        let metadata = strand.metadata.unwrap_or_default();
-        view.title = metadata.title.unwrap_or_default();
-        view.summary = metadata.summary;
-        view.fields = metadata.fields.into_iter().collect();
-        view.content = strand.content;
-        view.encrypted_content = strand.encrypted_content;
-        view.tracks = strand.tracks;
-        view.schema_refs = strand.schema_refs.unwrap_or_default();
-        let mut complete = card_from_strand_projection_for_actor(&view, decrypt_ctx, actor);
-        complete.rank = card.rank.clone();
-        if complete.calendar == card.calendar {
-            complete.calendar_schedule_basis_refs = card.calendar_schedule_basis_refs.clone();
-        }
-        complete.calendar_rsvp = card.calendar_rsvp.clone();
-        complete.lifecycle = card.lifecycle;
-        complete.assignee = card.assignee.clone();
-        complete.assigned_to_relations = card.assigned_to_relations.clone();
-        complete.authoring_basis =
-            Some((entry.selector().scope_ref.clone(), head.event_id.clone()));
-        *card = complete;
     }
 }
 
@@ -969,6 +1327,109 @@ mod tests {
         event.event_id = arkret_sdk::EventId::new(event_id).unwrap();
         event.created_at = created_at.parse().unwrap();
         event
+    }
+
+    fn current_position(
+        strand_id: &str,
+        heads: Vec<(arkret_sdk::EventId, &str, &str)>,
+    ) -> arkret_sdk::CurrentResultEntry {
+        let heads = heads
+            .into_iter()
+            .map(|(event_id, list_space_id, rank)| {
+                json!({
+                    "event_id": event_id,
+                    "value": { "list_space_id": list_space_id, "rank": rank }
+                })
+            })
+            .collect::<Vec<_>>();
+        serde_json::from_value(json!({
+            "selector": {
+                "scope_ref": { "kind": "realm", "realm_id": REALM },
+                "cell_id": strand_position_cell_id(BOARD, strand_id)
+            },
+            "target": { "kind": "strand", "strand_id": strand_id },
+            "revision": 7,
+            "result": { "status": "heads", "heads": heads }
+        }))
+        .unwrap()
+    }
+
+    fn current_lifecycle(
+        strand_id: &str,
+        heads: Vec<(arkret_sdk::EventId, &str)>,
+    ) -> arkret_sdk::CurrentResultEntry {
+        let heads = heads
+            .into_iter()
+            .map(|(event_id, state)| json!({ "event_id": event_id, "value": state }))
+            .collect::<Vec<_>>();
+        serde_json::from_value(json!({
+            "selector": {
+                "scope_ref": { "kind": "realm", "realm_id": REALM },
+                "cell_id": format!("ak:cell:ak.component.strand.lifecycle.v1:{strand_id}")
+            },
+            "target": { "kind": "strand", "strand_id": strand_id },
+            "revision": 8,
+            "result": { "status": "heads", "heads": heads }
+        }))
+        .unwrap()
+    }
+
+    fn current_space_metadata(
+        space_id: &str,
+        heads: Vec<(arkret_sdk::EventId, &str, &str)>,
+    ) -> arkret_sdk::CurrentResultEntry {
+        let heads = heads
+            .into_iter()
+            .map(|(event_id, title, rank)| {
+                json!({
+                    "event_id": event_id,
+                    "value": {
+                        "id": space_id,
+                        "schema": "ak.schema.space.v1",
+                        "realm_id": REALM,
+                        "kind": "list",
+                        "title": title,
+                        "rank": rank,
+                        "created_by": {"kind":"account","account_id":{
+                            "principal_id":"ak:did_core:web:alice.example",
+                            "station_id":"ak:did_core:web:station.example"
+                        }},
+                        "created_at": "2026-09-11T00:00:00.000Z"
+                    }
+                })
+            })
+            .collect::<Vec<_>>();
+        serde_json::from_value(json!({
+            "selector": {
+                "scope_ref": { "kind": "realm", "realm_id": REALM },
+                "cell_id": format!("ak:cell:ak.component.space.metadata.v1:{space_id}")
+            },
+            "target": { "kind": "realm" },
+            "revision": 9,
+            "result": { "status": "heads", "heads": heads }
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn concurrent_space_metadata_never_selects_an_arrival_order_winner() {
+        let first = arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [1; 32]);
+        let second = arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [2; 32]);
+        let entry =
+            current_space_metadata(LIST_A, vec![(first, "Alpha", "A"), (second, "Beta", "B")]);
+        let mut columns = vec![KanbanColumn {
+            id: LIST_A.to_owned(),
+            title: "lossy last arrival".to_owned(),
+            rank: "z".to_owned(),
+            cards: Vec::new(),
+            state: SpaceContainerLifecycleState::Active,
+        }];
+
+        install_current_space_cells(&mut columns, &[entry]);
+
+        assert_eq!(columns[0].title, "Concurrent list metadata");
+        assert_eq!(columns[0].rank, LIST_A);
+        assert_eq!(columns[0].state, SpaceContainerLifecycleState::Conflict);
     }
 
     #[derive(Default)]
@@ -1376,6 +1837,183 @@ mod tests {
             .unwrap();
         assert_eq!(todos.cards.len(), 1);
         assert_eq!(todos.cards[0].title, "placed card");
+    }
+
+    #[test]
+    fn canonical_single_position_head_overrides_arrival_order_projection() {
+        let mut events = vec![
+            space_create_event(BOARD, "board", "Board1", None),
+            space_create_event(LIST_A, "list", "Todos", Some(BOARD)),
+            space_create_event(LIST_B, "list", "Doing", Some(BOARD)),
+        ];
+        events.extend(strand_create_and_place_events(
+            STRAND,
+            "ak:did_core:web:alice.example",
+            "card",
+            BOARD,
+            LIST_A,
+            "A",
+            "2026-06-28T00:01:00.000Z",
+        ));
+        events.push(strand_move_event(
+            STRAND,
+            BOARD,
+            LIST_B,
+            "B",
+            "2026-06-28T00:02:00.000Z",
+        ));
+        let ops = kanban_operations_from_events(&events);
+        let projected = strand_views_from_ops(&ops);
+        let (mut columns, ..) = project_board(&ops, BOARD, REALM, None);
+        assert!(
+            columns
+                .iter()
+                .find(|column| column.id == LIST_B)
+                .unwrap()
+                .cards
+                .iter()
+                .any(|card| card.id == STRAND)
+        );
+
+        let head = arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [0x31; 32]);
+        let current = current_position(STRAND, vec![(head.clone(), LIST_A, "C")]);
+        install_current_strand_positions(&mut columns, &[current], &projected, BOARD, None, "");
+
+        let card = columns
+            .iter()
+            .find(|column| column.id == LIST_A)
+            .unwrap()
+            .cards
+            .iter()
+            .find(|card| card.id == STRAND)
+            .expect("the sole canonical head places the card");
+        assert_eq!(card.rank, "C");
+        assert_eq!(card.position_basis_refs, vec![head.event_digest()]);
+        assert!(
+            !columns
+                .iter()
+                .find(|column| column.id == LIST_B)
+                .unwrap()
+                .cards
+                .iter()
+                .any(|card| card.id == STRAND)
+        );
+    }
+
+    #[test]
+    fn concurrent_position_heads_are_exposed_without_selecting_a_winner() {
+        let mut events = vec![
+            space_create_event(BOARD, "board", "Board1", None),
+            space_create_event(LIST_A, "list", "Todos", Some(BOARD)),
+            space_create_event(LIST_B, "list", "Doing", Some(BOARD)),
+        ];
+        events.extend(strand_create_and_place_events(
+            STRAND,
+            "ak:did_core:web:alice.example",
+            "conflicted card",
+            BOARD,
+            LIST_A,
+            "A",
+            "2026-06-28T00:01:00.000Z",
+        ));
+        let ops = kanban_operations_from_events(&events);
+        let projected = strand_views_from_ops(&ops);
+        let (mut columns, ..) = project_board(&ops, BOARD, REALM, None);
+        let head_a = arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [0x41; 32]);
+        let head_b = arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [0x42; 32]);
+        let current = current_position(
+            STRAND,
+            vec![(head_b.clone(), LIST_B, "B"), (head_a.clone(), LIST_A, "A")],
+        );
+        install_current_strand_positions(&mut columns, &[current], &projected, BOARD, None, "");
+
+        assert!(
+            columns
+                .iter()
+                .filter(|column| column.state == SpaceContainerLifecycleState::Active)
+                .all(|column| column.cards.iter().all(|card| card.id != STRAND))
+        );
+        let diagnostic = columns
+            .iter()
+            .find(|column| column.state == SpaceContainerLifecycleState::PositionConflict)
+            .expect("multi-head position is rendered as a diagnostic");
+        let card = diagnostic
+            .cards
+            .iter()
+            .find(|card| card.id == STRAND)
+            .unwrap();
+        assert_eq!(card.state, CardState::Conflict);
+        let mut expected = vec![head_a.event_digest(), head_b.event_digest()];
+        expected.sort();
+        assert_eq!(card.position_basis_refs, expected);
+    }
+
+    #[test]
+    fn canonical_lifecycle_head_overrides_arrival_order_projection() {
+        let mut events = vec![
+            space_create_event(BOARD, "board", "Board1", None),
+            space_create_event(LIST_A, "list", "Todos", Some(BOARD)),
+        ];
+        events.extend(strand_create_and_place_events(
+            STRAND,
+            "ak:did_core:web:alice.example",
+            "card",
+            BOARD,
+            LIST_A,
+            "A",
+            "2026-06-28T00:01:00.000Z",
+        ));
+        let ops = kanban_operations_from_events(&events);
+        let (mut columns, ..) = project_board(&ops, BOARD, REALM, None);
+        let head = arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [0x51; 32]);
+        let current = current_lifecycle(STRAND, vec![(head.clone(), "archived")]);
+
+        install_current_strand_lifecycles(&mut columns, &[current]);
+
+        let card = columns
+            .iter()
+            .flat_map(|column| &column.cards)
+            .find(|card| card.id == STRAND)
+            .unwrap();
+        assert_eq!(card.lifecycle, StrandLifecycleState::Archived);
+        assert_eq!(card.lifecycle_basis_refs, vec![head.event_digest()]);
+    }
+
+    #[test]
+    fn concurrent_lifecycle_heads_are_exposed_and_preserved_for_restore() {
+        let mut events = vec![
+            space_create_event(BOARD, "board", "Board1", None),
+            space_create_event(LIST_A, "list", "Todos", Some(BOARD)),
+        ];
+        events.extend(strand_create_and_place_events(
+            STRAND,
+            "ak:did_core:web:alice.example",
+            "card",
+            BOARD,
+            LIST_A,
+            "A",
+            "2026-06-28T00:01:00.000Z",
+        ));
+        let ops = kanban_operations_from_events(&events);
+        let (mut columns, ..) = project_board(&ops, BOARD, REALM, None);
+        let head_a = arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [0x61; 32]);
+        let head_b = arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [0x62; 32]);
+        let current = current_lifecycle(
+            STRAND,
+            vec![(head_b.clone(), "archived"), (head_a.clone(), "archived")],
+        );
+
+        install_current_strand_lifecycles(&mut columns, &[current]);
+
+        let card = columns
+            .iter()
+            .flat_map(|column| &column.cards)
+            .find(|card| card.id == STRAND)
+            .unwrap();
+        assert_eq!(card.lifecycle, StrandLifecycleState::Conflict);
+        let mut expected = vec![head_a.event_digest(), head_b.event_digest()];
+        expected.sort();
+        assert_eq!(card.lifecycle_basis_refs, expected);
     }
 
     /// Live incident (2026-08-19): final authoring changes a create's

@@ -12,13 +12,15 @@
 use arkret_wire::CapabilityActionId;
 use serde_json::Value;
 
+#[cfg(test)]
+use crate::event_builders::build_realm_profile_replacement_event;
 use crate::event_builders::{
     build_capability_relinquish_control_intent, build_member_state_transition_event,
     build_plaintext_visible_services_event, build_realm_alias_event,
     build_realm_alias_rename_event, build_realm_alias_tombstone_event, build_realm_archive_event,
     build_realm_authority_reset_control_intent, build_realm_bootstrap_steps_for_station,
     build_realm_destroy_event, build_realm_owner_transfer_control_intent,
-    build_realm_profile_replacement_event, build_realm_state_event_for_station,
+    build_realm_profile_resolution_event, build_realm_state_event_for_station,
     build_space_create_event, build_space_lifecycle_event, parse_wire_enum,
     recommended_realm_policy_bundle_value,
 };
@@ -242,6 +244,7 @@ pub async fn update_realm_metadata(
     actor_id: &str,
     digest_suite: arkret_sdk::DigestSuite,
     patch: Value,
+    causal_refs: Vec<arkret_sdk::Hash>,
 ) -> anyhow::Result<SubmitEventResult> {
     let fields = patch
         .as_object()
@@ -264,120 +267,14 @@ pub async fn update_realm_metadata(
         optional_profile_string(fields.get("avatar_blob_ref"), "avatar_blob_ref")?
             .map(arkret_sdk::BlobRef::new)
             .transpose()?;
-    let rows = submitter
-        .http()
-        .events_read_all_pages(realm_id)
-        .await?
-        .events;
-    let (expected_head, expected_head_digest) = settled_realm_profile_head(&rows)?;
-    let event = build_realm_profile_replacement_event(
+    let event = build_realm_profile_resolution_event(
         realm_id,
         actor_id,
         digest_suite,
         profile,
-        expected_head,
-        expected_head_digest,
+        causal_refs,
     )?;
     submitter.submit_sdk_event(&event).await
-}
-
-fn settled_realm_profile_head(
-    rows: &[arkret_sdk::EventReadRow],
-) -> anyhow::Result<(Value, arkret_sdk::Hash)> {
-    use arkret_state::CellStateRegistry as _;
-
-    let cell = arkret_sdk::CellRef::new(arkret_wire::REALM_PROFILE_CELL.to_owned())?;
-    let registry = arkret_sdk::lattice_registry::build_sdk_state_registry();
-    let pre_state = std::collections::BTreeMap::new();
-    let mut realm_id = None;
-    let mut ops = Vec::new();
-
-    for row in rows {
-        let event = match row {
-            arkret_sdk::EventReadRow::Event(event) => event,
-            arkret_sdk::EventReadRow::Redacted(view)
-                if view.kind == arkret_sdk::EventKind::RealmProfile =>
-            {
-                anyhow::bail!(
-                    "Realm profile Event {} is redacted; its causal head cannot be reconstructed",
-                    view.event_id
-                );
-            }
-            arkret_sdk::EventReadRow::ReferenceLocked(stub)
-                if stub.kind == Some(arkret_sdk::EventKind::RealmProfile) =>
-            {
-                anyhow::bail!(
-                    "a Realm profile Event is reference-locked; its causal head cannot be reconstructed"
-                );
-            }
-            arkret_sdk::EventReadRow::Redacted(_)
-            | arkret_sdk::EventReadRow::ReferenceLocked(_) => continue,
-        };
-        if event.kind != arkret_sdk::EventKind::RealmProfile {
-            continue;
-        }
-        let payload = serde_json::to_value(&event.payload)?;
-        let typed = serde_json::from_value::<arkret_sdk::RealmProfile>(payload)?;
-        if typed.schema != arkret_wire::SchemaId::REALM_PROFILE_V1 || typed.title.is_empty() {
-            anyhow::bail!(
-                "accepted Realm profile Event {} has an invalid payload",
-                event.event_id
-            );
-        }
-        if realm_id
-            .as_ref()
-            .is_some_and(|realm_id| realm_id != &event.realm_id)
-        {
-            anyhow::bail!("Realm profile history crosses Realm boundaries");
-        }
-        realm_id.get_or_insert_with(|| event.realm_id.clone());
-        let digest = event.event_id.event_digest();
-        let digest_suite = digest.digest_suite()?;
-        let writes = arkret_schema::project_registered_operation_writes(
-            &arkret_sdk::ProjectedEventInput::from(event),
-            digest_suite,
-        )?;
-        for write in writes {
-            for effect in arkret_state::resolve_projected_write(
-                &write,
-                &event.realm_id,
-                &pre_state,
-                &registry,
-            )
-            .map_err(|error| anyhow::anyhow!(error.to_string()))?
-            {
-                if effect.cell_id == cell {
-                    ops.push(arkret_state::state_model::ordered_log::IssuedOp {
-                        issuer_id: event.actor_id.clone(),
-                        op: arkret_state::StateWrite::from_projection(digest.clone(), &effect)
-                            .with_supersedes(event.causal_refs.clone()),
-                    });
-                }
-            }
-        }
-    }
-
-    let realm_id = realm_id.ok_or_else(|| {
-        anyhow::anyhow!("Realm profile is missing from the accepted Realm history")
-    })?;
-    if ops.is_empty() {
-        anyhow::bail!("Realm profile is missing from the accepted Realm history");
-    }
-    let binding = registry
-        .resolve(&realm_id, &cell)
-        .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-    match arkret_state::join_cell(binding.model.as_ref(), &cell, &ops)? {
-        arkret_state::ResolvedCellState::Causal(state) => {
-            let [head] = state.heads.as_slice() else {
-                anyhow::bail!("Realm profile causal register has no unique head");
-            };
-            Ok((head.value.clone(), head.event_id.event_digest()))
-        }
-        arkret_state::ResolvedCellState::Bottom(_) => {
-            anyhow::bail!("Realm profile causal register is Bottom; explicit recovery is required")
-        }
-        _ => anyhow::bail!("Realm profile registry did not resolve as a causal register"),
-    }
 }
 
 fn latest_realm_alias_payload(rows: &[arkret_sdk::EventReadRow]) -> anyhow::Result<Option<Value>> {
@@ -480,8 +377,10 @@ pub async fn update_space_metadata(
     space_id: &str,
     actor_id: &str,
     patch: Value,
+    causal_refs: Vec<arkret_sdk::Hash>,
 ) -> anyhow::Result<SubmitEventResult> {
     let event = ak_ops::space_update_patch(realm_id, actor_id, space_id, patch)?
+        .causal_refs(causal_refs)
         .build_sdk_event("inkson")?;
     submitter.submit_sdk_event(&event).await
 }

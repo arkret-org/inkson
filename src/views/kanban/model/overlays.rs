@@ -19,6 +19,7 @@ pub(crate) fn local_created_card(
     KanbanCard {
         id: strand_id.clone(),
         rank,
+        position_basis_refs: Vec::new(),
         title,
         description,
         description_body: String::new(),
@@ -44,6 +45,7 @@ pub(crate) fn local_created_card(
         security_encrypted: None,
         state,
         lifecycle: StrandLifecycleState::Active,
+        lifecycle_basis_refs: Vec::new(),
     }
 }
 

@@ -176,7 +176,8 @@ pub(super) fn strand_watch_set_payload(
 /// Build the canonical `strand_move_payload` body via the SDK strong type.
 /// `additionalProperties:false` — the destination is single-sourced by
 /// `target_space_id`; the optional `from_space_id` / `expected_position`
-/// (space_id + rank) are CAS hints.
+/// (space_id + rank) describe the author's observed causal basis. They may
+/// diagnose a mismatch but do not serialize concurrent Moves into a CAS.
 pub(super) fn strand_move_payload(
     board_space_id: &str,
     strand_id: &str,

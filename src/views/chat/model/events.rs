@@ -1,3 +1,5 @@
+use std::collections::{BTreeMap, BTreeSet};
+
 use arkret_wire::event_kind_str;
 
 use super::*;
@@ -489,18 +491,6 @@ fn fold_revision_message_into(message: &mut ChatMessage, revision: ChatMessage) 
     }
 }
 
-fn fold_revision_message(
-    messages: &mut [ChatMessage],
-    target_ref: &str,
-    revision: ChatMessage,
-) -> Option<usize> {
-    let index = messages
-        .iter()
-        .position(|message| message_matches_target_ref(message, target_ref))?;
-    fold_revision_message_into(&mut messages[index], revision);
-    Some(index)
-}
-
 fn message_created_at_from_candidates(
     candidates: &[&Value],
 ) -> Option<chrono::DateTime<chrono::Utc>> {
@@ -564,6 +554,9 @@ fn carry_create_metadata(target: &mut ChatMessage, source: &ChatMessage) {
     }
     if target.protocol_message_id.is_none() {
         target.protocol_message_id = source.protocol_message_id.clone();
+    }
+    if target.revision_basis_refs.is_empty() {
+        target.revision_basis_refs = source.revision_basis_refs.clone();
     }
 }
 
@@ -687,6 +680,118 @@ fn chat_messages_from_event_list_with_sidecar(
     fold_event_list_into_chat_messages(Vec::new(), realm_id, events, state_store, decrypt_identity)
 }
 
+fn canonical_message_revision_target(target_ref: &str) -> String {
+    let [direct, alternate] = message_ref_equivalents(target_ref);
+    if direct.starts_with("ak:message:") {
+        direct
+    } else {
+        alternate
+    }
+}
+
+fn revision_event_id(revision: &ChatMessage) -> Option<arkret_sdk::EventId> {
+    arkret_sdk::EventId::new(revision.id.clone()).ok()
+}
+
+fn event_parent_graph(events: &[Value]) -> BTreeMap<arkret_sdk::Hash, Vec<arkret_sdk::Hash>> {
+    events
+        .iter()
+        .filter_map(|value| serde_json::from_value::<arkret_sdk::Event>(value.clone()).ok())
+        .map(|event| {
+            let digest = event.event_id.event_digest();
+            let mut parents = event.causal_refs;
+            parents.extend(
+                event
+                    .prev_refs
+                    .into_iter()
+                    .map(|event_id| event_id.event_digest()),
+            );
+            parents.sort();
+            parents.dedup();
+            (digest, parents)
+        })
+        .collect()
+}
+
+fn graph_reaches(
+    graph: &BTreeMap<arkret_sdk::Hash, Vec<arkret_sdk::Hash>>,
+    from: &arkret_sdk::Hash,
+    target: &arkret_sdk::Hash,
+) -> bool {
+    let mut pending = graph.get(from).cloned().unwrap_or_default();
+    let mut seen = BTreeSet::new();
+    while let Some(candidate) = pending.pop() {
+        if &candidate == target {
+            return true;
+        }
+        if seen.insert(candidate.clone())
+            && let Some(parents) = graph.get(&candidate)
+        {
+            pending.extend(parents.iter().cloned());
+        }
+    }
+    false
+}
+
+fn fold_revision_group(
+    messages: &mut [ChatMessage],
+    target_ref: &str,
+    mut revisions: Vec<ChatMessage>,
+    graph: &BTreeMap<arkret_sdk::Hash, Vec<arkret_sdk::Hash>>,
+) -> bool {
+    let ids = revisions.iter().map(revision_event_id).collect::<Vec<_>>();
+    let heads = ids
+        .iter()
+        .enumerate()
+        .map(|(index, event_id)| {
+            event_id.as_ref().is_none_or(|event_id| {
+                let digest = event_id.event_digest();
+                !ids.iter().enumerate().any(|(other_index, other)| {
+                    other_index != index
+                        && other.as_ref().is_some_and(|other| {
+                            graph_reaches(graph, &other.event_digest(), &digest)
+                        })
+                })
+            })
+        })
+        .collect::<Vec<_>>();
+    // All superseded revisions are folded first. Maximal concurrent branches
+    // follow in canonical digest presentation order, so input/arrival order
+    // cannot change the displayed branch.
+    revisions.sort_by_key(|revision| {
+        let index = ids
+            .iter()
+            .position(|id| id.as_ref().is_some_and(|id| id.as_str() == revision.id));
+        let is_head = index
+            .and_then(|index| heads.get(index))
+            .copied()
+            .unwrap_or(true);
+        let presentation = revision_event_id(revision)
+            .map(|event_id| event_id.token_bytes().to_vec())
+            .unwrap_or_else(|| revision.id.as_bytes().to_vec());
+        (is_head, presentation)
+    });
+
+    let Some(index) = messages
+        .iter()
+        .position(|message| message_matches_target_ref(message, target_ref))
+    else {
+        return false;
+    };
+    for revision in revisions {
+        fold_revision_message_into(&mut messages[index], revision);
+    }
+    let mut basis = ids
+        .into_iter()
+        .zip(heads)
+        .filter_map(|(event_id, is_head)| is_head.then_some(event_id)?.map(|id| id.event_digest()))
+        .collect::<Vec<_>>();
+    basis.sort();
+    basis.dedup();
+    messages[index].revision_basis_refs = basis;
+    true
+}
+
 fn fold_event_list_into_chat_messages(
     mut messages: Vec<ChatMessage>,
     realm_id: &str,
@@ -695,7 +800,7 @@ fn fold_event_list_into_chat_messages(
     decrypt_identity: Option<(&arkret_sdk::AccountId, &str, &arkret_sdk::DeviceId)>,
 ) -> Vec<ChatMessage> {
     let mut durable_messages = Vec::new();
-    let mut pending_revisions = Vec::<(String, ChatMessage)>::new();
+    let mut pending_revisions = BTreeMap::<String, Vec<ChatMessage>>::new();
     for event in events {
         let candidates = message_candidates(event);
         let revision_target_ref = message_revision_target_ref_from_candidates(&candidates);
@@ -705,29 +810,27 @@ fn fold_event_list_into_chat_messages(
             continue;
         };
         if let Some(target_ref) = revision_target_ref {
-            if fold_revision_message(&mut durable_messages, &target_ref, message.clone()).is_some()
-            {
-                continue;
-            }
-            pending_revisions.push((target_ref, message));
+            pending_revisions
+                .entry(canonical_message_revision_target(&target_ref))
+                .or_default()
+                .push(message);
             continue;
         }
         push_or_merge_create_message(&mut durable_messages, message);
-        let mut index = 0;
-        while index < pending_revisions.len() {
-            let (target_ref, revision) = &pending_revisions[index];
-            if fold_revision_message(&mut durable_messages, target_ref, revision.clone()).is_some()
-            {
-                pending_revisions.remove(index);
-            } else {
-                index += 1;
-            }
-        }
     }
+    let graph = event_parent_graph(events);
+    pending_revisions.retain(|target_ref, revisions| {
+        !fold_revision_group(
+            &mut durable_messages,
+            target_ref,
+            std::mem::take(revisions),
+            &graph,
+        )
+    });
     merge_chat_messages(&mut messages, durable_messages);
-    for (target_ref, revision) in pending_revisions {
-        if fold_revision_message(&mut messages, &target_ref, revision.clone()).is_none()
-            && revision.redacted
+    for (target_ref, revisions) in pending_revisions {
+        if !fold_revision_group(&mut messages, &target_ref, revisions.clone(), &graph)
+            && let Some(revision) = revisions.into_iter().find(|revision| revision.redacted)
         {
             // Account sync projects one logical row per message_id. When the
             // latest row is a server-folded redacted revision, its original
@@ -1628,6 +1731,7 @@ pub(crate) fn chat_message_from_event_with_sidecar(
         redacted: is_redaction_tombstone,
         edited: false,
         revisions: Vec::new(),
+        revision_basis_refs: Vec::new(),
         pending: false,
         failed: false,
         error: late_recovery_rejection,

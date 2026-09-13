@@ -27,6 +27,51 @@ mod model;
 use controller::*;
 use model::*;
 
+fn metadata_causal_refs(
+    state_store: &crate::state::LocalStateStore,
+    home_realm_id: &str,
+    kind: RealmTreeNodeKind,
+    subject_id: &str,
+) -> Result<Vec<arkret_sdk::Hash>, String> {
+    let cell = match kind {
+        RealmTreeNodeKind::Realm => arkret_wire::REALM_PROFILE_CELL.to_owned(),
+        RealmTreeNodeKind::Space => {
+            format!("ak:cell:ak.component.space.metadata.v1:{subject_id}")
+        }
+    };
+    let current = state_store
+        .realm_tree_projection(home_realm_id)
+        .and_then(|projection| projection.get("current").cloned())
+        .and_then(|value| serde_json::from_value::<arkret_sdk::CurrentEntries>(value).ok())
+        .ok_or_else(|| "canonical metadata state is still loading".to_owned())?;
+    let mut matching = current
+        .entries
+        .iter()
+        .filter(|entry| entry.selector().cell_id.as_str() == cell);
+    let entry = matching
+        .next()
+        .ok_or_else(|| "canonical metadata cell is still loading".to_owned())?;
+    if matching.next().is_some() {
+        return Err("canonical metadata selector is duplicated".to_owned());
+    }
+    match entry.result() {
+        arkret_sdk::CurrentOutcome::Heads { heads } => {
+            let mut refs = heads
+                .iter()
+                .map(|head| head.event_id.event_digest())
+                .collect::<Vec<_>>();
+            refs.sort();
+            refs.dedup();
+            Ok(refs)
+        }
+        arkret_sdk::CurrentOutcome::Removed => Ok(Vec::new()),
+        arkret_sdk::CurrentOutcome::Unavailable { .. }
+        | arkret_sdk::CurrentOutcome::Value { .. } => {
+            Err("canonical metadata state is unavailable".to_owned())
+        }
+    }
+}
+
 #[component]
 pub fn RealmAdminPanel(
     principal_id: String,
@@ -138,6 +183,45 @@ pub fn RealmAdminPanel(
     // deep-linked editor reconciles again when that projection lands.
     let _projection_sync_cursor = sync_cursor();
     let metadata_subject = metadata_subject_for(&state_store.read(), &selected_realm_id);
+    use_effect({
+        let home_realm_id = metadata_subject.home_realm_id.clone();
+        let subject_id = selected_realm_id.clone();
+        let kind = metadata_subject.kind;
+        move || {
+            let Some(authority) = state_store.read().active_authority() else {
+                return;
+            };
+            let cells = if kind == RealmTreeNodeKind::Space {
+                arkret_sdk::CellRef::new(format!(
+                    "ak:cell:ak.component.space.metadata.v1:{subject_id}"
+                ))
+                .ok()
+                .into_iter()
+                .collect()
+            } else {
+                Vec::new()
+            };
+            state_store.read().set_product_current_demand(
+                &authority,
+                &home_realm_id,
+                Some(Vec::new()),
+                cells,
+            );
+        }
+    });
+    use_drop({
+        let home_realm_id = metadata_subject.home_realm_id.clone();
+        move || {
+            if let Some(authority) = state_store.read().active_authority() {
+                state_store.read().set_product_current_demand(
+                    &authority,
+                    &home_realm_id,
+                    None,
+                    Vec::new(),
+                );
+            }
+        }
+    });
     {
         let loaded_for = metadata_loaded_for();
         let loaded_subject = metadata_loaded_subject();
@@ -1028,6 +1112,18 @@ pub fn RealmAdminPanel(
                                         let accepted_summary = (!summary.is_empty()).then_some(summary.clone());
                                         let accepted_avatar = (!avatar_blob_ref.is_empty())
                                             .then_some(avatar_blob_ref.clone());
+                                        let causal_refs = match metadata_causal_refs(
+                                            &state_store.read(),
+                                            &home_realm_id,
+                                            subject_kind,
+                                            &subject_id,
+                                        ) {
+                                            Ok(refs) => refs,
+                                            Err(error) => {
+                                                status_msg.set(format!("profile update blocked: {error}"));
+                                                return;
+                                            }
+                                        };
                                         controller.save_metadata(
                                             base,
                                             api_token,
@@ -1038,6 +1134,7 @@ pub fn RealmAdminPanel(
                                                 kind: subject_kind,
                                                 event_kind: metadata_event_kind,
                                                 updates_alias,
+                                                causal_refs,
                                             },
                                             patch,
                                             alias,

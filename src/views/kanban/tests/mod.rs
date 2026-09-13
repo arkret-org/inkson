@@ -198,6 +198,7 @@ pub(super) fn test_card(id: &str, rank: &str) -> KanbanCard {
     KanbanCard {
         id: id.to_owned(),
         rank: rank.to_owned(),
+        position_basis_refs: Vec::new(),
         title: "test".to_owned(),
         description: String::new(),
         description_body: String::new(),
@@ -223,5 +224,6 @@ pub(super) fn test_card(id: &str, rank: &str) -> KanbanCard {
         security_encrypted: None,
         state: CardState::Synced,
         lifecycle: StrandLifecycleState::Active,
+        lifecycle_basis_refs: Vec::new(),
     }
 }

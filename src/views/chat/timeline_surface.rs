@@ -686,6 +686,14 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
                                             }
                                         }
                                     }
+                                    if msg.revision_basis_refs.len() > 1 {
+                                        span {
+                                            class: "badge",
+                                            "data-testid": "message-revision-conflict-badge",
+                                            title: "Concurrent revisions are all retained",
+                                            "{msg.revision_basis_refs.len()} concurrent branches"
+                                        }
+                                    }
                                 }
                                 // T7.4: per-message crypto status row.
                                 // Sits directly under the head so the
@@ -797,6 +805,21 @@ pub(super) fn ChatTimeline(controller: ChatController, context: ChatTimelineCont
                                                 {crate::i18n::tr("message.blocked_user")}
                                             } else {
                                                 {render_message_body(&msg.body, msg.content_format, &msg.mentions, &base_url)}
+                                            }
+                                        }
+                                    }
+                                }
+                                if msg.revision_basis_refs.len() > 1 {
+                                    details {
+                                        class: "message-revision-branches",
+                                        "data-testid": "message-revision-branches",
+                                        summary { "View all observed revision branches" }
+                                        div { class: "event-body", "Displayed branch: {msg.body}" }
+                                        for (index, branch) in msg.revisions.iter().enumerate() {
+                                            div {
+                                                key: "{msg.id}-revision-branch-{index}",
+                                                class: "event-body muted",
+                                                "Observed branch/history: {branch}"
                                             }
                                         }
                                     }

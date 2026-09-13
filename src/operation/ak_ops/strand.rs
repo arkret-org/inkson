@@ -46,6 +46,18 @@ pub fn strand_watch_set(
     )
 }
 
+/// Return the exact causal-register selector used by a receiver's watch
+/// preference. Keep this derived by the SDK payload type so product reads and
+/// writes cannot disagree about the composite `(strand, actor)` subject.
+pub fn strand_watch_cell_ref(
+    strand_id: &str,
+    watcher_actor_id: &str,
+) -> anyhow::Result<arkret_sdk::CellRef> {
+    strand_watch_set_payload(strand_id, watcher_actor_id, Some("mentions_only"), None)?
+        .cell_ref()
+        .map_err(Into::into)
+}
+
 /// Build a `ak.strand.tracks.update` operation. Spec:
 /// `arkret-spec/spec/v1/zh/models/strand-and-message.md §3` (post dc01ad7).
 ///
@@ -155,9 +167,9 @@ pub fn strand_update_patch(
     )
 }
 
-/// Strand position update. The sequenced state reducer compares the optional
-/// expected position with its current value and returns the current result when
-/// the submitted revision is stale.
+/// Strand position update. The payload retains the optional observed position;
+/// callers must separately put the corresponding position-head digests in the
+/// Event's `causal_refs` so offline concurrent Moves remain concurrent.
 pub fn strand_position_update(
     realm_id: &str,
     actor: &str,
@@ -193,7 +205,7 @@ pub fn strand_position_update(
     // (additionalProperties:false). The reorder path stays within a
     // single List Space (effect_space == space_id); the move path treats
     // effect_space as the destination target_space_id and carries the
-    // optional from_space_id / expected_position revision hints.
+    // optional from_space_id / expected_position basis diagnostics.
     match kind {
         event_kind_str::STRAND_REORDER => {
             let payload = strand_reorder_payload(
