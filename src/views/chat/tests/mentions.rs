@@ -63,7 +63,7 @@ fn agent_metadata_from_mentions_recovers_selector_audit_metadata() {
         redacted: false,
         edited: false,
         revisions: Vec::new(),
-        revision_basis_refs: Vec::new(),
+        revision_source: None,
         pending: false,
         failed: false,
         error: None,

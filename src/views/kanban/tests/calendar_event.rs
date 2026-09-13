@@ -125,6 +125,7 @@ fn calendar_rsvp_operation_carries_the_complete_entry_and_effect() {
         "2026-06-20T09:00:00[Asia/Shanghai]",
         &calendar,
         vec![basis.clone()],
+        None,
     )
     .unwrap();
 
@@ -185,6 +186,33 @@ fn calendar_rsvp_operation_carries_the_complete_entry_and_effect() {
 }
 
 #[test]
+fn calendar_rsvp_update_causally_references_the_same_cell_winner() {
+    let schedule = arkret_sdk::Hash::new(FRONTIER).unwrap();
+    let prior = arkret_sdk::Hash::new(format!("sha256:{}", "bb".repeat(32))).unwrap();
+    let calendar = CalendarCardFields {
+        start: "2026-06-20T09:00:00".to_owned(),
+        end: "2026-06-20T10:00:00".to_owned(),
+        timezone: "Asia/Shanghai".to_owned(),
+        tzdb_version: "2025a".to_owned(),
+        ..CalendarCardFields::default()
+    };
+
+    let event = calendar_rsvp_operation(
+        TEST_REALM_ID,
+        "ak:did_core:web:alice.example",
+        TEST_CALENDAR_STRAND_ID,
+        "declined",
+        "",
+        &calendar,
+        vec![schedule.clone()],
+        Some(prior.clone()),
+    )
+    .unwrap();
+
+    assert_eq!(event.intent().causal_refs(), &[schedule, prior]);
+}
+
+#[test]
 fn calendar_rsvp_without_an_observed_schedule_fails_closed() {
     let calendar = CalendarCardFields {
         start: "2026-06-20T09:00:00".to_owned(),
@@ -204,6 +232,7 @@ fn calendar_rsvp_without_an_observed_schedule_fails_closed() {
             "",
             &calendar,
             Vec::new(),
+            None,
         )
         .is_err()
     );
@@ -630,6 +659,33 @@ fn rsvp_display_matches_a_complete_account_actor_to_the_self_principal() {
 }
 
 #[test]
+fn rsvp_authoring_finds_the_exact_previous_cell_winner() {
+    let occurrence = "2026-06-20T09:00:00[Asia/Shanghai]";
+    let cells = vec![
+        RsvpCellProjectionView {
+            occurrence: None,
+            actor_id: "ak:did_core:web:alice.example".to_owned(),
+            winner: Some(rsvp_winner(1, FRONTIER, "accepted")),
+            retained_writes: Vec::new(),
+        },
+        RsvpCellProjectionView {
+            occurrence: Some(occurrence.to_owned()),
+            actor_id: r#"{"account_id":{"principal_id":"ak:did_core:web:alice.example","station_id":"ak:did_core:web:station.example"},"kind":"account"}"#.to_owned(),
+            winner: Some(rsvp_winner(2, FRONTIER, "declined")),
+            retained_writes: Vec::new(),
+        },
+    ];
+
+    assert_eq!(
+        calendar_rsvp_winner_source(&cells, Some(occurrence), "ak:did_core:web:alice.example")
+            .unwrap()
+            .unwrap()
+            .as_str(),
+        rsvp_winner(2, FRONTIER, "declined").source_event_digest
+    );
+}
+
+#[test]
 fn rsvp_display_uses_the_deterministic_concurrent_winner() {
     let cells = vec![RsvpCellProjectionView {
         occurrence: None,
@@ -649,7 +705,7 @@ fn rsvp_display_uses_the_deterministic_concurrent_winner() {
 }
 
 #[test]
-fn rsvp_display_excludes_heads_resting_on_an_unknown_schedule() {
+fn rsvp_display_excludes_winners_resting_on_an_unknown_schedule() {
     let stale = "sha256:9999999999999999999999999999999999999999999999999999999999999999";
     let cells = vec![RsvpCellProjectionView {
         occurrence: None,

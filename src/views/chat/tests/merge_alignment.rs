@@ -37,7 +37,7 @@ mod merge_duplicate_create_message_alignment_tests {
             redacted: false,
             edited: false,
             revisions: Vec::new(),
-            revision_basis_refs: Vec::new(),
+            revision_source: None,
             pending: false,
             failed: false,
             error: None,

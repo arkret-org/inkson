@@ -267,7 +267,7 @@ fn timeline_projection_key(
         message.reply_to.hash(&mut projection);
         message.reactions.hash(&mut projection);
         message.edited.hash(&mut projection);
-        message.revision_basis_refs.hash(&mut projection);
+        message.revision_source.hash(&mut projection);
         message.redacted.hash(&mut projection);
         message.pending.hash(&mut projection);
         message.failed.hash(&mut projection);

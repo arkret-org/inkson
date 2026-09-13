@@ -1427,7 +1427,7 @@ pub(super) fn submit_strand_position_move(
             Ok(resp) => {
                 // events.submit accepted path: the ordinary Event is durable.
                 // The canonical current result decides whether it is the sole
-                // position head or remains concurrent with another write.
+                // position winner or loses deterministically to another write.
                 state_store.write().update_raw_operation_write_state(
                     &move_for_track,
                     "accepted",

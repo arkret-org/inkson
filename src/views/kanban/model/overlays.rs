@@ -35,6 +35,7 @@ pub(crate) fn local_created_card(
         assigned_to_relations: Vec::new(),
         due: "unscheduled".to_owned(),
         calendar_rsvp: CalendarRsvpDisplay::default(),
+        calendar_rsvp_cells: Vec::new(),
         authoring_basis: None,
         calendar_schedule_basis_refs: Vec::new(),
         calendar: CalendarCardFields::default(),

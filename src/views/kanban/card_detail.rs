@@ -728,6 +728,20 @@ pub(super) fn dispatch_calendar_rsvp(
     let submit_token = api_token.clone();
     let strand_id = card.primary_strand_id.clone();
     let calendar = card.calendar.clone();
+    let rsvp_occurrence = (!occurrence.trim().is_empty()
+        && !calendar.recurrence_frequency.trim().is_empty())
+    .then_some(occurrence.trim().to_owned());
+    let current_rsvp_source = match calendar_rsvp_winner_source(
+        &card.calendar_rsvp_cells,
+        rsvp_occurrence.as_deref(),
+        &actor_id,
+    ) {
+        Ok(source) => source,
+        Err(err) => {
+            board_status.set(format!("cannot build RSVP: {err:#}"));
+            return;
+        }
+    };
     let build_base = base_url.clone();
     let build_realm_id = realm_id.clone();
     let build_actor_id = actor_id.clone();
@@ -801,6 +815,7 @@ pub(super) fn dispatch_calendar_rsvp(
                 &occurrence,
                 &calendar,
                 vec![schedule_winner],
+                current_rsvp_source,
             )
         })
         .await;

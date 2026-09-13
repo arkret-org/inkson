@@ -772,7 +772,7 @@ pub async fn moderation_lift(
 mod tests {
     use super::*;
 
-    fn settled_realm_profile_head(
+    fn settled_realm_profile_winner(
         rows: &[arkret_sdk::EventReadRow],
     ) -> anyhow::Result<(Value, arkret_sdk::Hash)> {
         let writes = rows
@@ -869,7 +869,7 @@ mod tests {
             crate::operation::author_for_test(&initial).into_event(),
         );
         let (expected, expected_digest) =
-            settled_realm_profile_head(std::slice::from_ref(&initial_row)).unwrap();
+            settled_realm_profile_winner(std::slice::from_ref(&initial_row)).unwrap();
 
         let replacement = build_realm_profile_replacement_event(
             REALM_ID,
@@ -896,14 +896,14 @@ mod tests {
             ),
         ];
         assert_eq!(
-            settled_realm_profile_head(&rows).unwrap().0["title"],
+            settled_realm_profile_winner(&rows).unwrap().0["title"],
             serde_json::json!("Platform")
         );
         rows.reverse();
         assert_eq!(
-            settled_realm_profile_head(&rows).unwrap().0["title"],
+            settled_realm_profile_winner(&rows).unwrap().0["title"],
             serde_json::json!("Platform"),
-            "event pagination order must not change the causal-register head"
+            "event pagination order must not change the causal-register winner"
         );
     }
 
@@ -935,10 +935,10 @@ mod tests {
             arkret_sdk::EventReadRow::Event(unguarded_event),
         ];
 
-        let first = settled_realm_profile_head(&rows).unwrap();
+        let first = settled_realm_profile_winner(&rows).unwrap();
         let mut reversed = rows;
         reversed.reverse();
-        let second = settled_realm_profile_head(&reversed).unwrap();
+        let second = settled_realm_profile_winner(&reversed).unwrap();
         assert_eq!(first, second);
     }
 }

@@ -144,7 +144,8 @@ pub(crate) struct ChatMessage {
     /// Event digests of every currently observed maximal revision branch.
     /// A subsequent edit covers this complete observed frontier; more than one
     /// ref also drives the ordinary-branch conflict affordance in the UI.
-    pub(crate) revision_basis_refs: Vec<arkret_sdk::Hash>,
+    /// Exact source of the current message-revision causal-register winner.
+    pub(crate) revision_source: Option<arkret_sdk::Hash>,
     pub(crate) pending: bool,
     pub(crate) failed: bool,
     pub(crate) error: Option<String>,

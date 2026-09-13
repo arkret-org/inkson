@@ -660,7 +660,7 @@ pub(crate) fn project_board(
 
 /// Default-actor form of [`project_board_with_projection_for_actor`].
 /// Only the projection tests need it: production always knows the signed-in
-/// actor, because the board marks the viewer's own RSVP head.
+/// actor, because the board marks the viewer's own RSVP winner.
 #[cfg(test)]
 pub(crate) fn project_board_with_projection(
     ops: &[RawOperationRecord],
@@ -1842,7 +1842,7 @@ mod tests {
     }
 
     #[test]
-    fn canonical_single_position_head_overrides_arrival_order_projection() {
+    fn canonical_position_winner_overrides_arrival_order_projection() {
         let mut events = vec![
             space_create_event(BOARD, "board", "Board1", None),
             space_create_event(LIST_A, "list", "Todos", Some(BOARD)),
@@ -1938,7 +1938,7 @@ mod tests {
     }
 
     #[test]
-    fn canonical_lifecycle_head_overrides_arrival_order_projection() {
+    fn canonical_lifecycle_winner_overrides_arrival_order_projection() {
         let mut events = vec![
             space_create_event(BOARD, "board", "Board1", None),
             space_create_event(LIST_A, "list", "Todos", Some(BOARD)),

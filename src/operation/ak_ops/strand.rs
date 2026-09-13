@@ -168,7 +168,7 @@ pub fn strand_update_patch(
 }
 
 /// Strand position update. The payload retains the optional observed position;
-/// callers must separately put the corresponding position-head digests in the
+/// callers must separately put the corresponding position-winner digest in the
 /// Event's `causal_refs` so offline concurrent Moves remain concurrent.
 pub fn strand_position_update(
     realm_id: &str,

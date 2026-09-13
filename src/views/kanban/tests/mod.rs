@@ -214,6 +214,7 @@ pub(super) fn test_card(id: &str, rank: &str) -> KanbanCard {
         assigned_to_relations: Vec::new(),
         due: String::new(),
         calendar_rsvp: CalendarRsvpDisplay::default(),
+        calendar_rsvp_cells: Vec::new(),
         authoring_basis: None,
         calendar_schedule_basis_refs: Vec::new(),
         calendar: CalendarCardFields::default(),

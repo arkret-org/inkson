@@ -77,6 +77,9 @@ pub(crate) struct KanbanCard {
     /// Folded RSVP state for the card's calendar: the signed-in actor's own
     /// answer, the aggregate, and how many retained winners do not count.
     pub(crate) calendar_rsvp: CalendarRsvpDisplay,
+    /// Projected RSVP cells retained so a new response can causally reference
+    /// the previous winner of its exact `(occurrence, responder)` cell.
+    pub(crate) calendar_rsvp_cells: Vec<crate::state::projection_views::RsvpCellProjectionView>,
     pub(crate) calendar: CalendarCardFields,
     pub(crate) primary_strand_id: String,
     pub(crate) locked_strand: Option<LockedStrand>,

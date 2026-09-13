@@ -164,7 +164,7 @@ pub(crate) fn card_from_strand_projection(
 }
 
 /// Same as [`card_from_strand_projection`], with the signed-in actor so the
-/// card can mark which RSVP head is the viewer's own answer.
+/// card can mark which RSVP winner is the viewer's own answer.
 pub(crate) fn card_from_strand_projection_for_actor(
     strand: &crate::state::projection_views::StrandProjectionView,
     decrypt_ctx: Option<&MlsDecryptCtx<'_>>,
@@ -289,6 +289,7 @@ pub(crate) fn card_from_strand_projection_for_actor(
             None,
             self_actor_id,
         ),
+        calendar_rsvp_cells: strand.rsvps.clone(),
         authoring_basis: None,
         calendar_schedule_basis_refs: strand.schedule_revision_source.iter().cloned().collect(),
         calendar: calendar_fields_from_metadata(&strand.fields, decrypt_ctx, &strand.strand_id),

@@ -23,6 +23,7 @@ pub fn build_calendar_rsvp_event(
     occurrence: Option<&str>,
     calendar_fields: &arkret_sdk::CalendarEventFields,
     schedule_basis_refs: Vec<arkret_sdk::Hash>,
+    current_rsvp_source: Option<arkret_sdk::Hash>,
 ) -> anyhow::Result<crate::operation::LocalOperation> {
     let schedule_bytes = arkret_sdk::canonical::canonical_json_bytes(calendar_fields)?;
     let [schedule_basis] = schedule_basis_refs.as_slice() else {
@@ -34,6 +35,12 @@ pub fn build_calendar_rsvp_event(
     );
     let mut authoring = crate::operation::ak_ops::rsvp_authoring(strand_id, status, occurrence)?;
     authoring.schedule_basis_refs = schedule_basis_refs.clone();
+    let mut causal_refs = schedule_basis_refs;
+    if let Some(source) = current_rsvp_source {
+        causal_refs.push(source);
+    }
+    causal_refs.sort();
+    causal_refs.dedup();
     Ok(crate::operation::LocalOperation::new(
         arkret_sdk::calendar::build_rsvp_set_intent(
             authoring,
@@ -44,7 +51,7 @@ pub fn build_calendar_rsvp_event(
             },
             actor_id.clone(),
             crate::clock::now_utc_millis(),
-            schedule_basis_refs,
+            causal_refs,
         )?,
     ))
 }
@@ -77,6 +84,7 @@ mod tests {
                 None,
                 &fields,
                 vec![arkret_sdk::Hash::new(format!("sha256:{}", "11".repeat(32))).unwrap()],
+                None,
             )
             .unwrap();
             assert_eq!(operation.actor_id(), &actor);

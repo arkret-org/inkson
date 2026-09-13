@@ -478,7 +478,7 @@ fn durable_redaction_folds_onto_controller_only_create() {
         edited: false,
         redacted: false,
         revisions: Vec::new(),
-        revision_basis_refs: Vec::new(),
+        revision_source: None,
         reply_to: None,
         reactions: Vec::new(),
         mentions: Vec::new(),
@@ -511,6 +511,10 @@ fn durable_redaction_folds_onto_controller_only_create() {
 
 #[test]
 fn chat_messages_fold_revision_chain_into_latest_message() {
+    let revision_v2 = "ak:event:AugQeQYGPoF9zEbbEIcD8ndn7DUoCaZVaJ9EM6u1rvuo";
+    let revision_v2_digest = arkret_sdk::EventId::new(revision_v2.to_owned())
+        .unwrap()
+        .event_digest();
     let mut events = vec![
         json!({
             "event_id": "ak:event:AuVYtOcVkQu9JLkr0AO35k8Vn36NgL7qI1NnvHuzyDDs",
@@ -525,7 +529,7 @@ fn chat_messages_fold_revision_chain_into_latest_message() {
             }
         }),
         json!({
-            "event_id": "ak:event:AugQeQYGPoF9zEbbEIcD8ndn7DUoCaZVaJ9EM6u1rvuo",
+            "event_id": revision_v2,
             "kind": "ak.message.revise",
             "actor_id": {"kind":"account","account_id":{"principal_id":"ak:did_core:web:bob.example","station_id":"ak:did_core:web:principal.example"}},
             "realm_id": "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0",
@@ -543,6 +547,7 @@ fn chat_messages_fold_revision_chain_into_latest_message() {
             "realm_id": "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0",
             "created_at": "2026-05-22T10:02:00.000Z",
             "prev_refs": ["ak:event:AugQeQYGPoF9zEbbEIcD8ndn7DUoCaZVaJ9EM6u1rvuo"],
+            "causal_refs": [revision_v2_digest],
             "payload": {
                 "message_id": "ak:message:AuVYtOcVkQu9JLkr0AO35k8Vn36NgL7qI1NnvHuzyDDs",
                 "content": {"kind": "ak.content.text", "body": "v3"}
@@ -569,6 +574,15 @@ fn chat_messages_fold_revision_chain_into_latest_message() {
         messages[0].revisions,
         vec!["v1".to_owned(), "v2".to_owned()]
     );
+
+    let incomplete = chat_messages_from_events_with_sidecar(
+        "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0",
+        &[events[0].clone(), events[2].clone()],
+        None,
+        None,
+    );
+    assert_eq!(incomplete[0].body, "v1");
+    assert_eq!(incomplete[0].revision_source, None);
 
     let stale_state = ClientLocalState {
         raw_operations: message_operations_from_events(
@@ -619,7 +633,7 @@ fn chat_messages_fold_revision_chain_into_latest_message() {
 }
 
 #[test]
-fn concurrent_message_revisions_are_arrival_order_independent_and_keep_every_head() {
+fn concurrent_message_revisions_are_arrival_order_independent_with_one_winner() {
     let message_event = "ak:event:AuVYtOcVkQu9JLkr0AO35k8Vn36NgL7qI1NnvHuzyDDs";
     let message_id = "ak:message:AuVYtOcVkQu9JLkr0AO35k8Vn36NgL7qI1NnvHuzyDDs";
     let revision_a = "ak:event:AugQeQYGPoF9zEbbEIcD8ndn7DUoCaZVaJ9EM6u1rvuo";
@@ -674,11 +688,21 @@ fn concurrent_message_revisions_are_arrival_order_independent_and_keep_every_hea
     );
 
     assert_eq!(forward[0].body, backward[0].body);
-    assert_eq!(
-        forward[0].revision_basis_refs,
-        backward[0].revision_basis_refs
-    );
-    assert_eq!(forward[0].revision_basis_refs.len(), 2);
+    assert_eq!(forward[0].revision_source, backward[0].revision_source);
+    let id_a = arkret_sdk::EventId::new(revision_a.to_owned()).unwrap();
+    let id_b = arkret_sdk::EventId::new(revision_b.to_owned()).unwrap();
+    let winner = if id_a.token_bytes() > id_b.token_bytes() {
+        id_a
+    } else {
+        id_b
+    };
+    assert_eq!(forward[0].revision_source, Some(winner.event_digest()));
+    let expected_body = if winner.as_str() == revision_a {
+        "branch a"
+    } else {
+        "branch b"
+    };
+    assert_eq!(forward[0].body, expected_body);
     let mut visible = forward[0].revisions.clone();
     visible.push(forward[0].body.clone());
     assert!(visible.contains(&"branch a".to_owned()));
@@ -898,7 +922,7 @@ fn merge_chat_messages_dedupes_tombstones_by_protocol_message_id() {
             redacted: true,
             edited: false,
             revisions: Vec::new(),
-            revision_basis_refs: Vec::new(),
+            revision_source: None,
             pending: false,
             failed: false,
             error: None,
@@ -988,7 +1012,7 @@ fn merge_chat_messages_keeps_newer_revision_when_older_create_arrives_late() {
             redacted: false,
             edited: false,
             revisions: Vec::new(),
-            revision_basis_refs: Vec::new(),
+            revision_source: None,
             pending: false,
             failed: false,
             error: None,
@@ -1237,7 +1261,7 @@ fn local_redaction_tombstone_replaces_raw_message_without_plaintext() {
         redacted: false,
         edited: false,
         revisions: Vec::new(),
-        revision_basis_refs: Vec::new(),
+        revision_source: None,
         pending: false,
         failed: false,
         error: None,
