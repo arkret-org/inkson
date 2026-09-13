@@ -163,6 +163,13 @@ impl ProducerProofContext {
 pub(crate) fn cached_active_event_proof_context(
     digest_suite: arkret_sdk::DigestSuite,
 ) -> Result<ProducerProofContext, EventSignerError> {
+    cached_active_event_proof_context_for_plane(digest_suite, arkret_sdk::CbsEffectPlane::Data)
+}
+
+fn cached_active_event_proof_context_for_plane(
+    digest_suite: arkret_sdk::DigestSuite,
+    plane: arkret_sdk::CbsEffectPlane,
+) -> Result<ProducerProofContext, EventSignerError> {
     let signer = active_signer().ok_or(EventSignerError::MissingSigner {
         mode: "active-device",
     })?;
@@ -183,7 +190,23 @@ pub(crate) fn cached_active_event_proof_context(
                     "active endpoint signer public key is invalid".to_owned(),
                 )
             })?;
-    let evidence_ref =
+    let evidence_ref = if plane == arkret_sdk::CbsEffectPlane::Control {
+        let account_id = arkret_sdk::AccountId::new(
+            principal_id,
+            crate::operation::authoring_station_id()
+                .map_err(|error| EventSignerError::Encoding(error.to_string()))?,
+        );
+        crate::identity::device_directory::cached_control_signer_evidence_ref(
+            &account_id,
+            &arkret_sdk::DeviceId::new(device_id.to_owned())
+                .map_err(|error| EventSignerError::Encoding(error.to_string()))?,
+        )
+        .ok_or_else(|| {
+            EventSignerError::Encoding(
+                "verified Control signer evidence is unavailable for the active device".to_owned(),
+            )
+        })?
+    } else {
         crate::identity::device_directory::cached_signer_evidence_ref_for_principal_device_and_key(
             &principal_id,
             device_id,
@@ -194,7 +217,8 @@ pub(crate) fn cached_active_event_proof_context(
                 "verified signer-resolution evidence is unavailable for the active device"
                     .to_owned(),
             )
-        })?;
+        })?
+    };
     Ok(ProducerProofContext::new()
         .with_digest_suite(digest_suite)
         .with_signer_resolution_evidence_ref(evidence_ref))
@@ -529,7 +553,12 @@ impl InksonEventSigner {
         #[cfg(test)]
         let context = test_producer_proof_context(event.digest_suite());
         #[cfg(not(test))]
-        let context = cached_active_event_proof_context(event.digest_suite())?;
+        let context = cached_active_event_proof_context_for_plane(
+            event.digest_suite(),
+            arkret_schema::classify_event_execution(event.event())
+                .map_err(|error| EventSignerError::Encoding(error.to_string()))?
+                .unwrap_or(arkret_sdk::CbsEffectPlane::Data),
+        )?;
         self.sign_envelope_with_context(event, context)
     }
 

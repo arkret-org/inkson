@@ -38,9 +38,12 @@ pub(crate) fn did_for_request_field(
 pub async fn account_viewer(
     http: &arkret_sdk::http_client::Client,
 ) -> anyhow::Result<arkret_models_collaboration::account_lifecycle::AccountView> {
-    http.account_viewer()
+    let viewer = http
+        .account_viewer()
         .await
-        .map_err(|error| anyhow::Error::new(error).context("account viewer"))
+        .map_err(|error| anyhow::Error::new(error).context("account viewer"))?;
+    crate::identity::device_directory::cache_control_evidence_from_account_viewer(&viewer)?;
+    Ok(viewer)
 }
 
 pub async fn account_me(http: &arkret_sdk::http_client::Client) -> anyhow::Result<CurrentAccount> {

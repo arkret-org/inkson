@@ -58,6 +58,8 @@ impl std::ops::DerefMut for DeviceKeyCache {
 
 static CACHE: LazyLock<RwLock<DeviceKeyCache>> =
     LazyLock::new(|| RwLock::new(DeviceKeyCache::default()));
+static CONTROL_EVIDENCE_CACHE: LazyLock<RwLock<HashMap<CacheKey, arkret_sdk::SignerEvidenceRef>>> =
+    LazyLock::new(|| RwLock::new(HashMap::new()));
 
 pub(crate) fn cache_epoch() -> u64 {
     CACHE
@@ -70,6 +72,60 @@ pub(crate) fn reset_session_cache() {
     let mut cache = CACHE.write().unwrap_or_else(|poison| poison.into_inner());
     cache.epoch = cache.epoch.wrapping_add(1);
     cache.entries.clear();
+    CONTROL_EVIDENCE_CACHE
+        .write()
+        .unwrap_or_else(|poison| poison.into_inner())
+        .clear();
+}
+
+pub(crate) fn cache_control_evidence_from_account_viewer(
+    viewer: &arkret_models_collaboration::account_lifecycle::AccountView,
+) -> anyhow::Result<()> {
+    let Some(scope) = crate::secure_key_store::active_device_seed_scope() else {
+        return Ok(());
+    };
+    anyhow::ensure!(
+        viewer.principal_id == scope.authority.principal_id,
+        "account viewer principal does not match the active device scope"
+    );
+    let key = (scope.authority, scope.device_id.as_str().to_owned());
+    let mut cache = CONTROL_EVIDENCE_CACHE
+        .write()
+        .unwrap_or_else(|poison| poison.into_inner());
+    let Some(device) = viewer
+        .devices
+        .iter()
+        .find(|device| device.device_id == scope.device_id)
+    else {
+        cache.remove(&key);
+        return Ok(());
+    };
+    device.validate()?;
+    if device.status != arkret_models_identity::DeviceSummaryStatus::Active
+        || device.verification_state
+            != arkret_models_identity::DeviceSummaryVerificationState::Verified
+    {
+        cache.remove(&key);
+        return Ok(());
+    }
+    let evidence_ref = device
+        .signer_resolution_evidence_ref
+        .clone()
+        .ok_or_else(|| anyhow::anyhow!("verified active device omits Control signer evidence"))?;
+    evidence_ref.content_digest()?;
+    cache.insert(key, evidence_ref);
+    Ok(())
+}
+
+pub(crate) fn cached_control_signer_evidence_ref(
+    account_id: &arkret_sdk::AccountId,
+    device_id: &arkret_sdk::DeviceId,
+) -> Option<arkret_sdk::SignerEvidenceRef> {
+    CONTROL_EVIDENCE_CACHE
+        .read()
+        .unwrap_or_else(|poison| poison.into_inner())
+        .get(&(account_id.clone(), device_id.as_str().to_owned()))
+        .cloned()
 }
 
 #[derive(Clone)]
