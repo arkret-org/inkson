@@ -104,22 +104,25 @@ impl crate::transport::TransportClient {
             let outcome =
                 crate::transport::keys::query_keys(&http, account_id, device_id.as_str()).await?;
             let generation = outcome.generation_for(account_id);
+            let now = chrono::Utc::now();
             outcome
                 .devices_for(account_id)
                 .and_then(|devices| devices.get(&device_id))
-                .filter(|record| {
-                    record
-                        .validate_attestation_binding(account_id, &device_id)
-                        .is_ok()
-                })
                 .filter(|record| record.is_usable_in_generation(generation))
-                .map(|record| {
-                    record
-                        .device_projection_attestation
-                        .attestation
-                        .device_authorize_event_id
-                        .clone()
+                // The row was read at the exact `(account_id, device_id)`
+                // selectors; the remaining client-side checks are the evidence
+                // reference, the status and the temporal windows.
+                .and_then(|record| {
+                    crate::identity::device_directory::validate_self_device_row(record).ok()
                 })
+                .filter(|projection| {
+                    crate::identity::device_directory::projection_observation_is_fresh(
+                        projection, now,
+                    ) && crate::identity::device_directory::projection_authorization_window_contains(
+                        projection, now,
+                    )
+                })
+                .map(|projection| projection.device_authorize_event_id.clone())
         } else {
             None
         };

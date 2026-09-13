@@ -237,9 +237,14 @@ async fn current_ordinary_human_endpoint_authorization(
         .ok_or_else(|| {
             anyhow::anyhow!("history request device is absent from the PCR projection")
         })?;
-    let attested = &device.device_projection_attestation.attestation;
-    device.validate_attestation_binding(account_id, device_id)?;
-    if attested.device_status != arkret_sdk::DeviceStatus::Active
+    // The row was read at the exact `(account_id, device_id)` selectors; the
+    // projection itself carries no account/device identity to re-check.
+    let attested = crate::identity::device_directory::validate_self_device_row(device)?;
+    let now = chrono::Utc::now();
+    if !crate::identity::device_directory::projection_observation_is_fresh(attested, now)
+        || !crate::identity::device_directory::projection_authorization_window_contains(
+            attested, now,
+        )
         || attested.authorized_generation_ref != generation.current_device_generation_ref
         || attested.device_authorize_event_id != requester_device_authorize_event_id
     {
@@ -417,11 +422,21 @@ async fn current_member_signer_evidence_coordinates(
         .devices_for(authority)
         .and_then(|devices| devices.get(device_id))
         .ok_or_else(|| anyhow::anyhow!("history source has no current attested device"))?;
-    record.validate_attestation_binding(authority, device_id)?;
+    // The row was read at the exact `(authority, device_id)` selectors.
+    let projection = crate::identity::device_directory::validate_self_device_row(record)?;
     if !record.is_usable_in_generation(outcome.generation_for(authority)) {
         anyhow::bail!("history source device generation is inactive");
     }
-    record.signer_evidence_ref.content_digest()?;
+    let now = chrono::Utc::now();
+    if !crate::identity::device_directory::projection_observation_is_fresh(projection, now)
+        || !crate::identity::device_directory::projection_authorization_window_contains(
+            projection, now,
+        )
+    {
+        anyhow::bail!("history source device projection is not currently authorized");
+    }
+    // The reference is returned exactly as the Station projected it; it still
+    // addresses the original complete immutable evidence object.
     Ok(record.signer_evidence_ref.clone())
 }
 

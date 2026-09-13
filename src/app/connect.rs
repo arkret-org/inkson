@@ -551,13 +551,7 @@ async fn current_event_signer_matches_directory(
     let signer_matches = outcome
         .devices_for(account_id)
         .and_then(|devices| devices.get(&device_id))
-        .map(|record| {
-            record
-                .device_projection_attestation
-                .attestation
-                .device_signing_key_did
-                .as_str()
-        })
+        .map(|record| record.device_projection.device_signing_key_did.as_str())
         == Some(expected_key.as_str());
     if !signer_matches {
         clear_verified_device_authoring_authority(state_store);

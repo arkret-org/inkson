@@ -141,61 +141,117 @@ pub(crate) fn retained_device_authoring_evidence(
     Some((entry.key.clone()?, entry.signer_evidence_ref.clone()?))
 }
 
-/// Restore the active device's last verified authoring authority after a cold
-/// start. The persisted attestation remains evidence of the last accepted
-/// authorization after its online freshness window; only a subsequently
+/// Validate a self device row read at exact `(account_id, device_id)` selectors.
+///
+/// A self row carries no origin proof shell. The requester's own Station
+/// verified the origin attestation, the complete AccountId, the generation and
+/// the validity before projecting, and the projection itself carries no
+/// account/device identity: the row's identity is the outer entry `account_id`
+/// plus the `device_keys` map key. Every caller therefore MUST reach the row
+/// through `devices_for(account_id)?.get(device_id)` and never by scanning the
+/// map. What remains the client's own check happens here: a resolvable
+/// `signer_evidence_ref`, an `active` status, and a positive observation window.
+pub(crate) fn validate_self_device_row(
+    record: &arkret_models_crypto::QueryDeviceRecord,
+) -> anyhow::Result<&arkret_models_crypto::VerifiedDeviceProjection> {
+    record.signer_evidence_ref.content_digest()?;
+    let projection = &record.device_projection;
+    if projection.device_status != arkret_models_crypto::DeviceStatus::Active {
+        anyhow::bail!("device projection does not describe a usable device");
+    }
+    if projection.attested_at >= projection.expires_at {
+        anyhow::bail!("device projection is not a positive observation window");
+    }
+    Ok(projection)
+}
+
+/// Whether the Station's observation of this projection is still fresh.
+///
+/// This is a query-cache freshness bound, not an authorization deadline: a
+/// previously accepted authority survives it for offline authoring, and only a
 /// verified revocation or generation replacement fences it.
+pub(crate) fn projection_observation_is_fresh(
+    projection: &arkret_models_crypto::VerifiedDeviceProjection,
+    now: chrono::DateTime<chrono::Utc>,
+) -> bool {
+    projection.attested_at <= now && now < projection.expires_at
+}
+
+/// Whether the device's own authorization window has opened and not closed.
+///
+/// Unlike the observation window this is a real authorization deadline, so it
+/// gates the cold-start restore as well as live consumption.
+pub(crate) fn projection_authorization_window_contains(
+    projection: &arkret_models_crypto::VerifiedDeviceProjection,
+    now: chrono::DateTime<chrono::Utc>,
+) -> bool {
+    let window = &projection.authorization_window;
+    now >= window.not_before && window.expires_at.is_none_or(|expires_at| now < expires_at)
+}
+
+/// Version watermark of one projection, bound to the selectors it was read at.
+///
+/// The projection no longer repeats `account_id` / `device_id`, so the digest
+/// covers the selectors explicitly; a row observed under different selectors
+/// can never satisfy a retained watermark.
+fn projection_version(
+    account_id: &arkret_sdk::AccountId,
+    device_id: &arkret_sdk::DeviceId,
+    projection: &arkret_models_crypto::VerifiedDeviceProjection,
+) -> Option<VerifiedProjectionVersion> {
+    Some(VerifiedProjectionVersion {
+        generation_ref: projection.authorized_generation_ref,
+        attested_at: projection.attested_at,
+        projection_digest: arkret_sdk::canonical::canonical_sha256(&serde_json::json!({
+            "account_id": account_id,
+            "device_id": device_id,
+            "device_projection": projection,
+        }))
+        .ok()?,
+    })
+}
+
+/// Restore the active device's last verified authoring authority after a cold
+/// start. The persisted projection remains evidence of the last accepted
+/// authorization after its online observation window; only a subsequently
+/// verified revocation, a closed authorization window, or a generation
+/// replacement fences it.
 pub(crate) fn restore_persisted_device_authoring_authority(
     expected_epoch: u64,
     expected_account: &arkret_sdk::AccountId,
     expected_device: &arkret_sdk::DeviceId,
     persisted: &crate::state::PersistedDeviceAuthoringAuthority,
 ) -> bool {
-    use arkret_models_collaboration::current_signer_evidence::CurrentSignerEvidence;
-
-    let CurrentSignerEvidence::AccountDevice {
-        account_id,
-        device_id,
-        device_projection_attestation,
-        signer_evidence_ref,
-    } = &persisted.current_signer_evidence
-    else {
-        return false;
-    };
-    if account_id != expected_account || device_id != expected_device {
+    if &persisted.account_id != expected_account || &persisted.device_id != expected_device {
         return false;
     }
-    let core = &device_projection_attestation.attestation;
-    if core.account_id != *account_id
-        || core.device_id != *device_id
-        || core.device_status != arkret_models_crypto::DeviceStatus::Active
-        || core.authorized_generation_ref.to_string()
+    let projection = &persisted.device_projection;
+    if projection.device_status != arkret_models_crypto::DeviceStatus::Active
+        || projection.attested_at >= projection.expires_at
+        || !projection_authorization_window_contains(projection, chrono::Utc::now())
+        || projection.authorized_generation_ref.to_string()
             != persisted.authoring_generation.generation_ref
         || persisted.authoring_generation.authority_model
             != garth::AuthoringAuthorityModel::AcceptedDevice
-        || persisted.authoring_generation.authority_principal_id != account_id.principal_id
-        || signer_evidence_ref.content_digest().is_err()
+        || persisted.authoring_generation.authority_principal_id != expected_account.principal_id
+        || persisted.signer_evidence_ref.content_digest().is_err()
     {
         return false;
     }
-    let Some(key) = public_key_from_directory_value(core.device_signing_key_did.as_str()) else {
+    let Some(key) = public_key_from_directory_value(projection.device_signing_key_did.as_str())
+    else {
         return false;
     };
-    let version = VerifiedProjectionVersion {
-        generation_ref: core.authorized_generation_ref,
-        attested_at: core.attested_at,
-        projection_digest: match arkret_sdk::canonical::canonical_sha256(core) {
-            Ok(digest) => digest,
-            Err(_) => return false,
-        },
+    let Some(version) = projection_version(expected_account, expected_device, projection) else {
+        return false;
     };
     store_entry_at_epoch(
         expected_epoch,
-        &account_id.to_string(),
-        device_id.as_str(),
+        &expected_account.to_string(),
+        expected_device.as_str(),
         Some(key),
-        Some(core.device_authorize_event_id.clone()),
-        Some(signer_evidence_ref.clone()),
+        Some(projection.device_authorize_event_id.clone()),
+        Some(persisted.signer_evidence_ref.clone()),
         None,
         Some(version),
     )
@@ -208,26 +264,19 @@ pub(crate) fn persisted_device_authoring_authority_from_outcome(
     authoring_generation: garth::AuthoringGeneration,
 ) -> Option<crate::state::PersistedDeviceAuthoringAuthority> {
     let record = outcome.devices_for(account_id)?.get(device_id)?;
-    record
-        .validate_attestation_binding(account_id, device_id)
-        .ok()?;
-    if record
-        .device_projection_attestation
-        .attestation
-        .authorized_generation_ref
-        .to_string()
-        != authoring_generation.generation_ref
+    let projection = validate_self_device_row(record).ok()?;
+    let now = chrono::Utc::now();
+    if !projection_observation_is_fresh(projection, now)
+        || !projection_authorization_window_contains(projection, now)
+        || projection.authorized_generation_ref.to_string() != authoring_generation.generation_ref
     {
         return None;
     }
     Some(crate::state::PersistedDeviceAuthoringAuthority {
-        current_signer_evidence:
-            arkret_models_collaboration::current_signer_evidence::CurrentSignerEvidence::AccountDevice {
-                account_id: account_id.clone(),
-                device_id: device_id.clone(),
-                device_projection_attestation: record.device_projection_attestation.clone(),
-                signer_evidence_ref: record.signer_evidence_ref.clone(),
-            },
+        account_id: account_id.clone(),
+        device_id: device_id.clone(),
+        device_projection: projection.clone(),
+        signer_evidence_ref: record.signer_evidence_ref.clone(),
         authoring_generation,
     })
 }
@@ -262,7 +311,7 @@ fn store_entry_at_epoch(
     key: Option<PublicKeyMaterial>,
     authorize_event_id: Option<arkret_sdk::EventId>,
     signer_evidence_ref: Option<arkret_sdk::SignerEvidenceRef>,
-    attestation_expires_at_ms: Option<u64>,
+    projection_expires_at_ms: Option<u64>,
     verified_projection: Option<VerifiedProjectionVersion>,
 ) -> bool {
     let Some(inserted) = cache_key(actor, device) else {
@@ -274,13 +323,13 @@ fn store_entry_at_epoch(
     } else {
         NEGATIVE_TTL_MS
     };
-    let expires_at_ms = if key.is_some() && attestation_expires_at_ms.is_none() {
+    let expires_at_ms = if key.is_some() && projection_expires_at_ms.is_none() {
         // A persisted, previously verified authority remains usable while its
         // revocation is unknown. A later accepted projection invalidates it.
         u64::MAX
     } else {
         now.saturating_add(ttl)
-            .min(attestation_expires_at_ms.unwrap_or(u64::MAX))
+            .min(projection_expires_at_ms.unwrap_or(u64::MAX))
     };
     if key.is_some() && expires_at_ms <= now {
         return false;
@@ -380,52 +429,43 @@ pub fn public_key_from_directory_value(value: &str) -> Option<PublicKeyMaterial>
     Some(material)
 }
 
+struct AcceptedDeviceEvidence {
+    key: PublicKeyMaterial,
+    authorize_event_id: arkret_sdk::EventId,
+    signer_evidence_ref: arkret_sdk::SignerEvidenceRef,
+    projection_expires_at_ms: u64,
+    version: VerifiedProjectionVersion,
+}
+
 fn accepted_device_evidence(
     outcome: &arkret_models_crypto::KeysQueryOutcome,
     account_id: &arkret_sdk::AccountId,
     device: &str,
-) -> Option<(
-    PublicKeyMaterial,
-    arkret_sdk::EventId,
-    arkret_sdk::SignerEvidenceRef,
-    arkret_sdk::AccountId,
-    u64,
-    VerifiedProjectionVersion,
-)> {
+) -> Option<AcceptedDeviceEvidence> {
+    account_id.validate().ok()?;
     let device = arkret_sdk::DeviceId::new(device.to_owned()).ok()?;
     let record = outcome.devices_for(account_id)?.get(&device)?;
     let generation = outcome.generation_for(account_id)?;
     if !record.is_usable_in_generation(Some(generation)) {
         return None;
     }
-    record
-        .validate_attestation_binding(account_id, &device)
-        .ok()?;
-    let attestation = &record.device_projection_attestation;
+    let projection = validate_self_device_row(record).ok()?;
     let now = chrono::Utc::now();
-    if attestation.attestation.attested_at > now || now >= attestation.attestation.expires_at {
+    if !projection_observation_is_fresh(projection, now)
+        || !projection_authorization_window_contains(projection, now)
+    {
         return None;
     }
-    let key =
-        public_key_from_directory_value(attestation.attestation.device_signing_key_did.as_str())?;
-    let authority = attestation.attestation.account_id.clone();
-    authority.validate().ok()?;
-    let expires_at_ms =
-        u64::try_from(attestation.attestation.expires_at.timestamp_millis()).ok()?;
-    let version = VerifiedProjectionVersion {
-        generation_ref: attestation.attestation.authorized_generation_ref,
-        attested_at: attestation.attestation.attested_at,
-        projection_digest: arkret_sdk::canonical::canonical_sha256(&attestation.attestation)
-            .ok()?,
-    };
-    Some((
-        key,
-        attestation.attestation.device_authorize_event_id.clone(),
-        record.signer_evidence_ref.clone(),
-        authority,
-        expires_at_ms,
-        version,
-    ))
+    Some(AcceptedDeviceEvidence {
+        key: public_key_from_directory_value(projection.device_signing_key_did.as_str())?,
+        authorize_event_id: projection.device_authorize_event_id.clone(),
+        // The reference points at the original immutable evidence object and is
+        // passed through byte-exactly; it is never recomputed from the values
+        // the client kept.
+        signer_evidence_ref: record.signer_evidence_ref.clone(),
+        projection_expires_at_ms: u64::try_from(projection.expires_at.timestamp_millis()).ok()?,
+        version: projection_version(account_id, &device, projection)?,
+    })
 }
 
 pub(crate) fn cache_accepted_device_evidence_from_outcome(
@@ -435,24 +475,22 @@ pub(crate) fn cache_accepted_device_evidence_from_outcome(
     device: &str,
 ) -> Option<PublicKeyMaterial> {
     let resolved = accepted_device_evidence(outcome, account_id, device);
-    let key = resolved.as_ref().map(|(key, ..)| key.clone());
-    let authorize_event_id = resolved.as_ref().map(|(_, event_id, ..)| event_id.clone());
-    let signer_evidence_ref = resolved
-        .as_ref()
-        .map(|(_, _, signer_evidence_ref, ..)| signer_evidence_ref.clone());
-    let attestation_expires_at_ms = resolved
-        .as_ref()
-        .map(|(_, _, _, _, expires_at_ms, _)| *expires_at_ms);
-    let version = resolved.map(|(_, _, _, _, _, version)| version);
+    let key = resolved.as_ref().map(|resolved| resolved.key.clone());
     let stored = store_entry_at_epoch(
         expected_epoch,
         &account_id.to_string(),
         device,
         key.clone(),
-        authorize_event_id,
-        signer_evidence_ref,
-        attestation_expires_at_ms,
-        version,
+        resolved
+            .as_ref()
+            .map(|resolved| resolved.authorize_event_id.clone()),
+        resolved
+            .as_ref()
+            .map(|resolved| resolved.signer_evidence_ref.clone()),
+        resolved
+            .as_ref()
+            .map(|resolved| resolved.projection_expires_at_ms),
+        resolved.map(|resolved| resolved.version),
     );
     stored.then_some(key).flatten()
 }
@@ -716,63 +754,72 @@ mod verification_method_controller_tests {
         verification_method_controller_matches_signer,
     };
 
+    fn self_projection_fixture(
+        now: chrono::DateTime<chrono::Utc>,
+        device_signing_key_did: &str,
+    ) -> arkret_models_crypto::VerifiedDeviceProjection {
+        arkret_models_crypto::VerifiedDeviceProjection {
+            device_signing_key_did: arkret_sdk::DidKey::new(device_signing_key_did.to_owned())
+                .unwrap(),
+            hpke_key: arkret_sdk::NonEmptyString::new("hpke-test").unwrap(),
+            device_authorize_event_id: arkret_sdk::EventId::new(
+                "ak:event:AfAnsJqSlM9bHVI7P1QBMOEW3p5P1PNQu7BBMpiSnD_e",
+            )
+            .unwrap(),
+            authorized_generation_ref: 7,
+            device_status: arkret_models_crypto::DeviceStatus::Active,
+            authorization_window: arkret_models_crypto::DeviceAuthorizationWindow {
+                not_before: now,
+                expires_at: None,
+            },
+            attested_at: now,
+            expires_at: now + chrono::Duration::minutes(5),
+        }
+    }
+
+    const FIXTURE_SIGNER_EVIDENCE_REF: &str = "ak:signer_evidence:sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+
+    fn self_outcome_fixture(
+        account: &arkret_sdk::AccountId,
+        device: &arkret_sdk::DeviceId,
+        projection: &arkret_models_crypto::VerifiedDeviceProjection,
+    ) -> arkret_models_crypto::KeysQueryOutcome {
+        serde_json::from_value(serde_json::json!({
+            "device_keys": [{"account_id": account, "device_keys": {
+                device.as_str(): {
+                    "signer_evidence_ref": FIXTURE_SIGNER_EVIDENCE_REF,
+                    "algorithms": {}, "trust_algorithms": [],
+                    "device_projection": projection
+                }
+            }}],
+            "failures": [],
+            "device_generations": [{"account_id": account, "generation_state": {
+                "current_device_generation_ref": 7,
+                "device_generation_status": "active"
+            }}]
+        }))
+        .unwrap()
+    }
+
+    fn projection_fixture_account() -> (arkret_sdk::AccountId, arkret_sdk::DeviceId) {
+        (
+            arkret_sdk::AccountId::new(
+                arkret_sdk::DidCoreId::new("ak:did_core:web:projection-principal.example").unwrap(),
+                arkret_sdk::DidCoreId::new("ak:did_core:web:projection-station.example").unwrap(),
+            ),
+            arkret_sdk::DeviceId::new("ak:device:0196419b-0000-7000-8000-000000000001").unwrap(),
+        )
+    }
+
     #[test]
     fn trusted_device_result_requires_exact_binding_and_current_generation() {
-        let station_did = arkret_sdk::Did::new("did:web:projection-station.example").unwrap();
-        let method = arkret_sdk::DidUrl::new(format!("{station_did}#assertion")).unwrap();
-        let account = arkret_sdk::AccountId::new(
-            arkret_sdk::DidCoreId::new("ak:did_core:web:projection-principal.example").unwrap(),
-            arkret_sdk::project_did_to_core_id(&station_did).unwrap(),
-        );
-        let device =
-            arkret_sdk::DeviceId::new("ak:device:0196419b-0000-7000-8000-000000000001").unwrap();
+        let (account, device) = projection_fixture_account();
         let now = arkret_sdk::canonical::normalize_timestamp_canonical(chrono::Utc::now());
         let signing_key = ed25519_dalek::SigningKey::from_bytes(&[43u8; 32]);
         let public_key =
             arkret_sdk::ed25519_pubkey_to_did_key_multibase(signing_key.verifying_key().as_bytes());
-        let attestation =
-            arkret_sdk::signatures::device_projection::sign_device_projection_attestation(
-                arkret_models_crypto::DeviceProjectionAttestationCore {
-                    account_id: account.clone(),
-                    device_id: device.clone(),
-                    device_signing_key_did: arkret_sdk::DidKey::new(format!(
-                        "did:key:{public_key}"
-                    ))
-                    .unwrap(),
-                    hpke_key: arkret_sdk::NonEmptyString::new("hpke-test").unwrap(),
-                    device_authorize_event_id: arkret_sdk::EventId::new(
-                        "ak:event:AfAnsJqSlM9bHVI7P1QBMOEW3p5P1PNQu7BBMpiSnD_e",
-                    )
-                    .unwrap(),
-                    authorized_generation_ref: 7,
-                    device_status: arkret_models_crypto::DeviceStatus::Active,
-                    authorization_window: arkret_models_crypto::DeviceAuthorizationWindow {
-                        not_before: now,
-                        expires_at: None,
-                    },
-                    attested_at: now,
-                    expires_at: now + chrono::Duration::minutes(5),
-                },
-                method.clone(),
-                &signing_key,
-            )
-            .unwrap();
-        let mut outcome: arkret_models_crypto::KeysQueryOutcome =
-            serde_json::from_value(serde_json::json!({
-                "device_keys": [{"account_id": account, "device_keys": {
-                    device.as_str(): {
-                        "signer_evidence_ref": "ak:signer_evidence:sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-                        "algorithms": {}, "trust_algorithms": [],
-                        "device_projection_attestation": attestation
-                    }
-                }}],
-                "failures": [],
-                "device_generations": [{"account_id": account, "generation_state": {
-                    "current_device_generation_ref": 7,
-                    "device_generation_status": "active"
-                }}]
-            }))
-            .unwrap();
+        let projection = self_projection_fixture(now, &format!("did:key:{public_key}"));
+        let mut outcome = self_outcome_fixture(&account, &device, &projection);
         assert!(super::accepted_device_evidence(&outcome, &account, device.as_str()).is_some());
         let generation = garth::AuthoringGeneration {
             authority_model: garth::AuthoringAuthorityModel::AcceptedDevice,
@@ -786,6 +833,13 @@ mod verification_method_controller_tests {
             generation.clone(),
         )
         .expect("accepted projection forms durable authoring evidence");
+        // The reference is the original immutable evidence object, carried
+        // through byte-exactly rather than recomputed from the projection.
+        assert_eq!(
+            persisted.signer_evidence_ref,
+            arkret_sdk::SignerEvidenceRef::new(FIXTURE_SIGNER_EVIDENCE_REF).unwrap()
+        );
+        assert_eq!(persisted.device_projection, projection);
         super::reset_session_cache();
         let epoch = super::cache_epoch();
         assert!(super::restore_persisted_device_authoring_authority(
@@ -806,16 +860,30 @@ mod verification_method_controller_tests {
         assert_eq!(
             super::retained_device_authoring_evidence(&account.to_string(), device.as_str())
                 .map(|(_, evidence)| evidence),
-            Some(match persisted.current_signer_evidence {
-                arkret_models_collaboration::current_signer_evidence::CurrentSignerEvidence::AccountDevice {
-                    signer_evidence_ref,
-                    ..
-                } => signer_evidence_ref,
-                _ => unreachable!("fixture is account-device evidence"),
-            })
+            Some(persisted.signer_evidence_ref.clone())
         );
-        let other_device = "ak:device:0196419b-0000-7000-8000-000000000002";
-        assert!(super::accepted_device_evidence(&outcome, &account, other_device).is_none());
+        // A restore is bound to the account and device it was persisted under.
+        let other_account = arkret_sdk::AccountId::new(
+            account.principal_id.clone(),
+            arkret_sdk::DidCoreId::new("ak:did_core:web:other-station.example").unwrap(),
+        );
+        assert!(!super::restore_persisted_device_authoring_authority(
+            epoch,
+            &other_account,
+            &device,
+            &persisted,
+        ));
+        let other_device =
+            arkret_sdk::DeviceId::new("ak:device:0196419b-0000-7000-8000-000000000002").unwrap();
+        assert!(!super::restore_persisted_device_authoring_authority(
+            epoch,
+            &account,
+            &other_device,
+            &persisted,
+        ));
+        assert!(
+            super::accepted_device_evidence(&outcome, &account, other_device.as_str()).is_none()
+        );
         outcome.device_generations[0]
             .generation_state
             .current_device_generation_ref = 8;
@@ -823,16 +891,96 @@ mod verification_method_controller_tests {
         outcome.device_generations[0]
             .generation_state
             .current_device_generation_ref = 7;
+        // A closed authorization window fences the device even while the
+        // Station's observation of the projection is still fresh.
+        let closed_window = arkret_models_crypto::VerifiedDeviceProjection {
+            authorization_window: arkret_models_crypto::DeviceAuthorizationWindow {
+                not_before: now - chrono::Duration::minutes(10),
+                expires_at: Some(now - chrono::Duration::minutes(1)),
+            },
+            ..projection.clone()
+        };
+        let closed = self_outcome_fixture(&account, &device, &closed_window);
+        assert!(super::accepted_device_evidence(&closed, &account, device.as_str()).is_none());
+        assert!(
+            super::persisted_device_authoring_authority_from_outcome(
+                &closed,
+                &account,
+                &device,
+                garth::AuthoringGeneration {
+                    authority_model: garth::AuthoringAuthorityModel::AcceptedDevice,
+                    authority_principal_id: account.principal_id.clone(),
+                    generation_ref: "7".to_owned(),
+                },
+            )
+            .is_none()
+        );
         outcome.device_keys[0]
             .device_keys
             .get_mut(&device)
             .unwrap()
-            .device_projection_attestation
-            .attestation
+            .device_projection
             .expires_at = now;
         assert!(super::accepted_device_evidence(&outcome, &account, device.as_str()).is_none());
         super::reset_session_cache();
         crate::identity::authoring_generation::reset_verified_authoring_generations();
+    }
+
+    /// The persisted self authority is a Station-verified projection, not
+    /// portable evidence: the client never received the origin proof, so it
+    /// MUST NOT be presentable where a complete signed evidence object is
+    /// declared - `CurrentSignerEvidence::AccountDevice` in particular.
+    #[test]
+    fn an_unsigned_self_projection_cannot_pose_as_complete_signed_evidence() {
+        use arkret_models_collaboration::current_signer_evidence::CurrentSignerEvidence;
+
+        let (account, device) = projection_fixture_account();
+        let now = arkret_sdk::canonical::normalize_timestamp_canonical(chrono::Utc::now());
+        let projection = self_projection_fixture(
+            now,
+            "did:key:z6MkhHrTbtosB4xyyJM217fS4ry35F7JhZ5oA9uVHErBJDL5",
+        );
+        let outcome = self_outcome_fixture(&account, &device, &projection);
+        let persisted = super::persisted_device_authoring_authority_from_outcome(
+            &outcome,
+            &account,
+            &device,
+            garth::AuthoringGeneration {
+                authority_model: garth::AuthoringAuthorityModel::AcceptedDevice,
+                authority_principal_id: account.principal_id.clone(),
+                generation_ref: "7".to_owned(),
+            },
+        )
+        .expect("accepted projection forms durable authoring evidence");
+
+        let serialized = serde_json::to_string(&persisted).unwrap();
+        assert!(!serialized.contains("device_projection_attestation"));
+        assert!(!serialized.contains("\"proof\""));
+        assert!(!serialized.contains("\"jws\""));
+
+        // Feeding the projection into the signed slot is rejected by the type
+        // itself: `device_projection_attestation` demands an attested core plus
+        // its detached proof, and neither exists on this device.
+        assert!(
+            serde_json::from_value::<CurrentSignerEvidence>(serde_json::json!({
+                "sender_kind": "account_device",
+                "account_id": persisted.account_id,
+                "device_id": persisted.device_id,
+                "device_projection_attestation": persisted.device_projection,
+                "signer_evidence_ref": persisted.signer_evidence_ref,
+            }))
+            .is_err()
+        );
+        assert!(
+            serde_json::from_value::<CurrentSignerEvidence>(serde_json::json!({
+                "sender_kind": "account_device",
+                "account_id": persisted.account_id,
+                "device_id": persisted.device_id,
+                "device_projection_attestation": {"attestation": persisted.device_projection},
+                "signer_evidence_ref": persisted.signer_evidence_ref,
+            }))
+            .is_err()
+        );
     }
 
     #[test]

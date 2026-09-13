@@ -73,7 +73,6 @@ fn main() -> Result<()> {
         "realm-actor-frontier" => realm_actor_frontier(input)?,
         "service-resolution" => service_resolution()?,
         "principal-locator" => principal_locator(input)?,
-        "device-projection-attestation" => device_projection_attestation(input)?,
         "did-key-from-seed" => did_key_from_seed(input)?,
         "demo-realm-genesis" => demo_realm_genesis()?,
         "realm-genesis-seal" => realm_genesis_seal(input)?,
@@ -489,21 +488,6 @@ fn principal_locator(input: Value) -> Result<Value> {
     });
     locator.validate_minimal()?;
     serde_json::to_value(locator).context("serialize principal-locator fixture")
-}
-
-fn device_projection_attestation(input: Value) -> Result<Value> {
-    let core: arkret_sdk::DeviceProjectionAttestationCore = serde_json::from_value(input)?;
-    let authority = mock_service_authority()?;
-    if core.account_id.station_id != authority.service_id {
-        bail!("mock Station cannot attest a foreign account");
-    }
-    let attestation =
-        arkret_sdk::signatures::device_projection::sign_device_projection_attestation(
-            core,
-            authority.verification_method,
-            &authority.signing_key,
-        )?;
-    serde_json::to_value(attestation).context("serialize device projection attestation fixture")
 }
 
 fn validate_mock_response(input: Value) -> Result<Value> {

@@ -232,16 +232,19 @@ fn resolve_principal_authoring_generation_from_keys(
                     "authoring_device_not_active".to_owned(),
                 ));
             };
-            let attested = &record.device_projection_attestation.attestation;
-            if record
-                .validate_attestation_binding(account_id, &device)
-                .is_err()
-            {
+            // The row was read at the exact `(account_id, device)` selectors, so
+            // the Station-verified projection is bound to this account and
+            // device; what is left to check is the row's own usability.
+            let Ok(attested) = crate::identity::device_directory::validate_self_device_row(record)
+            else {
                 return Ok(PrincipalGenerationResolution::Quarantine(
-                    "authoring_device_account_binding_mismatch".to_owned(),
+                    "authoring_device_projection_unusable".to_owned(),
                 ));
-            }
-            if attested.device_status != arkret_models_crypto::DeviceStatus::Active {
+            };
+            if !crate::identity::device_directory::projection_authorization_window_contains(
+                attested,
+                chrono::Utc::now(),
+            ) {
                 return Ok(PrincipalGenerationResolution::Quarantine(
                     "authoring_device_not_active".to_owned(),
                 ));
@@ -338,27 +341,27 @@ mod tests {
         let device =
             arkret_sdk::DeviceId::new("ak:device:0196419b-0000-7000-8000-000000000001".to_owned())
                 .unwrap();
+        // The self row carries the Station-verified projection plus the
+        // reference later Events actually use; no origin proof shell reaches
+        // the client, and the projection repeats neither account nor device.
         let record: arkret_models_crypto::QueryDeviceRecord = serde_json::from_value(
             serde_json::json!({
+                "signer_evidence_ref":
+                    "ak:signer_evidence:sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
                 "algorithms": {},
                 "trust_algorithms": [],
-                "device_projection_attestation": {
-                    "attestation": {
-                        "account_id": account_id,
-                        "device_id": device.as_str(),
-                        "device_signing_key_did": "did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuVkhY7g94pVQyG98x",
-                        "hpke_key": "hpke-1",
-                        "device_authorize_event_id": "ak:event:AfAnsJqSlM9bHVI7P1QBMOEW3p5P1PNQu7BBMpiSnD_e",
-                        "authorized_generation_ref": 7,
-                        "device_status": "active",
-                        "attested_at": "2026-08-15T00:00:00.000Z",
-                        "expires_at": "2026-08-15T00:10:00.000Z"
+                "device_projection": {
+                    "device_signing_key_did": "did:key:z6MkpTHR8VNsBxYAAWHut2Geadd9jSwuVkhY7g94pVQyG98x",
+                    "hpke_key": "hpke-1",
+                    "device_authorize_event_id": "ak:event:AfAnsJqSlM9bHVI7P1QBMOEW3p5P1PNQu7BBMpiSnD_e",
+                    "authorized_generation_ref": 7,
+                    "device_status": "active",
+                    "authorization_window": {
+                        "not_before": "2026-08-15T00:00:00.000Z",
+                        "expires_at": null
                     },
-                    "proof": {
-                        "verification_method": "did:webvh:fixture:ps.example#signing-1",
-                        "created_at": "2026-08-15T00:00:00.000Z",
-                        "jws": "c2ln"
-                    }
+                    "attested_at": "2026-08-15T00:00:00.000Z",
+                    "expires_at": "2026-08-15T00:10:00.000Z"
                 }
             }),
         )

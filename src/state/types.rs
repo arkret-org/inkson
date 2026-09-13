@@ -773,14 +773,27 @@ pub struct CachedHistoricalAgentSignerKey {
 }
 
 /// Last locally verified authoring authority for this account's active device.
-/// The complete evidence closure and its generation fence are persisted in the
-/// existing account-state value so an ordinary Event can be authored after a
-/// cold offline start. A later verified revocation clears the whole record.
+///
+/// This holds the trusted self projection this device's own Station returned,
+/// the `signer_evidence_ref` later Events actually carry, and the matching
+/// accepted generation fence, so an ordinary Event can be authored after a cold
+/// offline start. A later verified revocation clears the whole record.
+///
+/// It is deliberately not portable evidence. The Station verified the origin
+/// attestation, the complete AccountId, the generation and validity before
+/// projecting; the client never received that proof and MUST NOT present this
+/// record where a complete signed evidence object is declared - in particular
+/// not as `CurrentSignerEvidence::AccountDevice`, whose
+/// `device_projection_attestation` is a signed object. `signer_evidence_ref`
+/// keeps pointing at the original immutable evidence and is never recomputed
+/// from these values.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PersistedDeviceAuthoringAuthority {
-    pub current_signer_evidence:
-        arkret_models_collaboration::current_signer_evidence::CurrentSignerEvidence,
+    pub account_id: arkret_sdk::AccountId,
+    pub device_id: arkret_sdk::DeviceId,
+    pub device_projection: arkret_models_crypto::VerifiedDeviceProjection,
+    pub signer_evidence_ref: arkret_sdk::SignerEvidenceRef,
     pub authoring_generation: garth::AuthoringGeneration,
 }
 

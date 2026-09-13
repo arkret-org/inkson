@@ -228,7 +228,6 @@ fn test_pairing_view(status: AgentLifecycleState, runtime_state: AgentRuntimeSta
             .then(|| crate::clock::now_utc() + chrono::Duration::hours(1)),
             approval_request_id: None,
             pending_runtime_key_request: None,
-            runtime_verifier_material: None,
             approval_requested_at: None,
             authorized_event_ref: None,
             active_authorizations,

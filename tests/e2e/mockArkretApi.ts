@@ -134,7 +134,6 @@ type InksonWireCommand =
   | "realm-actor-frontier"
   | "service-resolution"
   | "principal-locator"
-  | "device-projection-attestation"
   | "realm-genesis-seal"
   | "validate-mock-response";
 type InksonWireCanonicalJson = { canonical: string };
@@ -3220,11 +3219,14 @@ export async function mockArkretApi(
         device_keys: requestedDeviceKeys.map(({ account_id, device_ids }) => ({
           account_id,
           device_keys: Object.fromEntries(device_ids.map((device_id) => [device_id, {
+              // The self face carries the Station-verified projection and the
+              // reference later Events use. The origin attestation and its
+              // proof stay on the peer face and never reach a client.
+              signer_evidence_ref:
+                "ak:signer_evidence:sha256:3f3c1d4dd0b7f0f0b8f2f1f0a9c8b7a6958473625140f0e1d2c3b4a596877869",
               algorithms: {},
               trust_algorithms: [],
-              device_projection_attestation: inksonWire("device-projection-attestation", {
-                  account_id,
-                  device_id,
+              device_projection: {
                   device_signing_key_did:
                     "did:key:z6Mkon3Necd6NkkyfoGoHxid2znGc59LU3K7mubaRcFbLfLX",
                   hpke_key: "fixture-hpke-key",
@@ -3232,9 +3234,13 @@ export async function mockArkretApi(
                     "ak:event:Ad-rGYKVGY9i32DG2R9ZwMezGzT5g2rmdYjrifmGO6Fe",
                   authorized_generation_ref: generationRef,
                   device_status: "active",
+                  authorization_window: {
+                    not_before: attestedAt,
+                    expires_at: null,
+                  },
                   attested_at: attestedAt,
                   expires_at: new Date(Date.now() + 600000).toISOString(),
-              }),
+              },
           }])),
         })),
         failures: [],
