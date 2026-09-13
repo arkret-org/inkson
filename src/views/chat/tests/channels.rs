@@ -1,4 +1,4 @@
-//! Discussion channels read complete Station current Strand heads.
+//! Discussion channels read the Station's deterministic current Strand value.
 use super::*;
 
 const CHANNEL_REALM: &str = "ak:realm:AUkVX3O4YS1KHnF-rBBp6xN650srYAO3w11NkWM23fXI";
@@ -13,15 +13,17 @@ fn current_strand(realm: &str, title: &str, concurrent: bool) -> arkret_sdk::Cur
         "created_at":"2026-09-07T00:00:00.000Z",
         "created_by":{"kind":"account","account_id":{"principal_id":"ak:did_core:web:alice.example","station_id":"ak:did_core:web:station.example"}}
     });
-    let mut heads = vec![json!({"event_id":event_id,"value":object})];
-    if concurrent {
-        heads.push(json!({"event_id":arkret_sdk::EventId::from_digest(arkret_sdk::canonical::DigestSuite::Sha256,[0x42;32]),"value":object}));
-    }
+    let source = if concurrent {
+        arkret_sdk::EventId::from_digest(arkret_sdk::canonical::DigestSuite::Sha256, [0x42; 32])
+    } else {
+        event_id
+    };
     serde_json::from_value(json!({
         "selector":{"scope_ref":{"kind":"realm","realm_id":realm},
             "cell_id":format!("ak:cell:ak.component.strand.object.v1:{strand_id}")},
         "target":{"kind":"strand","strand_id":strand_id},
-        "revision":7,"result":{"status":"heads","heads":heads}
+        "revision":7,"result":{"status":"value","value":object,
+            "source":{"event_id":source,"depth":0}}
     }))
     .unwrap()
 }
@@ -37,13 +39,14 @@ fn channel_reads_complete_current_metadata() {
 }
 
 #[test]
-fn concurrent_heads_are_not_collapsed_to_an_arbitrary_channel() {
-    let current = current_strand(CHANNEL_REALM, "Conflicting", true);
-    assert!(channel_from_current_strand(CHANNEL_REALM, &current).is_none());
-    let arkret_sdk::CurrentOutcome::Heads { heads } = current.result() else {
-        panic!("heads")
-    };
-    assert_eq!(heads.len(), 2);
+fn deterministic_current_value_is_displayable() {
+    let current = current_strand(CHANNEL_REALM, "Converged", true);
+    assert_eq!(
+        channel_from_current_strand(CHANNEL_REALM, &current)
+            .unwrap()
+            .name,
+        "Converged"
+    );
 }
 
 #[test]

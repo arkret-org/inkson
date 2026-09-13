@@ -1,5 +1,5 @@
 use super::*;
-use crate::state::projection_views::{RsvpCellProjectionView, RsvpHeadProjectionView};
+use crate::state::projection_views::{RsvpCellProjectionView, RsvpWinnerProjectionView};
 
 const TEST_CALENDAR_STRAND_ID: &str = "ak:strand:Ac_zaRRyp7i2guabQjAsFr7CdWBbP2ULfqGAcp4_we-V";
 
@@ -246,9 +246,9 @@ fn calendar_projection_reads_schedule_and_plain_location() {
         fields,
         schema_refs: vec![arkret_sdk::SchemaId::CALENDAR_EVENT_V1.to_owned()],
         rsvps: Vec::new(),
-        schedule_revision_heads: vec![
+        schedule_revision_source: Some(
             "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_owned(),
-        ],
+        ),
         state: arkret_sdk::ProjectionObjectState::Active,
         created_by: None,
         created_at: None,
@@ -417,7 +417,7 @@ fn locally_accepted_rsvp_retains_the_observed_schedule_frontier() {
         fields: Default::default(),
         schema_refs: Vec::new(),
         rsvps: Vec::new(),
-        schedule_revision_heads: Vec::new(),
+        schedule_revision_source: None,
         state: arkret_sdk::ProjectionObjectState::Active,
         created_by: None,
         created_at: None,
@@ -433,7 +433,7 @@ fn locally_accepted_rsvp_retains_the_observed_schedule_frontier() {
             "event_id": source_event_id,
             "actor_id": "ak:did_core:web:alice.example",
             "write_state": "synced",
-            "locally_observed_schedule_heads": [FRONTIER],
+            "locally_observed_schedule_winner": FRONTIER,
             "body": {
                 "event_ref": TEST_CALENDAR_STRAND_ID,
                 "entry": {
@@ -445,7 +445,7 @@ fn locally_accepted_rsvp_retains_the_observed_schedule_frontier() {
     };
 
     let views = strand_views_from_projection_and_ops(&projected, &[accepted]);
-    assert_eq!(views[0].schedule_revision_heads, vec![FRONTIER.to_owned()]);
+    assert_eq!(views[0].schedule_revision_source.as_deref(), Some(FRONTIER));
     assert_eq!(views[0].rsvps.len(), 1);
 }
 
@@ -564,12 +564,12 @@ fn calendar_overlay_does_not_invent_a_schedule_frontier_from_one_update() {
     );
 }
 
-fn rsvp_head(digest_byte: u8, basis: &str, status: &str) -> RsvpHeadProjectionView {
+fn rsvp_winner(digest_byte: u8, basis: &str, status: &str) -> RsvpWinnerProjectionView {
     let source_event_id = arkret_sdk::EventId::from_digest(
         arkret_sdk::canonical::DigestSuite::Sha256,
         [digest_byte; 32],
     );
-    RsvpHeadProjectionView {
+    RsvpWinnerProjectionView {
         source_event_id: source_event_id.to_string(),
         source_event_digest: format!("sha256:{}", format!("{digest_byte:02x}").repeat(32)),
         entry: json!({
@@ -587,12 +587,14 @@ fn rsvp_display_shows_own_answer_and_aggregate() {
         RsvpCellProjectionView {
             occurrence: None,
             actor_id: "ak:did_core:web:alice.example".to_owned(),
-            heads: vec![rsvp_head(1, FRONTIER, "accepted")],
+            winner: Some(rsvp_winner(1, FRONTIER, "accepted")),
+            retained_writes: Vec::new(),
         },
         RsvpCellProjectionView {
             occurrence: None,
             actor_id: "ak:did_core:web:bob.example".to_owned(),
-            heads: vec![rsvp_head(2, FRONTIER, "declined")],
+            winner: Some(rsvp_winner(2, FRONTIER, "declined")),
+            retained_writes: Vec::new(),
         },
     ];
 
@@ -603,7 +605,6 @@ fn rsvp_display_shows_own_answer_and_aggregate() {
         "ak:did_core:web:alice.example",
     );
     assert_eq!(display.own_status.as_deref(), Some("accepted"));
-    assert!(!display.own_conflicted);
     assert_eq!(display.accepted, 1);
     assert_eq!(display.declined, 1);
     assert_eq!(display.excluded, 0);
@@ -614,7 +615,8 @@ fn rsvp_display_matches_a_complete_account_actor_to_the_self_principal() {
     let cells = vec![RsvpCellProjectionView {
         occurrence: None,
         actor_id: r#"{"account_id":{"principal_id":"ak:did_core:web:alice.example","station_id":"ak:did_core:web:station.example"},"kind":"account"}"#.to_owned(),
-        heads: vec![rsvp_head(1, FRONTIER, "accepted")],
+        winner: Some(rsvp_winner(1, FRONTIER, "accepted")),
+        retained_writes: Vec::new(),
     }];
 
     let display = calendar_rsvp_display(
@@ -628,16 +630,12 @@ fn rsvp_display_matches_a_complete_account_actor_to_the_self_principal() {
 }
 
 #[test]
-fn rsvp_display_surfaces_a_conflict_instead_of_choosing_a_side() {
-    // Two concurrent answers from the same responder. Only they can resolve
-    // it, so the card must not display one of them as the answer.
+fn rsvp_display_uses_the_deterministic_concurrent_winner() {
     let cells = vec![RsvpCellProjectionView {
         occurrence: None,
         actor_id: "ak:did_core:web:alice.example".to_owned(),
-        heads: vec![
-            rsvp_head(1, FRONTIER, "accepted"),
-            rsvp_head(2, FRONTIER, "declined"),
-        ],
+        winner: Some(rsvp_winner(2, FRONTIER, "declined")),
+        retained_writes: Vec::new(),
     }];
 
     let display = calendar_rsvp_display(
@@ -646,10 +644,8 @@ fn rsvp_display_surfaces_a_conflict_instead_of_choosing_a_side() {
         None,
         "ak:did_core:web:alice.example",
     );
-    assert!(display.own_conflicted);
-    assert!(display.own_status.is_none());
-    // A conflicted responder contributes to no aggregate bucket.
-    assert_eq!(display.accepted + display.declined + display.tentative, 0);
+    assert_eq!(display.own_status.as_deref(), Some("declined"));
+    assert_eq!(display.declined, 1);
 }
 
 #[test]
@@ -658,7 +654,8 @@ fn rsvp_display_excludes_heads_resting_on_an_unknown_schedule() {
     let cells = vec![RsvpCellProjectionView {
         occurrence: None,
         actor_id: "ak:did_core:web:alice.example".to_owned(),
-        heads: vec![rsvp_head(1, stale, "accepted")],
+        winner: Some(rsvp_winner(1, stale, "accepted")),
+        retained_writes: Vec::new(),
     }];
 
     let display = calendar_rsvp_display(
@@ -679,12 +676,14 @@ fn rsvp_display_prefers_the_instance_answer_over_the_series_fallback() {
         RsvpCellProjectionView {
             occurrence: None,
             actor_id: "ak:did_core:web:alice.example".to_owned(),
-            heads: vec![rsvp_head(1, FRONTIER, "accepted")],
+            winner: Some(rsvp_winner(1, FRONTIER, "accepted")),
+            retained_writes: Vec::new(),
         },
         RsvpCellProjectionView {
             occurrence: Some(occurrence.to_owned()),
             actor_id: "ak:did_core:web:alice.example".to_owned(),
-            heads: vec![rsvp_head(2, FRONTIER, "declined")],
+            winner: Some(rsvp_winner(2, FRONTIER, "declined")),
+            retained_writes: Vec::new(),
         },
     ];
 
@@ -694,14 +693,12 @@ fn rsvp_display_prefers_the_instance_answer_over_the_series_fallback() {
         Some(occurrence),
         "ak:did_core:web:alice.example",
     );
-    // Instance overrides series; the two tiers are never unioned into a
-    // conflict.
+    // Instance overrides series; the two tiers are never unioned.
     assert_eq!(display.own_status.as_deref(), Some("declined"));
-    assert!(!display.own_conflicted);
 }
 
 #[test]
-fn schedule_frontier_is_invariant_under_unrelated_branch_arrival_order() {
+fn schedule_winner_is_invariant_under_unrelated_branch_arrival_order() {
     let realm = arkret_sdk::RealmId::new(TEST_REALM_ID).unwrap();
     let actor = arkret_sdk::ActorId::account(arkret_sdk::AccountId::new(
         "ak:did_core:web:alice.example".parse().unwrap(),
@@ -771,18 +768,18 @@ fn schedule_frontier_is_invariant_under_unrelated_branch_arrival_order() {
         &[&a],
     );
     assert_eq!(
-        calendar_schedule_revision_heads_at_source(
+        calendar_schedule_revision_winner_at_source(
             &[a.clone(), t.clone(), c.clone(), x.clone()],
             &strand,
             suite,
             &t.event_id,
         )
         .unwrap(),
-        vec![a.event_id.event_digest()],
+        a.event_id.event_digest(),
         "new schedule C must not be attached to the old displayed value T",
     );
     assert!(
-        calendar_schedule_revision_heads_at_source(
+        calendar_schedule_revision_winner_at_source(
             &[t.clone(), c.clone()],
             &strand,
             suite,
@@ -791,7 +788,7 @@ fn schedule_frontier_is_invariant_under_unrelated_branch_arrival_order() {
         .is_err(),
         "a missing ancestor must not produce an invented basis"
     );
-    let expected = vec![c.event_id.event_digest()];
+    let expected = c.event_id.event_digest();
     for events in [
         vec![a.clone(), t.clone(), c.clone(), x.clone()],
         vec![a.clone(), t.clone(), x.clone(), c.clone()],
@@ -799,7 +796,7 @@ fn schedule_frontier_is_invariant_under_unrelated_branch_arrival_order() {
         vec![c, x, t, a],
     ] {
         assert_eq!(
-            calendar_schedule_revision_heads(&events, &strand, suite).unwrap(),
+            calendar_schedule_revision_winner(&events, &strand, suite).unwrap(),
             expected
         );
     }

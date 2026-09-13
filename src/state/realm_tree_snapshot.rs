@@ -25,7 +25,7 @@ impl LocalStateStore {
             *demand = Some((authority.clone(), realm.to_owned(), strands, cells));
         } else if demand
             .as_ref()
-            .is_some_and(|(a, r, _, _)| a == authority && r == realm)
+            .is_some_and(|(a, r, ..)| a == authority && r == realm)
         {
             *demand = None;
         }
@@ -40,7 +40,7 @@ impl LocalStateStore {
             .lock()
             .unwrap_or_else(|p| p.into_inner())
             .as_ref()
-            .filter(|(a, r, _, _)| a == authority && r == realm)
+            .filter(|(a, r, ..)| a == authority && r == realm)
             .map(|(_, _, strands, _)| strands.clone())
     }
 
@@ -53,7 +53,7 @@ impl LocalStateStore {
             .lock()
             .unwrap_or_else(|p| p.into_inner())
             .as_ref()
-            .filter(|(a, r, _, _)| a == authority && r == realm)
+            .filter(|(a, r, ..)| a == authority && r == realm)
             .map(|(_, _, _, cells)| cells.clone())
             .unwrap_or_default()
     }

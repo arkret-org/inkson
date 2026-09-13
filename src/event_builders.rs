@@ -1008,10 +1008,9 @@ pub fn build_space_lifecycle_event(
 
 /// Build a replacement for the singleton Realm profile causal register.
 ///
-/// The producer signs both an optional predicate over its verified causal
-/// basis and the exact causal head digest it supersedes. A concurrent writer
-/// may still create another head; the causal-register reducer preserves both
-/// and reports Bottom instead of pretending this is a globally serialized CAS.
+/// The producer signs an optional value predicate and the exact deterministic
+/// winner it observed. Concurrent writes still converge by `(depth, EventId)`;
+/// the predicate is a product CAS guard, not causal-register conflict repair.
 pub fn build_realm_profile_replacement_event(
     realm_id: &str,
     actor_id: &str,
@@ -1033,16 +1032,18 @@ pub fn build_realm_profile_replacement_event(
     )
 }
 
-/// Build a Realm profile write over every canonical causal-register head.
-/// Multi-head conflict resolution cannot truthfully use a single-value CAS
-/// predicate, so this form signs the complete current head set instead.
-pub fn build_realm_profile_resolution_event(
+/// Build a Realm profile update over the deterministic current winner.
+pub fn build_realm_profile_update_event(
     realm_id: &str,
     actor_id: &str,
     digest_suite: arkret_sdk::DigestSuite,
     payload: arkret_sdk::RealmProfile,
     causal_refs: Vec<arkret_sdk::Hash>,
 ) -> anyhow::Result<crate::operation::LocalOperation> {
+    anyhow::ensure!(
+        causal_refs.len() <= 1,
+        "Realm profile update requires at most one deterministic current winner"
+    );
     Ok(
         build_realm_state_event_for_station_with_set_head::<arkret_sdk::event_spec::RealmProfile>(
             crate::operation::authoring_station_id()?,

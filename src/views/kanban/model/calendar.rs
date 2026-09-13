@@ -416,12 +416,12 @@ pub(crate) fn calendar_rsvp_operation(
 
 /// Project the schedule observed with one complete current object, excluding
 /// later or unrelated Events even when they are already in the local cache.
-pub(crate) fn calendar_schedule_revision_heads_at_source(
+pub(crate) fn calendar_schedule_revision_winner_at_source(
     events: &[arkret_sdk::Event],
     strand_id: &str,
     digest_suite: arkret_sdk::DigestSuite,
     source: &arkret_sdk::EventId,
-) -> anyhow::Result<Vec<arkret_sdk::Hash>> {
+) -> anyhow::Result<arkret_sdk::Hash> {
     let mut by_digest = BTreeMap::new();
     for event in events {
         by_digest.insert(
@@ -444,14 +444,14 @@ pub(crate) fn calendar_schedule_revision_heads_at_source(
         }
         closure.push((*event).clone());
     }
-    calendar_schedule_revision_heads(&closure, strand_id, digest_suite)
+    calendar_schedule_revision_winner(&closure, strand_id, digest_suite)
 }
 
-pub(crate) fn calendar_schedule_revision_heads(
+pub(crate) fn calendar_schedule_revision_winner(
     events: &[arkret_sdk::Event],
     strand_id: &str,
     digest_suite: arkret_sdk::DigestSuite,
-) -> anyhow::Result<Vec<arkret_sdk::Hash>> {
+) -> anyhow::Result<arkret_sdk::Hash> {
     let mut by_digest = std::collections::BTreeMap::new();
     let mut revisions = std::collections::BTreeSet::new();
     for event in events {
@@ -461,42 +461,41 @@ pub(crate) fn calendar_schedule_revision_heads(
         }
         by_digest.insert(digest.as_str().to_owned(), event);
     }
-    let mut consumed = std::collections::BTreeSet::new();
-    for revision in &revisions {
-        let Some(event) = by_digest.get(revision) else {
-            continue;
-        };
-        let mut pending = event
-            .causal_refs
-            .iter()
-            .map(|reference| reference.as_str().to_owned())
-            .collect::<Vec<_>>();
-        let mut visited = std::collections::BTreeSet::new();
-        while let Some(reference) = pending.pop() {
-            if !visited.insert(reference.clone()) {
-                continue;
+    let writes = revisions
+        .iter()
+        .filter_map(|digest| by_digest.get(digest))
+        .map(|event| {
+            let mut pending = event.causal_refs.clone();
+            let mut seen = BTreeSet::new();
+            let mut same_cell_predecessors = Vec::new();
+            while let Some(reference) = pending.pop() {
+                if !seen.insert(reference.clone()) {
+                    continue;
+                }
+                let ancestor = by_digest.get(reference.as_str()).ok_or_else(|| {
+                    anyhow::anyhow!("calendar schedule causal dependency {reference} is missing")
+                })?;
+                if revisions.contains(reference.as_str()) {
+                    same_cell_predecessors.push(reference);
+                }
+                pending.extend(ancestor.causal_refs.iter().cloned());
             }
-            if revisions.contains(&reference) {
-                consumed.insert(reference.clone());
-            }
-            if let Some(ancestor) = by_digest.get(&reference) {
-                pending.extend(
-                    ancestor
-                        .causal_refs
-                        .iter()
-                        .map(|parent| parent.as_str().to_owned()),
-                );
-            }
-        }
-    }
-    let heads = revisions
-        .difference(&consumed)
-        .map(|digest| arkret_sdk::Hash::new(digest.clone()))
-        .collect::<Result<Vec<_>, _>>()?;
-    if heads.is_empty() {
-        anyhow::bail!("calendar schedule has no visible revision head");
-    }
-    Ok(heads)
+            Ok(arkret_sdk::StateWrite::new(
+                event.event_id.clone(),
+                arkret_sdk::LatticeOp {
+                    op_type: arkret_sdk::LatticeOpType::Set,
+                    value: Some(serde_json::Value::String(
+                        event.event_id.event_digest().to_string(),
+                    )),
+                    ..arkret_sdk::LatticeOp::empty()
+                },
+            )
+            .with_supersedes(same_cell_predecessors))
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    let state = arkret_sdk::causal_register_state(&writes)
+        .map_err(|error| anyhow::anyhow!("calendar schedule winner is unavailable: {error}"))?;
+    Ok(state.winner.event_id.event_digest())
 }
 
 fn calendar_event_revises_schedule(event: &arkret_sdk::Event, strand_id: &str) -> bool {
@@ -568,21 +567,24 @@ pub(crate) struct CalendarAgendaItem {
 /// slices schedule strings or reimplements recurrence/TZDB/DST behavior.
 pub(crate) fn calendar_agenda(
     calendar: &CalendarCardFields,
-    schedule_revision_heads: &[String],
+    schedule_revision_basis: &[String],
     now: chrono::DateTime<chrono::Utc>,
 ) -> Result<Vec<CalendarAgendaItem>, String> {
     let fields = calendar_event_fields_from_draft(calendar)?;
-    let mut heads = schedule_revision_heads
+    let basis = schedule_revision_basis
         .iter()
-        .map(|head| arkret_sdk::Hash::new(head.clone()).map_err(|err| err.to_string()))
+        .map(|source| arkret_sdk::Hash::new(source.clone()).map_err(|err| err.to_string()))
         .collect::<Result<Vec<_>, _>>()?;
-    heads.sort_by(|left, right| left.as_str().cmp(right.as_str()));
-    heads.dedup_by(|left, right| left.as_str() == right.as_str());
-    if heads.is_empty() {
-        return Err("calendar agenda requires an observed schedule frontier".to_owned());
-    }
+    let [schedule_source] = basis.as_slice() else {
+        return Err("calendar agenda requires exactly one schedule winner".to_owned());
+    };
     let page = fields
-        .expand_occurrences_between_instants(now, now + chrono::Duration::days(90), 20, heads)
+        .expand_occurrences_between_instants(
+            now,
+            now + chrono::Duration::days(90),
+            20,
+            vec![schedule_source.clone()],
+        )
         .map_err(|err| err.to_string())?;
     Ok(page
         .occurrences
@@ -933,22 +935,19 @@ fn validate_calendar_event_value(value: &Value) -> Result<(), String> {
 
 /// Card-level RSVP display state.
 ///
-/// Built from the shared SDK projection so the client classifies heads exactly
-/// like the server and the conformance runner. Concurrent answers are surfaced
-/// as a conflict the responder must resolve; nothing here silently picks one.
+/// Built from the shared SDK projection so the client classifies the
+/// deterministic winner exactly like the server and conformance runner.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct CalendarRsvpDisplay {
     /// The signed-in actor's effective answer, if it has one.
     pub(crate) own_status: Option<String>,
-    /// The actor answered concurrently and the answers disagree.
-    pub(crate) own_conflicted: bool,
     /// A significant schedule field moved since the actor answered.
     pub(crate) own_needs_reconfirmation: bool,
     /// Aggregate of every responder's effective answer.
     pub(crate) accepted: usize,
     pub(crate) declined: usize,
     pub(crate) tentative: usize,
-    /// Heads that exist but do not count: orphaned by an identity-affecting
+    /// Winners that exist but do not count: orphaned by an identity-affecting
     /// edit, unreadable, or resting on an unknown schedule basis.
     pub(crate) excluded: usize,
 }
@@ -966,19 +965,21 @@ impl CalendarRsvpDisplay {
 /// Instance answers override the series fallback and the two are never unioned.
 pub(crate) fn calendar_rsvp_display(
     cells: &[crate::state::projection_views::RsvpCellProjectionView],
-    schedule_revision_heads: &[String],
+    schedule_revision_basis: &[String],
     occurrence: Option<&str>,
     self_actor_id: &str,
 ) -> CalendarRsvpDisplay {
-    let frontier = arkret_sdk::CalendarScheduleProjection::from_heads(
-        &schedule_revision_heads
-            .iter()
-            .filter_map(|value| arkret_sdk::Hash::new(value.clone()).ok())
-            .map(|digest| (digest, Some(Vec::new())))
-            .collect::<Vec<_>>(),
-    );
-
     let mut display = CalendarRsvpDisplay::default();
+    let Some(schedule_source) = schedule_revision_basis
+        .iter()
+        .filter_map(|value| arkret_sdk::Hash::new(value.clone()).ok())
+        .next()
+    else {
+        display.excluded = cells.iter().filter(|cell| cell.winner.is_some()).count();
+        return display;
+    };
+    let schedule =
+        arkret_sdk::CalendarScheduleProjection::from_winner(schedule_source, Some(Vec::new()));
     let mut by_actor: std::collections::BTreeMap<String, arkret_sdk::CalendarRsvpProjection> =
         std::collections::BTreeMap::new();
     for cell in cells {
@@ -989,27 +990,27 @@ pub(crate) fn calendar_rsvp_display(
         }
         let entry = by_actor.entry(cell.actor_id.clone()).or_insert_with(|| {
             arkret_sdk::CalendarRsvpProjection {
-                instance_heads: Vec::new(),
-                series_heads: Vec::new(),
+                instance_winner: None,
+                series_winner: None,
             }
         });
-        for head in &cell.heads {
-            let Some(classified) = classify_rsvp_head(head, &frontier, is_instance) else {
-                continue;
-            };
-            if is_instance {
-                entry.instance_heads.push(classified);
-            } else {
-                entry.series_heads.push(classified);
-            }
+        let Some(winner) = &cell.winner else {
+            continue;
+        };
+        let Some(classified) = classify_rsvp_winner(winner, &schedule, is_instance) else {
+            continue;
+        };
+        if is_instance {
+            entry.instance_winner = Some(classified);
+        } else {
+            entry.series_winner = Some(classified);
         }
     }
 
     for (actor_id, projection) in &by_actor {
-        display.excluded += projection.excluded_heads().len();
-        let conflicted = projection.resolution_state() == arkret_sdk::RsvpResolutionState::Conflict;
-        let needs_reconfirmation = projection.effective_heads().iter().any(|head| {
-            head.basis_class == arkret_sdk::RsvpBasisClass::EffectiveNeedsReconfirmation
+        display.excluded += projection.excluded_winners().len();
+        let needs_reconfirmation = projection.effective_winner().is_some_and(|winner| {
+            winner.basis_class == arkret_sdk::RsvpBasisClass::EffectiveNeedsReconfirmation
         });
         let status = projection
             .effective_response()
@@ -1020,11 +1021,8 @@ pub(crate) fn calendar_rsvp_display(
             .unwrap_or_else(|| actor_id.trim().to_owned());
         if actor_principal_id == self_actor_id.trim() {
             display.own_status = status.clone();
-            display.own_conflicted = conflicted;
             display.own_needs_reconfirmation = needs_reconfirmation;
         }
-        // A responder with an unresolved conflict has no single answer, so they
-        // are not counted into any aggregate bucket.
         match status.as_deref() {
             Some("accepted") => display.accepted += 1,
             Some("declined") => display.declined += 1,
@@ -1035,13 +1033,13 @@ pub(crate) fn calendar_rsvp_display(
     display
 }
 
-fn classify_rsvp_head(
-    head: &crate::state::projection_views::RsvpHeadProjectionView,
-    frontier: &arkret_sdk::CalendarScheduleProjection,
+fn classify_rsvp_winner(
+    winner: &crate::state::projection_views::RsvpWinnerProjectionView,
+    schedule: &arkret_sdk::CalendarScheduleProjection,
     is_instance: bool,
-) -> Option<arkret_sdk::CalendarRsvpHead> {
-    let source_event_digest = arkret_sdk::Hash::new(head.source_event_digest.clone()).ok()?;
-    let entry = serde_json::from_value::<arkret_sdk::RsvpEntry>(head.entry.clone()).ok()?;
+) -> Option<arkret_sdk::CalendarRsvpWinner> {
+    let source_event_digest = arkret_sdk::Hash::new(winner.source_event_digest.clone()).ok()?;
+    let entry = serde_json::from_value::<arkret_sdk::RsvpEntry>(winner.entry.clone()).ok()?;
     // The plaintext branch is readable directly; an encrypted branch this
     // device cannot open is listed without fabricating a status.
     let (response, response_class) = match (&entry.response, &entry.encrypted_response) {
@@ -1052,14 +1050,14 @@ fn classify_rsvp_head(
         (None, Some(_)) => (None, arkret_sdk::RsvpResponseClass::EncryptedUnresolved),
         _ => (None, arkret_sdk::RsvpResponseClass::ResponseInvalid),
     };
-    let basis_class = arkret_sdk::CalendarRsvpHead::classify_basis(
+    let basis_class = arkret_sdk::CalendarRsvpWinner::classify_basis(
         &entry.schedule_basis_refs,
-        &frontier.schedule_revision_heads,
+        std::slice::from_ref(&schedule.schedule_revision_source),
         is_instance,
         false,
         false,
     );
-    Some(arkret_sdk::CalendarRsvpHead {
+    Some(arkret_sdk::CalendarRsvpWinner {
         source_event_digest,
         schedule_basis_refs: entry.schedule_basis_refs,
         response,

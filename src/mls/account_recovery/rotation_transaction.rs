@@ -896,6 +896,11 @@ mod rotation_resume_tests {
             realm_id: realm_id.clone(),
             predecessor_ref: None,
             delta: Vec::new(),
+            data_delta: Vec::new(),
+            data_event_set_root: arkret_wire::empty_data_event_set_root(
+                arkret_sdk::DigestSuite::Sha256,
+            )
+            .unwrap(),
             control_event_set_root: zero_hash.clone(),
             state_root: zero_hash.clone(),
             notary_seq: 0,
@@ -916,6 +921,8 @@ mod rotation_resume_tests {
             .unwrap(),
             command_results: Vec::new(),
             authorization_closures: Vec::new(),
+            data_closure_announcements: Vec::new(),
+            data_closures: Vec::new(),
             existence_anchors: Vec::new(),
         };
         let trust_anchor = ControllerBackupTrustAnchor {

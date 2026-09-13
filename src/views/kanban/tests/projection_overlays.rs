@@ -341,7 +341,7 @@ fn lifecycle_projection_builds_persisted_board_columns_and_cards() {
         ],
         schema_refs: Vec::new(),
         rsvps: Vec::new(),
-        schedule_revision_heads: Vec::new(),
+        schedule_revision_source: None,
         fields: Map::from_iter([
             ("labels".to_owned(), json!(["demo", "db"])),
             ("due_at".to_owned(), json!("2026-05-22")),
@@ -669,7 +669,7 @@ fn non_spec_projection_paths_expose_no_strand_content() {
         assigned_to_relations: Vec::new(),
         schema_refs: Vec::new(),
         rsvps: Vec::new(),
-        schedule_revision_heads: Vec::new(),
+        schedule_revision_source: None,
         fields: Map::from_iter([
             ("body".to_owned(), json!("non-spec body")),
             ("synthesis".to_owned(), json!("non-spec synthesis")),

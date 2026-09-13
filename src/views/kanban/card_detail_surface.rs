@@ -165,86 +165,6 @@ fn CardMemberMentionRow(
 }
 
 #[component]
-fn CardVersionChoices(
-    base_url: String,
-    realm_id: String,
-    actor_id: String,
-    strand_id: String,
-    token: Signal<String>,
-    state_store: SyncSignal<LocalStateStore>,
-) -> Element {
-    let mut status = use_signal(String::new);
-    let mut submitting = use_signal(|| false);
-    let entry = state_store.read().load().realm_tree_projections.get(&realm_id)
-        .and_then(|tree| tree.get("current"))
-        .and_then(|value| serde_json::from_value::<arkret_sdk::CurrentEntries>(value.clone()).ok())
-        .and_then(|current| {
-            let mut matching = current.entries.into_iter().filter(|entry| {
-            entry.selector().cell_id.as_str()
-                == format!("ak:cell:ak.component.strand.object.v1:{strand_id}")
-                && matches!(entry.target(), arkret_sdk::CurrentTarget::Strand { strand_id: id } if id.as_str() == strand_id)
-            });
-            let entry = matching.next()?;
-            matching.next().is_none().then_some(entry)
-        });
-    let Some(entry) = entry else {
-        return rsx! {};
-    };
-    let arkret_sdk::CurrentOutcome::Heads { heads } = entry.result() else {
-        return rsx! {};
-    };
-    if heads.len() < 2 {
-        return rsx! {};
-    }
-    rsx! {
-        section { class: "card-detail-section",
-            h3 { "Concurrent card versions" }
-            p { "Review each complete version. Choosing one retains its complete content and supersedes only the versions shown here. Unseen concurrent edits remain." }
-            for head in heads {
-                details {
-                    key: "{head.event_id}",
-                    summary { "{head.event_id}" }
-                    pre { "{serde_json::to_string_pretty(head.value.as_json()).unwrap_or_default()}" }
-                    Button {
-                        variant: ButtonVariant::Secondary,
-                        disabled: submitting(),
-                        onclick: {
-                            let entry = entry.clone();
-                            let chosen = head.event_id.clone();
-                            let base = base_url.clone();
-                            let realm = realm_id.clone();
-                            let actor = actor_id.clone();
-                            move |_| {
-                                let operation = match build_card_version_selection(&realm, &actor, &entry, &chosen) {
-                                    Ok(operation) => operation,
-                                    Err(error) => { status.set(format!("Cannot select version: {error:#}")); return; }
-                                };
-                                let base = base.clone();
-                                let api_token = token();
-                                submitting.set(true);
-                                status.set("Submitting explicit version selection".to_owned());
-                                spawn(async move {
-                                    let result = with_authed_api(&base, api_token, |api| async move {
-                                        api.event_submitter()?.submit_sdk_event(&operation).await
-                                    }).await;
-                                    submitting.set(false);
-                                    match result {
-                                        Ok(_) => status.set("Selection accepted; waiting for current synchronization".to_owned()),
-                                        Err(error) => status.set(format!("Version selection failed: {}", error.display())),
-                                    }
-                                });
-                            }
-                        },
-                        "Use this complete version"
-                    }
-                }
-            }
-            p { "{status}" }
-        }
-    }
-}
-
-#[component]
 pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContext) -> Element {
     let CardDetailContext {
         base_url,
@@ -824,16 +744,6 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
 
                                 div { class: "{detail_layout_class}",
                                         main { class: "card-detail-main",
-                                            if card.state == CardState::Conflict {
-                                                CardVersionChoices {
-                                                    base_url: base_url.clone(),
-                                                    realm_id: selected_realm_id.clone(),
-                                                    actor_id: principal_id.clone(),
-                                                    strand_id: card.id.clone(),
-                                                    token,
-                                                    state_store,
-                                                }
-                                            }
                                             section { class: "card-detail-section",
                                                 div { class: "card-detail-section-head",
                                                     div { class: "card-detail-section-title",
@@ -2558,18 +2468,12 @@ pub(super) fn CardDetail(controller: KanbanController, context: CardDetailContex
                                                                                                 // Answer state before the buttons: a card that only
                                                                                                 // offered "send once" could never show whether the
                                                                                                 // response landed, who else answered, or that the
-                                                                                                // responder has an unresolved conflict.
+                                                                                                // responder needs to reconfirm after a schedule change.
                                                                                                 if rsvp_display.has_any() {
                                                                                                     div {
                                                                                                         class: "calendar-rsvp-status",
                                                                                                         "data-testid": "card-detail-rsvp-status",
-                                                                                                        if rsvp_display.own_conflicted {
-                                                                                                            span {
-                                                                                                                class: "calendar-rsvp-conflict",
-                                                                                                                "data-testid": "card-detail-rsvp-conflict",
-                                                                                                                "Your answers conflict — answer again to resolve"
-                                                                                                            }
-                                                                                                        } else if let Some(status) = rsvp_display.own_status.clone() {
+                                                                                                        if let Some(status) = rsvp_display.own_status.clone() {
                                                                                                             span {
                                                                                                                 class: "calendar-rsvp-own",
                                                                                                                 "data-testid": "card-detail-rsvp-own",

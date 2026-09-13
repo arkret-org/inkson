@@ -401,8 +401,9 @@ fn encode_did_key(signing_key: &SigningKey) -> String {
 /// `Effective` requires verified acceptance evidence or completion of the
 /// independent MLS reconciliation path. A sync status label alone cannot
 /// establish a committed command result or ordinary historical eligibility.
-/// `ProjectionUnresolved` describes multiple ordinary causal-register heads;
-/// it is not command rejection and does not authorize a safety-state repair.
+/// `ProjectionUnresolved` is reserved for explicitly registered cross-cell or
+/// domain invariants that can still report Bottom; ordinary causal-register
+/// concurrency always has a deterministic current winner.
 /// `NotaryPaused` and `PendingMlsBinding` retain separate retry conditions.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -418,7 +419,8 @@ pub enum MoveSubmissionState {
 
 impl MoveSubmissionState {
     /// Interpret non-authoritative progress labels without creating success.
-    /// The wire `failed_bottom` diagnostic maps to local projection ambiguity.
+    /// The wire `failed_bottom` diagnostic maps to a registered domain-level
+    /// projection ambiguity, never ordinary causal-register concurrency.
     /// Unknown labels and purported terminal success remain pending until an
     /// independent verified acceptance path establishes the result.
     pub fn from_submit_state(state: &str, _reason: Option<&str>) -> Self {

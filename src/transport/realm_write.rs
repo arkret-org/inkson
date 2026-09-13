@@ -20,7 +20,7 @@ use crate::event_builders::{
     build_realm_alias_rename_event, build_realm_alias_tombstone_event, build_realm_archive_event,
     build_realm_authority_reset_control_intent, build_realm_bootstrap_steps_for_station,
     build_realm_destroy_event, build_realm_owner_transfer_control_intent,
-    build_realm_profile_resolution_event, build_realm_state_event_for_station,
+    build_realm_profile_update_event, build_realm_state_event_for_station,
     build_space_create_event, build_space_lifecycle_event, parse_wire_enum,
     recommended_realm_policy_bundle_value,
 };
@@ -267,13 +267,8 @@ pub async fn update_realm_metadata(
         optional_profile_string(fields.get("avatar_blob_ref"), "avatar_blob_ref")?
             .map(arkret_sdk::BlobRef::new)
             .transpose()?;
-    let event = build_realm_profile_resolution_event(
-        realm_id,
-        actor_id,
-        digest_suite,
-        profile,
-        causal_refs,
-    )?;
+    let event =
+        build_realm_profile_update_event(realm_id, actor_id, digest_suite, profile, causal_refs)?;
     submitter.submit_sdk_event(&event).await
 }
 
@@ -777,6 +772,35 @@ pub async fn moderation_lift(
 mod tests {
     use super::*;
 
+    fn settled_realm_profile_head(
+        rows: &[arkret_sdk::EventReadRow],
+    ) -> anyhow::Result<(Value, arkret_sdk::Hash)> {
+        let writes = rows
+            .iter()
+            .filter_map(|row| match row {
+                arkret_sdk::EventReadRow::Event(event)
+                    if event.kind == arkret_sdk::EventKind::RealmProfile =>
+                {
+                    Some(event)
+                }
+                _ => None,
+            })
+            .map(|event| {
+                arkret_sdk::StateWrite::new(
+                    event.event_id.clone(),
+                    arkret_sdk::LatticeOp {
+                        op_type: arkret_sdk::LatticeOpType::Set,
+                        value: Some(Value::Object(event.payload.clone().into_iter().collect())),
+                        ..arkret_sdk::LatticeOp::empty()
+                    },
+                )
+                .with_supersedes(event.causal_refs.clone())
+            })
+            .collect::<Vec<_>>();
+        let state = arkret_sdk::causal_register_state(&writes)?;
+        Ok((state.winner.value, state.winner.event_id.event_digest()))
+    }
+
     const REALM_ID: &str = "ak:realm:AT3p9polsnQ_WOix32QZimMdE2zPe62HptJu2PaO3V1h";
     const ACTOR_ID: &str = "ak:did_core:web:alice.example";
     const SERVICE_DID: &str = "did:web:server.example";
@@ -884,7 +908,7 @@ mod tests {
     }
 
     #[test]
-    fn realm_profile_history_preserves_concurrent_heads_as_bottom() {
+    fn realm_profile_history_selects_a_deterministic_concurrent_value() {
         let initial = build_realm_state_event_for_station::<arkret_sdk::event_spec::RealmProfile>(
             crate::test_support::core_id(crate::test_support::STATION_ID),
             REALM_ID,
@@ -911,10 +935,10 @@ mod tests {
             arkret_sdk::EventReadRow::Event(unguarded_event),
         ];
 
-        let error = settled_realm_profile_head(&rows).unwrap_err();
-        assert!(
-            error.to_string().contains("causal register is Bottom"),
-            "{error:#}"
-        );
+        let first = settled_realm_profile_head(&rows).unwrap();
+        let mut reversed = rows;
+        reversed.reverse();
+        let second = settled_realm_profile_head(&reversed).unwrap();
+        assert_eq!(first, second);
     }
 }

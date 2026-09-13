@@ -22,16 +22,12 @@ pub(crate) enum SpaceContainerLifecycleState {
     /// Server-only terminal state. UI never produces this; the variant
     /// exists so `dispatch_space_container_lifecycle` can exhaustively match.
     Tombstoned,
-    /// One of the Space metadata/lifecycle causal registers has concurrent
-    /// heads. The UI keeps the container visible but must not silently pick a
-    /// title, rank, or lifecycle winner.
-    Conflict,
     /// The canonical Space state is unavailable or malformed.
     Unavailable,
     /// Holder-local diagnostic bucket for Strands whose canonical position
-    /// cell has multiple heads (or is otherwise unavailable). This is not a
+    /// cell is unavailable. This is not a
     /// Space and must never participate in Board ordering or lifecycle writes.
-    PositionConflict,
+    PositionUnavailable,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -43,9 +39,8 @@ pub(crate) struct KanbanCard {
     /// `ak.strand.move` / `ak.strand.reorder` Move. When the projection
     /// refreshes (server-side cell update), this must be re-synced.
     pub(crate) rank: String,
-    /// Canonical Event digests of the currently observed position heads.
-    /// A normal settled card has exactly one. Multiple refs mean the position
-    /// is unresolved and a resolving Move must observe every ref.
+    /// Canonical Event digest of the deterministic position winner. A normal
+    /// settled card has exactly one; no ref means the position is unwritten.
     pub(crate) position_basis_refs: Vec<arkret_sdk::Hash>,
     pub(crate) title: String,
     /// Strand `metadata.summary` — the short one-line/paragraph overview.
@@ -72,15 +67,15 @@ pub(crate) struct KanbanCard {
     pub(crate) assignee: String,
     pub(crate) assigned_to_relations: Vec<CardAssignedToRelation>,
     pub(crate) due: String,
-    /// Schedule revision frontier this client observed for the card's
-    /// calendar, as `event_digest` values. Empty means the projection has not
-    /// exposed `schedule_revision_heads` yet, and RSVP authoring fails closed
+    /// Deterministic schedule revision winner this client observed for the
+    /// card's calendar, as one `event_digest`. Empty means the projection has
+    /// not exposed a readable winner yet, and RSVP authoring fails closed
     /// rather than signing an unbacked basis.
     pub(crate) calendar_schedule_basis_refs: Vec<String>,
     /// Identity captured together with the displayed complete current value.
     pub(crate) authoring_basis: Option<(arkret_sdk::ScopeRef, arkret_sdk::EventId)>,
     /// Folded RSVP state for the card's calendar: the signed-in actor's own
-    /// answer, the aggregate, and how many heads exist but do not count.
+    /// answer, the aggregate, and how many retained winners do not count.
     pub(crate) calendar_rsvp: CalendarRsvpDisplay,
     pub(crate) calendar: CalendarCardFields,
     pub(crate) primary_strand_id: String,
@@ -98,15 +93,15 @@ pub(crate) struct KanbanCard {
     /// irreversible terminal (content cleared, envelope/audit retained); UI
     /// never emits it but renders a withdrawn-message placeholder for it.
     pub(crate) lifecycle: StrandLifecycleState,
-    /// Canonical Event digests of the currently observed lifecycle heads.
+    /// Canonical Event digest of the currently observed lifecycle winner.
     /// Empty is the valid initial `active` state (the create Event does not
-    /// write the lifecycle cell); one ref is settled, and multiple refs are
-    /// an archive conflict that a restore must cover in full.
+    /// write the lifecycle cell); one ref is settled. More than one ref is
+    /// malformed input and never represents an ordinary concurrent state.
     pub(crate) lifecycle_basis_refs: Vec<arkret_sdk::Hash>,
 }
 
 impl KanbanCard {
-    /// Parses the observed schedule revision frontier into SDK digests.
+    /// Parses the observed schedule revision winner into an SDK digest.
     ///
     /// Anything unparseable is dropped rather than guessed: an invalid digest
     /// can never be a legitimate causal edge, and signing it would produce an
@@ -204,10 +199,6 @@ pub(crate) enum StrandLifecycleState {
     /// content but retains the envelope and audit trail, so the UI renders a
     /// withdrawn-message placeholder rather than hiding the Strand.
     Redacted,
-    /// The causal lifecycle register has multiple heads. The card is kept out
-    /// of ordinary active/archived surfaces until an explicit restore observes
-    /// every head and converges the register.
-    Conflict,
     /// The exact lifecycle result is unavailable or malformed. Never infer a
     /// state from the arrival-ordered convenience projection in this case.
     Unavailable,
@@ -220,16 +211,16 @@ pub(crate) struct LockedStrand {
 }
 
 /// Snapshot of the card-being-dragged's pre-move state. The causal-register
-/// model requires the resulting Event to reference the exact position heads
-/// observed by the user. We capture the frontier on `ondragstart` so the drop
-/// handler does not infer a winner from a later holder-local projection.
+/// model requires the resulting Event to reference the exact position winner
+/// observed by the user. We capture it on `ondragstart` so the drop handler
+/// does not infer a different winner from a later holder-local projection.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct DraggedCard {
     pub(crate) card_id: String,
     pub(crate) from_column_id: String,
     pub(crate) from_rank: String,
-    /// Exact position frontier captured with the rendered card. The drop
-    /// command signs these refs instead of inferring a winner from UI order.
+    /// Exact position winner captured with the rendered card. The drop command
+    /// signs this ref instead of inferring a winner from UI order.
     pub(crate) position_basis_refs: Vec<arkret_sdk::Hash>,
 }
 
@@ -406,7 +397,7 @@ impl CardState {
             CardState::Accepted => "Server accepted the event; waiting for projection",
             CardState::SoftFailed => "Server did not accept this event",
             CardState::Quarantined => "Write failed; open the queue for details",
-            CardState::Conflict => "Concurrent state requires explicit resolution",
+            CardState::Conflict => "Write precondition failed; refresh and retry",
         }
     }
 }

@@ -785,17 +785,12 @@ pub(super) fn dispatch_calendar_rsvp(
                     anyhow::bail!("calendar source resolve returned an incomplete batch");
                 }
             }
-            let schedule_heads = calendar_schedule_revision_heads_at_source(
+            let schedule_winner = calendar_schedule_revision_winner_at_source(
                 &events,
                 &strand_id,
                 digest_suite,
                 &source_event,
             )?;
-            if schedule_heads.len() != 1 {
-                anyhow::bail!(
-                    "calendar schedule requires explicit conflict resolution before RSVP"
-                );
-            }
             // The actor frontier and HLC belong to the authoring boundary; the
             // builder only states what the user chose.
             calendar_rsvp_operation(
@@ -805,7 +800,7 @@ pub(super) fn dispatch_calendar_rsvp(
                 status,
                 &occurrence,
                 &calendar,
-                schedule_heads,
+                vec![schedule_winner],
             )
         })
         .await;
@@ -875,7 +870,7 @@ pub(super) fn dispatch_calendar_rsvp(
                         "write_state": "synced",
                         "body": body,
                         "causal_refs": causal_refs.clone(),
-                        "locally_observed_schedule_heads": causal_refs,
+                        "locally_observed_schedule_winner": causal_refs[0],
                     }),
                 );
                 board_status.set(format!(

@@ -40,7 +40,7 @@ use drag_drop_controller::*;
 use due_calendar::*;
 use effects::KanbanEffects;
 use model::*;
-pub(crate) use model::{calendar_schedule_revision_heads, strand_views_from_ops};
+pub(crate) use model::{calendar_schedule_revision_winner, strand_views_from_ops};
 
 fn current_board_cell_demand(
     columns: &[KanbanColumn],
@@ -78,44 +78,6 @@ fn current_board_cell_demand(
         }
     }
     cells.into_iter().take(256).collect()
-}
-
-fn space_metadata_conflict_choices(
-    state_store: &LocalStateStore,
-    realm_id: &str,
-    space_id: &str,
-) -> (Vec<arkret_sdk::Hash>, Vec<(String, String)>) {
-    let entries = state_store
-        .realm_tree_projection(realm_id)
-        .and_then(|projection| projection.get("current").cloned())
-        .and_then(|value| serde_json::from_value::<arkret_sdk::CurrentEntries>(value).ok())
-        .map(|current| current.entries)
-        .unwrap_or_default();
-    let cell = format!("ak:cell:ak.component.space.metadata.v1:{space_id}");
-    let Some(entry) = entries
-        .iter()
-        .find(|entry| entry.selector().cell_id.as_str() == cell)
-    else {
-        return (Vec::new(), Vec::new());
-    };
-    let arkret_sdk::CurrentOutcome::Heads { heads } = entry.result() else {
-        return (Vec::new(), Vec::new());
-    };
-    let mut refs = heads
-        .iter()
-        .map(|head| head.event_id.event_digest())
-        .collect::<Vec<_>>();
-    refs.sort();
-    refs.dedup();
-    let choices = heads
-        .iter()
-        .filter_map(|head| {
-            serde_json::from_value::<arkret_sdk::Space>(head.value.as_json().clone())
-                .ok()
-                .map(|space| (space.title, space.rank.unwrap_or_default()))
-        })
-        .collect();
-    (refs, choices)
 }
 
 #[cfg(test)]
@@ -2534,74 +2496,35 @@ pub fn KanbanPanel(
                 }
             }
 
-            // A multi-head lifecycle cell has no single active/archived value.
-            // The protocol's conservative repair is an explicit restore that
-            // observes every head; never let arrival order pick a state.
+            // Keep malformed or incomplete lifecycle data out of normal
+            // active/archived surfaces until a complete current value arrives.
             {
                 let lifecycle_issues = columns()
                     .iter()
                     .flat_map(|column| column.cards.iter())
-                    .filter(|card| {
-                        matches!(
-                            card.lifecycle,
-                            StrandLifecycleState::Conflict
-                                | StrandLifecycleState::Unavailable
-                        )
-                    })
+                    .filter(|card| card.lifecycle == StrandLifecycleState::Unavailable)
                     .cloned()
                     .collect::<Vec<_>>();
                 rsx! {
                     if !lifecycle_issues.is_empty() {
                         details {
                             class: "event board-maintenance",
-                            "data-testid": "kanban-lifecycle-conflicts",
+                            "data-testid": "kanban-lifecycle-unavailable",
                             open: true,
                             summary {
-                                span { "Lifecycle conflicts" }
+                                span { "Lifecycle unavailable" }
                                 span { "{lifecycle_issues.len()} card(s)" }
                             }
                             for card in lifecycle_issues.iter() {
                                 div {
                                     key: "{card.id}",
                                     class: "event",
-                                    "data-testid": "kanban-lifecycle-conflict-row",
+                                    "data-testid": "kanban-lifecycle-unavailable-row",
                                     div { class: "event-head",
                                         span { class: "entity-title", "{card.title}" }
-                                        span { "{card.lifecycle_basis_refs.len()} concurrent head(s)" }
+                                        span { "Canonical lifecycle state is unavailable" }
                                     }
-                                    if card.lifecycle == StrandLifecycleState::Conflict
-                                        && card.lifecycle_basis_refs.len() > 1
-                                    {
-                                        Button {
-                                            variant: ButtonVariant::Secondary,
-                                            "data-testid": "lifecycle-conflict-restore-button",
-                                            title: "Restore and cover every lifecycle head",
-                                            onclick: {
-                                                let base = base_url.clone();
-                                                let realm = selected_realm_id.clone();
-                                                let actor = principal_id.clone();
-                                                let strand_id = card.id.clone();
-                                                let lifecycle_basis_refs =
-                                                    card.lifecycle_basis_refs.clone();
-                                                move |_| {
-                                                    dispatch_strand_lifecycle(
-                                                        base.clone(),
-                                                        token,
-                                                        realm.clone(),
-                                                        actor.clone(),
-                                                        strand_id.clone(),
-                                                        StrandLifecycleState::Active,
-                                                        lifecycle_basis_refs.clone(),
-                                                        state_store,
-                                                        board_status,
-                                                    );
-                                                }
-                                            },
-                                            "Resolve by restoring"
-                                        }
-                                    } else {
-                                        div { class: "muted", "Lifecycle data is unavailable; refresh to retry." }
-                                    }
+                                    div { class: "muted", "Refresh to retry." }
                                 }
                             }
                         }
@@ -2609,15 +2532,14 @@ pub fn KanbanPanel(
                 }
             }
 
-            // A multi-head position cell has no effective List placement.
-            // Keep it outside the Board grid and require an explicit target;
-            // that resolving Move observes every displayed head.
+            // Keep cards with malformed or incomplete position data outside
+            // the Board grid until a complete current value arrives.
             {
                 let cols = columns();
-                let conflicts = cols
+                let unavailable = cols
                     .iter()
                     .find(|column| {
-                        column.state == SpaceContainerLifecycleState::PositionConflict
+                        column.state == SpaceContainerLifecycleState::PositionUnavailable
                     })
                     .map(|column| {
                         column
@@ -2628,91 +2550,26 @@ pub fn KanbanPanel(
                             .collect::<Vec<_>>()
                     })
                     .unwrap_or_default();
-                let targets = cols
-                    .into_iter()
-                    .filter(|column| column.state == SpaceContainerLifecycleState::Active)
-                    .collect::<Vec<_>>();
                 rsx! {
-                    if !conflicts.is_empty() {
+                    if !unavailable.is_empty() {
                         details {
                             class: "event board-maintenance",
-                            "data-testid": "kanban-position-conflicts",
+                            "data-testid": "kanban-position-unavailable",
                             open: true,
                             summary {
-                                span { "Position conflicts" }
-                                span { "{conflicts.len()} card(s)" }
+                                span { "Position unavailable" }
+                                span { "{unavailable.len()} card(s)" }
                             }
-                            for card in conflicts.iter() {
+                            for card in unavailable.iter() {
                                 div {
                                     key: "{card.id}",
                                     class: "event",
-                                    "data-testid": "kanban-position-conflict-row",
+                                    "data-testid": "kanban-position-unavailable-row",
                                     div { class: "event-head",
                                         span { class: "entity-title", "{card.title}" }
-                                        span { "{card.position_basis_refs.len()} concurrent head(s)" }
+                                        span { "Canonical position is unavailable" }
                                     }
-                                    if card.position_basis_refs.len() > 1 {
-                                        div { class: "board-column-actions",
-                                            for target in targets.iter() {
-                                                Button {
-                                                    variant: ButtonVariant::Secondary,
-                                                    "data-testid": "position-conflict-resolve-button",
-                                                    title: "Resolve into {target.title}",
-                                                    onclick: {
-                                                        let base = base_url.clone();
-                                                        let realm = selected_realm_id.clone();
-                                                        let actor = principal_id.clone();
-                                                        let card_id = card.id.clone();
-                                                        let head_refs = card.position_basis_refs.clone();
-                                                        let target_id = target.id.clone();
-                                                        let previous_rank = target
-                                                            .cards
-                                                            .iter()
-                                                            .filter(|candidate| {
-                                                                candidate.lifecycle
-                                                                    == StrandLifecycleState::Active
-                                                            })
-                                                            .last()
-                                                            .map(|candidate| candidate.rank.clone());
-                                                        move |_| {
-                                                            let Some(board_id) = selected_board()
-                                                                .map(|id| id.to_string())
-                                                            else {
-                                                                board_status.set(
-                                                                    "Select a Board before resolving the conflict."
-                                                                        .to_owned(),
-                                                                );
-                                                                return;
-                                                            };
-                                                            dispatch_strand_position_move(
-                                                                base.clone(),
-                                                                token,
-                                                                realm.clone(),
-                                                                board_id,
-                                                                actor.clone(),
-                                                                DraggedCard {
-                                                                    card_id: card_id.clone(),
-                                                                    from_column_id: String::new(),
-                                                                    from_rank: String::new(),
-                                                                    position_basis_refs: head_refs.clone(),
-                                                                },
-                                                                target_id.clone(),
-                                                                ColumnNeighbours {
-                                                                    prev_rank: previous_rank.clone(),
-                                                                    next_rank: None,
-                                                                },
-                                                                state_store,
-                                                                board_status,
-                                                            );
-                                                        }
-                                                    },
-                                                    "Resolve to {target.title}"
-                                                }
-                                            }
-                                        }
-                                    } else {
-                                        div { class: "muted", "Position data is unavailable; refresh to retry." }
-                                    }
+                                    div { class: "muted", "Refresh to retry." }
                                 }
                             }
                         }
@@ -2723,97 +2580,18 @@ pub fn KanbanPanel(
             {
                 let unresolved: Vec<KanbanColumn> = columns()
                     .iter()
-                    .filter(|column| {
-                        matches!(
-                            column.state,
-                            SpaceContainerLifecycleState::Conflict
-                                | SpaceContainerLifecycleState::Unavailable
-                        )
-                    })
+                    .filter(|column| column.state == SpaceContainerLifecycleState::Unavailable)
                     .cloned()
                     .collect();
                 if !unresolved.is_empty() {
                     rsx! {
                         details { class: "event board-maintenance", open: true, "data-testid": "kanban-space-conflicts",
-                            summary { "Unresolved list state ({unresolved.len()})" }
+                            summary { "Unavailable list state ({unresolved.len()})" }
                             for column in unresolved {
-                                {
-                                    let (metadata_refs, choices) = space_metadata_conflict_choices(
-                                        &state_store.read(),
-                                        &selected_realm_id,
-                                        &column.id,
-                                    );
-                                    rsx! {
-                                        div { key: "space-conflict-{column.id}", class: "event",
-                                            div { class: "event-head",
-                                                span { class: "entity-title", "{column.id}" }
-                                                span { "Canonical Space state has no single winner." }
-                                            }
-                                            if choices.len() > 1 {
-                                                div { class: "workflow-actions",
-                                                    for (index, (title, rank)) in choices.iter().enumerate() {
-                                                        Button {
-                                                            key: "space-metadata-choice-{column.id}-{index}",
-                                                            variant: ButtonVariant::Secondary,
-                                                            "data-testid": "space-metadata-conflict-choice",
-                                                            onclick: {
-                                                                let base = base_url.clone();
-                                                                let realm = selected_realm_id.clone();
-                                                                let actor = principal_id.clone();
-                                                                let column_id = column.id.clone();
-                                                                let title = title.clone();
-                                                                let rank = rank.clone();
-                                                                let refs = metadata_refs.clone();
-                                                                move |_| submit_space_metadata_resolution(
-                                                                    base.clone(),
-                                                                    token,
-                                                                    realm.clone(),
-                                                                    actor.clone(),
-                                                                    column_id.clone(),
-                                                                    title.clone(),
-                                                                    rank.clone(),
-                                                                    refs.clone(),
-                                                                    selected_scope_security_encrypted,
-                                                                    state_store,
-                                                                    board_status,
-                                                                )
-                                                            },
-                                                            "Choose metadata branch: {title} / rank {rank}"
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                            div { class: "workflow-actions",
-                                                Button {
-                                                    variant: ButtonVariant::Secondary,
-                                                    onclick: {
-                                                        let base = base_url.clone();
-                                                        let realm = selected_realm_id.clone();
-                                                        let actor = principal_id.clone();
-                                                        let id = column.id.clone();
-                                                        move |_| dispatch_space_container_lifecycle(
-                                                            base.clone(), token, realm.clone(), actor.clone(), id.clone(),
-                                                            SpaceContainerLifecycleState::Active, state_store, board_status,
-                                                        )
-                                                    },
-                                                    "Resolve lifecycle as active"
-                                                }
-                                                Button {
-                                                    variant: ButtonVariant::Secondary,
-                                                    onclick: {
-                                                        let base = base_url.clone();
-                                                        let realm = selected_realm_id.clone();
-                                                        let actor = principal_id.clone();
-                                                        let id = column.id.clone();
-                                                        move |_| dispatch_space_container_lifecycle(
-                                                            base.clone(), token, realm.clone(), actor.clone(), id.clone(),
-                                                            SpaceContainerLifecycleState::Archived, state_store, board_status,
-                                                        )
-                                                    },
-                                                    "Resolve lifecycle as archived"
-                                                }
-                                            }
-                                        }
+                                div { key: "space-unavailable-{column.id}", class: "event",
+                                    div { class: "event-head",
+                                        span { class: "entity-title", "{column.id}" }
+                                        span { "Canonical Space state is unavailable; refresh to retry." }
                                     }
                                 }
                             }

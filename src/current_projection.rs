@@ -30,7 +30,8 @@ pub(crate) fn required_realm_values_ready(entries: &[CurrentResultEntry], realm_
 }
 
 /// Build presentation fields from complete current values, never from Event
-/// ordering, effects or patches. All concurrent Strand heads remain in `current`.
+/// ordering, effects or patches. The Station result already carries the
+/// protocol-selected causal-register value and exact source.
 pub(crate) fn install_bounded_view(
     projection: &mut Value,
     realm_id: &str,
@@ -52,7 +53,9 @@ pub(crate) fn install_bounded_view(
     let default_strand =
         realm_entry(&entries, realm_id, REQUIRED_REALM_CELLS[3]).and_then(|entry| {
             match entry.result() {
-                CurrentOutcome::Value { value } => value.as_json().as_str().map(ToOwned::to_owned),
+                CurrentOutcome::Value { value, .. } => {
+                    value.as_json().as_str().map(ToOwned::to_owned)
+                }
                 _ => None,
             }
         });
@@ -62,7 +65,7 @@ pub(crate) fn install_bounded_view(
         "ak:cell:ak.component.realm.profile.v1:null",
     )
     .and_then(|entry| match entry.result() {
-        CurrentOutcome::Value { value } => {
+        CurrentOutcome::Value { value, .. } => {
             serde_json::from_value::<arkret_sdk::RealmProfile>(value.as_json().clone()).ok()
         }
         _ => None,
@@ -97,17 +100,13 @@ pub(crate) fn install_bounded_view(
     Ok(())
 }
 
-/// A single head can be displayed directly. Multiple heads are kept as a
-/// conflict; this reader never chooses the last or largest Event id.
+/// Decode the deterministic current Strand value selected by the protocol.
 pub(crate) fn unique_strand_head(entry: &CurrentResultEntry) -> Option<arkret_sdk::Strand> {
     if !matches!(entry.target(), CurrentTarget::Strand { .. }) {
         return None;
     }
-    let CurrentOutcome::Heads { heads } = entry.result() else {
+    let CurrentOutcome::Value { value, .. } = entry.result() else {
         return None;
     };
-    let [head] = heads.as_slice() else {
-        return None;
-    };
-    head.value.as_strand().ok()
+    value.as_strand().ok()
 }

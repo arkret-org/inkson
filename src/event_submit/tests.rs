@@ -1578,6 +1578,8 @@ async fn space_update_metadata_authoring_skips_seal_refresh_but_policy_requires_
             arkret_sdk::SealId::new(format!("ak:seal:sha256:{}", "11".repeat(32))).unwrap(),
         ],
     });
+    source.data_basis =
+        Some(arkret_sdk::SealId::new(format!("ak:seal:sha256:{}", "11".repeat(32))).unwrap());
     let http = arkret_sdk::http_client::Client::builder("http://127.0.0.1:9/".parse().unwrap())
         .allow_insecure_localhost()
         .build()
@@ -1646,6 +1648,7 @@ async fn space_update_metadata_authoring_skips_seal_refresh_but_policy_requires_
     );
 
     source.auth_context = None;
+    source.data_basis = None;
     let error = submitter
         .stamp_cbs_basis_for_intent(EventIntent::from_authored(&source))
         .await

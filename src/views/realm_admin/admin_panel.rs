@@ -55,18 +55,12 @@ fn metadata_causal_refs(
         return Err("canonical metadata selector is duplicated".to_owned());
     }
     match entry.result() {
-        arkret_sdk::CurrentOutcome::Heads { heads } => {
-            let mut refs = heads
-                .iter()
-                .map(|head| head.event_id.event_digest())
-                .collect::<Vec<_>>();
-            refs.sort();
-            refs.dedup();
-            Ok(refs)
-        }
+        arkret_sdk::CurrentOutcome::Value { source, .. } => source
+            .as_ref()
+            .map(|source| vec![source.event_id.event_digest()])
+            .ok_or_else(|| "canonical metadata source is unavailable".to_owned()),
         arkret_sdk::CurrentOutcome::Removed => Ok(Vec::new()),
-        arkret_sdk::CurrentOutcome::Unavailable { .. }
-        | arkret_sdk::CurrentOutcome::Value { .. } => {
+        arkret_sdk::CurrentOutcome::Unavailable { .. } => {
             Err("canonical metadata state is unavailable".to_owned())
         }
     }

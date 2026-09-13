@@ -89,9 +89,6 @@ enum WatchCurrentProjection {
         level: WatchLevel,
         basis_refs: Vec<arkret_sdk::Hash>,
     },
-    Conflict {
-        basis_refs: Vec<arkret_sdk::Hash>,
-    },
     Unavailable,
 }
 
@@ -136,8 +133,8 @@ fn current_watch_projection(
         return WatchCurrentProjection::Unavailable;
     }
     match entry.result() {
-        arkret_sdk::CurrentOutcome::Heads { heads } if heads.len() == 1 => {
-            let value = heads[0].value.as_json();
+        arkret_sdk::CurrentOutcome::Value { value, source } => {
+            let value = value.as_json();
             let level = match value.get("level").and_then(Value::as_str) {
                 Some("mentions_only") | None => WatchLevel::MentionsOnly,
                 Some("participating") => WatchLevel::Participating,
@@ -147,24 +144,17 @@ fn current_watch_projection(
             };
             WatchCurrentProjection::Settled {
                 level,
-                basis_refs: vec![heads[0].event_id.event_digest()],
+                basis_refs: source
+                    .as_ref()
+                    .map(|source| vec![source.event_id.event_digest()])
+                    .unwrap_or_default(),
             }
-        }
-        arkret_sdk::CurrentOutcome::Heads { heads } => {
-            let mut basis_refs = heads
-                .iter()
-                .map(|head| head.event_id.event_digest())
-                .collect::<Vec<_>>();
-            basis_refs.sort();
-            basis_refs.dedup();
-            WatchCurrentProjection::Conflict { basis_refs }
         }
         arkret_sdk::CurrentOutcome::Removed => WatchCurrentProjection::Settled {
             level: WatchLevel::MentionsOnly,
             basis_refs: Vec::new(),
         },
-        arkret_sdk::CurrentOutcome::Unavailable { .. }
-        | arkret_sdk::CurrentOutcome::Value { .. } => WatchCurrentProjection::Unavailable,
+        arkret_sdk::CurrentOutcome::Unavailable { .. } => WatchCurrentProjection::Unavailable,
     }
 }
 
@@ -2626,27 +2616,20 @@ pub fn ChatPanel(
                         // a network failure rolls back via status_msg.
                         {
                             let optimistic_level = strand_watch_level();
-                            let (level_now, watch_basis_refs, watch_conflict, watch_unavailable) =
+                            let (level_now, watch_basis_refs, watch_unavailable) =
                                 match &watch_current {
                                     WatchCurrentProjection::Settled { level, basis_refs } => {
-                                        (*level, basis_refs.clone(), false, false)
-                                    }
-                                    WatchCurrentProjection::Conflict { basis_refs } => {
-                                        (optimistic_level, basis_refs.clone(), true, false)
+                                        (*level, basis_refs.clone(), false)
                                     }
                                     WatchCurrentProjection::Unavailable => {
-                                        (optimistic_level, Vec::new(), false, true)
+                                        (optimistic_level, Vec::new(), true)
                                     }
                                     WatchCurrentProjection::Loading => {
-                                        (optimistic_level, Vec::new(), false, true)
+                                        (optimistic_level, Vec::new(), true)
                                     }
                                 };
                             let menu_open = watch_level_menu_open();
-                            let level_label = if watch_conflict {
-                                "Conflict".to_owned()
-                            } else {
-                                crate::i18n::tr(watch_level_label_key(level_now))
-                            };
+                            let level_label = crate::i18n::tr(watch_level_label_key(level_now));
                             let strand_id_for_watch = selected_channel_value.clone();
                             let realm_for_watch = selected_realm_id.clone();
                             let actor_for_watch = principal_id.clone();

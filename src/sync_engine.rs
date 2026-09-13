@@ -759,7 +759,7 @@ async fn refresh_current_product_view(
         if entry.selector().cell_id.as_str() != crate::current_projection::REQUIRED_REALM_CELLS[3] {
             return None;
         }
-        let arkret_sdk::CurrentOutcome::Value { value } = entry.result() else {
+        let arkret_sdk::CurrentOutcome::Value { value, .. } = entry.result() else {
             return None;
         };
         arkret_sdk::StrandId::new(value.as_json().as_str()?.to_owned()).ok()

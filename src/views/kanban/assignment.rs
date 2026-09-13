@@ -184,7 +184,7 @@ fn assignment_lifecycle_bases(
         let lifecycle = format!("ak:cell:ak.component.relation.lifecycle.v1:{relation_id}");
         let object = format!("ak:cell:ak.component.relation.v1:{relation_id}");
         let refs = match current_register_basis(&entries, &lifecycle) {
-            CurrentRegisterBasis::Heads(refs) => refs,
+            CurrentRegisterBasis::Source(refs) => refs,
             CurrentRegisterBasis::Removed => Vec::new(),
             CurrentRegisterBasis::Missing
                 if !matches!(

@@ -819,10 +819,10 @@ fn merge_synced_raw_operation_payload(existing: &Value, mut incoming: Value) -> 
         // canonical Event backfill replaces the payload shape.
         "event_id",
         "local_operation_idempotency_alias",
-        // Calendar RSVP authoring records the complete schedule frontier it
+        // Calendar RSVP authoring records the deterministic schedule winner it
         // observed. The canonical Event intentionally does not repeat this
         // holder-local observation, but reconciliation must not erase it.
-        "locally_observed_schedule_heads",
+        "locally_observed_schedule_winner",
         "synthesis_entry_id",
         "synthesis_revision_body",
         "encrypted_payload_local",
@@ -976,7 +976,7 @@ mod durable_inbox_tests {
             json!({
                 "kind": "ak.space.create",
                 "operation_id": operation_alias,
-                "locally_observed_schedule_heads": ["sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"],
+                "locally_observed_schedule_winner": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
                 "local_target_ref": temporary_target,
                 "write_state": "queued",
                 "body": { "object": { "kind": "list", "title": "Todo", "realm_id": realm_id } }
@@ -1007,8 +1007,8 @@ mod durable_inbox_tests {
         assert_eq!(rows[0].payload["write_state"], json!("synced"));
         assert_eq!(rows[0].payload["event_id"], json!(event_id));
         assert_eq!(
-            rows[0].payload["locally_observed_schedule_heads"],
-            json!(["sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"])
+            rows[0].payload["locally_observed_schedule_winner"],
+            json!("sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
         );
         assert_eq!(rows[0].payload["local_target_ref"], json!(canonical_target));
         let _ = std::fs::remove_file(path);

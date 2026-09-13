@@ -3276,15 +3276,19 @@ impl EventSubmitter {
     /// pre-join `ak.invite.accept` carries the only Seal view its author could
     /// read, and re-resolving it would need membership the invitee lacks.
     async fn stamp_cbs_basis_for_intent(&self, intent: EventIntent) -> anyhow::Result<EventIntent> {
-        if intent.auth_context().is_some()
-            || intent.seal_basis().is_some()
-            || cbs_exempt_reducer_kind(intent.kind())
-        {
+        if cbs_exempt_reducer_kind(intent.kind()) {
             return Ok(intent);
         }
         let Some(plane) = cbs_effect_plane_for_intent(&intent)? else {
             return Ok(intent);
         };
+        if (plane == CbsEffectPlane::Control && intent.seal_basis().is_some())
+            || (plane == CbsEffectPlane::Data
+                && intent.auth_context().is_some()
+                && intent.data_basis().is_some())
+        {
+            return Ok(intent);
+        }
         let realm_id = intent.realm_id_opt().cloned().ok_or_else(|| {
             anyhow::anyhow!(
                 "{} needs a CBS basis but carries no Realm scope",
@@ -3295,29 +3299,40 @@ impl EventSubmitter {
             let seal_view = self.seals_frontier_realm_view(realm_id.as_str()).await?;
             intent.with_seal_basis(seal_view.seal_basis())
         } else {
-            let store = self.state_store.as_ref().ok_or_else(|| {
-                anyhow::anyhow!(
-                    "frontier_unavailable: {} authoring has no verified local authority store",
-                    intent.kind().as_str()
-                )
-            })?;
-            let authority_ref = store
-                .read(|state| state.confirmed_seal_ref_for_realm(realm_id.as_str()))
-                .ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "frontier_unavailable: {} authoring has no unique verified authority decision",
-                        intent.kind().as_str()
-                    )
-                })?;
-            let authority_ref = arkret_sdk::SealId::new(authority_ref).map_err(|error| {
-                anyhow::anyhow!("verified authority reference is invalid: {error}")
-            })?;
-            let auth_context = ordinary_event_auth_context(&intent, vec![authority_ref])?;
-            intent.with_auth_context(auth_context)
+            let data_basis = match intent.data_basis().cloned() {
+                Some(data_basis) => data_basis,
+                None => {
+                    let store = self.state_store.as_ref().ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "frontier_unavailable: {} authoring has no verified local authority store",
+                            intent.kind().as_str()
+                        )
+                    })?;
+                    let authority_ref = store
+                        .read(|state| state.confirmed_seal_ref_for_realm(realm_id.as_str()))
+                        .ok_or_else(|| {
+                            anyhow::anyhow!(
+                                "frontier_unavailable: {} authoring has no unique verified authority decision",
+                                intent.kind().as_str()
+                            )
+                        })?;
+                    arkret_sdk::SealId::new(authority_ref).map_err(|error| {
+                        anyhow::anyhow!("verified authority reference is invalid: {error}")
+                    })?
+                }
+            };
+            let intent = intent.with_data_basis(data_basis.clone());
+            if intent.auth_context().is_some() {
+                intent
+            } else {
+                let auth_context = ordinary_event_auth_context(&intent, vec![data_basis])?;
+                intent.with_auth_context(auth_context)
+            }
         };
         // This is routine authoring telemetry. Ordinary Events carry verified
-        // authority evidence in AuthContext; optional preconditions are
-        // evaluated against their signed causal basis.
+        // authority evidence in AuthContext and name the open Seal publication
+        // window in data_basis; optional preconditions are evaluated against
+        // their signed causal basis.
         tracing::debug!(
             kind = %intent.kind().as_str(),
             has_seal_basis = intent.seal_basis().is_some(),

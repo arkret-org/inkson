@@ -27,14 +27,12 @@ pub fn strand_position_cell_id(board_space_id: &str, strand_id: &str) -> String 
 }
 
 /// Causal position basis observed by the caller before authoring the Event.
-/// The referenced heads are copied into the Event envelope's `causal_refs`;
+/// The referenced winner is copied into the Event envelope's `causal_refs`;
 /// they are not a compare-and-swap precondition.
 ///
-/// - `Initial` has no predecessor head.
-/// - `At` observes the one settled head and retains its value for the
-///   holder-local optimistic projection.
-/// - `Conflict` observes every concurrent head, so the new position causally
-///   covers and resolves the complete frontier selected by the user.
+/// - `Initial` has no predecessor winner.
+/// - `At` observes the deterministic winner and retains its value for the holder-local optimistic
+///   projection.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum StrandPositionExpectation {
     /// Strand not yet present on the target Board.
@@ -45,18 +43,14 @@ pub enum StrandPositionExpectation {
         rank: String,
         head_ref: arkret_sdk::Hash,
     },
-    /// Multiple concurrent position heads. A resolving Move has no unique
-    /// value preimage, but it must causally observe every competing head.
-    Conflict { head_refs: Vec<arkret_sdk::Hash> },
 }
 
 impl StrandPositionExpectation {
-    /// Exact position frontier that the authored Event must causally cover.
+    /// Exact position winner that the authored Event must causally cover.
     pub fn causal_refs(&self) -> Vec<arkret_sdk::Hash> {
         match self {
             Self::Initial => Vec::new(),
             Self::At { head_ref, .. } => vec![head_ref.clone()],
-            Self::Conflict { head_refs } => head_refs.clone(),
         }
     }
 }
@@ -94,23 +88,5 @@ mod tests {
             cell,
             "ak:cell:ak.component.strand.position.v1:ak:space:AVFSR4O2uTcP6zGsyewp0OdaGeDZBXQAUZ9VIEKLSXYo:ak:strand:AR0yYaLgfEhMOjzAp9eFpdYOf2dma-COBObvEGjj8NN0"
         );
-    }
-
-    #[test]
-    fn conflict_expectation_covers_every_observed_head() {
-        let head_a = arkret_sdk::EventId::from_digest(
-            arkret_sdk::canonical::DigestSuite::Sha256,
-            [0x41; 32],
-        )
-        .event_digest();
-        let head_b = arkret_sdk::EventId::from_digest(
-            arkret_sdk::canonical::DigestSuite::Sha256,
-            [0x42; 32],
-        )
-        .event_digest();
-        let expectation = StrandPositionExpectation::Conflict {
-            head_refs: vec![head_a.clone(), head_b.clone()],
-        };
-        assert_eq!(expectation.causal_refs(), vec![head_a, head_b]);
     }
 }

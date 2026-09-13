@@ -950,7 +950,7 @@ fn strand_projection_with_synthesis_content(
         assigned_to_relations: Vec::new(),
         schema_refs: Vec::new(),
         rsvps: Vec::new(),
-        schedule_revision_heads: Vec::new(),
+        schedule_revision_source: None,
         fields: Map::new(),
         created_by: None,
         created_at: None,
@@ -1176,13 +1176,13 @@ fn card_current_keeps_value_and_event_together_across_remote_replacement() {
             "selector":{"scope_ref":{"kind":"realm","realm_id":TEST_REALM_ID},
                 "cell_id":format!("ak:cell:ak.component.strand.object.v1:{id}")},
             "target":{"kind":"strand","strand_id":id},"revision":1,
-            "result":{"status":"heads","heads":[{"event_id":event,"value":{
+            "result":{"status":"value","source":{"event_id":event,"depth":0},"value":{
                 "id":id,"schema":"ak.schema.strand.v1","realm_id":TEST_REALM_ID,
                 "metadata":{"title":title},"tracks":{"synthesis":{"enabled":true,"is_primary":true}},
                 "created_by":{"kind":"account","account_id":{"principal_id":"ak:did_core:web:alice.example",
                     "station_id":"ak:did_core:web:station.example"}},
                 "created_at":"2026-09-11T00:00:00.000Z"
-            }}]}
+            }}
         })).unwrap();
         (event, entry)
     };
@@ -1205,50 +1205,6 @@ fn card_current_keeps_value_and_event_together_across_remote_replacement() {
         columns[0].cards[0].authoring_basis.as_ref().unwrap().1,
         event_b
     );
-    let mut conflict = serde_json::to_value(a).unwrap();
-    conflict["result"]["heads"]
-        .as_array_mut()
-        .unwrap()
-        .push(serde_json::to_value(b).unwrap()["result"]["heads"][0].clone());
-    let conflict: arkret_sdk::CurrentResultEntry = serde_json::from_value(conflict).unwrap();
-    let selection = build_card_version_selection(
-        TEST_REALM_ID,
-        "ak:did_core:web:alice.example",
-        &conflict,
-        &event_b,
-    )
-    .unwrap();
-    let payload = selection
-        .typed_payload::<arkret_sdk::event_spec::StrandUpdate>()
-        .unwrap();
-    let arkret_sdk::CurrentOutcome::Heads { heads } = conflict.result() else {
-        panic!("heads");
-    };
-    let base = heads
-        .iter()
-        .find(|head| head.event_id == event_b)
-        .unwrap()
-        .value
-        .as_json();
-    assert_eq!(payload.patch.apply(base).unwrap(), *base);
-    arkret_sdk::canonical::verify_digest(
-        &arkret_sdk::canonical::canonical_json_bytes(base).unwrap(),
-        payload.expected_state_digest.as_ref().unwrap().as_str(),
-    )
-    .unwrap();
-    assert_eq!(selection.intent().causal_refs().len(), 2);
-    assert!(
-        build_card_version_selection(
-            TEST_REALM_ID,
-            "ak:did_core:web:alice.example",
-            &conflict,
-            &arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [99; 32]),
-        )
-        .is_err()
-    );
-    install_current_card_sources(&mut columns, &[conflict], &[], None, "");
-    assert_eq!(columns[0].cards[0].state, CardState::Conflict);
-    assert!(columns[0].cards[0].authoring_basis.is_none());
 }
 
 #[test]

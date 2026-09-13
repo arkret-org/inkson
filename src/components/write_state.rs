@@ -43,7 +43,7 @@ pub enum WriteState {
     /// Reducer soft failure (schema / capability passed but the transition
     /// is illegal).
     SoftFailed,
-    /// CAS / position-edge conflict (concurrent `ak.strand.move`).
+    /// A write precondition failed (for example a product-level CAS guard).
     CasConflict,
     /// Capability check passed but the write is quarantined by moderation
     /// policy.

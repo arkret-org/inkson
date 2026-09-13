@@ -277,16 +277,20 @@ pub(crate) fn card_from_strand_projection_for_actor(
         assigned_to_relations: strand_projection_assigned_to_relations(strand),
         due: strand_projection_field_string(strand, None, &["due_at", "due", "due_date"])
             .unwrap_or_else(|| "—".to_owned()),
-        // Fold the projected RSVP heads for the card's base occurrence. The
+        // Fold the projected RSVP winner for the card's base occurrence. The
         // self actor is filled in by the view layer, which knows the session.
         calendar_rsvp: calendar_rsvp_display(
             &strand.rsvps,
-            &strand.schedule_revision_heads,
+            &strand
+                .schedule_revision_source
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>(),
             None,
             self_actor_id,
         ),
         authoring_basis: None,
-        calendar_schedule_basis_refs: strand.schedule_revision_heads.clone(),
+        calendar_schedule_basis_refs: strand.schedule_revision_source.iter().cloned().collect(),
         calendar: calendar_fields_from_metadata(&strand.fields, decrypt_ctx, &strand.strand_id),
         primary_strand_id: strand.strand_id.clone(),
         locked_strand,

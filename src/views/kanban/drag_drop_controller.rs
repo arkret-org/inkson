@@ -20,7 +20,7 @@ fn current_cell_basis_from_store(
         .ok_or_else(|| "canonical current state is still loading".to_owned())?;
     let cell = format!("ak:cell:{family}:{subject}");
     match current_register_basis(&entries, &cell) {
-        CurrentRegisterBasis::Heads(refs) => Ok(refs),
+        CurrentRegisterBasis::Source(refs) => Ok(refs),
         CurrentRegisterBasis::Removed => Ok(Vec::new()),
         CurrentRegisterBasis::Missing
             if missing_witness_family.is_some_and(|witness_family| {
@@ -486,52 +486,6 @@ pub(super) fn submit_column_rename(
     );
 }
 
-#[allow(clippy::too_many_arguments)]
-pub(super) fn submit_space_metadata_resolution(
-    base_url: String,
-    token: Signal<String>,
-    realm_id: String,
-    actor_id: String,
-    column_id: String,
-    title: String,
-    rank: String,
-    basis_refs: Vec<arkret_sdk::Hash>,
-    scope_security_encrypted: Option<bool>,
-    state_store: SyncSignal<LocalStateStore>,
-    board_status: Signal<String>,
-) {
-    let builder = match crate::operation::ak_ops::space_update_patch(
-        &realm_id,
-        &actor_id,
-        &column_id,
-        json!({ "title": title, "rank": rank }),
-    ) {
-        Ok(builder) => builder,
-        Err(error) => {
-            let mut status = board_status;
-            status.set(format!("List conflict resolution failed: {error:#}"));
-            return;
-        }
-    };
-    let operation = match builder.causal_refs(basis_refs).build_sdk_event("inkson") {
-        Ok(operation) => operation,
-        Err(error) => {
-            let mut status = board_status;
-            status.set(format!("List conflict resolution failed: {error}"));
-            return;
-        }
-    };
-    submit_kanban_operation_event(
-        base_url,
-        token,
-        realm_id,
-        operation,
-        scope_security_encrypted,
-        state_store,
-        board_status,
-    );
-}
-
 /// Closed command accepted by the card-create boundary.
 ///
 /// Keeping these fields typed prevents UI call sites from selecting an event
@@ -845,7 +799,7 @@ pub(super) struct ColumnNeighbours {
 /// End-to-end handler for a drag-drop landing. Computes the new rank,
 /// decides cross-list move vs in-list reorder, updates the local
 /// pending state, and submits an Event whose causal refs cover the observed
-/// position frontier.
+/// deterministic position winner.
 ///
 /// Spec mapping ([views.md §2.6](../../arkret-spec/spec/v1/zh/models/views.md)):
 ///
@@ -902,15 +856,16 @@ pub(super) fn dispatch_strand_position_move(
     // `submit_strand_position_move` appends the canonical move/reorder op to
     // `raw_operations`; the current position result remains authoritative, so
     // the UI does not claim a settled destination until sync observes it.
-    let expected = if dragged.position_basis_refs.len() == 1 {
-        StrandPositionExpectation::At {
+    let expected = match dragged.position_basis_refs.as_slice() {
+        [] => StrandPositionExpectation::Initial,
+        [head_ref] => StrandPositionExpectation::At {
             list_space_id: dragged.from_column_id.clone(),
             rank: dragged.from_rank.clone(),
-            head_ref: dragged.position_basis_refs[0].clone(),
-        }
-    } else {
-        StrandPositionExpectation::Conflict {
-            head_refs: dragged.position_basis_refs.clone(),
+            head_ref: head_ref.clone(),
+        },
+        _ => {
+            board_status.set("move failed: canonical position winner is unavailable".to_owned());
+            return;
         }
     };
     let effect = StrandPositionEffect::SetPosition {
@@ -1002,9 +957,8 @@ pub(super) fn dispatch_space_container_lifecycle(
             board_status.set("lifecycle update failed: tombstone is not dispatchable".to_owned());
             return;
         }
-        SpaceContainerLifecycleState::Conflict
-        | SpaceContainerLifecycleState::Unavailable
-        | SpaceContainerLifecycleState::PositionConflict => {
+        SpaceContainerLifecycleState::Unavailable
+        | SpaceContainerLifecycleState::PositionUnavailable => {
             board_status
                 .set("lifecycle update failed: canonical Space state is unresolved".to_owned());
             return;
@@ -1107,9 +1061,7 @@ pub(super) fn dispatch_strand_lifecycle(
         StrandLifecycleState::Active => {
             crate::operation::ak_ops::strand_restore(&realm_id, &actor_id, &strand_id)
         }
-        StrandLifecycleState::Redacted
-        | StrandLifecycleState::Conflict
-        | StrandLifecycleState::Unavailable => {
+        StrandLifecycleState::Redacted | StrandLifecycleState::Unavailable => {
             board_status
                 .set("lifecycle update failed: target state is not dispatchable".to_owned());
             return;
@@ -1377,7 +1329,6 @@ pub(super) fn submit_strand_position_move(
         } => {
             json!({"list_space_id": list_space_id, "rank": rank})
         }
-        StrandPositionExpectation::Conflict { .. } => serde_json::Value::Null,
     };
     let causal_refs = expected.causal_refs();
     let effect_json = match &effect {
@@ -1433,7 +1384,6 @@ pub(super) fn submit_strand_position_move(
                 rank,
                 ..
             } => json!({"space_id": list_space_id, "rank": rank}),
-            StrandPositionExpectation::Conflict { .. } => serde_json::Value::Null,
         },
         target_position: match &effect {
             StrandPositionEffect::SetPosition {

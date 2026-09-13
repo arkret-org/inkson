@@ -4,14 +4,14 @@
 //! product and the live Inkson + Soland row exercise exactly the same RSVP
 //! authoring path.
 
-/// Derives the canonical schedule revision frontier from the accepted Realm
+/// Derives the deterministic schedule revision winner from the accepted Realm
 /// event log. The UI calls the same reducer before it authors an RSVP.
-pub fn schedule_revision_heads(
+pub fn schedule_revision_winner(
     events: &[arkret_sdk::Event],
     strand_id: &str,
     digest_suite: arkret_sdk::DigestSuite,
-) -> anyhow::Result<Vec<arkret_sdk::Hash>> {
-    crate::views::kanban::calendar_schedule_revision_heads(events, strand_id, digest_suite)
+) -> anyhow::Result<arkret_sdk::Hash> {
+    crate::views::kanban::calendar_schedule_revision_winner(events, strand_id, digest_suite)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -25,20 +25,13 @@ pub fn build_calendar_rsvp_event(
     schedule_basis_refs: Vec<arkret_sdk::Hash>,
 ) -> anyhow::Result<crate::operation::LocalOperation> {
     let schedule_bytes = arkret_sdk::canonical::canonical_json_bytes(calendar_fields)?;
-    let schedule = if schedule_basis_refs.len() == 1 {
-        arkret_sdk::CalendarScheduleProjection::from_heads(&[(
-            schedule_basis_refs[0].clone(),
-            Some(schedule_bytes),
-        )])
-    } else {
-        arkret_sdk::CalendarScheduleProjection::from_heads(
-            &schedule_basis_refs
-                .iter()
-                .cloned()
-                .map(|head| (head, None))
-                .collect::<Vec<_>>(),
-        )
+    let [schedule_basis] = schedule_basis_refs.as_slice() else {
+        anyhow::bail!("RSVP requires exactly one deterministic schedule winner");
     };
+    let schedule = arkret_sdk::CalendarScheduleProjection::from_winner(
+        schedule_basis.clone(),
+        Some(schedule_bytes),
+    );
     let mut authoring = crate::operation::ak_ops::rsvp_authoring(strand_id, status, occurrence)?;
     authoring.schedule_basis_refs = schedule_basis_refs.clone();
     Ok(crate::operation::LocalOperation::new(

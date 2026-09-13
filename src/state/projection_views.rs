@@ -30,18 +30,31 @@ pub struct RsvpCellProjectionView {
     #[serde(default)]
     pub actor_id: String,
     #[serde(default)]
-    pub heads: Vec<RsvpHeadProjectionView>,
+    pub winner: Option<RsvpWinnerProjectionView>,
+    /// Local replay evidence used only to recompute the deterministic winner.
+    /// Server projection rows need only provide `winner`.
+    #[serde(skip)]
+    pub retained_writes: Vec<RsvpRetainedWrite>,
 }
 
-/// One causal-register head. `entry` is the complete signed value.
+/// The deterministic RSVP winner. `entry` is the complete signed value.
 #[derive(Clone, Debug, Default, PartialEq, serde::Deserialize)]
-pub struct RsvpHeadProjectionView {
+pub struct RsvpWinnerProjectionView {
     #[serde(default)]
     pub source_event_id: String,
     #[serde(default)]
     pub source_event_digest: String,
     #[serde(default)]
     pub entry: serde_json::Value,
+}
+
+/// Authenticated local write evidence retained for order-independent replay.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct RsvpRetainedWrite {
+    pub source_event_id: String,
+    pub source_event_digest: String,
+    pub entry: serde_json::Value,
+    pub causal_refs: Vec<arkret_sdk::Hash>,
 }
 
 /// Server-side Strand row from `GET /_arkret/self/realms/{realm_id}/strands`.
@@ -86,14 +99,12 @@ pub struct StrandProjectionView {
     /// `metadata.fields.calendar` subtree co-occur in both directions.
     #[serde(default)]
     pub schema_refs: Vec<String>,
-    /// Canonical schedule revision frontier as `event_digest` values. RSVP
-    /// authoring signs a subset of this, so an empty frontier is what keeps the
-    /// RSVP path fail-closed.
+    /// Canonical deterministic schedule revision source as an `event_digest`.
+    /// RSVP authoring fails closed until this richer projection is available.
     #[serde(default)]
-    pub schedule_revision_heads: Vec<String>,
-    /// Live RSVP causal-register heads for this Strand. Concurrent responses stay
-    /// side by side; the UI shows them as an unresolved conflict rather than
-    /// silently choosing one.
+    pub schedule_revision_source: Option<String>,
+    /// Live RSVP causal-register winners for this Strand. Losing writes remain
+    /// replay evidence and never become additional UI answers.
     #[serde(default)]
     pub rsvps: Vec<RsvpCellProjectionView>,
     /// Object lifecycle from the authoritative projection contract.
@@ -157,7 +168,7 @@ impl From<arkret_sdk::ProjectionStrandRow> for StrandProjectionView {
             tracks: std::collections::BTreeMap::new(),
             schema_refs: Vec::new(),
             rsvps: Vec::new(),
-            schedule_revision_heads: Vec::new(),
+            schedule_revision_source: None,
             board_space_id: row
                 .board_space_id
                 .map(|space_id| space_id.as_str().to_owned()),
