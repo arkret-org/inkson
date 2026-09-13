@@ -195,7 +195,8 @@ pub(crate) fn cache_principal_authoring_generation_from_keys(
             cache_verified_principal_generation(account_id, device_id, &generation);
             Ok(true)
         }
-        PrincipalGenerationResolution::Quarantine(_) => {
+        PrincipalGenerationResolution::Quarantine(reason) => {
+            tracing::warn!(%reason, "device authoring generation is quarantined");
             verified_generation_cache()
                 .lock()
                 .unwrap_or_else(PoisonError::into_inner)
