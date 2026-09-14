@@ -498,13 +498,18 @@ pub(super) async fn probe_device_authorization(
     principal_api: &TransportClient,
     state_store: SyncSignal<LocalStateStore>,
 ) -> anyhow::Result<(bool, bool)> {
+    let viewer = crate::transport::keys::list_devices(&principal_api.sdk_http_client()?).await?;
+    let signer_matches_directory = current_event_signer_matches_directory(
+        principal_api,
+        account,
+        device,
+        &viewer,
+        state_store,
+    )
+    .await?;
     // The account-viewer helpers read `devices[]` leniently via `Value`
-    // accessors; serialize the typed `AccountView` back to its wire JSON.
-    let viewer = serde_json::to_value(
-        &crate::transport::keys::list_devices(&principal_api.sdk_http_client()?).await?,
-    )?;
-    let signer_matches_directory =
-        current_event_signer_matches_directory(principal_api, account, device, state_store).await?;
+    // accessors; serialize the already-validated typed response for them.
+    let viewer = serde_json::to_value(viewer)?;
     Ok(device_authorization_probe_from_account_viewer(
         &viewer,
         device,
@@ -521,6 +526,7 @@ async fn current_event_signer_matches_directory(
     principal_api: &TransportClient,
     account: &crate::config::ActiveAccountContext,
     device: &str,
+    viewer: &arkret_sdk::AccountView,
     mut state_store: SyncSignal<LocalStateStore>,
 ) -> anyhow::Result<bool> {
     let signer = match crate::event_signer::active_signer() {
@@ -557,20 +563,6 @@ async fn current_event_signer_matches_directory(
         clear_verified_device_authoring_authority(state_store);
         return Ok(false);
     }
-    let accepted_key =
-        crate::identity::device_directory::cache_accepted_device_evidence_from_outcome(
-            device_cache_epoch,
-            &outcome,
-            account_id,
-            device,
-        );
-    if accepted_key.as_ref()
-        != crate::identity::device_directory::public_key_from_directory_value(&expected_key)
-            .as_ref()
-    {
-        clear_verified_device_authoring_authority(state_store);
-        return Ok(false);
-    }
     let active =
         crate::identity::authoring_generation::cache_principal_authoring_generation_from_keys(
             &outcome, account_id, device,
@@ -579,15 +571,22 @@ async fn current_event_signer_matches_directory(
         clear_verified_device_authoring_authority(state_store);
         return Ok(false);
     }
-    let generation = crate::identity::authoring_generation::cached_principal_authoring_generation(
-        account_id, device,
-    )
-    .ok_or_else(|| anyhow::anyhow!("verified authoring generation was not retained"))?;
-    let persisted =
-        crate::identity::device_directory::persisted_device_authoring_authority_from_outcome(
-            &outcome, account_id, &device_id, generation,
+    let Some(generation) =
+        crate::identity::authoring_generation::cached_principal_authoring_generation(
+            account_id, device,
         )
-        .ok_or_else(|| anyhow::anyhow!("verified device authoring evidence is incomplete"))?;
+    else {
+        clear_verified_device_authoring_authority(state_store);
+        return Ok(false);
+    };
+    let Some(persisted) =
+        crate::identity::device_directory::persisted_device_authoring_authority_from_outcome(
+            &outcome, viewer, account_id, &device_id, generation,
+        )
+    else {
+        clear_verified_device_authoring_authority(state_store);
+        return Ok(false);
+    };
     if !crate::identity::device_directory::restore_persisted_device_authoring_authority(
         device_cache_epoch,
         account_id,

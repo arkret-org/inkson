@@ -792,9 +792,13 @@ fn sign_prepared_sidecar_event(
     {
         anyhow::bail!("active Sidecar signer is not bound to the authenticated controller device");
     }
+    let plane = crate::event_signer::event_signer_evidence_plane(
+        &event.kind,
+        arkret_schema::classify_event_execution(event.event())?,
+    )?;
     signer.sign_sdk_event_with_context(
         &mut event,
-        crate::event_signer::cached_active_event_proof_context(digest_suite)?,
+        crate::event_signer::cached_active_event_proof_context(digest_suite, plane)?,
     )?;
     let signed_digest = arkret_sdk::Hash::new(event.event_digest_with_digest_suite(digest_suite)?)?;
     if signed_digest != draft.event_digest

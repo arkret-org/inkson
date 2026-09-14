@@ -162,12 +162,6 @@ impl ProducerProofContext {
 
 pub(crate) fn cached_active_event_proof_context(
     digest_suite: arkret_sdk::DigestSuite,
-) -> Result<ProducerProofContext, EventSignerError> {
-    cached_active_event_proof_context_for_plane(digest_suite, arkret_sdk::CbsEffectPlane::Data)
-}
-
-fn cached_active_event_proof_context_for_plane(
-    digest_suite: arkret_sdk::DigestSuite,
     plane: arkret_sdk::CbsEffectPlane,
 ) -> Result<ProducerProofContext, EventSignerError> {
     let signer = active_signer().ok_or(EventSignerError::MissingSigner {
@@ -190,38 +184,52 @@ fn cached_active_event_proof_context_for_plane(
                     "active endpoint signer public key is invalid".to_owned(),
                 )
             })?;
-    let evidence_ref = if plane == arkret_sdk::CbsEffectPlane::Control {
-        let account_id = arkret_sdk::AccountId::new(
-            principal_id,
-            crate::operation::authoring_station_id()
-                .map_err(|error| EventSignerError::Encoding(error.to_string()))?,
-        );
-        crate::identity::device_directory::cached_control_signer_evidence_ref(
-            &account_id,
-            &arkret_sdk::DeviceId::new(device_id.to_owned())
-                .map_err(|error| EventSignerError::Encoding(error.to_string()))?,
-        )
+    let scope = crate::secure_key_store::active_device_seed_scope()
+        .filter(|scope| scope.authority.principal_id == principal_id)
         .ok_or_else(|| {
             EventSignerError::Encoding(
-                "verified Control signer evidence is unavailable for the active device".to_owned(),
+                "active signer has no matching complete Account authority".to_owned(),
             )
-        })?
-    } else {
-        crate::identity::device_directory::cached_signer_evidence_ref_for_principal_device_and_key(
-            &principal_id,
-            device_id,
-            &public_key,
+        })?;
+    let evidence_ref = crate::identity::device_directory::retained_device_authoring_evidence(
+        &scope.authority.to_string(),
+        device_id,
+        plane,
+    )
+    .filter(|(retained_key, _)| retained_key == &public_key)
+    .map(|(_, evidence_ref)| evidence_ref)
+    .ok_or_else(|| {
+        EventSignerError::Encoding(
+            "verified signer-resolution evidence is unavailable for the active device".to_owned(),
         )
-        .ok_or_else(|| {
-            EventSignerError::Encoding(
-                "verified signer-resolution evidence is unavailable for the active device"
-                    .to_owned(),
-            )
-        })?
-    };
+    })?;
     Ok(ProducerProofContext::new()
         .with_digest_suite(digest_suite)
         .with_signer_resolution_evidence_ref(evidence_ref))
+}
+
+/// Select the immutable human-device evidence family fixed by the Event
+/// registry. Realm Events use their projected CBS plane. The closed
+/// actor-private set has no CBS cell writes, but its producer proof is defined
+/// to use the Data `account_device` root. No other unclassified kind may borrow
+/// that exception.
+pub(crate) fn event_signer_evidence_plane(
+    kind: &arkret_sdk::EventKind,
+    registered_plane: Option<arkret_sdk::CbsEffectPlane>,
+) -> Result<arkret_sdk::CbsEffectPlane, EventSignerError> {
+    if let Some(plane) = registered_plane {
+        return Ok(plane);
+    }
+    match kind {
+        arkret_sdk::EventKind::AccountBlocklist
+        | arkret_sdk::EventKind::AccountDataSet
+        | arkret_sdk::EventKind::DevicePushRoute
+        | arkret_sdk::EventKind::ReadCursorAdvance => Ok(arkret_sdk::CbsEffectPlane::Data),
+        _ => Err(EventSignerError::Encoding(format!(
+            "{} has no registered signer-evidence plane",
+            kind.as_str()
+        ))),
+    }
 }
 
 #[cfg(test)]
@@ -553,12 +561,14 @@ impl InksonEventSigner {
         #[cfg(test)]
         let context = test_producer_proof_context(event.digest_suite());
         #[cfg(not(test))]
-        let context = cached_active_event_proof_context_for_plane(
-            event.digest_suite(),
-            arkret_schema::classify_event_execution(event.event())
-                .map_err(|error| EventSignerError::Encoding(error.to_string()))?
-                .unwrap_or(arkret_sdk::CbsEffectPlane::Data),
-        )?;
+        let context = {
+            let plane = event_signer_evidence_plane(
+                &event.kind,
+                arkret_schema::classify_event_execution(event.event())
+                    .map_err(|error| EventSignerError::Encoding(error.to_string()))?,
+            )?;
+            cached_active_event_proof_context(event.digest_suite(), plane)?
+        };
         self.sign_envelope_with_context(event, context)
     }
 
@@ -577,6 +587,19 @@ impl InksonEventSigner {
         &self,
         event: &mut AuthoredEvent,
         context: ProducerProofContext,
+    ) -> Result<(), EventSignerError> {
+        self.sign_sdk_event_with_context_at(event, context, crate::clock::now_utc())
+    }
+
+    /// Sign a frozen native-unit Event at the timestamp already selected by
+    /// that unit's authoring checkpoint. Ordinary Event signing uses
+    /// [`Self::sign_sdk_event_with_context`] and remains free to record the
+    /// actual later signing instant.
+    pub(crate) fn sign_sdk_event_with_context_at(
+        &self,
+        event: &mut AuthoredEvent,
+        context: ProducerProofContext,
+        proof_created_at: DateTime<Utc>,
     ) -> Result<(), EventSignerError> {
         // Authoring settled the digest suite when it derived the identity, and
         // the proof must be bound under that same suite. A caller-supplied
@@ -611,7 +634,7 @@ impl InksonEventSigner {
             Some(evidence_ref) => arkret_sdk::signatures::SignEventOptions::new(evidence_ref),
             None => arkret_sdk::signatures::SignEventOptions::for_native_unit(),
         }
-        .with_created_at(crate::clock::now_utc());
+        .with_created_at(proof_created_at);
         if let Some(domain) = context.domain {
             options = options.with_domain(domain);
         }
@@ -1273,6 +1296,36 @@ mod tests {
     }
 
     #[test]
+    fn signer_evidence_plane_closes_actor_private_events_to_data() {
+        for kind in [
+            arkret_sdk::EventKind::AccountBlocklist,
+            arkret_sdk::EventKind::AccountDataSet,
+            arkret_sdk::EventKind::DevicePushRoute,
+            arkret_sdk::EventKind::ReadCursorAdvance,
+        ] {
+            assert_eq!(
+                event_signer_evidence_plane(&kind, None).unwrap(),
+                arkret_sdk::CbsEffectPlane::Data,
+                "{}",
+                kind.as_str()
+            );
+        }
+        assert!(
+            event_signer_evidence_plane(&arkret_sdk::EventKind::MessageCreate, None).is_err(),
+            "ordinary Realm Events must not inherit the actor-private Data exception"
+        );
+        assert_eq!(
+            event_signer_evidence_plane(
+                &arkret_sdk::EventKind::SpaceUpdate,
+                Some(arkret_sdk::CbsEffectPlane::Control),
+            )
+            .unwrap(),
+            arkret_sdk::CbsEffectPlane::Control,
+            "a registered CBS plane is authoritative"
+        );
+    }
+
+    #[test]
     fn build_ed25519_signer_sets_did_and_verification_method() {
         let _g = reset();
         let signer = build_ed25519_signer([7u8; 32], "did:web:alice.example");
@@ -1756,6 +1809,26 @@ mod tests {
         event
             .validate_proof_bindings_with_digest_suite(arkret_sdk::canonical::DigestSuite::Blake3)
             .expect("proof digest matches");
+    }
+
+    #[test]
+    fn frozen_native_unit_signing_uses_its_authored_timestamp() {
+        let _g = reset();
+        let signer =
+            build_ed25519_device_signer([11u8; 32], "did:web:native.example", TEST_DEVICE_ID);
+        let mut event = message_event("did:web:native.example", "native");
+        let authored_at = event.created_at;
+        let digest_suite = event.digest_suite();
+
+        signer
+            .sign_sdk_event_with_context_at(
+                &mut event,
+                ProducerProofContext::for_native_unit(digest_suite),
+                authored_at,
+            )
+            .expect("sign frozen native Event");
+
+        assert_eq!(producer_proof(&event).created_at, authored_at);
     }
 
     #[test]

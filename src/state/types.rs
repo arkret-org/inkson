@@ -774,26 +774,30 @@ pub struct CachedHistoricalAgentSignerKey {
 
 /// Last locally verified authoring authority for this account's active device.
 ///
-/// This holds the trusted self projection this device's own Station returned,
-/// the `signer_evidence_ref` later Events actually carry, and the matching
-/// accepted generation fence, so an ordinary Event can be authored after a cold
-/// offline start. A later verified revocation clears the whole record.
+/// This holds the trusted self projections this device's own Station returned,
+/// the distinct Data and Control signer-evidence references later Events carry,
+/// and the matching accepted generation fence, so an ordinary Event can be
+/// authored after a cold offline start. A later verified revocation clears the
+/// whole record.
 ///
 /// It is deliberately not portable evidence. The Station verified the origin
 /// attestation, the complete AccountId, the generation and validity before
 /// projecting; the client never received that proof and MUST NOT present this
 /// record where a complete signed evidence object is declared - in particular
 /// not as `CurrentSignerEvidence::AccountDevice`, whose
-/// `device_projection_attestation` is a signed object. `signer_evidence_ref`
-/// keeps pointing at the original immutable evidence and is never recomputed
-/// from these values.
+/// `device_projection_attestation` is a signed object. The Data reference comes
+/// from `keys/query` and names that immutable `account_device` object. The
+/// Control reference comes from the exact verified account-viewer device row
+/// and names its immutable `account_device_control` PCR root. Neither is ever
+/// recomputed from these values or substituted for the other.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PersistedDeviceAuthoringAuthority {
     pub account_id: arkret_sdk::AccountId,
     pub device_id: arkret_sdk::DeviceId,
     pub device_projection: arkret_models_crypto::VerifiedDeviceProjection,
-    pub signer_evidence_ref: arkret_sdk::SignerEvidenceRef,
+    pub data_signer_evidence_ref: arkret_sdk::SignerEvidenceRef,
+    pub control_signer_evidence_ref: arkret_sdk::SignerEvidenceRef,
     pub authoring_generation: garth::AuthoringGeneration,
 }
 

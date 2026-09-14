@@ -84,6 +84,25 @@ fn sdk_intent_with_kind(realm_id: &str, kind: &str, actor_id: &str) -> EventInte
     .unwrap()
 }
 
+fn control_space_update_intent(realm_id: &str, actor_id: &str) -> EventIntent {
+    let actor_id = crate::test_support::account_actor(
+        crate::mls_api_helpers::principal_core_id(actor_id)
+            .unwrap()
+            .as_str(),
+    );
+    serde_json::from_value(json!({
+        "kind": "ak.space.update",
+        "scope_ref": {"kind": "realm", "realm_id": realm_id},
+        "actor_id": actor_id,
+        "created_at": "2026-05-19T00:00:00.000Z",
+        "payload": {
+            "space_id": "ak:space:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19",
+            "child_scope_policy": {"kind": "allow_any"}
+        }
+    }))
+    .unwrap()
+}
+
 /// The queue slot a locally built write occupies.
 fn fixture_queued_intent(intent: EventIntent) -> QueuedEventIntent {
     QueuedEventIntent::new(intent, arkret_sdk::DigestSuite::Sha256)
@@ -864,7 +883,7 @@ async fn stamp_realm_authority_root_claim_stamps_from_cached_create_facts() {
         );
     let intent = dead_endpoint_submitter()
         .stamp_realm_authority_root_claim(
-            sdk_intent_with_kind(realm, "ak.strand.create", AUTHORITY_CONTROLLER),
+            control_space_update_intent(realm, AUTHORITY_CONTROLLER),
             None,
         )
         .await;
@@ -880,8 +899,8 @@ async fn stamp_realm_authority_root_claim_stamps_from_cached_create_facts() {
 /// froze their intents with `authorization_ref = None` (the authority
 /// lookup 401ed). A post-re-login replay used the fresh-authoring prepare,
 /// stamped the claim onto the envelope, diverged from the frozen intent
-/// and the queue's semantic guard cancelled the item — the discussion
-/// message could never send. Frozen-intent re-authoring MUST reproduce
+/// and the queue's semantic guard cancelled the item — the queued
+/// Control Move could never send. Frozen-intent re-authoring MUST reproduce
 /// the intent's authorization choice verbatim even when the claim is now
 /// resolvable.
 #[tokio::test]
@@ -898,7 +917,7 @@ async fn frozen_intent_replay_must_not_upgrade_the_authorization_claim() {
         );
     // Outage-era intent: owner-authored kind, but no claim was resolvable
     // at enqueue time.
-    let frozen = sdk_intent_with_kind(realm, "ak.message.create", AUTHORITY_CONTROLLER);
+    let frozen = control_space_update_intent(realm, AUTHORITY_CONTROLLER);
     assert!(frozen.authorization_ref().is_none());
 
     // Fresh authoring would stamp (the claim is resolvable from cache)…
@@ -1561,7 +1580,10 @@ async fn realm_bootstrap_preparation_requires_verified_producer_evidence() {
         .await
         .expect_err("authoring must have verified producer evidence");
     crate::operation::set_proof_mode(previous_proof_mode);
-    assert!(format!("{error:#}").contains("verified signer-resolution evidence"));
+    assert!(
+        format!("{error:#}").contains("verified control signer-resolution evidence"),
+        "{error:#}"
+    );
 }
 
 #[tokio::test]
@@ -1586,7 +1608,10 @@ async fn space_update_metadata_authoring_skips_seal_refresh_but_policy_requires_
         .unwrap();
     let submitter =
         EventSubmitter::new(http).with_authority(source.actor_id.as_account_id().unwrap().clone());
-    let ordinary = EventIntent::from_authored(&source);
+    // `from_authored` deliberately returns authorization fields unpinned;
+    // this test owns the original intent, so retain its ordinary Data basis.
+    let ordinary = EventIntent::from_authored(&source)
+        .with_auth_context(source.auth_context.clone().expect("fixture auth context"));
     assert_eq!(
         cbs_effect_plane_for_intent(&ordinary).unwrap(),
         Some(CbsEffectPlane::Data)

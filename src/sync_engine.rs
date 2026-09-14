@@ -854,6 +854,87 @@ impl InksonAccountPostCommit {
     }
 }
 
+async fn refresh_local_device_authoring_authority(
+    http: &arkret_sdk::http_client::Client,
+    viewer: &arkret_sdk::AccountView,
+    ctx: &SyncEngineContext,
+) -> anyhow::Result<()> {
+    let signer = crate::event_signer::active_signer()
+        .ok_or_else(|| anyhow::anyhow!("active device signer is unavailable during refresh"))?;
+    anyhow::ensure!(
+        signer.device_id() == Some(ctx.device_id.as_str()),
+        "active signer device differs from the account-sync device"
+    );
+    let signer_did = arkret_sdk::Did::new(signer.signer_did().to_owned())?;
+    anyhow::ensure!(
+        arkret_sdk::project_did_to_core_id(&signer_did)? == ctx.principal_id,
+        "active signer principal differs from the account-sync principal"
+    );
+    let public_key = signer
+        .public_key_multibase()
+        .ok_or_else(|| anyhow::anyhow!("active endpoint signer has no public key"))?;
+    let expected_key = format!("did:key:{public_key}");
+
+    // A device-list notification (including the first founding Seal) fences
+    // the retained pair before either refreshed reference is consumed. The
+    // next successful refresh installs Data and Control together.
+    crate::identity::device_directory::reset_session_cache();
+    crate::identity::authoring_generation::reset_verified_authoring_generations();
+    ctx.state_store
+        .write(|store| store.set_device_authoring_authority(None));
+    let device_cache_epoch = crate::identity::device_directory::cache_epoch();
+    let outcome =
+        crate::transport::keys::query_keys(http, &ctx.account.authority, ctx.device_id.as_str())
+            .await?;
+    let device_id = arkret_sdk::DeviceId::new(ctx.device_id.clone())?;
+    anyhow::ensure!(
+        outcome
+            .devices_for(&ctx.account.authority)
+            .and_then(|devices| devices.get(&device_id))
+            .map(|record| record.device_projection.device_signing_key_did.as_str())
+            == Some(expected_key.as_str()),
+        "refreshed device projection does not match the active signer"
+    );
+    anyhow::ensure!(
+        crate::identity::authoring_generation::cache_principal_authoring_generation_from_keys(
+            &outcome,
+            &ctx.account.authority,
+            ctx.device_id.as_str(),
+        )?,
+        "refreshed device projection has no active authoring generation"
+    );
+    let generation = crate::identity::authoring_generation::cached_principal_authoring_generation(
+        &ctx.account.authority,
+        ctx.device_id.as_str(),
+    )
+    .ok_or_else(|| anyhow::anyhow!("refreshed authoring generation was not retained"))?;
+    let persisted =
+        crate::identity::device_directory::persisted_device_authoring_authority_from_outcome(
+            &outcome,
+            viewer,
+            &ctx.account.authority,
+            &device_id,
+            generation,
+        )
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "refreshed device authoring evidence does not contain exact Data and Control roots"
+            )
+        })?;
+    anyhow::ensure!(
+        crate::identity::device_directory::restore_persisted_device_authoring_authority(
+            device_cache_epoch,
+            &ctx.account.authority,
+            &device_id,
+            &persisted,
+        ),
+        "refreshed device authoring evidence lost its cache epoch"
+    );
+    ctx.state_store
+        .write(|store| store.set_device_authoring_authority(Some(persisted)));
+    Ok(())
+}
+
 /// The hook runs against whichever transport carried the step, but its own work
 /// — invite-delivery recovery, MLS, calls, to-device acknowledgement — is not a covered
 /// operation (§1), so it always uses the canonical HTTPS client the rail keeps.
@@ -920,6 +1001,11 @@ impl
                 return Ok(AccountPostCommitOutcome::Unauthorized {
                     reason: Some("this device was revoked by its Station".into()),
                 });
+            }
+            if let Err(error) =
+                refresh_local_device_authoring_authority(http, &viewer, &self.ctx).await
+            {
+                return Ok(self.classify_error(error));
             }
             self.ctx
                 .state_store
@@ -2892,6 +2978,8 @@ mod tests {
         let mut viewer: arkret_sdk::AccountView = serde_json::from_value(json!({
             "principal_id":principal,"state":"active","devices":[{
                 "device_id":device,"status":"revoked","verification_state":"verified",
+                "authorized_event_ref":proposal.event_id,
+                "signer_resolution_evidence_ref":format!("ak:signer_evidence:sha256:{}", "3".repeat(64)),
                 "revocation_states":[{
                     "schema":"ak.schema.device_revocation_state.v1",
                     "account_id":{"principal_id":principal,"station_id":"ak:did_core:web:station.example"},

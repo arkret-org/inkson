@@ -2274,6 +2274,7 @@ impl EventSubmitter {
     pub(crate) async fn event_proof_context(
         &self,
         digest_suite: arkret_sdk::DigestSuite,
+        plane: arkret_sdk::CbsEffectPlane,
     ) -> anyhow::Result<crate::event_signer::ProducerProofContext> {
         // Durable Event envelopes are portable Realm facts. Binding their
         // proof to the authoring Station would make the original
@@ -2290,11 +2291,15 @@ impl EventSubmitter {
             .as_deref()
             .and_then(crate::identity::device_directory::public_key_from_directory_value)
             .ok_or_else(|| anyhow::anyhow!("active endpoint signer public key is invalid"))?;
-        let (retained_key, evidence_ref) =
-            crate::identity::device_directory::retained_device_authoring_evidence(&actor, device_id)
-                .ok_or_else(|| {
+        let (retained_key, evidence_ref) = crate::identity::device_directory::retained_device_authoring_evidence(
+            &actor,
+            device_id,
+            plane,
+        )
+        .ok_or_else(|| {
                     anyhow::anyhow!(
-                        "frontier_unavailable: verified signer-resolution evidence is unavailable for the active device"
+                        "frontier_unavailable: verified {} signer-resolution evidence is unavailable for the active device",
+                        plane.as_str()
                     )
                 })?;
         if retained_key != signer_key {
@@ -2494,7 +2499,11 @@ impl EventSubmitter {
             anyhow::bail!("prepared join expired while checking signing prerequisites");
         }
         signer
-            .sign_sdk_event_with_context(&mut event, self.event_proof_context(suite).await?)
+            .sign_sdk_event_with_context(
+                &mut event,
+                self.event_proof_context(suite, signer_evidence_plane_for_intent(&intent)?)
+                    .await?,
+            )
             .map_err(|e| anyhow::anyhow!("sign prepared join Event: {e}"))?;
         let canonical_body_bytes = arkret_sdk::canonical::canonical_json_bytes(&event)?;
         let key = prepared.request_id.to_string();
@@ -3118,7 +3127,8 @@ impl EventSubmitter {
         authoring: SemanticAuthoring,
         digest_suite: arkret_sdk::DigestSuite,
     ) -> anyhow::Result<AuthoredAttempt> {
-        if cbs_effect_plane_for_intent(intent)? == Some(CbsEffectPlane::Control)
+        let effect_plane = signer_evidence_plane_for_intent(intent)?;
+        if effect_plane == CbsEffectPlane::Control
             && let Some(realm_id) = intent.realm_id_opt()
         {
             self.ensure_realm_detail_current(realm_id.as_str())?;
@@ -3139,7 +3149,7 @@ impl EventSubmitter {
         let (actor_seq, prev_refs) = self.resolve_actor_chain_basis(&intent).await?;
         intent = intent.with_prev_refs(prev_refs);
         let hlc = self.issue_intent_hlc(&intent).await?;
-        let proof_context = self.event_proof_context(digest_suite).await?;
+        let proof_context = self.event_proof_context(digest_suite, effect_plane).await?;
         let mut event = intent
             .clone()
             .author_with_digest_suite(actor_seq, hlc, proof_context.digest_suite)
@@ -3741,6 +3751,7 @@ impl EventSubmitter {
                 }
                 intent = intent.with_prev_refs(prev_refs);
                 let hlc = self.issue_intent_hlc(&intent).await?;
+                let effect_plane = signer_evidence_plane_for_intent(&intent)?;
                 let proof_context = match (
                     intent.kind() == &arkret_sdk::EventKind::RealmCreate,
                     chain.genesis_digest_suite(),
@@ -3749,17 +3760,19 @@ impl EventSubmitter {
                     // Other founding Events use the live suite declared by its
                     // payload before the first Seal exists.
                     (true, Some(_)) => {
-                        self.event_proof_context(arkret_sdk::DigestSuite::Sha256)
+                        self.event_proof_context(arkret_sdk::DigestSuite::Sha256, effect_plane)
                             .await?
                     }
-                    (false, Some(digest_suite)) => self.event_proof_context(digest_suite).await?,
+                    (false, Some(digest_suite)) => {
+                        self.event_proof_context(digest_suite, effect_plane).await?
+                    }
                     (_, None) => {
                         let digest_suite = self.trusted_digest_suite_for_intent(
                             &intent,
                             None,
                             self.state_store.as_ref(),
                         )?;
-                        self.event_proof_context(digest_suite).await?
+                        self.event_proof_context(digest_suite, effect_plane).await?
                     }
                 };
                 let mut event = intent

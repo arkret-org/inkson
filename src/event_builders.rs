@@ -1649,7 +1649,7 @@ pub fn build_signed_device_verification_proof(
         bytes: signing_key.verifying_key().to_bytes().to_vec(),
     };
     let signer_resolution_evidence_ref =
-        crate::identity::device_directory::cached_signer_evidence_ref_for_principal_device_and_key(
+        crate::identity::device_directory::cached_data_signer_evidence_ref_for_principal_device_and_key(
             &principal_id,
             from_device,
             &public_key,

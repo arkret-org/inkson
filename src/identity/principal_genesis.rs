@@ -191,11 +191,12 @@ pub fn build_genesis_unit(
             arkret_sdk::canonical::DigestSuite::Sha256,
         )?;
     device_signer
-        .sign_sdk_event_with_context(
+        .sign_sdk_event_with_context_at(
             &mut authorize,
             crate::event_signer::ProducerProofContext::for_native_unit(
                 arkret_sdk::canonical::DigestSuite::Sha256,
             ),
+            created_at,
         )
         .map_err(|error| anyhow::anyhow!(error.to_string()))?;
     arkret_bootstrap::build_self_principal_pcr_genesis_unit(

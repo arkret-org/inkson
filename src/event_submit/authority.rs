@@ -81,6 +81,19 @@ pub(super) fn cbs_effect_plane_for_intent(
     arkret_sdk::classify_intent_execution(intent).map_err(anyhow::Error::from)
 }
 
+/// Producer-evidence family for one human-authored intent. Actor-private
+/// Events have no CBS write plane, so the shared closed selector supplies only
+/// their registry-defined Data exception.
+pub(super) fn signer_evidence_plane_for_intent(
+    intent: &EventIntent,
+) -> anyhow::Result<CbsEffectPlane> {
+    crate::event_signer::event_signer_evidence_plane(
+        intent.kind(),
+        cbs_effect_plane_for_intent(intent)?,
+    )
+    .map_err(anyhow::Error::from)
+}
+
 /// Check the projection's aggregate lane, retaining atomic mixed D/S commands.
 pub(super) fn validate_projected_cbs_plane(
     event: &arkret_sdk::AuthoredEvent,

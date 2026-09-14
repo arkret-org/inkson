@@ -29,7 +29,8 @@ impl VerifiedProjectionVersion {
 struct CacheEntry {
     key: Option<PublicKeyMaterial>,
     authorize_event_id: Option<arkret_sdk::EventId>,
-    signer_evidence_ref: Option<arkret_sdk::SignerEvidenceRef>,
+    data_signer_evidence_ref: Option<arkret_sdk::SignerEvidenceRef>,
+    control_signer_evidence_ref: Option<arkret_sdk::SignerEvidenceRef>,
     verified_projection: Option<VerifiedProjectionVersion>,
     expires_at_ms: u64,
     last_accessed_ms: u64,
@@ -190,11 +191,16 @@ pub fn cached_device_authorize_event_id(actor: &str, device: &str) -> Option<ark
 pub(crate) fn retained_device_authoring_evidence(
     actor: &str,
     device: &str,
+    plane: arkret_sdk::CbsEffectPlane,
 ) -> Option<(PublicKeyMaterial, arkret_sdk::SignerEvidenceRef)> {
     let guard = CACHE.read().unwrap_or_else(|poison| poison.into_inner());
     let entry = guard.get(&cache_key(actor, device)?)?;
     entry.verified_projection.as_ref()?;
-    Some((entry.key.clone()?, entry.signer_evidence_ref.clone()?))
+    let evidence_ref = match plane {
+        arkret_sdk::CbsEffectPlane::Data => entry.data_signer_evidence_ref.clone()?,
+        arkret_sdk::CbsEffectPlane::Control => entry.control_signer_evidence_ref.clone()?,
+    };
+    Some((entry.key.clone()?, evidence_ref))
 }
 
 /// Validate a self device row read at exact `(account_id, device_id)` selectors.
@@ -219,6 +225,37 @@ pub(crate) fn validate_self_device_row(
         anyhow::bail!("device projection is not a positive observation window");
     }
     Ok(projection)
+}
+
+/// Select the Control evidence for the exact active device authorization from
+/// the authenticated account viewer. The viewer does not repeat Station id, so
+/// its transport session and the caller-pinned complete Account supply that
+/// half of the authority coordinate. Duplicate device rows fail closed.
+fn control_signer_evidence_ref_from_viewer(
+    viewer: &arkret_sdk::AccountView,
+    account_id: &arkret_sdk::AccountId,
+    device_id: &arkret_sdk::DeviceId,
+    authorization_event_id: &arkret_sdk::EventId,
+) -> Option<arkret_sdk::SignerEvidenceRef> {
+    if viewer.principal_id != account_id.principal_id {
+        return None;
+    }
+    let mut matching = viewer
+        .devices
+        .iter()
+        .filter(|row| &row.device_id == device_id);
+    let row = matching.next()?;
+    if matching.next().is_some()
+        || row.validate().is_err()
+        || row.status != arkret_sdk::DeviceSummaryStatus::Active
+        || row.verification_state != arkret_sdk::DeviceSummaryVerificationState::Verified
+        || row.authorized_event_ref.as_ref() != Some(authorization_event_id)
+    {
+        return None;
+    }
+    let evidence_ref = row.signer_resolution_evidence_ref.clone()?;
+    evidence_ref.content_digest().ok()?;
+    Some(evidence_ref)
 }
 
 /// Whether the Station's observation of this projection is still fresh.
@@ -290,7 +327,12 @@ pub(crate) fn restore_persisted_device_authoring_authority(
         || persisted.authoring_generation.authority_model
             != garth::AuthoringAuthorityModel::AcceptedDevice
         || persisted.authoring_generation.authority_principal_id != expected_account.principal_id
-        || persisted.signer_evidence_ref.content_digest().is_err()
+        || persisted.data_signer_evidence_ref.content_digest().is_err()
+        || persisted
+            .control_signer_evidence_ref
+            .content_digest()
+            .is_err()
+        || persisted.data_signer_evidence_ref == persisted.control_signer_evidence_ref
     {
         return false;
     }
@@ -307,7 +349,8 @@ pub(crate) fn restore_persisted_device_authoring_authority(
         expected_device.as_str(),
         Some(key),
         Some(projection.device_authorize_event_id.clone()),
-        Some(persisted.signer_evidence_ref.clone()),
+        Some(persisted.data_signer_evidence_ref.clone()),
+        Some(persisted.control_signer_evidence_ref.clone()),
         None,
         Some(version),
     )
@@ -315,6 +358,7 @@ pub(crate) fn restore_persisted_device_authoring_authority(
 
 pub(crate) fn persisted_device_authoring_authority_from_outcome(
     outcome: &arkret_models_crypto::KeysQueryOutcome,
+    viewer: &arkret_sdk::AccountView,
     account_id: &arkret_sdk::AccountId,
     device_id: &arkret_sdk::DeviceId,
     authoring_generation: garth::AuthoringGeneration,
@@ -328,16 +372,27 @@ pub(crate) fn persisted_device_authoring_authority_from_outcome(
     {
         return None;
     }
+    let data_signer_evidence_ref = record.signer_evidence_ref.clone();
+    let control_signer_evidence_ref = control_signer_evidence_ref_from_viewer(
+        viewer,
+        account_id,
+        device_id,
+        &projection.device_authorize_event_id,
+    )?;
+    if data_signer_evidence_ref == control_signer_evidence_ref {
+        return None;
+    }
     Some(crate::state::PersistedDeviceAuthoringAuthority {
         account_id: account_id.clone(),
         device_id: device_id.clone(),
         device_projection: projection.clone(),
-        signer_evidence_ref: record.signer_evidence_ref.clone(),
+        data_signer_evidence_ref,
+        control_signer_evidence_ref,
         authoring_generation,
     })
 }
 
-pub(crate) fn cached_signer_evidence_ref_for_principal_device_and_key(
+pub(crate) fn cached_data_signer_evidence_ref_for_principal_device_and_key(
     principal_id: &arkret_sdk::DidCoreId,
     device: &str,
     expected_key: &PublicKeyMaterial,
@@ -351,7 +406,7 @@ pub(crate) fn cached_signer_evidence_ref_for_principal_device_and_key(
                 && cached_device == device
                 && entry.expires_at_ms > now
                 && entry.key.as_ref() == Some(expected_key))
-            .then(|| entry.signer_evidence_ref.clone())
+            .then(|| entry.data_signer_evidence_ref.clone())
             .flatten()
         });
     let evidence = matches.next()?;
@@ -366,7 +421,8 @@ fn store_entry_at_epoch(
     device: &str,
     key: Option<PublicKeyMaterial>,
     authorize_event_id: Option<arkret_sdk::EventId>,
-    signer_evidence_ref: Option<arkret_sdk::SignerEvidenceRef>,
+    data_signer_evidence_ref: Option<arkret_sdk::SignerEvidenceRef>,
+    control_signer_evidence_ref: Option<arkret_sdk::SignerEvidenceRef>,
     projection_expires_at_ms: Option<u64>,
     verified_projection: Option<VerifiedProjectionVersion>,
 ) -> bool {
@@ -416,7 +472,8 @@ fn store_entry_at_epoch(
             {
                 entry.key = None;
                 entry.authorize_event_id = None;
-                entry.signer_evidence_ref = None;
+                entry.data_signer_evidence_ref = None;
+                entry.control_signer_evidence_ref = None;
                 entry.expires_at_ms = now;
             }
         }
@@ -432,7 +489,8 @@ fn store_entry_at_epoch(
             if incoming.projection_digest != retained.projection_digest {
                 previous.key = None;
                 previous.authorize_event_id = None;
-                previous.signer_evidence_ref = None;
+                previous.data_signer_evidence_ref = None;
+                previous.control_signer_evidence_ref = None;
                 previous.expires_at_ms = now.saturating_add(NEGATIVE_TTL_MS);
                 return false;
             }
@@ -451,7 +509,8 @@ fn store_entry_at_epoch(
         CacheEntry {
             key,
             authorize_event_id,
-            signer_evidence_ref,
+            data_signer_evidence_ref,
+            control_signer_evidence_ref,
             verified_projection,
             expires_at_ms,
             last_accessed_ms: now,
@@ -488,7 +547,7 @@ pub fn public_key_from_directory_value(value: &str) -> Option<PublicKeyMaterial>
 struct AcceptedDeviceEvidence {
     key: PublicKeyMaterial,
     authorize_event_id: arkret_sdk::EventId,
-    signer_evidence_ref: arkret_sdk::SignerEvidenceRef,
+    data_signer_evidence_ref: arkret_sdk::SignerEvidenceRef,
     projection_expires_at_ms: u64,
     version: VerifiedProjectionVersion,
 }
@@ -518,7 +577,7 @@ fn accepted_device_evidence(
         // The reference points at the original immutable evidence object and is
         // passed through byte-exactly; it is never recomputed from the values
         // the client kept.
-        signer_evidence_ref: record.signer_evidence_ref.clone(),
+        data_signer_evidence_ref: record.signer_evidence_ref.clone(),
         projection_expires_at_ms: u64::try_from(projection.expires_at.timestamp_millis()).ok()?,
         version: projection_version(account_id, &device, projection)?,
     })
@@ -542,7 +601,8 @@ pub(crate) fn cache_accepted_device_evidence_from_outcome(
             .map(|resolved| resolved.authorize_event_id.clone()),
         resolved
             .as_ref()
-            .map(|resolved| resolved.signer_evidence_ref.clone()),
+            .map(|resolved| resolved.data_signer_evidence_ref.clone()),
+        None,
         resolved
             .as_ref()
             .map(|resolved| resolved.projection_expires_at_ms),
@@ -722,7 +782,8 @@ pub fn invalidate_actor(actor: &str) -> usize {
         {
             entry.key = None;
             entry.authorize_event_id = None;
-            entry.signer_evidence_ref = None;
+            entry.data_signer_evidence_ref = None;
+            entry.control_signer_evidence_ref = None;
             entry.expires_at_ms = crate::clock::now_unix_ms();
             invalidated += 1;
         }
@@ -745,6 +806,7 @@ fn store_entry(
         device,
         key,
         authorize_event_id,
+        None,
         None,
         expires_at,
         version,
@@ -833,7 +895,8 @@ mod verification_method_controller_tests {
         }
     }
 
-    const FIXTURE_SIGNER_EVIDENCE_REF: &str = "ak:signer_evidence:sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const FIXTURE_DATA_SIGNER_EVIDENCE_REF: &str = "ak:signer_evidence:sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+    const FIXTURE_CONTROL_SIGNER_EVIDENCE_REF: &str = "ak:signer_evidence:sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 
     fn self_outcome_fixture(
         account: &arkret_sdk::AccountId,
@@ -843,7 +906,7 @@ mod verification_method_controller_tests {
         serde_json::from_value(serde_json::json!({
             "device_keys": [{"account_id": account, "device_keys": {
                 device.as_str(): {
-                    "signer_evidence_ref": FIXTURE_SIGNER_EVIDENCE_REF,
+                    "signer_evidence_ref": FIXTURE_DATA_SIGNER_EVIDENCE_REF,
                     "algorithms": {}, "trust_algorithms": [],
                     "device_projection": projection
                 }
@@ -853,6 +916,25 @@ mod verification_method_controller_tests {
                 "current_device_generation_ref": 7,
                 "device_generation_status": "active"
             }}]
+        }))
+        .unwrap()
+    }
+
+    fn account_viewer_fixture(
+        account: &arkret_sdk::AccountId,
+        device: &arkret_sdk::DeviceId,
+        authorization_event_id: &arkret_sdk::EventId,
+    ) -> arkret_sdk::AccountView {
+        serde_json::from_value(serde_json::json!({
+            "principal_id": account.principal_id,
+            "state": "active",
+            "devices": [{
+                "device_id": device,
+                "status": "active",
+                "verification_state": "verified",
+                "authorized_event_ref": authorization_event_id,
+                "signer_resolution_evidence_ref": FIXTURE_CONTROL_SIGNER_EVIDENCE_REF
+            }]
         }))
         .unwrap()
     }
@@ -876,7 +958,37 @@ mod verification_method_controller_tests {
             arkret_sdk::ed25519_pubkey_to_did_key_multibase(signing_key.verifying_key().as_bytes());
         let projection = self_projection_fixture(now, &format!("did:key:{public_key}"));
         let mut outcome = self_outcome_fixture(&account, &device, &projection);
+        let viewer =
+            account_viewer_fixture(&account, &device, &projection.device_authorize_event_id);
         assert!(super::accepted_device_evidence(&outcome, &account, device.as_str()).is_some());
+        super::reset_session_cache();
+        let directory_epoch = super::cache_epoch();
+        assert!(
+            super::cache_accepted_device_evidence_from_outcome(
+                directory_epoch,
+                &outcome,
+                &account,
+                device.as_str(),
+            )
+            .is_some()
+        );
+        assert!(
+            super::retained_device_authoring_evidence(
+                &account.to_string(),
+                device.as_str(),
+                arkret_sdk::CbsEffectPlane::Data,
+            )
+            .is_some()
+        );
+        assert!(
+            super::retained_device_authoring_evidence(
+                &account.to_string(),
+                device.as_str(),
+                arkret_sdk::CbsEffectPlane::Control,
+            )
+            .is_none(),
+            "keys/query Data evidence must not be reused as Control evidence"
+        );
         let generation = garth::AuthoringGeneration {
             authority_model: garth::AuthoringAuthorityModel::AcceptedDevice,
             authority_principal_id: account.principal_id.clone(),
@@ -884,6 +996,7 @@ mod verification_method_controller_tests {
         };
         let persisted = super::persisted_device_authoring_authority_from_outcome(
             &outcome,
+            &viewer,
             &account,
             &device,
             generation.clone(),
@@ -892,8 +1005,12 @@ mod verification_method_controller_tests {
         // The reference is the original immutable evidence object, carried
         // through byte-exactly rather than recomputed from the projection.
         assert_eq!(
-            persisted.signer_evidence_ref,
-            arkret_sdk::SignerEvidenceRef::new(FIXTURE_SIGNER_EVIDENCE_REF).unwrap()
+            persisted.data_signer_evidence_ref,
+            arkret_sdk::SignerEvidenceRef::new(FIXTURE_DATA_SIGNER_EVIDENCE_REF).unwrap()
+        );
+        assert_eq!(
+            persisted.control_signer_evidence_ref,
+            arkret_sdk::SignerEvidenceRef::new(FIXTURE_CONTROL_SIGNER_EVIDENCE_REF).unwrap()
         );
         assert_eq!(persisted.device_projection, projection);
         super::reset_session_cache();
@@ -914,9 +1031,22 @@ mod verification_method_controller_tests {
             Some(generation)
         );
         assert_eq!(
-            super::retained_device_authoring_evidence(&account.to_string(), device.as_str())
-                .map(|(_, evidence)| evidence),
-            Some(persisted.signer_evidence_ref.clone())
+            super::retained_device_authoring_evidence(
+                &account.to_string(),
+                device.as_str(),
+                arkret_sdk::CbsEffectPlane::Data,
+            )
+            .map(|(_, evidence)| evidence),
+            Some(persisted.data_signer_evidence_ref.clone())
+        );
+        assert_eq!(
+            super::retained_device_authoring_evidence(
+                &account.to_string(),
+                device.as_str(),
+                arkret_sdk::CbsEffectPlane::Control,
+            )
+            .map(|(_, evidence)| evidence),
+            Some(persisted.control_signer_evidence_ref.clone())
         );
         // A restore is bound to the account and device it was persisted under.
         let other_account = arkret_sdk::AccountId::new(
@@ -961,6 +1091,7 @@ mod verification_method_controller_tests {
         assert!(
             super::persisted_device_authoring_authority_from_outcome(
                 &closed,
+                &viewer,
                 &account,
                 &device,
                 garth::AuthoringGeneration {
@@ -982,6 +1113,99 @@ mod verification_method_controller_tests {
         crate::identity::authoring_generation::reset_verified_authoring_generations();
     }
 
+    #[test]
+    fn control_authoring_root_requires_the_exact_verified_viewer_device() {
+        let (account, device) = projection_fixture_account();
+        let now = arkret_sdk::canonical::normalize_timestamp_canonical(chrono::Utc::now());
+        let projection = self_projection_fixture(
+            now,
+            "did:key:z6MkhHrTbtosB4xyyJM217fS4ry35F7JhZ5oA9uVHErBJDL5",
+        );
+        let outcome = self_outcome_fixture(&account, &device, &projection);
+        let generation = garth::AuthoringGeneration {
+            authority_model: garth::AuthoringAuthorityModel::AcceptedDevice,
+            authority_principal_id: account.principal_id.clone(),
+            generation_ref: "7".to_owned(),
+        };
+        let viewer =
+            account_viewer_fixture(&account, &device, &projection.device_authorize_event_id);
+
+        let mut missing_control = viewer.clone();
+        missing_control.devices[0].signer_resolution_evidence_ref = None;
+        assert!(
+            super::persisted_device_authoring_authority_from_outcome(
+                &outcome,
+                &missing_control,
+                &account,
+                &device,
+                generation.clone(),
+            )
+            .is_none()
+        );
+
+        let mut wrong_authorization = viewer.clone();
+        wrong_authorization.devices[0].authorized_event_ref = Some(
+            arkret_sdk::EventId::from_digest(arkret_sdk::DigestSuite::Sha256, [99; 32]),
+        );
+        assert!(
+            super::persisted_device_authoring_authority_from_outcome(
+                &outcome,
+                &wrong_authorization,
+                &account,
+                &device,
+                generation.clone(),
+            )
+            .is_none()
+        );
+
+        let mut duplicate = viewer.clone();
+        duplicate.devices.push(duplicate.devices[0].clone());
+        assert!(
+            super::persisted_device_authoring_authority_from_outcome(
+                &outcome,
+                &duplicate,
+                &account,
+                &device,
+                generation.clone(),
+            )
+            .is_none()
+        );
+
+        let mut wrong_principal = viewer;
+        wrong_principal.principal_id =
+            arkret_sdk::DidCoreId::new("ak:did_core:web:other-principal.example").unwrap();
+        assert!(
+            super::persisted_device_authoring_authority_from_outcome(
+                &outcome,
+                &wrong_principal,
+                &account,
+                &device,
+                generation,
+            )
+            .is_none()
+        );
+
+        let mut reused_data_root =
+            account_viewer_fixture(&account, &device, &projection.device_authorize_event_id);
+        reused_data_root.devices[0].signer_resolution_evidence_ref =
+            Some(arkret_sdk::SignerEvidenceRef::new(FIXTURE_DATA_SIGNER_EVIDENCE_REF).unwrap());
+        assert!(
+            super::persisted_device_authoring_authority_from_outcome(
+                &outcome,
+                &reused_data_root,
+                &account,
+                &device,
+                garth::AuthoringGeneration {
+                    authority_model: garth::AuthoringAuthorityModel::AcceptedDevice,
+                    authority_principal_id: account.principal_id.clone(),
+                    generation_ref: "7".to_owned(),
+                },
+            )
+            .is_none(),
+            "the Data root cannot be reused as the Control root"
+        );
+    }
+
     /// The persisted self authority is a Station-verified projection, not
     /// portable evidence: the client never received the origin proof, so it
     /// MUST NOT be presentable where a complete signed evidence object is
@@ -997,8 +1221,11 @@ mod verification_method_controller_tests {
             "did:key:z6MkhHrTbtosB4xyyJM217fS4ry35F7JhZ5oA9uVHErBJDL5",
         );
         let outcome = self_outcome_fixture(&account, &device, &projection);
+        let viewer =
+            account_viewer_fixture(&account, &device, &projection.device_authorize_event_id);
         let persisted = super::persisted_device_authoring_authority_from_outcome(
             &outcome,
+            &viewer,
             &account,
             &device,
             garth::AuthoringGeneration {
@@ -1023,7 +1250,7 @@ mod verification_method_controller_tests {
                 "account_id": persisted.account_id,
                 "device_id": persisted.device_id,
                 "device_projection_attestation": persisted.device_projection,
-                "signer_evidence_ref": persisted.signer_evidence_ref,
+                "signer_evidence_ref": persisted.data_signer_evidence_ref,
             }))
             .is_err()
         );
@@ -1033,7 +1260,7 @@ mod verification_method_controller_tests {
                 "account_id": persisted.account_id,
                 "device_id": persisted.device_id,
                 "device_projection_attestation": {"attestation": persisted.device_projection},
-                "signer_evidence_ref": persisted.signer_evidence_ref,
+                "signer_evidence_ref": persisted.data_signer_evidence_ref,
             }))
             .is_err()
         );
@@ -1051,8 +1278,11 @@ mod verification_method_controller_tests {
             "did:key:z6MkhHrTbtosB4xyyJM217fS4ry35F7JhZ5oA9uVHErBJDL5",
         )
         .unwrap();
-        let evidence = arkret_sdk::SignerEvidenceRef::new(
+        let data_evidence = arkret_sdk::SignerEvidenceRef::new(
             "ak:signer_evidence:sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        ).unwrap();
+        let control_evidence = arkret_sdk::SignerEvidenceRef::new(
+            "ak:signer_evidence:sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
         ).unwrap();
         let now = chrono::Utc::now();
         let version = super::VerifiedProjectionVersion {
@@ -1069,7 +1299,8 @@ mod verification_method_controller_tests {
                 arkret_sdk::DigestSuite::Sha256,
                 [81; 32]
             )),
-            Some(evidence.clone()),
+            Some(data_evidence.clone()),
+            Some(control_evidence.clone()),
             Some(crate::clock::now_unix_ms() + 60_000),
             Some(version.clone()),
         ));
@@ -1085,8 +1316,20 @@ mod verification_method_controller_tests {
             super::CacheLookup::Miss
         ));
         assert_eq!(
-            super::retained_device_authoring_evidence(&account, device),
-            Some((key, evidence))
+            super::retained_device_authoring_evidence(
+                &account,
+                device,
+                arkret_sdk::CbsEffectPlane::Data,
+            ),
+            Some((key.clone(), data_evidence))
+        );
+        assert_eq!(
+            super::retained_device_authoring_evidence(
+                &account,
+                device,
+                arkret_sdk::CbsEffectPlane::Control,
+            ),
+            Some((key, control_evidence))
         );
         let revoked = super::VerifiedProjectionVersion {
             attested_at: now + chrono::Duration::seconds(1),
@@ -1101,10 +1344,26 @@ mod verification_method_controller_tests {
             None,
             None,
             None,
+            None,
             Some(revoked),
         ));
         assert!(super::known_device_revoked(&account, device));
-        assert!(super::retained_device_authoring_evidence(&account, device).is_none());
+        assert!(
+            super::retained_device_authoring_evidence(
+                &account,
+                device,
+                arkret_sdk::CbsEffectPlane::Data,
+            )
+            .is_none()
+        );
+        assert!(
+            super::retained_device_authoring_evidence(
+                &account,
+                device,
+                arkret_sdk::CbsEffectPlane::Control,
+            )
+            .is_none()
+        );
     }
 
     #[test]

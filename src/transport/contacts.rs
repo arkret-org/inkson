@@ -697,7 +697,12 @@ pub(crate) fn sign_prepared_contact_event(
         );
     }
     let digest_suite = event.digest_suite();
-    let proof_context = crate::event_signer::cached_active_event_proof_context(digest_suite)?;
+    let plane = crate::event_signer::event_signer_evidence_plane(
+        &event.kind,
+        arkret_schema::classify_event_execution(event.event())?,
+    )?;
+    let proof_context =
+        crate::event_signer::cached_active_event_proof_context(digest_suite, plane)?;
     signer.sign_sdk_event_with_context(&mut event, proof_context)?;
     let signed_digest =
         arkret_sdk::Hash::new(event.event_digest_with_digest_suite(event.digest_suite())?)?;
