@@ -46,7 +46,7 @@ pub(super) fn RecoveryReminderEffects(state: RecoveryReminderEffectState) -> Ele
         // dashboard banner remains as the steady-state reminder. The
         // in-memory `recovery_auto_prompt_fired` guard makes "once" robust within
         // a session. See account_health::should_auto_prompt_recovery_setup and
-        // docs/user-strands-key-lifecycle.md §3/S1.
+        // docs/user-flows-key-lifecycle.md §3/S1.
         let mut recovery_key_setup_prompt = recovery_key_setup_prompt;
         let mut recovery_auto_prompt_fired = recovery_auto_prompt_fired;
         use_effect(move || {

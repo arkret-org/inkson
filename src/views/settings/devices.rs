@@ -13,7 +13,7 @@
 //!   a [`crate::transport::TransportClient::revoke_device`], then rotates the account MLS history
 //!   secret and rewraps local `mls_history` backups.
 //!
-//! The pair strand on `/settings/devices/pair` carries:
+//! The pair flow on `/settings/devices/pair` carries:
 //! - New-device request generation belongs exclusively to onboarding, before login. This
 //!   authenticated settings page only approves another device.
 //! - `accept-pairing-input` / `accept-pairing-button` / `accept-pairing-status` — existing-device
@@ -268,7 +268,7 @@ pub fn SettingsDevicesPanel(
             }
 
             if pair_mode {
-                {render_pair_strand(
+                {render_pair_flow(
                     base_url,
                     token,
                     auto_loaded,
@@ -713,7 +713,7 @@ fn render_revoke_modal(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn render_pair_strand(
+fn render_pair_flow(
     base_url: Signal<String>,
     token: Signal<String>,
     mut auto_loaded: Signal<bool>,

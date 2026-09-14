@@ -2,7 +2,7 @@
 //!
 //! Centralises the protocol-level details (schema ids, event kinds, raw
 //! event log, server profile id, conformance status, protocol version)
-//! that used to leak into the main strand. End-user views render friendly
+//! that used to leak into the main flow. End-user views render friendly
 //! product language; admins / operators / developers consult this panel
 //! when they need to see the canonical identifiers.
 //!

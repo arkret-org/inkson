@@ -673,7 +673,7 @@ pub fn DirectoryPanel(
             // (never distinguish not_found vs unauthorized).
             // TODO: a richer share/open surface (per-object "Share"
             // context-menu actions in the Board and Realm pages, an
-            // invite-token issuance strand, and a confirm-before-navigate
+            // invite-token issuance flow, and a confirm-before-navigate
             // preview card) lives here in a follow-up.
             div { class: "event", "data-testid": "open-shared-link",
                 div { class: "event-head",

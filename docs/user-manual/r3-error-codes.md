@@ -48,11 +48,11 @@ hijacked.
 
 **What to do:**
 
-1. Start the pairing strand again from **Settings → Agents → Add new
+1. Start the pairing flow again from **Settings → Agents → Add new
    agent**.
 2. This time, complete each step without leaving the screen for long.
 3. If you're consistently hitting the timeout, check your device
-   clock. The pairing strand needs your device clock to be within ~5
+   clock. The pairing flow needs your device clock to be within ~5
    minutes of real time; if your clock is wrong, every pairing will
    fail. On macOS: **System Settings → General → Date & Time → Set
    automatically**. On Windows: **Settings → Time & language → Date &

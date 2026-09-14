@@ -69,7 +69,7 @@ pub fn is_placeholder_push_key(key: &str) -> bool {
 
 /// Returns the request when its push key is real material, otherwise an error
 /// describing why the registration must NOT be sent. Callers in the login /
-/// settings strand should funnel through this helper before POSTing a register
+/// settings flow should funnel through this helper before POSTing a register
 /// request to a non-loopback push gateway.
 pub fn ensure_production_register_request(
     request: &ChimePushRegisterDeviceRequest,

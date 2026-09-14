@@ -27,7 +27,7 @@ pub struct EncryptedReaction {
 /// emoji as an MLS application message, both under the current epoch.
 ///
 /// Unlike message send, this does NOT advance the MLS epoch (no commit) —
-/// `encryption-and-audit.md` §2.9 reuses the application-key strand, so
+/// `encryption-and-audit.md` §2.9 reuses the application-key flow, so
 /// reactions ride the current epoch and the server deduplicates on the
 /// routing tag. The post-encrypt snapshot IS persisted immediately so the
 /// sender's application ratchet never reuses a generation; because the epoch

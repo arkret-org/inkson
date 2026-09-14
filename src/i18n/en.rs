@@ -1389,7 +1389,7 @@ pub fn english_translations() -> TranslationDict {
     dict.set("verify_device.generate_qr", "Generate QR Data");
     dict.set("verify_device.start_sas", "Start emoji verification");
     dict.set("verify_device.short_auth_string", "Comparison code");
-    // SAS strand — plain-language rewrite: no SAS / X25519 jargon in
+    // SAS flow — plain-language rewrite: no SAS / X25519 jargon in
     // user-facing copy. This panel has no "technical details" affordance,
     // so the jargon is dropped rather than tucked behind one.
     dict.set("verify_device.key_exchange_title", "Key exchange");
@@ -1702,7 +1702,7 @@ pub fn english_translations() -> TranslationDict {
     );
     dict.set("content.attachment.download", "Download");
 
-    // T7.1 — friendly product-language terms surfaced in the main strand.
+    // T7.1 — friendly product-language terms surfaced in the main flow.
     // Raw protocol identifiers (did:webvh:, ak.*, schema ids, profile ids)
     // are only shown inside Developer Tools / Diagnostics surfaces.
     dict.set(
@@ -1753,7 +1753,7 @@ pub fn english_translations() -> TranslationDict {
     dict.set("profile_gate.friendly.unknown", "Client feature");
 
     // Developer Tools / Diagnostics entry points used to expose the
-    // protocol-level details that used to leak into the main strand.
+    // protocol-level details that used to leak into the main flow.
     dict.set("developer.title", "Developer Tools");
     dict.set("developer.subtitle", "Protocol diagnostics and audit");
     dict.set("developer.section.events", "Raw event log");
@@ -2188,7 +2188,7 @@ fn add_r3_error_keys(dict: &mut TranslationDict) {
     // Agent FSM + pairing.
     dict.set(
         "error.agent.pairing_request_expired",
-        "Pairing request expired — start a fresh pairing strand and re-scan.",
+        "Pairing request expired — start a fresh pairing flow and re-scan.",
     );
     dict.set(
         "error.agent.proof_invalid",

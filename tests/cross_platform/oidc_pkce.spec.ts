@@ -1,4 +1,4 @@
-// cross-platform scenario: OIDC PKCE strand start.
+// cross-platform scenario: OIDC PKCE flow start.
 //
 // Mirrors `open_oidc_authorize_url` (round 24) — the wasm path opens
 // a `https://` authorize URL via `window.open` (web) or
@@ -35,7 +35,7 @@ const AUTHORIZE_ENDPOINT = "https://example.test/authorize";
 const CLIENT_ID = "inkson-cross-platform-2026";
 const REDIRECT_URI = "https://inkson.example/oidc/callback";
 
-test.describe("OIDC PKCE strand start", () => {
+test.describe("OIDC PKCE flow start", () => {
   test.beforeEach(async ({ page }) => {
     await gotoOrSkip(page, "/");
     await waitForBundleReady(page);

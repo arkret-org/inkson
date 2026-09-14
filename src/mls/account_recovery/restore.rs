@@ -816,7 +816,7 @@ fn restore_private_plaintext_sidecar(
 
 /// Auto-restore MLS history for a fresh device using the recovery passphrase.
 ///
-/// Strand:
+/// Flow:
 ///   1. Fetch the server's `mls_account_secret` backup when present, decrypt it with `passphrase`,
 ///      and replace the local account key with it. This also repairs stale local secrets left by
 ///      incomplete bootstraps.

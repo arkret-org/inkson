@@ -836,7 +836,7 @@ impl AgentAdminController {
             let controller_realm_for_checkpoint = controller_realm_id.clone();
             let controller_evidence_for_checkpoint = controller_recovery_evidence.clone();
             if let Err(error) = with_authed_api(&base, api_token.clone(), move |api| async move {
-                crate::recovery_strand::verify_recovery_authority_evidence(
+                crate::recovery_flow::verify_recovery_authority_evidence(
                     &api,
                     &controller_evidence_for_checkpoint,
                 )

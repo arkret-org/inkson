@@ -17,7 +17,7 @@
 //! Contact request keeps its own `pending_incoming` state and deliberately
 //! produces no entry here.
 //!
-//! Until the consent-grant authoring strand is connected the panel stays
+//! Until the consent-grant authoring flow is connected the panel stays
 //! read-only and does not invent an approval action.
 
 use arkret_models_collaboration::governance::holder_quarantine::{

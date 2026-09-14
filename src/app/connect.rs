@@ -676,10 +676,10 @@ pub(super) fn connect(
                             description.service_kind, description.protocol_version
                         ));
                         // Cache the advertised trust_domain so
-                        // downstream signing strands and S2S transcripts can pull a canonical
+                        // downstream signing flows and S2S transcripts can pull a canonical
                         // value off local state without an extra round
                         // trip. Cleared when describe fails so a stale
-                        // domain can't leak into the next strand.
+                        // domain can't leak into the next flow.
                         {
                             let mut store = state_store.write();
                             let mut snapshot = store.load();

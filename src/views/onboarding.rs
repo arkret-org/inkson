@@ -212,7 +212,7 @@ pub fn OnboardingPanel(
             let complete = account_summary_complete(!token().trim().is_empty(), &did);
             rsx! {
                 div { class: "timeline onboarding-flow", "data-testid": "onboarding-panel",
-                    div { class: "event onboarding-card onboarding-finished", "data-testid": "account-strand",
+                    div { class: "event onboarding-card onboarding-finished", "data-testid": "account-flow",
                         if !complete {
                             div { class: "onboarding-finish-mark", "aria-hidden": "true", "1" }
                             h2 { "Set up your identity" }

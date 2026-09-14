@@ -80,7 +80,7 @@ fn load_or_create_push_token_wrap_seed(
 /// token). After this call, every ciphertext stored under
 /// [`PUSH_TOKEN_ENTRY_PREFIX`]`*` becomes undecryptable, so callers
 /// should follow up with [`PushTokenBinding::store_token`] or
-/// [`PushTokenBinding::rotate`] before the next register-device strand.
+/// [`PushTokenBinding::rotate`] before the next register-device flow.
 pub fn rotate_push_token_wrap_seed(
     store: &dyn SecureKeyStore,
 ) -> Result<[u8; 32], SecureKeyStoreError> {

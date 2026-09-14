@@ -51,7 +51,7 @@ use crate::push::{
 };
 use crate::state::PersistedSessionGrant;
 
-/// Errors the orchestrator surfaces back to the UI / login strand.
+/// Errors the orchestrator surfaces back to the UI / login flow.
 #[derive(Debug, thiserror::Error)]
 pub enum PushRegistrationError {
     /// No `PushTokenProvider` installed, or the installed one declined

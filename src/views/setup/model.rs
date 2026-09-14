@@ -3,7 +3,7 @@
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum SetupSection {
     Overview,
-    /// Realm bootstrap strand; the form creates a Realm and emits
+    /// Realm bootstrap flow; the form creates a Realm and emits
     /// `ak.realm.create`.
     Realms,
     /// `ak.space.create` form: pick a Realm, pick a kind,

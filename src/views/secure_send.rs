@@ -3,7 +3,7 @@
 //! This module owns the MLS core + operation construction + commit/message
 //! submission orchestration used by the Chat discussion view to send an
 //! encrypted `ak.message.create`. It was extracted from the verified Chat
-//! "Send Secure" strand so encryption, commit and persist-on-accept stay in one
+//! "Send Secure" flow so encryption, commit and persist-on-accept stay in one
 //! path.
 //!
 //! Boundary: this module performs everything that MUST be identical across the

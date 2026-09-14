@@ -1,7 +1,7 @@
 //! 6.1 / 6.3 — recovery client orchestration.
 //!
 //! Pure request builders (unit-tested) + thin async wrappers over
-//! [`crate::transport::TransportClient`] that drive the REC-1 recovery strand:
+//! [`crate::transport::TransportClient`] that drive the REC-1 recovery flow:
 //!
 //! - 6.1: fetch + parse the active recovery policy.
 //! - 6.3: open a recovery session and sign + submit a `recovery_unlock` proof.

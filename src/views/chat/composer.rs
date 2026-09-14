@@ -1056,7 +1056,7 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                     error: None,
                                     mentions: mentions.clone(),
                                     // Local-only sends start plaintext;
-                                    // the Send Secure strand may upgrade
+                                    // the Send Secure flow may upgrade
                                     // them via a separate `messages.write()`
                                     // patch after `encrypt_payload`.
                                     crypto_state: MessageCryptoState::Plaintext,

@@ -17,7 +17,7 @@ pub mod account_data;
 /// chain (device authorization → MLS unlock → MLS backup → recovery-missing →
 /// recommended encryption floor → recovery reminder). Replaces the scattered
 /// per-prompt suppression conditions that used to live inline in `app.rs`.
-/// See `docs/user-strands-key-lifecycle.md` §3.
+/// See `docs/user-flows-key-lifecycle.md` §3.
 pub mod account_health;
 pub mod api_error;
 pub mod app;
@@ -120,7 +120,7 @@ pub mod realm_events_engine;
 pub(crate) mod realm_helpers;
 pub(crate) mod realm_tree;
 pub mod recovery_crypto;
-pub mod recovery_strand;
+pub mod recovery_flow;
 pub mod routes;
 pub mod rtc_transport;
 pub(crate) mod runtime;

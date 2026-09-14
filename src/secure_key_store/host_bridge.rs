@@ -237,7 +237,7 @@ impl SecureKeyStore for HostBridgeSecureKeyStore {
 
     fn backend_info(&self) -> SecureKeyStoreBackendInfo {
         SecureKeyStoreBackendInfo {
-            // Preserved verbatim: strands from the bridge label so diagnostic UI
+            // Preserved verbatim: flows from the bridge label so diagnostic UI
             // can distinguish Android Keystore vs iOS Keychain.
             name: self.bridge.backend_label(),
             // Android Keystore / iOS Keychain are hardware-backed, non-exportable.

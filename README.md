@@ -198,7 +198,7 @@ cd ../soland
 cargo run -- --bind local.host:443
 ```
 
-The Connect action probes server discovery first. Authenticated sync, directory, device, and push strands run only after a real session is available.
+The Connect action probes server discovery first. Authenticated sync, directory, device, and push flows run only after a real session is available.
 
 ## Product Shell
 

@@ -110,14 +110,14 @@ pub(crate) fn upload_recovery_key_account_backup(
             if evidence.principal_did != actor_did || evidence.device_id.as_str() != device {
                 anyhow::bail!("recovery authority evidence does not match the active session");
             }
-            crate::recovery_strand::verify_recovery_authority_evidence(&api, &evidence).await?;
-            crate::recovery_strand::refresh_principal_bootstrap_frontier(
+            crate::recovery_flow::verify_recovery_authority_evidence(&api, &evidence).await?;
+            crate::recovery_flow::refresh_principal_bootstrap_frontier(
                 &api,
                 &governance_state_store,
                 &evidence.bootstrap_seal,
             )
             .await?;
-            crate::recovery_strand::ensure_recovery_policy(
+            crate::recovery_flow::ensure_recovery_policy(
                 &api,
                 &evidence.principal_did,
                 &authority,

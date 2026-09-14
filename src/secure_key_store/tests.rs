@@ -523,7 +523,7 @@ fn host_bridge_store_namespaces_by_service_name() {
     assert_eq!(store_b.get_secret("k").unwrap().as_deref(), Some("v-b"));
 }
 
-/// `backend_name` strands from the bridge's `backend_label` so
+/// `backend_name` flows from the bridge's `backend_label` so
 /// diagnostic UI can distinguish
 /// Android Keystore vs iOS Keychain.
 #[test]

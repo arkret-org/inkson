@@ -126,7 +126,7 @@ test("setup, onboarding, and Board entry works", async ({ page }) => {
   await page.goto("/onboarding", { waitUntil: "domcontentloaded" });
   await expect(page.getByTestId("onboarding-panel")).toBeVisible();
   await dismissRecoveryMissingModal(page);
-  await expect(page.getByTestId("account-strand")).toContainText(
+  await expect(page.getByTestId("account-flow")).toContainText(
     "Your account is linked to ak:did_core:web:alice.example",
   );
 

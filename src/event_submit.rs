@@ -2001,12 +2001,12 @@ impl EventSubmitter {
             .get("/_arkret/root/identity/recovery-policy")
             .await
             .map_err(anyhow::Error::from)?;
-        match crate::recovery_strand::first_backup_gate_status(
+        match crate::recovery_flow::first_backup_gate_status(
             accepted_principal_control_seal,
             &policy,
         ) {
-            crate::recovery_strand::FirstBackupGateStatus::Satisfied => Ok(()),
-            crate::recovery_strand::FirstBackupGateStatus::Blocked(reason) => {
+            crate::recovery_flow::FirstBackupGateStatus::Satisfied => Ok(()),
+            crate::recovery_flow::FirstBackupGateStatus::Blocked(reason) => {
                 anyhow::bail!("recovery_material_pending blocks E2EE Realm create/join: {reason:?}")
             }
         }

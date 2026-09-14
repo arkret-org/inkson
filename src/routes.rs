@@ -67,7 +67,7 @@ pub enum Route {
     SettingsDevices,
 
     /// G3.Y1 — QR-driven pairing for a sibling device. Live on its
-    /// own URL so the e2e harness can deep-link into the pair strand
+    /// own URL so the e2e harness can deep-link into the pair flow
     /// without scrolling through the device list.
     #[route("/settings/devices/pair", RoutePage)]
     SettingsDevicesPair,
@@ -103,7 +103,7 @@ pub enum Route {
 
     /// T7.1 — Developer Tools / Diagnostics aggregator. Hosts the
     /// protocol-level details (schema ids, event kinds, raw event log,
-    /// profile id, conformance) that used to leak into the main strand.
+    /// profile id, conformance) that used to leak into the main flow.
     #[route("/developer", RoutePage)]
     Developer,
 

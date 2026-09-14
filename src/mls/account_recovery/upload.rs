@@ -289,7 +289,7 @@ async fn fetch_active_series_tail(
 /// Wrap the local account MLS secret behind a freshly-derived recovery KEK and
 /// upload it to soland's `secret_storage` endpoint.
 ///
-/// This is the upload half of the backup-prompt strand (the inverse of
+/// This is the upload half of the backup-prompt flow (the inverse of
 /// [`crate::mls::account_recovery::auto_restore_mls_history_with_passphrase`]).
 /// It re-uses any prior account-secret backup's `backup_id`/series so the upload
 /// stays in the same rotation series. Returns the `backup_id` it wrote.
@@ -437,7 +437,7 @@ pub async fn upload_mls_account_secret_backup_with_recovery_public_key(
     // SEC-05: stamp the actor's currently-accepted recovery policy into the
     // backup's `recovery_policy_ref` so a fresh-device restore can verify it
     // against the live policy and reject an old-policy / non-frontier replay.
-    let active_policy = crate::recovery_strand::fetch_active_recovery_policy(api)
+    let active_policy = crate::recovery_flow::fetch_active_recovery_policy(api)
         .await
         .map_err(|err| anyhow!("fetch active recovery policy for backup binding: {err}"))?;
     let active_policy = active_policy
@@ -534,7 +534,7 @@ pub(crate) async fn upload_local_authoritative_mls_history_records_with_recovery
         return Ok(Vec::new());
     }
 
-    let active_policy = crate::recovery_strand::fetch_active_recovery_policy(api)
+    let active_policy = crate::recovery_flow::fetch_active_recovery_policy(api)
         .await
         .map_err(|error| anyhow!("fetch active recovery policy for history backup: {error}"))?
         .ok_or_else(|| anyhow!("active recovery policy is required for history backup"))?;
@@ -613,7 +613,7 @@ pub(crate) async fn upload_local_authoritative_mls_history_records_with_recovery
 /// the ACCOUNT SECRET and upload it to soland's `secret_storage` endpoint.
 ///
 /// The KEK source is the account secret (already recoverable via the passphrase
-/// through the X3 `mls_account_secret` backup), so the restore strand decrypts the
+/// through the X3 `mls_account_secret` backup), so the restore flow decrypts the
 /// sidecar with no second passphrase prompt. Reuses any prior sidecar backup's
 /// `backup_id`/series so the upload stays in the same rotation series
 /// (`series_seq++` whenever the sidecar changes). Returns the `backup_id` it

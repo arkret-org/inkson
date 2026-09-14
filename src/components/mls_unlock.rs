@@ -25,7 +25,7 @@ where
     }
 }
 
-/// Account-MLS-secret auto-unlock prompt (step 3 of the recovery strand).
+/// Account-MLS-secret auto-unlock prompt (step 3 of the recovery flow).
 ///
 /// Mounted once near the app shell and rendered ONLY when `needs_mls_unlock`
 /// is `true` — which the boot-time detection in `App` sets when this device
@@ -131,7 +131,7 @@ pub fn MlsUnlockPrompt(
                         )
                         .await?;
                     let active_policy =
-                        crate::recovery_strand::fetch_active_recovery_policy(&api).await?;
+                        crate::recovery_flow::fetch_active_recovery_policy(&api).await?;
                     Ok::<_, anyhow::Error>((payload, active_policy))
                 }))
                 .await;

@@ -8,7 +8,7 @@
 //!
 //! The happy path is `encrypt_state` -> write through `LocalStateStore` -> read
 //! back -> [`restore_envelope`]. That is the same path the device rehydrate
-//! strand drives.
+//! flow drives.
 
 pub use garth::mls::local_checkpoint::{
     AEAD_VERSION_CHACHA20_POLY1305, EnvelopeError, MLS_ENVELOPE_MAGIC, MlsLocalCheckpointEnvelope,

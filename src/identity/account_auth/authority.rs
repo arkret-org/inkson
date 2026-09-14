@@ -26,11 +26,11 @@ pub fn clear_authority_resolver_cache() {
 }
 
 /// best-effort deep link to the issuer/coauth handle
-/// issuance strand (`/handles/me`). inkson does NOT manage handle lifecycle
+/// issuance flow (`/handles/me`). inkson does NOT manage handle lifecycle
 /// (per spec §3.2.3 / §3.4): `ak.profile.update` /
 /// `ak.member.identity.update` MUST NOT set or override handles. Instead
 /// the settings UI surfaces "Handle managed by your organization" with a
-/// link out to the issuer strand, where the org-run issuer signs
+/// link out to the issuer flow, where the org-run issuer signs
 /// `ak.schema.handle_claim.v1` evidence.
 ///
 /// We derive the link from the supplied base URL synchronously

@@ -1218,14 +1218,14 @@ pub struct ClientLocalState {
     pub pending_personal_block_sagas: BTreeSet<String>,
     /// Per spec a77b995 — last `trust_domain` advertised by the
     /// connected Station's `ServiceDescribe` response.
-    /// Threaded through to strands that need to canonicalise into
+    /// Threaded through to flows that need to canonicalise into
     /// transport / signing transcripts.
     /// `None` until the first successful `/server/describe` lands.
     #[serde(default)]
     pub server_trust_domain: Option<String>,
     /// G3.Y0 — per-device DPoP signing key metadata persisted across launches.
     /// Used to mint `DPoP:` proofs for session-grant issuance and private
-    /// refresh strands that both require a key the server can bind to `cnf.jkt`.
+    /// refresh flows that both require a key the server can bind to `cnf.jkt`.
     ///
     /// Production callers store the private seed in `SecureKeyStore`
     /// under `auth.dpop.device_key.v1`; this state record keeps the

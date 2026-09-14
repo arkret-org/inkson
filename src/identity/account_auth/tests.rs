@@ -377,7 +377,7 @@ fn authorize_url_forces_reauthentication() {
     );
 }
 
-/// A new-identity transaction must enter the issuer's registration strand;
+/// A new-identity transaction must enter the issuer's registration flow;
 /// treating it as login loses the original creation intent when the user has
 /// to create an Account Authority account first.
 #[test]

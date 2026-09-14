@@ -44,7 +44,7 @@ pub mod contacts;
 pub mod dashboard;
 /// T7.1 — Developer Tools / Diagnostics aggregator. Hosts the
 /// protocol-level details (raw event log, audit rows, profile / schema
-/// ids, conformance status) that used to leak into the main strand. End
+/// ids, conformance status) that used to leak into the main flow. End
 /// users do not need to read this surface.
 pub mod developer;
 pub mod directory;
@@ -117,7 +117,7 @@ pub enum AppView {
     /// Recovery behind an Advanced fold (claude-design `desktop/recovery.html`,
     /// crypto-media/device-lifecycle.md §10-§13 — secret storage / key backup / recovery)
     Recovery,
-    /// Onboarding stepper — 4-step strand (DID method / Handle / Device / Recovery).
+    /// Onboarding stepper — 4-step flow (DID method / Handle / Device / Recovery).
     /// Account creation now starts from coauth's OIDC pages; this panel is a signed-in identity
     /// setup surface. (claude-design `desktop/onboarding.html`, identity-did §3 +
     /// identity-handles + device-lifecycle §1-§13)
@@ -130,7 +130,7 @@ pub enum AppView {
     Search,
     /// G3.Y1 — device management surface (list + revoke + QR pair).
     /// Rendered for both `/settings/devices` and `/settings/devices/pair`
-    /// because the pair strand is a single panel mounted on a sub-route.
+    /// because the pair flow is a single panel mounted on a sub-route.
     SettingsDevices,
     /// `/settings/recovery` renders through `AppView::Settings` so the Settings
     /// sidebar remains visible.

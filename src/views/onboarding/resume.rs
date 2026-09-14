@@ -42,7 +42,7 @@ pub(super) async fn recover_bound_principal_device(
         completed.standard_grant_installed = true;
         return Ok((completed, account));
     }
-    let policy = crate::recovery_strand::fetch_active_recovery_policy(&api)
+    let policy = crate::recovery_flow::fetch_active_recovery_policy(&api)
         .await?
         .ok_or_else(|| anyhow::anyhow!("the identity has no active Recovery Key policy"))?;
     let signer =
@@ -91,7 +91,7 @@ pub(super) async fn recover_bound_principal_device(
             && session.requesting_device_id == create.requesting_device_id,
         "recovery session changed its create identity or replacement device public key"
     );
-    let proof = crate::recovery_strand::build_recovery_unlock_proof_from_words(
+    let proof = crate::recovery_flow::build_recovery_unlock_proof_from_words(
         &session,
         &policy,
         recovery_words,
@@ -599,7 +599,7 @@ pub(super) async fn collect_bound_completion_resume_inventory(
             Ok(api) => {
                 observe_resume_material(
                     "active recovery policy",
-                    crate::recovery_strand::fetch_active_recovery_policy(&api).await,
+                    crate::recovery_flow::fetch_active_recovery_policy(&api).await,
                     &mut read_errors,
                 )
                 .0

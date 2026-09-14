@@ -693,7 +693,7 @@ impl LocalStateStore {
 
     /// Snapshot of every persisted MLS envelope. Used by the boot
     /// path to rehydrate every known Realm's group in one pass and by
-    /// device-recovery strands to enumerate the encrypted snapshots that
+    /// device-recovery flows to enumerate the encrypted snapshots that
     /// can be restored for this device.
     pub fn mls_local_checkpoints(
         &self,

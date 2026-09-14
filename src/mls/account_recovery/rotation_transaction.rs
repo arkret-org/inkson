@@ -860,7 +860,7 @@ mod rotation_resume_tests {
     }
 
     /// Same shape as
-    /// `recovery_strand::genesis_policy_uses_explicit_account_station_before_app_connect`:
+    /// `recovery_flow::genesis_policy_uses_explicit_account_station_before_app_connect`:
     /// first enrollment authors the active-series pointer before `describe`
     /// installs the ambient authoring Station, so the builder must take the
     /// Station from the closed `AccountId` it is given and author under that

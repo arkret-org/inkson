@@ -35,7 +35,7 @@ pub const MLS_ACCOUNT_SECRET_SECRET_ID: &str = "inkson_mls_account_secret";
 /// `validation.rs` rejects own-leaf messages before any key lookup), so without
 /// this backup the author loses sight of everything they wrote after switching
 /// browsers. The sidecar JSON is encrypted under a KEK derived from the ACCOUNT
-/// SECRET (not the passphrase directly) so the restore strand — which imports the
+/// SECRET (not the passphrase directly) so the restore flow — which imports the
 /// account secret first — can decrypt it with NO second passphrase prompt. Both
 /// soland's validator and the inkson client validator allowlist this content
 /// type under the `secret_storage` class.
@@ -57,7 +57,7 @@ pub const MLS_PRIVATE_PLAINTEXT_SECRET_ID: &str = "inkson_mls_private_plaintext"
 /// source `decrypt_mls_account_secret_backup` stretches on restore), never from
 /// the account secret itself — wrapping the account secret under a KEK derived
 /// from that same account secret would make the backup self-referential and
-/// undecryptable by the recovery strand. (A former `build_mls_account_secret_backup_body`
+/// undecryptable by the recovery flow. (A former `build_mls_account_secret_backup_body`
 /// helper that derived the KEK from the account secret was removed for this
 /// reason; it was dead code and a latent footgun.)
 pub fn build_mls_account_secret_backup_body_with_kek(
@@ -227,7 +227,7 @@ pub fn build_mls_private_plaintext_backup_successor_body_with_kek(
 /// the serialized sidecar JSON bytes.
 ///
 /// The KEK source is the ACCOUNT SECRET bytes (NOT the recovery passphrase):
-/// the restore strand imports the account secret first, then feeds its bytes here
+/// the restore flow imports the account secret first, then feeds its bytes here
 /// so the sidecar is recovered with no second passphrase prompt.
 /// `open_passphrase_kdf_backup_body` derives the Argon2id root from these bytes +
 /// the stored salt, exactly as the account-secret path does.

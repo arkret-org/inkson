@@ -554,7 +554,7 @@ async fn maybe_backup_or_flag_mls_backup_after_encrypted_write(
         })
     });
     // Server must NOT already hold an `mls_account_secret` backup. (When it
-    // does, the restore/unlock path owns the strand — backup and restore are
+    // does, the restore/unlock path owns the flow — backup and restore are
     // mutually exclusive by this exact check, so we can't double-prompt.)
     let actor_for_probe = actor_id.clone();
     let payload = match with_authed_api(&base_url, token.clone(), |api| async move {
@@ -605,7 +605,7 @@ async fn maybe_backup_or_flag_mls_backup_after_encrypted_write(
             .clone();
         let principal_control_realm_id_for_sidecar = principal_control_realm_id.clone();
         let upload_result = with_authed_api(&base_url, token.clone(), |api| async move {
-            crate::recovery_strand::verify_recovery_authority_evidence(
+            crate::recovery_flow::verify_recovery_authority_evidence(
                 &api,
                 &recovery_material_evidence,
             )
@@ -675,7 +675,7 @@ async fn maybe_backup_or_flag_mls_backup_after_encrypted_write(
 /// [`crate::mls::account_recovery::upload_mls_account_secret_backup_with_recovery_key`]
 /// to wrap + upload the account secret so a future fresh browser can recover
 /// encrypted history. The wire recipient method remains spec-conformant
-/// `secret_storage` + `recovery_public_key`; the user-facing strand does not ask
+/// `secret_storage` + `recovery_public_key`; the user-facing flow does not ask
 /// the user to invent or confirm a separate passphrase.
 #[allow(clippy::too_many_arguments)]
 fn upload_mls_backup_with_recovery_key(
@@ -692,7 +692,7 @@ fn upload_mls_backup_with_recovery_key(
     mut status: Signal<String>,
     mut busy: Signal<bool>,
     mut backup_created: Signal<bool>,
-    generated_in_this_strand: bool,
+    generated_in_this_flow: bool,
 ) {
     let mut state_store_for_marker = state_store;
     let history_records = {
@@ -729,7 +729,7 @@ fn upload_mls_backup_with_recovery_key(
         let session_for_sidecar = session.clone();
         let principal_control_realm_id_for_sidecar = principal_control_realm_id.clone();
         let result = with_authed_api(&base, session, |api| async move {
-            crate::recovery_strand::verify_recovery_authority_evidence(
+            crate::recovery_flow::verify_recovery_authority_evidence(
                 &api,
                 &recovery_material_evidence,
             )
@@ -791,7 +791,7 @@ fn upload_mls_backup_with_recovery_key(
                 }
                 try_set_signal(backup_created, true);
                 try_set_signal(status, crate::i18n::tr("mls_backup.status.created"));
-                if !generated_in_this_strand {
+                if !generated_in_this_flow {
                     try_set_signal(recovery_key_input, String::new());
                     crate::runtime_helpers::sleep_for(std::time::Duration::from_millis(750)).await;
                     try_set_signal(needs_mls_backup, false);
@@ -890,7 +890,7 @@ pub fn MlsBackupPrompt(
         let recovery_key_configured =
             local_recovery_key_configured || matches!(account_recovery_configured(), Some(true));
         let generated = generated_recovery_key();
-        let generated_in_this_strand = !generated.trim().is_empty() || !recovery_key_configured;
+        let generated_in_this_flow = !generated.trim().is_empty() || !recovery_key_configured;
         let recovery_key = if recovery_key_configured {
             if generated.trim().is_empty() {
                 recovery_key_input()
@@ -952,7 +952,7 @@ pub fn MlsBackupPrompt(
             status,
             busy,
             backup_created,
-            generated_in_this_strand,
+            generated_in_this_flow,
         );
     };
 

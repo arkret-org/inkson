@@ -1,4 +1,4 @@
-# inkson — Recovery strand
+# inkson — Recovery flow
 
 Recovery uses the offline 24-word Recovery Key. Account authentication proves
 which account is continuing the flow; the Recovery Key proves control of the

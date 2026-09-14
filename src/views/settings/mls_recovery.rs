@@ -139,7 +139,7 @@ fn start_recovery_key_generation(
         let session_for_sidecar = session.clone();
         let principal_control_realm_id_for_sidecar = principal_control_realm_id.clone();
         let result = with_authed_api(&base, session, |api| async move {
-            crate::recovery_strand::verify_recovery_authority_evidence(
+            crate::recovery_flow::verify_recovery_authority_evidence(
                 &api,
                 &recovery_material_evidence,
             )

@@ -28,7 +28,7 @@ pub(crate) fn now_utc_millis() -> DateTime<Utc> {
 /// Canonical Arkret timestamp `minutes` into the future. Used to
 /// stamp `DeviceMessageEnvelope.expires_at`, which `device-lifecycle.md` §7
 /// makes a required to-device queue field (default cap 24h; verification and
-/// secret-share strands use much shorter windows).
+/// secret-share flows use much shorter windows).
 pub(crate) fn timestamp_in(minutes: i64) -> String {
     arkret_sdk::canonical::format_timestamp_canonical(
         now_utc() + chrono::Duration::minutes(minutes),

@@ -71,7 +71,7 @@ pub fn strand_watch_cell_ref(
 /// { "tracks.discussion.enabled": { "$op": "set", "value": true } }
 /// ```
 ///
-/// Disabling, renaming, or marking a track primary all strand through the
+/// Disabling, renaming, or marking a track primary all flow through the
 /// same patch shape. Callers that only know a track name should compose
 /// the patch via the helpers below (`strand_tracks_update_enable`,
 /// `strand_tracks_update_disable`, `strand_tracks_update_set_primary`).

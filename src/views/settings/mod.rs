@@ -2604,7 +2604,7 @@ pub fn SettingsPanel(
                 // Handles come from signed ak.schema.handle_claim.v1
                 // evidence issued by the org's coauth issuer. So instead
                 // of an "edit your handle" affordance we show a managed
-                // notice + a link out to the issuer strand.
+                // notice + a link out to the issuer flow.
                             div { class: "event", "data-testid": "handle-managed-by-org",
                     div { class: "event-head",
                         span { {crate::i18n::tr("settings.handle.title")} }

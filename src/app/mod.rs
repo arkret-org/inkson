@@ -1063,7 +1063,7 @@ fn AppBootstrap() -> Element {
     // Single source of truth for the post-boot account-health prompt chain.
     // Each prompt below renders iff it is the resolved highest-priority one,
     // replacing the per-prompt inline suppression that used to drift apart.
-    // See `account_health` and `docs/user-strands-key-lifecycle.md` §3.
+    // See `account_health` and `docs/user-flows-key-lifecycle.md` §3.
     let active_prompt = {
         let store = state_store.read();
         let actor = principal_id();
@@ -1480,7 +1480,7 @@ fn AppBootstrap() -> Element {
                         actor_id: principal_id,
                     }
                 }
-                // Step 3 of the account-MLS-secret auto-unlock strand: a
+                // Step 3 of the account-MLS-secret auto-unlock flow: a
                 // recovery-passphrase banner that restores encrypted history on
                 // a fresh device. Renders nothing unless boot detection flagged
                 // `needs_mls_unlock`.
@@ -3037,7 +3037,7 @@ fn AppBootstrap() -> Element {
                             // / Space) that scopes the new Space to that
                             // parent. A floating "+ New Space" with no
                             // parent context was confusing — it actually
-                            // opened the Realm bootstrap strand.
+                            // opened the Realm bootstrap flow.
                             div { class: "account-menu-wrap",
                                 Button {
                                     variant: ButtonVariant::Ghost,

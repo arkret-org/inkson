@@ -109,8 +109,8 @@ impl LocalStateStore {
     /// this helper.
     ///
     /// The session grant is deliberately preserved here because the caller
-    /// usually has its own opinion (a fresh-login strand has just written the
-    /// grant; a logout strand follows up with explicit `set_session_grant(None)`).
+    /// usually has its own opinion (a fresh-login flow has just written the
+    /// grant; a logout flow follows up with explicit `set_session_grant(None)`).
     pub fn clear_account_scoped(&mut self) {
         self.ensure_cached_loaded();
         let preserved_identity = self.cached.local_identity.clone();

@@ -193,7 +193,7 @@ pub(super) fn AccountRecoveryEffects(
                                 && evidence.device_id.as_str() == gate_device =>
                         {
                             Some(
-                                crate::recovery_strand::verify_recovery_material_evidence(
+                                crate::recovery_flow::verify_recovery_material_evidence(
                                     &api, evidence,
                                 )
                                 .await,
@@ -236,7 +236,7 @@ pub(super) fn AccountRecoveryEffects(
                     // authoritative policy result and strand the UI in
                     // `Checking` forever.
                     let recovery_configured =
-                        crate::recovery_strand::active_recovery_policy(&policy).is_some();
+                        crate::recovery_flow::active_recovery_policy(&policy).is_some();
                     let completion = if gate_auth_expired {
                         RecoveryRequestCompletion::AuthFailure
                     } else {
