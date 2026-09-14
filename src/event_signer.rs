@@ -147,6 +147,46 @@ fn validate_pending_pcr_successor(
     Ok(())
 }
 
+fn is_prepare_fence_not_found(error: &arkret_sdk::http_client::Error) -> bool {
+    matches!(
+        error,
+        arkret_sdk::http_client::Error::Api { status: 404, .. }
+    ) && error.error_code() == Some(arkret_sdk::ErrorCode::NotFound)
+}
+
+fn is_prepare_slot_fenced(error: &arkret_sdk::http_client::Error) -> bool {
+    error.error_code() == Some(arkret_sdk::ErrorCode::SealSignerSlotFenced)
+}
+
+async fn recover_pcr_successor_fence(
+    http: &arkret_sdk::http_client::Client,
+    signer: &InksonEventSigner,
+    realm_id: &arkret_sdk::RealmId,
+    predecessor_ref: &arkret_sdk::SealId,
+    intended_event_digests: &[arkret_sdk::Hash],
+) -> Result<arkret_sdk::SealPrepareFenceResultOutcome, arkret_sdk::http_client::Error> {
+    let recovered = http
+        .seals_prepare_fence_result(&arkret_sdk::SealPrepareFenceResultRequestBody {
+            realm_id: realm_id.clone(),
+            predecessor_ref: predecessor_ref.clone(),
+        })
+        .await?;
+    if recovered.frozen_request.event_digests != intended_event_digests {
+        return Err(arkret_sdk::http_client::Error::Protocol(
+            "recovered PCR prepare request does not match the current signer intent".to_owned(),
+        ));
+    }
+    let pending = PendingPcrSuccessor {
+        verification_method: signer.verification_method().to_owned(),
+        signer_key: signer.public_key_base64url(),
+        request: recovered.frozen_request.clone(),
+        seal: None,
+    };
+    validate_pending_pcr_successor(&pending, signer, realm_id, predecessor_ref)
+        .map_err(|error| arkret_sdk::http_client::Error::Protocol(error.to_string()))?;
+    Ok(recovered)
+}
+
 pub(crate) async fn prepare_and_sign_pcr_successor(
     http: &arkret_sdk::http_client::Client,
     actor_id: &arkret_sdk::ActorId,
@@ -165,6 +205,7 @@ pub(crate) async fn prepare_and_sign_pcr_successor(
     let storage_key = scope.secret_key(&logical_key);
     let _lock = pcr_successor_lock(&storage_key).lock_owned().await;
     let store = crate::secure_key_store::default_secure_key_store("inkson");
+    let mut recovered_outcome = None;
     let mut pending = match scope.load_secret(store.as_ref(), &logical_key)? {
         Some(raw) => {
             let pending: PendingPcrSuccessor = serde_json::from_str(&raw)?;
@@ -172,25 +213,48 @@ pub(crate) async fn prepare_and_sign_pcr_successor(
             pending
         }
         None => {
-            let device_id = signer
-                .device_id()
-                .ok_or_else(|| anyhow::anyhow!("PCR signer requires a bound device"))?;
-            let request = arkret_sdk::SealPrepareRequestBody {
-                realm_id: realm_id.clone(),
-                predecessor_ref,
-                event_digests,
-                hlc: crate::signing_stamp::issue_protocol_hlc(
-                    actor_id.signing_principal_id().as_str(),
-                    device_id,
-                    realm_id.as_str(),
-                )?,
-            };
-            request.validate()?;
-            let pending = PendingPcrSuccessor {
-                verification_method: signer.verification_method().to_owned(),
-                signer_key: signer.public_key_base64url(),
-                request,
-                seal: None,
+            let pending = match recover_pcr_successor_fence(
+                http,
+                signer.as_ref(),
+                realm_id,
+                &predecessor_ref,
+                &event_digests,
+            )
+            .await
+            {
+                Ok(recovered) => {
+                    let pending = PendingPcrSuccessor {
+                        verification_method: signer.verification_method().to_owned(),
+                        signer_key: signer.public_key_base64url(),
+                        request: recovered.frozen_request,
+                        seal: None,
+                    };
+                    recovered_outcome = Some(recovered.frozen_outcome);
+                    pending
+                }
+                Err(error) if is_prepare_fence_not_found(&error) => {
+                    let device_id = signer
+                        .device_id()
+                        .ok_or_else(|| anyhow::anyhow!("PCR signer requires a bound device"))?;
+                    let request = arkret_sdk::SealPrepareRequestBody {
+                        realm_id: realm_id.clone(),
+                        predecessor_ref: predecessor_ref.clone(),
+                        event_digests: event_digests.clone(),
+                        hlc: crate::signing_stamp::issue_protocol_hlc(
+                            actor_id.signing_principal_id().as_str(),
+                            device_id,
+                            realm_id.as_str(),
+                        )?,
+                    };
+                    request.validate()?;
+                    PendingPcrSuccessor {
+                        verification_method: signer.verification_method().to_owned(),
+                        signer_key: signer.public_key_base64url(),
+                        request,
+                        seal: None,
+                    }
+                }
+                Err(error) => return Err(error.into()),
             };
             scope
                 .save_secret_durable(
@@ -205,8 +269,34 @@ pub(crate) async fn prepare_and_sign_pcr_successor(
     if let Some(seal) = pending.seal {
         return Ok(seal);
     }
-    let request = pending.request.clone();
-    let prepared = http.seals_prepare(&request).await?;
+    let mut request = pending.request.clone();
+    let prepared = match recovered_outcome {
+        Some(prepared) => prepared,
+        None => match http.seals_prepare(&request).await {
+            Ok(prepared) => prepared,
+            Err(error) if is_prepare_slot_fenced(&error) => {
+                let recovered = recover_pcr_successor_fence(
+                    http,
+                    signer.as_ref(),
+                    realm_id,
+                    &predecessor_ref,
+                    &event_digests,
+                )
+                .await?;
+                request = recovered.frozen_request;
+                pending.request = request.clone();
+                scope
+                    .save_secret_durable(
+                        store.as_ref(),
+                        &logical_key,
+                        &serde_json::to_string(&pending)?,
+                    )
+                    .await?;
+                recovered.frozen_outcome
+            }
+            Err(error) => return Err(error.into()),
+        },
+    };
     let seal = signer
         .sign_prepared_pcr_seal(actor_id, &request, &prepared)
         .map_err(anyhow::Error::from)?;
