@@ -177,7 +177,7 @@ pub(crate) async fn prepare_and_sign_pcr_successor(
                 .ok_or_else(|| anyhow::anyhow!("PCR signer requires a bound device"))?;
             let request = arkret_sdk::SealPrepareRequestBody {
                 realm_id: realm_id.clone(),
-                predecessor_ref: predecessor_ref.clone(),
+                predecessor_ref,
                 event_digests,
                 hlc: crate::signing_stamp::issue_protocol_hlc(
                     actor_id.signing_principal_id().as_str(),
@@ -205,29 +205,8 @@ pub(crate) async fn prepare_and_sign_pcr_successor(
     if let Some(seal) = pending.seal {
         return Ok(seal);
     }
-    let mut request = pending.request.clone();
-    let prepared = match http.seals_prepare(&request).await {
-        Ok(prepared) => prepared,
-        Err(error) => {
-            let frozen_request = frozen_pcr_successor_request(&error)?.ok_or(error)?;
-            anyhow::ensure!(
-                frozen_request.realm_id == *realm_id
-                    && frozen_request.predecessor_ref == predecessor_ref,
-                "server returned a frozen PCR request for another signing position"
-            );
-            pending.request = frozen_request.clone();
-            pending.seal = None;
-            scope
-                .save_secret_durable(
-                    store.as_ref(),
-                    &logical_key,
-                    &serde_json::to_string(&pending)?,
-                )
-                .await?;
-            request = frozen_request;
-            http.seals_prepare(&request).await?
-        }
-    };
+    let request = pending.request.clone();
+    let prepared = http.seals_prepare(&request).await?;
     let seal = signer
         .sign_prepared_pcr_seal(actor_id, &request, &prepared)
         .map_err(anyhow::Error::from)?;
@@ -240,31 +219,6 @@ pub(crate) async fn prepare_and_sign_pcr_successor(
         )
         .await?;
     Ok(seal)
-}
-
-fn frozen_pcr_successor_request(
-    error: &arkret_sdk::http_client::Error,
-) -> anyhow::Result<Option<arkret_sdk::SealPrepareRequestBody>> {
-    let arkret_sdk::http_client::Error::Api {
-        status,
-        error: problem,
-    } = error
-    else {
-        return Ok(None);
-    };
-    if *status != reqwest::StatusCode::CONFLICT.as_u16()
-        || problem.error_code() != Some(arkret_sdk::error_codes::ErrorCode::SealSignerSlotFenced)
-    {
-        return Ok(None);
-    }
-    let value = problem.extensions.get("frozen_request").ok_or_else(|| {
-        anyhow::anyhow!(
-            "server fenced this PCR signing slot but did not provide the frozen request for exact recovery"
-        )
-    })?;
-    let request: arkret_sdk::SealPrepareRequestBody = serde_json::from_value(value.clone())?;
-    request.validate()?;
-    Ok(Some(request))
 }
 
 /// Remove the exact retry journal only after the Station has confirmed the
@@ -1525,30 +1479,6 @@ mod tests {
         let replaced =
             build_ed25519_device_signer([32; 32], "did:web:alice.example", TEST_DEVICE_ID);
         assert!(validate_pending_pcr_successor(&pending, &replaced, &realm, &predecessor).is_err());
-    }
-
-    #[test]
-    fn fenced_pcr_problem_recovers_the_exact_server_request() {
-        let request = arkret_sdk::SealPrepareRequestBody {
-            realm_id: arkret_sdk::RealmId::new(TEST_REALM_ID.to_owned()).unwrap(),
-            predecessor_ref: arkret_sdk::SealId::new(format!("ak:seal:sha256:{}", "44".repeat(32)))
-                .unwrap(),
-            event_digests: vec![
-                arkret_sdk::Hash::new(format!("sha256:{}", "55".repeat(32))).unwrap(),
-            ],
-            hlc: arkret_sdk::Hlc::new("01970e589d21-0002-a13f9c2e").unwrap(),
-        };
-        let problem = arkret_sdk::Problem::from_code(
-            arkret_sdk::error_codes::ErrorCode::SEAL_SIGNER_SLOT_FENCED,
-            "slot fenced",
-        )
-        .with_extension("frozen_request", serde_json::to_value(&request).unwrap());
-        let error = arkret_sdk::http_client::Error::Api {
-            status: reqwest::StatusCode::CONFLICT.as_u16(),
-            error: Box::new(problem),
-        };
-
-        assert_eq!(frozen_pcr_successor_request(&error).unwrap(), Some(request));
     }
 
     #[test]
