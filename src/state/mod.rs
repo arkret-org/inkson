@@ -182,8 +182,7 @@ pub struct LocalStateStore {
     /// (the Dioxus `SyncSignal<LocalStateStore>` is cloned widely) observes the same
     /// latch, letting the UI surface "your changes aren't being saved"
     /// instead of silently diverging from disk. Must be thread-safe because the
-    /// store is held behind `Arc<Mutex<_>>` in `InMemoryKeyStore` (`KeyStore:
-    /// Send + Sync`).
+    /// store is shared with key-storage and UI workers (`KeyStore: Send + Sync`).
     persist_health: Arc<Mutex<Option<String>>>,
     corrupt_account_scopes: Arc<Mutex<std::collections::BTreeSet<String>>>,
     /// Shared receive-chain write-back overlay (see
