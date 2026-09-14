@@ -822,12 +822,6 @@ pub(super) async fn finish_principal_setup(
     }
     crate::recovery_strand::submit_principal_bootstrap_seal(&api, &bootstrap_seal_for_submit)
         .await?;
-    crate::recovery_strand::refresh_principal_bootstrap_frontier(
-        &api,
-        &governance_state_store,
-        &bootstrap_seal_for_submit,
-    )
-    .await?;
     // The accepted genesis unit, its frozen bootstrap Seal, and the receipt
     // issuer already form the complete holder-side PCR authority evidence.
     // Persist that verified evidence before publishing the recovery policy:
@@ -913,6 +907,16 @@ pub(super) async fn finish_principal_setup(
         store.begin_durable_flush()?
     };
     barrier.wait().await?;
+
+    // Evidence hydration deliberately advances the device-cache epoch above.
+    // Refresh the accepted PCR frontier only afterwards so its digest suite is
+    // cached under the same epoch that will author the recovery-policy Move.
+    crate::recovery_strand::refresh_principal_bootstrap_frontier(
+        &api,
+        &governance_state_store,
+        &bootstrap_seal_for_submit,
+    )
+    .await?;
 
     crate::recovery_strand::ensure_recovery_policy(
         &api,
