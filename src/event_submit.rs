@@ -3486,9 +3486,6 @@ impl EventSubmitter {
             }
             return intent;
         }
-        if cbs_effect_plane_for_intent(&intent).ok().flatten() != Some(CbsEffectPlane::Control) {
-            return intent;
-        }
         let authority = match self.realm_create_authority(realm_id.as_str()).await {
             Ok(authority) => authority,
             Err(error) => {

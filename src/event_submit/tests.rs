@@ -875,7 +875,7 @@ fn test_authority() -> arkret_sdk::AccountId {
 }
 
 #[tokio::test]
-async fn stamp_realm_authority_root_claim_stamps_from_cached_create_facts() {
+async fn stamp_realm_authority_root_claim_stamps_registered_control_and_data_events() {
     // Unique Realm id: the create-facts cache is process-global and tests
     // run in parallel.
     let realm = "ak:realm:AZEvldDJcWI9IRHqP2BMibDDfc59Ax_LwrbsrQmeD6Ml";
@@ -888,14 +888,26 @@ async fn stamp_realm_authority_root_claim_stamps_from_cached_create_facts() {
                 controller: authority_controller_actor(),
             },
         );
-    let intent = dead_endpoint_submitter()
+    let control_intent = dead_endpoint_submitter()
         .stamp_realm_authority_root_claim(
             control_space_update_intent(realm, AUTHORITY_CONTROLLER),
             None,
         )
         .await;
     assert_eq!(
-        intent
+        control_intent
+            .authorization_ref()
+            .map(arkret_sdk::AuthorizationRef::as_str),
+        Some(arkret_wire::REALM_AUTHORITY_ROOT_CELL)
+    );
+    let data_intent = dead_endpoint_submitter()
+        .stamp_realm_authority_root_claim(
+            sdk_intent_with_kind(realm, "ak.strand.create", AUTHORITY_CONTROLLER),
+            None,
+        )
+        .await;
+    assert_eq!(
+        data_intent
             .authorization_ref()
             .map(arkret_sdk::AuthorizationRef::as_str),
         Some(arkret_wire::REALM_AUTHORITY_ROOT_CELL)
