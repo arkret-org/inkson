@@ -73,6 +73,46 @@ fn accepted_and_durable_recovery_stages_are_both_resumable() {
     );
 }
 
+#[test]
+fn principal_setup_refreshes_frontier_after_device_evidence_hydration() {
+    // key-management.md §5.0.4 allows the bootstrap Seal and genesis
+    // recovery policy while recovery_material_pending is active. The policy
+    // Event still needs both the accepted-device authoring evidence and the
+    // current Station frontier. Device evidence hydration advances the shared
+    // session-cache epoch, so a frontier fetched before it is immediately
+    // stale and cannot supply the Realm digest suite for policy authoring.
+    let source = include_str!("identity_setup.rs");
+    let setup = source
+        .split_once("pub(super) async fn finish_principal_setup(")
+        .expect("finish_principal_setup must remain defined")
+        .1
+        .split_once("pub(super) fn hosting_label(")
+        .expect("finish_principal_setup must end before hosting_label")
+        .0;
+
+    let hydrate = setup
+        .find("authenticated_device_authoring_authority(")
+        .expect("principal setup must hydrate accepted-device authoring evidence");
+    let restore = setup
+        .find("restore_persisted_device_authoring_authority(")
+        .expect("principal setup must install the hydrated evidence in the live epoch");
+    let refresh = setup
+        .find("refresh_principal_bootstrap_frontier(")
+        .expect("principal setup must refresh the accepted PCR frontier");
+    let publish = setup
+        .find("ensure_recovery_policy(")
+        .expect("principal setup must publish the genesis recovery policy");
+
+    assert!(
+        hydrate < restore && restore < refresh && refresh < publish,
+        "accepted-device evidence must be hydrated and restored before the PCR frontier is refreshed, and policy publication must consume that current frontier"
+    );
+    assert!(
+        !setup[refresh..publish].contains("reset_session_cache()"),
+        "no cache-epoch reset may invalidate the refreshed PCR frontier before recovery-policy authoring"
+    );
+}
+
 fn restorable_resume_facts() -> garth::BoundCompletionResumeFacts {
     garth::BoundCompletionResumeFacts {
         handoff: garth::BoundCompletionHandoffState::ActiveBound,
