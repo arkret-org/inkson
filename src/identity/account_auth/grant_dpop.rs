@@ -232,6 +232,13 @@ pub fn ensure_pending_device_key_with_secure_store(
             AuthDpopError::SecureStore(format!("ensure pending grant-binding seed: {error}"))
         })?;
     let (handle, record) = handle_and_record_from_seed(material.seed)?;
+    if let Some(stored_record) = store
+        .load_pending_dpop_device_key_with_secure_store(secure_store, pending_store)
+        .map_err(|error| AuthDpopError::SecureStore(error.to_string()))?
+        .filter(|stored_record| same_dpop_key(stored_record, &record))
+    {
+        return publish_loaded_record(store, stored_record);
+    }
     store
         .set_pending_dpop_device_key_with_secure_store(Some(record), secure_store, pending_store)
         .map_err(|error| AuthDpopError::SecureStore(error.to_string()))?;
@@ -276,25 +283,36 @@ pub fn ensure_device_key_with_secure_store(
     let material = crate::secure_key_store::ensure_grant_binding_seed(secure_store)
         .map_err(|err| AuthDpopError::SecureStore(format!("ensure grant-binding seed: {err}")))?;
     let (handle, record) = handle_and_record_from_seed(material.seed)?;
+    if let Some(stored_record) = store
+        .load_dpop_device_key_with_secure_store(secure_store)
+        .map_err(|err| AuthDpopError::SecureStore(err.to_string()))?
+        .filter(|stored_record| same_dpop_key(stored_record, &record))
+    {
+        return publish_loaded_record(store, stored_record);
+    }
     store
         .set_dpop_device_key_with_secure_store(Some(record), secure_store)
         .map_err(|err| AuthDpopError::SecureStore(err.to_string()))?;
     Ok(handle)
 }
 
-fn persist_loaded_record(
+fn publish_loaded_record(
     store: &mut LocalStateStore,
-    secure_store: &dyn crate::secure_key_store::SecureKeyStore,
     record: DpopDeviceKeyRecord,
 ) -> Result<DpopHandle, AuthDpopError> {
-    // 0004 §4.3: this persists the DPoP / grant-binding record only. It MUST NOT
-    // activate the event signer — the device identity key that signs events stays
-    // on the signing seed (activated via event_signer::bootstrap_default_signer).
+    // The full record was already loaded from the secure backend. Publish only
+    // its non-secret metadata to local state; rewriting the secret would turn a
+    // read/ensure operation into a contending IndexedDB mutation. In particular,
+    // `created_at` is the key's creation time, not the request time.
     let handle = decode_record(&record)?;
-    store
-        .set_dpop_device_key_with_secure_store(Some(record), secure_store)
-        .map_err(|err| AuthDpopError::SecureStore(err.to_string()))?;
+    let mut public_record = record;
+    public_record.seed_b64.clear();
+    store.set_dpop_device_key(Some(public_record));
     Ok(handle)
+}
+
+fn same_dpop_key(left: &DpopDeviceKeyRecord, right: &DpopDeviceKeyRecord) -> bool {
+    left.seed_b64 == right.seed_b64 && left.jkt == right.jkt
 }
 
 fn handle_and_record_from_seed(
@@ -414,12 +432,14 @@ pub fn load_or_recover_device_key_with_secure_store(
     if let Some(material) = crate::secure_key_store::load_grant_binding_seed(secure_store)
         .map_err(|err| AuthDpopError::SecureStore(format!("load grant-binding seed: {err}")))?
     {
-        let stored_jkt = store
+        let stored_record = store
             .load_dpop_device_key_with_secure_store(secure_store)
-            .ok()
-            .flatten()
-            .map(|record| record.jkt);
-        let (seed_handle, _) = handle_and_record_from_seed(material.seed)?;
+            .map_err(|err| AuthDpopError::SecureStore(err.to_string()))?;
+        let (seed_handle, seed_record) = handle_and_record_from_seed(material.seed)?;
+        if let Some(record) = stored_record.filter(|record| same_dpop_key(record, &seed_record)) {
+            return publish_loaded_record(store, record).map(Some);
+        }
+        let stored_jkt = store.dpop_device_key().map(|record| record.jkt);
         if stored_jkt.as_deref() != Some(seed_handle.jkt()) {
             tracing::warn!(
                 stored_jkt = stored_jkt.as_deref().unwrap_or(""),
@@ -434,7 +454,7 @@ pub fn load_or_recover_device_key_with_secure_store(
         .load_dpop_device_key_with_secure_store(secure_store)
         .map_err(|err| AuthDpopError::SecureStore(err.to_string()))?
     {
-        Some(record) => persist_loaded_record(store, secure_store, record).map(Some),
+        Some(record) => publish_loaded_record(store, record).map(Some),
         None => Ok(None),
     }
 }
@@ -473,12 +493,16 @@ pub fn load_or_recover_pending_device_key_with_secure_store(
             AuthDpopError::SecureStore(format!("load pending grant-binding seed: {error}"))
         })?
     {
-        let stored_jkt = store
+        let stored_record = store
             .load_pending_dpop_device_key_with_secure_store(secure_store, pending_store)
-            .ok()
-            .flatten()
-            .map(|record| record.jkt);
+            .map_err(|error| AuthDpopError::SecureStore(error.to_string()))?;
         let (handle, record) = handle_and_record_from_seed(material.seed)?;
+        if let Some(stored_record) =
+            stored_record.filter(|stored_record| same_dpop_key(stored_record, &record))
+        {
+            return publish_loaded_record(store, stored_record).map(Some);
+        }
+        let stored_jkt = store.dpop_device_key().map(|record| record.jkt);
         if stored_jkt.as_deref() != Some(handle.jkt()) {
             tracing::warn!(
                 device_id = %pending_store.device_id(),
@@ -505,11 +529,7 @@ pub fn load_or_recover_pending_device_key_with_secure_store(
     else {
         return Ok(None);
     };
-    let handle = decode_record(&record)?;
-    store
-        .set_pending_dpop_device_key_with_secure_store(Some(record), secure_store, pending_store)
-        .map_err(|error| AuthDpopError::SecureStore(error.to_string()))?;
-    Ok(Some(handle))
+    publish_loaded_record(store, record).map(Some)
 }
 
 /// Rebuild a [`DpopHandle`] from a persisted seed + thumbprint pair,
@@ -677,6 +697,37 @@ mod tests {
             .unwrap()
             .expect("loaded");
         assert_eq!(second.jkt(), first.jkt());
+    }
+
+    #[test]
+    fn ensure_preserves_the_creation_time_of_an_existing_grant_binding_key() {
+        let authority = fixture::authority("ak:did_core:web:stable-dpop.example");
+        let device_id = fixture::device_id(TEST_DEVICE);
+        let _scope = DeviceSeedScopeTestGuard::replace(Some((&authority, &device_id)));
+        let mut store = isolated_store("stable-secure-dpop-record");
+        let secure = MemorySecureKeyStore::default();
+        let grant_seed = [41_u8; 32];
+        crate::secure_key_store::store_grant_binding_seed(&secure, &grant_seed).unwrap();
+
+        let mut original =
+            dpop_device_key_record_from_seed(&URL_SAFE_NO_PAD.encode(grant_seed)).unwrap();
+        original.created_at = chrono::DateTime::<Utc>::from_timestamp(1_600_000_000, 0).unwrap();
+        store
+            .set_dpop_device_key_with_secure_store(Some(original.clone()), &secure)
+            .unwrap();
+
+        let ensured = ensure_device_key_with_secure_store(&mut store, &secure).unwrap();
+        let persisted = store
+            .load_dpop_device_key_with_secure_store(&secure)
+            .unwrap()
+            .expect("secure DPoP record");
+
+        assert_eq!(ensured.jkt(), original.jkt);
+        assert_eq!(persisted, original);
+        assert_eq!(
+            store.dpop_device_key().expect("public metadata").created_at,
+            original.created_at
+        );
     }
 
     #[test]

@@ -1103,6 +1103,21 @@ impl std::fmt::Debug for IndexedDbSecureKeyStore {
 
 impl SecureKeyStore for IndexedDbSecureKeyStore {
     fn store_secret_bytes(&self, key: &str, value: &[u8]) -> Result<(), SecureKeyStoreError> {
+        // Authenticated client construction may publish the same DPoP/session
+        // material on every request. Advancing the per-key revision for an
+        // identical value continuously supersedes the previous async commit;
+        // under a live subscribe loop there may never be a final writer, which
+        // can starve unrelated durable entries in the same IndexedDB store.
+        // Treat byte-identical publication as the idempotent no-op it is.
+        if self
+            .cache
+            .lock()
+            .map_err(|err| SecureKeyStoreError::Backend(format!("cache lock: {err}")))?
+            .get(key)
+            .is_some_and(|current| current.as_slice() == value)
+        {
+            return Ok(());
+        }
         let revision = self.begin_mutation(key)?;
         let mutations = self.mutations.clone();
         // The byte-store contract includes binary MLS secrets. AES-GCM wraps

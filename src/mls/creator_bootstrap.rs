@@ -195,6 +195,39 @@ pub(crate) async fn should_resume_creator_genesis(
     authenticated_account_is_realm_creator(api, state_store, realm_id, authority).await
 }
 
+async fn converge_accepted_creator_genesis(
+    api: &crate::transport::TransportClient,
+    state_store: &StateStoreHandle,
+    realm_id: &str,
+    authority: &arkret_sdk::AccountId,
+    device_id: &arkret_sdk::DeviceId,
+    accepted_event_id: &arkret_sdk::EventId,
+) -> Result<(), String> {
+    if state_store.read(|store| store.mls_checkpoint_for(realm_id).is_none()) {
+        return Err(format!(
+            "accepted MLS genesis exists for {realm_id}, but the local snapshot is missing; restore this device before retrying creator bootstrap"
+        ));
+    }
+    state_store.write(|store| {
+        store.mark_mls_genesis_emitted_for_effective_scope_with_event(
+            realm_id,
+            None,
+            accepted_event_id,
+        )
+    })?;
+    wait_for_accepted_transition(api, state_store, accepted_event_id).await?;
+    crate::mls::runtime::converge_accepted_mls_artifacts(state_store, authority, device_id).await?;
+    if !state_store
+        .read(|store| store.accepted_mls_artifact_snapshot())
+        .snapshot
+        .artifacts
+        .contains_key(accepted_event_id.as_str())
+    {
+        return Err("accepted MLS Genesis did not become durably ready".to_owned());
+    }
+    Ok(())
+}
+
 pub(crate) async fn ensure_creator_realm_mls_genesis(
     api: &crate::transport::TransportClient,
     state_store: &StateStoreHandle,
@@ -215,22 +248,111 @@ pub(crate) async fn ensure_creator_realm_mls_genesis(
         authority.station_id, authority.principal_id, device_id, realm_id
     ));
     let _guard = lock.lock().await;
-    let (encrypted, incomplete) = state_store.read(|store| {
-        let state = store.load();
-        let encrypted =
-            garth::security_projection_for_scope_id(&state.realm_tree_projections, realm_id)
-                .is_some_and(garth::realm_projection_is_encrypted);
-        (encrypted, creator_mls_bootstrap_incomplete(store, realm_id))
-    });
-    if !encrypted || !incomplete {
-        return Ok(());
-    }
     let submitter = api
         .event_submitter()
         .map_err(|error| format!("MLS genesis Event submitter: {error}"))?;
     // Resolve exact accepted authority; a local presentation row is not evidence.
     if !authenticated_account_is_realm_creator(api, state_store, realm_id, authority).await? {
         return Err("the authenticated actor is not the accepted Realm creator".to_owned());
+    }
+    if !submitter
+        .accepted_realm_is_encrypted(realm_id)
+        .await
+        .map_err(|error| format!("resolve accepted Realm encryption profile: {error}"))?
+    {
+        return Ok(());
+    }
+
+    // An accepted Genesis is the authoritative completion record. Resolve it,
+    // or drain its byte-identical durable queue item, before reading or
+    // rebuilding any pre-Genesis proposal, proof, or epoch-0 authoring state.
+    // This ordering is required by encryption-and-audit.md §5.1.3: refreshing
+    // the proof first can invalidate a perfectly valid staged snapshot after
+    // the Event has already been accepted.
+    let mut accepted_before_authoring = submitter
+        .find_mls_genesis_event_id(realm_id)
+        .await
+        .map_err(|error| format!("resolve accepted ak.mls.genesis Event: {error}"))?;
+    if accepted_before_authoring.is_none()
+        && submitter
+            .has_durable_mls_genesis_for_realm(realm_id)
+            .await
+            .map_err(|error| format!("inspect queued ak.mls.genesis Event: {error}"))?
+    {
+        submitter
+            .drain_outbound()
+            .await
+            .map_err(|error| format!("resume queued ak.mls.genesis Event: {error}"))?;
+        accepted_before_authoring = submitter
+            .find_mls_genesis_event_id(realm_id)
+            .await
+            .map_err(|error| format!("resolve retried ak.mls.genesis Event: {error}"))?;
+        if accepted_before_authoring.is_none() {
+            return Err(
+                "the byte-identical ak.mls.genesis transaction remains durably queued".to_owned(),
+            );
+        }
+    }
+    if let Some(accepted_event_id) = accepted_before_authoring.as_ref() {
+        return converge_accepted_creator_genesis(
+            api,
+            state_store,
+            realm_id,
+            authority,
+            device_id,
+            accepted_event_id,
+        )
+        .await;
+    }
+    if state_store.read(|store| store.mls_genesis_emitted_for(realm_id)) {
+        // A local marker cannot overrule the Station's complete accepted Event
+        // history. Repair only unaccepted epoch-0 authoring state.
+        state_store.write(|store| store.clear_unaccepted_creator_mls_genesis(realm_id))?;
+    }
+
+    if state_store.read(|store| {
+        store
+            .realm_tree_projection(realm_id)
+            .as_ref()
+            .and_then(crate::realm_tree::realm_projection_content_scheme)
+            .is_none()
+    }) {
+        let proposal = submitter
+            .accepted_legacy_creator_genesis_proposal(realm_id)
+            .await
+            .map_err(|error| format!("recover accepted Realm MLS Genesis proposal: {error}"))?
+            .ok_or_else(|| {
+                "the interrupted pre-Genesis transaction has no unambiguous persisted content scheme"
+                    .to_owned()
+            })?;
+        let barrier = state_store.write(|store| {
+            let mut projection = store.realm_tree_projection(realm_id).ok_or_else(|| {
+                "pre-Genesis MLS proposal requires the accepted Realm projection".to_owned()
+            })?;
+            let object = projection.as_object_mut().ok_or_else(|| {
+                "pre-Genesis accepted Realm projection must be an object".to_owned()
+            })?;
+            object.insert(
+                "content_scheme".to_owned(),
+                serde_json::to_value(proposal.content_scheme)
+                    .map_err(|error| format!("encode recovered content scheme: {error}"))?,
+            );
+            if let Some(durability) = proposal.durability_policy {
+                object.insert(
+                    "durability_policy".to_owned(),
+                    serde_json::to_value(durability)
+                        .map_err(|error| format!("encode recovered durability policy: {error}"))?,
+                );
+            }
+            store.save_realm_tree_projection(realm_id, projection);
+            store
+                .begin_durable_flush()
+                .map_err(|error| format!("persist recovered Genesis proposal: {error}"))
+        })?;
+        barrier
+            .wait()
+            .await
+            .map_err(|error| format!("persist recovered Genesis proposal: {error}"))?;
     }
     if state_store.read(|store| {
         store.mls_genesis_emitted_for(realm_id) && store.mls_checkpoint_for(realm_id).is_none()
@@ -261,7 +383,41 @@ pub(crate) async fn ensure_creator_realm_mls_genesis(
         .find_mls_genesis_event_id(realm_id)
         .await
         .map_err(|error| format!("resolve accepted ak.mls.genesis Event: {error}"))?;
-    let genesis_emitted = state_store.read(|store| store.mls_genesis_emitted_for(realm_id));
+    if accepted_event_id.is_none()
+        && submitter
+            .has_durable_mls_genesis_for_realm(realm_id)
+            .await
+            .map_err(|error| format!("inspect queued ak.mls.genesis Event: {error}"))?
+    {
+        // encryption-and-audit.md §5.1.3 requires byte-identical retry of the
+        // persisted epoch-0 transaction. A retryable foreground result means
+        // Garth already owns those signed bytes; drain that lane and never
+        // build another Genesis merely because this UI effect was re-entered.
+        submitter
+            .drain_outbound()
+            .await
+            .map_err(|error| format!("resume queued ak.mls.genesis Event: {error}"))?;
+        accepted_event_id = submitter
+            .find_mls_genesis_event_id(realm_id)
+            .await
+            .map_err(|error| format!("resolve retried ak.mls.genesis Event: {error}"))?;
+        if accepted_event_id.is_none() {
+            return Err(
+                "the byte-identical ak.mls.genesis transaction remains durably queued".to_owned(),
+            );
+        }
+    }
+    let mut genesis_emitted = state_store.read(|store| store.mls_genesis_emitted_for(realm_id));
+    if accepted_event_id.is_none() && genesis_emitted {
+        // The Station's complete accepted-event history is the authority for
+        // protocol completion. A browser can retain a stale local marker after
+        // an interrupted/rolled-back development run; treating it as success
+        // violates encryption-and-audit.md §5.1 and permanently suppresses
+        // the required Genesis retry. Repair only epoch-0 authoring state with
+        // no durably accepted local artifact, then author a fresh queue item.
+        state_store.write(|store| store.clear_unaccepted_creator_mls_genesis(realm_id))?;
+        genesis_emitted = false;
+    }
     match creator_genesis_resume_action(accepted_event_id.as_ref(), genesis_emitted)? {
         CreatorGenesisResumeAction::ConvergeAccepted => {
             let accepted_event_id = accepted_event_id.as_ref().ok_or_else(|| {
@@ -281,6 +437,15 @@ pub(crate) async fn ensure_creator_realm_mls_genesis(
             })?;
         }
         CreatorGenesisResumeAction::Author => {
+            // encryption-and-audit.md \u00a75.1 requires creator bootstrap to
+            // converge even while account current-sync has not installed the
+            // authority-root projection yet. The exact creator was resolved
+            // above and the accepted governance frontier was refreshed before
+            // this branch, so bypass only the redundant local-detail gate for
+            // this one Realm; normal authoring and server admission still run.
+            let founding_realm = arkret_sdk::RealmId::new(realm_id.to_owned())
+                .map_err(|error| format!("invalid creator bootstrap Realm id: {error}"))?;
+            let submitter = submitter.for_founding_realm(founding_realm);
             let request = state_store
                 .read(|store| {
                     crate::mls::governance_proof::frontier_request(
@@ -413,25 +578,29 @@ pub(crate) async fn ensure_creator_realm_mls_genesis(
                     )
                 })?;
             let accepted = match submitter.submit_sdk_event(&genesis_event).await {
-            Ok(accepted) => arkret_sdk::EventId::new(accepted.event_id.clone()).map_err(|error| {
-                anyhow::anyhow!("accepted ak.mls.genesis carries an invalid Event id: {error}")
-            }),
-            // A duplicate is success only after resolving the exact
-            // already-accepted Event id: encrypted writes bind their
-            // `group_state_ref` to it, so merely setting the emitted flag would
-            // strand them without a resolvable group state.
-            Err(error) if genesis_already_accepted(&error) => submitter
-                .find_mls_genesis_event_id(realm_id)
-                .await
-                .and_then(|event_id| {
-                    event_id.ok_or_else(|| {
+                Ok(accepted) => {
+                    arkret_sdk::EventId::new(accepted.event_id.clone()).map_err(|error| {
                         anyhow::anyhow!(
-                            "MLS genesis already exists server-side but its accepted Event id is unavailable"
+                            "accepted ak.mls.genesis carries an invalid Event id: {error}"
                         )
                     })
-                }),
-            Err(error) => Err(error),
-        };
+                }
+                // A duplicate is success only after resolving the exact
+                // already-accepted Event id: encrypted writes bind their
+                // `group_state_ref` to it, so merely setting the emitted flag would
+                // strand them without a resolvable group state.
+                Err(error) if genesis_already_accepted(&error) => submitter
+                    .find_mls_genesis_event_id(realm_id)
+                    .await
+                    .and_then(|event_id| {
+                        event_id.ok_or_else(|| {
+                            anyhow::anyhow!(
+                                "MLS genesis already exists server-side but its accepted Event id is unavailable"
+                            )
+                        })
+                    }),
+                Err(error) => Err(error),
+            };
             match accepted {
                 Ok(event_id) => {
                     state_store.write(|store| {
@@ -787,6 +956,37 @@ mod tests {
             CreatorGenesisResumeAction::Author
         );
         assert!(creator_genesis_resume_action(None, true).is_err());
+    }
+
+    #[test]
+    fn station_absence_can_repair_only_unaccepted_epoch_zero_marker() {
+        let mut store = temp_store("repair-stale-marker");
+        store.save_realm_tree_projection(REALM, realm_projection(ACTOR, "mls_rfc9420"));
+        let scope = arkret_sdk::ScopeRef::Realm {
+            realm_id: arkret_sdk::RealmId::new(REALM.to_owned()).unwrap(),
+        };
+        let group_id = scope.canonical_mls_group_id().unwrap();
+        store
+            .save_mls_checkpoint(REALM, epoch_zero_snapshot(group_id.clone()))
+            .unwrap();
+        let stale =
+            arkret_sdk::EventId::new("ak:event:AXBcp13trH3bPXvj0eHppCpGqJZWL9yqE3cf2Tl43vyk")
+                .unwrap();
+        store
+            .mark_mls_genesis_emitted_for_effective_scope_with_event(REALM, None, &stale)
+            .unwrap();
+
+        store.clear_unaccepted_creator_mls_genesis(REALM).unwrap();
+
+        assert!(!store.mls_genesis_emitted_for(REALM));
+        let snapshot = store.mls_checkpoint_for(REALM).unwrap();
+        assert_eq!(snapshot.epoch, 0);
+        assert!(snapshot.group_state_event_id.is_none());
+        assert!(
+            store
+                .mls_group_state_ref_for_scope(&scope, &group_id, 0)
+                .is_err()
+        );
     }
 
     #[test]

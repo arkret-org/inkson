@@ -72,7 +72,13 @@ pub(super) fn MlsRecoveryEffects(state: MlsRecoveryEffectState) -> Element {
             let actor = account.principal_id().to_string();
             let device = account.device_id.clone();
             let authority = account.authority.clone();
-            let generation = sync_generation();
+            // Keep broad sync completion as a re-evaluation trigger, but do
+            // not make its monotonically increasing counter part of the
+            // deduplication identity. This effect performs authenticated
+            // queries itself; those queries advance sync generation, so
+            // including it in `detection_key` creates a self-sustaining
+            // backups/query loop even when no recovery fact changed.
+            let _sync_generation_trigger = sync_generation();
             let account_recovery_configured_value = account_recovery_configured_for_detection();
             if !matches!(session_boot_state(), SessionBootState::Authenticated) {
                 needs_mls_unlock.set(false);
@@ -136,18 +142,12 @@ pub(super) fn MlsRecoveryEffects(state: MlsRecoveryEffectState) -> Element {
             )
             .unwrap_or(false);
             let detection_key = format!(
-                "{generation}|{base}|{actor}|{device}|sec={has_local_account_secret}|verified={local_account_secret_verified}|snap={has_local_mls_checkpoint}|enc={has_encrypted_realm_projection}|epoch={local_mls_epoch_floor}|rk={recovery_key_fingerprint}|recovery={account_recovery_configured_value:?}"
+                "{base}|{actor}|{device}|sec={has_local_account_secret}|verified={local_account_secret_verified}|snap={has_local_mls_checkpoint}|enc={has_encrypted_realm_projection}|epoch={local_mls_epoch_floor}|rk={recovery_key_fingerprint}|recovery={account_recovery_configured_value:?}"
             );
             if seen_detection_key().as_deref() == Some(detection_key.as_str()) {
                 return;
             }
             seen_detection_key.set(Some(detection_key.clone()));
-            // DIAG (describe-storm): this effect re-fetches backups (+ sidecar)
-            // whenever `detection_key` changes. On a wedged-recovery account it
-            // storms; log the full key so consecutive values reveal which
-            // component (sec/verified/snap/enc/epoch/rk/recovery/generation) keeps
-            // flipping. Remove once the driver is fixed.
-            tracing::debug!(target: "recovery_diag", key = %detection_key, "mls_unlock detection re-fetch (backups)");
             let seen_detection_key_for_result = seen_detection_key;
             let should_wait_for_projection = should_wait_for_backup_projection(
                 has_local_account_secret,

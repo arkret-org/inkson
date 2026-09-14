@@ -54,9 +54,10 @@ pub struct EventSubmitter {
     state_store: Option<crate::runtime::input::StateStoreHandle>,
     /// A freshly accepted Realm has no complete demand-sync projection yet,
     /// but its setup flow must append the deterministic default-Strand
-    /// follow-ups before that projection can become complete. This narrowly
-    /// scoped exception is installed only by the setup flow for that exact
-    /// Realm; ordinary writes remain fail-closed on stale detail.
+    /// follow-ups and, for an encrypted Realm, its creator MLS Genesis. This
+    /// only bypasses the local-detail freshness guard for that exact Realm;
+    /// accepted creator authority, governance-frontier verification, signing,
+    /// and server admission remain mandatory.
     founding_realm: Option<arkret_sdk::RealmId>,
 }
 
@@ -1163,6 +1164,29 @@ fn pending_mls_admission_for_realm_from_snapshot(
         .any(|item| is_unfinished_mls_admission_record(item.status, &item.record, realm_id))
 }
 
+fn durable_mls_genesis_for_realm_from_snapshot(
+    snapshot: &garth::SendQueueSnapshot,
+    realm_id: &str,
+) -> bool {
+    use garth::SendQueueStatus;
+
+    snapshot.items.iter().any(|item| {
+        matches!(
+            item.status,
+            SendQueueStatus::Queued
+                | SendQueueStatus::Sending
+                | SendQueueStatus::Sent
+                | SendQueueStatus::Failed
+        ) && matches!(
+            &item.record,
+            QueuedRecord::SdkEvent(queued)
+                if queued.intent.kind() == &arkret_sdk::EventKind::MlsGenesis
+                    && queued.intent.realm_id_opt().map(arkret_sdk::RealmId::as_str)
+                        == Some(realm_id)
+        )
+    })
+}
+
 fn is_unfinished_mls_admission_record(
     status: garth::SendQueueStatus,
     record: &QueuedRecord,
@@ -1305,21 +1329,28 @@ fn outbound_submit_lock() -> &'static tokio::sync::Mutex<()> {
     LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
 }
 
+fn local_detail_blocks_control_authoring(
+    founding_realm: Option<&arkret_sdk::RealmId>,
+    realm_id: &str,
+    invalidated_without_checkpoint: bool,
+) -> bool {
+    !founding_realm.is_some_and(|founding| founding.as_str() == realm_id)
+        && invalidated_without_checkpoint
+}
+
 impl EventSubmitter {
     fn ensure_realm_detail_current(&self, realm_id: &str) -> anyhow::Result<()> {
-        if self
-            .founding_realm
-            .as_ref()
-            .is_some_and(|founding| founding.as_str() == realm_id)
-        {
-            return Ok(());
-        }
-        if self.state_store.as_ref().is_some_and(|store| {
+        let invalidated_without_checkpoint = self.state_store.as_ref().is_some_and(|store| {
             store.read(|store| {
                 store.realm_detail_invalidated(realm_id)
                     && store.station_realm_digest_suite(realm_id).is_none()
             })
-        }) {
+        });
+        if local_detail_blocks_control_authoring(
+            self.founding_realm.as_ref(),
+            realm_id,
+            invalidated_without_checkpoint,
+        ) {
             return Err(anyhow::Error::new(arkret_sdk::Error::Http(
                 "Realm current state is refreshing after an account invalidation and no verified governance checkpoint is available"
                     .to_owned(),
@@ -1368,6 +1399,60 @@ impl EventSubmitter {
         Ok(matches!(founding, RealmCreateAuthority::Root { controller } if controller == actor))
     }
 
+    /// Resolve the immutable encryption choice from the Station-accepted Realm
+    /// founding Event. A missing/cold local projection must never downgrade an
+    /// encrypted Realm to plaintext or suppress creator MLS bootstrap.
+    pub(crate) async fn accepted_realm_is_encrypted(&self, realm_id: &str) -> anyhow::Result<bool> {
+        let realm = arkret_sdk::RealmId::new(realm_id.to_owned())?;
+        let create_id = arkret_sdk::EventId::new(format!(
+            "ak:event:{}",
+            realm.as_str().trim_start_matches("ak:realm:")
+        ))?;
+        let outcome = self
+            .http
+            .events_resolve(&arkret_sdk::EventsResolveRequestBody {
+                event_ids: vec![create_id.clone()],
+                event_digests: Vec::new(),
+                include_payload: Some(true),
+                history_traversal_access: None,
+                max_response_bytes: Some(8 * 1024 * 1024),
+            })
+            .await?;
+        anyhow::ensure!(
+            outcome
+                .events
+                .iter()
+                .all(|event| event.event_id == create_id
+                    && event.realm_id == realm
+                    && event.kind == arkret_sdk::EventKind::RealmCreate),
+            "Station returned a different Realm founding Event"
+        );
+        realm_create_is_encrypted_from_events(&outcome.events, realm_id).ok_or_else(|| {
+            anyhow::anyhow!("accepted Realm founding encryption profile is not available")
+        })
+    }
+
+    /// Recover an interrupted pre-Genesis proposal from the complete accepted
+    /// founding Event set, but only for the one legacy Inkson combination that
+    /// is uniquely implied by its accepted history facet.
+    pub(crate) async fn accepted_legacy_creator_genesis_proposal(
+        &self,
+        realm_id: &str,
+    ) -> anyhow::Result<Option<arkret_sdk::ProposedMlsGroupGenesisBinding>> {
+        let outcome = self
+            .http
+            .events_read_all_pages(realm_id)
+            .await
+            .map_err(anyhow::Error::from)?;
+        let events = crate::models::require_complete_event_rows(
+            &outcome.events,
+            "legacy creator MLS Genesis recovery",
+        )?;
+        Ok(legacy_creator_genesis_proposal_from_events(
+            &events, realm_id,
+        ))
+    }
+
     pub(crate) fn for_founding_realm(mut self, realm_id: arkret_sdk::RealmId) -> Self {
         self.founding_realm = Some(realm_id);
         self
@@ -1388,6 +1473,25 @@ impl EventSubmitter {
         )?);
         let snapshot = outbound.snapshot().await?;
         Ok(pending_mls_admission_for_realm_from_snapshot(
+            &snapshot, realm_id,
+        ))
+    }
+
+    /// Whether the standard durable lane already owns an immutable Genesis
+    /// attempt for this Realm that is active or accepted at ingress. A `Sent`
+    /// item remains authoritative while its accepted Event is still crossing
+    /// the Seal/current-projection boundary; treating that propagation window
+    /// as absence would author a second Genesis transaction.
+    pub(crate) async fn has_durable_mls_genesis_for_realm(
+        &self,
+        realm_id: &str,
+    ) -> anyhow::Result<bool> {
+        let outbound = OutboundEngine::new(crate::outbound_store::InksonOutboundStore::open(
+            self.authority()?,
+            crate::outbound_store::OutboundLane::Standard,
+        )?);
+        let snapshot = outbound.snapshot().await?;
+        Ok(durable_mls_genesis_for_realm_from_snapshot(
             &snapshot, realm_id,
         ))
     }
@@ -2429,7 +2533,7 @@ impl EventSubmitter {
                 );
                 anyhow::Error::from(error)
             })?;
-        tracing::warn!(
+        tracing::debug!(
             event_id = %signed.event_id,
             status = ?response.status,
             accepted = response.accepted.len(),
@@ -2619,6 +2723,11 @@ impl EventSubmitter {
         }
         let digest_suite =
             self.trusted_digest_suite_for_intent(&intent, None, state_store.as_ref())?;
+        tracing::warn!(
+            local_operation_id = %local_operation_id,
+            kind = %intent.kind().as_str(),
+            "submit prerequisites resolved; waiting for durable outbound writer"
+        );
         let mut queued_intent = QueuedEventIntent::new(intent, digest_suite);
         queued_intent.publication_event = operation.publication_event().cloned();
         self.enqueue_and_drive_sdk_event(
@@ -2784,7 +2893,13 @@ impl EventSubmitter {
         // it here so a RetryAt wait can yield to account-sync convergence and
         // reacquire before touching the durable engine again.
         let mut single_writer = if manage_single_writer {
-            Some(outbound_submit_lock().lock().await)
+            let guard = outbound_submit_lock().lock().await;
+            tracing::debug!(
+                transaction_id = %queued.local_operation_id,
+                kind = %queued.intent.kind().as_str(),
+                "durable outbound writer acquired"
+            );
+            Some(guard)
         } else {
             None
         };
@@ -3042,8 +3157,7 @@ impl EventSubmitter {
                     }
                     .into());
                 }
-                OutboundEngineOutcome::Rejected { item, .. }
-                | OutboundEngineOutcome::Terminal { item, .. }
+                OutboundEngineOutcome::Rejected { item, reason }
                     if item.transaction_id == transaction_id =>
                 {
                     if let Some(error) = results
@@ -3054,7 +3168,27 @@ impl EventSubmitter {
                     {
                         return Err(error);
                     }
-                    anyhow::bail!("queued operation {transaction_id} reached a terminal state");
+                    anyhow::bail!("queued operation {transaction_id} was rejected: {reason}");
+                }
+                OutboundEngineOutcome::Terminal { item, reason }
+                    if item.transaction_id == transaction_id =>
+                {
+                    if let Some(error) = results
+                        .rejected
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner())
+                        .remove(&transaction_id)
+                    {
+                        return Err(error);
+                    }
+                    results
+                        .retryable
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner)
+                        .remove(&transaction_id);
+                    anyhow::bail!(
+                        "queued operation {transaction_id} reached a terminal state: {reason}"
+                    );
                 }
                 OutboundEngineOutcome::Rejected { .. } | OutboundEngineOutcome::Terminal { .. } => {
                 }

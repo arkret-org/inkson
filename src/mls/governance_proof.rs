@@ -172,10 +172,7 @@ fn proposed_group_genesis_binding(
             if let Some(proposal) = direct_conversation_genesis_proposal(projection) {
                 return Ok(proposal);
             }
-            let scheme = crate::realm_tree::realm_projection_content_scheme(projection)
-                .ok_or_else(|| {
-                    "pre-Genesis MLS proposal requires an explicit content scheme".to_owned()
-                })?;
+            let explicit_scheme = crate::realm_tree::realm_projection_content_scheme(projection);
             let durability = projection
                 .get("durability_policy")
                 .or_else(|| projection.pointer("/summary/durability_policy"))
@@ -185,6 +182,29 @@ fn proposed_group_genesis_binding(
                         .map_err(|error| format!("invalid proposed durability policy: {error}"))
                 })
                 .transpose()?;
+            // Older interrupted creator transactions may predate the durable
+            // preservation of the local pre-Genesis selector.  The accepted
+            // `all_history_for_current_members` facet is nevertheless a
+            // one-way protocol implication: realm-and-space.md §2.3 forbids
+            // that policy with `mls_rfc9420`, so an MLS-backed Realm can only
+            // have proposed `mls_exporter_aead_v1`. Inkson's creator surface
+            // has never offered organization-key custody and therefore paired
+            // that choice with the explicit `none` durability value. This is
+            // recovery of the exact legacy creator intent, not a general
+            // content-scheme default; `since_join` remains ambiguous and fails
+            // closed when its persisted selector is absent.
+            let (scheme, durability) = match explicit_scheme {
+                Some(scheme) => (scheme, durability),
+                None if legacy_creator_binding_is_implied_by_history(projection) => (
+                    "mls_exporter_aead_v1".to_owned(),
+                    Some(arkret_wire::DurabilityPolicy::None),
+                ),
+                None => {
+                    return Err(
+                        "pre-Genesis MLS proposal requires an explicit content scheme".to_owned(),
+                    );
+                }
+            };
             (scheme, durability)
         }
         arkret_sdk::ScopeRef::Circle { circle_id, .. } => (
@@ -211,6 +231,27 @@ fn proposed_group_genesis_binding(
         .validate()
         .map_err(|error| format!("invalid proposed MLS Genesis binding: {error}"))?;
     Ok(proposal)
+}
+
+fn legacy_creator_binding_is_implied_by_history(projection: &serde_json::Value) -> bool {
+    if !garth::realm_projection_is_encrypted(projection) {
+        return false;
+    }
+    let null = serde_json::Value::Null;
+    [
+        projection,
+        projection.get("summary").unwrap_or(&null),
+        projection.get("object").unwrap_or(&null),
+        projection.get("realm").unwrap_or(&null),
+        projection.get("metadata").unwrap_or(&null),
+    ]
+    .into_iter()
+    .any(|container| {
+        container
+            .get("history_access")
+            .and_then(serde_json::Value::as_str)
+            == Some("all_history_for_current_members")
+    })
 }
 
 /// The current Direct Conversation profile fixes the exporter scheme. This
@@ -1139,6 +1180,76 @@ mod direct_conversation_genesis_tests {
         assert!(
             direct_conversation_genesis_proposal(&json!({"purpose":"direct_conversation"}))
                 .is_none()
+        );
+    }
+}
+
+#[cfg(test)]
+mod interrupted_creator_genesis_tests {
+    use serde_json::json;
+
+    use super::*;
+    use crate::state::LocalStateStore;
+
+    const REALM: &str = "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
+
+    fn store_with_projection(name: &str, projection: serde_json::Value) -> LocalStateStore {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let mut store = LocalStateStore::with_path(
+            std::env::temp_dir().join(format!("inkson-governance-{name}-{stamp}.json")),
+        );
+        store.save_realm_tree_projection(REALM, projection);
+        store
+    }
+
+    fn scope() -> arkret_sdk::ScopeRef {
+        arkret_sdk::ScopeRef::Realm {
+            realm_id: arkret_sdk::RealmId::new(REALM.to_owned()).unwrap(),
+        }
+    }
+
+    #[test]
+    fn accepted_all_history_repairs_only_the_legacy_exporter_none_intent() {
+        let store = store_with_projection(
+            "legacy-exporter",
+            json!({
+                "summary": {
+                    "encryption_profile": "mls_rfc9420",
+                    "history_access": "all_history_for_current_members"
+                }
+            }),
+        );
+
+        let proposal = proposed_group_genesis_binding(&store, &scope()).unwrap();
+        assert_eq!(
+            proposal.content_scheme,
+            arkret_wire::ContentScheme::MlsExporterAeadV1
+        );
+        assert_eq!(
+            proposal.durability_policy,
+            Some(arkret_wire::DurabilityPolicy::None)
+        );
+    }
+
+    #[test]
+    fn ambiguous_since_join_without_a_persisted_selector_stays_closed() {
+        let store = store_with_projection(
+            "ambiguous-since-join",
+            json!({
+                "summary": {
+                    "encryption_profile": "mls_rfc9420",
+                    "history_access": "since_join"
+                }
+            }),
+        );
+
+        assert!(
+            proposed_group_genesis_binding(&store, &scope())
+                .unwrap_err()
+                .contains("requires an explicit content scheme")
         );
     }
 }

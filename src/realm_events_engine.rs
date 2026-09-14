@@ -409,7 +409,10 @@ async fn load_realm_live_digest_suite(
     if &frontier.realm_id != realm_id {
         return Err("Realm current result returned a different Realm".to_owned());
     }
-    Ok(frontier.live_digest_suite)
+    let live_digest_suite = frontier.live_digest_suite;
+    ctx.state_store
+        .write(|store| store.cache_realm_governance_frontier(frontier))?;
+    Ok(live_digest_suite)
 }
 
 struct RealmTransportProvider {

@@ -994,6 +994,57 @@ impl LocalStateStore {
         Ok(())
     }
 
+    /// Remove a creator-side Genesis completion marker after the authenticated
+    /// Station authoritatively reports that no accepted Genesis exists.
+    ///
+    /// This is intentionally limited to an epoch-0 Realm snapshot and refuses
+    /// to discard a transition that the accepted-artifact consumer has made
+    /// durable. Callers must perform the remote absence check before entering
+    /// this local repair boundary.
+    pub(crate) fn clear_unaccepted_creator_mls_genesis(
+        &mut self,
+        realm_id: &str,
+    ) -> Result<(), String> {
+        self.ensure_cached_loaded();
+        let scope = mls_realm_or_circle_scope(realm_id, None)?;
+        let key = mls_scope_checkpoint_key(&scope)?;
+        let snapshot = self
+            .cached
+            .mls_local_checkpoints
+            .get(&key)
+            .ok_or_else(|| "cannot repair a missing creator MLS snapshot".to_owned())?;
+        if snapshot.epoch != 0 {
+            return Err("refusing to repair creator MLS state beyond epoch 0".to_owned());
+        }
+        let transition = self
+            .cached
+            .mls_group_state_refs
+            .get(&key)
+            .map(|record| record.event_id.clone())
+            .or_else(|| snapshot.group_state_event_id.clone());
+        if transition.as_ref().is_some_and(|event_id| {
+            self.cached
+                .accepted_mls_artifacts
+                .snapshot
+                .artifacts
+                .contains_key(event_id.as_str())
+        }) {
+            return Err("refusing to discard a locally accepted creator MLS transition".to_owned());
+        }
+
+        let mut changed = self.cached.mls_genesis_emitted.remove(&key);
+        changed |= self.cached.mls_group_state_refs.remove(&key).is_some();
+        if let Some(snapshot) = self.cached.mls_local_checkpoints.get_mut(&key)
+            && snapshot.group_state_event_id.take().is_some()
+        {
+            changed = true;
+        }
+        if changed {
+            self.flush().map_err(|error| error.to_string())?;
+        }
+        Ok(())
+    }
+
     /// Resolve the only valid MLS group-state reference for an exact local
     /// `(effective scope, group, epoch)` snapshot.
     pub fn mls_group_state_ref_for_effective_scope(

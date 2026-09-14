@@ -60,8 +60,8 @@ async fn mutate_queue_in_store<R>(
     let stored = store
         .get_secret(storage_key)
         .map_err(|error| garth::Error::Protocol(format!("read outbound queue: {error}")))?;
-    let snapshot = match stored {
-        Some(raw) => serde_json::from_str(&raw)
+    let snapshot = match stored.as_deref() {
+        Some(raw) => serde_json::from_str(raw)
             .map_err(|error| garth::Error::Protocol(format!("decode outbound queue: {error}")))?,
         None => garth::SendQueueSnapshot::default(),
     };
@@ -69,6 +69,14 @@ async fn mutate_queue_in_store<R>(
     let result = mutation(&mut queue)?;
     let encoded = serde_json::to_string(&queue.snapshot())
         .map_err(|error| garth::Error::Protocol(format!("encode outbound queue: {error}")))?;
+    // `OutboundQueueStore` exposes reads through the same mutation closure as
+    // writes. In particular, `OutboundEngine::snapshot()` lands here. Do not
+    // turn an unchanged read into a full AES-GCM + IndexedDB commit while the
+    // process-wide outbound gate is held: besides being unnecessary, that can
+    // serialize an ordinary Event behind unrelated secure-store maintenance.
+    if stored.as_deref() == Some(encoded.as_str()) || (stored.is_none() && queue.is_empty()) {
+        return Ok(result);
+    }
     store
         .store_secret_durable(storage_key, &encoded)
         .await
@@ -418,6 +426,18 @@ mod tests {
             error.to_string().contains("persist outbound queue"),
             "unexpected error: {error}"
         );
+    }
+
+    #[tokio::test]
+    async fn an_empty_snapshot_is_a_true_read_and_does_not_write() {
+        let item_count = mutate_queue_in_store(
+            &RefusingStore,
+            "inkson.outbound.v1::nsA.standard",
+            |queue| Ok(queue.len()),
+        )
+        .await
+        .expect("an unchanged empty queue must not attempt durable persistence");
+        assert_eq!(item_count, 0);
     }
 
     #[test]

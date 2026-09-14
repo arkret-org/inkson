@@ -3,6 +3,30 @@ use serde_json::json;
 use super::*;
 
 #[test]
+fn founding_realm_bypasses_only_its_own_local_detail_freshness_gap() {
+    let founding = arkret_sdk::RealmId::new(
+        "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19".to_owned(),
+    )
+    .unwrap();
+
+    assert!(!local_detail_blocks_control_authoring(
+        Some(&founding),
+        founding.as_str(),
+        true,
+    ));
+    assert!(local_detail_blocks_control_authoring(
+        Some(&founding),
+        "ak:realm:AZEvldDJcWI9IRHqP2BMibDDfc59Ax_LwrbsrQmeD6Ml",
+        true,
+    ));
+    assert!(local_detail_blocks_control_authoring(
+        None,
+        founding.as_str(),
+        true,
+    ));
+}
+
+#[test]
 fn sealed_command_requires_its_exact_unit_to_be_committed() {
     let first = arkret_sdk::Hash::new(format!("sha256:{}", "11".repeat(32))).unwrap();
     let member = arkret_sdk::Hash::new(format!("sha256:{}", "22".repeat(32))).unwrap();
@@ -719,6 +743,131 @@ fn realm_create_authority_resolves_the_root_controller() {
             controller: authority_controller_actor()
         })
     );
+}
+
+#[test]
+fn realm_encryption_comes_from_the_exact_accepted_create_event() {
+    let mut encrypted = realm_create_sdk_event(AUTHORITY_GENESIS_EVENT, AUTHORITY_CONTROLLER);
+    encrypted.payload.insert(
+        "object".to_owned(),
+        json!({"encryption_profile":"mls_rfc9420"}),
+    );
+    let realm = encrypted.realm_id.to_string();
+    assert_eq!(
+        realm_create_is_encrypted_from_events(&[encrypted], &realm),
+        Some(true)
+    );
+
+    let mut plaintext = realm_create_sdk_event(AUTHORITY_GENESIS_EVENT, AUTHORITY_CONTROLLER);
+    plaintext
+        .payload
+        .insert("object".to_owned(), json!({"encryption_profile":"none"}));
+    assert_eq!(
+        realm_create_is_encrypted_from_events(&[plaintext], &realm),
+        Some(false)
+    );
+}
+
+#[test]
+fn legacy_creator_proposal_requires_one_unambiguous_accepted_history_facet() {
+    let mut create = realm_create_sdk_event(AUTHORITY_GENESIS_EVENT, AUTHORITY_CONTROLLER);
+    create.payload.insert(
+        "object".to_owned(),
+        json!({"encryption_profile":"mls_rfc9420"}),
+    );
+    let realm = create.realm_id.to_string();
+    let mut history = sdk_event_with_kind(
+        "ak:event:AZpUEIyW7TNKR7LXG3WwW7XhlXVKyRQXiuhWXSw19pzj",
+        &realm,
+        "ak.realm.history_access",
+        AUTHORITY_CONTROLLER,
+    );
+    history
+        .payload
+        .insert("to".to_owned(), json!("all_history_for_current_members"));
+
+    let proposal =
+        legacy_creator_genesis_proposal_from_events(&[create.clone(), history.clone()], &realm)
+            .unwrap();
+    assert_eq!(
+        proposal.content_scheme,
+        arkret_wire::ContentScheme::MlsExporterAeadV1
+    );
+    assert_eq!(
+        proposal.durability_policy,
+        Some(arkret_wire::DurabilityPolicy::None)
+    );
+
+    history.payload.insert("to".to_owned(), json!("since_join"));
+    assert!(
+        legacy_creator_genesis_proposal_from_events(&[create.clone(), history], &realm).is_none()
+    );
+    assert!(
+        legacy_creator_genesis_proposal_from_events(&[create.clone(), create], &realm).is_none()
+    );
+}
+
+#[test]
+fn durable_genesis_queue_blocks_reauthoring_until_accepted_projection_converges() {
+    let realm = arkret_sdk::RealmId::new(AUTHORITY_REALM.to_owned()).unwrap();
+    let genesis = sdk_event_with_kind(
+        "ak:event:AcsFZ3o2tOdN3EFpNceeLV-aI3jZkB9S34_4YIwJ5DLy",
+        realm.as_str(),
+        "ak.mls.genesis",
+        AUTHORITY_CONTROLLER,
+    );
+    let queued = QueuedSdkEvent::unauthored(
+        fixture_queued_intent(EventIntent::from_authored(&genesis)),
+        "genesis-operation".to_owned(),
+        "genesis-attempt".to_owned(),
+        None,
+        test_authoring_generation(),
+        None,
+    )
+    .unwrap();
+    let mut queue = garth::SendQueue::new();
+    queue
+        .enqueue(
+            Some("genesis-operation".to_owned()),
+            realm,
+            QueuedRecord::SdkEvent(Box::new(queued)),
+            Vec::new(),
+            chrono::Utc::now(),
+        )
+        .unwrap();
+
+    let snapshot = queue.snapshot();
+    for status in [
+        garth::SendQueueStatus::Queued,
+        garth::SendQueueStatus::Sending,
+        garth::SendQueueStatus::Failed,
+        garth::SendQueueStatus::Sent,
+    ] {
+        let mut at_status = snapshot.clone();
+        at_status.items[0].status = status;
+        at_status.items[0].local_echo.status = status;
+        assert!(durable_mls_genesis_for_realm_from_snapshot(
+            &at_status,
+            AUTHORITY_REALM
+        ));
+    }
+    for status in [
+        garth::SendQueueStatus::Cancelled,
+        garth::SendQueueStatus::Superseded,
+        garth::SendQueueStatus::LeaseExpired,
+    ] {
+        let mut at_status = snapshot.clone();
+        at_status.items[0].status = status;
+        at_status.items[0].local_echo.status = status;
+        assert!(!durable_mls_genesis_for_realm_from_snapshot(
+            &at_status,
+            AUTHORITY_REALM
+        ));
+    }
+    assert!(!durable_mls_genesis_for_realm_from_snapshot(
+        &snapshot,
+        "ak:realm:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19"
+    ));
 }
 
 #[test]

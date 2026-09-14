@@ -38,6 +38,52 @@ pub(super) fn realm_create_authority_from_events(
     })
 }
 
+pub(super) fn realm_create_is_encrypted_from_events(
+    events: &[arkret_sdk::Event],
+    realm_id: &str,
+) -> Option<bool> {
+    events.iter().find_map(|event| {
+        if event.realm_id.as_str() != realm_id || event.kind != arkret_sdk::EventKind::RealmCreate {
+            return None;
+        }
+        event
+            .payload
+            .get("object")
+            .and_then(|object| object.get("encryption_profile"))
+            .and_then(serde_json::Value::as_str)
+            .map(|profile| profile == "mls_rfc9420")
+    })
+}
+
+/// Recover the creator proposal used by Inkson's legacy Realm wizard only
+/// when the accepted founding unit makes it unambiguous. The wizard paired
+/// `all_history_for_current_members` with exporter content and explicit
+/// `durability_policy=none`; the protocol independently forbids that history
+/// policy with standard RFC 9420 content. Multiple history facets or
+/// `since_join` deliberately remain unresolved.
+pub(super) fn legacy_creator_genesis_proposal_from_events(
+    events: &[arkret_sdk::Event],
+    realm_id: &str,
+) -> Option<arkret_sdk::ProposedMlsGroupGenesisBinding> {
+    if realm_create_is_encrypted_from_events(events, realm_id) != Some(true) {
+        return None;
+    }
+    let history = events
+        .iter()
+        .filter(|event| {
+            event.realm_id.as_str() == realm_id && event.kind.as_str() == "ak.realm.history_access"
+        })
+        .map(|event| event.payload.get("to").and_then(serde_json::Value::as_str))
+        .collect::<Vec<_>>();
+    if history.as_slice() != [Some("all_history_for_current_members")] {
+        return None;
+    }
+    Some(arkret_sdk::ProposedMlsGroupGenesisBinding {
+        content_scheme: arkret_wire::ContentScheme::MlsExporterAeadV1,
+        durability_policy: Some(arkret_wire::DurabilityPolicy::None),
+    })
+}
+
 pub(super) fn realm_owner_covers_event_kind(kind: &str) -> bool {
     arkret_schema::capability_action(CapabilityActionId::REALM_OWNER)
         .is_some_and(|descriptor| descriptor.target_event_kinds.contains(&kind))

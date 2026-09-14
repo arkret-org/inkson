@@ -1287,7 +1287,7 @@ fn accepted_context_promotion_moves_the_unfinished_handoff_with_its_registration
     // resume/accepted-context promotion mutate the process-global pending-login id.
     let _scope = crate::secure_key_store::DeviceSeedScopeTestGuard::replace(None);
     let path = temp_state_path("pending-onboarding-handoff");
-    let mut store = LocalStateStore::with_path(path);
+    let mut store = LocalStateStore::with_path(path.clone());
     let device = "ak:device:019f0000-0000-7000-8000-000000000001";
     let typed_device = arkret_sdk::DeviceId::new(device.to_owned()).unwrap();
     let handoff = PendingAccountHandoff {
@@ -1329,6 +1329,16 @@ fn accepted_context_promotion_moves_the_unfinished_handoff_with_its_registration
     store
         .set_pending_principal_registration(Some(checkpoint))
         .unwrap();
+
+    let reloaded = LocalStateStore::with_path(path);
+    assert_eq!(
+        reloaded
+            .pending_principal_registration()
+            .as_ref()
+            .map(|pending| pending.did.as_str()),
+        Some(did.as_str()),
+        "a persisted PCR genesis unit must round-trip without emitting forbidden empty refs"
+    );
     assert!(!store.can_resume_pending_login(&typed_device));
     let dpop_jkt = "resume-holder-jkt".to_owned();
     store.set_dpop_device_key(Some(DpopDeviceKeyRecord {
