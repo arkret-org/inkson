@@ -209,6 +209,15 @@ async fn ensure_initial_active_series(
     )
     .await?;
     let seal_outcome = http.events_submit_seal(&seal).await?;
+    if seal_outcome.seal_id != seal.id
+        || seal_outcome.accepted_event_digests != seal.delta
+        || seal_outcome.post_state_root != seal.state_root
+    {
+        return Err(anyhow!(
+            "Station returned a mismatched key-backup active-series Seal outcome"
+        ));
+    }
+    crate::event_signer::clear_prepared_pcr_successor(&seal).await?;
     if !seal_outcome
         .accepted_event_digests
         .iter()

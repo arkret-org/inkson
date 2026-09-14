@@ -313,6 +313,34 @@ test("account settings split account/server info and surface Agents", async ({ p
   expect(narrowOverflow).toBeLessThanOrEqual(1);
   await page.setViewportSize({ width: 1280, height: 720 });
   await expect(page.getByTestId("settings-nav-item-recovery")).toBeVisible();
+  const accountCardLayout = await page.evaluate(() => {
+    const profile = document.querySelector<HTMLElement>("[data-testid='settings-profile-fields']");
+    const avatar = document.querySelector<HTMLElement>(".settings-avatar-actions");
+    const identity = document.querySelector<HTMLElement>(".settings-account-identity-grid");
+    if (!profile || !avatar || !identity) {
+      return null;
+    }
+    const profileBox = profile.getBoundingClientRect();
+    const avatarBox = avatar.getBoundingClientRect();
+    const identityBox = identity.getBoundingClientRect();
+    return {
+      profileColumn: getComputedStyle(profile).gridColumnStart,
+      avatarColumn: getComputedStyle(avatar).gridColumnStart,
+      identityColumn: getComputedStyle(identity).gridColumnStart,
+      profileLeft: profileBox.left,
+      avatarRight: avatarBox.right,
+      identityLeft: identityBox.left,
+      identityTop: identityBox.top,
+      profileBottom: profileBox.bottom,
+    };
+  });
+  expect(accountCardLayout).not.toBeNull();
+  expect(accountCardLayout!.profileColumn).toBe("2");
+  expect(accountCardLayout!.avatarColumn).toBe("1");
+  expect(accountCardLayout!.identityColumn).toBe("2");
+  expect(accountCardLayout!.profileLeft).toBeGreaterThanOrEqual(accountCardLayout!.avatarRight);
+  expect(accountCardLayout!.identityLeft).toBe(accountCardLayout!.profileLeft);
+  expect(accountCardLayout!.identityTop).toBeGreaterThanOrEqual(accountCardLayout!.profileBottom);
 
   // Server information is a separate section (transport context).
   await page.getByTestId("settings-nav-item-server").click();

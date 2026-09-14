@@ -191,6 +191,15 @@
   grid-column: 1 / -1;
 }
 
+/* The profile editor was inserted before the two original identity columns.
+   Pin every child to its intended area so CSS grid auto-placement cannot put
+   the form in the avatar column and push the avatar down a row. */
+.settings-profile-fields {
+  grid-column: 2;
+  grid-row: 2;
+  min-width: 0;
+}
+
 .settings-avatar-actions {
   align-items: center;
   gap: 16px;
@@ -205,6 +214,7 @@
 
 .settings-avatar-actions {
   grid-column: 1;
+  grid-row: 2 / span 2;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -280,6 +290,7 @@ label.avatar-upload-button .ui-icon {
 
 .settings-account-identity-grid {
   grid-column: 2;
+  grid-row: 3;
   grid-template-columns: 1fr;
   align-content: center;
   gap: 8px;
@@ -335,8 +346,10 @@ label.avatar-upload-button .ui-icon {
   }
 
   .settings-avatar-actions,
+  .settings-profile-fields,
   .settings-account-identity-grid {
     grid-column: 1;
+    grid-row: auto;
   }
 
   .settings-avatar-actions {

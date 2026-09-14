@@ -65,6 +65,7 @@ pub fn AgentAdminPanel(
     let mut create_mode = use_signal(|| false);
     let mut new_agent_slug = use_signal(String::new);
     let mut new_agent_avatar_blob_ref = use_signal(String::new);
+    let provision_in_flight = use_signal(|| false);
     let mut provision_presets =
         use_signal(|| vec![AgentGrantPreset::Read, AgentGrantPreset::ReplyAsAgent]);
     let mut provision_service_scopes = use_signal(|| AgentServiceScopePreset::DEFAULTS.to_vec());
@@ -90,6 +91,7 @@ pub fn AgentAdminPanel(
         selected_agent_id,
         create_mode,
         new_agent_avatar_blob_ref,
+        provision_in_flight,
         deactivate_dialog_open,
         deactivate_confirm,
         pairing_action_agent_id,
@@ -220,6 +222,7 @@ pub fn AgentAdminPanel(
     let selected_pairing_action_in_flight =
         !selected_id_now.is_empty() && active_pairing_action_id == selected_id_now;
     let selected_pairing_action_phase = pairing_action_phase();
+    let agent_provision_in_flight = provision_in_flight();
 
     rsx! {
         div { class: "agent-admin-page", "data-testid": "agent-admin",
@@ -470,7 +473,7 @@ pub fn AgentAdminPanel(
                                     Button {
                                         variant: ButtonVariant::Primary,
                                         "data-testid": "agent-admin-provision-button",
-                                        disabled: new_agent_slug().trim().is_empty(),
+                                        disabled: new_agent_slug().trim().is_empty() || agent_provision_in_flight,
                                         onclick: {
                                             let base = base_url.clone();
                                             let controller_principal_id = controller_principal_id.clone();
@@ -490,11 +493,12 @@ pub fn AgentAdminPanel(
                                                 );
                                             }
                                         },
-                                        "Create"
+                                        if agent_provision_in_flight { "Creating…" } else { "Create" }
                                     }
                                     Button {
                                         variant: ButtonVariant::Secondary,
                                         "data-testid": "agent-admin-create-cancel-button",
+                                        disabled: agent_provision_in_flight,
                                         onclick: move |_| {
                                             new_agent_avatar_blob_ref.set(String::new());
                                             create_mode.set(false);

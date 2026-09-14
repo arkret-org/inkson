@@ -154,6 +154,7 @@ pub(crate) async fn ensure_agent_pcr_seal_current(
                 && outcome.accepted_event_digests == seal.delta,
             "Station returned a mismatched Agent PCR successor Seal outcome"
         );
+        crate::event_signer::clear_prepared_pcr_successor(&seal).await?;
         (view, head) = submitter.seals_frontier_agent_head(realm_id).await?;
         anyhow::ensure!(
             head == seal,
@@ -168,40 +169,61 @@ pub(crate) async fn ensure_agent_pcr_seal_current(
 pub(crate) async fn seal_self_principal_event_current(
     api: &crate::transport::TransportClient,
     controller_did: &arkret_sdk::Did,
-    realm_id: &arkret_sdk::RealmId,
-    expected_event_id: &arkret_sdk::EventId,
-) -> anyhow::Result<arkret_sdk::Seal> {
+    expected_event: &arkret_sdk::Event,
+) -> anyhow::Result<()> {
     let submitter = api.event_submitter()?;
     let http = api.sdk_http_client()?;
-    let predecessor = submitter
-        .seals_frontier_realm_head(realm_id.as_str())
-        .await?;
+    let realm_id = &expected_event.realm_id;
     let controller_authority = submitter.authority()?;
     if arkret_sdk::project_did_to_core_id(controller_did)? != controller_authority.principal_id {
         anyhow::bail!("controller DID does not belong to the authenticated account");
     }
     let controller_actor_id = arkret_sdk::ActorId::account(controller_authority.clone());
-    let expected_digest = expected_event_id.event_digest();
-    let seal = crate::event_signer::prepare_and_sign_pcr_successor(
-        &http,
-        &controller_actor_id,
-        realm_id,
-        predecessor.id.clone(),
-        vec![expected_digest.clone()],
+    anyhow::ensure!(
+        expected_event.actor_id == controller_actor_id,
+        "controller self-PCR Event belongs to another account authority"
+    );
+    let expected_digest = expected_event.event_id.event_digest();
+    for _ in 0..64 {
+        let predecessor = submitter
+            .seals_frontier_realm_head(realm_id.as_str())
+            .await?;
+        let pending = http
+            .pcr_pending_control(&arkret_sdk::PcrPendingControlRequestBody {
+                realm_id: realm_id.clone(),
+                predecessor_ref: predecessor.id.clone(),
+                limit: 1,
+            })
+            .await?;
+        if pending.event_digests.is_empty() {
+            crate::event_submit::require_server_sealed_event(&http, expected_event).await?;
+            return Ok(());
+        }
+        let seal = crate::event_signer::prepare_and_sign_pcr_successor(
+            &http,
+            &controller_actor_id,
+            realm_id,
+            predecessor.id.clone(),
+            pending.event_digests,
+        )
+        .await?;
+        let covers_expected = seal.delta.contains(&expected_digest);
+        let expected_digests = seal.delta.clone();
+        let outcome = http.events_submit_seal(&seal).await?;
+        if outcome.seal_id != seal.id
+            || outcome.accepted_event_digests != expected_digests
+            || outcome.post_state_root != seal.state_root
+        {
+            anyhow::bail!("Station returned a mismatched controller self-PCR Seal outcome");
+        }
+        crate::event_signer::clear_prepared_pcr_successor(&seal).await?;
+        if covers_expected {
+            return Ok(());
+        }
+    }
+    anyhow::bail!(
+        "controller self-PCR still has pending work after the bounded signing pass; retry to continue"
     )
-    .await?;
-    if !seal.delta.contains(&expected_digest) {
-        anyhow::bail!("controller self-PCR successor Seal does not cover the requested Event");
-    }
-    let expected_digests = seal.delta.clone();
-    let outcome = http.events_submit_seal(&seal).await?;
-    if outcome.seal_id != seal.id
-        || outcome.accepted_event_digests != expected_digests
-        || outcome.post_state_root != seal.state_root
-    {
-        anyhow::bail!("Station returned a mismatched controller self-PCR Seal outcome");
-    }
-    Ok(seal)
 }
 
 /// Publish the controller-authored successor Seal required to turn durable

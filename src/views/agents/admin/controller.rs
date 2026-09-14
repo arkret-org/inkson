@@ -23,6 +23,10 @@ pub(super) struct AgentAdminController {
     pub(super) selected_agent_id: Signal<String>,
     pub(super) create_mode: Signal<bool>,
     pub(super) new_agent_avatar_blob_ref: Signal<String>,
+    /// A provision ceremony allocates several immutable identities and Seal
+    /// coordinates. A second click must not start a competing ceremony against
+    /// the same Controller PCR signing slot.
+    pub(super) provision_in_flight: Signal<bool>,
     pub(super) deactivate_dialog_open: Signal<bool>,
     pub(super) deactivate_confirm: Signal<String>,
     /// The one Agent a pairing action is in flight for. Non-empty means every
@@ -33,6 +37,14 @@ pub(super) struct AgentAdminController {
     /// Bumped so the Contacts sidebar re-pulls `agent_list`.
     pub(super) owned_agents_rev: Signal<u64>,
     pub(super) state_store: SyncSignal<crate::state::LocalStateStore>,
+}
+
+struct ProvisionInFlightReset(Signal<bool>);
+
+impl Drop for ProvisionInFlightReset {
+    fn drop(&mut self) {
+        self.0.set(false);
+    }
 }
 
 /// The create-form values a provision run needs. They are read from the form
@@ -530,10 +542,16 @@ impl AgentAdminController {
             mut create_mode,
             mut new_agent_avatar_blob_ref,
             mut last_op_status,
+            mut provision_in_flight,
             owned_agents_rev,
             state_store,
             ..
         } = self;
+        if *provision_in_flight.peek() {
+            last_op_status.set("Agent creation is already in progress.".to_owned());
+            return;
+        }
+        provision_in_flight.set(true);
         let ProvisionAgentRequest {
             controller_principal_id,
             slug,
@@ -541,6 +559,7 @@ impl AgentAdminController {
             service_scopes,
         } = request;
         spawn(async move {
+            let _provision_in_flight_reset = ProvisionInFlightReset(provision_in_flight);
             let account = match crate::app::SessionContext::get().active_account() {
                 Some(account) => account,
                 None => {
@@ -941,7 +960,7 @@ impl AgentAdminController {
                         return;
                     }
                 };
-            let provision_event_id = provision_event.event.event_id.clone();
+            let provision_event_for_seal = provision_event.event.clone();
             let commit = AgentProvisionRequestBody::Commit {
                 operation_id,
                 idempotency_key,
@@ -1008,14 +1027,12 @@ impl AgentAdminController {
                     return;
                 }
             };
-            let controller_realm_for_seal = controller_realm_id.clone();
             let controller_did_for_seal = controller_did.clone();
             if let Err(error) = with_authed_api(&base, api_token.clone(), move |api| async move {
                 bootstrap::seal_self_principal_event_current(
                     &api,
                     &controller_did_for_seal,
-                    &controller_realm_for_seal,
-                    &provision_event_id,
+                    &provision_event_for_seal,
                 )
                 .await
                 .map(|_| ())

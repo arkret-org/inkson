@@ -48,7 +48,7 @@
 //! guard then routes through their backend instead of the in-process
 //! seed.
 
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, LazyLock, Mutex, OnceLock, Weak};
 
 use arkret_sdk::signatures::proof::EventSigner as SdkEventSigner;
 use arkret_sdk::{Did, DidUrl, Hash, PayloadSigner, WireError};
@@ -61,6 +61,92 @@ use ed25519_dalek::{Signer as _, SigningKey};
 use crate::identity::verification_method_controller;
 use crate::operation::{Audience, AuthoredEvent, ProofMode, current_proof_mode};
 
+pub(crate) const PCR_SUCCESSOR_JOURNAL_KEY_PREFIX: &str = "pcr.pending_successor.v1.";
+
+static PCR_SUCCESSOR_LOCKS: LazyLock<
+    Mutex<std::collections::BTreeMap<String, Weak<tokio::sync::Mutex<()>>>>,
+> = LazyLock::new(|| Mutex::new(std::collections::BTreeMap::new()));
+
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PendingPcrSuccessor {
+    verification_method: String,
+    signer_key: Option<String>,
+    request: arkret_sdk::SealPrepareRequestBody,
+    seal: Option<arkret_sdk::Seal>,
+}
+
+fn pcr_successor_journal_key(
+    realm_id: &arkret_sdk::RealmId,
+    predecessor_ref: &arkret_sdk::SealId,
+) -> anyhow::Result<String> {
+    let identity = serde_json::json!({
+        "realm_id": realm_id,
+        "predecessor_ref": predecessor_ref,
+    });
+    let digest = arkret_sdk::canonical::canonical_sha256(&identity)?;
+    Ok(format!(
+        "{PCR_SUCCESSOR_JOURNAL_KEY_PREFIX}{}",
+        digest.trim_start_matches("sha256:")
+    ))
+}
+
+fn pcr_successor_lock(key: &str) -> Arc<tokio::sync::Mutex<()>> {
+    let mut locks = PCR_SUCCESSOR_LOCKS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    locks.retain(|_, lock| lock.strong_count() > 0);
+    if let Some(lock) = locks.get(key).and_then(Weak::upgrade) {
+        return lock;
+    }
+    let lock = Arc::new(tokio::sync::Mutex::new(()));
+    locks.insert(key.to_owned(), Arc::downgrade(&lock));
+    lock
+}
+
+fn active_pcr_journal_scope(
+    signer: &InksonEventSigner,
+) -> anyhow::Result<crate::secure_key_store::UserLocalStore> {
+    let active = crate::secure_key_store::active_device_seed_scope()
+        .ok_or_else(|| anyhow::anyhow!("PCR signing requires an active account/device scope"))?;
+    anyhow::ensure!(
+        signer.device_id() == Some(active.device_id.as_str()),
+        "PCR journal device differs from the active signer"
+    );
+    crate::secure_key_store::UserLocalStore::new(active.authority, active.device_id)
+        .map_err(Into::into)
+}
+
+fn validate_pending_pcr_successor(
+    pending: &PendingPcrSuccessor,
+    signer: &InksonEventSigner,
+    realm_id: &arkret_sdk::RealmId,
+    predecessor_ref: &arkret_sdk::SealId,
+) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        pending.verification_method == signer.verification_method()
+            && pending.signer_key == signer.public_key_base64url(),
+        "PCR successor journal belongs to a replaced signer"
+    );
+    pending.request.validate()?;
+    anyhow::ensure!(
+        pending.request.realm_id == *realm_id
+            && pending.request.predecessor_ref == *predecessor_ref,
+        "PCR successor journal changed its signing position"
+    );
+    if let Some(seal) = &pending.seal {
+        seal.validate_structural()?;
+        seal.validate_id(seal.state_root.digest_suite()?)?;
+        anyhow::ensure!(
+            seal.realm_id == *realm_id
+                && seal.predecessor_ref.as_ref() == Some(predecessor_ref)
+                && seal.delta == pending.request.event_digests,
+            "PCR successor journal Seal differs from its frozen request"
+        );
+    }
+    Ok(())
+}
+
 pub(crate) async fn prepare_and_sign_pcr_successor(
     http: &arkret_sdk::http_client::Client,
     actor_id: &arkret_sdk::ActorId,
@@ -70,24 +156,88 @@ pub(crate) async fn prepare_and_sign_pcr_successor(
 ) -> anyhow::Result<arkret_sdk::Seal> {
     let signer =
         active_signer().ok_or_else(|| anyhow::anyhow!("active PCR device signer is required"))?;
-    let device_id = signer
-        .device_id()
-        .ok_or_else(|| anyhow::anyhow!("PCR signer requires a bound device"))?;
-    let hlc = crate::signing_stamp::issue_protocol_hlc(
-        actor_id.signing_principal_id().as_str(),
-        device_id,
-        realm_id.as_str(),
-    )?;
-    let request = arkret_sdk::SealPrepareRequestBody {
-        realm_id: realm_id.clone(),
-        predecessor_ref,
-        event_digests,
-        hlc,
+    let scope = active_pcr_journal_scope(signer.as_ref())?;
+    anyhow::ensure!(
+        actor_id.as_account_id() == Some(scope.authority()),
+        "PCR successor actor differs from the active account authority"
+    );
+    let logical_key = pcr_successor_journal_key(realm_id, &predecessor_ref)?;
+    let storage_key = scope.secret_key(&logical_key);
+    let _lock = pcr_successor_lock(&storage_key).lock_owned().await;
+    let store = crate::secure_key_store::default_secure_key_store("inkson");
+    let mut pending = match scope.load_secret(store.as_ref(), &logical_key)? {
+        Some(raw) => {
+            let pending: PendingPcrSuccessor = serde_json::from_str(&raw)?;
+            validate_pending_pcr_successor(&pending, signer.as_ref(), realm_id, &predecessor_ref)?;
+            pending
+        }
+        None => {
+            let device_id = signer
+                .device_id()
+                .ok_or_else(|| anyhow::anyhow!("PCR signer requires a bound device"))?;
+            let request = arkret_sdk::SealPrepareRequestBody {
+                realm_id: realm_id.clone(),
+                predecessor_ref,
+                event_digests,
+                hlc: crate::signing_stamp::issue_protocol_hlc(
+                    actor_id.signing_principal_id().as_str(),
+                    device_id,
+                    realm_id.as_str(),
+                )?,
+            };
+            request.validate()?;
+            let pending = PendingPcrSuccessor {
+                verification_method: signer.verification_method().to_owned(),
+                signer_key: signer.public_key_base64url(),
+                request,
+                seal: None,
+            };
+            scope
+                .save_secret_durable(
+                    store.as_ref(),
+                    &logical_key,
+                    &serde_json::to_string(&pending)?,
+                )
+                .await?;
+            pending
+        }
     };
+    if let Some(seal) = pending.seal {
+        return Ok(seal);
+    }
+    let request = pending.request.clone();
     let prepared = http.seals_prepare(&request).await?;
-    signer
+    let seal = signer
         .sign_prepared_pcr_seal(actor_id, &request, &prepared)
-        .map_err(Into::into)
+        .map_err(anyhow::Error::from)?;
+    pending.seal = Some(seal.clone());
+    scope
+        .save_secret_durable(
+            store.as_ref(),
+            &logical_key,
+            &serde_json::to_string(&pending)?,
+        )
+        .await?;
+    Ok(seal)
+}
+
+/// Remove the exact retry journal only after the Station has confirmed the
+/// signed successor. An uncertain submit deliberately leaves it in place.
+pub(crate) async fn clear_prepared_pcr_successor(seal: &arkret_sdk::Seal) -> anyhow::Result<()> {
+    let predecessor_ref = seal
+        .predecessor_ref
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("PCR successor journal cannot clear a genesis Seal"))?;
+    let signer =
+        active_signer().ok_or_else(|| anyhow::anyhow!("active PCR device signer is required"))?;
+    let scope = active_pcr_journal_scope(signer.as_ref())?;
+    let logical_key = pcr_successor_journal_key(&seal.realm_id, predecessor_ref)?;
+    let storage_key = scope.secret_key(&logical_key);
+    let _lock = pcr_successor_lock(&storage_key).lock_owned().await;
+    crate::secure_key_store::default_secure_key_store("inkson")
+        .delete_secret_durable(&storage_key)
+        .await?;
+    Ok(())
 }
 
 /// Errors produced by the active-write signing pipeline.
@@ -1293,6 +1443,42 @@ mod tests {
 
     fn producer_proof(event: &arkret_sdk::Event) -> &arkret_sdk::ProducerEventProof {
         event.proofs.first().expect("producer proof")
+    }
+
+    #[test]
+    fn pcr_successor_journal_keeps_one_exact_request_per_signing_position() {
+        let realm = arkret_sdk::RealmId::new(TEST_REALM_ID.to_owned()).unwrap();
+        let predecessor =
+            arkret_sdk::SealId::new(format!("ak:seal:sha256:{}", "11".repeat(32))).unwrap();
+        let other_predecessor =
+            arkret_sdk::SealId::new(format!("ak:seal:sha256:{}", "22".repeat(32))).unwrap();
+        assert_eq!(
+            pcr_successor_journal_key(&realm, &predecessor).unwrap(),
+            pcr_successor_journal_key(&realm, &predecessor).unwrap()
+        );
+        assert_ne!(
+            pcr_successor_journal_key(&realm, &predecessor).unwrap(),
+            pcr_successor_journal_key(&realm, &other_predecessor).unwrap()
+        );
+
+        let signer = build_ed25519_device_signer([31; 32], "did:web:alice.example", TEST_DEVICE_ID);
+        let pending = PendingPcrSuccessor {
+            verification_method: signer.verification_method().to_owned(),
+            signer_key: signer.public_key_base64url(),
+            request: arkret_sdk::SealPrepareRequestBody {
+                realm_id: realm.clone(),
+                predecessor_ref: predecessor.clone(),
+                event_digests: vec![
+                    arkret_sdk::Hash::new(format!("sha256:{}", "33".repeat(32))).unwrap(),
+                ],
+                hlc: arkret_sdk::Hlc::new("01970e589d21-0001-a13f9c2e").unwrap(),
+            },
+            seal: None,
+        };
+        validate_pending_pcr_successor(&pending, &signer, &realm, &predecessor).unwrap();
+        let replaced =
+            build_ed25519_device_signer([32; 32], "did:web:alice.example", TEST_DEVICE_ID);
+        assert!(validate_pending_pcr_successor(&pending, &replaced, &realm, &predecessor).is_err());
     }
 
     #[test]

@@ -288,13 +288,8 @@ pub async fn approve_device_pairing(
     let signer = crate::event_signer::active_signer()
         .ok_or_else(|| anyhow::anyhow!("active pairing signer is unavailable"))?;
     let principal = arkret_sdk::Did::new(signer.signer_did().to_owned())?;
-    crate::views::agents::seal_self_principal_event_current(
-        api,
-        &principal,
-        &authorize_event.realm_id,
-        &authorize_event.event_id,
-    )
-    .await?;
+    crate::views::agents::seal_self_principal_event_current(api, &principal, &authorize_event)
+        .await?;
     Ok(outcome)
 }
 
