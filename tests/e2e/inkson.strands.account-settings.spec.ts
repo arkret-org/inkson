@@ -315,12 +315,20 @@ test("account settings split account/server info and surface Agents", async ({ p
   await expect(page.getByTestId("settings-nav-item-recovery")).toBeVisible();
   const accountCardLayout = await page.evaluate(() => {
     const profile = document.querySelector<HTMLElement>("[data-testid='settings-profile-fields']");
+    const displayName = document.querySelector<HTMLInputElement>(
+      "[data-testid='settings-profile-display-name']",
+    );
+    const displayNameLabel = displayName?.closest("label")?.querySelector<HTMLElement>("span");
+    const bio = document.querySelector<HTMLTextAreaElement>("[data-testid='settings-profile-bio']");
     const avatar = document.querySelector<HTMLElement>(".settings-avatar-actions");
     const identity = document.querySelector<HTMLElement>(".settings-account-identity-grid");
-    if (!profile || !avatar || !identity) {
+    if (!profile || !displayName || !displayNameLabel || !bio || !avatar || !identity) {
       return null;
     }
     const profileBox = profile.getBoundingClientRect();
+    const displayNameBox = displayName.getBoundingClientRect();
+    const displayNameLabelBox = displayNameLabel.getBoundingClientRect();
+    const bioBox = bio.getBoundingClientRect();
     const avatarBox = avatar.getBoundingClientRect();
     const identityBox = identity.getBoundingClientRect();
     return {
@@ -332,6 +340,10 @@ test("account settings split account/server info and surface Agents", async ({ p
       identityLeft: identityBox.left,
       identityTop: identityBox.top,
       profileBottom: profileBox.bottom,
+      displayNameLeft: displayNameBox.left,
+      bioLeft: bioBox.left,
+      labelHeight: displayNameLabelBox.height,
+      labelLineHeight: Number.parseFloat(getComputedStyle(displayNameLabel).lineHeight),
     };
   });
   expect(accountCardLayout).not.toBeNull();
@@ -341,6 +353,10 @@ test("account settings split account/server info and surface Agents", async ({ p
   expect(accountCardLayout!.profileLeft).toBeGreaterThanOrEqual(accountCardLayout!.avatarRight);
   expect(accountCardLayout!.identityLeft).toBe(accountCardLayout!.profileLeft);
   expect(accountCardLayout!.identityTop).toBeGreaterThanOrEqual(accountCardLayout!.profileBottom);
+  expect(accountCardLayout!.displayNameLeft).toBe(accountCardLayout!.bioLeft);
+  expect(accountCardLayout!.labelHeight).toBeLessThanOrEqual(
+    accountCardLayout!.labelLineHeight + 1,
+  );
 
   // Server information is a separate section (transport context).
   await page.getByTestId("settings-nav-item-server").click();

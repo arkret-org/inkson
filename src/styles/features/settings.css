@@ -197,7 +197,45 @@
 .settings-profile-fields {
   grid-column: 2;
   grid-row: 2;
+  display: grid;
+  align-content: start;
+  gap: 12px;
   min-width: 0;
+}
+
+/* The shared settings label rule is an inline row. Profile fields need the
+   conventional label-above-control rhythm so longer labels do not wrap into
+   a narrow column and every control starts on the same edge. */
+.settings-profile-fields > .form-field {
+  display: grid;
+  align-items: start;
+  gap: 6px;
+  width: 100%;
+  min-width: 0;
+}
+
+.settings-profile-fields > .form-field > span {
+  display: block;
+  font-weight: 600;
+  line-height: 1.3;
+  white-space: nowrap;
+}
+
+.settings-profile-fields input,
+.settings-profile-fields textarea {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+}
+
+.settings-profile-fields textarea {
+  min-height: 76px;
+  resize: vertical;
+}
+
+.settings-profile-fields > .actions {
+  justify-content: flex-start;
+  margin-top: 2px;
 }
 
 .settings-avatar-actions {
