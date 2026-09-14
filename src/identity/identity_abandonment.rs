@@ -16,14 +16,16 @@ fn target_from_handoff(
         .reserved_identity
         .clone()
         .ok_or_else(|| anyhow::anyhow!("account handoff has no provisional identity to abandon"))?;
-    let validated = arkret_sdk::signatures::webvh::validate_principal_inception_operation(
-        &reserved.did_operation,
+    let validated = arkret_sdk::identity::validate_principal_registration_anchor(
+        &reserved.principal_registration_anchor,
     )
-    .map_err(|error| anyhow::anyhow!("reserved DID inception operation is invalid: {error}"))?;
+    .map_err(|error| anyhow::anyhow!("reserved registration anchor is invalid: {error}"))?;
     if validated.principal_id != reserved.principal_id
-        || validated.operation_digest != reserved.operation_digest
+        || validated.registration_anchor_digest != reserved.registration_anchor_digest
     {
-        anyhow::bail!("reserved DID operation digest or principal does not match its checkpoint");
+        anyhow::bail!(
+            "reserved registration anchor digest or principal does not match its checkpoint"
+        );
     }
     Ok(IdentityAbandonmentTarget {
         lease_id: handoff

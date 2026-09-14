@@ -698,8 +698,10 @@ fn contradictory_bound_and_reserved_server_state_fails_closed() {
     handoff.bound_principal_id = Some(arkret_sdk::project_did_to_core_id(&checkpoint.did).unwrap());
     handoff.bound_principal_did = Some(checkpoint.did.clone());
     handoff.reserved_identity = Some(
-        arkret_sdk::ReservedIdentityCreation::from_operation(checkpoint.did_operation.clone())
-            .unwrap(),
+        arkret_sdk::ReservedIdentityCreation::from_anchor(
+            checkpoint.principal_registration_anchor.clone(),
+        )
+        .unwrap(),
     );
     handoff.identity_creation_state = Some(arkret_sdk::IdentityCreationLeaseState::Reserved);
 
@@ -831,8 +833,10 @@ fn a_server_reservation_never_generates_a_replacement_recovery_key() {
         Some(2),
     );
     renewed.reserved_identity = Some(
-        arkret_sdk::ReservedIdentityCreation::from_operation(checkpoint.did_operation.clone())
-            .unwrap(),
+        arkret_sdk::ReservedIdentityCreation::from_anchor(
+            checkpoint.principal_registration_anchor.clone(),
+        )
+        .unwrap(),
     );
     renewed.identity_creation_state = Some(arkret_sdk::IdentityCreationLeaseState::Reserved);
 
@@ -860,7 +864,8 @@ fn every_unfinished_server_phase_uses_one_handoff_flow() {
         crate::state::PendingPrincipalRegistrationStage::CustodyConfirmed,
     );
     let reserved_identity =
-        arkret_sdk::ReservedIdentityCreation::from_operation(checkpoint.did_operation).unwrap();
+        arkret_sdk::ReservedIdentityCreation::from_anchor(checkpoint.principal_registration_anchor)
+            .unwrap();
     for state in [
         arkret_sdk::IdentityCreationLeaseState::Active,
         arkret_sdk::IdentityCreationLeaseState::Reserved,
@@ -903,7 +908,8 @@ fn retained_or_reserved_key_material_skips_identity_choice() {
         crate::state::PendingPrincipalRegistrationStage::CustodyConfirmed,
     );
     handoff.reserved_identity = Some(
-        arkret_sdk::ReservedIdentityCreation::from_operation(checkpoint.did_operation).unwrap(),
+        arkret_sdk::ReservedIdentityCreation::from_anchor(checkpoint.principal_registration_anchor)
+            .unwrap(),
     );
     assert_eq!(
         initial_identity_choice(Some(&handoff), false),
@@ -925,9 +931,9 @@ fn renewed_handoff_reuses_the_server_reserved_identity() {
         &recovery_key,
     )
     .unwrap();
-    let did_operation = checkpoint.did_operation.clone();
+    let principal_registration_anchor = checkpoint.principal_registration_anchor.clone();
     let reserved_identity =
-        arkret_sdk::ReservedIdentityCreation::from_operation(did_operation).unwrap();
+        arkret_sdk::ReservedIdentityCreation::from_anchor(principal_registration_anchor).unwrap();
     checkpoint.account_handle.clear();
     let mut new_handoff = test_handoff(
         "ak:request:019f0000-0000-7000-8000-000000000011",
@@ -943,7 +949,10 @@ fn renewed_handoff_reuses_the_server_reserved_identity() {
     assert_eq!(resumed.lease_id, "lease-2");
     assert_eq!(resumed.lease_fence, 2);
     assert_eq!(resumed.did, checkpoint.did);
-    assert_eq!(resumed.did_operation, checkpoint.did_operation);
+    assert_eq!(
+        resumed.principal_registration_anchor,
+        checkpoint.principal_registration_anchor
+    );
 }
 
 #[test]
@@ -968,14 +977,14 @@ fn renewed_handoff_fails_closed_on_a_different_reservation() {
             &other_key,
         )
         .unwrap();
-    let other_operation = other_checkpoint.did_operation;
+    let other_anchor = other_checkpoint.principal_registration_anchor;
     let mut new_handoff = test_handoff(
         "ak:request:019f0000-0000-7000-8000-000000000011",
         Some("lease-2"),
         Some(2),
     );
     new_handoff.reserved_identity =
-        Some(arkret_sdk::ReservedIdentityCreation::from_operation(other_operation).unwrap());
+        Some(arkret_sdk::ReservedIdentityCreation::from_anchor(other_anchor).unwrap());
     new_handoff.identity_creation_state = Some(arkret_sdk::IdentityCreationLeaseState::Reserved);
 
     let error = checkpoint_for_handoff(&checkpoint, &new_handoff, &recovery_key).unwrap_err();
@@ -1041,16 +1050,19 @@ fn renewed_handoff_does_not_treat_account_handle_as_identity_evidence() {
         Some(2),
     );
     new_account_handoff.account_handle = "bob:auth.example".to_owned();
-    let operation = checkpoint.did_operation.clone();
+    let anchor = checkpoint.principal_registration_anchor.clone();
     new_account_handoff.reserved_identity =
-        Some(arkret_sdk::ReservedIdentityCreation::from_operation(operation).unwrap());
+        Some(arkret_sdk::ReservedIdentityCreation::from_anchor(anchor).unwrap());
     new_account_handoff.identity_creation_state =
         Some(arkret_sdk::IdentityCreationLeaseState::Reserved);
 
     let resumed = checkpoint_for_handoff(&checkpoint, &new_account_handoff, &recovery_key).unwrap();
 
     assert_eq!(resumed.did, checkpoint.did);
-    assert_eq!(resumed.did_operation, checkpoint.did_operation);
+    assert_eq!(
+        resumed.principal_registration_anchor,
+        checkpoint.principal_registration_anchor
+    );
     assert_eq!(resumed.account_handle, checkpoint.account_handle);
 }
 
@@ -1075,7 +1087,8 @@ fn an_in_flight_server_reservation_does_not_turn_first_run_into_recovery() {
         crate::state::PendingPrincipalRegistrationStage::RegisterRequestPrepared,
     );
     handoff.reserved_identity = Some(
-        arkret_sdk::ReservedIdentityCreation::from_operation(checkpoint.did_operation).unwrap(),
+        arkret_sdk::ReservedIdentityCreation::from_anchor(checkpoint.principal_registration_anchor)
+            .unwrap(),
     );
     handoff.identity_creation_state = Some(arkret_sdk::IdentityCreationLeaseState::Reserved);
     assert!(!key_source.requires_existing_key());

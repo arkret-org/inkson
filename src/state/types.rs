@@ -646,11 +646,8 @@ pub struct PendingPrincipalRegistration {
     pub recovery_proof_public_key_multibase: String,
     pub backup_hpke_public_key_multibase: String,
     pub recovery_key_fingerprint: String,
-    /// Frozen method-native DID inception operation.
-    pub did_operation: arkret_sdk::DidOperationSubmitRequestBody,
-    /// Canonical bytes of the method-native did:webvh inception entry. The
-    /// registration terminal re-reads did.jsonl and compares entry 0 against
-    /// this frozen value before adopting the identity.
+    /// Frozen, method-native principal registration evidence.
+    pub principal_registration_anchor: arkret_sdk::PrincipalRegistrationAnchor,
     /// Complete client-authored, root/device-signed PCR genesis unit.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pcr_genesis_unit: Option<arkret_wire::PcrGenesisUnit>,

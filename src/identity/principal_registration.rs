@@ -1,5 +1,6 @@
 //! Durable, client-authored identity creation with atomic PCR genesis.
 
+use std::collections::BTreeMap;
 use std::time::Duration;
 
 use anyhow::{Context as _, anyhow};
@@ -55,6 +56,20 @@ pub fn prepare_registration_checkpoint(
         &key_material.root_seed,
     )?
     .to_string();
+    let normalized_did_document = serde_json::from_value(draft.log_entry["state"].clone())
+        .context("prepared did:webvh inception has no normalized DID document")?;
+    let log_entry: BTreeMap<String, serde_json::Value> =
+        serde_json::from_value(draft.log_entry.clone())
+            .context("prepared did:webvh inception is not an object")?;
+    let principal_registration_anchor =
+        arkret_sdk::PrincipalRegistrationAnchor::WebvhRegistration {
+            registration_did_operation: Box::new(draft.submit_body),
+            log_entries: vec![log_entry],
+            witness_records: Vec::new(),
+            normalized_did_document,
+        };
+    arkret_sdk::identity::validate_principal_registration_anchor(&principal_registration_anchor)
+        .map_err(|error| anyhow!("prepared principal registration anchor is invalid: {error}"))?;
     Ok(PendingPrincipalRegistration {
         station_url: handoff.station_url.clone(),
         gate_account_base_url: handoff.gate_account_base_url.clone(),
@@ -77,7 +92,7 @@ pub fn prepare_registration_checkpoint(
             .clone(),
         backup_hpke_public_key_multibase: key_material.backup_hpke_public_key_multikey.clone(),
         recovery_key_fingerprint: crate::recovery_crypto::fingerprint_recovery_key(recovery_key),
-        did_operation: draft.submit_body,
+        principal_registration_anchor,
         pcr_genesis_unit: None,
         initial_session: None,
         pcr_genesis_receipt: None,
@@ -112,14 +127,16 @@ pub fn recover_registration_checkpoint_from_reservation(
     if lease_fence == 0 {
         anyhow::bail!("renewed identity-creation lease fence must be positive");
     }
-    let validated = arkret_sdk::signatures::webvh::validate_principal_inception_operation(
-        &reserved.did_operation,
+    let validated = arkret_sdk::identity::validate_principal_registration_anchor(
+        &reserved.principal_registration_anchor,
     )
-    .map_err(|error| anyhow!("reserved DID inception operation is invalid: {error}"))?;
+    .map_err(|error| anyhow!("reserved principal registration anchor is invalid: {error}"))?;
     if validated.principal_id != reserved.principal_id
-        || validated.operation_digest != reserved.operation_digest
+        || validated.registration_anchor_digest != reserved.registration_anchor_digest
     {
-        anyhow::bail!("reserved DID operation digest or principal does not match its checkpoint");
+        anyhow::bail!(
+            "reserved registration anchor digest or principal does not match its checkpoint"
+        );
     }
     let key_material = arkret_sdk::identity_root::derive_identity_recovery_key_material_from_bip39(
         recovery_key,
@@ -129,9 +146,16 @@ pub fn recover_registration_checkpoint_from_reservation(
     if validated.root_public_key_multibase != key_material.root_public_key_multikey {
         anyhow::bail!("Recovery Key does not control the reserved identity root");
     }
-    if validated.next_root_key_hash != key_material.next_root_key_hash {
+    if validated.next_root_key_hash.as_deref() != Some(key_material.next_root_key_hash.as_str()) {
         anyhow::bail!("Recovery Key does not match the reserved root pre-rotation chain");
     }
+    let next_root_key_hash = validated
+        .next_root_key_hash
+        .clone()
+        .context("reserved registration anchor has no root pre-rotation commitment")?;
+    let genesis_created_at = validated
+        .did_version_time
+        .context("reserved registration anchor has no native publication time")?;
     let genesis_hlc = crate::signing_stamp::issue_realm_genesis_hlc_with_secret(
         reserved.did.as_str(),
         handoff.device_id.trim(),
@@ -154,20 +178,18 @@ pub fn recover_registration_checkpoint_from_reservation(
         root_public_key_multibase: key_material.root_public_key_multikey.clone(),
         root_verification_method: validated.root_verification_method.to_string(),
         next_root_public_key_multibase: key_material.next_root_public_key_multikey.clone(),
-        next_root_key_hash: validated.next_root_key_hash,
+        next_root_key_hash,
         recovery_proof_public_key_multibase: key_material
             .recovery_proof_public_key_multikey
             .clone(),
         backup_hpke_public_key_multibase: key_material.backup_hpke_public_key_multikey.clone(),
         recovery_key_fingerprint: crate::recovery_crypto::fingerprint_recovery_key(recovery_key),
-        did_operation: reserved.did_operation,
+        principal_registration_anchor: reserved.principal_registration_anchor,
         pcr_genesis_unit: None,
         initial_session: None,
         pcr_genesis_receipt: None,
         pcr_bootstrap_seal: None,
-        genesis_created_at: arkret_sdk::canonical::format_timestamp_canonical(
-            validated.did_version_time,
-        ),
+        genesis_created_at: arkret_sdk::canonical::format_timestamp_canonical(genesis_created_at),
         genesis_hlc,
         genesis_salt: arkret_sdk::GenesisSalt::generate()?.into_string(),
         binding_receipt: None,
@@ -186,14 +208,16 @@ pub fn validate_reserved_identity_recovery_key(
         .reserved_identity
         .as_ref()
         .context("account handoff omits its reserved DID operation")?;
-    let validated = arkret_sdk::signatures::webvh::validate_principal_inception_operation(
-        &reserved.did_operation,
+    let validated = arkret_sdk::identity::validate_principal_registration_anchor(
+        &reserved.principal_registration_anchor,
     )
-    .map_err(|error| anyhow!("reserved DID inception operation is invalid: {error}"))?;
+    .map_err(|error| anyhow!("reserved principal registration anchor is invalid: {error}"))?;
     if validated.principal_id != reserved.principal_id
-        || validated.operation_digest != reserved.operation_digest
+        || validated.registration_anchor_digest != reserved.registration_anchor_digest
     {
-        anyhow::bail!("reserved DID operation digest or principal does not match its checkpoint");
+        anyhow::bail!(
+            "reserved registration anchor digest or principal does not match its checkpoint"
+        );
     }
     let key_material = arkret_sdk::identity_root::derive_identity_recovery_key_material_from_bip39(
         recovery_key,
@@ -201,7 +225,7 @@ pub fn validate_reserved_identity_recovery_key(
         0,
     )?;
     if validated.root_public_key_multibase != key_material.root_public_key_multikey
-        || validated.next_root_key_hash != key_material.next_root_key_hash
+        || validated.next_root_key_hash.as_deref() != Some(key_material.next_root_key_hash.as_str())
     {
         anyhow::bail!("Recovery Key does not control the reserved identity root");
     }
@@ -250,8 +274,10 @@ pub fn checkpoint_belongs_to_handoff(
     let Some(reserved_identity) = handoff.reserved_identity.as_ref() else {
         return false;
     };
-    arkret_sdk::ReservedIdentityCreation::from_operation(checkpoint.did_operation.clone())
-        .is_ok_and(|expected| expected == *reserved_identity)
+    arkret_sdk::ReservedIdentityCreation::from_anchor(
+        checkpoint.principal_registration_anchor.clone(),
+    )
+    .is_ok_and(|expected| expected == *reserved_identity)
 }
 
 /// Finish all local key generation and signatures before the first identity
@@ -302,12 +328,11 @@ pub fn prepare_genesis_draft(
     let created_at = chrono::DateTime::parse_from_rfc3339(&checkpoint.genesis_created_at)
         .context("persisted genesis creation time is invalid")?
         .with_timezone(&Utc);
-    let validated_inception =
-        arkret_sdk::signatures::webvh::validate_principal_inception_operation(
-            &checkpoint.did_operation,
-        )
-        .map_err(|error| anyhow!("persisted DID inception operation is invalid: {error}"))?;
-    if validated_inception.did_version_id != checkpoint.version_id {
+    let validated_anchor = arkret_sdk::identity::validate_principal_registration_anchor(
+        &checkpoint.principal_registration_anchor,
+    )
+    .map_err(|error| anyhow!("persisted principal registration anchor is invalid: {error}"))?;
+    if validated_anchor.did_version_id != checkpoint.version_id {
         anyhow::bail!("persisted DID inception version does not match its checkpoint");
     }
     let unit = crate::identity::principal_genesis::build_genesis_unit(
@@ -316,7 +341,7 @@ pub fn prepare_genesis_draft(
         arkret_sdk::GenesisSalt::new(checkpoint.genesis_salt.clone())?,
         arkret_sdk::TrustDomainId::new(checkpoint.trust_domain.clone())?,
         checkpoint.version_id.clone(),
-        validated_inception.log_head_digest.to_string(),
+        validated_anchor.method_history_head.to_string(),
         created_at,
         arkret_sdk::Hlc::new(checkpoint.genesis_hlc.clone())?,
         &key_material.root_seed,
@@ -381,7 +406,7 @@ pub async fn complete_account_handoff_binding(
     let account_handoff_grant = crate::identity::account_auth::load_account_handoff_grant(handoff)?
         .ok_or_else(|| anyhow!("account handoff credential is unavailable; authenticate again"))?;
     let key_material = validate_checkpoint_recovery_key(checkpoint, recovery_key)?;
-    let did_operation = checkpoint.did_operation.clone();
+    let principal_registration_anchor = checkpoint.principal_registration_anchor.clone();
     let unit = checkpoint
         .pcr_genesis_unit
         .clone()
@@ -477,7 +502,7 @@ pub async fn complete_account_handoff_binding(
         let challenge_request = garth::identity_binding_challenge_request(
             arkret_sdk::RequestId::new_v7_at(crate::clock::now_unix_ms()),
             &current_lease,
-            did_operation.clone(),
+            principal_registration_anchor.clone(),
             &unit,
             &initial,
         )?;
@@ -536,7 +561,7 @@ pub async fn complete_account_handoff_binding(
             let renewed_challenge_request = garth::identity_binding_challenge_request(
                 arkret_sdk::RequestId::new_v7_at(crate::clock::now_unix_ms()),
                 lease,
-                checkpoint.did_operation.clone(),
+                checkpoint.principal_registration_anchor.clone(),
                 &unit,
                 &initial,
             )?;
@@ -721,18 +746,18 @@ fn check_registration_result_binding(
     receipt: &arkret_sdk::AccountBindingReceipt,
 ) -> anyhow::Result<()> {
     receipt.validate_shape()?;
-    let did_operation = &checkpoint.did_operation;
-    let validated =
-        arkret_sdk::signatures::webvh::validate_principal_inception_operation(did_operation)
-            .map_err(|error| anyhow!("validate frozen principal inception: {error}"))?;
+    let validated = arkret_sdk::identity::validate_principal_registration_anchor(
+        &checkpoint.principal_registration_anchor,
+    )
+    .map_err(|error| anyhow!("validate frozen principal registration anchor: {error}"))?;
     let registration = request
         .identity_creation
         .as_ref()
         .context("identity-creation request lost its frozen registration")?;
     if validated.principal_id != receipt.principal_id
-        || validated.operation_digest != receipt.operation_digest
+        || validated.registration_anchor_digest != receipt.registration_anchor_digest
         || validated.did_version_id != registration.control_proof.did_version_id
-        || validated.log_head_digest.as_str()
+        || validated.method_history_head.as_str()
             != registration
                 .registration_did_evidence_draft
                 .method_history_head
@@ -865,15 +890,18 @@ mod tests {
             &key,
         )
         .unwrap();
-        let operation = first.did_operation.clone();
+        let anchor = first.principal_registration_anchor.clone();
         let mut renewed = handoff("ak:device:019f0000-0000-7000-8000-000000000002", 2);
         renewed.reserved_identity =
-            Some(arkret_sdk::ReservedIdentityCreation::from_operation(operation).unwrap());
+            Some(arkret_sdk::ReservedIdentityCreation::from_anchor(anchor).unwrap());
 
         let recovered = recover_registration_checkpoint_from_reservation(&renewed, &key).unwrap();
 
         assert_eq!(recovered.did, first.did);
-        assert_eq!(recovered.did_operation, first.did_operation);
+        assert_eq!(
+            recovered.principal_registration_anchor,
+            first.principal_registration_anchor
+        );
         assert_eq!(recovered.lease_fence, 2);
         assert_eq!(recovered.device_id, renewed.device_id);
         assert!(recovered.pcr_genesis_unit.is_none());
@@ -888,10 +916,10 @@ mod tests {
             &key,
         )
         .unwrap();
-        let operation = first.did_operation;
+        let anchor = first.principal_registration_anchor;
         let mut renewed = handoff("ak:device:019f0000-0000-7000-8000-000000000002", 2);
         renewed.reserved_identity =
-            Some(arkret_sdk::ReservedIdentityCreation::from_operation(operation).unwrap());
+            Some(arkret_sdk::ReservedIdentityCreation::from_anchor(anchor).unwrap());
         let wrong = crate::recovery_crypto::generate_recovery_key().unwrap();
 
         assert!(recover_registration_checkpoint_from_reservation(&renewed, &wrong).is_err());

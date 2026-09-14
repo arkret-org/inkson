@@ -614,10 +614,10 @@ pub(super) fn checkpoint_for_handoff(
     // `account_handle` is not consulted: the spec defines it as an unsigned UX
     // hint, while this typed reservation is the continuity evidence.
     if let Some(reserved_identity) = handoff.reserved_identity.as_ref() {
-        let did_operation = checkpoint.did_operation.clone();
-        let expected_reservation =
-            arkret_sdk::ReservedIdentityCreation::from_operation(did_operation)
-                .map_err(|error| anyhow::anyhow!("the saved DID operation is invalid: {error}"))?;
+        let expected_reservation = arkret_sdk::ReservedIdentityCreation::from_anchor(
+            checkpoint.principal_registration_anchor.clone(),
+        )
+        .map_err(|error| anyhow::anyhow!("the saved registration anchor is invalid: {error}"))?;
         if expected_reservation != *reserved_identity {
             anyhow::bail!(
                 "the server's reserved identity does not match the local checkpoint; the original checkpoint is required"
