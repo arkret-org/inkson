@@ -129,13 +129,20 @@ fn agent_pcr_genesis_does_not_bypass_control_proposal_ack_authoring() {
     );
 
     assert!(crate::authorization_lease::is_agent_pcr_genesis(&managed));
-    assert!(!uses_bare_online_anchor_submission(true, &managed));
+    assert_eq!(bare_online_bootstrap_context(true, false, &managed), None);
 
     let ordinary = realm_create_sdk_event(
         "ak:event:Ab0jbIKlPZ-M3WbarZlCPLYtkCWggYwWZeRDlW-ShdQ9",
         "did:web:alice.example",
     );
-    assert!(uses_bare_online_anchor_submission(true, &ordinary));
+    assert_eq!(
+        bare_online_bootstrap_context(true, false, &ordinary),
+        Some(arkret_wire::EventSubmitContext::RealmBootstrap)
+    );
+    assert_eq!(
+        bare_online_bootstrap_context(true, true, &ordinary),
+        Some(arkret_wire::EventSubmitContext::AnchorUnit)
+    );
 }
 
 #[test]

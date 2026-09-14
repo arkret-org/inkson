@@ -60,11 +60,13 @@ pub struct EventSubmitter {
     founding_realm: Option<arkret_sdk::RealmId>,
 }
 
-/// Ordinary Realm and self-principal bootstrap units intentionally publish
-/// without per-Event Control Proposal Acks. A Agent PCR create is also an
-/// anchor unit, but its delegated controller is the founding proposal
-/// authority, so it must pass through `standard_initial_submission` to attach
-/// that controller's Control Proposal Ack.
+/// Realm bootstrap units intentionally publish without per-Event Control
+/// Proposal Acks. Their signer-material context is still branch-specific:
+/// ordinary Realm Events retain portable signer evidence, while only the
+/// exact human PCR create/authorize unit uses native unit-local evidence. A
+/// Agent PCR create is also basis-free, but its delegated controller is the
+/// founding proposal authority, so it must pass through
+/// `standard_initial_submission` to attach that controller's Ack.
 fn validate_prepared_join_signing_scope(
     prepared_account: &arkret_sdk::AccountId,
     captured_account: &arkret_sdk::AccountId,
@@ -82,8 +84,19 @@ fn validate_prepared_join_signing_scope(
     Ok(())
 }
 
-fn uses_bare_online_anchor_submission(anchor_unit: bool, event: &arkret_sdk::Event) -> bool {
-    anchor_unit && !crate::authorization_lease::is_agent_pcr_genesis(event)
+fn bare_online_bootstrap_context(
+    realm_bootstrap_unit: bool,
+    native_anchor_unit: bool,
+    event: &arkret_sdk::Event,
+) -> Option<arkret_wire::EventSubmitContext> {
+    if !realm_bootstrap_unit || crate::authorization_lease::is_agent_pcr_genesis(event) {
+        return None;
+    }
+    Some(if native_anchor_unit {
+        arkret_wire::EventSubmitContext::AnchorUnit
+    } else {
+        arkret_wire::EventSubmitContext::RealmBootstrap
+    })
 }
 
 /// The write is safely persisted and will be retried.
@@ -3653,16 +3666,20 @@ impl EventSubmitter {
         }
         // `idempotency_key` is not a body field in v1: it travels only in the
         // `Idempotency-Key` header.
-        let anchor_unit = first_event.kind == arkret_sdk::EventKind::RealmCreate;
+        let realm_bootstrap_unit = first_event.kind == arkret_sdk::EventKind::RealmCreate;
+        let native_anchor_unit = realm_bootstrap_unit
+            && sdk_events.len() == 2
+            && sdk_events[1].kind == arkret_sdk::EventKind::DeviceAuthorize;
         let mut submissions = Vec::with_capacity(sdk_events.len());
         for event in sdk_events {
-            let submission = if uses_bare_online_anchor_submission(anchor_unit, event) {
+            let submission = if let Some(context) = bare_online_bootstrap_context(
+                realm_bootstrap_unit,
+                native_anchor_unit,
+                event.event(),
+            ) {
                 let submission = arkret_wire::EventInitialSubmission::online(event.event().clone());
                 submission
-                    .validate_structural_in_context(
-                        arkret_wire::EventSubmitContext::AnchorUnit,
-                        event.digest_suite(),
-                    )
+                    .validate_structural_in_context(context, event.digest_suite())
                     .map_err(anyhow::Error::from)?;
                 submission
             } else {

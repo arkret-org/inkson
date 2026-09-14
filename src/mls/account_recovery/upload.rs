@@ -158,6 +158,14 @@ async fn ensure_initial_active_series(
     }
 
     let submitter = api.event_submitter()?;
+    // This is a new ordinary PCR Control authoring boundary. A concurrent
+    // account reconnect can advance the device-cache epoch after recovery
+    // policy publication, invalidating the earlier onboarding snapshot. Read
+    // and cache the Station frontier again here instead of borrowing that
+    // stale checkpoint for the active-series Event.
+    submitter
+        .refresh_realm_governance_frontier(control_realm.as_str())
+        .await?;
     let frontier = submitter
         .seals_frontier_realm_head(control_realm.as_str())
         .await?;
