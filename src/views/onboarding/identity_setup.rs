@@ -864,6 +864,56 @@ pub(super) async fn finish_principal_setup(
         };
         barrier.wait().await?;
     }
+
+    // The founding Seal materializes two distinct Station-verified authoring
+    // roots: keys/query carries Data evidence, while the authenticated account
+    // viewer carries Control evidence adjacent to the exact authorize Event.
+    // Install and durably checkpoint both before authoring the ordinary
+    // Control-plane recovery policy. Neither root is a fallback for the other.
+    crate::identity::device_directory::reset_session_cache();
+    crate::identity::authoring_generation::reset_verified_authoring_generations();
+    crate::authorization_lease::clear_leases();
+    state_store.write().set_device_authoring_authority(None);
+    let device_cache_epoch = crate::identity::device_directory::cache_epoch();
+    let http = api.sdk_http_client()?;
+    let viewer = crate::transport::keys::list_devices(&http)
+        .await
+        .context("read the accepted founding device Control evidence")?;
+    let signer = crate::event_signer::active_signer()
+        .context("accepted founding device signer is unavailable")?;
+    let Some(persisted) =
+        crate::identity::device_directory::authenticated_device_authoring_authority(
+            &http,
+            &viewer,
+            &account.authority,
+            &account.device_id,
+            signer.as_ref(),
+        )
+        .await?
+    else {
+        crate::identity::device_directory::reset_session_cache();
+        crate::identity::authoring_generation::reset_verified_authoring_generations();
+        anyhow::bail!(
+            "accepted founding device projection does not contain exact Data and Control authoring evidence"
+        );
+    };
+    if !crate::identity::device_directory::restore_persisted_device_authoring_authority(
+        device_cache_epoch,
+        &account.authority,
+        &account.device_id,
+        &persisted,
+    ) {
+        crate::identity::device_directory::reset_session_cache();
+        crate::identity::authoring_generation::reset_verified_authoring_generations();
+        anyhow::bail!("accepted founding device authoring evidence lost its cache epoch");
+    }
+    let barrier = {
+        let mut store = state_store.write();
+        store.set_device_authoring_authority(Some(persisted));
+        store.begin_durable_flush()?
+    };
+    barrier.wait().await?;
+
     crate::recovery_strand::ensure_recovery_policy(
         &api,
         &recovery_actor,

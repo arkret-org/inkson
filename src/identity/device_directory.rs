@@ -392,6 +392,77 @@ pub(crate) fn persisted_device_authoring_authority_from_outcome(
     })
 }
 
+fn local_signer_matches_device_projection(
+    signer: &crate::event_signer::InksonEventSigner,
+    account_id: &arkret_sdk::AccountId,
+    device_id: &arkret_sdk::DeviceId,
+    projection: &arkret_models_crypto::VerifiedDeviceProjection,
+) -> bool {
+    if signer.device_id() != Some(device_id.as_str()) {
+        return false;
+    }
+    let Ok(signer_did) = arkret_sdk::Did::new(signer.signer_did().to_owned()) else {
+        return false;
+    };
+    if arkret_sdk::project_did_to_core_id(&signer_did)
+        .ok()
+        .as_ref()
+        != Some(&account_id.principal_id)
+    {
+        return false;
+    }
+    signer
+        .public_key_multibase()
+        .map(|public_key| format!("did:key:{public_key}"))
+        .as_deref()
+        == Some(projection.device_signing_key_did.as_str())
+}
+
+/// Resolve the exact Data and Control authoring roots for the active local
+/// signer from one authenticated account viewer plus the authoritative
+/// keys/query projection. Neither evidence plane may substitute for the other.
+pub(crate) async fn authenticated_device_authoring_authority(
+    http: &arkret_sdk::http_client::Client,
+    viewer: &arkret_sdk::AccountView,
+    account_id: &arkret_sdk::AccountId,
+    device_id: &arkret_sdk::DeviceId,
+    signer: &crate::event_signer::InksonEventSigner,
+) -> anyhow::Result<Option<crate::state::PersistedDeviceAuthoringAuthority>> {
+    let outcome = crate::transport::keys::query_keys(http, account_id, device_id.as_str()).await?;
+    let Some(record) = outcome
+        .devices_for(account_id)
+        .and_then(|devices| devices.get(device_id))
+    else {
+        return Ok(None);
+    };
+    if !local_signer_matches_device_projection(
+        signer,
+        account_id,
+        device_id,
+        &record.device_projection,
+    ) {
+        return Ok(None);
+    }
+    if !crate::identity::authoring_generation::cache_principal_authoring_generation_from_keys(
+        &outcome,
+        account_id,
+        device_id.as_str(),
+    )? {
+        return Ok(None);
+    }
+    let Some(generation) =
+        crate::identity::authoring_generation::cached_principal_authoring_generation(
+            account_id,
+            device_id.as_str(),
+        )
+    else {
+        return Ok(None);
+    };
+    Ok(persisted_device_authoring_authority_from_outcome(
+        &outcome, viewer, account_id, device_id, generation,
+    ))
+}
+
 pub(crate) fn cached_data_signer_evidence_ref_for_principal_device_and_key(
     principal_id: &arkret_sdk::DidCoreId,
     device: &str,
@@ -947,6 +1018,58 @@ mod verification_method_controller_tests {
             ),
             arkret_sdk::DeviceId::new("ak:device:0196419b-0000-7000-8000-000000000001").unwrap(),
         )
+    }
+
+    #[test]
+    fn local_signer_requires_exact_account_device_and_projection_key() {
+        let (account, device) = projection_fixture_account();
+        let signer = crate::event_signer::build_ed25519_device_signer(
+            [43u8; 32],
+            "did:web:projection-principal.example",
+            device.as_str(),
+        );
+        let public_key = signer.public_key_multibase().unwrap();
+        let projection = self_projection_fixture(
+            arkret_sdk::canonical::normalize_timestamp_canonical(chrono::Utc::now()),
+            &format!("did:key:{public_key}"),
+        );
+        assert!(super::local_signer_matches_device_projection(
+            &signer,
+            &account,
+            &device,
+            &projection,
+        ));
+
+        let other_device =
+            arkret_sdk::DeviceId::new("ak:device:0196419b-0000-7000-8000-000000000002").unwrap();
+        assert!(!super::local_signer_matches_device_projection(
+            &signer,
+            &account,
+            &other_device,
+            &projection,
+        ));
+
+        let other_account = arkret_sdk::AccountId::new(
+            arkret_sdk::DidCoreId::new("ak:did_core:web:other-principal.example").unwrap(),
+            account.station_id.clone(),
+        );
+        assert!(!super::local_signer_matches_device_projection(
+            &signer,
+            &other_account,
+            &device,
+            &projection,
+        ));
+
+        let wrong_key_projection = self_projection_fixture(
+            arkret_sdk::canonical::normalize_timestamp_canonical(chrono::Utc::now()),
+            "did:key:z6MkhHrTbtosB4xyyJM217fS4ry35F7JhZ5oA9uVHErBJDL5",
+        );
+        assert!(!super::local_signer_matches_device_projection(
+            &signer,
+            &account,
+            &device,
+            &wrong_key_projection,
+        ));
     }
 
     #[test]

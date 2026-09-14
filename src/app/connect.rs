@@ -535,54 +535,20 @@ async fn current_event_signer_matches_directory(
             .map_err(|error| anyhow::anyhow!("bootstrap device signer: {error}"))?,
     };
     let account_id = &account.authority;
-    let actor_id = account.principal_id();
     let signer = crate::event_signer::bind_active_signer_device_id(device)
         .map_err(|error| anyhow::anyhow!("bind event signer device: {error}"))?
         .unwrap_or(signer);
-    let signer_did = arkret_sdk::Did::new(signer.signer_did().to_owned())?;
-    if &arkret_sdk::project_did_to_core_id(&signer_did)? != actor_id {
-        clear_verified_device_authoring_authority(state_store);
-        return Ok(false);
-    }
-    let Some(public_key) = signer.public_key_multibase() else {
-        clear_verified_device_authoring_authority(state_store);
-        return Ok(false);
-    };
     let device_cache_epoch = crate::identity::device_directory::cache_epoch();
-    let outcome =
-        crate::transport::keys::query_keys(&principal_api.sdk_http_client()?, account_id, device)
-            .await?;
     let device_id = arkret_sdk::DeviceId::new(device.to_owned())?;
-    let expected_key = format!("did:key:{public_key}");
-    let signer_matches = outcome
-        .devices_for(account_id)
-        .and_then(|devices| devices.get(&device_id))
-        .map(|record| record.device_projection.device_signing_key_did.as_str())
-        == Some(expected_key.as_str());
-    if !signer_matches {
-        clear_verified_device_authoring_authority(state_store);
-        return Ok(false);
-    }
-    let active =
-        crate::identity::authoring_generation::cache_principal_authoring_generation_from_keys(
-            &outcome, account_id, device,
-        )?;
-    if !active {
-        clear_verified_device_authoring_authority(state_store);
-        return Ok(false);
-    }
-    let Some(generation) =
-        crate::identity::authoring_generation::cached_principal_authoring_generation(
-            account_id, device,
-        )
-    else {
-        clear_verified_device_authoring_authority(state_store);
-        return Ok(false);
-    };
     let Some(persisted) =
-        crate::identity::device_directory::persisted_device_authoring_authority_from_outcome(
-            &outcome, viewer, account_id, &device_id, generation,
+        crate::identity::device_directory::authenticated_device_authoring_authority(
+            &principal_api.sdk_http_client()?,
+            viewer,
+            account_id,
+            &device_id,
+            signer.as_ref(),
         )
+        .await?
     else {
         clear_verified_device_authoring_authority(state_store);
         return Ok(false);
