@@ -70,6 +70,27 @@ pub(crate) async fn refresh_realm_governance_frontier<
     Ok(())
 }
 
+/// Establish the first verified governance checkpoint immediately after this
+/// client has received an accepted Realm-bootstrap response. Acceptance and
+/// the first Seal projection are asynchronous at the Station, so the creator
+/// lane admits the registered `not_found`/`frontier_unavailable` gap before it
+/// runs the ordinary fail-closed frontier refresh.
+pub(crate) async fn refresh_new_realm_governance_frontier<
+    S: crate::mls::governance_proof::GovernanceProofStateStore,
+>(
+    api: &crate::transport::TransportClient,
+    state_store: S,
+    realm_id: &str,
+) -> Result<(), String> {
+    let submitter = api
+        .event_submitter()
+        .map_err(|error| format!("Realm Seal wait client: {error}"))?;
+    wait_for_realm_seal_view(&submitter, realm_id)
+        .await
+        .map_err(|error| error.to_string())?;
+    refresh_realm_governance_frontier(api, state_store, realm_id).await
+}
+
 /// Whether this client is the creator of an encrypted `realm_id` whose MLS
 /// bootstrap is still incomplete.
 ///
