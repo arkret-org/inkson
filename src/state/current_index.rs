@@ -17,6 +17,12 @@ mod platform;
 #[path = "current_index/wasm.rs"]
 mod platform;
 
+// The browser regressions of this index are an integration test target, which
+// cannot reach a crate-private type; this is their only entry point.
+#[cfg(target_arch = "wasm32")]
+#[path = "current_index/wasm_harness.rs"]
+pub mod wasm_harness;
+
 pub(crate) const CURRENT_PREFIX: &str = "inkson.current.v1/";
 const PAGE_LIMIT: usize = 100;
 
@@ -119,6 +125,49 @@ struct CleanupTask {
     generation: u64,
 }
 
+/// Phases of one reachability cycle over snapshot-scoped `seen` evidence.
+/// `Purge` drops the marks of the previous cycle, `Mark` republishes the marks
+/// of every live root, and only then may `Sweep` delete.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum GcPhase {
+    #[default]
+    Purge,
+    Mark,
+    Sweep,
+}
+
+/// Durable position of the reachability cycle. The epoch keeps the marks of the
+/// running cycle apart from the previous root set, so a stale mark can never be
+/// mistaken for current evidence.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+struct GcState {
+    epoch: u64,
+    phase: GcPhase,
+    stream: usize,
+    cursor: Option<String>,
+    reclaimed: bool,
+    /// A root was published or retired since this cycle began. The cycle that
+    /// observes the change usually only stops marking the orphan; the delete
+    /// belongs to the next one, so this keeps that next cycle scheduled.
+    dirty: bool,
+    idle: bool,
+}
+
+/// Rotating position of per-logical-key version compaction over metadata.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+struct MetaPosition {
+    stream: usize,
+    cursor: Option<String>,
+}
+
+/// Metadata whose historical versions answer no read once a newer committed
+/// version exists. Rotation gives each one a share of every maintenance pass.
+const META_STREAMS: [&str; 5] = ["progress/", "coverage/", "retired/", "refresh/", "reset/"];
+/// Root streams of the mark phase: a realm's installed baseline and every
+/// coverage mark a reader can still reach through `strongest_mark`.
+const MARK_STREAMS: [&str; 2] = ["progress/", "coverage/"];
+
 #[derive(Clone, Debug)]
 pub(crate) struct CurrentTargetPage {
     pub entries: Vec<CurrentResultEntry>,
@@ -166,6 +215,20 @@ fn target_key(target: &CurrentTarget) -> anyhow::Result<String> {
 }
 fn member_all_key() -> &'static str {
     "member-all"
+}
+/// Snapshot cursors reach storage only as this digest, so marks and `seen`
+/// keys address the same snapshot without keeping the cursor itself around.
+fn snapshot_key(snapshot: &str) -> anyhow::Result<String> {
+    hash(&snapshot)
+}
+/// Split a versioned key into its logical prefix and the generation that wrote
+/// it. Versions sort descending, so a page lists each logical key newest first.
+fn split_version(key: &str) -> anyhow::Result<(&str, u64)> {
+    let cut = key
+        .rfind('/')
+        .ok_or_else(|| anyhow::anyhow!("current version key has no logical prefix"))?
+        + 1;
+    Ok((&key[..cut], u64::MAX - key[cut..].parse::<u64>()?))
 }
 
 impl CurrentIndex {
@@ -321,9 +384,30 @@ impl CurrentIndex {
         Ok(format!(
             "{}seen/{}/{}/",
             self.prefix,
-            hash(&snapshot)?,
+            snapshot_key(snapshot)?,
             hash(selector)?
         ))
+    }
+    fn gc_state_key(&self) -> String {
+        format!("{}gc-state", self.prefix)
+    }
+    fn gc_mark_prefix(&self) -> String {
+        format!("{}gc-mark/", self.prefix)
+    }
+    fn gc_mark_key(&self, epoch: u64, snapshot: &str) -> String {
+        format!("{}{epoch:020}/{snapshot}", self.gc_mark_prefix())
+    }
+    async fn load_state<T: serde::de::DeserializeOwned + Default>(
+        &self,
+        key: &str,
+    ) -> anyhow::Result<T> {
+        Ok(self
+            .backend
+            .get(key)
+            .await?
+            .map(|bytes| serde_json::from_slice(&bytes))
+            .transpose()?
+            .unwrap_or_default())
     }
     async fn progress_at(
         &self,
@@ -603,6 +687,12 @@ impl CurrentIndex {
             .unwrap_or_default();
         let mut writes = BTreeMap::<String, Vec<u8>>::new();
         let mut unversioned = BTreeMap::<String, Vec<u8>>::new();
+        // Publish write barrier. Maintenance and staging share one lease, so the
+        // epoch read here is the epoch the running mark phase collects under.
+        // Marking every snapshot this frame roots, in the same apply as the
+        // rows that root it, means a mark cursor that already passed a Realm
+        // cannot lose the evidence and never has to restart its scan.
+        let gc: GcState = self.load_state(&self.gc_state_key()).await?;
         let mut filtered = frame.clone();
         let mut progress_updates = BTreeMap::<String, garth::CurrentRealmProgress>::new();
         if frame.kind == arkret_sdk::AccountSubscribeFrameKind::ResyncRequired {
@@ -792,6 +882,13 @@ impl CurrentIndex {
                                 .as_ref()
                                 .is_none_or(|old| old.cut_revision <= cleanup.cut_revision)
                             {
+                                unversioned.insert(
+                                    self.gc_mark_key(
+                                        gc.epoch,
+                                        &snapshot_key(cleanup.snapshot_cursor.as_str())?,
+                                    ),
+                                    serde_json::to_vec(&true)?,
+                                );
                                 writes.insert(
                                     format!("{prefix}{suffix}"),
                                     serde_json::to_vec(&CoverageMark {
@@ -821,10 +918,22 @@ impl CurrentIndex {
             }
         }
         for (realm, progress) in progress_updates {
+            if let Some(baseline) = &progress.baseline {
+                unversioned.insert(
+                    self.gc_mark_key(gc.epoch, &snapshot_key(baseline.snapshot_cursor.as_str())?),
+                    serde_json::to_vec(&true)?,
+                );
+            }
             writes.insert(
                 format!("{}{suffix}", self.progress_prefix(&realm)?),
                 serde_json::to_vec(&progress)?,
             );
+        }
+        if gc.idle || !gc.dirty {
+            let mut woken = gc.clone();
+            woken.idle = false;
+            woken.dirty = true;
+            unversioned.insert(self.gc_state_key(), serde_json::to_vec(&woken)?);
         }
         let mut manifest = writes.keys().cloned().collect::<Vec<_>>();
         for key in unversioned.keys() {
@@ -891,6 +1000,255 @@ impl CurrentIndex {
         Ok(true)
     }
 
+    /// One bounded page of per-logical-key version compaction.
+    ///
+    /// Versions above the committed pointer belong to an unfinished stage and
+    /// are never touched. At or below it only the newest can still answer
+    /// `latest` or `latest_generation`, so the rest are bytes. Nothing is
+    /// rewritten: a retained key keeps the generation the reader compares
+    /// against the refresh and reset floors.
+    async fn compact_versions(
+        &self,
+        prefix: &str,
+        cursor: Option<&str>,
+        generation: u64,
+    ) -> anyhow::Result<(Vec<String>, Option<String>)> {
+        let keys = self.backend.keys(prefix, None, cursor, PAGE_LIMIT).await?;
+        let Some(next) = keys.last().cloned() else {
+            return Ok((Vec::new(), None));
+        };
+        let mut deletes = Vec::new();
+        let mut logical = String::new();
+        let mut retained = false;
+        for (position, key) in keys.iter().enumerate() {
+            let (key_logical, key_generation) = split_version(key)?;
+            if key_logical != logical {
+                logical = key_logical.to_owned();
+                // A page can open inside a logical key whose survivor an
+                // earlier pass already passed, so ask instead of assuming.
+                retained = position == 0
+                    && self
+                        .backend
+                        .keys(
+                            key_logical,
+                            Some(&format!("{key_logical}{}", version(generation))),
+                            None,
+                            1,
+                        )
+                        .await?
+                        .first()
+                        .is_some_and(|survivor| survivor.as_str() < key.as_str());
+            }
+            if key_generation > generation {
+                continue;
+            }
+            if retained {
+                deletes.push(key.clone());
+            } else {
+                retained = true;
+            }
+        }
+        Ok((deletes, Some(next)))
+    }
+
+    /// Rotate the compaction quota across the metadata prefixes so a Realm that
+    /// keeps rewriting one of them cannot starve the others.
+    async fn compact_metadata(&self, generation: u64) -> anyhow::Result<bool> {
+        let cursor_key = format!("{}meta-position", self.prefix);
+        let mut position: MetaPosition = self.load_state(&cursor_key).await?;
+        position.stream %= META_STREAMS.len();
+        let prefix = format!("{}{}", self.prefix, META_STREAMS[position.stream]);
+        let (deletes, next) = self
+            .compact_versions(&prefix, position.cursor.as_deref(), generation)
+            .await?;
+        match next {
+            Some(next) => position.cursor = Some(next),
+            None => {
+                position.stream = (position.stream + 1) % META_STREAMS.len();
+                position.cursor = None;
+            }
+        }
+        let reclaimed = !deletes.is_empty();
+        self.backend
+            .apply(deletes, vec![(cursor_key, serde_json::to_vec(&position)?)])
+            .await?;
+        Ok(reclaimed)
+    }
+
+    /// One bounded page of roots. Every stored version is treated as a root,
+    /// including the ones an unfinished stage wrote: over-retaining costs a
+    /// cycle, while under-marking would delete evidence a reader still needs.
+    /// Compaction removes the superseded versions, so the root set converges.
+    async fn mark_roots(
+        &self,
+        stream: usize,
+        cursor: Option<&str>,
+    ) -> anyhow::Result<(Vec<String>, Option<String>)> {
+        let prefix = format!("{}{}", self.prefix, MARK_STREAMS[stream]);
+        let rows = self.backend.scan(&prefix, None, cursor, PAGE_LIMIT).await?;
+        let mut snapshots = Vec::new();
+        let mut next = None;
+        for (key, bytes) in rows {
+            if MARK_STREAMS[stream] == "progress/" {
+                let progress: garth::CurrentRealmProgress = serde_json::from_slice(&bytes)?;
+                if let Some(baseline) = &progress.baseline {
+                    snapshots.push(snapshot_key(baseline.snapshot_cursor.as_str())?);
+                }
+            } else {
+                let mark: CoverageMark = serde_json::from_slice(&bytes)?;
+                snapshots.push(snapshot_key(&mark.snapshot)?);
+            }
+            next = Some(key);
+        }
+        Ok((snapshots, next))
+    }
+
+    /// One bounded page of `seen` evidence. A snapshot no root reaches is gone
+    /// from both readers, so its evidence at or below the committed pointer is
+    /// deleted outright; a snapshot still rooted only loses superseded
+    /// versions. Future generations stay untouched in either case.
+    async fn sweep_seen(
+        &self,
+        epoch: u64,
+        cursor: Option<&str>,
+        generation: u64,
+    ) -> anyhow::Result<(Vec<String>, Option<String>)> {
+        let prefix = format!("{}seen/", self.prefix);
+        let keys = self.backend.keys(&prefix, None, cursor, PAGE_LIMIT).await?;
+        let Some(next) = keys.last().cloned() else {
+            return Ok((Vec::new(), None));
+        };
+        let mut marks = BTreeMap::<String, bool>::new();
+        let mut deletes = Vec::new();
+        let mut logical = String::new();
+        let mut retained = false;
+        for (position, key) in keys.iter().enumerate() {
+            let (key_logical, key_generation) = split_version(key)?;
+            if key_logical != logical {
+                logical = key_logical.to_owned();
+                retained = position == 0
+                    && self
+                        .backend
+                        .keys(
+                            key_logical,
+                            Some(&format!("{key_logical}{}", version(generation))),
+                            None,
+                            1,
+                        )
+                        .await?
+                        .first()
+                        .is_some_and(|survivor| survivor.as_str() < key.as_str());
+            }
+            if key_generation > generation {
+                continue;
+            }
+            let snapshot = key_logical
+                .strip_prefix(&prefix)
+                .and_then(|rest| rest.split('/').next())
+                .ok_or_else(|| anyhow::anyhow!("current seen key carries no snapshot"))?
+                .to_owned();
+            let marked = match marks.get(&snapshot) {
+                Some(marked) => *marked,
+                None => {
+                    let marked = self
+                        .backend
+                        .get(&self.gc_mark_key(epoch, &snapshot))
+                        .await?
+                        .is_some();
+                    marks.insert(snapshot, marked);
+                    marked
+                }
+            };
+            if !marked || retained {
+                deletes.push(key.clone());
+            } else {
+                retained = true;
+            }
+        }
+        Ok((deletes, Some(next)))
+    }
+
+    /// One bounded step of the reachability cycle. The batch of deletes and the
+    /// phase, epoch and cursor advance reach the backend in a single apply, so
+    /// a crash keeps the whole step or none of it and a replay resumes at the
+    /// same position rather than skipping the unfinished batch.
+    async fn collect_garbage(&self, generation: u64, wake: bool) -> anyhow::Result<bool> {
+        let state_key = self.gc_state_key();
+        let mut state: GcState = self.load_state(&state_key).await?;
+        if state.idle && !wake {
+            return Ok(false);
+        }
+        state.idle = false;
+        state.dirty |= wake;
+        let mut deletes = Vec::new();
+        let mut writes = Vec::new();
+        match state.phase {
+            GcPhase::Purge => {
+                let prefix = self.gc_mark_prefix();
+                let current = format!("{prefix}{:020}/", state.epoch);
+                for key in self.backend.keys(&prefix, None, None, PAGE_LIMIT).await? {
+                    if key.as_str() < current.as_str() {
+                        deletes.push(key);
+                    }
+                }
+                if deletes.is_empty() {
+                    state.phase = GcPhase::Mark;
+                    state.stream = 0;
+                    state.cursor = None;
+                }
+            }
+            GcPhase::Mark => {
+                state.stream %= MARK_STREAMS.len();
+                let (snapshots, next) = self
+                    .mark_roots(state.stream, state.cursor.as_deref())
+                    .await?;
+                for snapshot in snapshots {
+                    writes.push((
+                        self.gc_mark_key(state.epoch, &snapshot),
+                        serde_json::to_vec(&true)?,
+                    ));
+                }
+                match next {
+                    Some(next) => state.cursor = Some(next),
+                    None => {
+                        state.cursor = None;
+                        if state.stream + 1 < MARK_STREAMS.len() {
+                            state.stream += 1;
+                        } else {
+                            state.phase = GcPhase::Sweep;
+                        }
+                    }
+                }
+            }
+            GcPhase::Sweep => {
+                let (batch, next) = self
+                    .sweep_seen(state.epoch, state.cursor.as_deref(), generation)
+                    .await?;
+                state.reclaimed |= !batch.is_empty();
+                deletes = batch;
+                match next {
+                    Some(next) => state.cursor = Some(next),
+                    None => {
+                        // A cycle that reclaimed nothing and saw no root change
+                        // has no work left until a frame publishes another root
+                        // or compaction retires one.
+                        state.idle = !state.reclaimed && !state.dirty;
+                        state.reclaimed = false;
+                        state.dirty = false;
+                        state.epoch += 1;
+                        state.phase = GcPhase::Purge;
+                        state.stream = 0;
+                        state.cursor = None;
+                    }
+                }
+            }
+        }
+        let reclaimed = !deletes.is_empty();
+        writes.push((state_key, serde_json::to_vec(&state)?));
+        self.backend.apply(deletes, writes).await?;
+        Ok(reclaimed)
+    }
+
     /// At most two selectors and 200 historical row keys per pass. Logical
     /// coverage removal was already atomic with the frame; this reclaims bytes.
     pub(crate) async fn maintain(&self) -> anyhow::Result<bool> {
@@ -906,6 +1264,13 @@ impl CurrentIndex {
         );
         let generation = self.generation.load(Ordering::Acquire);
         let mut maintained = self.prune_live_versions(generation).await?;
+        // Each reclaimer takes its own fixed share of the pass before the queue
+        // that produces the most work runs, so none of them can be starved by a
+        // Realm that keeps writing. Retiring a metadata version can orphan a
+        // snapshot, so it wakes an idle reachability cycle.
+        let retired_metadata = self.compact_metadata(generation).await?;
+        maintained |= retired_metadata;
+        maintained |= self.collect_garbage(generation, retired_metadata).await?;
         let manifests = format!("{}stage/", self.prefix);
         let older = self
             .backend
@@ -1095,6 +1460,89 @@ mod tests {
             generation: shared.generation.clone(),
             lease: shared.lease.clone(),
             _shared: shared,
+        }
+    }
+    const OTHER_REALM: &str = "ak:realm:AQJmSg1s9QyzppFeJL40dN92YVHZeLdBBt3UWHa9XNOD";
+    const CURSORS: [&str; 12] = [
+        "ak:cursor:YQ",
+        "ak:cursor:Yg",
+        "ak:cursor:Yw",
+        "ak:cursor:ZA",
+        "ak:cursor:ZQ",
+        "ak:cursor:Zg",
+        "ak:cursor:Zw",
+        "ak:cursor:aA",
+        "ak:cursor:aQ",
+        "ak:cursor:ag",
+        "ak:cursor:aw",
+        "ak:cursor:bA",
+    ];
+    fn realm_row(realm: &str, revision: u64) -> CurrentResultEntry {
+        serde_json::from_value(json!({"selector":{"scope_ref":{"kind":"realm","realm_id":realm},"cell_id":"ak:cell:ak.component.realm.freeze.v1:null"},"target":{"kind":"realm"},"revision":revision,"result":{"status":"value","value":null}})).unwrap()
+    }
+    fn member_row(realm: &str, actor: &str, revision: u64) -> CurrentResultEntry {
+        serde_json::from_value(json!({"selector":{"scope_ref":{"kind":"realm","realm_id":realm},"cell_id":format!("ak:cell:ak.component.member.state.v1:{actor}")},"target":{"kind":"member","actor_id":{"kind":"service","service_id":actor}},"revision":revision,"result":{"status":"value","value":null}})).unwrap()
+    }
+    fn realm_frame(
+        realm: &str,
+        entries: Vec<CurrentResultEntry>,
+        baseline: Option<serde_json::Value>,
+    ) -> AccountSubscribeFrame {
+        let mut entry = json!({"current":{"entries":entries}});
+        if let Some(baseline) = baseline {
+            entry["baseline"] = baseline;
+        }
+        serde_json::from_value(
+            json!({"kind":"delta","cursor":"ak:cursor:YQ","realms":{realm:entry}}),
+        )
+        .unwrap()
+    }
+    fn members_baseline(snapshot: &str, cut: u64, complete: bool) -> serde_json::Value {
+        json!({"snapshot_cursor":snapshot,"cut_revision":cut,"coverage":{"realm":true,"strand_ids":[],"members":{"mode":"all"},"event_ids":[]},"complete":complete})
+    }
+    async fn seen_versions(
+        index: &CurrentIndex,
+        snapshot: &str,
+        selector: &CurrentSelector,
+    ) -> usize {
+        let prefix = index.seen_prefix(snapshot, selector).unwrap();
+        index
+            .backend
+            .keys(&prefix, None, None, PAGE_LIMIT)
+            .await
+            .unwrap()
+            .len()
+    }
+    async fn seen_generation(
+        index: &CurrentIndex,
+        snapshot: &str,
+        selector: &CurrentSelector,
+    ) -> u64 {
+        let prefix = index.seen_prefix(snapshot, selector).unwrap();
+        index.latest_generation(&prefix, u64::MAX).await.unwrap()
+    }
+    async fn count_keys(index: &CurrentIndex, prefix: &str) -> usize {
+        let mut after: Option<String> = None;
+        let mut total = 0;
+        loop {
+            let keys = index
+                .backend
+                .keys(prefix, None, after.as_deref(), PAGE_LIMIT)
+                .await
+                .unwrap();
+            let Some(last) = keys.last().cloned() else {
+                return total;
+            };
+            total += keys.len();
+            after = Some(last);
+        }
+    }
+    async fn gc(index: &CurrentIndex) -> GcState {
+        index.load_state(&index.gc_state_key()).await.unwrap()
+    }
+    async fn drive(index: &CurrentIndex, passes: usize) {
+        for _ in 0..passes {
+            index.maintain().await.unwrap();
         }
     }
     fn path() -> std::path::PathBuf {
@@ -1461,5 +1909,493 @@ mod tests {
             index.read_selector(row(1, false).selector()).await.unwrap(),
             Some(row(1, false))
         );
+    }
+
+    #[tokio::test]
+    async fn repeated_baselines_reclaim_zero_reference_snapshot_seen() {
+        let path = path();
+        let store = index(&path, 0).await;
+        let selector = row(1, false).selector().clone();
+        for (generation, snapshot) in CURSORS[..3].iter().enumerate() {
+            store
+                .stage_frame(
+                    generation as u64,
+                    &frame(vec![row(1, false)], Some(baseline(snapshot, 5, true))),
+                )
+                .await
+                .unwrap()
+                .finish();
+        }
+        for snapshot in &CURSORS[..3] {
+            assert_eq!(seen_versions(&store, snapshot, &selector).await, 1);
+        }
+        assert_eq!(
+            store.read_selector(&selector).await.unwrap(),
+            Some(row(1, false))
+        );
+        assert!(
+            store
+                .read_selector_ready(&selector)
+                .await
+                .unwrap()
+                .is_some()
+        );
+        drive(&store, 80).await;
+        assert_eq!(seen_versions(&store, CURSORS[0], &selector).await, 0);
+        assert_eq!(seen_versions(&store, CURSORS[1], &selector).await, 0);
+        assert_eq!(seen_versions(&store, CURSORS[2], &selector).await, 1);
+        assert_eq!(
+            store.read_selector(&selector).await.unwrap(),
+            Some(row(1, false))
+        );
+        assert!(
+            store
+                .read_selector_ready(&selector)
+                .await
+                .unwrap()
+                .is_some()
+        );
+    }
+
+    #[tokio::test]
+    async fn another_target_reference_keeps_a_shared_snapshot_alive() {
+        let path = path();
+        let store = index(&path, 0).await;
+        let realm_selector = row(1, false).selector().clone();
+        let member = member_row(REALM, "ak:did_core:webvh:z6mkfixture", 1);
+        let member_selector = member.selector().clone();
+        store
+            .stage_frame(
+                0,
+                &frame(
+                    vec![row(1, false), member.clone()],
+                    Some(members_baseline(CURSORS[0], 5, true)),
+                ),
+            )
+            .await
+            .unwrap()
+            .finish();
+        // Selected members with an empty set retires only the Realm region, so
+        // the member-all coverage mark still reaches the first snapshot.
+        store
+            .stage_frame(
+                1,
+                &frame(vec![row(1, false)], Some(baseline(CURSORS[1], 5, true))),
+            )
+            .await
+            .unwrap()
+            .finish();
+        drive(&store, 80).await;
+        assert_eq!(seen_versions(&store, CURSORS[0], &member_selector).await, 1);
+        assert_eq!(seen_versions(&store, CURSORS[0], &realm_selector).await, 1);
+        assert_eq!(
+            store.read_selector(&member_selector).await.unwrap(),
+            Some(member.clone())
+        );
+        assert_eq!(
+            store.read_selector(&realm_selector).await.unwrap(),
+            Some(row(1, false))
+        );
+        // Only another member-all baseline detaches the first snapshot.
+        store
+            .stage_frame(
+                2,
+                &frame(
+                    vec![row(1, false), member.clone()],
+                    Some(members_baseline(CURSORS[2], 5, true)),
+                ),
+            )
+            .await
+            .unwrap()
+            .finish();
+        drive(&store, 120).await;
+        assert_eq!(seen_versions(&store, CURSORS[0], &member_selector).await, 0);
+        assert_eq!(seen_versions(&store, CURSORS[0], &realm_selector).await, 0);
+        assert_eq!(seen_versions(&store, CURSORS[2], &member_selector).await, 1);
+        assert_eq!(
+            store.read_selector(&member_selector).await.unwrap(),
+            Some(member)
+        );
+        assert_eq!(
+            store.read_selector(&realm_selector).await.unwrap(),
+            Some(row(1, false))
+        );
+    }
+
+    #[tokio::test]
+    async fn an_unfinished_baseline_keeps_its_seen_at_the_original_generation() {
+        let path = path();
+        let store = index(&path, 0).await;
+        let selector = row(1, false).selector().clone();
+        store
+            .stage_frame(
+                0,
+                &frame(vec![row(1, false)], Some(baseline(CURSORS[0], 1, false))),
+            )
+            .await
+            .unwrap()
+            .finish();
+        assert!(
+            store
+                .read_selector_ready(&selector)
+                .await
+                .unwrap()
+                .is_some()
+        );
+        let reset = serde_json::from_value(json!({"kind":"resync_required"})).unwrap();
+        store.stage_frame(1, &reset).await.unwrap().finish();
+        assert!(
+            store
+                .read_selector_ready(&selector)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        drive(&store, 80).await;
+        // The pending baseline still references this evidence, and maintenance
+        // must not rewrite it into its own generation to look fresh.
+        assert_eq!(seen_versions(&store, CURSORS[0], &selector).await, 1);
+        assert_eq!(seen_generation(&store, CURSORS[0], &selector).await, 1);
+        assert!(
+            store
+                .read_selector_ready(&selector)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert!(store.read_selector(&selector).await.unwrap().is_some());
+        store
+            .stage_frame(
+                2,
+                &frame(vec![row(1, false)], Some(baseline(CURSORS[1], 1, false))),
+            )
+            .await
+            .unwrap()
+            .finish();
+        assert!(
+            store
+                .read_selector_ready(&selector)
+                .await
+                .unwrap()
+                .is_some()
+        );
+        drive(&store, 80).await;
+        assert_eq!(seen_generation(&store, CURSORS[1], &selector).await, 3);
+        assert!(
+            store
+                .read_selector_ready(&selector)
+                .await
+                .unwrap()
+                .is_some()
+        );
+    }
+
+    #[tokio::test]
+    async fn a_root_published_after_the_mark_cursor_survives_the_same_sweep() {
+        let path = path();
+        let store = index(&path, 0).await;
+        let selector = row(1, false).selector().clone();
+        store
+            .stage_frame(
+                0,
+                &frame(vec![row(1, false)], Some(baseline(CURSORS[0], 5, true))),
+            )
+            .await
+            .unwrap()
+            .finish();
+        let mut generation = 1;
+        let mut passes = 0;
+        while gc(&store).await.phase != GcPhase::Sweep {
+            store.maintain().await.unwrap();
+            passes += 1;
+            assert!(passes < 40, "the mark phase did not terminate");
+        }
+        // The mark scan is already past this Realm; only the publish write
+        // barrier can protect the snapshot this frame roots.
+        store
+            .stage_frame(
+                generation,
+                &frame(vec![row(1, false)], Some(baseline(CURSORS[1], 5, false))),
+            )
+            .await
+            .unwrap()
+            .finish();
+        generation += 1;
+        let epoch = gc(&store).await.epoch;
+        passes = 0;
+        while gc(&store).await.epoch == epoch {
+            store.maintain().await.unwrap();
+            passes += 1;
+            assert!(passes < 40, "the sweep did not terminate");
+        }
+        assert_eq!(seen_versions(&store, CURSORS[1], &selector).await, 1);
+        assert_eq!(
+            store.read_selector(&selector).await.unwrap(),
+            Some(row(1, false))
+        );
+        assert!(
+            store
+                .read_selector_ready(&selector)
+                .await
+                .unwrap()
+                .is_some()
+        );
+        // Publishing on every pass still lets whole cycles finish.
+        let epoch = gc(&store).await.epoch;
+        passes = 0;
+        while gc(&store).await.epoch < epoch + 2 {
+            store
+                .stage_frame(generation, &frame(vec![row(generation + 10, false)], None))
+                .await
+                .unwrap()
+                .finish();
+            generation += 1;
+            store.maintain().await.unwrap();
+            passes += 1;
+            assert!(passes < 120, "continuous writes restarted the cycle");
+        }
+    }
+
+    #[tokio::test]
+    async fn maintenance_never_deletes_future_data_or_skips_an_unfinished_batch() {
+        let path = path();
+        let store = index(&path, 0).await;
+        let selector = row(1, false).selector().clone();
+        for (generation, snapshot) in CURSORS[..2].iter().enumerate() {
+            store
+                .stage_frame(
+                    generation as u64,
+                    &frame(vec![row(1, false)], Some(baseline(snapshot, 5, true))),
+                )
+                .await
+                .unwrap()
+                .finish();
+        }
+        drop(
+            store
+                .stage_frame(
+                    2,
+                    &frame(vec![row(1, false)], Some(baseline(CURSORS[2], 5, true))),
+                )
+                .await
+                .unwrap(),
+        );
+        let future = store.seen_prefix(CURSORS[2], &selector).unwrap();
+        let staged = store
+            .backend
+            .keys(&future, None, None, PAGE_LIMIT)
+            .await
+            .unwrap();
+        assert_eq!(staged.len(), 1);
+        for _ in 0..40 {
+            let job = tokio::spawn({
+                let store = store.clone();
+                async move { store.maintain().await }
+            });
+            job.abort();
+            let _ = job.await;
+            store.maintain().await.unwrap();
+        }
+        assert_eq!(
+            store
+                .backend
+                .keys(&future, None, None, PAGE_LIMIT)
+                .await
+                .unwrap(),
+            staged
+        );
+        assert_eq!(seen_versions(&store, CURSORS[0], &selector).await, 0);
+        assert_eq!(seen_versions(&store, CURSORS[1], &selector).await, 1);
+        assert_eq!(
+            store.read_selector(&selector).await.unwrap(),
+            Some(row(1, false))
+        );
+        store.poison();
+        assert!(store.maintain().await.is_err());
+        store.confirm_durable_pointer(2).unwrap();
+        drop(store);
+        let restored = index(&path, 2).await;
+        assert_eq!(
+            restored.read_selector(&selector).await.unwrap(),
+            Some(row(1, false))
+        );
+        assert_eq!(
+            restored
+                .backend
+                .keys(&future, None, None, PAGE_LIMIT)
+                .await
+                .unwrap(),
+            staged
+        );
+        // The exact-generation retry replaces the abandoned stage byte for byte.
+        restored
+            .stage_frame(
+                2,
+                &frame(vec![row(1, false)], Some(baseline(CURSORS[3], 5, true))),
+            )
+            .await
+            .unwrap()
+            .finish();
+        assert!(
+            restored
+                .backend
+                .keys(&future, None, None, PAGE_LIMIT)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        drive(&restored, 80).await;
+        assert_eq!(seen_versions(&restored, CURSORS[3], &selector).await, 1);
+        assert_eq!(
+            restored.read_selector(&selector).await.unwrap(),
+            Some(row(1, false))
+        );
+        assert!(
+            restored
+                .read_selector_ready(&selector)
+                .await
+                .unwrap()
+                .is_some()
+        );
+    }
+
+    #[tokio::test]
+    async fn continuous_writes_reclaim_both_realms_without_starving_either() {
+        let path = path();
+        let store = index(&path, 0).await;
+        let mut generation = 0;
+        for round in 0..6usize {
+            for (offset, realm) in [REALM, OTHER_REALM].into_iter().enumerate() {
+                let snapshot = CURSORS[round * 2 + offset];
+                store
+                    .stage_frame(
+                        generation,
+                        &realm_frame(
+                            realm,
+                            vec![realm_row(realm, 1)],
+                            Some(baseline(snapshot, 5, true)),
+                        ),
+                    )
+                    .await
+                    .unwrap()
+                    .finish();
+                generation += 1;
+                store
+                    .stage_frame(
+                        generation,
+                        &realm_frame(realm, vec![realm_row(realm, round as u64 + 10)], None),
+                    )
+                    .await
+                    .unwrap()
+                    .finish();
+                generation += 1;
+                store.maintain().await.unwrap();
+            }
+        }
+        drive(&store, 240).await;
+        for (offset, realm) in [REALM, OTHER_REALM].into_iter().enumerate() {
+            let selector = realm_row(realm, 1).selector().clone();
+            for round in 0..5usize {
+                assert_eq!(
+                    seen_versions(&store, CURSORS[round * 2 + offset], &selector).await,
+                    0,
+                    "stale snapshot survived for realm {realm}"
+                );
+            }
+            assert_eq!(
+                seen_versions(&store, CURSORS[10 + offset], &selector).await,
+                1
+            );
+            let row_prefix = store.row_prefix(&selector).unwrap();
+            assert_eq!(count_keys(&store, &row_prefix).await, 1);
+            assert_eq!(
+                store.read_selector(&selector).await.unwrap(),
+                Some(realm_row(realm, 15))
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn one_maintenance_pass_reclaims_at_most_one_bounded_page() {
+        let path = path();
+        let store = index(&path, 0).await;
+        let members: Vec<CurrentResultEntry> = (0..120)
+            .map(|index| {
+                member_row(
+                    REALM,
+                    &format!("ak:did_core:webvh:z6mkfixture{index:03}"),
+                    1,
+                )
+            })
+            .collect();
+        store
+            .stage_frame(
+                0,
+                &frame(
+                    members[..100].to_vec(),
+                    Some(members_baseline(CURSORS[0], 5, false)),
+                ),
+            )
+            .await
+            .unwrap()
+            .finish();
+        store
+            .stage_frame(
+                1,
+                &frame(
+                    members[100..].to_vec(),
+                    Some(members_baseline(CURSORS[0], 5, true)),
+                ),
+            )
+            .await
+            .unwrap()
+            .finish();
+        let seen = format!("{}seen/", store.prefix);
+        let total = count_keys(&store, &seen).await;
+        assert_eq!(total, 120);
+        // A later member-all baseline delivers none of them, so every one of
+        // those snapshot references becomes unreachable at once.
+        store
+            .stage_frame(
+                2,
+                &frame(
+                    vec![row(1, false)],
+                    Some(members_baseline(CURSORS[1], 5, true)),
+                ),
+            )
+            .await
+            .unwrap()
+            .finish();
+        let total = count_keys(&store, &seen).await;
+        assert_eq!(total, 121);
+        let mut intermediate = None;
+        for _ in 0..200 {
+            store.maintain().await.unwrap();
+            let remaining = count_keys(&store, &seen).await;
+            if remaining < total {
+                intermediate = Some(remaining);
+                break;
+            }
+        }
+        let intermediate = intermediate.expect("no unreachable evidence was reclaimed");
+        assert!(intermediate > 0, "one pass cleared the whole account");
+        assert!(total - intermediate <= PAGE_LIMIT);
+        drive(&store, 200).await;
+        assert_eq!(count_keys(&store, &seen).await, 1);
+        assert_eq!(
+            store
+                .read_selector(&selector_of(&members[0]))
+                .await
+                .unwrap(),
+            None
+        );
+        assert_eq!(
+            store.read_selector(row(1, false).selector()).await.unwrap(),
+            Some(row(1, false))
+        );
+    }
+
+    fn selector_of(entry: &CurrentResultEntry) -> CurrentSelector {
+        entry.selector().clone()
     }
 }
