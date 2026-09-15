@@ -1746,6 +1746,10 @@ fn add_contacts_keys_zh(dict: &mut TranslationDict) {
         "你上次确认时是「{confirmed}」，现在是「{current}」。核对无误后再确认新名称。",
     );
     dict.set("contacts.confirmed_name.confirm", "确认新显示名");
+    dict.set(
+        "contacts.confirmed_name.confirm_identity",
+        "确认这是「{current}」",
+    );
     dict.set("contacts.confirmed_name.confirmed", "已更新确认的显示名");
     dict.set("contacts.dm.opening", "正在打开私聊…");
     dict.set(

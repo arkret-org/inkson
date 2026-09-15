@@ -252,6 +252,27 @@ fn ContactRow(
         })
         .flatten();
 
+    // A first-time Contact has no shared Realm at accept time, so accept could
+    // not have initialized a baseline. Without an explicit action here the
+    // holder would never be able to establish one, and the rename notice could
+    // never fire. Offer the confirmation exactly when there is fresh evidence to
+    // confirm and no baseline yet.
+    let confirmable_display_name = matches!(
+        confirmation_state,
+        Some(
+            arkret_models_collaboration::actor_profile_resolution::ConfirmedDisplayNameState::Unconfirmed
+        )
+    )
+    .then(|| {
+        shared_realm_id.as_ref().and_then(|realm_id| {
+            crate::identity::contact_profile::current_verified_display_name(
+                realm_id,
+                &peer_actor_id,
+            )
+        })
+    })
+    .flatten();
+
     let confirmation_at_accept = existing_remark
         .is_none()
         .then(|| {
@@ -401,6 +422,54 @@ fn ContactRow(
                             }
                         },
                         {tr("contacts.confirmed_name.confirm")}
+                    }
+                }
+            }
+            if is_accepted_human && let Some(display_name) = confirmable_display_name.clone() {
+                div {
+                    class: "contact-confirm-identity",
+                    "data-testid": "contact-confirm-identity-{peer}",
+                    Button {
+                        variant: ButtonVariant::Secondary,
+                        "data-testid": "contact-confirm-name-{peer}",
+                        onclick: {
+                            let base = base_url.clone();
+                            let peer_principal = peer_principal.clone();
+                            let peer_key = peer.clone();
+                            let existing = existing_remark.clone();
+                            let display_name = display_name.clone();
+                            move |_| {
+                                let Ok(principal_id) =
+                                    arkret_sdk::DidCoreId::new(peer_principal.clone())
+                                else {
+                                    row_status.set(tr("contacts.petname.invalid_principal"));
+                                    return;
+                                };
+                                let edit =
+                                    crate::account_data::ContactRemarkEdit::ConfirmDisplayName(
+                                        display_name.clone(),
+                                    );
+                                let remark = edit.apply(
+                                    principal_id.clone(),
+                                    existing.as_ref(),
+                                    chrono::Utc::now(),
+                                );
+                                state_store
+                                    .write()
+                                    .set_contact_remark(peer_key.clone(), remark);
+                                row_status.set(tr("contacts.confirmed_name.confirmed"));
+                                crate::views::settings::push_contact_remark_edit(
+                                    base.clone(),
+                                    token(),
+                                    principal_id,
+                                    edit,
+                                );
+                            }
+                        },
+                        {crate::i18n::tr_args(
+                            "contacts.confirmed_name.confirm_identity",
+                            &[("current", display_name.clone())],
+                        )}
                     }
                 }
             }

@@ -1917,6 +1917,10 @@ fn add_contacts_keys(dict: &mut TranslationDict) {
         "Confirm the new display name",
     );
     dict.set(
+        "contacts.confirmed_name.confirm_identity",
+        "Confirm this is {current}",
+    );
+    dict.set(
         "contacts.confirmed_name.confirmed",
         "Confirmed display name updated",
     );
