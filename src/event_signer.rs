@@ -940,6 +940,34 @@ impl InksonEventSigner {
             .map_err(|error| EventSignerError::Backend(error.to_string()))
     }
 
+    /// Sign the exact first new-generation Seal frozen by a recovery
+    /// transaction's dedicated prepare.
+    ///
+    /// This deliberately does NOT go through [`prepare_and_sign_pcr_successor`]:
+    /// `ak.self.seals.command.prepare.v1` is not reachable from a recovery
+    /// SessionGrant, so the ordinary `SealPrepareRequestBody` path would always
+    /// answer `capability_denied`. The body arrives inside the prepared plan
+    /// instead, already fenced at its signing slot.
+    ///
+    /// The commit transcript is built by the single SDK helper every other f=0
+    /// PCR successor uses, so this device never selects a signing view of its
+    /// own: the `view` the PCR `f=0` profile fixes at `0` is a property of that
+    /// one transcript, not a value this call can get wrong.
+    pub(crate) fn sign_recovery_first_generation_seal(
+        &self,
+        principal_did: &Did,
+        body: arkret_wire::UnsignedSeal,
+        digest_suite: arkret_sdk::DigestSuite,
+    ) -> Result<arkret_sdk::Seal, EventSignerError> {
+        let signer = InksonSealSignerAdapter {
+            owner: self,
+            did: principal_did.clone(),
+            verification_method: self.verification_method_for_principal(principal_did)?,
+        };
+        arkret_sdk::Seal::sign_with_signer(body, digest_suite, &signer)
+            .map_err(|error| EventSignerError::Backend(error.to_string()))
+    }
+
     pub fn sign_agent_pcr_bootstrap_seal(
         &self,
         controller_did: &arkret_sdk::Did,

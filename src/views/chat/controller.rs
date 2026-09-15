@@ -1141,7 +1141,7 @@ impl ChatController {
                 &message.realm_id,
                 scope,
                 &message.strand_id,
-                garth::message_authoring::MessageAuthoringContent::Plaintext {
+                arkret_sdk::MessageAuthoringContent::Plaintext {
                     content,
                     metadata: None,
                 },

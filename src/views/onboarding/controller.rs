@@ -66,9 +66,20 @@ impl DevicePairingController {
                             .to_owned(),
                     );
                 }
-                Ok(arkret_sdk::DevicePairingState::PendingAuthorization) => {
+                Ok(arkret_sdk::DevicePairingState::ReadyForClaim) => {
                     status.set(
-                        "Still waiting. Scan or open the pairing QR/link on an authorized device; this flow does not send an automatic prompt."
+                        "Still waiting. Scan the QR, open the link, or type the code on an authorized device; this flow does not send an automatic prompt."
+                            .to_owned(),
+                    );
+                }
+                Ok(arkret_sdk::DevicePairingState::Staged) => {
+                    // The record exists but carries no target proof yet, so no
+                    // sibling can claim it. Showing "waiting for approval" here
+                    // would send the user to look at a request that is not
+                    // reachable from any of the three entry points.
+                    request.set(None);
+                    status.set(
+                        "This pairing request was never completed on this device. Generate a new pairing QR."
                             .to_owned(),
                     );
                 }

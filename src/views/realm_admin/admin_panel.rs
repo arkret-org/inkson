@@ -55,10 +55,15 @@ fn metadata_causal_refs(
         return Err("canonical metadata selector is duplicated".to_owned());
     }
     match entry.result() {
-        arkret_sdk::CurrentOutcome::Value { source, .. } => source
-            .as_ref()
-            .map(|source| vec![source.event_id.event_digest()])
-            .ok_or_else(|| "canonical metadata source is unavailable".to_owned()),
+        arkret_sdk::CurrentOutcome::Value { value, source } => match source {
+            Some(source) => Ok(vec![source.event_id.event_digest()]),
+            // `ak.realm.profile` starts as a confirmed null with no writing
+            // identity. That is a settled empty register, so the first write
+            // supersedes nothing; refusing it here would make a Realm that has
+            // never been renamed permanently unrenameable.
+            None if value.as_json().is_null() => Ok(Vec::new()),
+            None => Err("canonical metadata source is unavailable".to_owned()),
+        },
         arkret_sdk::CurrentOutcome::Removed => Ok(Vec::new()),
         arkret_sdk::CurrentOutcome::Unavailable { .. } => {
             Err("canonical metadata state is unavailable".to_owned())

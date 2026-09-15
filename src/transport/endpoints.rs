@@ -102,6 +102,23 @@ impl KeysEndpoints<'_> {
             .await
             .map_err(anyhow::Error::from)
     }
+
+    /// Claim a typed-in eight-character pairing code
+    /// (`ak.gate.account.read.claim_device_pairing_code.v1`). The caller's own
+    /// accepted-device session supplies the account, so this is the typed
+    /// sibling of the short-link resolve rather than a weaker code-only
+    /// authorization branch: it returns the same bootstrap plus the target
+    /// proof the short link carries out of band, and grants nothing.
+    pub async fn device_pairing_claim_code(
+        &self,
+        body: &arkret_sdk::DevicePairingCodeClaimRequestBody,
+    ) -> anyhow::Result<arkret_sdk::DevicePairingCodeClaimOutcome> {
+        self.transport
+            .http()
+            .device_pairing_claim_code(body)
+            .await
+            .map_err(anyhow::Error::from)
+    }
 }
 
 impl MlsEndpoints<'_> {

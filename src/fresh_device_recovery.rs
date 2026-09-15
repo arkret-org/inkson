@@ -5,14 +5,14 @@
 
 use arkret_models_crypto::{
     ClientStepAttestationArtifact, RecoveryBackupClassUnlocked, RecoveryProofSummary,
-    RecoveryReceiptOutcome, RecoveryWelcomeRealmSummary, SecurityTransactionContinueRequest,
-    UnsignedRecoveryReceipt, UnsignedRecoveryReceiptBody,
+    RecoveryReceiptOutcome, RecoveryTerminalCommit, RecoveryWelcomeRealmSummary,
+    SecurityTransactionContinueRequest, UnsignedRecoveryReceipt, UnsignedRecoveryReceiptBody,
 };
 use arkret_wire::{
     BackupObjectRef, BackupRotationBinding, BackupRotationKind, BackupRotationPlan, BackupSeriesId,
     CanonicalPublicMaterial, Did, EventId, EventsSubmitBatchRequestBody, Hash,
     IssueRecoveryCompletionGrantOutcome, IssueRecoveryCompletionGrantRequest, PreparedEventUnit,
-    RecoveryPreparedPlan, RecoveryTransactionCreateRequest,
+    RecoveryPreparedPlan, RecoveryTransactionCreateRequest, SealId,
     SecurityRotationTransactionCreateRequest, SecurityTransaction,
     SecurityTransactionCreateRequest, SecurityTransactionPreparedPlan, SecurityTransactionStep,
     TransactionId, UnsignedClientStepAttestation,
@@ -78,22 +78,43 @@ pub struct RecoveryTerminalObservation {
     pub completed_at: chrono::DateTime<chrono::Utc>,
 }
 
-/// Sign the one client-authored terminal artifact for a PCR-policy
-/// recovery. All earlier steps are server continuations over a byte-identical
-/// durable plan.
-pub fn sign_terminal_receipt_continue(
+/// The Realm digest suite a recovery prepare already committed to.
+///
+/// `first_generation_seal_id` is the content-derived identity of the frozen
+/// unsigned body, so its digest prefix is the only wire-visible statement of
+/// the suite the Station used; signing under any other suite would derive a
+/// different id and the commit would not close.
+fn reserved_seal_digest_suite(
+    reserved_id: &SealId,
+) -> anyhow::Result<arkret_sdk::canonical::DigestSuite> {
+    let digest = reserved_id
+        .as_str()
+        .strip_prefix("ak:seal:")
+        .ok_or_else(|| anyhow::anyhow!("reserved first-generation Seal id is malformed"))?;
+    Ok(Hash::new(digest)?.digest_suite()?)
+}
+
+/// Sign the one client-authored terminal artifact for a PCR-policy recovery.
+///
+/// A RecoveryTransaction has exactly one client-attested step. The replacement
+/// device signs the exact first new-generation Seal the Station froze in its
+/// prepare, then the receipt that names that Seal, then the outer attestation
+/// over both, and delivers all three as one `commit_recovery_unit`. There is no
+/// earlier server continuation to wait for: before this request the transaction
+/// has produced no recovery effect at all.
+pub fn sign_recovery_terminal_commit_continue(
     resource: &SecurityTransaction,
     observation: RecoveryTerminalObservation,
     signer: &crate::event_signer::InksonEventSigner,
 ) -> anyhow::Result<SecurityTransactionContinueRequest> {
     resource.validate_structural()?;
     if !resource.requires_device_attestation()? {
-        anyhow::bail!("terminal receipt requires canonical device-attestation readiness");
+        anyhow::bail!("recovery terminal commit requires canonical device-attestation readiness");
     }
     let SecurityTransactionPreparedPlan::Recovery(RecoveryPreparedPlan::PcrPolicy(plan)) =
         &resource.prepared_plan
     else {
-        anyhow::bail!("terminal receipt requires a PCR-policy recovery transaction");
+        anyhow::bail!("recovery terminal commit requires a PCR-policy recovery transaction");
     };
     let binding = &plan.binding;
     if observation.policy_version == 0
@@ -101,15 +122,26 @@ pub fn sign_terminal_receipt_continue(
     {
         anyhow::bail!("terminal observation does not match the verified recovery proof");
     }
-    let batch_receipt = resource
-        .accepted_steps
-        .first()
-        .ok_or_else(|| anyhow::anyhow!("accepted re-anchor unit is missing"))?;
+    if !resource.accepted_steps.is_empty() {
+        anyhow::bail!("recovery terminal commit is the only accepted step of its transaction");
+    }
     let signer_did = Did::new(signer.signer_did().to_owned())?;
     if arkret_sdk::project_did_to_core_id(&signer_did)? != resource.account_id.principal_id {
         anyhow::bail!("recovery receipt signer does not control the recovered principal");
     }
     let verification_method = signer.verification_method_for_principal(&signer_did)?;
+
+    // `validate_structural` above already proved the frozen body derives the
+    // reserved id, so signing it is the only remaining degree of freedom.
+    let first_generation_seal = signer.sign_recovery_first_generation_seal(
+        &signer_did,
+        plan.first_generation_seal_body.clone(),
+        reserved_seal_digest_suite(&binding.first_generation_seal_id)?,
+    )?;
+    if first_generation_seal.id != binding.first_generation_seal_id {
+        anyhow::bail!("signed first-generation Seal does not carry the reserved plan identity");
+    }
+
     let receipt = UnsignedRecoveryReceipt::new(
         UnsignedRecoveryReceiptBody {
             receipt_id: binding.terminal_receipt_id.clone(),
@@ -128,9 +160,10 @@ pub fn sign_terminal_receipt_continue(
             result_model_generation_ref: plan.result_model_generation_ref,
             authorization_event_id: binding.authorize_event_id.clone(),
             reanchor_event_id: Some(binding.reanchor_event_id.clone()),
-            reanchor_batch_receipt_id: Some(arkret_sdk::ReceiptId::new(
-                batch_receipt.output_ref.clone(),
-            )?),
+            // Reserved by the prepare, not observed from an accepted step: the
+            // two Events are still unaccepted at signing time.
+            reanchor_batch_receipt_id: Some(binding.reanchor_batch_receipt_id.clone()),
+            first_generation_seal_id: binding.first_generation_seal_id.clone(),
             proof_summary: observation.proof_summary,
             unlocked_backups: observation.backup_classes_unlocked,
             welcome_count: observation.welcome_count,
@@ -150,14 +183,18 @@ pub fn sign_terminal_receipt_continue(
     let receipt = receipt.attach_signature(receipt_signature)?;
     receipt.validate()?;
 
-    let artifact = ClientStepAttestationArtifact::RecoveryReceipt(receipt);
+    let commit = RecoveryTerminalCommit {
+        first_generation_seal,
+        recovery_receipt: receipt,
+    };
+    commit.validate()?;
+    let artifact = ClientStepAttestationArtifact::RecoveryTerminalCommit(commit);
     let attestation = UnsignedClientStepAttestation::new(
-        SecurityTransactionStep::IssueTerminalReceipt,
+        SecurityTransactionStep::CommitRecoveryUnit,
         binding.terminal_receipt_id.as_str().to_owned(),
         resource.transaction_id.clone(),
         resource.request_digest.clone(),
         resource.prepared_plan_digest.clone(),
-        Hash::new(arkret_sdk::canonical::canonical_sha256(&artifact)?)?,
         artifact,
         verification_method,
     )?;
@@ -170,7 +207,7 @@ pub fn sign_terminal_receipt_continue(
     Ok(SecurityTransactionContinueRequest {
         request_digest: resource.request_digest.clone(),
         prepared_plan_digest: resource.prepared_plan_digest.clone(),
-        expected_accepted_step_count: resource.accepted_steps.len().try_into()?,
+        expected_accepted_step_count: 0,
         client_attestation: Some(attestation),
     })
 }
@@ -207,39 +244,6 @@ where
         transaction_id: &TransactionId,
     ) -> garth::Result<SecurityTransaction> {
         self.engine.refresh(transaction_id).await
-    }
-
-    pub async fn continue_server_step(
-        &self,
-        transaction: &SecurityTransaction,
-    ) -> garth::Result<SecurityTransaction> {
-        let step = transaction.next_required_step()?.ok_or_else(|| {
-            garth::Error::Protocol("recovery transaction has no next step".to_owned())
-        })?;
-        if step == SecurityTransactionStep::IssueTerminalReceipt {
-            return Err(garth::Error::Protocol(
-                "terminal receipt requires a signed client attestation".to_owned(),
-            ));
-        }
-        self.engine
-            .continue_transaction(
-                &transaction.transaction_id,
-                &SecurityTransactionContinueRequest {
-                    request_digest: transaction.request_digest.clone(),
-                    prepared_plan_digest: transaction.prepared_plan_digest.clone(),
-                    expected_accepted_step_count: transaction
-                        .accepted_steps
-                        .len()
-                        .try_into()
-                        .map_err(|_| {
-                            garth::Error::Protocol(
-                                "recovery transaction progress exceeds wire limit".to_owned(),
-                            )
-                        })?,
-                    client_attestation: None,
-                },
-            )
-            .await
     }
 
     pub async fn continue_with_signed_artifact(
@@ -301,7 +305,9 @@ where
             .ok_or_else(|| anyhow::anyhow!("terminal continuation omitted attestation"))?
             .artifact
         {
-            ClientStepAttestationArtifact::RecoveryReceipt(receipt) => receipt,
+            ClientStepAttestationArtifact::RecoveryTerminalCommit(commit) => {
+                commit.recovery_receipt
+            }
             ClientStepAttestationArtifact::SecurityRotationLocalCommit(_) => {
                 anyhow::bail!("recovery completion grant cannot use a rotation local commit")
             }
@@ -532,5 +538,28 @@ where
         transaction_id: &TransactionId,
     ) -> garth::Result<Option<SecurityTransaction>> {
         self.engine.retry_pending(transaction_id).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The recovery prepare states its digest suite only through the reserved
+    /// Seal id. Signing under a different suite derives a different id, and the
+    /// only symptom would be a commit the Station cannot verify, so the
+    /// derivation is pinned here rather than left to a live run to discover.
+    #[test]
+    fn the_reserved_seal_id_is_the_only_statement_of_the_realm_digest_suite() {
+        let sha256 = SealId::new(format!("ak:seal:sha256:{}", "a".repeat(64))).unwrap();
+        assert_eq!(
+            reserved_seal_digest_suite(&sha256).unwrap(),
+            arkret_sdk::canonical::DigestSuite::Sha256
+        );
+        let blake3 = SealId::new(format!("ak:seal:blake3:{}", "b".repeat(64))).unwrap();
+        assert_eq!(
+            reserved_seal_digest_suite(&blake3).unwrap(),
+            arkret_sdk::canonical::DigestSuite::Blake3
+        );
     }
 }

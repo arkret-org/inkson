@@ -566,7 +566,7 @@ pub fn summarize_runtime_key_approval_request(
         &request.public_key,
         &request.verification_method,
     )?
-    .runtime_request_digest;
+    .public_key_digest;
     validate_runtime_approval_candidate(&request)?;
     Ok(RuntimeKeyApprovalSummary {
         pairing_request_id: request.pairing_request_id,

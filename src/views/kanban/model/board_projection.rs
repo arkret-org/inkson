@@ -921,6 +921,11 @@ pub(crate) fn install_current_strand_lifecycles(
 pub(crate) enum CurrentRegisterBasis {
     Missing,
     Source(Vec<arkret_sdk::Hash>),
+    /// The register is present and its confirmed value is the initial null.
+    /// Nothing has ever been written, so there is no winner to supersede and
+    /// the causal basis is the empty set. This is a settled answer, not a
+    /// missing or unavailable one, and the board must render against it.
+    ConfirmedEmpty,
     Removed,
     Unavailable,
 }
@@ -939,10 +944,14 @@ pub(crate) fn current_register_basis(
         return CurrentRegisterBasis::Unavailable;
     }
     match entry.result() {
-        arkret_sdk::CurrentOutcome::Value { source, .. } => source
-            .as_ref()
-            .map(|source| CurrentRegisterBasis::Source(vec![source.event_id.event_digest()]))
-            .unwrap_or(CurrentRegisterBasis::Unavailable),
+        arkret_sdk::CurrentOutcome::Value { value, source } => match source {
+            Some(source) => CurrentRegisterBasis::Source(vec![source.event_id.event_digest()]),
+            // A causal register only omits its winner source when the value is
+            // the confirmed initial null; a non-null value without one is a
+            // shape the wire decoder already rejects.
+            None if value.as_json().is_null() => CurrentRegisterBasis::ConfirmedEmpty,
+            None => CurrentRegisterBasis::Unavailable,
+        },
         arkret_sdk::CurrentOutcome::Removed => CurrentRegisterBasis::Removed,
         arkret_sdk::CurrentOutcome::Unavailable { .. } => CurrentRegisterBasis::Unavailable,
     }
@@ -1155,6 +1164,31 @@ mod tests {
     const LIST_A: &str = "ak:space:AXDc1EwPcJZuThaCiR4FHq4V7rQ4I9QBR1YmEVB4xroH";
     const LIST_B: &str = "ak:space:AVcONsY9NXkyxnm3-GILG2GEKqeoyPiGmxPiVikKKl1t";
     const STRAND: &str = "ak:strand:AhEY3TQwXzS3vBpmyeK7Ki84MdgP5oV7KbS2ZGWOzK6y";
+
+    /// A causal register that has never been written publishes its confirmed
+    /// initial null with no winner source. That is a settled answer, so the
+    /// basis is the empty set and a first write is allowed to supersede
+    /// nothing; reporting `Unavailable` here is what used to leave a Realm
+    /// that was never renamed permanently unrenameable.
+    #[test]
+    fn a_confirmed_empty_causal_register_is_a_settled_empty_basis() {
+        let entries: arkret_sdk::CurrentEntries = serde_json::from_value(json!({
+            "entries": [{
+                "selector": {
+                    "scope_ref": {"kind": "realm", "realm_id": REALM},
+                    "cell_id": arkret_wire::REALM_PROFILE_CELL
+                },
+                "target": {"kind": "realm"},
+                "revision": 0,
+                "result": {"status": "value", "value": null}
+            }]
+        }))
+        .unwrap();
+        assert_eq!(
+            current_register_basis(&entries.entries, arkret_wire::REALM_PROFILE_CELL),
+            CurrentRegisterBasis::ConfirmedEmpty
+        );
+    }
 
     /// `ak.space.create` is `id_source: event_derived`: the payload carries no
     /// `object.id`, and the Space is `retype(event_id)`. The fixture therefore

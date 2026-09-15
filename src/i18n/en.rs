@@ -3133,6 +3133,18 @@ fn prompt_copy_strings(dict: &mut TranslationDict) {
         "settings.devices.accept_gate_audience",
         "Approving account server",
     );
+    dict.set("settings.devices.accept_account_id", "Account being joined");
+    dict.set("settings.devices.accept_code_title", "Approve using a code");
+    dict.set(
+        "settings.devices.accept_code_body",
+        "Type the eight-character code shown on the new device. It reaches the same request as the link, and claiming it approves nothing on its own.",
+    );
+    dict.set(
+        "settings.devices.accept_code_placeholder",
+        "8-character code",
+    );
+    dict.set("settings.devices.accept_code_claim", "Look up code");
+    dict.set("settings.devices.accept_code_claiming", "Looking up…");
     dict.set("settings.devices.accept_unnamed_device", "Not provided");
     dict.set("settings.devices.revoke_threat_note", "Revoking is not a remote wipe. It cannot erase secrets or cached history already copied onto that device. Treat a lost or stolen device as able to read anything it kept before you revoked it.");
     dict.set("audit.title", "Audit log");

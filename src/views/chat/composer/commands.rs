@@ -507,7 +507,7 @@ pub(super) fn send_plaintext_message(
             &realm_id,
             scope,
             &strand_id,
-            garth::message_authoring::MessageAuthoringContent::Plaintext {
+            arkret_sdk::MessageAuthoringContent::Plaintext {
                 content,
                 metadata: None,
             },

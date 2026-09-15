@@ -21,7 +21,7 @@ fn current_cell_basis_from_store(
     let cell = format!("ak:cell:{family}:{subject}");
     match current_register_basis(&entries, &cell) {
         CurrentRegisterBasis::Source(refs) => Ok(refs),
-        CurrentRegisterBasis::Removed => Ok(Vec::new()),
+        CurrentRegisterBasis::ConfirmedEmpty | CurrentRegisterBasis::Removed => Ok(Vec::new()),
         CurrentRegisterBasis::Missing
             if missing_witness_family.is_some_and(|witness_family| {
                 let witness = format!("ak:cell:{witness_family}:{subject}");

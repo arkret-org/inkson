@@ -48,6 +48,7 @@ impl PendingDevicePairingVerification {
             || self.account_id != expected_account
             || self.device_id.as_str() != handoff.device_id
             || self.target_proof.device_id != self.device_id
+            || self.target_proof.account_id != expected_account
         {
             anyhow::bail!("pending device pairing does not match the bound account handoff");
         }
@@ -114,7 +115,11 @@ pub async fn sign_target_proof(
         device_id,
     )
     .await?;
+    // device-lifecycle.md 5.4.1 item 5: the account this device is joining is a
+    // signed member, so the proof can only be authored once the candidate holds
+    // its pending account handoff.
     let unsigned = arkret_sdk::UnsignedDevicePairingTargetProof::new(
+        authority.clone(),
         device_id.clone(),
         arkret_sdk::DidKey::new(format!("did:key:{public_key_multibase}"))
             .map_err(anyhow::Error::msg)?,
@@ -159,15 +164,17 @@ pub async fn author_pairing_request_body(
         arkret_sdk::signatures::device_pairing::ServerDevicePairingChallenge::from_bootstrap(
             &payload.bootstrap,
         );
+    let active_scope = crate::secure_key_store::active_device_seed_scope()
+        .ok_or_else(|| anyhow::anyhow!("no active authority can approve device pairing"))?;
+    // Same core, different Station is a different account and MUST be refused:
+    // the comparison is over the whole AccountId, not its principal half.
     arkret_sdk::signatures::device_pairing::verify_server_device_pairing_target_proof(
         &new_device_pubkey,
         &server_challenge,
+        &active_scope.authority,
         &attestation,
         chrono::Utc::now(),
     )?;
-
-    let active_scope = crate::secure_key_store::active_device_seed_scope()
-        .ok_or_else(|| anyhow::anyhow!("no active authority can approve device pairing"))?;
     let signer = crate::event_signer::active_signer()
         .ok_or_else(|| anyhow::anyhow!("no active device signer can approve device pairing"))?;
     let principal = arkret_sdk::Did::new(signer.signer_did().to_owned())?;
@@ -314,6 +321,13 @@ pub async fn verify_authorized_pairing_event_for_authority(
         .ok_or_else(|| anyhow::anyhow!("authorized pairing status omitted authorized_event_ref"))?;
     if device_id != &attestation.device_id {
         anyhow::bail!("authorized pairing status names another target device");
+    }
+    // device-lifecycle.md 5.4.1 item 5, target side: the account this device
+    // signed itself into has to be the exact account it is now being installed
+    // under. Comparing the whole AccountId is the point -- the same principal
+    // core under a second Station is a different account.
+    if attestation.account_id != *authority {
+        anyhow::bail!("authorized pairing attestation was signed for another account");
     }
     let resolved = http
         .events_resolve(&arkret_sdk::EventsResolveRequestBody {

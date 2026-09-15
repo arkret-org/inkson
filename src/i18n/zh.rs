@@ -2612,6 +2612,15 @@ fn prompt_copy_strings(dict: &mut TranslationDict) {
     dict.set("settings.devices.accept_device_id", "设备标识");
     dict.set("settings.devices.accept_key_fingerprint", "密钥指纹");
     dict.set("settings.devices.accept_gate_audience", "批准账户服务器");
+    dict.set("settings.devices.accept_account_id", "将要加入的账户");
+    dict.set("settings.devices.accept_code_title", "用比对码批准");
+    dict.set(
+        "settings.devices.accept_code_body",
+        "输入新设备上显示的 8 位比对码。它指向与链接完全相同的那一条请求;取回请求本身不批准任何设备。",
+    );
+    dict.set("settings.devices.accept_code_placeholder", "8 位比对码");
+    dict.set("settings.devices.accept_code_claim", "查取比对码");
+    dict.set("settings.devices.accept_code_claiming", "正在查取…");
     dict.set("settings.devices.accept_unnamed_device", "未提供");
     dict.set("settings.devices.revoke_threat_note", "吊销不等于远程擦除。它无法删除该设备上已经复制走的密钥或缓存历史。请把丢失或被盗的设备当作仍能读取它在吊销前留存的一切内容。");
     dict.set("audit.title", "审计日志");

@@ -2,6 +2,46 @@
 
 use crate::state::{LocalStateStore, PendingAccountHandoff, PendingPrincipalRegistrationStage};
 
+/// Authenticated client for one pending account handoff.
+///
+/// Every `ak.gate.account.*` call a candidate device makes before it owns an
+/// accepted device session goes through here: the sender-constrained handoff
+/// grant is the only thing that tells the service which account the caller is
+/// acting for.
+pub fn account_handoff_client(
+    handoff: &PendingAccountHandoff,
+) -> anyhow::Result<arkret_sdk::http_client::Client> {
+    let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
+    let device_id = arkret_sdk::DeviceId::new(handoff.device_id.clone())?;
+    let pending_store = crate::secure_key_store::PendingLocalStore::new(device_id.clone());
+    let seed = match pending_store.load_grant_binding_seed(secure_store.as_ref())? {
+        Some(material) => material.seed,
+        // Once registration is accepted the pending holder is promoted into the
+        // bound account scope and the pending copy is deliberately consumed.
+        None => {
+            let principal_id = handoff
+                .bound_principal_id
+                .clone()
+                .ok_or_else(|| anyhow::anyhow!("account handoff holder key is unavailable"))?;
+            let authority = arkret_sdk::AccountId::new(principal_id, handoff.audience_id.clone());
+            crate::secure_key_store::UserLocalStore::new(authority, device_id)?
+                .load_grant_binding_seed(secure_store.as_ref())?
+                .ok_or_else(|| anyhow::anyhow!("account handoff holder key is unavailable"))?
+                .seed
+        }
+    };
+    // Deriving the handle against the handoff's own `holder_jkt` fails closed on
+    // a replaced or tampered holder key rather than minting proofs the grant
+    // will not accept.
+    let dpop = super::grant_dpop::device_handle_from_seed(
+        &base64::Engine::encode(&base64::engine::general_purpose::URL_SAFE_NO_PAD, seed),
+        &handoff.holder_jkt,
+    )?;
+    let grant = super::load_account_handoff_grant(handoff)?
+        .ok_or_else(|| anyhow::anyhow!("account handoff credential is unavailable"))?;
+    account_client(handoff, &dpop, grant)
+}
+
 fn account_client(
     handoff: &PendingAccountHandoff,
     dpop: &super::grant_dpop::DpopHandle,

@@ -745,7 +745,7 @@ fn every_send_failure_has_its_own_message() {
 #[test]
 fn a_message_intent_carries_only_its_reply_target() {
     let strand = "ak:strand:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
-    let content = garth::message_authoring::MessageAuthoringContent::Plaintext {
+    let content = arkret_sdk::MessageAuthoringContent::Plaintext {
         content: chat_content_block_for_body("hello").expect("content"),
         metadata: None,
     };

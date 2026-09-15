@@ -495,14 +495,12 @@ async fn drive_security_rotation(
         transaction_request_digest: transaction.request_digest.clone(),
         prepared_plan_digest: transaction.prepared_plan_digest.clone(),
         local_commit_digest: plan.local_commit_digest.clone(),
-        erase_confirmation_digest: plan.erase_confirmation_digest.clone(),
         device_id: arkret_sdk::DeviceId::new(current_device_id.to_owned())?,
         committed_at: crate::clock::now_utc(),
     };
     let artifact = arkret_models_crypto::ClientStepAttestationArtifact::SecurityRotationLocalCommit(
         local_commit,
     );
-    let attestation_digest = Hash::new(arkret_sdk::canonical::canonical_sha256(&artifact)?)?;
     let signer = crate::event_signer::active_signer()
         .ok_or_else(|| anyhow!("active device signer is required for local commit"))?;
     let attestation = UnsignedClientStepAttestation::new(
@@ -511,7 +509,6 @@ async fn drive_security_rotation(
         transaction.transaction_id.clone(),
         transaction.request_digest.clone(),
         transaction.prepared_plan_digest.clone(),
-        attestation_digest,
         artifact,
         arkret_sdk::DidUrl::new(signer.verification_method().to_owned())
             .map_err(anyhow::Error::msg)?,

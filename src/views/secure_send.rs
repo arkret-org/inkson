@@ -195,9 +195,7 @@ fn circle_effective_scope(
 /// the same send and has no identity until it is accepted — so the message is
 /// built from the accepted commit id, never from a draft one.
 pub(crate) type SecureMessagePlan = Box<
-    dyn FnOnce(
-            Option<&arkret_sdk::EventId>,
-        ) -> Result<garth::message_authoring::MessageAuthoringContent, String>
+    dyn FnOnce(Option<&arkret_sdk::EventId>) -> Result<arkret_sdk::MessageAuthoringContent, String>
         + Send,
 >;
 
@@ -413,7 +411,7 @@ pub(crate) async fn build_secure_send(
         // the request so the Station can only complete an Event that reproduces
         // it: scheme, effective scope and sender domain are compared verbatim
         // before this device signs anything.
-        let encryption_context = garth::message_authoring::MessageEncryptionContext {
+        let encryption_context = arkret_sdk::MessageEncryptionContext {
             scheme: encrypted_payload.pre_encryption_header.scheme.clone(),
             effective_scope: plan_scope,
             sender_domain: encrypted_payload
@@ -434,7 +432,7 @@ pub(crate) async fn build_secure_send(
             })
             .transpose()?;
         let _ = &plan_local_operation_id;
-        Ok(garth::message_authoring::MessageAuthoringContent::Mls {
+        Ok(arkret_sdk::MessageAuthoringContent::Mls {
             encrypted_content,
             encrypted_metadata,
             encryption_context,

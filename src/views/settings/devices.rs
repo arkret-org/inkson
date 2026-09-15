@@ -150,6 +150,10 @@ pub fn SettingsDevicesPanel(
 
     // ── Accept (already-authorized device side) state ─────────────────
     let accept_input = use_signal(String::new);
+    // The typed eight-character code entry. It is a second way into the same
+    // pending request as the scanned link, not a second approval path: both
+    // land in `accept_resolved` and go through one compare-and-approve action.
+    let accept_code_input = use_signal(String::new);
     let accept_status = use_signal(String::new);
     let accept_action_busy = use_signal(|| false);
     // Resolved pairing bootstrap JSON (empty = not yet resolved), held between
@@ -273,6 +277,7 @@ pub fn SettingsDevicesPanel(
                     token,
                     auto_loaded,
                     accept_input,
+                    accept_code_input,
                     accept_status,
                     accept_resolved,
                     accept_action_busy,
@@ -386,13 +391,15 @@ struct PairingApprovalReview {
     device_id: String,
     key_fingerprint: String,
     platform: String,
+    account_id: String,
     gate_audience: String,
     pairing_code: String,
     expires_at: String,
 }
 
 impl PairingApprovalReview {
-    fn from_bootstrap(bootstrap: &arkret_sdk::DevicePairingBootstrap) -> Self {
+    fn from_resolved(resolved: &crate::identity::device_pairing::ResolvedPairingApproval) -> Self {
+        let bootstrap = &resolved.bootstrap;
         let unknown = tr("settings.devices.accept_unnamed_device");
         Self {
             display_name: bootstrap
@@ -408,6 +415,11 @@ impl PairingApprovalReview {
                 .and_then(|metadata| metadata.platform.as_ref())
                 .map(|platform| platform.as_str().to_owned())
                 .unwrap_or_else(|| unknown.clone()),
+            // The account is read from the signed target proof, never from the
+            // anonymous bootstrap: it is the value device-lifecycle.md 5.4.1
+            // item 5 makes the approving user responsible for recognising, and
+            // the same core under another Station is a different account.
+            account_id: resolved.target_proof.account_id.to_string(),
             gate_audience: bootstrap.gate_audience_uri.clone(),
             pairing_code: bootstrap.pairing_code.as_str().to_owned(),
             expires_at: bootstrap.expires_at.to_rfc3339(),
@@ -718,6 +730,7 @@ fn render_pair_flow(
     token: Signal<String>,
     mut auto_loaded: Signal<bool>,
     mut accept_input: Signal<String>,
+    mut accept_code_input: Signal<String>,
     mut accept_status: Signal<String>,
     mut accept_resolved: Signal<String>,
     mut accept_action_busy: Signal<bool>,
@@ -727,7 +740,7 @@ fn render_pair_flow(
         crate::identity::device_pairing::ResolvedPairingApproval,
     >(&accept_resolved_value)
     .ok()
-    .map(|value| PairingApprovalReview::from_bootstrap(&value.bootstrap));
+    .map(|value| PairingApprovalReview::from_resolved(&value));
     let accept_busy = accept_action_busy();
 
     rsx! {
@@ -750,6 +763,124 @@ fn render_pair_flow(
                 disabled: accept_busy,
                 placeholder: tr("settings.devices.accept_placeholder"),
                 oninput: move |event: FormEvent| accept_input.set(event.value()),
+            }
+            div { class: "accept-pairing-code-entry",
+                strong { {tr("settings.devices.accept_code_title")} }
+                p { class: "muted", {tr("settings.devices.accept_code_body")} }
+                Textarea {
+                    "data-testid": "accept-pairing-code-input",
+                    rows: "1",
+                    cols: "16",
+                    value: "{accept_code_input}",
+                    disabled: accept_busy,
+                    placeholder: tr("settings.devices.accept_code_placeholder"),
+                    oninput: move |event: FormEvent| accept_code_input.set(event.value()),
+                }
+                Button {
+                    variant: ButtonVariant::Secondary,
+                    "data-testid": "accept-pairing-code-claim-button",
+                    disabled: accept_code_input().trim().is_empty() || accept_busy,
+                    onclick: move |_| {
+                        if accept_action_busy() {
+                            return;
+                        }
+                        let raw = accept_code_input().trim().to_owned();
+                        let pairing_code = match arkret_sdk::DevicePairingCode::new(raw) {
+                            Ok(code) => code,
+                            Err(error) => {
+                                accept_status.set(format!(
+                                    "That is not a valid pairing code: {error}"
+                                ));
+                                return;
+                            }
+                        };
+                        let base = base_url();
+                        let api_token = token();
+                        accept_action_busy.set(true);
+                        accept_status.set("Looking up the pairing code…".to_owned());
+                        spawn(async move {
+                            let claim_body = arkret_sdk::DevicePairingCodeClaimRequestBody {
+                                pairing_code,
+                            };
+                            match crate::transport::auth::with_endpoint_clients(
+                                &base,
+                                api_token,
+                                None,
+                                |clients| async move {
+                                    clients.keys().device_pairing_claim_code(&claim_body).await
+                                },
+                            )
+                            .await
+                            {
+                                Ok(claimed) => {
+                                    let Some(scope) = crate::secure_key_store::active_device_seed_scope() else {
+                                        accept_resolved.set(String::new());
+                                        accept_status.set(
+                                            "No active account can approve a pairing request.".to_owned(),
+                                        );
+                                        accept_action_busy.set(false);
+                                        return;
+                                    };
+                                    if claimed.device_pairing_request_id
+                                        != claimed.bootstrap.device_pairing_request_id
+                                    {
+                                        accept_resolved.set(String::new());
+                                        accept_status.set(
+                                            "The claimed code returned two different pairing requests.".to_owned(),
+                                        );
+                                        accept_action_busy.set(false);
+                                        return;
+                                    }
+                                    // Exactly the transcript the scanned-link
+                                    // path verifies: the code entry never gets
+                                    // a shorter check for having been typed.
+                                    let server_challenge = arkret_sdk::signatures::device_pairing::ServerDevicePairingChallenge::from_bootstrap(&claimed.bootstrap);
+                                    if let Err(error) = arkret_sdk::signatures::device_pairing::verify_server_device_pairing_target_proof(
+                                        &claimed.bootstrap.new_device_pubkey,
+                                        &server_challenge,
+                                        &scope.authority,
+                                        &claimed.target_proof,
+                                        chrono::Utc::now(),
+                                    ) {
+                                        accept_resolved.set(String::new());
+                                        accept_status.set(format!(
+                                            "Claimed pairing challenge is invalid: {error}"
+                                        ));
+                                        accept_action_busy.set(false);
+                                        return;
+                                    }
+                                    let request_payload = crate::identity::device_pairing::ResolvedPairingApproval {
+                                        bootstrap: claimed.bootstrap,
+                                        target_proof: claimed.target_proof,
+                                    };
+                                    match serde_json::to_string(&request_payload) {
+                                        Ok(payload) => {
+                                            accept_resolved.set(payload);
+                                            accept_status.set(
+                                                "Found. Compare the code and account below with the new device, then approve.".to_owned(),
+                                            );
+                                        }
+                                        Err(error) => {
+                                            accept_resolved.set(String::new());
+                                            accept_status.set(format!(
+                                                "Claimed pairing material is invalid: {error}"
+                                            ));
+                                        }
+                                    }
+                                }
+                                Err(err) => {
+                                    accept_resolved.set(String::new());
+                                    accept_status.set(format!(
+                                        "No pending pairing request matches that code: {}. Unknown, expired, already approved and other-account codes are deliberately indistinguishable.",
+                                        err.display()
+                                    ));
+                                }
+                            }
+                            accept_action_busy.set(false);
+                        });
+                    },
+                    if accept_busy { {tr("settings.devices.accept_code_claiming")} } else { {tr("settings.devices.accept_code_claim")} }
+                }
             }
             div { class: "actions",
                 Button {
@@ -795,10 +926,19 @@ fn render_pair_flow(
                             .await
                             {
                                 Ok(bootstrap) => {
+                                    let Some(scope) = crate::secure_key_store::active_device_seed_scope() else {
+                                        accept_resolved.set(String::new());
+                                        accept_status.set(
+                                            "No active account can approve a pairing request.".to_owned(),
+                                        );
+                                        accept_action_busy.set(false);
+                                        return;
+                                    };
                                     let server_challenge = arkret_sdk::signatures::device_pairing::ServerDevicePairingChallenge::from_bootstrap(&bootstrap);
                                     if let Err(error) = arkret_sdk::signatures::device_pairing::verify_server_device_pairing_target_proof(
                                         &bootstrap.new_device_pubkey,
                                         &server_challenge,
+                                        &scope.authority,
                                         &target_proof,
                                         chrono::Utc::now(),
                                     ) {
@@ -858,6 +998,8 @@ fn render_pair_flow(
                             dd { class: "mono", "data-testid": "accept-pairing-key-fingerprint", "{review.key_fingerprint}" }
                             dt { {tr("device_pair.platform")} }
                             dd { "data-testid": "accept-pairing-platform", "{review.platform}" }
+                            dt { {tr("settings.devices.accept_account_id")} }
+                            dd { class: "mono", "data-testid": "accept-pairing-account-id", "{review.account_id}" }
                             dt { {tr("settings.devices.accept_gate_audience")} }
                             dd { class: "mono", "data-testid": "accept-pairing-gate-audience", "{review.gate_audience}" }
                             dt { {tr("device_pair.expires")} }
@@ -906,6 +1048,7 @@ fn render_pair_flow(
                                         auto_loaded.set(false);
                                         accept_resolved.set(String::new());
                                         accept_input.set(String::new());
+                                        accept_code_input.set(String::new());
                                         accept_status.set(
                                             format!("Device authorization accepted ({}). On the new device, check authorization status and sign in again. Encrypted Realms become available after KeyPackage publication and Welcome processing.", value.authorized_event_ref),
                                         );
@@ -929,6 +1072,7 @@ fn render_pair_flow(
                         onclick: move |_| {
                             accept_resolved.set(String::new());
                             accept_input.set(String::new());
+                            accept_code_input.set(String::new());
                             accept_status.set(tr("settings.devices.accept_rejected"));
                         },
                         {tr("device_pair.reject")}
@@ -949,6 +1093,10 @@ mod tests {
 
     fn target_proof() -> arkret_sdk::DevicePairingTargetProof {
         serde_json::from_value(json!({
+            "account_id": {
+                "principal_id": "ak:did_core:webvh:z6mkfixture",
+                "station_id": "ak:did_core:webvh:z6mkfixturestationexample"
+            },
             "device_id": "ak:device:01964137-0000-7000-8000-0000000000c1",
             "device_public_key_did": "did:key:z6MkogKw38hXxUkpMWitoBubBGHZzeGrQJ4oHF36iegUbmpA",
             "hpke_key": "z6LSriWhVBzW9Vz2PvqbieSz7Aa2hPLzTKJuDwXTMKFeomeW",

@@ -13,9 +13,10 @@
 //! re-authoring locally: the signed bytes are the operation, and a new attempt
 //! is a new preparation over the identical body.
 
+use arkret_sdk::{MessageAuthoringIntent, MessagePrepareOutcome};
 use garth::message_authoring::{
-    MessageAuthoringFailure, MessageAuthoringIntent, MessageAuthoringRecovery,
-    MessageAuthoringSession, MessageAuthoringTarget, MessagePrepareOutcome,
+    MessageAuthoringFailure, MessageAuthoringRecovery, MessageAuthoringSession,
+    MessageAuthoringTarget,
 };
 
 use super::*;

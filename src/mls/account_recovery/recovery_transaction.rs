@@ -11,10 +11,9 @@ use arkret_models_collaboration::events_payloads::device_identity::{
 use arkret_models_crypto::{RecoveryAuthorityKind, RecoveryProofKind};
 use arkret_wire::{
     ControlProposalAck, EventInitialSubmission, EventsSubmitBatchRequestBody, Hash, NonEmptyString,
-    PcrPolicyRecoveryBinding, PcrPolicyRecoveryPlan, PreparedEventUnit, ReceiptId,
-    RecoveryIdentityModel, RecoveryPreparedPlan, RecoveryTransactionCreateRequest,
-    SecurityTransaction, SecurityTransactionCreateRequest, SecurityTransactionResultKind,
-    SecurityTransactionStep, TransactionId,
+    PcrPolicyRecoveryIntent, PreparedEventUnit, ReceiptId, RecoverySealIntent,
+    RecoveryTransactionCreateRequest, SecurityTransaction, SecurityTransactionCreateRequest,
+    SecurityTransactionResultKind, TransactionId,
 };
 use zeroize::Zeroizing;
 
@@ -171,7 +170,7 @@ pub(crate) async fn prepare_pcr_policy_recovery(
 
     let mut authorize =
         arkret_sdk::TypedEventDraft::<arkret_sdk::event_spec::DeviceAuthorize>::new(
-            scope_ref,
+            scope_ref.clone(),
             arkret_sdk::ActorId::account(verified_session.account_id.clone()),
             authorize_payload,
         )?
@@ -187,7 +186,6 @@ pub(crate) async fn prepare_pcr_policy_recovery(
         crate::event_signer::ProducerProofContext::for_native_unit(digest_suite),
         created_at,
     )?;
-    let authorize_event_id = authorize.event_id().clone();
     let reanchor = reanchor.into_event();
     let authorize = authorize.into_event();
     let proof_summary = verified_session
@@ -240,6 +238,10 @@ pub(crate) async fn prepare_pcr_policy_recovery(
         submission.control_proposal_ack = Some(authority_ack);
         Ok(submission)
     };
+    let unit_event_digests = vec![
+        Hash::new(reanchor.event_digest_with_digest_suite(digest_suite)?)?,
+        Hash::new(authorize.event_digest_with_digest_suite(digest_suite)?)?,
+    ];
     let reanchor_submission = EventsSubmitBatchRequestBody {
         events: vec![
             recovery_submission(reanchor)?,
@@ -247,25 +249,35 @@ pub(crate) async fn prepare_pcr_policy_recovery(
         ],
     };
 
-    let plan = PcrPolicyRecoveryPlan {
-        binding: PcrPolicyRecoveryBinding {
-            identity_model: RecoveryIdentityModel::PcrPolicy,
-            recovery_session_id: verified_session.recovery_session_id.clone(),
-            replacement_device_id: verified_session.requesting_device_id.clone(),
-            reanchor_event_id,
-            authorize_event_id,
-            terminal_receipt_id: ReceiptId::new(format!(
-                "ak:receipt:{}",
-                crate::operation::uuid_v7()
-            ))?,
-        },
-        recovery_session_snapshot_digest: Hash::new(arkret_sdk::canonical::canonical_sha256(
-            &verified_session,
-        )?)?,
-        proof_digest: proof_summary.proof_digest.clone(),
+    // The f=0 Principal Control Realm advances linearly, so its accepted Seal
+    // frontier is a single leaf and that leaf is the only legal predecessor of
+    // the first new-generation Seal. A wider frontier is not something to pick
+    // from: it means this Realm is not the closed PCR the recovery assumes.
+    let [predecessor_ref] = verified_session.accepted_seal_frontier.leaves.as_slice() else {
+        anyhow::bail!("PCR recovery requires a single accepted Seal frontier leaf");
+    };
+    let first_generation_seal_intent = RecoverySealIntent {
+        realm_id: scope_ref.realm_id().clone(),
+        predecessor_ref: predecessor_ref.clone(),
+        unit_event_digests,
+        hlc: crate::signing_stamp::issue_protocol_hlc_for_active_device(
+            verified_session.account_id.principal_id.as_str(),
+            scope_ref.realm_id().as_str(),
+        )?,
+    };
+    // The client states intent only. The reserved re-anchor batch receipt id,
+    // the derived Seal id, the session and proof snapshots and the exact
+    // unsigned Seal body are all Station-derived and reach the client through
+    // the prepared plan; reproducing them here would create a second truth the
+    // Station would then have to be trusted to agree with.
+    let recovery_intent = PcrPolicyRecoveryIntent {
+        recovery_session_id: verified_session.recovery_session_id.clone(),
+        replacement_device_id: verified_session.requesting_device_id.clone(),
         previous_model_generation_ref: previous_device_generation,
         result_model_generation_ref: result_device_generation,
+        terminal_receipt_id: ReceiptId::new(format!("ak:receipt:{}", crate::operation::uuid_v7()))?,
         reanchor_unit: PreparedEventUnit::new(digest_suite, reanchor_submission)?,
+        first_generation_seal_intent,
     };
     let create_request = RecoveryTransactionCreateRequest::new(
         TransactionId::new(format!("ak:transaction:{}", crate::operation::uuid_v7()))?,
@@ -274,7 +286,7 @@ pub(crate) async fn prepare_pcr_policy_recovery(
             verified_session.expires_at,
             crate::clock::now_utc() + chrono::Duration::hours(1),
         ),
-        RecoveryPreparedPlan::PcrPolicy(plan),
+        recovery_intent,
     )?;
     Ok(PreparedPcrPolicyRecovery {
         create_request,
@@ -426,13 +438,10 @@ pub(crate) async fn execute_pcr_policy_recovery(
         transaction = retried;
     }
     reject_terminal_recovery_transaction(&transaction, secure_store.as_ref())?;
-    while transaction.next_required_step()? == Some(SecurityTransactionStep::SubmitReanchorUnit) {
-        transaction = workflow.continue_server_step(&transaction).await?;
-    }
     if !transaction.is_completed() {
         let signer = crate::event_signer::active_signer()
             .ok_or_else(|| anyhow::anyhow!("replacement device signer is unavailable"))?;
-        let terminal = crate::fresh_device_recovery::sign_terminal_receipt_continue(
+        let terminal = crate::fresh_device_recovery::sign_recovery_terminal_commit_continue(
             &transaction,
             crate::fresh_device_recovery::RecoveryTerminalObservation {
                 policy_id: session.policy_id.clone(),
@@ -559,13 +568,10 @@ pub(crate) async fn resume_pending_pcr_policy_recovery(
         .read(crate::state::LocalStateStore::begin_durable_flush)?
         .wait()
         .await?;
-    while transaction.next_required_step()? == Some(SecurityTransactionStep::SubmitReanchorUnit) {
-        transaction = workflow.continue_server_step(&transaction).await?;
-    }
     if !transaction.is_completed() {
         let signer = crate::event_signer::active_signer()
             .ok_or_else(|| anyhow::anyhow!("replacement device signer is unavailable"))?;
-        let terminal = crate::fresh_device_recovery::sign_terminal_receipt_continue(
+        let terminal = crate::fresh_device_recovery::sign_recovery_terminal_commit_continue(
             &transaction,
             crate::fresh_device_recovery::RecoveryTerminalObservation {
                 policy_id: session.policy_id.clone(),

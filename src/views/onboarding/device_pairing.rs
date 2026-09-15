@@ -3,6 +3,16 @@
 //! The staging half mints the handoff token and deep link; the polling half
 //! reads the authorized pairing status back. Both are network commands the
 //! device-setup screen calls, not view state.
+//!
+//! Staging is two server calls, in this order and no other. The anonymous
+//! stage mints an account-less record and the challenge inputs; only then can
+//! the candidate sign a target proof, because the proof commits to the request
+//! id, code, expiry, gate audience and server nonce that call produced — and,
+//! since the two-phase pairing contract, to the `AccountId` its pending
+//! account handoff is bound to. The authenticated finalize is what attaches
+//! that proof and moves the record from `staged` to `ready_for_claim`. Nothing
+//! may be shown to the user before finalize returns: a code, QR or link handed
+//! out against a `staged` record points at something no sibling can claim.
 
 #[derive(Clone, Debug)]
 pub(super) struct DeviceSetupPairingRequest {
@@ -124,6 +134,13 @@ pub(super) async fn stage_device_setup_pairing(
         transcript_digest,
     )
     .await?;
+    finalize_device_setup_pairing(
+        handoff,
+        &stage.device_pairing_request_id,
+        &stage.pairing_code,
+        &target_proof,
+    )
+    .await?;
     let token =
         device_pairing_handoff_token(&stage.device_pairing_request_id, &stage.pairing_code)?;
     let deep_link = device_pairing_deep_link(&handoff.station_url, &token, &target_proof)?;
@@ -152,6 +169,34 @@ pub(super) async fn stage_device_setup_pairing(
         deep_link,
         target_proof,
     })
+}
+
+/// Attach the signed target proof to the staged record under the candidate's
+/// own pending account handoff.
+///
+/// The handoff is the only thing that tells the service which account the
+/// record belongs to, so this call is authenticated while the stage before it
+/// is not. It is one way and idempotent for an identical intent, which is why
+/// a retried staging screen must not mint a second request.
+async fn finalize_device_setup_pairing(
+    handoff: &crate::state::PendingAccountHandoff,
+    request_id: &arkret_sdk::DevicePairingRequestId,
+    pairing_code: &arkret_sdk::DevicePairingCode,
+    target_proof: &arkret_sdk::DevicePairingTargetProof,
+) -> anyhow::Result<()> {
+    let outcome = crate::identity::account_auth::account_handoff_client(handoff)?
+        .auth_finalize_device_pairing(&arkret_sdk::DevicePairingFinalizeRequestBody {
+            device_pairing_request_id: request_id.clone(),
+            pairing_code: pairing_code.clone(),
+            target_proof: target_proof.clone(),
+        })
+        .await?;
+    if outcome.device_pairing_request_id != *request_id
+        || outcome.state != arkret_sdk::DevicePairingReadyForClaimState::ReadyForClaim
+    {
+        anyhow::bail!("device pairing finalize did not report this request ready for claim");
+    }
+    Ok(())
 }
 
 pub(super) async fn check_device_setup_pairing(

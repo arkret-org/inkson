@@ -469,9 +469,9 @@ pub(crate) fn chat_content_with_mentions(
 /// answers, and this client checks them rather than inventing them.
 pub(crate) fn chat_message_authoring_intent(
     strand_id: &str,
-    content: garth::message_authoring::MessageAuthoringContent,
+    content: arkret_sdk::MessageAuthoringContent,
     reply_to: Option<&str>,
-) -> anyhow::Result<garth::message_authoring::MessageAuthoringIntent> {
+) -> anyhow::Result<arkret_sdk::MessageAuthoringIntent> {
     let reply_to_id = match reply_to.map(str::trim).filter(|value| !value.is_empty()) {
         Some(reply_to) => {
             if !is_schema_message_id(reply_to) {
@@ -481,9 +481,9 @@ pub(crate) fn chat_message_authoring_intent(
         }
         None => None,
     };
-    let intent = garth::message_authoring::MessageAuthoringIntent {
+    let intent = arkret_sdk::MessageAuthoringIntent {
         strand_id: strand_id_value(strand_id)?,
-        track_name: garth::message_authoring::MessageTrackName::Discussion,
+        track_name: arkret_sdk::MessageTrackName::Discussion,
         content,
         blob_refs: vec![],
         reply_to_id,
@@ -569,7 +569,7 @@ pub(crate) async fn send_ordinary_chat_message(
     realm_id: &str,
     scope: arkret_sdk::ScopeRef,
     strand_id: &str,
-    content: garth::message_authoring::MessageAuthoringContent,
+    content: arkret_sdk::MessageAuthoringContent,
     reply_to: Option<&str>,
     local_operation_id: String,
 ) -> std::result::Result<SubmitEventResult, garth::MessageAuthoringFailure> {
