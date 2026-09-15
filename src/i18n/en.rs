@@ -1373,143 +1373,9 @@ pub fn english_translations() -> TranslationDict {
     );
 
     // Verify Device (device-lifecycle.md §10 Verification Strands: SAS / QR)
-    dict.set("verify_device.title", "Device Verification");
-    dict.set("verify_device.choose_method", "choose method");
-    dict.set("verify_device.qr_code", "QR Code");
-    dict.set("verify_device.sas_emoji", "Emoji comparison");
-    dict.set("verify_device.qr_section", "QR Verification");
-    dict.set("verify_device.qr_section_hint", "scan or display");
-    dict.set("verify_device.sas_section", "Emoji verification");
-    dict.set("verify_device.sas_section_hint", "emoji comparison");
-    dict.set("verify_device.target_device_id", "Target Device ID");
-    dict.set(
-        "verify_device.target_device_placeholder",
-        "Device ID to verify",
-    );
-    dict.set("verify_device.generate_qr", "Generate QR Data");
-    dict.set("verify_device.start_sas", "Start emoji verification");
-    dict.set("verify_device.short_auth_string", "Comparison code");
     // SAS flow — plain-language rewrite: no SAS / X25519 jargon in
     // user-facing copy. This panel has no "technical details" affordance,
     // so the jargon is dropped rather than tucked behind one.
-    dict.set("verify_device.key_exchange_title", "Key exchange");
-    dict.set("verify_device.keypair_ready", "key ready");
-    dict.set("verify_device.keypair_missing", "not generated");
-    dict.set(
-        "verify_device.key_exchange_hint",
-        "Generate a fresh one-time key, send the public part to your other device, and paste the other device's public key below. The emoji and digits update as soon as both sides are connected.",
-    );
-    dict.set("verify_device.generate_keypair", "Generate my key");
-    dict.set(
-        "verify_device.keypair_generated",
-        "Key generated — click Send to share the public part with the other device.",
-    );
-    dict.set(
-        "verify_device.keypair_generate_failed",
-        "Could not generate a key: {error}",
-    );
-    dict.set("verify_device.send_public_key", "Send my public key");
-    dict.set("verify_device.generate_first", "Generate a key first.");
-    dict.set(
-        "verify_device.target_required",
-        "Enter the device ID to verify first.",
-    );
-    dict.set(
-        "verify_device.send_failed_signing",
-        "Send failed — this device's signing key is unavailable: {error}",
-    );
-    dict.set(
-        "verify_device.send_failed_sign",
-        "Send failed — could not sign the key message: {error}",
-    );
-    dict.set("verify_device.send_failed", "Send failed: {error}");
-    dict.set(
-        "verify_device.public_key_sent",
-        "Public key sent. Waiting for the other device's key.",
-    );
-    dict.set("verify_device.my_public_key", "My public key: {key}");
-    dict.set(
-        "verify_device.peer_key_placeholder",
-        "Paste the other device's public key",
-    );
-    dict.set(
-        "verify_device.peer_key_autofilled",
-        "The other device's public key arrived automatically.",
-    );
-    dict.set(
-        "verify_device.session_started",
-        "Verification session started. Generate and exchange keys on both devices to see the real emoji and digits.",
-    );
-    dict.set(
-        "verify_device.compare_hint",
-        "Compare these emoji and digits on both devices — they must look identical.",
-    );
-    dict.set(
-        "verify_device.source_secure",
-        "Derived from the secure key exchange between both devices.",
-    );
-    dict.set(
-        "verify_device.source_demo_invalid",
-        "Placeholder — the other device's key is invalid.",
-    );
-    dict.set(
-        "verify_device.source_demo_waiting",
-        "Placeholder — waiting for the other device's key.",
-    );
-    dict.set(
-        "verify_device.match_requires_keys",
-        "Both devices' keys are needed first — generate and send your key, then wait for the other device's key.",
-    );
-    dict.set(
-        "verify_device.match_failed_signing",
-        "Confirmation failed — this device's signing key is unavailable: {error}",
-    );
-    dict.set(
-        "verify_device.match_failed_sign",
-        "Confirmation failed — could not sign the proof: {error}",
-    );
-    dict.set(
-        "verify_device.matched",
-        "Codes match for {target}. The confirmation is signed on this device; authorization continues through the pairing flow.",
-    );
-    dict.set(
-        "verify_device.mismatch_aborted",
-        "Mismatch — aborted. The new device will not be authorized and will not receive encrypted history.",
-    );
-    dict.set("verify_device.they_match", "They match");
-    dict.set("verify_device.they_dont_match", "They don't match");
-    dict.set(
-        "verify_device.after_confirm_title",
-        "What happens after you confirm",
-    );
-    dict.set(
-        "verify_device.after_confirm_body",
-        "The comparison only confirms that you trust the new device's key. The four steps below record that trust in your account, so the device becomes a long-term member and can read encrypted history.",
-    );
-    dict.set("verify_device.step_authorize", "Authorize device");
-    dict.set(
-        "verify_device.step_authorize_hint",
-        "Add the new device's public key to your authorized set",
-    );
-    dict.set("verify_device.step_record", "Record acceptance");
-    dict.set(
-        "verify_device.step_record_hint",
-        "Your account's device directory records the authorization",
-    );
-    dict.set("verify_device.step_rejoin", "Rejoin encrypted groups");
-    dict.set(
-        "verify_device.step_rejoin_hint",
-        "Each space updates its encryption to include the new device",
-    );
-    dict.set("verify_device.step_sync", "Sync secret storage");
-    dict.set(
-        "verify_device.step_sync_hint",
-        "Fetch the encrypted key backup so past history is readable",
-    );
-    dict.set(
-        "verify_device.after_confirm_note",
-        "Sign-in, device authorization, and device verification are three separate steps. Skipping verification leaves you with a short-lived session that cannot decrypt past messages.",
-    );
 
     // A6.4 — keyboard shortcut help overlay.
     dict.set("shortcuts.title", "Keyboard shortcuts");
@@ -2983,7 +2849,6 @@ fn route_label_strings(dict: &mut TranslationDict) {
     dict.set("route.setup_new_space", "New Space");
     dict.set("route.settings", "Settings");
     dict.set("route.notifications", "Notifications");
-    dict.set("route.verify_device", "Verify Device");
     dict.set("route.realm_members", "Members");
     dict.set("route.circles", "Circles");
     dict.set("route.realm_admin", "Realm Settings");

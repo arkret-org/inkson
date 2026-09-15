@@ -546,7 +546,7 @@ fn local_state_store_durably_deduplicates_device_message_envelopes() {
     let path = temp_state_path("device-message-dedup");
     let message: arkret_sdk::DeviceMessageEnvelope = serde_json::from_value(serde_json::json!({
     "device_message_id": "ak:device_message:0196419b-0000-7000-8000-000000000071",
-    "kind": "ak.key.verification.request",
+    "kind": "ak.secret.request",
     "sender_account_id": {
         "principal_id": "ak:did_core:webvh:z6mkfixture:alice.example",
         "station_id": "ak:did_core:webvh:z6mkfixture:station.example"
@@ -560,12 +560,10 @@ fn local_state_store_durably_deduplicates_device_message_envelopes() {
     "sent_at": "2026-07-17T00:00:00.000Z",
     "expires_at": "2099-07-17T00:10:00.000Z",
     "content": {
-        "transaction_id": "txn-device-message-dedup",
+        "request_id": "txn-device-message-dedup",
+        "secret_id": "example_mls_account_secret",
         "from_device_id": "ak:device:0196419b-0000-7000-8000-000000000001",
-        "methods": ["ak.key.verification.sas_v1"],
-        "timestamp": "2026-07-17T00:00:00.000Z",
-        "expires_at": "2099-07-17T00:10:00.000Z",
-        "pairing_code": "7H2K9M4Q"
+        "recipient_hpke_public_key": "9CKz3Ai9iQz0kHhZcH0H2jqvS-LcQ0YjvKq3aH9mQ0U"
     }
     }))
     .unwrap();
@@ -588,7 +586,7 @@ fn local_state_store_durably_deduplicates_device_message_envelopes() {
     let conflicting: arkret_sdk::DeviceMessageEnvelope =
         serde_json::from_value(serde_json::json!({
         "device_message_id": "ak:device_message:0196419b-0000-7000-8000-000000000071",
-        "kind": "ak.key.verification.request",
+        "kind": "ak.secret.request",
         "sender_account_id": {
             "principal_id": "ak:did_core:webvh:z6mkfixture:alice.example",
             "station_id": "ak:did_core:webvh:z6mkfixture:station.example"
@@ -602,12 +600,10 @@ fn local_state_store_durably_deduplicates_device_message_envelopes() {
         "sent_at": "2026-07-17T00:00:00.000Z",
         "expires_at": "2099-07-17T00:10:00.000Z",
         "content": {
-            "transaction_id": "txn-device-message-conflict",
+            "request_id": "txn-device-message-conflict",
+            "secret_id": "example_mls_account_secret",
             "from_device_id": "ak:device:0196419b-0000-7000-8000-000000000001",
-            "methods": ["ak.key.verification.sas_v1"],
-            "timestamp": "2026-07-17T00:00:00.000Z",
-            "expires_at": "2099-07-17T00:10:00.000Z",
-            "pairing_code": "8J3L5N7P"
+            "recipient_hpke_public_key": "F1Nn6Pq8RtVwXyZ0aBcDeFgHiJkLmNoPqRsTuVwXyZ0"
         }
         }))
         .unwrap();

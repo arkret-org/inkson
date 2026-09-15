@@ -77,7 +77,7 @@ pub async fn send_device_message<K: arkret_sdk::DeviceMessageSpec>(
 /// `device_message_id`.
 ///
 /// Kinds whose HPKE AAD binds the envelope id (`ak.secret.send`,
-/// device-lifecycle.md §10.7) MUST allocate that id **before** sealing and hand
+/// device-lifecycle.md §10.2) MUST allocate that id **before** sealing and hand
 /// the same value here, so the ciphertext, the envelope and the durable queue
 /// row all carry one id. Minting a second id at send time would break the AAD.
 #[allow(clippy::too_many_arguments)]

@@ -13,7 +13,6 @@
 // | chat               | desktop/discussion.html           | models/object-model-standard §5, current-model §3      | ak.strand.tracks.update (unified), ak.message.*                      |
 // | directory          | desktop/directory.html            | discovery/discovery-directory                          | (read-only); writes via ak.realm.discovery state event              |
 // | notifications      | desktop/inbox.html, mobile/inbox  | discovery/push-notifications, discovery/read-receipts §6 | (projection only — derived from ak.read_cursor.advance / ak.receipt.read / @-mention) |
-// | verify_device      | desktop/verify-device.html        | crypto-media/device-lifecycle (verification)           | ak.key.verification.*, ak.mls.welcome                              |
 // | realm_admin        | desktop/realm-admin.html          | authz/capabilities, governance/content-moderation, sync/federation | ak.policy.{rule,action,set}, ak.capability.{grant,revoke}, ak.realm.owner.transfer, ak.realm.authority.reset |
 // | settings           | desktop/settings.html             | identity/identity-handles §16, identity/account-lifecycle, authz/capabilities §10.4 | ak.profile.update, ak.account.status, ak.identity.disclosure_*, ak.capability.relinquish (subject-only, settings/capabilities) |
 // | setup              | (Realm bootstrap helper page)     | overview/architecture                                  | (Realm bootstrap)                                                  |
@@ -79,7 +78,6 @@ pub mod secure_send;
 /// settings/mod.rs head comment for the territory split (G3.Y1 vs G3.Y3).
 pub mod settings;
 pub mod setup;
-pub mod verify_device;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum AppView {
@@ -90,7 +88,6 @@ pub enum AppView {
     Directory,
     Setup,
     Settings,
-    VerifyDevice,
     RealmAdmin,
     Circles,
     Kanban,

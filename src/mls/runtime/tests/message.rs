@@ -1416,7 +1416,7 @@ fn local_welcome_hint_filters_by_governance_realm() {
             },
         }),
         json!({
-            "kind": "ak.key.verification.request",
+            "kind": "ak.secret.request",
             "content": {
                 "governance_binding": { "effective_scope": { "kind": "realm", "realm_id": realm } },
             },

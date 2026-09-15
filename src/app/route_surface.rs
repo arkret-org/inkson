@@ -464,20 +464,6 @@ pub(super) fn RouteSurface(state: RouteSurfaceState) -> Element {
                             theme,
                         }
                     },
-                    Route::VerifyDevice => {
-                        if StationFeature::VerifyDevice.ready(server_description.as_ref()) {
-                            rsx! {
-                                crate::views::verify_device::VerifyDevicePanel {
-                                    token,
-                                    device_id: device_id(),
-                                    principal_id: principal_core_id.clone(),
-                                    selected_realm_id: selected_realm_id(),
-                                }
-                            }
-                        } else {
-                            rsx! { FeatureGateNotice { feature: StationFeature::VerifyDevice, missing: (StationFeature::VerifyDevice).missing_requirements(server_description.as_ref()), pending: server_description.is_none() } }
-                        }
-                    },
                     Route::Circles { realm_id } | Route::CircleDetail { realm_id, .. } => {
                         if selected_realm_id() != *realm_id {
                             selected_realm_id.set(realm_id.clone());

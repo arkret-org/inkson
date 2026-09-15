@@ -30,11 +30,6 @@ pub(super) fn palette_destinations() -> Vec<(&'static str, &'static str, Route)>
             Route::SettingsRecovery,
         ),
         (
-            "Verify device",
-            "QR / SAS device verification",
-            Route::VerifyDevice,
-        ),
-        (
             "Quarantine",
             "review held invites (admin)",
             Route::Quarantine,

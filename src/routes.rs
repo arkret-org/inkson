@@ -80,9 +80,6 @@ pub enum Route {
     #[route("/settings/:section?:filter", SettingsSectionPage)]
     SettingsSection { section: String, filter: String },
 
-    #[route("/devices/verify", RoutePage)]
-    VerifyDevice,
-
     #[route("/realms/:realm_id/members", RealmMembersPage)]
     RealmMembers { realm_id: String },
 
@@ -310,7 +307,6 @@ impl Route {
             | Route::Recovery
             | Route::Audit
             | Route::Developer => AppView::Settings,
-            Route::VerifyDevice => AppView::VerifyDevice,
             Route::Circles { .. } | Route::CircleDetail { .. } => AppView::Circles,
             Route::RealmMembers { .. }
             | Route::RealmAdmin { .. }
@@ -395,7 +391,6 @@ impl From<AppView> for Route {
             AppView::Settings => Route::Settings,
             AppView::SettingsDevices => Route::SettingsDevices,
             AppView::SettingsRecovery => Route::SettingsRecovery,
-            AppView::VerifyDevice => Route::VerifyDevice,
             AppView::RealmAdmin => Route::RealmAdmin {
                 realm_id: String::new(),
             },
@@ -442,7 +437,6 @@ mod tests {
                 section: "realms".to_owned(),
             },
             Route::Settings,
-            Route::VerifyDevice,
             Route::RealmAdminSection {
                 realm_id: "ak:realm:Ah-TN8ceKyXkuwRp9fuEVw7pwATVHa-ISAbDJQgUm9hA".to_owned(),
                 section: "access".to_owned(),

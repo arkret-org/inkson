@@ -97,7 +97,6 @@ pub(super) fn route_label_key(route: &Route) -> &'static str {
         Route::Settings => "route.settings",
         Route::SettingsSection { section, .. } => settings_route_label_key(section),
         Route::NotificationsSettings => "route.notifications",
-        Route::VerifyDevice => "route.verify_device",
         Route::RealmMembers { .. } => "route.realm_members",
         Route::Circles { .. } | Route::CircleDetail { .. } => "route.circles",
         Route::RealmAdmin { .. } => "route.realm_admin",

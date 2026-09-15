@@ -15,7 +15,6 @@ pub enum StationFeature {
     CreateRealm,
     CreateSpace,
     Circles,
-    VerifyDevice,
     PublishKeyPackage,
     MlsAdmission,
     WelcomeBootstrap,
@@ -29,7 +28,6 @@ impl StationFeature {
             Self::CreateRealm => "route.setup_realms",
             Self::CreateSpace => "route.setup_new_space",
             Self::Circles => "route.circles",
-            Self::VerifyDevice => "route.verify_device",
             Self::PublishKeyPackage | Self::MlsAdmission | Self::WelcomeBootstrap => {
                 "route.devices"
             }
@@ -68,11 +66,6 @@ impl StationFeature {
                 SelfSealsCommandPrepareV1,
             ],
             Self::Circles => &[SelfCircleReadListV1],
-            Self::VerifyDevice => &[
-                SelfDeviceMessagesReadListV1,
-                SelfDeviceMessagesCommandSendV1,
-                SelfDeviceMessagesCommandAckV1,
-            ],
             Self::PublishKeyPackage => &[
                 SelfKeysKeypackagesUploadCreateV1,
                 SelfKeysKeypackagesCommandRevokeV1,
@@ -174,7 +167,6 @@ mod tests {
             vec!["ak.self.signer_keys.read.resolve.v1 (http_json)"]
         );
         assert!(StationFeature::Discussion.ready(Some(&description)));
-        assert!(StationFeature::VerifyDevice.ready(Some(&description)));
         assert!(StationFeature::PublishKeyPackage.ready(Some(&description)));
     }
 
@@ -188,7 +180,7 @@ mod tests {
         assert!(!StationFeature::CreateRealm.ready(Some(&description)));
         description = station(&["ak.operation_bundle.station.http_core.v1"]);
         description.transport_bindings.clear();
-        assert!(!StationFeature::VerifyDevice.ready(Some(&description)));
+        assert!(!StationFeature::Discussion.ready(Some(&description)));
         description = station(&["ak.operation_bundle.station.http_core.v1"]);
         description.service_kind = ServiceKind::IdentityRegistry;
         assert!(!StationFeature::Discussion.ready(Some(&description)));

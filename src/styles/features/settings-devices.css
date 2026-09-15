@@ -261,11 +261,6 @@
   border-radius: var(--radius);
   padding: 12px 14px;
 }
-.sas-digits {
-  display: flex; justify-content: center; gap: 12px;
-  font-family: var(--font-mono); font-size: 26px; font-weight: 600;
-  letter-spacing: 0.08em;
-}
 
 /* Device / agent pairing approval prompts. Long identifiers (DIDs, key
    fingerprints) must stack and wrap instead of running together inline,

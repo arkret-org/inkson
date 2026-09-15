@@ -1358,130 +1358,8 @@ pub fn chinese_translations() -> TranslationDict {
     );
 
     // Verify Device
-    dict.set("verify_device.title", "设备验证");
-    dict.set("verify_device.choose_method", "选择方式");
-    dict.set("verify_device.qr_code", "二维码");
-    dict.set("verify_device.sas_emoji", "表情符号比对");
-    dict.set("verify_device.qr_section", "二维码验证");
-    dict.set("verify_device.qr_section_hint", "扫描或显示");
-    dict.set("verify_device.sas_section", "表情符号验证");
-    dict.set("verify_device.sas_section_hint", "表情对比");
-    dict.set("verify_device.target_device_id", "目标设备 ID");
-    dict.set("verify_device.target_device_placeholder", "要验证的设备 ID");
-    dict.set("verify_device.generate_qr", "生成二维码");
-    dict.set("verify_device.start_sas", "开始表情符号验证");
-    dict.set("verify_device.short_auth_string", "比对码");
     // 表情符号比对照料——面向用户的文案不再出现 SAS / X25519 术语；
     // 面板没有“技术详情”折叠区，术语直接去掉而不是藏起来。
-    dict.set("verify_device.key_exchange_title", "密钥交换");
-    dict.set("verify_device.keypair_ready", "密钥已生成");
-    dict.set("verify_device.keypair_missing", "未生成");
-    dict.set(
-        "verify_device.key_exchange_hint",
-        "生成一个新的一次性密钥，把公开部分发送到你的另一台设备，并把那台设备的公钥粘贴到下方。两边都就绪后，下方的表情符号和数字会自动更新。",
-    );
-    dict.set("verify_device.generate_keypair", "生成我的密钥");
-    dict.set(
-        "verify_device.keypair_generated",
-        "密钥已生成——点击发送，把公开部分分享给另一台设备。",
-    );
-    dict.set(
-        "verify_device.keypair_generate_failed",
-        "无法生成密钥:{error}",
-    );
-    dict.set("verify_device.send_public_key", "发送我的公钥");
-    dict.set("verify_device.generate_first", "请先生成密钥。");
-    dict.set("verify_device.target_required", "请先输入要验证的设备 ID。");
-    dict.set(
-        "verify_device.send_failed_signing",
-        "发送失败——本设备的签名密钥不可用:{error}",
-    );
-    dict.set(
-        "verify_device.send_failed_sign",
-        "发送失败——无法为密钥消息签名:{error}",
-    );
-    dict.set("verify_device.send_failed", "发送失败:{error}");
-    dict.set(
-        "verify_device.public_key_sent",
-        "公钥已发送，等待另一台设备的密钥。",
-    );
-    dict.set("verify_device.my_public_key", "我的公钥:{key}");
-    dict.set("verify_device.peer_key_placeholder", "粘贴另一台设备的公钥");
-    dict.set(
-        "verify_device.peer_key_autofilled",
-        "已自动收到另一台设备的公钥。",
-    );
-    dict.set(
-        "verify_device.session_started",
-        "验证会话已开始。在两边设备上生成并交换密钥后，即可看到真实的表情符号和数字。",
-    );
-    dict.set(
-        "verify_device.compare_hint",
-        "在两台设备上对比这些表情符号和数字——必须完全一致。",
-    );
-    dict.set(
-        "verify_device.source_secure",
-        "由两台设备间的安全密钥交换得出。",
-    );
-    dict.set(
-        "verify_device.source_demo_invalid",
-        "占位结果——另一台设备的密钥无效。",
-    );
-    dict.set(
-        "verify_device.source_demo_waiting",
-        "占位结果——等待另一台设备的密钥。",
-    );
-    dict.set(
-        "verify_device.match_requires_keys",
-        "需要两台设备的密钥——请先生成并发送你的密钥，然后等待另一台设备的密钥。",
-    );
-    dict.set(
-        "verify_device.match_failed_signing",
-        "确认失败——本设备的签名密钥不可用:{error}",
-    );
-    dict.set(
-        "verify_device.match_failed_sign",
-        "确认失败——无法为证明签名:{error}",
-    );
-    dict.set(
-        "verify_device.matched",
-        "{target} 的比对结果一致。确认信息已在本设备签名，授权将通过配对流程继续。",
-    );
-    dict.set(
-        "verify_device.mismatch_aborted",
-        "不一致——已中止。新设备不会被授权，也不会收到加密历史。",
-    );
-    dict.set("verify_device.they_match", "一致");
-    dict.set("verify_device.they_dont_match", "不一致");
-    dict.set("verify_device.after_confirm_title", "确认后会发生什么");
-    dict.set(
-        "verify_device.after_confirm_body",
-        "比对只是确认你信任新设备的密钥。下面四个步骤会把这份信任记录到你的账户中，让设备成为长期成员并能读取加密历史。",
-    );
-    dict.set("verify_device.step_authorize", "授权设备");
-    dict.set(
-        "verify_device.step_authorize_hint",
-        "把新设备的公钥加入已授权列表",
-    );
-    dict.set("verify_device.step_record", "记录接受");
-    dict.set(
-        "verify_device.step_record_hint",
-        "账户的设备目录会记录这次授权",
-    );
-    dict.set("verify_device.step_rejoin", "重新加入加密群组");
-    dict.set(
-        "verify_device.step_rejoin_hint",
-        "每个空间会更新加密设置以纳入新设备",
-    );
-    dict.set("verify_device.step_sync", "同步密钥存储");
-    dict.set(
-        "verify_device.step_sync_hint",
-        "拉取加密的密钥备份，使历史消息可解密",
-    );
-    dict.set(
-        "verify_device.after_confirm_note",
-        "登录、设备授权和设备验证是三个独立步骤。跳过验证只会得到短期会话，无法解密历史消息。",
-    );
 
     // A6.4 - keyboard shortcut help overlay.
     dict.set("shortcuts.title", "键盘快捷键");
@@ -2473,7 +2351,6 @@ fn route_label_strings(dict: &mut TranslationDict) {
     dict.set("route.setup_new_space", "新建空间");
     dict.set("route.settings", "设置");
     dict.set("route.notifications", "通知");
-    dict.set("route.verify_device", "验证设备");
     dict.set("route.realm_members", "成员");
     dict.set("route.circles", "圈子");
     dict.set("route.realm_admin", "Realm 设置");
