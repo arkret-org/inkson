@@ -42,7 +42,6 @@ pub(super) struct ChatCommandContext {
     pub device_id: arkret_sdk::DeviceId,
     pub selected_realm_id: String,
     pub selected_channel_id: String,
-    pub plaintext_service_id: String,
     pub selected_channel_security_encrypted: bool,
     pub token: Signal<String>,
     pub sync_cursor: Signal<String>,
@@ -921,14 +920,6 @@ impl ChatController {
         }
         self.status_msg.set("Retrying message".to_owned());
         let state_store = crate::app::SessionContext::get().state_store;
-        let projection = state_store
-            .read()
-            .load()
-            .realm_tree_projections
-            .get(&message.realm_id)
-            .cloned();
-        let plaintext_services =
-            plaintext_services_for_policy(projection.as_ref(), &context.plaintext_service_id);
         let mention_values = mention_nodes_to_values(&message.mentions);
         let base_url = context.base_url;
         let authority = context.authority;
@@ -1088,20 +1079,41 @@ impl ChatController {
                         );
                         status_msg.set(format!("Message send failed: {message}"));
                     }
+                    crate::views::secure_send::SecureSendOutcome::MessageAuthoringFailed {
+                        failure,
+                    } => {
+                        present_retry_send_failure(
+                            &mut messages,
+                            &mut status_msg,
+                            &message_id_for_lookup,
+                            &failure,
+                        );
+                    }
                 }
                 return;
             }
-            let operation = match chat_message_create_operation_with_content(
-                &message.realm_id,
-                actor.as_str(),
-                &message.strand_id,
-                &retry_message_id,
-                &message.body,
-                content,
-                &message.mentions,
-                message.reply_to.as_deref(),
+            let content =
+                match chat_content_with_mentions(&message.body, content, &message.mentions) {
+                    Ok(content) => content,
+                    Err(error) => {
+                        mark_message_command_failed(
+                            &mut messages,
+                            &message_id_for_lookup,
+                            format!("send failed: {error:#}"),
+                        );
+                        status_msg.set(format!("send failed: {error:#}"));
+                        return;
+                    }
+                };
+            let content_for_store =
+                serde_json::to_value(&content).unwrap_or(serde_json::Value::Null);
+            let local_operation_id =
+                crate::operation::LocalOperationId::from_holder_key(retry_message_id.clone())
+                    .to_string();
+            let api = match crate::transport::auth::authed_api_with_sync(
+                &base_url, api_token, wait_for,
             ) {
-                Ok(operation) => operation,
+                Ok(api) => api,
                 Err(error) => {
                     mark_message_command_failed(
                         &mut messages,
@@ -1112,14 +1124,29 @@ impl ChatController {
                     return;
                 }
             };
-            match submit_chat_operation_with_auth_refresh(
-                &base_url,
-                actor.as_str(),
+            let scope = match arkret_sdk::RealmId::new(message.realm_id.clone()) {
+                Ok(realm_id) => arkret_sdk::ScopeRef::Realm { realm_id },
+                Err(error) => {
+                    mark_message_command_failed(
+                        &mut messages,
+                        &message_id_for_lookup,
+                        format!("send failed: {error}"),
+                    );
+                    status_msg.set(format!("send failed: {error}"));
+                    return;
+                }
+            };
+            match send_ordinary_chat_message(
+                &api,
                 &message.realm_id,
-                api_token,
-                wait_for,
-                &plaintext_services,
-                &operation,
+                scope,
+                &message.strand_id,
+                garth::message_authoring::MessageAuthoringContent::Plaintext {
+                    content,
+                    metadata: None,
+                },
+                message.reply_to.as_deref(),
+                local_operation_id.clone(),
             )
             .await
             {
@@ -1129,7 +1156,7 @@ impl ChatController {
                         kind: event_kind_str::MESSAGE_CREATE,
                         actor_id: actor.as_str(),
                         body: &message.body,
-                        content: &operation.payload()["content"],
+                        content: &content_for_store,
                         strand_id: &message.strand_id,
                         message_id: &retry_message_id,
                         mentions: &mention_values,
@@ -1137,7 +1164,7 @@ impl ChatController {
                         status: &submitted.status,
                     }) {
                         Ok(raw_operation) => state_store.write().append_raw_operation(
-                            operation.local_operation_id().to_string(),
+                            local_operation_id.clone(),
                             Some(message.realm_id.clone()),
                             raw_operation,
                         ),
@@ -1160,14 +1187,13 @@ impl ChatController {
                     frontier_state.set(submitted.event_id);
                     status_msg.set("Message sent".to_owned());
                 }
-                Err(error) => {
-                    let error = chat_send_error_message(&error);
-                    mark_message_command_failed(
+                Err(failure) => {
+                    present_retry_send_failure(
                         &mut messages,
+                        &mut status_msg,
                         &message_id_for_lookup,
-                        error.clone(),
+                        &failure,
                     );
-                    status_msg.set(format!("Message send failed: {error}"));
                 }
             }
         });
@@ -1499,6 +1525,27 @@ fn mark_message_command_succeeded(messages: &mut Signal<Vec<ChatMessage>>, messa
         message.failed = false;
         message.error = None;
     }
+}
+
+/// Show the exact reason a retried message did not land.
+///
+/// A submission whose result is unknown leaves the row pending: the signed
+/// bytes are durable, and inviting another retry would risk a duplicate of a
+/// message that may already be accepted.
+fn present_retry_send_failure(
+    messages: &mut Signal<Vec<ChatMessage>>,
+    status_msg: &mut Signal<String>,
+    message_id: &str,
+    failure: &garth::MessageAuthoringFailure,
+) {
+    let message = crate::i18n::tr(chat_authoring_failure_message(failure));
+    if !matches!(
+        failure,
+        garth::MessageAuthoringFailure::SubmissionOutcomeUnknown { .. }
+    ) {
+        mark_message_command_failed(messages, message_id, message.clone());
+    }
+    status_msg.set(message);
 }
 
 fn mark_message_command_failed(

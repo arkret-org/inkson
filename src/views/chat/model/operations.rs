@@ -1,7 +1,4 @@
 use super::*;
-use crate::api_error::{
-    is_auth_expired_error, is_plaintext_visibility_policy_error, is_space_membership_denied_error,
-};
 use crate::payload::strand_id_value;
 
 pub(crate) const CHAT_PRIVATE_SAVED_COLLECTION_TITLE: &str = "Saved";
@@ -424,16 +421,15 @@ pub(crate) fn confirmed_sidecar_publish_message_operation(
     Ok(event)
 }
 
-fn chat_message_create_operation_with_content_inner(
-    realm_id: &str,
-    actor: &str,
-    strand_id: &str,
-    _local_message_id: &str,
+/// Fold explicit mention intent into the Content Block the user authored.
+///
+/// Mentions are Content Block nodes, not a second durable write: the caller
+/// gets one block back and nothing else is emitted on its behalf.
+pub(crate) fn chat_content_with_mentions(
     body: &str,
     mut content: arkret_sdk::ContentBlock,
     mentions: &[MentionNode],
-    reply_to: Option<&str>,
-) -> anyhow::Result<crate::operation::LocalOperation> {
+) -> anyhow::Result<arkret_sdk::ContentBlock> {
     if let Some(error) = public_update_policy_error(body) {
         anyhow::bail!(error);
     }
@@ -462,6 +458,53 @@ fn chat_message_create_operation_with_content_inner(
             .with_audience_mentions(audience_mentions)
             .map_err(|err| anyhow::anyhow!("chat message audience_mentions serialize: {err}"))?;
     }
+    Ok(content)
+}
+
+/// The closed typed intent for one ordinary message.
+///
+/// This is the only thing a chat send hands to the shared authoring engine.
+/// There is deliberately no way to reach an Event envelope from here: the
+/// actor chain position, authority closure and CBS basis are the Station's
+/// answers, and this client checks them rather than inventing them.
+pub(crate) fn chat_message_authoring_intent(
+    strand_id: &str,
+    content: garth::message_authoring::MessageAuthoringContent,
+    reply_to: Option<&str>,
+) -> anyhow::Result<garth::message_authoring::MessageAuthoringIntent> {
+    let reply_to_id = match reply_to.map(str::trim).filter(|value| !value.is_empty()) {
+        Some(reply_to) => {
+            if !is_schema_message_id(reply_to) {
+                anyhow::bail!("reply_to must be a ak:message id");
+            }
+            Some(reply_to.to_owned())
+        }
+        None => None,
+    };
+    let intent = garth::message_authoring::MessageAuthoringIntent {
+        strand_id: strand_id_value(strand_id)?,
+        track_name: garth::message_authoring::MessageTrackName::Discussion,
+        content,
+        blob_refs: vec![],
+        reply_to_id,
+    };
+    intent
+        .validate()
+        .map_err(|error| anyhow::anyhow!("chat message intent is not sendable: {error}"))?;
+    Ok(intent)
+}
+
+fn chat_message_create_operation_with_content_inner(
+    realm_id: &str,
+    actor: &str,
+    strand_id: &str,
+    _local_message_id: &str,
+    body: &str,
+    content: arkret_sdk::ContentBlock,
+    mentions: &[MentionNode],
+    reply_to: Option<&str>,
+) -> anyhow::Result<crate::operation::LocalOperation> {
+    let content = chat_content_with_mentions(body, content, mentions)?;
     // T2.3: v1 wire uses `track_name` — a display-only message segment
     // identifier — instead of the removed `branch` top-level field.
     let mut payload = arkret_sdk::MessageCreatePayload::with_content(
@@ -482,86 +525,72 @@ fn chat_message_create_operation_with_content_inner(
     .build_sdk_event("inkson")
 }
 
-pub(crate) fn chat_send_error_message(error: &anyhow::Error) -> String {
-    if is_auth_expired_error(error) {
-        "Session expired while sending. Refresh the session or sign in again, then retry."
-            .to_owned()
-    } else if is_plaintext_visibility_policy_error(error) {
-        "Plaintext is not enabled for this Realm on the current service. Send Secure or update Realm plaintext visibility."
-            .to_owned()
-    } else if is_space_membership_denied_error(error) {
-        "This account is not a member of this Realm. Join the Realm or switch to an account that is a member before sending."
-            .to_owned()
-    } else {
-        error.to_string()
+/// The exact reason one ordinary message did not land, in the user's words.
+///
+/// Every branch names a different situation and a different thing to do about
+/// it. A send that is waiting on its own authorization to be sealed is not the
+/// same event as a Station returning a message the user did not author, and
+/// collapsing both into "send failed" tells the user nothing they can act on.
+pub(crate) fn chat_authoring_failure_message(
+    failure: &garth::MessageAuthoringFailure,
+) -> &'static str {
+    match failure {
+        garth::MessageAuthoringFailure::AuthorizationNotSealed { .. } => {
+            "chat.send.not_ready.authorization"
+        }
+        garth::MessageAuthoringFailure::DependencyUnavailable { .. } => {
+            "chat.send.not_ready.dependency"
+        }
+        garth::MessageAuthoringFailure::PlaintextRefused { .. } => "chat.send.failed.e2ee_required",
+        garth::MessageAuthoringFailure::EncryptionContextChanged { .. } => {
+            "chat.send.failed.encryption_context"
+        }
+        garth::MessageAuthoringFailure::PreparationExpired { .. } => "chat.send.failed.expired",
+        garth::MessageAuthoringFailure::DuplicateConflict { .. } => "chat.send.failed.duplicate",
+        garth::MessageAuthoringFailure::PreparedIntentMismatch { .. } => {
+            "chat.send.failed.intent_mismatch"
+        }
+        garth::MessageAuthoringFailure::ActorChainConflict { .. } => "chat.send.failed.chain",
+        garth::MessageAuthoringFailure::SubmissionOutcomeUnknown { .. } => {
+            "chat.send.pending.unknown"
+        }
+        garth::MessageAuthoringFailure::Refused { .. } => "chat.send.failed.refused",
     }
 }
 
-pub(crate) async fn submit_chat_operation_with_plaintext_retry(
+/// Send one ordinary message through the shared typed authoring engine.
+///
+/// The `content` is already final: plaintext the target still permits, or the
+/// envelope this device's MLS engine produced. Nothing below this call can
+/// change it, so a retry inside the engine never re-encrypts and never consumes
+/// another sender counter.
+pub(crate) async fn send_ordinary_chat_message(
     api: &TransportClient,
     realm_id: &str,
-    actor_id: &str,
-    plaintext_visible_services: &[String],
-    operation: &crate::operation::LocalOperation,
-) -> anyhow::Result<SubmitEventResult> {
-    match api.event_submitter()?.submit_sdk_event(operation).await {
-        Ok(response) => Ok(response),
-        Err(error) if is_plaintext_visibility_policy_error(&error) => {
-            let mut services = plaintext_visible_services.to_vec();
-            if let Ok(description) = api.describe().await {
-                let service_id = description.service_id.as_str().trim();
-                if !service_id.is_empty() && !services.iter().any(|existing| existing == service_id)
-                {
-                    services.push(service_id.to_owned());
-                }
-            }
-            if services.is_empty() {
-                return Err(error);
-            }
-            let policy_update =
-                crate::transport::realm_write::update_realm_plaintext_visible_services(
-                    &api.event_submitter()?,
-                    realm_id,
-                    actor_id,
-                    services,
-                )
-                .await;
-            let retry_operation = crate::operation::LocalOperation::new(operation.intent().clone());
-            let retry = api
-                .event_submitter()?
-                .submit_sdk_event(&retry_operation)
-                .await;
-            match (policy_update, retry) {
-                (_, Ok(response)) => Ok(response),
-                (Ok(_), Err(retry_error)) => Err(retry_error),
-                (Err(update_error), Err(retry_error)) => Err(anyhow::anyhow!(
-                    "plaintext policy update failed: {update_error}; retry after policy convergence failed: {retry_error}; original send failed: {error}"
-                )),
-            }
-        }
-        Err(error) => Err(error),
-    }
-}
-
-/// Submit a chat operation using the current typed transport. Session refresh
-/// is owned by `RuntimeServices`; this lower layer returns auth failures to the
-/// caller instead of reaching through a global callback.
-pub(crate) async fn submit_chat_operation_with_auth_refresh(
-    base_url: &str,
-    actor_id: &str,
-    realm_id: &str,
-    session_credential: String,
-    wait_for_sync_token: Option<String>,
-    plaintext_visible_services: &[String],
-    operation: &crate::operation::LocalOperation,
-) -> anyhow::Result<SubmitEventResult> {
-    let api = authed_api_with_sync(base_url, session_credential, wait_for_sync_token.clone())?;
-    submit_chat_operation_with_plaintext_retry(
-        &api,
+    scope: arkret_sdk::ScopeRef,
+    strand_id: &str,
+    content: garth::message_authoring::MessageAuthoringContent,
+    reply_to: Option<&str>,
+    local_operation_id: String,
+) -> std::result::Result<SubmitEventResult, garth::MessageAuthoringFailure> {
+    let refused = |error: anyhow::Error| garth::MessageAuthoringFailure::Refused {
+        code: "failed_precondition".to_owned(),
+        detail: format!("{error:#}"),
+    };
+    let submitter = api.event_submitter().map_err(refused)?;
+    let intent = chat_message_authoring_intent(strand_id, content, reply_to).map_err(refused)?;
+    let session = submitter.message_authoring_session(
         realm_id,
-        actor_id,
-        plaintext_visible_services,
-        operation,
+        scope,
+        intent,
+        crate::clock::now_utc_millis(),
+    )?;
+    crate::event_submit::drive_message_send(
+        &submitter,
+        crate::event_submit::MessageSendAttempt {
+            session,
+            local_operation_id,
+        },
     )
     .await
 }

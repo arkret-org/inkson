@@ -931,6 +931,11 @@ pub(crate) async fn submit_pending_sidecar_auto_close(
         crate::views::secure_send::SecureSendOutcome::Sent { event_id, .. } => Ok(event_id),
         crate::views::secure_send::SecureSendOutcome::CommitFailed { message }
         | crate::views::secure_send::SecureSendOutcome::MessageFailed { message } => Err(message),
+        // A Sidecar close is a control Event this client authors itself, so the
+        // message authoring engine is never reached from here.
+        crate::views::secure_send::SecureSendOutcome::MessageAuthoringFailed { failure } => {
+            Err(failure.to_string())
+        }
     };
     let mut next = intent;
     match result {

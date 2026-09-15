@@ -15,7 +15,6 @@ pub(super) struct ChatComposerContext {
     pub participants: Vec<SpaceParticipant>,
     pub selected_realm_id: String,
     pub device_id: arkret_sdk::DeviceId,
-    pub plaintext_service_id: String,
     pub selected_channel_security_encrypted: bool,
     pub selected_realm_pending_mls_binding: bool,
     pub selected_realm_pending_mls_binding_reason: Option<String>,
@@ -103,7 +102,6 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
         participants: participants_for_messages,
         selected_realm_id,
         device_id,
-        plaintext_service_id,
         selected_channel_security_encrypted,
         selected_realm_pending_mls_binding,
         selected_realm_pending_mls_binding_reason,
@@ -949,7 +947,6 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                         disabled: sidecar_send_blocked || sidecar_route_pending(),
                         onclick: {
                             let base = base_url.clone();
-                            let service_id = plaintext_service_id.clone();
                             let realm = selected_realm_id.clone();
                             let actor = principal_id.clone();
                             let own_controller_handle = own_controller_handle.clone();
@@ -1076,7 +1073,6 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                 }
 
                                 let base = base.clone();
-                                let service_id = service_id.clone();
                                 let realm = realm.clone();
                                 let api_token = token();
                                 let actor = actor.clone();
@@ -1086,14 +1082,6 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                 // we've folded the mentions into the
                                 // pending send state.
                                 mention_picker_state.write().clear();
-                                let projection = state_store
-                                    .read()
-                                    .load()
-                                    .realm_tree_projections
-                                    .get(&realm)
-                                    .cloned();
-                                let plaintext_services =
-                                    plaintext_services_for_policy(projection.as_ref(), &service_id);
                                 let wait_for = active_sync_token(sync_cursor());
                                 let roster_accounts = roster_accounts_for_retry.clone();
                                 commands::send_plaintext_message(
@@ -1113,7 +1101,6 @@ pub(super) fn ChatComposer(controller: ChatController, context: ChatComposerCont
                                         mentions_enabled,
                                         own_controller_handle,
                                         roster_accounts,
-                                        plaintext_services,
                                     },
                                 );
                                 chat_draft.set(String::new());

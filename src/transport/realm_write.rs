@@ -16,13 +16,12 @@ use serde_json::Value;
 use crate::event_builders::build_realm_profile_replacement_event;
 use crate::event_builders::{
     build_capability_relinquish_control_intent, build_member_state_transition_event,
-    build_plaintext_visible_services_event, build_realm_alias_event,
-    build_realm_alias_rename_event, build_realm_alias_tombstone_event, build_realm_archive_event,
-    build_realm_authority_reset_control_intent, build_realm_bootstrap_steps_for_station,
-    build_realm_destroy_event, build_realm_owner_transfer_control_intent,
-    build_realm_profile_update_event, build_realm_state_event_for_station,
-    build_space_create_event, build_space_lifecycle_event, parse_wire_enum,
-    recommended_realm_policy_bundle_value,
+    build_realm_alias_event, build_realm_alias_rename_event, build_realm_alias_tombstone_event,
+    build_realm_archive_event, build_realm_authority_reset_control_intent,
+    build_realm_bootstrap_steps_for_station, build_realm_destroy_event,
+    build_realm_owner_transfer_control_intent, build_realm_profile_update_event,
+    build_realm_state_event_for_station, build_space_create_event, build_space_lifecycle_event,
+    parse_wire_enum, recommended_realm_policy_bundle_value,
 };
 use crate::event_submit::EventSubmitter;
 use crate::models::{RealmCreateResult, RealmPolicyResult, SpaceCreateResult, SubmitEventResult};
@@ -345,22 +344,6 @@ fn optional_profile_string(value: Option<&Value>, field: &str) -> anyhow::Result
         .ok_or_else(|| anyhow::anyhow!("Realm profile {field} must be a string or unset"))?
         .trim();
     Ok((!value.is_empty()).then(|| value.to_owned()))
-}
-
-/// Update the Realm plaintext-visible service facet through the
-/// dedicated `ak.realm.plaintext_visible_services` event. This is not a
-/// The profile Event cannot change this policy: servers enforce plaintext
-/// access from the typed facet projection.
-pub async fn update_realm_plaintext_visible_services(
-    submitter: &EventSubmitter,
-    realm_id: &str,
-    actor_id: &str,
-    services: Vec<String>,
-) -> anyhow::Result<SubmitEventResult> {
-    let Some(event) = build_plaintext_visible_services_event(realm_id, actor_id, &services)? else {
-        anyhow::bail!("plaintext_visible_services update requires at least one service DID");
-    };
-    submitter.submit_sdk_event(&event).await
 }
 
 /// Update a structural Space object's metadata via `ak.space.update`.

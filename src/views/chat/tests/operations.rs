@@ -682,3 +682,90 @@ fn chat_reaction_add_operation_uses_schema_target_ref() {
         )
         .unwrap();
 }
+
+/// Every send outcome has to say something different, and something true.
+///
+/// The old plaintext path answered any unclassified failure with the error's
+/// own `Display` text, so a user waiting on their authorization to be sealed
+/// and a user whose Station returned a different message than they wrote both
+/// read "Message send failed". A duplicate key here would put that back.
+#[test]
+fn every_send_failure_has_its_own_message() {
+    let failures = [
+        garth::MessageAuthoringFailure::AuthorizationNotSealed {
+            detail: String::new(),
+        },
+        garth::MessageAuthoringFailure::DependencyUnavailable {
+            detail: String::new(),
+        },
+        garth::MessageAuthoringFailure::PlaintextRefused {
+            detail: String::new(),
+        },
+        garth::MessageAuthoringFailure::EncryptionContextChanged {
+            detail: String::new(),
+        },
+        garth::MessageAuthoringFailure::PreparationExpired {
+            detail: String::new(),
+        },
+        garth::MessageAuthoringFailure::DuplicateConflict {
+            detail: String::new(),
+        },
+        garth::MessageAuthoringFailure::PreparedIntentMismatch {
+            detail: String::new(),
+        },
+        garth::MessageAuthoringFailure::ActorChainConflict {
+            detail: String::new(),
+        },
+        garth::MessageAuthoringFailure::SubmissionOutcomeUnknown {
+            detail: String::new(),
+        },
+        garth::MessageAuthoringFailure::Refused {
+            code: "policy_denied".to_owned(),
+            detail: String::new(),
+        },
+    ];
+    let mut keys = Vec::new();
+    let mut rendered = Vec::new();
+    for failure in &failures {
+        let key = chat_authoring_failure_message(failure);
+        let text = crate::i18n::tr(key);
+        assert_ne!(text, key, "{key} has no localized line");
+        assert!(!rendered.contains(&text), "{key} repeats another line");
+        keys.push(key);
+        rendered.push(text);
+    }
+    keys.sort_unstable();
+    keys.dedup();
+    assert_eq!(keys.len(), failures.len());
+}
+
+/// A reply target is the only relation an ordinary message expresses, and it
+/// has to be a Message id: anything else would ask the Station to bind the
+/// message to something the user did not name.
+#[test]
+fn a_message_intent_carries_only_its_reply_target() {
+    let strand = "ak:strand:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
+    let content = garth::message_authoring::MessageAuthoringContent::Plaintext {
+        content: chat_content_block_for_body("hello").expect("content"),
+        metadata: None,
+    };
+    let intent = chat_message_authoring_intent(strand, content.clone(), None).expect("intent");
+    assert_eq!(intent.strand_id.as_str(), strand);
+    assert!(intent.reply_to_id.is_none());
+    assert!(intent.blob_refs.is_empty());
+    let payload = intent.payload();
+    assert!(payload.encrypted_content.is_none());
+    assert!(payload.reply_to_id.is_none());
+
+    let replied = chat_message_authoring_intent(
+        strand,
+        content.clone(),
+        Some("ak:message:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19"),
+    )
+    .expect("reply intent");
+    assert_eq!(
+        replied.reply_to_id.as_deref(),
+        Some("ak:message:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19")
+    );
+    assert!(chat_message_authoring_intent(strand, content, Some("not-a-message-id")).is_err());
+}

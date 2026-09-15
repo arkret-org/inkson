@@ -2,9 +2,9 @@ use reqwest::StatusCode;
 
 use crate::api_error::{
     TransportClientError, decode_arkret_error, is_actor_seq_cas_conflict_error,
-    is_auth_expired_error, is_device_not_authorized_error, is_plaintext_visibility_policy_error,
-    is_space_membership_denied_error, is_terminal_session_grant_error,
-    is_terminal_session_grant_refresh_error, rate_limited_retry_after,
+    is_auth_expired_error, is_device_not_authorized_error, is_space_membership_denied_error,
+    is_terminal_session_grant_error, is_terminal_session_grant_refresh_error,
+    rate_limited_retry_after,
 };
 
 fn problem_body(status: StatusCode, code: &str, detail: &str) -> Vec<u8> {
@@ -297,42 +297,6 @@ fn coauth_rejected_introspection_is_a_terminal_session_grant_loss() {
     }
     .into();
     assert!(!is_terminal_session_grant_error(&unrelated));
-}
-
-#[test]
-fn recognizes_plaintext_visibility_policy_errors() {
-    let error: anyhow::Error = TransportClientError {
-        status: StatusCode::FORBIDDEN,
-        error: decode_problem(
-            StatusCode::FORBIDDEN,
-            "policy_denied",
-            "private plaintext message operations require this service in plaintext_visible_services",
-        ),
-    }
-    .into();
-    assert!(is_plaintext_visibility_policy_error(&error));
-
-    let capability_error: anyhow::Error = TransportClientError {
-        status: StatusCode::FORBIDDEN,
-        error: decode_problem(
-            StatusCode::FORBIDDEN,
-            "capability_denied",
-            "private plaintext message operations require this service in plaintext_visible_services",
-        ),
-    }
-    .into();
-    assert!(is_plaintext_visibility_policy_error(&capability_error));
-
-    let other_policy: anyhow::Error = TransportClientError {
-        status: StatusCode::FORBIDDEN,
-        error: decode_problem(
-            StatusCode::FORBIDDEN,
-            "policy_denied",
-            "only the space owner can update policy",
-        ),
-    }
-    .into();
-    assert!(!is_plaintext_visibility_policy_error(&other_policy));
 }
 
 #[test]

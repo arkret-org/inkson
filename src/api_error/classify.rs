@@ -348,17 +348,6 @@ pub(crate) fn is_mls_governance_binding_stale_error(error: &anyhow::Error) -> bo
     })
 }
 
-pub fn is_plaintext_visibility_policy_error(error: &anyhow::Error) -> bool {
-    api_error_status_and_envelope(error).is_some_and(|(status, envelope)| {
-        let code = envelope.code();
-        status == StatusCode::FORBIDDEN
-            && (code == arkret_sdk::error_codes::ErrorCode::POLICY_DENIED
-                || code == arkret_sdk::error_codes::ErrorCode::CAPABILITY_DENIED
-                || code.ends_with(".capability_denied"))
-            && envelope.detail.contains("plaintext_visible_services")
-    })
-}
-
 pub fn is_space_membership_denied_error(error: &anyhow::Error) -> bool {
     api_error_status_and_envelope(error).is_some_and(|(status, envelope)| {
         let code = envelope.code();

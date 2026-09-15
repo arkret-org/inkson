@@ -399,7 +399,6 @@ pub(super) struct PlaintextSendRequest {
     pub own_controller_handle: Option<String>,
     pub roster_accounts:
         std::collections::BTreeMap<arkret_sdk::DidCoreId, Option<arkret_sdk::AccountId>>,
-    pub plaintext_services: Vec<String>,
 }
 
 /// Send a message into a plaintext Strand.
@@ -414,7 +413,7 @@ pub(super) fn send_plaintext_message(
 ) {
     let mut messages = controller.messages;
     let mut status_msg = controller.status_msg;
-    let mut chat_draft = controller.draft;
+    let chat_draft = controller.draft;
     let mut state_store = crate::app::SessionContext::get().state_store;
     spawn(async move {
         let PlaintextSendRequest {
@@ -431,7 +430,6 @@ pub(super) fn send_plaintext_message(
             mentions_enabled,
             own_controller_handle,
             roster_accounts,
-            plaintext_services,
         } = request;
         for mention in resolve_agent_selector_mentions(
             mentions_enabled,
@@ -472,22 +470,30 @@ pub(super) fn send_plaintext_message(
                 return;
             }
         };
-        let op = match chat_message_create_operation_with_content(
-            &realm_id,
-            &actor,
-            &strand_id,
-            &local_id,
-            &body,
-            content,
-            &mentions,
-            reply_to.as_deref(),
-        ) {
-            Ok(op) => op.with_local_operation_id(
-                crate::operation::LocalOperationId::from_holder_key(local_id.clone()),
-            ),
+        let content = match chat_content_with_mentions(&body, content, &mentions) {
+            Ok(content) => content,
             Err(error) => {
                 fail_optimistic_send_row(messages, &local_id, format!("send failed: {error:#}"));
                 status_msg.set(format!("send failed: {error:#}"));
+                return;
+            }
+        };
+        let content_for_store = serde_json::to_value(&content).unwrap_or(serde_json::Value::Null);
+        let local_operation_id =
+            crate::operation::LocalOperationId::from_holder_key(local_id.clone()).to_string();
+        let api = match authed_api_with_sync(&base_url, api_token, wait_for) {
+            Ok(api) => api,
+            Err(error) => {
+                fail_optimistic_send_row(messages, &local_id, format!("send failed: {error:#}"));
+                status_msg.set(format!("send failed: {error:#}"));
+                return;
+            }
+        };
+        let scope = match arkret_sdk::RealmId::new(realm_id.clone()) {
+            Ok(realm_id) => arkret_sdk::ScopeRef::Realm { realm_id },
+            Err(error) => {
+                fail_optimistic_send_row(messages, &local_id, format!("send failed: {error}"));
+                status_msg.set(format!("send failed: {error}"));
                 return;
             }
         };
@@ -496,14 +502,17 @@ pub(super) fn send_plaintext_message(
         // plaintext send already carries `mentions` in the clear, so it gets
         // no sidecar.
         let mention_values_for_store = mention_nodes_to_values(&mentions);
-        match submit_chat_operation_with_auth_refresh(
-            &base_url,
-            &actor,
+        match send_ordinary_chat_message(
+            &api,
             &realm_id,
-            api_token,
-            wait_for,
-            &plaintext_services,
-            &op,
+            scope,
+            &strand_id,
+            garth::message_authoring::MessageAuthoringContent::Plaintext {
+                content,
+                metadata: None,
+            },
+            reply_to.as_deref(),
+            local_operation_id.clone(),
         )
         .await
         {
@@ -513,7 +522,7 @@ pub(super) fn send_plaintext_message(
                     kind: event_kind_str::MESSAGE_CREATE,
                     actor_id: &actor,
                     body: &body,
-                    content: &op.payload()["content"],
+                    content: &content_for_store,
                     strand_id: &strand_id,
                     message_id: &local_id,
                     mentions: &mention_values_for_store,
@@ -521,7 +530,7 @@ pub(super) fn send_plaintext_message(
                     status: &resp.status,
                 }) {
                     Ok(raw_operation) => state_store.write().append_raw_operation(
-                        op.local_operation_id().to_string(),
+                        local_operation_id.clone(),
                         Some(realm_id),
                         raw_operation,
                     ),
@@ -544,32 +553,57 @@ pub(super) fn send_plaintext_message(
                 frontier_state.set(resp.event_id.clone());
                 status_msg.set("Message sent".to_owned());
             }
-            Err(error) => {
+            Err(failure) => {
                 tracing::warn!(
                     event_id = %local_id,
-                    error = %format!("{error:#}"),
+                    error = %failure,
                     "chat send did not reach an accepted result"
                 );
-                if crate::event_submit::is_durably_queued_error(&error) {
-                    status_msg.set(crate::i18n::tr("chat.outbox.queued_offline"));
-                    return;
-                }
-                let membership_denied = is_space_membership_denied_error(&error);
-                let message = chat_send_error_message(&error);
-                if membership_denied {
-                    messages
-                        .write()
-                        .retain(|candidate| candidate.id != local_id);
-                    if chat_draft().trim().is_empty() {
-                        chat_draft.set(body.clone());
-                    }
-                } else {
-                    fail_optimistic_send_row(messages, &local_id, message.clone());
-                }
-                status_msg.set(format!("Message send failed: {message}"));
+                present_chat_send_failure(
+                    messages, status_msg, chat_draft, &local_id, &body, &failure,
+                );
             }
         }
     });
+}
+
+/// Show exactly what stopped one message, and leave the row in the state that
+/// matches it.
+///
+/// A submission whose result is unknown stays pending: the exact signed bytes
+/// are durable and the drain owns them, so marking the bubble failed would
+/// invite the user to author a duplicate of a message that may already exist.
+pub(super) fn present_chat_send_failure(
+    mut messages: Signal<Vec<ChatMessage>>,
+    mut status_msg: Signal<String>,
+    mut chat_draft: Signal<String>,
+    local_id: &str,
+    body: &str,
+    failure: &garth::MessageAuthoringFailure,
+) {
+    let message = crate::i18n::tr(chat_authoring_failure_message(failure));
+    if matches!(
+        failure,
+        garth::MessageAuthoringFailure::SubmissionOutcomeUnknown { .. }
+    ) {
+        status_msg.set(message);
+        return;
+    }
+    if matches!(
+        failure,
+        garth::MessageAuthoringFailure::Refused { code, .. } if code == "space_membership_denied"
+    ) {
+        messages
+            .write()
+            .retain(|candidate| candidate.id != local_id);
+        if chat_draft().trim().is_empty() {
+            chat_draft.set(body.to_owned());
+        }
+        status_msg.set(message);
+        return;
+    }
+    fail_optimistic_send_row(messages, local_id, message.clone());
+    status_msg.set(message);
 }
 
 /// Mark the optimistic row for `local_id` failed with `error`.
@@ -1016,6 +1050,19 @@ pub(super) fn send_encrypted_message(
                         &message_id_for_failure,
                         &body_for_restore,
                         message,
+                    );
+                    return;
+                }
+                crate::views::secure_send::SecureSendOutcome::MessageAuthoringFailed {
+                    failure,
+                } => {
+                    present_chat_send_failure(
+                        messages,
+                        status_msg,
+                        chat_draft,
+                        &message_id_for_failure,
+                        &body_for_restore,
+                        &failure,
                     );
                     return;
                 }

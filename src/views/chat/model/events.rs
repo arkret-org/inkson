@@ -59,40 +59,6 @@ pub(crate) fn watch_level_from_wire(value: &str) -> WatchLevel {
     }
 }
 
-pub(crate) fn collect_plaintext_services(value: &Value, services: &mut Vec<String>) {
-    if let Some(items) = value
-        .get("plaintext_visible_services")
-        .and_then(Value::as_array)
-    {
-        for item in items {
-            if let Some(service) = item.as_str() {
-                let service = service.trim();
-                if !service.is_empty() && !services.iter().any(|existing| existing == service) {
-                    services.push(service.to_owned());
-                }
-            }
-        }
-    }
-}
-
-pub(crate) fn plaintext_services_for_policy(
-    projection: Option<&Value>,
-    service_id: &str,
-) -> Vec<String> {
-    let mut services = Vec::new();
-    if let Some(projection) = projection {
-        collect_plaintext_services(projection, &mut services);
-        if let Some(summary) = projection.get("summary") {
-            collect_plaintext_services(summary, &mut services);
-        }
-    }
-    let service_id = service_id.trim();
-    if !service_id.is_empty() && !services.iter().any(|existing| existing == service_id) {
-        services.push(service_id.to_owned());
-    }
-    services
-}
-
 /// Detect the per-message redaction tombstone surfaced by soland on the sync
 /// timeline (spec strand-and-message.md §9). The server folds a redacted
 /// `ak.message.create` into a tombstone form carrying `redacted: true` /

@@ -1247,6 +1247,47 @@ pub fn chinese_translations() -> TranslationDict {
         "你已离线。消息已排队,重新联网后将自动发送。",
     );
     dict.set("chat.outbox.flushing", "已恢复联网 - 正在发送排队的消息…");
+    // Ordinary message send outcomes, one line per registered reason.
+    dict.set(
+        "chat.send.not_ready.authorization",
+        "暂时还不能发送 - 成员资格已接受，但授权尚未被接受的 Seal 覆盖。稍后自动恢复，请稍候重试。",
+    );
+    dict.set(
+        "chat.send.not_ready.dependency",
+        "暂时还不能发送 - 本会话的一项安全依赖不可用。请稍候重试。",
+    );
+    dict.set(
+        "chat.send.failed.e2ee_required",
+        "本会话要求端到端加密，明文发送已被拒绝。请使用加密发送。",
+    );
+    dict.set(
+        "chat.send.failed.encryption_context",
+        "发送过程中加密状态已变更，消息未发出。再发一次将按当前群状态重新加密。",
+    );
+    dict.set(
+        "chat.send.failed.expired",
+        "本次发送的准备窗口已过期，消息未被接受。请重新发送。",
+    );
+    dict.set(
+        "chat.send.failed.duplicate",
+        "该发送身份已对应另一份内容。请作为新消息重新发送。",
+    );
+    dict.set(
+        "chat.send.failed.intent_mismatch",
+        "服务端返回的不是你写的那条消息，因此未签名，也未发送。",
+    );
+    dict.set(
+        "chat.send.failed.chain",
+        "本账号的另一条消息先落地了。请重新发送这条。",
+    );
+    dict.set(
+        "chat.send.pending.unknown",
+        "发送结果尚未确认，消息仍在队列中，不会产生重复副本。",
+    );
+    dict.set(
+        "chat.send.failed.refused",
+        "本条消息被会话规则拒绝，未发送。",
+    );
     // Message shared pin and holder-private saved item actions.
     dict.set("message.shared_pin", "共享钉选");
     dict.set("message.shared_unpin", "取消共享钉选");

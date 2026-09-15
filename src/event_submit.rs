@@ -36,11 +36,13 @@ use crate::operation::{EventIntent, LocalOperation, uuid_v7};
 
 mod authoring_unit;
 mod authority;
+mod message_authoring;
 
 #[cfg(test)]
 pub(crate) use authoring_unit::author_event_unit_for_test;
 use authoring_unit::{UnitAuthoringChain, validate_authored_unit_shape};
 use authority::*;
+pub(crate) use message_authoring::{MessageSendAttempt, drive_message_send};
 
 /// Authenticated durable/ephemeral event submission engine extracted from the
 /// former `TransportClient` events surface. Constructed per authenticated call from
@@ -902,7 +904,13 @@ impl OutboundSubmitter for EventOutboundSubmitter<'_> {
                                     .get("membership")
                                     .and_then(serde_json::Value::as_str)
                                     .is_some_and(|state| matches!(state, "join" | "knock")));
-                        if queued.scheduled_dispatch.is_some() || prepared_join {
+                        // A Station-prepared message has no local answer for
+                        // the chain position, authority closure or CBS basis it
+                        // carries: those were the preparation's, and the user's
+                        // proof covers exactly them. Recovery is a new
+                        // preparation over the identical body, never a local
+                        // rewrite of what was signed.
+                        if queued.requires_new_preparation() || prepared_join {
                             let reason = "frozen Event hit an actor frontier conflict; prepare a new authorized attempt without rewriting the signed Event".to_owned();
                             self.results
                                 .rejected

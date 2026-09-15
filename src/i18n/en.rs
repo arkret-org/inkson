@@ -1245,6 +1245,47 @@ pub fn english_translations() -> TranslationDict {
         "chat.outbox.flushing",
         "Back online - sending queued messages...",
     );
+    // Ordinary message send outcomes, one line per registered reason.
+    dict.set(
+        "chat.send.not_ready.authorization",
+        "Not sendable yet - your membership is accepted but its authorization is still being sealed. This clears on its own; try again shortly.",
+    );
+    dict.set(
+        "chat.send.not_ready.dependency",
+        "Not sendable yet - a security dependency for this conversation is unavailable. Try again shortly.",
+    );
+    dict.set(
+        "chat.send.failed.e2ee_required",
+        "This conversation requires end-to-end encryption. Use Send Secure; plaintext was refused.",
+    );
+    dict.set(
+        "chat.send.failed.encryption_context",
+        "Encryption state moved while sending. The message was not sent; send it again to encrypt under the current group state.",
+    );
+    dict.set(
+        "chat.send.failed.expired",
+        "The send window expired before this message was accepted. Send it again.",
+    );
+    dict.set(
+        "chat.send.failed.duplicate",
+        "This send already exists with different content. Send the message again as a new one.",
+    );
+    dict.set(
+        "chat.send.failed.intent_mismatch",
+        "The server returned a different message than the one you wrote, so it was not signed. Nothing was sent.",
+    );
+    dict.set(
+        "chat.send.failed.chain",
+        "Another message from this account landed first. Send this one again.",
+    );
+    dict.set(
+        "chat.send.pending.unknown",
+        "The send result is not confirmed yet. It stays queued and will be resolved without creating a duplicate.",
+    );
+    dict.set(
+        "chat.send.failed.refused",
+        "This message was refused by the conversation's rules and was not sent.",
+    );
     // Message shared pin and holder-private saved item actions.
     dict.set("message.shared_pin", "Pin for everyone");
     dict.set("message.shared_unpin", "Unpin for everyone");

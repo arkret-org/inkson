@@ -6,7 +6,6 @@ use dioxus_primitives::checkbox::CheckboxState;
 use dioxus_router::hooks::use_navigator;
 use serde_json::{Value, json};
 
-use crate::api_error::is_space_membership_denied_error;
 use crate::circle::{CircleScope, CircleSummary};
 use crate::components::{
     ActorIdentityLabel, CircleScopePicker, HelpTip, SecurityStateBadge, SelfAttributionBadge,
@@ -35,7 +34,7 @@ mod composer;
 mod controller;
 mod direct_authority;
 mod effects;
-mod model;
+pub(crate) mod model;
 mod poll_submission;
 mod right_panel;
 mod scheduled_send_panel;
@@ -1306,6 +1305,11 @@ async fn submit_source_routed_sidecar_message(
         crate::views::secure_send::SecureSendOutcome::CommitFailed { message }
         | crate::views::secure_send::SecureSendOutcome::MessageFailed { message } => {
             anyhow::bail!(message)
+        }
+        crate::views::secure_send::SecureSendOutcome::MessageAuthoringFailed { failure } => {
+            anyhow::bail!(crate::i18n::tr(
+                crate::views::chat::model::chat_authoring_failure_message(&failure)
+            ))
         }
     };
     {
@@ -2996,7 +3000,6 @@ pub fn ChatPanel(
                             .unwrap_or_else(|| selected_channel_value.clone()),
                         sidecar_active: sidecar_mode,
                         device_id: account_device_id.clone(),
-                        plaintext_service_id: plaintext_service_id.clone(),
                         base_url: base_url.clone(),
                         focus_message_id: focus_message_id.clone(),
                         blocked_actor_ids: blocked_actor_id_set.clone(),
@@ -3229,7 +3232,6 @@ pub fn ChatPanel(
                     participants: composer_participants.clone(),
                     selected_realm_id: selected_realm_id.clone(),
                     device_id: account_device_id.clone(),
-                    plaintext_service_id: plaintext_service_id.clone(),
                     selected_channel_security_encrypted,
                     selected_realm_pending_mls_binding,
                     selected_realm_pending_mls_binding_reason: selected_realm_pending_mls_binding_reason.clone(),

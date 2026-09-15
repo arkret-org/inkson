@@ -40,16 +40,42 @@ pub(super) async fn submit_poll_operation(
         )
         .await
         .map_err(anyhow::Error::msg)?;
-        let plan = build.message_plan;
+        // A poll response is an `ak.message.create` that has to name the poll
+        // it answers in `causal_refs`. The closed message authoring intent has
+        // no member for that, and a prepared message with non-empty
+        // `causal_refs` is refused, so this one write is authored locally
+        // instead of prepared. Ordinary discussion messages do not take this
+        // path; when the contract carries the reference, neither will this one.
+        let crate::views::secure_send::SecureWritePlan::Message(authoring) = build.message_plan
+        else {
+            anyhow::bail!("a poll response requires the encrypted message build");
+        };
         let response_refs = operation.intent().causal_refs().to_vec();
-        build.message_plan = Box::new(move |commit_ref| {
-            let message = plan(commit_ref)?;
-            let mut refs = message.intent().causal_refs().to_vec();
-            refs.extend(response_refs);
-            refs.sort();
-            refs.dedup();
-            Ok(message.with_causal_refs(refs))
-        });
+        let plan_realm_id = realm_id.to_owned();
+        let plan_actor = context.authority.principal_id.as_str().to_owned();
+        let plan_scope = build.effective_scope.clone();
+        let plan_local_operation_id = build.message_local_operation_id.clone();
+        build.message_plan =
+            crate::views::secure_send::SecureWritePlan::Control(Box::new(move |commit_ref| {
+                let content = (authoring.plan)(commit_ref)?;
+                let intent = crate::views::chat::model::chat_message_authoring_intent(
+                    &authoring.strand_id,
+                    content,
+                    authoring.reply_to.as_deref(),
+                )
+                .map_err(|error| format!("poll response intent build failed: {error:#}"))?;
+                let mut refs = response_refs;
+                refs.sort();
+                refs.dedup();
+                crate::operation::TypedOperationBuilder::new::<
+                    arkret_sdk::event_spec::MessageCreate,
+                >(&plan_realm_id, &plan_actor, intent.payload())
+                .effective_scope(plan_scope)
+                .causal_refs(refs)
+                .build_sdk_event("inkson")
+                .map(|operation| operation.with_local_operation_id(plan_local_operation_id))
+                .map_err(|error| format!("poll response Event conversion failed: {error}"))
+            }));
         match crate::views::secure_send::submit_secure_send(
             api,
             state_store,
@@ -63,6 +89,11 @@ pub(super) async fn submit_poll_operation(
             crate::views::secure_send::SecureSendOutcome::CommitFailed { message }
             | crate::views::secure_send::SecureSendOutcome::MessageFailed { message } => {
                 anyhow::bail!(message);
+            }
+            crate::views::secure_send::SecureSendOutcome::MessageAuthoringFailed { failure } => {
+                anyhow::bail!(crate::i18n::tr(
+                    crate::views::chat::model::chat_authoring_failure_message(&failure)
+                ));
             }
         }
     } else {

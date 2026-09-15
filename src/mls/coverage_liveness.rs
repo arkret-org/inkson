@@ -42,6 +42,27 @@ pub(crate) fn note_e2ee_submit_refusal(
     state_store.write(|store| note_e2ee_submit_refusal_in_store(store, realm_id, circle_id, error))
 }
 
+/// Record the same coverage refusal when it arrives already classified.
+///
+/// The typed message authoring path reports a stale governance binding as
+/// [`garth::MessageAuthoringFailure::EncryptionContextChanged`] rather than as
+/// a raw transport error, and the epoch still has to advance for that scope.
+pub(crate) fn note_e2ee_epoch_update_required(
+    state_store: &StateStoreHandle,
+    realm_id: &str,
+    circle_id: Option<&str>,
+    detail: &str,
+) -> bool {
+    state_store.write(|store| {
+        if let Err(error) = store.record_mls_coverage_stale(realm_id.to_owned(), circle_id, detail)
+        {
+            tracing::warn!(realm = %realm_id, %error, "refusing to persist an invalid MLS coverage scope");
+            return false;
+        }
+        true
+    })
+}
+
 /// Store-level form for callers that already hold the store borrow.
 pub(crate) fn note_e2ee_submit_refusal_in_store(
     state_store: &mut LocalStateStore,
