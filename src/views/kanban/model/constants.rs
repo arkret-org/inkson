@@ -36,13 +36,15 @@ pub(crate) fn kanban_projection_refresh_key(
     account_sync_ready: bool,
     live_epoch: u64,
     mls_unlock: &str,
+    current_generation: u64,
 ) -> String {
     format!(
-        "{}|{}|{}|{}",
+        "{}|{}|{}|{}|{}",
         realm_id.trim(),
         account_sync_ready as u8,
         live_epoch,
         mls_unlock.trim(),
+        current_generation,
     )
 }
 
@@ -52,18 +54,31 @@ pub(crate) fn next_kanban_projection_refresh_key(
     account_sync_ready: bool,
     live_epoch: u64,
     mls_unlock: &str,
+    current_generation: u64,
 ) -> Option<String> {
-    let key = kanban_projection_refresh_key(realm_id, account_sync_ready, live_epoch, mls_unlock);
+    let key = kanban_projection_refresh_key(
+        realm_id,
+        account_sync_ready,
+        live_epoch,
+        mls_unlock,
+        current_generation,
+    );
     if last_seen_key == key {
         return None;
     }
     // Refresh when account sync is ready, OR the realm events engine has
     // reported fresh content (`live_epoch > 0`), OR the MLS-unlock axis has
-    // progressed (a snapshot/epoch just landed). Any of the three is a real
-    // freshness signal; still require a realm selector so a bare boot
-    // with none of them doesn't churn.
+    // progressed (a snapshot/epoch just landed), OR a current-result install
+    // committed a new generation. The last axis is the one `client-sync.md`
+    // 13.1 requires: the panel reads the current-object baseline, so a current
+    // delta must be able to drive it on its own. Without it the panel could
+    // only refresh when an Event arrived, which is the timeline coupling that
+    // section forbids for submission receipts. Still require a realm selector
+    // so a bare boot with none of them doesn't churn.
     let mls_active = !mls_unlock.trim().is_empty();
-    if (!account_sync_ready && live_epoch == 0 && !mls_active) || realm_id.trim().is_empty() {
+    if (!account_sync_ready && live_epoch == 0 && !mls_active && current_generation == 0)
+        || realm_id.trim().is_empty()
+    {
         return None;
     }
     Some(key)
@@ -201,10 +216,10 @@ mod tests {
     #[test]
     fn kanban_projection_refresh_ignores_cursor_remints_after_sync_is_ready() {
         let realm_id = "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0";
-        let first_key = kanban_projection_refresh_key(realm_id, true, 0, "");
+        let first_key = kanban_projection_refresh_key(realm_id, true, 0, "", 0);
 
         assert_eq!(
-            next_kanban_projection_refresh_key(&first_key, realm_id, true, 0, ""),
+            next_kanban_projection_refresh_key(&first_key, realm_id, true, 0, "", 0),
             None,
             "a newly signed token for the same ready account frontier is not a durable change"
         );
@@ -218,12 +233,13 @@ mod tests {
                 "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0",
                 false,
                 0,
-                ""
+                "",
+                0
             ),
             None
         );
         assert_eq!(
-            next_kanban_projection_refresh_key("", "", true, 0, ""),
+            next_kanban_projection_refresh_key("", "", true, 0, "", 0),
             None
         );
     }
@@ -239,20 +255,22 @@ mod tests {
             false,
             1,
             "",
+            0,
         );
         assert_eq!(
             key,
-            Some("ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0|0|1|".to_owned())
+            Some("ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0|0|1||0".to_owned())
         );
 
         // Same epoch + same inputs → no churn.
         assert_eq!(
             next_kanban_projection_refresh_key(
-                "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0|0|1|",
+                "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0|0|1||0",
                 "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0",
                 false,
                 1,
-                ""
+                "",
+                0
             ),
             None
         );
@@ -260,18 +278,64 @@ mod tests {
         // A later epoch advances the key again.
         assert_eq!(
             next_kanban_projection_refresh_key(
-                "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0|0|1|",
+                "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0|0|1||0",
                 "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0",
                 false,
                 2,
-                ""
+                "",
+                0
             ),
-            Some("ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0|0|2|".to_owned())
+            Some("ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0|0|2||0".to_owned())
         );
 
         // Still no realm/view selector → no refresh even with an epoch.
         assert_eq!(
-            next_kanban_projection_refresh_key("", "", false, 5, ""),
+            next_kanban_projection_refresh_key("", "", false, 5, "", 0),
+            None
+        );
+    }
+
+    #[test]
+    fn kanban_projection_refresh_fires_on_a_committed_current_generation() {
+        // Nothing else moved: the account cursor is still the bootstrap
+        // sentinel, the events engine never bumped, and there is no MLS
+        // material. Only a current-result install committed. `client-sync.md`
+        // 13.1 puts this panel's truth in `current`, so that alone must
+        // reproject -- otherwise the panel can only learn about its own
+        // accepted write when an Event shows up in the timeline, which is the
+        // receipt coupling 13.1 forbids.
+        let realm_id = "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0";
+        assert_eq!(
+            next_kanban_projection_refresh_key("", realm_id, false, 0, "", 7),
+            Some(format!("{realm_id}|0|0||7"))
+        );
+        // Same generation → no churn.
+        assert_eq!(
+            next_kanban_projection_refresh_key(
+                &format!("{realm_id}|0|0||7"),
+                realm_id,
+                false,
+                0,
+                "",
+                7
+            ),
+            None
+        );
+        // A later install advances it again.
+        assert_eq!(
+            next_kanban_projection_refresh_key(
+                &format!("{realm_id}|0|0||7"),
+                realm_id,
+                false,
+                0,
+                "",
+                8
+            ),
+            Some(format!("{realm_id}|0|0||8"))
+        );
+        // Still gated on a realm selector.
+        assert_eq!(
+            next_kanban_projection_refresh_key("", "", false, 0, "", 7),
             None
         );
     }
@@ -302,6 +366,7 @@ mod tests {
             false,
             0,
             &before,
+            0,
         );
         assert_eq!(
             next_kanban_projection_refresh_key(
@@ -309,7 +374,8 @@ mod tests {
                 "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0",
                 false,
                 0,
-                &before
+                &before,
+                0
             ),
             None,
             "no cursor, no live epoch, no snapshot → still idle"
@@ -322,22 +388,25 @@ mod tests {
             false,
             0,
             &after,
+            0,
         );
         assert_eq!(
             unlocked,
             Some(
-                "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0|0|0|snap:1|ep:1".to_owned()
+                "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0|0|0|snap:1|ep:1|0"
+                    .to_owned()
             )
         );
 
         // Same snapshot signature again → no churn.
         assert_eq!(
             next_kanban_projection_refresh_key(
-                "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0|0|0|snap:1|ep:1",
+                "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0|0|0|snap:1|ep:1|0",
                 "ak:realm:AhqX99K03QXK2MTH4KkLKdcUAjZEYYcxENCdxK3f6nN0",
                 false,
                 0,
                 &after,
+                0,
             ),
             None
         );

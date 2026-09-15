@@ -430,11 +430,14 @@ pub(super) fn KanbanEffects(
             let initial_cursor = sync_cursor.peek().clone();
             let initial_sync_ready = crate::app::account_sync_ready(&initial_cursor);
             let initial_epoch = *realm_live_epoch.peek();
-            let initial_mls_unlock = {
+            let (initial_mls_unlock, initial_current_generation) = {
                 let store = state_store.peek();
-                kanban_mls_unlock_signature(
-                    !store.mls_local_checkpoints().is_empty(),
-                    crate::app::local_mls_epoch_floor_all(&store),
+                (
+                    kanban_mls_unlock_signature(
+                        !store.mls_local_checkpoints().is_empty(),
+                        crate::app::local_mls_epoch_floor_all(&store),
+                    ),
+                    store.current_generation(),
                 )
             };
             kanban_projection_refresh_key(
@@ -442,6 +445,7 @@ pub(super) fn KanbanEffects(
                 initial_sync_ready,
                 initial_epoch,
                 &initial_mls_unlock,
+                initial_current_generation,
             )
         }
     });
@@ -474,11 +478,20 @@ pub(super) fn KanbanEffects(
         // makes that arrival re-trigger the backfill so the pre-join history can
         // finally decrypt, instead of staying blank until a manual page refresh.
         // (invitee-history-late-decrypt)
-        let mls_unlock = {
+        // Fourth freshness axis: the generation committed by the last
+        // current-result install. `client-sync.md` 13.1 puts the panel's truth
+        // in `current`, so a current delta must be able to drive a reproject on
+        // its own -- otherwise the only way this panel ever refreshes is an
+        // Event arriving, which is exactly the receipt coupling 13.1 forbids.
+        // Read through `.read()` so this effect subscribes to the store.
+        let (mls_unlock, current_generation) = {
             let store = state_store.read();
-            kanban_mls_unlock_signature(
-                !store.mls_local_checkpoints().is_empty(),
-                crate::app::local_mls_epoch_floor_all(&store),
+            (
+                kanban_mls_unlock_signature(
+                    !store.mls_local_checkpoints().is_empty(),
+                    crate::app::local_mls_epoch_floor_all(&store),
+                ),
+                store.current_generation(),
             )
         };
         let Some(refresh_key) = next_kanban_projection_refresh_key(
@@ -487,6 +500,7 @@ pub(super) fn KanbanEffects(
             account_sync_ready,
             live_epoch,
             &mls_unlock,
+            current_generation,
         ) else {
             return;
         };
