@@ -390,15 +390,7 @@ impl HostArtifactApplicator {
                         event.actor_id == arkret_sdk::ActorId::account(self.authority.clone()),
                         recovered_staging.is_some(),
                     )))?;
-                self.state
-                    .read(|store| {
-                        crate::mls::governance_proof::install_cached_transition_leaf_bindings(
-                            store,
-                            &mut group,
-                            payload.governance_binding(),
-                        )
-                    })
-                    .map_err(protocol)?;
+
                 Ok((
                     scope,
                     payload.governance_binding().clone(),
@@ -439,23 +431,12 @@ impl HostArtifactApplicator {
                 }
                 let mut group = arkret_sdk::ArkretMlsGroup::join_from_welcome(identity, &welcome)
                     .map_err(protocol)?;
-                let authority_hints =
-                    crate::mls::governance_proof::leaf_authority_hints_from_welcome(&payload)
-                        .map_err(protocol)?;
-                self.state
-                    .read(|store| {
-                        crate::mls::governance_proof::install_cached_transition_leaf_bindings_with_hints(
-                            store,
-                            &mut group,
-                            &payload.governance_binding,
-                            &authority_hints,
-                        )
-                    })
-                    .map_err(protocol)?;
+
                 self.state
                     .read(|store| {
                         super::message::verify_welcome_governance_binding(
                             store,
+                            &event.event_id,
                             payload.governance_binding.realm_id().as_str(),
                             &group,
                             &value,
@@ -496,7 +477,7 @@ impl HostArtifactApplicator {
         let recovered = self
             .recover_accepted_own_commit(event, &snapshot_secret)
             .await?;
-        let independently_recovered = recovered.is_some();
+
         let (scope, binding, mut group, transition) = match recovered {
             Some(recovered) => recovered,
             None => self.prepare_group(event, previous, &snapshot_secret)?,
@@ -506,15 +487,15 @@ impl HostArtifactApplicator {
                 "applied MLS state differs from the accepted governance binding",
             ));
         }
-        if event.kind != arkret_sdk::EventKind::MlsGenesis && !independently_recovered {
-            self.state
-                .read(|store| {
-                    crate::mls::governance_proof::install_cached_transition_leaf_bindings(
-                        store, &mut group, &binding,
-                    )
-                })
-                .map_err(protocol)?;
-        }
+        self.state
+            .read(|store| {
+                crate::mls::governance_proof::install_accepted_transition_leaf_bindings(
+                    store,
+                    &mut group,
+                    &event.event_id,
+                )
+            })
+            .map_err(protocol)?;
         let realm_id = scope
             .realm_id_opt()
             .ok_or_else(|| protocol("accepted MLS artifact has no Realm scope"))?;

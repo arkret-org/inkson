@@ -1791,6 +1791,7 @@ pub(super) fn verify_welcome_claim_envelope_signer(
 /// checks remain local before any durable snapshot publication.
 pub(super) fn verify_welcome_governance_binding(
     state_store: &crate::state::LocalStateStore,
+    artifact_ref: &arkret_sdk::EventId,
     realm_id: &str,
     group: &arkret_sdk::ArkretMlsGroup,
     welcome_value: &serde_json::Value,
@@ -1816,12 +1817,13 @@ pub(super) fn verify_welcome_governance_binding(
                 .to_owned(),
         );
     }
-    let local = state_store.load();
-    if !local
-        .mls_accepted_artifacts
-        .values()
-        .filter_map(|entry| state_store.cached_mls_accepted_artifact(&entry.event.event_id))
-        .any(|entry| entry.outcome.governance_binding == binding)
+    if !state_store
+        .cached_mls_accepted_artifact(artifact_ref)
+        .is_some_and(|entry| {
+            entry.request.artifact_ref == *artifact_ref
+                && entry.event.event_id == *artifact_ref
+                && entry.outcome.governance_binding == binding
+        })
     {
         return Err("Welcome has no session-current Station acceptance result".to_owned());
     }
