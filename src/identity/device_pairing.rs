@@ -207,6 +207,7 @@ pub async fn author_pairing_request_body(
         None,
         arkret_sdk::DeviceAuthorizationBindingKind::AcceptedDevice,
         None,
+        None,
     )?
     .with_pairing_challenge_transcript_digest(
         attestation.pairing_challenge_transcript_digest.clone(),

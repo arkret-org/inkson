@@ -126,6 +126,7 @@ pub(crate) async fn prepare_pcr_policy_recovery(
         None,
         DeviceAuthorizationBindingKind::PcrRecovery,
         Some(verified_session.recovery_session_id.clone()),
+        None,
     )?;
     let authorize_signature =
         arkret_sdk::Base64UrlString::new(arkret_sdk::base64url_encode(device_signer.sign_raw(

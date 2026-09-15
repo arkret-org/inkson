@@ -55,6 +55,7 @@ pub fn build_founding_authorize_payload(
         None,
         arkret_sdk::DeviceAuthorizationBindingKind::RegistrationAnchor,
         None,
+        None,
     )?;
     let signature = signer
         .sign_raw(&payload.device_possession_signature_input(&account_id)?)
