@@ -8,7 +8,7 @@
 ## 1. 背景与证据
 
 1. **信息过载**：4 个导航组、16 个一级分区，另有多层嵌套卡片/折叠面板。通知相关设置横跨 Notifications（按类型）与 per-realm 覆盖（按频率）两处，页面无解释二者关系。
-2. **协议术语当分区名**（`settings/sections.rs` label）：`TSP connections`、`Capabilities`、`Blocked actors`、`Consent`——普通用户无法建立预期。
+2. **协议术语当分区名**（`settings/sections.rs` label）：`Capabilities`、`Blocked actors`、`Consent`——普通用户无法建立预期。
 3. **开发者/测试面暴露在正常设置**：MIMI interop 测试面板（硬编码测试 payload + 5 个测试按钮，`settings/mod.rs` MIMI 区块）、Storage 诊断（"IndexedDB / Encryption at Rest" 实现细节）、Session diagnostics（Proof mode / Active signer）。
 4. **保存语义不可见**：主题/语言/黑名单即时保存（本地或 account_data），通知/在线状态要点 Save，Realm 策略要点 Apply——哪些跨设备同步用户完全无从判断。
 5. **危险操作确认不一**：删备注/清空通知覆盖零确认 vs 撤销设备输 24 词（审计 H2；本设计只定规范，逐处落地随迁移做）。
@@ -37,10 +37,10 @@
 | 隐私 | Privacy & sharing、Blocked actors（改名"屏蔽名单"）、Who can invite me、Consent（改名"邀请与同意"） | 四节合并导航相邻，保留各自页面 |
 | 通知 | Notifications | 页首加一行说明："此处选**类型**；各空间的**频率**在空间设置覆盖" |
 | 外观与语言 | Appearance & locale | 不变 |
-| 高级 | Data & sync、Diagnostics(Release)、Audit log、Developer tools、TSP connections（改名"外部连接"） | Audit/Developer 已独立（前置 PR 落地） |
+| 高级 | Data & sync、Diagnostics(Release)、Audit log、Developer tools | Audit/Developer 已独立（前置 PR 落地） |
 
 术语映射（label 全部转 i18n key；slug 不变，URL 保持稳定）：
-`TSP connections→外部连接 / Capabilities→应用授权 / Blocked actors→屏蔽名单 / Consent→邀请与同意 / Diagnostics→发布状态`。
+`Capabilities→应用授权 / Blocked actors→屏蔽名单 / Consent→邀请与同意 / Diagnostics→发布状态`。
 
 ### 3.2 保存语义标注
 
