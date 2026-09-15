@@ -387,79 +387,83 @@ pub(crate) fn push_realm_remark_account_data_with_failure_toast(
     push_realm_remark_account_data_impl(base_url, api_token, realm_id, remark, true);
 }
 
-pub(crate) fn push_contact_remark_account_data(
+/// Apply one holder-authored Contact remark edit through the account-data
+/// whole-value CAS binding.
+///
+/// The edit, not the assembled record, is what travels: the merge re-reads the
+/// authoritative value on every attempt and re-applies just the edited field, so
+/// a concurrent write from the holder's second device keeps its petname, note,
+/// tags, pin and confirmation baseline instead of being overwritten by whatever
+/// this device had rendered (`client-preferences.md` section 3.6).
+pub(crate) fn push_contact_remark_edit(
     base_url: String,
     api_token: String,
-    actor_id: String,
-    remark: crate::account_data::ContactRemark,
+    principal_id: arkret_sdk::DidCoreId,
+    edit: crate::account_data::ContactRemarkEdit,
 ) {
     let authority = match crate::secure_key_store::active_device_seed_scope()
         .map(|scope| scope.authority)
     {
         Some(holder) => holder,
         None => {
-            tracing::warn!("contact petname upload skipped: active account scope is unavailable");
+            tracing::warn!("contact remark upload skipped: active account scope is unavailable");
             return;
         }
     };
-    if actor_id != remark.subject.principal_id.as_str() {
-        tracing::warn!(%actor_id, "contact petname upload rejected: map key does not match subject.principal_id");
-        return;
-    }
     let namespace_key = match crate::account_data::account_data_namespace_key(&authority) {
         Ok(key) => key,
         Err(error) => {
-            tracing::warn!(%error, "contact petname upload skipped: namespace key unavailable");
+            tracing::warn!(%error, "contact remark upload skipped: namespace key unavailable");
             return;
         }
     };
-    let key = match crate::account_data::contact_remark_account_data_key(
-        &namespace_key,
-        &remark.subject.principal_id,
-    ) {
-        Ok(key) => key,
-        Err(error) => {
-            tracing::warn!(%error, "contact petname key derivation failed");
-            return;
-        }
-    };
-    if let Err(error) = remark.validate_for_account_data_key(&namespace_key, &key) {
-        tracing::warn!(%error, "contact petname value rejected before upload");
-        return;
-    }
-    spawn(async move {
-        if remark.is_empty() {
-            let key_for_log = key.clone();
-            if let Err(err) = with_event_submitter(&base_url, api_token, |sub| {
-                let key = key.clone();
-                async move { crate::transport::account::delete_account_data(&sub, &key).await }
-            })
-            .await
-            {
-                tracing::debug!(
-                    "account_data DELETE for {key_for_log} failed: {}; local state still authoritative",
-                    err.display()
-                );
-            }
-            return;
-        }
-        let body = match encrypted_account_data_value(
-            &key,
-            &serde_json::to_value(&remark).unwrap_or_default(),
-        ) {
-            Ok(body) => body,
+    let key =
+        match crate::account_data::contact_remark_account_data_key(&namespace_key, &principal_id) {
+            Ok(key) => key,
             Err(error) => {
-                tracing::warn!(key = %key, %error, "contact remark encryption failed");
+                tracing::warn!(%error, "contact remark key derivation failed");
                 return;
             }
         };
-        let key_for_request = key.clone();
-        if let Err(error) = with_event_submitter(&base_url, api_token, |sub| async move {
-            crate::transport::account::set_account_data(&sub, &key_for_request, body).await
+    spawn(async move {
+        let key_for_log = key.clone();
+        if let Err(error) = with_event_submitter(&base_url, api_token, move |sub| {
+            let key = key.clone();
+            let authority = authority.clone();
+            let principal_id = principal_id.clone();
+            let edit = edit.clone();
+            async move {
+                crate::transport::account::update_account_data_with_conditional_merge(
+                    &sub,
+                    &key,
+                    |snapshot| {
+                        let merged = crate::account_data::merge_contact_remark_account_data(
+                            &authority,
+                            &key,
+                            &principal_id,
+                            &edit,
+                            snapshot.entry.as_ref(),
+                        )?;
+                        Ok(match merged {
+                            crate::account_data::ContactRemarkMerge::Write(body) => {
+                                crate::transport::account::AccountDataMergeDecision::Replace(body)
+                            }
+                            crate::account_data::ContactRemarkMerge::Delete => {
+                                crate::transport::account::AccountDataMergeDecision::Delete
+                            }
+                        })
+                    },
+                )
+                .await
+            }
         })
         .await
         {
-            tracing::warn!(key = %key, error = %error.display(), "contact remark account_data upload failed");
+            tracing::warn!(
+                key = %key_for_log,
+                error = %error.display(),
+                "contact remark account_data write failed"
+            );
         }
     });
 }

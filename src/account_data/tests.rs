@@ -343,6 +343,131 @@ fn contact_remark_pinned_builder_preserves_private_fields() {
 }
 
 #[test]
+fn every_contact_remark_edit_preserves_the_fields_it_did_not_touch() {
+    let actor_did = "did:web:alice.example";
+    let principal_id = crate::mls_api_helpers::principal_core_id(actor_did).unwrap();
+    let saved_at: chrono::DateTime<chrono::Utc> = "2026-06-05T00:00:00.000Z".parse().unwrap();
+    let later: chrono::DateTime<chrono::Utc> = "2026-06-06T00:00:00.000Z".parse().unwrap();
+    let existing = ContactRemark {
+        version: 1,
+        subject: ContactRemarkSubject {
+            kind: "human".to_owned(),
+            principal_id: principal_id.clone(),
+        },
+        petname: "Alice from Ops".to_owned(),
+        confirmed_display_name: Some("Alice Zhang".to_owned()),
+        note: "met at launch".to_owned(),
+        tags: vec!["ops".to_owned()],
+        pinned: true,
+        verified_handle_at_save: Some("alice:example.com".to_owned()),
+        saved_at,
+        updated_at: Some(saved_at),
+    };
+
+    for edit in [
+        ContactRemarkEdit::Petname("Ali".to_owned()),
+        ContactRemarkEdit::Note("moved teams".to_owned()),
+        ContactRemarkEdit::Tags(vec!["ops".to_owned(), "launch".to_owned()]),
+        ContactRemarkEdit::Pinned(false),
+    ] {
+        let next = edit.apply(principal_id.clone(), Some(&existing), later);
+        assert_eq!(
+            next.confirmed_display_name, existing.confirmed_display_name,
+            "an ordinary edit must not touch the confirmation baseline: {edit:?}"
+        );
+        assert_eq!(next.saved_at, existing.saved_at, "{edit:?}");
+        assert_eq!(next.updated_at, Some(later), "{edit:?}");
+        assert_eq!(
+            next.verified_handle_at_save, existing.verified_handle_at_save,
+            "{edit:?}"
+        );
+        match &edit {
+            ContactRemarkEdit::Petname(petname) => {
+                assert_eq!(&next.petname, petname);
+                assert_eq!(next.note, existing.note);
+                assert_eq!(next.tags, existing.tags);
+                assert_eq!(next.pinned, existing.pinned);
+            }
+            ContactRemarkEdit::Note(note) => {
+                assert_eq!(&next.note, note);
+                assert_eq!(next.petname, existing.petname);
+            }
+            ContactRemarkEdit::Tags(tags) => {
+                assert_eq!(&next.tags, tags);
+                assert_eq!(next.petname, existing.petname);
+                assert_eq!(next.note, existing.note);
+            }
+            ContactRemarkEdit::Pinned(pinned) => {
+                assert_eq!(next.pinned, *pinned);
+                assert_eq!(next.petname, existing.petname);
+                assert_eq!(next.note, existing.note);
+                assert_eq!(next.tags, existing.tags);
+            }
+            ContactRemarkEdit::ConfirmDisplayName(_) => unreachable!("not in the list"),
+        }
+    }
+}
+
+#[test]
+fn an_explicit_confirmation_refreshes_only_the_baseline() {
+    let principal_id = crate::mls_api_helpers::principal_core_id("did:web:alice.example").unwrap();
+    let saved_at: chrono::DateTime<chrono::Utc> = "2026-06-05T00:00:00.000Z".parse().unwrap();
+    let later: chrono::DateTime<chrono::Utc> = "2026-06-06T00:00:00.000Z".parse().unwrap();
+    let mut existing = ContactRemark::new(principal_id.clone(), "Alice from Ops", saved_at);
+    existing.confirmed_display_name = Some("Alice Zhang".to_owned());
+    existing.note = "met at launch".to_owned();
+
+    let next = ContactRemarkEdit::ConfirmDisplayName("Alice C.".to_owned()).apply(
+        principal_id.clone(),
+        Some(&existing),
+        later,
+    );
+    assert_eq!(next.confirmed_display_name.as_deref(), Some("Alice C."));
+    assert_eq!(
+        next.petname, existing.petname,
+        "confirming an identity never rewrites the holder petname"
+    );
+    assert_eq!(next.note, existing.note);
+
+    // A first confirmation on a peer with no record leaves the petname empty.
+    let first = ContactRemarkEdit::ConfirmDisplayName("Alice C.".to_owned()).apply(
+        principal_id,
+        None,
+        later,
+    );
+    assert_eq!(first.confirmed_display_name.as_deref(), Some("Alice C."));
+    assert!(
+        first.petname.is_empty(),
+        "accept must not invent a petname from the confirmed name"
+    );
+}
+
+#[test]
+fn clearing_the_last_holder_field_leaves_nothing_to_store() {
+    let principal_id = crate::mls_api_helpers::principal_core_id("did:web:alice.example").unwrap();
+    let saved_at: chrono::DateTime<chrono::Utc> = "2026-06-05T00:00:00.000Z".parse().unwrap();
+    let existing = ContactRemark::new(principal_id.clone(), "Alice from Ops", saved_at);
+    let cleared = ContactRemarkEdit::Petname(String::new()).apply(
+        principal_id.clone(),
+        Some(&existing),
+        saved_at,
+    );
+    assert!(
+        cleared.is_empty(),
+        "an empty record is deleted rather than written"
+    );
+
+    let mut confirmed = existing.clone();
+    confirmed.confirmed_display_name = Some("Alice Zhang".to_owned());
+    let still_kept =
+        ContactRemarkEdit::Petname(String::new()).apply(principal_id, Some(&confirmed), saved_at);
+    assert!(
+        !still_kept.is_empty(),
+        "clearing a petname must not discard the confirmation baseline"
+    );
+}
+
+#[test]
 fn typed_blocklist_entries_filter_by_closed_mode_surface_and_expiry() {
     use arkret_models_collaboration::objects::productivity::{
         AccountBlocklistMode, AccountBlocklistSurface,

@@ -476,11 +476,11 @@ pub(super) fn toggle_sidebar_contact_pin(
         },
         vec![],
     );
-    crate::views::settings::push_contact_remark_account_data(
+    crate::views::settings::push_contact_remark_edit(
         base_url,
         api_token,
-        actor_id.to_string(),
-        next,
+        actor_id,
+        crate::account_data::ContactRemarkEdit::Pinned(next_pinned),
     );
 }
 
@@ -525,6 +525,12 @@ pub(super) fn leave_sidebar_realm(
                 let forgotten_ids = ids_to_forget.into_iter().collect::<BTreeSet<_>>();
                 for id in &forgotten_ids {
                     state_store.write().forget_realm_tree_projection(id);
+                    // The shared membership was what authorized reading other
+                    // members' global Profiles there; once it is gone those rows
+                    // must stop rendering.
+                    if let Ok(realm_id) = arkret_sdk::RealmId::new(id.clone()) {
+                        crate::identity::contact_profile::forget_realm(&realm_id);
+                    }
                 }
                 realm_tree_nodes.set(
                     realm_tree_nodes()

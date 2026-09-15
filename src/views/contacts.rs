@@ -180,7 +180,16 @@ fn ContactRow(
     let mut scope_presence = use_signal(move || grants_presence);
 
     let peer_principal = crate::models::contact_peer_id(&contact).to_string();
-    let peer = contact.peer.contact_actor_id().to_string();
+    let peer_actor_id = contact.peer.contact_actor_id();
+    let peer = peer_actor_id.to_string();
+    // A shared Collaboration Realm is the authorization basis for reading the
+    // peer's global Profile, and for a Contact that Realm is its Direct
+    // Conversation. Before one exists there is no authorized read, so the
+    // confirmation comparison stays undecided rather than claiming "unchanged".
+    let shared_realm_id = contact
+        .direct_conversation
+        .as_ref()
+        .map(|summary| summary.realm_id.clone());
     let state = contact.state;
     let peer_label = crate::views::helpers::contact_peer_label(&state_store.read(), &contact);
     let existing_remark = state_store.read().contact_remark(&peer_principal);
@@ -190,6 +199,78 @@ fn ContactRow(
             .map(|remark| remark.petname.clone())
             .unwrap_or_default()
     });
+    // Read the peer's global Profile through the authorized surface. garth
+    // decides whether a round trip is actually due, so entering the surface
+    // again inside the freshness window costs nothing.
+    let profile_resolve = {
+        let base = base_url.clone();
+        let realm_id = shared_realm_id.clone();
+        let actor_id = peer_actor_id.clone();
+        use_resource(move || {
+            let base = base.clone();
+            let realm_id = realm_id.clone();
+            let actor_id = actor_id.clone();
+            async move {
+                let Some(realm_id) = realm_id else {
+                    return;
+                };
+                if let Err(error) = crate::identity::contact_profile::refresh(
+                    &base,
+                    token(),
+                    realm_id,
+                    vec![actor_id],
+                )
+                .await
+                {
+                    tracing::debug!(%error, "authorized Contact Profile resolve failed");
+                }
+            }
+        })
+    };
+    // Reading the resource is what subscribes this row to it. The directory
+    // behind it is process state, not a signal, so without this the first visit
+    // would render before the read lands and never render again. It also makes
+    // "not read yet" indistinguishable from "unavailable" for everything below,
+    // which is the correct reading: an unfinished read decides nothing.
+    let profile_read_landed = profile_resolve.read().is_some();
+    let confirmation_state = profile_read_landed
+        .then(|| {
+            shared_realm_id.as_ref().map(|realm_id| {
+                crate::identity::contact_profile::confirmed_display_name_state(
+                    realm_id,
+                    &peer_actor_id,
+                    existing_remark.as_ref(),
+                )
+            })
+        })
+        .flatten();
+    let live_profile_display = profile_read_landed
+        .then(|| {
+            shared_realm_id.as_ref().and_then(|realm_id| {
+                crate::identity::contact_profile::current_display_name(realm_id, &peer_actor_id)
+            })
+        })
+        .flatten();
+
+    let confirmation_at_accept = existing_remark
+        .is_none()
+        .then(|| {
+            shared_realm_id.as_ref().and_then(|realm_id| {
+                crate::identity::contact_profile::current_verified_display_name(
+                    realm_id,
+                    &peer_actor_id,
+                )
+                .and_then(|display_name| {
+                    arkret_sdk::DidCoreId::new(peer_principal.clone())
+                        .ok()
+                        .map(|principal_id| ContactAcceptConfirmation {
+                            principal_id,
+                            display_name,
+                        })
+                })
+            })
+        })
+        .flatten();
     let is_pending_incoming = state == arkret_sdk::ContactState::PendingIncoming;
     let is_pending_outgoing = state == arkret_sdk::ContactState::PendingOutgoing;
     let is_accepted = state == arkret_sdk::ContactState::Accepted;
@@ -251,6 +332,77 @@ fn ContactRow(
                 // hint only; it does not replace authority validation (see the
                 // TRUST-CACHE comment at the top of the file).
 
+            }
+            if let Some(display_name) = live_profile_display.clone() {
+                div {
+                    class: "muted",
+                    "data-testid": "contact-profile-display-{peer}",
+                    "{display_name}"
+                }
+            }
+            // The holder confirmed a name once; the peer has since published a
+            // different one. Show both and make the refresh an explicit act, so
+            // a rename can never silently become the confirmed baseline.
+            if let Some(
+                arkret_models_collaboration::actor_profile_resolution::ConfirmedDisplayNameState::Changed {
+                    confirmed,
+                    current,
+                },
+            ) = confirmation_state.clone() {
+                div {
+                    class: "event contact-display-name-changed",
+                    "data-testid": "contact-display-name-changed-{peer}",
+                    div { class: "entity-title", {tr("contacts.confirmed_name.changed_title")} }
+                    div {
+                        class: "muted",
+                        {crate::i18n::tr_args(
+                            "contacts.confirmed_name.changed_body",
+                            &[
+                                ("confirmed", confirmed.clone()),
+                                ("current", current.clone()),
+                            ],
+                        )}
+                    }
+                    Button {
+                        variant: ButtonVariant::Secondary,
+                        "data-testid": "contact-confirm-name-{peer}",
+                        onclick: {
+                            let base = base_url.clone();
+                            let peer_principal = peer_principal.clone();
+                            let peer_key = peer.clone();
+                            let existing = existing_remark.clone();
+                            let current = current.clone();
+                            move |_| {
+                                let Ok(principal_id) =
+                                    arkret_sdk::DidCoreId::new(peer_principal.clone())
+                                else {
+                                    row_status.set(tr("contacts.petname.invalid_principal"));
+                                    return;
+                                };
+                                let edit =
+                                    crate::account_data::ContactRemarkEdit::ConfirmDisplayName(
+                                        current.clone(),
+                                    );
+                                let remark = edit.apply(
+                                    principal_id.clone(),
+                                    existing.as_ref(),
+                                    chrono::Utc::now(),
+                                );
+                                state_store
+                                    .write()
+                                    .set_contact_remark(peer_key.clone(), remark);
+                                row_status.set(tr("contacts.confirmed_name.confirmed"));
+                                crate::views::settings::push_contact_remark_edit(
+                                    base.clone(),
+                                    token(),
+                                    principal_id,
+                                    edit,
+                                );
+                            }
+                        },
+                        {tr("contacts.confirmed_name.confirm")}
+                    }
+                }
             }
             if advanced && !contact.bidirectional_scopes.is_empty() {
                 div { class: "muted",
@@ -326,6 +478,7 @@ fn ContactRow(
                                         busy,
                                         row_status,
                                         on_changed,
+                                        None,
                                     );
                                 }
                             },
@@ -375,28 +528,27 @@ fn ContactRow(
                                     row_status.set(tr("contacts.petname.invalid_principal"));
                                     return;
                                 };
-                                let mut remark = existing
-                                    .clone()
-                                    .unwrap_or_else(|| crate::account_data::ContactRemark::new(
-                                        principal_id,
-                                        "",
-                                        chrono::Utc::now(),
-                                    ));
-                                remark.petname = petname.clone();
-                                remark.updated_at = Some(chrono::Utc::now());
+                                let edit = crate::account_data::ContactRemarkEdit::Petname(
+                                    petname.clone(),
+                                );
+                                let remark = edit.apply(
+                                    principal_id.clone(),
+                                    existing.as_ref(),
+                                    chrono::Utc::now(),
+                                );
                                 state_store
                                     .write()
-                                    .set_contact_remark(peer.clone(), remark.clone());
+                                    .set_contact_remark(peer.clone(), remark);
                                 row_status.set(if petname.is_empty() {
                                     tr("contacts.petname.cleared")
                                 } else {
                                     tr("contacts.petname.saved")
                                 });
-                                crate::views::settings::push_contact_remark_account_data(
+                                crate::views::settings::push_contact_remark_edit(
                                     base.clone(),
                                     token(),
-                                    peer.clone(),
-                                    remark,
+                                    principal_id,
+                                    edit,
                                 );
                             }
                         },
@@ -414,6 +566,13 @@ fn ContactRow(
                             let peer = peer.clone();
                             let request_event_ref =
                                 contact.request_event_ref.as_ref().map(ToString::to_string);
+                            // Accept counts as the holder's first identity
+                            // confirmation only when this surface already held
+                            // verified Profile evidence and no record exists
+                            // yet. A first-time Contact has no shared Realm to
+                            // read through, so both fields stay absent and the
+                            // accept still succeeds.
+                            let confirmation = confirmation_at_accept.clone();
                             move |_| {
                                 run_contact_action(
                                     base.clone(),
@@ -423,6 +582,7 @@ fn ContactRow(
                                     busy,
                                     row_status,
                                     on_changed,
+                                    confirmation.clone(),
                                 );
                             }
                         },
@@ -446,6 +606,7 @@ fn ContactRow(
                                     busy,
                                     row_status,
                                     on_changed,
+                                    None,
                                 );
                             }
                         },
@@ -476,6 +637,7 @@ fn ContactRow(
                                     busy,
                                     row_status,
                                     on_changed,
+                                    None,
                                 );
                             }
                         },
@@ -716,6 +878,7 @@ fn ContactRow(
                                         busy,
                                         row_status,
                                         on_changed,
+                                        None,
                                     );
                                 }
                             },
@@ -764,6 +927,18 @@ pub(crate) enum ContactRowAction {
 /// Run a Contact write for a row, then refresh the parent list on success.
 /// Signals are `Copy`, so this is a free function the per-row onclick handlers
 /// can call without fighting closure-capture rules.
+/// A first identity confirmation to record if the action succeeds.
+///
+/// Only a surface that was already displaying verified Profile evidence for the
+/// peer may set this. A later background read must never fill it in, because
+/// that would dress a silent fetch up as the holder confirming an identity
+/// (`client-preferences.md` section 3.6).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ContactAcceptConfirmation {
+    pub principal_id: arkret_sdk::DidCoreId,
+    pub display_name: String,
+}
+
 pub(crate) fn run_contact_action(
     base: String,
     api_token: String,
@@ -772,9 +947,12 @@ pub(crate) fn run_contact_action(
     mut busy: Signal<bool>,
     mut row_status: Signal<String>,
     on_changed: EventHandler<()>,
+    confirmation: Option<ContactAcceptConfirmation>,
 ) {
     busy.set(true);
     row_status.set(pending_msg);
+    let confirmation_base = base.clone();
+    let confirmation_token = api_token.clone();
     spawn(async move {
         let result = match action {
             ContactRowAction::Respond {
@@ -817,6 +995,16 @@ pub(crate) fn run_contact_action(
         match result {
             Ok(()) => {
                 row_status.set(String::new());
+                if let Some(confirmation) = confirmation {
+                    crate::views::settings::push_contact_remark_edit(
+                        confirmation_base,
+                        confirmation_token,
+                        confirmation.principal_id,
+                        crate::account_data::ContactRemarkEdit::ConfirmDisplayName(
+                            confirmation.display_name,
+                        ),
+                    );
+                }
                 on_changed.call(());
             }
             Err(err) => {

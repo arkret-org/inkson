@@ -1464,6 +1464,11 @@ pub(crate) struct AccountDataSnapshot {
 pub(crate) enum AccountDataMergeDecision {
     Replace(Value),
     KeepCurrent,
+    /// The merge concluded there is nothing left to store, so the key is
+    /// physically deleted on the same revision it was read at. A whole-value
+    /// domain needs this: deciding removal before the read would delete
+    /// whatever another device wrote in the meantime.
+    Delete,
 }
 
 fn account_data_snapshot_from_details(
@@ -1596,25 +1601,48 @@ where
     let mut snapshot = account_data_snapshot(submitter.http(), type_key).await?;
     for attempt in 1..=MAX_ACCOUNT_DATA_CAS_ATTEMPTS {
         let content = match merge(&snapshot)? {
-            AccountDataMergeDecision::Replace(value) => value,
+            AccountDataMergeDecision::Replace(value) => Some(value),
             AccountDataMergeDecision::KeepCurrent => {
                 let current = snapshot.entry.as_ref().ok_or_else(|| {
                     anyhow::anyhow!("account_data merge cannot keep an absent current entry")
                 })?;
                 return serde_json::to_value(current).map_err(anyhow::Error::from);
             }
+            AccountDataMergeDecision::Delete => {
+                if snapshot.entry.is_none() {
+                    return Ok(Value::Null);
+                }
+                None
+            }
         };
-        let body = arkret_sdk::AccountDataReplaceRequestBody {
-            set_event: account_data_set_submission(
-                submitter,
-                type_key,
-                Some(content),
-                snapshot.revision,
-            )
-            .await?,
+        let deleting = content.is_none();
+        let set_event =
+            account_data_set_submission(submitter, type_key, content, snapshot.revision).await?;
+        // A delete has no entry to return, so the two branches meet as
+        // `Option<entry>` rather than by forcing the replace result through a
+        // serialization step the delete path never needs.
+        let outcome = if deleting {
+            submitter
+                .http()
+                .account_data_delete(
+                    type_key,
+                    &arkret_sdk::AccountDataDeleteRequestBody { set_event },
+                )
+                .await
+                .map(|_| None)
+        } else {
+            submitter
+                .http()
+                .account_data_replace(
+                    type_key,
+                    &arkret_sdk::AccountDataReplaceRequestBody { set_event },
+                )
+                .await
+                .map(Some)
         };
-        match submitter.http().account_data_replace(type_key, &body).await {
-            Ok(entry) => return serde_json::to_value(entry).map_err(anyhow::Error::from),
+        match outcome {
+            Ok(None) => return Ok(Value::Null),
+            Ok(Some(entry)) => return serde_json::to_value(entry).map_err(anyhow::Error::from),
             Err(error) => {
                 let Some(current) = account_data_conflict_snapshot(type_key, &error)? else {
                     return Err(error.into());

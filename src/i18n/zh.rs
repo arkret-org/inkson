@@ -1737,6 +1737,16 @@ fn add_contacts_keys_zh(dict: &mut TranslationDict) {
     dict.set("contacts.petname.invalid", "备注名无效");
     dict.set("contacts.petname.invalid_principal", "联系人主体无效");
     dict.set("contacts.petname.confusable_warning", "疑似冒充联系人");
+    dict.set(
+        "contacts.confirmed_name.changed_title",
+        "对方的全局显示名已变更",
+    );
+    dict.set(
+        "contacts.confirmed_name.changed_body",
+        "你上次确认时是「{confirmed}」，现在是「{current}」。核对无误后再确认新名称。",
+    );
+    dict.set("contacts.confirmed_name.confirm", "确认新显示名");
+    dict.set("contacts.confirmed_name.confirmed", "已更新确认的显示名");
     dict.set("contacts.dm.opening", "正在打开私聊…");
     dict.set(
         "contacts.dm.awaiting_founder",

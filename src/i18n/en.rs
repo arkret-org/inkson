@@ -1904,6 +1904,22 @@ fn add_contacts_keys(dict: &mut TranslationDict) {
         "contacts.petname.confusable_warning",
         "Possible Contact impersonation",
     );
+    dict.set(
+        "contacts.confirmed_name.changed_title",
+        "This Contact's global display name changed",
+    );
+    dict.set(
+        "contacts.confirmed_name.changed_body",
+        "You last confirmed “{confirmed}”; it is now “{current}”. Check before confirming the new name.",
+    );
+    dict.set(
+        "contacts.confirmed_name.confirm",
+        "Confirm the new display name",
+    );
+    dict.set(
+        "contacts.confirmed_name.confirmed",
+        "Confirmed display name updated",
+    );
     dict.set("contacts.dm.opening", "Opening direct chat…");
     dict.set(
         "contacts.dm.awaiting_founder",

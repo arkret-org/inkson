@@ -106,6 +106,7 @@ impl SessionCoordinator {
 
     pub fn replace(&self, credential: impl Into<String>) -> u64 {
         crate::identity::device_directory::reset_session_cache();
+        crate::identity::contact_profile::reset_session_cache();
         let mut state = self.state.borrow_mut();
         state.credential = Some(credential.into());
         state.generation = state.generation.wrapping_add(1);
@@ -166,6 +167,9 @@ impl SessionCoordinator {
 
     pub fn invalidate(&self, reason: impl Into<String>) -> u64 {
         crate::identity::device_directory::reset_session_cache();
+        // Resolved co-member Profiles were authorized by this holder's
+        // memberships, so they must not survive into the next session.
+        crate::identity::contact_profile::reset_session_cache();
         crate::identity::session_refresh::reset_session_grant_runtime();
         let reason = reason.into();
         let invalidator = {

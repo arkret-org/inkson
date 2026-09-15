@@ -495,6 +495,9 @@ fn ContactRequestNotification(
                                 });
                             }
                         }),
+                        // The notification row shows no Profile evidence, so
+                        // accepting from here records no identity confirmation.
+                        None,
                     );
                 },
                 if busy() { {crate::i18n::tr("contacts.action.accepting")} }
