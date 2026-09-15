@@ -19,10 +19,23 @@ fn seed_complete_rfc9420_projection(
     state.save_realm_tree_projection(
         realm,
         json!({
-            "content_scheme": "mls_rfc9420",
             "member_roster_entries_limited": false,
             "member_roster_entries": [{ "actor_id": actor_id, "membership": "join" }]
         }),
+    );
+    seed_accepted_rfc9420_binding(state, realm);
+}
+
+/// The group's accepted `content_scheme`, delivered the only way a client may
+/// learn it: the Station's installed `ak.component.mls.epoch.v1` value.
+#[cfg(not(target_arch = "wasm32"))]
+fn seed_accepted_rfc9420_binding(state: &mut crate::state::LocalStateStore, realm: &str) {
+    fixture::install_accepted_mls_epoch(
+        state,
+        &arkret_sdk::ScopeRef::Realm {
+            realm_id: arkret_sdk::RealmId::new(realm.to_owned()).unwrap(),
+        },
+        "mls_rfc9420",
     );
 }
 
@@ -65,7 +78,6 @@ fn creator_realm_state_snapshot_bootstrap_makes_space_encryptable() {
     state.save_realm_tree_projection(
         realm,
         json!({
-            "content_scheme": "mls_rfc9420",
             "member_roster_entries_limited": false,
             "member_roster_entries": [{
                 "actor_id": arkret_sdk::ActorId::account(fixture::authority(actor)),
@@ -73,6 +85,7 @@ fn creator_realm_state_snapshot_bootstrap_makes_space_encryptable() {
             }]
         }),
     );
+    seed_accepted_rfc9420_binding(&mut state, realm);
     let summary = ensure_creator_mls_checkpoint(
         &mut state,
         &secure,
@@ -147,7 +160,6 @@ fn complete_membership_hint_does_not_alias_same_principal_at_another_station() {
     state.save_realm_tree_projection(
         realm,
         json!({
-            "content_scheme": "mls_rfc9420",
             "member_roster_entries_limited": false,
             "member_roster_entries": [{ "actor_id": foreign, "membership": "join" }],
         }),
@@ -481,10 +493,11 @@ async fn authoring_exporter_aead_content_requires_accepted_transition_evidence()
     let history_store = crate::secure_key_store::default_secure_key_store("inkson");
     let history_key = crate::secure_key_store::mls_history_secret_store_key(&scope_group_key);
     let _ = history_store.delete_secret(&history_key);
-    // Use the same optimistic projection written immediately after Realm
-    // creation. Account sync may not have delivered the authoritative
-    // projection before the first content write, so this local shape must
-    // carry the scheme all the way into encryption dispatch.
+    // The optimistic projection written immediately after Realm creation
+    // carries the creator's local `content_scheme` intent. Per the 1920 ruling
+    // that intent is not the group's binding, so it must not reach encryption
+    // dispatch; only the Station's accepted `ak.component.mls.epoch.v1` value
+    // may.
     let optimistic = crate::realm_tree::OptimisticRealmTreeProjection::realm(
         crate::realm_tree::RealmProjectionInput {
             owner: actor.to_owned(),
@@ -513,6 +526,8 @@ async fn authoring_exporter_aead_content_requires_accepted_transition_evidence()
     .unwrap();
     state.prepare_account_demand_frame(&page).unwrap();
     state.finish_account_demand_frame(&page).unwrap();
+    assert!(!realm_content_scheme_is_exporter_aead(&state, realm));
+    fixture::install_accepted_mls_epoch(&mut state, &scope, "mls_exporter_aead_v1");
     assert!(realm_content_scheme_is_exporter_aead(&state, realm));
     // No secret is retained before any content is authored.
     assert!(state.history_secret_for(&scope, &group_id, 0).is_none());
@@ -1165,7 +1180,6 @@ fn minimal_overdue_epoch_blocks_before_counter_advance() {
         realm,
         json!({
             "schema_refs": [arkret_sdk::ProfileId::MLS_MINIMAL_METADATA_REALM_V1],
-            "content_scheme": "mls_rfc9420",
             "member_roster_entries_limited": false,
             "member_roster_entries": [{
                 "actor_id": arkret_sdk::ActorId::account(fixture::authority(actor)),
@@ -1471,4 +1485,78 @@ fn ordinary_exporter_sender_domain_requires_canonical_device_id() {
 fn minimal_exporter_sender_domain_uses_the_active_pairwise_leaf() {
     let device = "ak:device:01904100-0000-7000-8000-0000000000a1";
     assert!(verify_exporter_sender_domain_for_send(device, true, true).is_ok());
+}
+
+// ── accepted MLS binding (`ak.component.mls.epoch.v1`) ─────────────────
+
+/// A non-creator has no local pre-Genesis authoring intent, so before the
+/// current-result cell is installed the send gate is `EncryptionPolicyPending`.
+/// Installing the Station's value for the scope is what releases it — and a
+/// Realm value never releases a Circle group, which owns its own cell.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn accepted_epoch_cell_releases_the_send_gate_per_scope() {
+    let mut state = temp_state_store("accepted-epoch-cell-per-scope");
+    let realm = "ak:realm:AS5FqwC40o7__sjiREHUnzw9YDYeOTIYVGSZyZasRuaN";
+    let circle = "ak:circle:AdkQ-RmB1a8zyc52yl9GWAsodQ_EUle1WAVZqbO7pc19";
+    let realm_scope = arkret_sdk::ScopeRef::Realm {
+        realm_id: arkret_sdk::RealmId::new(realm.to_owned()).unwrap(),
+    };
+    let circle_scope = arkret_sdk::ScopeRef::Circle {
+        realm_id: arkret_sdk::RealmId::new(realm.to_owned()).unwrap(),
+        circle_id: arkret_sdk::CircleId::new(circle.to_owned()).unwrap(),
+    };
+
+    assert!(matches!(
+        realm_content_scheme_is_exporter_aead_for_send(&state, realm, None),
+        Err(MlsRuntimeError::EncryptionPolicyPending)
+    ));
+
+    fixture::install_accepted_mls_epoch(&mut state, &realm_scope, "mls_exporter_aead_v1");
+    assert!(realm_content_scheme_is_exporter_aead_for_send(&state, realm, None).unwrap());
+    // The Realm's own value is not the Circle group's binding.
+    assert!(matches!(
+        realm_content_scheme_is_exporter_aead_for_send(&state, realm, Some(circle)),
+        Err(MlsRuntimeError::EncryptionPolicyPending)
+    ));
+
+    fixture::install_accepted_mls_epoch(&mut state, &circle_scope, "mls_rfc9420");
+    assert!(!realm_content_scheme_is_exporter_aead_for_send(&state, realm, Some(circle)).unwrap());
+}
+
+/// `value_mls_epoch` is `anyOf[null, mls_epoch_head]`. A delivered `null` is a
+/// confirmed answer — this group has no accepted Genesis — and must stay
+/// distinguishable from an undelivered selector even though both pause sending.
+#[cfg(not(target_arch = "wasm32"))]
+#[test]
+fn a_delivered_null_epoch_is_not_the_same_state_as_an_undelivered_selector() {
+    let mut state = temp_state_store("accepted-epoch-null-vs-absent");
+    let realm = "ak:realm:Ae6wQDaXscJ6lZGbcWqFv_CW7o0_w5CGmtuB6TvlwNh2";
+    let scope = arkret_sdk::ScopeRef::Realm {
+        realm_id: arkret_sdk::RealmId::new(realm.to_owned()).unwrap(),
+    };
+    assert_eq!(
+        state.accepted_mls_epoch_binding(&scope),
+        garth::InstalledMlsEpoch::Pending
+    );
+
+    let group_id = scope.canonical_mls_group_id().unwrap();
+    let cell_id = arkret_state::mls_cells::mls_epoch_cell_id(&scope, &group_id).unwrap();
+    state.save_realm_tree_projection(
+        realm,
+        json!({"current": {"entries": [{
+            "selector": {"scope_ref": scope, "cell_id": cell_id},
+            "target": {"kind": "realm"},
+            "revision": 1,
+            "result": {"status": "value", "value": null},
+        }]}}),
+    );
+    assert_eq!(
+        state.accepted_mls_epoch_binding(&scope),
+        garth::InstalledMlsEpoch::NoAcceptedGenesis
+    );
+    assert!(matches!(
+        realm_content_scheme_is_exporter_aead_for_send(&state, realm, None),
+        Err(MlsRuntimeError::EncryptionPolicyPending)
+    ));
 }

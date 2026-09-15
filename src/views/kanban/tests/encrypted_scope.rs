@@ -199,6 +199,13 @@ async fn encrypted_scope_allows_encrypted_strand_update_patch_value() {
         TEST_REALM_ID,
         creator_realm_projection(TEST_REALM_ID, &actor_id, "mls_rfc9420"),
     );
+    fixture::install_accepted_mls_epoch(
+        &mut state,
+        &arkret_sdk::ScopeRef::Realm {
+            realm_id: arkret_sdk::RealmId::new(TEST_REALM_ID.to_owned()).unwrap(),
+        },
+        "mls_rfc9420",
+    );
     crate::mls::governance_proof::seed_test_governance_result(
         &mut state,
         TEST_REALM_ID,
@@ -557,6 +564,13 @@ async fn encrypted_private_patch_uses_checkpoint_proven_creator_snapshot() {
         realm,
         creator_realm_projection(realm, &actor_id, "mls_rfc9420"),
     );
+    fixture::install_accepted_mls_epoch(
+        &mut state,
+        &arkret_sdk::ScopeRef::Realm {
+            realm_id: arkret_sdk::RealmId::new(realm.to_owned()).unwrap(),
+        },
+        "mls_rfc9420",
+    );
     crate::mls::governance_proof::seed_test_governance_result(
         &mut state,
         realm,
@@ -612,6 +626,13 @@ async fn encrypted_private_patch_rejects_epoch_zero_without_accepted_genesis_ref
     state.save_realm_tree_projection(
         realm,
         creator_realm_projection(realm, &actor_id, "mls_rfc9420"),
+    );
+    fixture::install_accepted_mls_epoch(
+        &mut state,
+        &arkret_sdk::ScopeRef::Realm {
+            realm_id: arkret_sdk::RealmId::new(realm.to_owned()).unwrap(),
+        },
+        "mls_rfc9420",
     );
     crate::mls::governance_proof::seed_test_governance_result(
         &mut state,
@@ -693,6 +714,13 @@ async fn encrypted_private_patch_with_ready_checkpoint_replaces_plaintext() {
                 "membership": "join"
             }]
         }),
+    );
+    fixture::install_accepted_mls_epoch(
+        &mut state,
+        &arkret_sdk::ScopeRef::Realm {
+            realm_id: arkret_sdk::RealmId::new(realm.to_owned()).unwrap(),
+        },
+        "mls_rfc9420",
     );
     crate::mls::governance_proof::seed_test_governance_result(
         &mut state,

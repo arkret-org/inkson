@@ -1157,6 +1157,107 @@ impl LocalStateStore {
         Ok(selected)
     }
 
+    /// The create-locked MLS binding accepted for `effective_scope`.
+    ///
+    /// Two protocol-accepted sources, in order: the durable artifact this
+    /// client verified and applied itself, then the Station's installed
+    /// `ak.component.mls.epoch.v1` current value. Local pre-Genesis authoring
+    /// intent is deliberately not a source — `realm-and-space.md` §2.3 makes
+    /// `content_scheme` the group's immutable value only at `GenesisAccepted`,
+    /// so a create-side selector may never stand in for the accepted binding.
+    ///
+    /// `Pending` (nothing delivered) and `NoAcceptedGenesis` (the Station
+    /// delivered `null`) stay distinct all the way to the callers: only the
+    /// second is an answer.
+    pub fn accepted_mls_epoch_binding(
+        &self,
+        effective_scope: &arkret_sdk::ScopeRef,
+    ) -> garth::InstalledMlsEpoch {
+        if let Some(head) = self.applied_mls_epoch_head_for_scope(effective_scope) {
+            return garth::InstalledMlsEpoch::Accepted(Box::new(head));
+        }
+        let Some(realm_id) = effective_scope.realm_id_opt() else {
+            return garth::InstalledMlsEpoch::Pending;
+        };
+        let local = self.load();
+        let Some(projection) = local.realm_tree_projections.get(realm_id.as_str()) else {
+            return garth::InstalledMlsEpoch::Pending;
+        };
+        // An installed value the client cannot validate is not an answer; stay
+        // paused rather than downgrade to a guessed wire scheme.
+        garth::installed_mls_epoch(projection, effective_scope)
+            .unwrap_or(garth::InstalledMlsEpoch::Pending)
+    }
+
+    /// Latest locally applied transition head for `effective_scope`.
+    ///
+    /// `content_scheme` is immutable across a group's epochs, so any applied
+    /// head answers it; the highest `next_epoch` is chosen so the result is
+    /// deterministic. Heads that disagree on the create-locked scheme are
+    /// unresolvable locally and yield nothing.
+    fn applied_mls_epoch_head_for_scope(
+        &self,
+        effective_scope: &arkret_sdk::ScopeRef,
+    ) -> Option<arkret_sdk::MlsEpochHead> {
+        let local = self.load();
+        let mut selected: Option<arkret_sdk::MlsEpochHead> = None;
+        for artifact in local.accepted_mls_artifacts.snapshot.artifacts.values() {
+            let head = &artifact.transition_head;
+            if &head.effective_scope != effective_scope || head.validate().is_err() {
+                continue;
+            }
+            if selected
+                .as_ref()
+                .is_some_and(|current| current.content_scheme != head.content_scheme)
+            {
+                return None;
+            }
+            if selected
+                .as_ref()
+                .is_none_or(|current| current.next_epoch < head.next_epoch)
+            {
+                selected = Some(head.clone());
+            }
+        }
+        selected
+    }
+
+    /// Every effective scope inside `realm_id` this client holds an applied MLS
+    /// artifact for, the enclosing Realm first.
+    ///
+    /// This is the bounded set of MLS groups whose epoch cell the current view
+    /// has a reason to carry: a scope with no local group cannot send, decrypt
+    /// or recover history in the first place.
+    pub(crate) fn local_mls_scopes_in_realm(&self, realm_id: &str) -> Vec<arkret_sdk::ScopeRef> {
+        let Ok(realm) = arkret_sdk::RealmId::new(realm_id.trim().to_owned()) else {
+            return Vec::new();
+        };
+        let mut scopes = vec![arkret_sdk::ScopeRef::Realm {
+            realm_id: realm.clone(),
+        }];
+        let local = self.load();
+        let mut circles = std::collections::BTreeSet::new();
+        for artifact in local.accepted_mls_artifacts.snapshot.artifacts.values() {
+            if let arkret_sdk::ScopeRef::Circle {
+                realm_id: scope_realm,
+                circle_id,
+            } = &artifact.transition_head.effective_scope
+                && scope_realm == &realm
+            {
+                circles.insert(circle_id.clone());
+            }
+        }
+        scopes.extend(
+            circles
+                .into_iter()
+                .map(|circle_id| arkret_sdk::ScopeRef::Circle {
+                    realm_id: realm.clone(),
+                    circle_id,
+                }),
+        );
+        scopes
+    }
+
     /// Advance the canonical group-state reference after the matching genesis
     /// or commit Event has been accepted. Rollback and same-epoch forks fail
     /// closed and never overwrite the known winning reference.

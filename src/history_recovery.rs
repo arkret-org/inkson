@@ -383,16 +383,28 @@ fn scope_uses_exporter_history(
     state_store: &StateStoreHandle,
     scope: &arkret_sdk::HistoryEffectiveScope,
 ) -> bool {
-    state_store.read(|store| match scope {
-        arkret_sdk::HistoryEffectiveScope::Realm { realm_id } => store
-            .realm_content_scheme(realm_id.as_str())
-            .is_some_and(|scheme| scheme == "mls_exporter_aead_v1"),
-        // A Circle MLS group freezes its own content scheme at its accepted
-        // Genesis. `ak.component.circle.create.v1` is an ordered log, which
-        // `sync/current-results.md` keeps out of the current cell set, so the
-        // Station publishes no current value a client can read for it yet.
-        // Fail closed rather than borrow the parent Realm's scheme.
-        arkret_sdk::HistoryEffectiveScope::Circle { .. } => false,
+    // Each MLS group, Realm or Circle, freezes its own content scheme at its
+    // accepted Genesis and publishes it as that scope's
+    // `ak.component.mls.epoch.v1` value. RHRK durability is only effective for
+    // `mls_exporter_aead_v1` (`encryption-and-audit.md` §2.10.8), so an unknown
+    // binding stays false rather than borrowing another scope's scheme.
+    let effective_scope = match scope {
+        arkret_sdk::HistoryEffectiveScope::Realm { realm_id } => arkret_sdk::ScopeRef::Realm {
+            realm_id: realm_id.clone(),
+        },
+        arkret_sdk::HistoryEffectiveScope::Circle {
+            realm_id,
+            circle_id,
+        } => arkret_sdk::ScopeRef::Circle {
+            realm_id: realm_id.clone(),
+            circle_id: circle_id.clone(),
+        },
+    };
+    state_store.read(|store| {
+        store
+            .accepted_mls_epoch_binding(&effective_scope)
+            .content_scheme()
+            == Some(arkret_sdk::ContentScheme::MlsExporterAeadV1)
     })
 }
 

@@ -99,10 +99,13 @@ pub(crate) fn realm_content_scheme_is_exporter_aead(
     state_store: &crate::state::LocalStateStore,
     realm_id: &str,
 ) -> bool {
+    let Ok(realm_id) = arkret_sdk::RealmId::new(realm_id.trim().to_owned()) else {
+        return false;
+    };
     state_store
-        .realm_content_scheme(realm_id)
-        .map(|scheme| scheme.trim().to_ascii_lowercase().replace('-', "_"))
-        .is_some_and(|scheme| scheme == "mls_exporter_aead_v1")
+        .accepted_mls_epoch_binding(&arkret_sdk::ScopeRef::Realm { realm_id })
+        .content_scheme()
+        == Some(arkret_sdk::ContentScheme::MlsExporterAeadV1)
 }
 
 pub(super) fn realm_content_scheme_is_exporter_aead_for_send(
@@ -110,24 +113,21 @@ pub(super) fn realm_content_scheme_is_exporter_aead_for_send(
     realm_id: &str,
     circle: Option<&str>,
 ) -> Result<bool, MlsRuntimeError> {
-    // A Circle group's create-locked scheme has no current cell to read
-    // (`ak.component.circle.create.v1` is an ordered log, excluded from the
-    // current cell set), so Circle scope reports the policy as still pending
-    // rather than inheriting the Realm scheme.
-    let scheme = match circle {
-        Some(_) => None,
-        None => state_store.realm_content_scheme(realm_id),
-    }
-    .ok_or(MlsRuntimeError::EncryptionPolicyPending)?
-    .trim()
-    .to_ascii_lowercase()
-    .replace('-', "_");
-    match scheme.as_str() {
-        "mls_exporter_aead_v1" => Ok(true),
-        "mls_rfc9420" => Ok(false),
-        unsupported => Err(MlsRuntimeError::Encrypt(format!(
-            "unsupported Realm content scheme: {unsupported}"
-        ))),
+    // Realm and Circle groups each own an `ak.component.mls.epoch.v1` cell
+    // keyed by their own effective scope, so the Circle path reads its own
+    // accepted binding instead of borrowing the enclosing Realm's.
+    let effective_scope = runtime_effective_scope(realm_id, circle, None)?;
+    match state_store.accepted_mls_epoch_binding(&effective_scope) {
+        garth::InstalledMlsEpoch::Accepted(head) => match head.content_scheme {
+            arkret_sdk::ContentScheme::MlsExporterAeadV1 => Ok(true),
+            arkret_sdk::ContentScheme::MlsRfc9420 => Ok(false),
+        },
+        // Both remaining states block the send, and both are correct: a group
+        // with no accepted Genesis has no scheme to author under, and an
+        // undelivered cell is not an answer. Neither may fall back to a scheme.
+        garth::InstalledMlsEpoch::NoAcceptedGenesis | garth::InstalledMlsEpoch::Pending => {
+            Err(MlsRuntimeError::EncryptionPolicyPending)
+        }
     }
 }
 
@@ -232,16 +232,19 @@ pub(crate) fn encrypted_payload_from_verified_event_context(
             head.content_scheme
         } else {
             // Older externally recovered epochs need not have a locally applied
-            // artifact. The Account Station's immutable group configuration
-            // supplies the scheme; the exact transition reference and AEAD still bind it.
-            let scheme = match effective_scope {
-                arkret_sdk::ScopeRef::Circle { .. } => None,
-                _ => state_store.realm_content_scheme(effective_scope.realm_id_opt()?.as_str()),
-            }?;
-            match scheme.as_str() {
-                "mls_rfc9420" => arkret_sdk::ContentScheme::MlsRfc9420,
-                "mls_exporter_aead_v1" => arkret_sdk::ContentScheme::MlsExporterAeadV1,
-                _ => return None,
+            // artifact for that exact epoch. `content_scheme` is frozen for the
+            // life of the group, so the scope's accepted binding answers it;
+            // the exact transition reference and AEAD still bind the payload.
+            match state_store.accepted_mls_epoch_binding(effective_scope) {
+                garth::InstalledMlsEpoch::Accepted(head) => head.content_scheme,
+                garth::InstalledMlsEpoch::NoAcceptedGenesis => {
+                    warn_pending("the Station reports no accepted MLS Genesis for this scope");
+                    return None;
+                }
+                garth::InstalledMlsEpoch::Pending => {
+                    warn_pending("the scope's accepted MLS content scheme is not installed yet");
+                    return None;
+                }
             }
         };
         match content_scheme {

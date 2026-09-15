@@ -287,18 +287,19 @@ pub(crate) fn realm_projection_is_principal_control(body: &Value) -> bool {
     realm_projection_control_purpose(body).is_some()
 }
 
-/// Resolve the Realm's immutable content scheme.
+/// The local creator's pre-Genesis content-scheme intent, if one was authored
+/// on this device.
 ///
-/// The accepted binding is frozen by the Realm's MLS Genesis and published by
-/// the Station in the `ak.component.mls.epoch.v1` current value; that cell is
-/// not yet part of this client's selector set, so the only source here is the
-/// explicit pre-Genesis authoring value written by the local creator
-/// bootstrap. `None` means the authoritative scheme is unknown and encrypted
-/// sends stay paused — never a default to `mls_rfc9420`. The retired scan over
-/// projected `ak.mls.genesis` Events is gone: the wire carries no `state` /
-/// `state_after` container, and re-deriving a current value from Event arrival
-/// order is the raw-latest reduction the current-result contract removed.
-pub(crate) fn realm_projection_content_scheme(body: &Value) -> Option<String> {
+/// This is **not** the accepted binding. `realm-and-space.md` §2.3 and the 1920
+/// ruling make `content_scheme` a create-time local intent that only becomes
+/// the group's protocol-immutable value at `GenesisAccepted`; the accepted
+/// value is published as `ak.component.mls.epoch.v1` and is read through
+/// `LocalStateStore::accepted_mls_epoch_binding`. The single legitimate
+/// consumer here is the pre-Genesis `proposed_group_genesis_binding` branch,
+/// which has to resubmit the exact proposal the interrupted creator
+/// transaction carried. Sending, decrypting, Signal and history recovery must
+/// never read it.
+pub(crate) fn realm_projection_pre_genesis_content_scheme(body: &Value) -> Option<String> {
     let null = Value::Null;
     for container in [
         body,
@@ -884,12 +885,12 @@ mod tests {
         });
 
         assert_eq!(
-            realm_projection_content_scheme(&transient_projection),
+            realm_projection_pre_genesis_content_scheme(&transient_projection),
             None,
             "a roster-only frame may not guess a content wire scheme"
         );
         assert_eq!(
-            realm_projection_content_scheme(&json!({
+            realm_projection_pre_genesis_content_scheme(&json!({
                 "current": {"entries": [{
                     "selector": {
                         "scope_ref": {

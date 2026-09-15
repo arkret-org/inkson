@@ -320,18 +320,6 @@ impl LocalStateStore {
         ))
     }
 
-    /// The effective `content_scheme` selector for `realm_id`. RHRK durability is
-    /// only effective when this is `mls_exporter_aead_v1`
-    /// (encryption-and-audit.md §2.10.8). `None` means the authoritative
-    /// security projection is incomplete; encrypted sends must remain paused
-    /// instead of guessing the `mls_rfc9420` wire scheme.
-    pub fn realm_content_scheme(&self, realm_id: &str) -> Option<String> {
-        self.load()
-            .realm_tree_projections
-            .get(realm_id.trim())
-            .and_then(crate::realm_tree::realm_projection_content_scheme)
-    }
-
     /// SEC-08 (`encryption-and-audit.md` §2.9) — does the latest cached
     /// realm-tree projection declare the
     /// `ak.profile.mls.minimal_metadata_realm.v1` profile? The committer uses

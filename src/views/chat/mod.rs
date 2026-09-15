@@ -1801,14 +1801,23 @@ pub fn ChatPanel(
         && !sidecar_mode
         && selected_realm_pending_mls_binding_reason.is_none()
     {
-        if state_store
-            .read()
-            .realm_content_scheme(&selected_realm_id)
-            .is_none()
-        {
-            selected_realm_pending_mls_binding_reason = Some(
+        let accepted_binding = arkret_sdk::RealmId::new(selected_realm_id.clone())
+            .map(|realm_id| {
+                state_store
+                    .read()
+                    .accepted_mls_epoch_binding(&arkret_sdk::ScopeRef::Realm { realm_id })
+            })
+            .unwrap_or(garth::InstalledMlsEpoch::Pending);
+        if let Some(reason) = match accepted_binding {
+            garth::InstalledMlsEpoch::Accepted(_) => None,
+            garth::InstalledMlsEpoch::NoAcceptedGenesis => Some(
+                "encryption_policy_pending: this Realm has no accepted MLS Genesis yet".to_owned(),
+            ),
+            garth::InstalledMlsEpoch::Pending => Some(
                 "encryption_policy_pending: waiting for the verified content scheme".to_owned(),
-            );
+            ),
+        } {
+            selected_realm_pending_mls_binding_reason = Some(reason);
         } else {
             let secure_store = crate::secure_key_store::default_secure_key_store("inkson");
             let roster_matches =

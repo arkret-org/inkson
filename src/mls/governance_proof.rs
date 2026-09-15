@@ -172,7 +172,8 @@ fn proposed_group_genesis_binding(
             if let Some(proposal) = direct_conversation_genesis_proposal(projection) {
                 return Ok(proposal);
             }
-            let explicit_scheme = crate::realm_tree::realm_projection_content_scheme(projection);
+            let explicit_scheme =
+                crate::realm_tree::realm_projection_pre_genesis_content_scheme(projection);
             let durability = projection
                 .get("durability_policy")
                 .or_else(|| projection.pointer("/summary/durability_policy"))
@@ -207,14 +208,23 @@ fn proposed_group_genesis_binding(
             };
             (scheme, durability)
         }
-        // `ak.component.circle.create.v1` is an ordered log and therefore
-        // outside the current cell set (`sync/current-results.md`), so no
-        // Station current value carries a Circle group's create-locked
-        // binding. Fail closed instead of proposing a guessed scheme.
+        // A pre-Genesis proposal is the local creator's authoring intent, and
+        // Genesis admission later requires the signed binding to equal it
+        // byte-for-byte. Inkson persists that intent for a Realm it created
+        // (`realm_projection_pre_genesis_content_scheme`) but not for a Circle,
+        // so there is nothing to resubmit here. The Station's
+        // `ak.component.mls.epoch.v1` value cannot stand in: before Genesis it
+        // is exactly `null`, and once it carries a head this branch must not
+        // run at all.
         arkret_sdk::ScopeRef::Circle { .. } => {
             return Err(
-                "pre-Genesis Circle proposal requires the accepted Circle content scheme"
-                    .to_owned(),
+                match state_store.accepted_mls_epoch_binding(effective_scope) {
+                    garth::InstalledMlsEpoch::Accepted(_) => {
+                        "the Circle MLS group already has an accepted Genesis".to_owned()
+                    }
+                    _ => "pre-Genesis Circle proposal has no persisted local content scheme"
+                        .to_owned(),
+                },
             );
         }
         _ => return Err("unsupported MLS governance effective scope".to_owned()),
@@ -1038,7 +1048,7 @@ mod direct_conversation_genesis_tests {
             Some(arkret_wire::DurabilityPolicy::None)
         );
         assert_eq!(
-            crate::realm_tree::realm_projection_content_scheme(&projection),
+            crate::realm_tree::realm_projection_pre_genesis_content_scheme(&projection),
             None
         );
     }

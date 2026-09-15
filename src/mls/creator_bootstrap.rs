@@ -314,7 +314,7 @@ pub(crate) async fn ensure_creator_realm_mls_genesis(
         store
             .realm_tree_projection(realm_id)
             .as_ref()
-            .and_then(crate::realm_tree::realm_projection_content_scheme)
+            .and_then(crate::realm_tree::realm_projection_pre_genesis_content_scheme)
             .is_none()
     }) {
         let proposal = submitter

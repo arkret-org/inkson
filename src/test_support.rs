@@ -189,3 +189,48 @@ mod tests {
         assert_eq!(local.principal_id, remote.principal_id);
     }
 }
+
+/// Install the Station's `ak.component.mls.epoch.v1` current value for one
+/// effective scope, the only source a client may read the group's create-locked
+/// `content_scheme` from once Genesis is accepted.
+pub(crate) fn install_accepted_mls_epoch(
+    state: &mut crate::state::LocalStateStore,
+    effective_scope: &arkret_sdk::ScopeRef,
+    content_scheme: &str,
+) {
+    let realm_id = effective_scope.realm_id_opt().unwrap().to_string();
+    let group_id = effective_scope.canonical_mls_group_id().unwrap();
+    let cell_id = arkret_state::mls_cells::mls_epoch_cell_id(effective_scope, &group_id).unwrap();
+    let transition_ref =
+        arkret_sdk::EventId::new("ak:event:AZEvldDJcWI9IRHqP2BMibDDfc59Ax_LwrbsrQmeD6Ml").unwrap();
+    let digest = transition_ref.event_digest();
+    let entry = serde_json::json!({
+        "selector": {"scope_ref": effective_scope, "cell_id": cell_id},
+        "target": {"kind": "realm"},
+        "revision": 1,
+        "result": {"status": "value", "value": {
+            "transition_ref": transition_ref,
+            "transition_event_digest": digest,
+            "mls_transition_digest": digest,
+            "effective_scope": effective_scope,
+            "mls_group_id": group_id,
+            "previous_epoch": 0,
+            "next_epoch": 0,
+            "content_scheme": content_scheme,
+        }},
+    });
+    let mut projection = state
+        .realm_tree_projection(&realm_id)
+        .unwrap_or_else(|| serde_json::json!({}));
+    // Add to whatever the fixture already installed: one Realm view carries the
+    // Realm's own cells plus one epoch cell per MLS group it owns.
+    let mut entries = projection
+        .pointer("/current/entries")
+        .and_then(serde_json::Value::as_array)
+        .cloned()
+        .unwrap_or_default();
+    entries.retain(|existing| existing.pointer("/selector") != entry.pointer("/selector"));
+    entries.push(entry);
+    projection["current"]["entries"] = serde_json::Value::Array(entries);
+    state.save_realm_tree_projection(&realm_id, projection);
+}

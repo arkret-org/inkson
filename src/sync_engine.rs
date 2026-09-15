@@ -739,6 +739,39 @@ async fn refresh_current_product_view(
             entries.insert(entry.selector().canonical_key()?, entry);
         }
     }
+    // The create-locked MLS `content_scheme` only becomes this group's
+    // immutable value at `GenesisAccepted`, and the Station publishes it as
+    // `ak.component.mls.epoch.v1`. The family is not a singleton: its subject
+    // is the composite `(effective scope id, mls_group_id)`, so it is only
+    // published for scopes that actually have an MLS transition, and it stays
+    // out of `REQUIRED_REALM_CELLS` — a plaintext Realm has no such selector
+    // at all and must still reach first-screen readiness. `current-results.md`
+    // §2 lets one Realm's view carry selectors scoped to the Circles it owns,
+    // so the Realm group and every Circle group this client holds MLS state
+    // for are read into the same bounded view.
+    for scope in ctx
+        .state_store
+        .read(|store| store.local_mls_scopes_in_realm(&realm_id))
+    {
+        let Ok(group_id) = scope.canonical_mls_group_id() else {
+            continue;
+        };
+        let Ok(cell_id) = arkret_state::mls_cells::mls_epoch_cell_id(&scope, &group_id) else {
+            continue;
+        };
+        let mls_selector = arkret_sdk::CurrentSelector {
+            scope_ref: scope,
+            cell_id,
+        };
+        if let Some(entry) = index.read_selector_ready(&mls_selector).await? {
+            let bytes = arkret_sdk::canonical::canonical_json_bytes(&entry)?.len();
+            if bytes > remaining_bytes {
+                break;
+            }
+            remaining_bytes -= bytes;
+            entries.insert(entry.selector().canonical_key()?, entry);
+        }
+    }
     for cell in ctx
         .state_store
         .read(|store| store.product_current_cells(&ctx.account.authority, &realm_id))

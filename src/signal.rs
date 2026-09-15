@@ -616,17 +616,27 @@ pub fn restore_signal_mls_session(
     if state_store.realm_projection_is_minimal_metadata(realm_id) {
         anyhow::bail!("minimal-metadata endpoints have no registered Signal device carrier");
     }
-    let content_scheme = match scope_ref {
-        arkret_sdk::ScopeRef::Realm { .. } => state_store.realm_content_scheme(realm_id),
-        // No current cell publishes a Circle group's create-locked scheme yet
-        // (`ak.component.circle.create.v1` is an ordered log), so Signal stays
-        // paused for Circle scope instead of guessing a wire scheme.
-        _ => None,
+    // Realm and Circle groups each publish their own `ak.component.mls.epoch.v1`
+    // value; Sidecar rides its separate contract and has no Signal carrier here.
+    let binding = match scope_ref {
+        arkret_sdk::ScopeRef::Realm { .. } | arkret_sdk::ScopeRef::Circle { .. } => {
+            state_store.accepted_mls_epoch_binding(scope_ref)
+        }
+        _ => garth::InstalledMlsEpoch::Pending,
     };
-    let content_scheme = match content_scheme.as_deref() {
-        Some("mls_exporter_aead_v1") => arkret_sdk::EncryptedPayloadScheme::MlsExporterAeadV1,
-        Some("mls_rfc9420") => arkret_sdk::EncryptedPayloadScheme::MlsRfc9420,
-        _ => anyhow::bail!("Signal requires the scope's accepted content encryption policy"),
+    let content_scheme = match binding {
+        garth::InstalledMlsEpoch::Accepted(head) => match head.content_scheme {
+            arkret_sdk::ContentScheme::MlsExporterAeadV1 => {
+                arkret_sdk::EncryptedPayloadScheme::MlsExporterAeadV1
+            }
+            arkret_sdk::ContentScheme::MlsRfc9420 => arkret_sdk::EncryptedPayloadScheme::MlsRfc9420,
+        },
+        garth::InstalledMlsEpoch::NoAcceptedGenesis => {
+            anyhow::bail!("the Signal scope has no accepted MLS Genesis")
+        }
+        garth::InstalledMlsEpoch::Pending => {
+            anyhow::bail!("Signal requires the scope's accepted content encryption policy")
+        }
     };
     let circle_id = scope_ref.circle_id().map(arkret_sdk::CircleId::as_str);
     let snapshot = state_store
