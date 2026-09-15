@@ -5,6 +5,9 @@ use crate::state::LocalStateStore;
 #[derive(Clone)]
 pub(crate) struct MembershipRemovalSnapshot {
     pub request: arkret_sdk::MlsMembershipRemovalRequestBody,
+    /// The exact occupied leaves the request digest commits to. They stay
+    /// local: only their canonical digest travels to the Station.
+    pub local_mls_leaves: Vec<arkret_sdk::MlsSecurityFrontierLeaf>,
     checkpoint_bytes: Vec<u8>,
 }
 impl MembershipRemovalSnapshot {
@@ -32,19 +35,21 @@ impl MembershipRemovalSnapshot {
             next,
             leaves,
         )?;
-        let request = arkret_sdk::MlsMembershipRemovalRequestBody {
-            effective_scope: frontier.effective_scope,
-            mls_group_id: frontier.mls_group_id,
-            local_mls_leaves: frontier.local_mls_leaves,
-            seal_basis: frontier.seal_basis,
-            base_group_state_ref: frontier
+        let local_mls_leaves = frontier.local_mls_leaves;
+        let request = arkret_sdk::MlsMembershipRemovalRequestBody::from_local_leaves(
+            frontier.effective_scope,
+            frontier.mls_group_id,
+            frontier.seal_basis,
+            frontier
                 .base_group_state_ref
                 .ok_or("MLS removal has no accepted base")?,
-            epoch: checkpoint.epoch,
-        };
-        request.validate().map_err(|e| e.to_string())?;
+            checkpoint.epoch,
+            &local_mls_leaves,
+        )
+        .map_err(|e| e.to_string())?;
         Ok(Self {
             request,
+            local_mls_leaves,
             checkpoint_bytes: serde_json::to_vec(&checkpoint).map_err(|e| e.to_string())?,
         })
     }
@@ -72,11 +77,14 @@ impl MembershipRemovalSnapshot {
                 .epoch
                 .checked_add(1)
                 .ok_or("MLS epoch overflow")?,
-            self.request.local_mls_leaves.clone(),
+            self.local_mls_leaves.clone(),
         )?;
         if frontier.seal_basis != self.request.seal_basis {
             return Err("MLS removal accepted basis changed".to_owned());
         }
+        self.request
+            .matches_local_leaves(&self.local_mls_leaves)
+            .map_err(|e| e.to_string())?;
         Ok(())
     }
 }
@@ -139,7 +147,7 @@ pub(crate) async fn build_remove_scope_rotate_draft(
 ) -> Result<CircleScopeRotateDraft, String> {
     snapshot.ensure_current(state_store)?;
     outcome
-        .validate_for_request(&snapshot.request, authority)
+        .validate_for_request(&snapshot.request, authority, &snapshot.local_mls_leaves)
         .map_err(|e| e.to_string())?;
     let effective_scope = snapshot.request.effective_scope.clone();
     let realm_id = effective_scope
@@ -189,7 +197,6 @@ pub(crate) async fn build_remove_scope_rotate_draft(
     }
     for (proposal, index) in remove.proposals.iter().zip(&outcome.remove_leaf_indices) {
         let leaf = snapshot
-            .request
             .local_mls_leaves
             .iter()
             .find(|leaf| leaf.leaf_index == *index)
@@ -276,24 +283,33 @@ mod removal_snapshot_tests {
             .record_mls_group_state_ref_for_scope(&scope, &group_id, 1, base.clone())
             .unwrap();
         let checkpoint = store.mls_checkpoint_for_scope(&scope).unwrap();
+        let local_mls_leaves = vec![arkret_sdk::MlsSecurityFrontierLeaf {
+            leaf_index: 0,
+            actor_id: arkret_sdk::ActorId::account(crate::test_support::authority(
+                "did:web:alice.example",
+            )),
+            credential_ref: arkret_sdk::NonEmptyString::new("device-0").unwrap(),
+        }];
         let frozen = MembershipRemovalSnapshot {
-            request: arkret_sdk::MlsMembershipRemovalRequestBody {
-                effective_scope: scope.clone(),
-                mls_group_id: arkret_sdk::Base64UrlString::new(group_id).unwrap(),
-                local_mls_leaves: vec![arkret_sdk::MlsSecurityFrontierLeaf {
-                    leaf_index: 0,
-                    actor_id: arkret_sdk::ActorId::account(crate::test_support::authority(
-                        "did:web:alice.example",
-                    )),
-                    credential_ref: arkret_sdk::NonEmptyString::new("device-0").unwrap(),
-                }],
-                seal_basis: arkret_sdk::SealBasis { leaves: vec![seal] },
-                base_group_state_ref: base,
-                epoch: 1,
-            },
+            request: arkret_sdk::MlsMembershipRemovalRequestBody::from_local_leaves(
+                scope.clone(),
+                arkret_sdk::Base64UrlString::new(group_id).unwrap(),
+                arkret_sdk::SealBasis { leaves: vec![seal] },
+                base,
+                1,
+                &local_mls_leaves,
+            )
+            .unwrap(),
+            local_mls_leaves,
             checkpoint_bytes: serde_json::to_vec(&checkpoint).unwrap(),
         };
         frozen.ensure_current(&store).unwrap();
+        // The query commits to the leaf set by digest only; a drifted local
+        // tree must not be reconciled against a digest it no longer matches.
+        let mut drifted = frozen.clone();
+        drifted.local_mls_leaves[0].credential_ref =
+            arkret_sdk::NonEmptyString::new("device-1").unwrap();
+        assert!(drifted.ensure_current(&store).is_err());
         let mut wrong_base = frozen.clone();
         wrong_base.request.base_group_state_ref =
             arkret_sdk::EventId::from_digest(arkret_sdk::canonical::DigestSuite::Sha256, [7; 32]);

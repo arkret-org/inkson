@@ -139,7 +139,7 @@ pub(crate) fn build_mls_remove_leaves_commit_for_effective_scope(
         .ensure_current(state_store)
         .map_err(MlsRuntimeError::Commit)?;
     outcome
-        .validate_for_request(&frozen.request, authority)
+        .validate_for_request(&frozen.request, authority, &frozen.local_mls_leaves)
         .map_err(|error| MlsRuntimeError::Commit(error.to_string()))?;
     let effective_scope = frozen.request.effective_scope.clone();
     if effective_scope.realm_id_opt().map(|id| id.as_str()) != Some(realm_id)
@@ -177,7 +177,7 @@ pub(crate) fn build_mls_remove_leaves_commit_for_effective_scope(
         || group
             .security_frontier_leaves()
             .map_err(|e| MlsRuntimeError::Commit(e.to_string()))?
-            != frozen.request.local_mls_leaves
+            != frozen.local_mls_leaves
     {
         return Err(MlsRuntimeError::Commit(
             "MLS removal local leaves changed".to_owned(),

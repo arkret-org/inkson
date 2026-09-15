@@ -1380,15 +1380,23 @@ async fn run_circle_scope_rotate_pass(
                     fence()?;
                     let outcome = api
                         .sdk_http_client()?
-                        .mls_membership_removal(&frozen.request, authority)
+                        .mls_membership_removal(
+                            &frozen.request,
+                            authority,
+                            &frozen.local_mls_leaves,
+                        )
                         .await?;
                     fence()?;
-                    outcome.validate_for_request(&frozen.request, authority)?;
+                    outcome.validate_for_request(
+                        &frozen.request,
+                        authority,
+                        &frozen.local_mls_leaves,
+                    )?;
                     if outcome.remove_leaf_indices.is_empty() {
                         return Ok(None);
                     }
                     let leaves = crate::mls::governance_proof::security_frontier_without_leaves(
-                        frozen.request.local_mls_leaves.clone(),
+                        frozen.local_mls_leaves.clone(),
                         &outcome.remove_leaf_indices,
                     );
                     let proof_request = arkret_sdk::MlsGovernanceFrontierRequestBody {
